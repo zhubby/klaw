@@ -1,8 +1,12 @@
 use clap::Args;
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    sync::Arc,
+};
 use tracing::info;
 
 use crate::commands::runtime::{build_runtime_bundle, submit_and_get_output};
+use klaw_config::AppConfig;
 
 #[derive(Debug, Args)]
 pub struct StdioCommand {
@@ -12,8 +16,8 @@ pub struct StdioCommand {
 }
 
 impl StdioCommand {
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let runtime = build_runtime_bundle();
+    pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
+        let runtime = build_runtime_bundle(config.as_ref())?;
         let chat_id = self
             .session_key
             .split(':')

@@ -8,6 +8,7 @@ license.workspace = true
 klaw-core.workspace = true
 klaw-llm.workspace = true
 klaw-tool.workspace = true
+klaw-config.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

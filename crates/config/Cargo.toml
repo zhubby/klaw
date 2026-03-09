@@ -1,0 +1,13 @@
+[package]
+name = "klaw-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "klaw_config"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true

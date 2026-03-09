@@ -4,9 +4,10 @@ use klaw_core::{
     InMemoryIdempotencyStore, InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy,
     RunLimits, SessionSchedulingPolicy, Subscription,
 };
-use klaw_llm::{EchoProvider, OpenAiCompatibleConfig, OpenAiCompatibleProvider};
+use klaw_config::{AppConfig, ModelProviderConfig};
+use klaw_llm::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
 use klaw_tool::{EchoTool, ToolRegistry};
-use std::{collections::BTreeMap, env, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, env, error::Error, io, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
 pub struct RuntimeBundle {
@@ -21,8 +22,8 @@ pub struct RuntimeBundle {
     pub subscription: Subscription,
 }
 
-pub fn build_runtime_bundle() -> RuntimeBundle {
-    let provider = build_provider_from_env();
+pub fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn Error>> {
+    let provider = build_provider_from_config(config)?;
     let mut tools = ToolRegistry::default();
     tools.register(EchoTool);
 
@@ -43,7 +44,7 @@ pub fn build_runtime_bundle() -> RuntimeBundle {
         tools,
     );
 
-    RuntimeBundle {
+    Ok(RuntimeBundle {
         runtime,
         inbound_transport: InMemoryTransport::new(),
         outbound_transport: InMemoryTransport::new(),
@@ -70,7 +71,7 @@ pub fn build_runtime_bundle() -> RuntimeBundle {
             consumer_group: "stdio".to_string(),
             visibility_timeout: Duration::from_secs(10),
         },
-    }
+    })
 }
 
 pub async fn submit_and_get_output(
@@ -119,23 +120,49 @@ pub async fn submit_and_get_output(
     }
 }
 
-fn build_provider_from_env() -> Arc<dyn klaw_llm::LlmProvider> {
-    let base_url = env::var("OPENAI_BASE_URL").ok();
-    let api_key = env::var("OPENAI_API_KEY").ok();
-    let model = env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+fn build_provider_from_config(config: &AppConfig) -> Result<Arc<dyn klaw_llm::LlmProvider>, Box<dyn Error>> {
+    let provider = config
+        .model_providers
+        .get(&config.model_provider)
+        .ok_or_else(|| config_err(format!("model_provider '{}' not found", config.model_provider)))?;
 
-    match (base_url, api_key) {
-        (Some(base_url), Some(api_key)) => {
-            info!("using OpenAI compatible provider");
-            Arc::new(OpenAiCompatibleProvider::new(OpenAiCompatibleConfig {
-                base_url,
-                api_key,
-                default_model: model,
-            }))
-        }
-        _ => {
-            warn!("OPENAI_BASE_URL/OPENAI_API_KEY not set, fallback to EchoProvider");
-            Arc::new(EchoProvider)
+    match provider.wire_api.as_str() {
+        "chat_completions" | "responses" => {}
+        other => {
+            return Err(config_err(format!(
+                "unsupported wire_api '{other}' for provider '{}'",
+                config.model_provider
+            )))
         }
     }
+
+    let api_key = resolve_api_key(provider).ok_or_else(|| {
+        config_err(format!(
+            "provider '{}' requires api_key or env_key",
+            config.model_provider
+        ))
+    })?;
+
+    info!(provider_id = %config.model_provider, "using configured provider");
+
+    Ok(Arc::new(OpenAiCompatibleProvider::new(
+        OpenAiCompatibleConfig {
+            base_url: provider.base_url.clone(),
+            api_key,
+            default_model: provider.default_model.clone(),
+        },
+    )))
+}
+
+fn resolve_api_key(provider: &ModelProviderConfig) -> Option<String> {
+    provider.api_key.clone().or_else(|| {
+        provider
+            .env_key
+            .as_ref()
+            .and_then(|env_name| env::var(env_name).ok())
+    })
+}
+
+fn config_err(message: String) -> Box<dyn Error> {
+    Box::new(io::Error::other(message))
 }

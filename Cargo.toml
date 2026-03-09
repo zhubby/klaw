@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/core", "crates/llm", "crates/tool", "crates/cli"]
+members = [
+    "crates/core",
+    "crates/llm",
+    "crates/tool",
+    "crates/config",
+    "crates/cli",
+]
 resolver = "2"
 
 [workspace.package]
@@ -18,6 +24,8 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 clap = { version = "4", features = ["derive", "env"] }
+toml = "0.8"
 klaw-core = { path = "crates/core" }
 klaw-llm = { path = "crates/llm" }
 klaw-tool = { path = "crates/tool" }
+klaw-config = { path = "crates/config" }
