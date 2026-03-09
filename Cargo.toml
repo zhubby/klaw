@@ -1,0 +1,23 @@
+[workspace]
+members = ["crates/core", "crates/llm", "crates/tool", "crates/cli"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time", "macros", "rt"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+clap = { version = "4", features = ["derive", "env"] }
+klaw-core = { path = "crates/core" }
+klaw-llm = { path = "crates/llm" }
+klaw-tool = { path = "crates/tool" }

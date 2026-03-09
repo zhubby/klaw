@@ -1,0 +1,15 @@
+[package]
+name = "klaw-llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "klaw_llm"
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
