@@ -6,7 +6,7 @@ use klaw_core::{
 };
 use klaw_config::{AppConfig, ModelProviderConfig};
 use klaw_llm::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
-use klaw_tool::{EchoTool, ToolRegistry};
+use klaw_tool::{ShellTool, ToolRegistry};
 use std::{collections::BTreeMap, env, error::Error, io, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -25,7 +25,7 @@ pub struct RuntimeBundle {
 pub fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn Error>> {
     let provider = build_provider_from_config(config)?;
     let mut tools = ToolRegistry::default();
-    tools.register(EchoTool);
+    tools.register(ShellTool::new());
 
     let runtime = AgentLoop::new(
         RunLimits {

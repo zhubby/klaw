@@ -1,35 +1,50 @@
-# Agents Project Guide
+# Repository Guidelines
 
-## Module Capabilities
+## Project Structure & Module Organization
+This repository is a Rust workspace. Crates are split by responsibility:
+- `klaw-core`: agent loop, protocol, reliability, scheduling.
+- `klaw-cli`: CLI entrypoint and command handlers (`stdio`, `once`).
+- `klaw-llm`: LLM provider integrations.
+- `klaw-tool`: tool implementations and registry.
+- `klaw-config`: TOML config loading/validation.
+- `klaw-mcp`, `klaw-skill`, `klaw-memory`: MCP, skill, and memory support crates.
+- `docs/`: mdBook sources (`docs/src`) and architecture notes (`docs/agent-core`).
 
-### `crates/core`
-- 核心领域模型：`InboundMessage`、`OutboundMessage`、`DeadLetterMessage`
-- 消息协议与错误码：`Envelope`、`MessageTopic`、`ErrorCode`
-- 传输抽象：`MessageTransport`（publish/consume/ack/nack/requeue）
-- 会话调度抽象：`SessionScheduler`
-- 可靠性抽象：`RetryPolicy`、`DeadLetterPolicy`、`CircuitBreaker`、`IdempotencyStore`
-- 运行时主循环：`agent::AgentLoop`（含 `run_once`、`run_once_reliable`）
-- 内存 Mock：`InMemoryTransport`、`InMemoryIdempotencyStore`、`InMemorySessionScheduler`
+Keep new code in the crate that owns the domain concern; avoid cross-crate leakage of CLI-specific logic into core runtime crates.
 
-### `crates/llm`
-- `LlmProvider` 抽象
-- 统一 LLM 输入输出结构：`LlmMessage`、`ToolDefinition`、`LlmResponse`
-- 本地占位实现：`EchoProvider`
+## Build, Test, and Development Commands
+Use workspace-level Cargo commands from repo root:
+- `cargo check --workspace`: fast compile verification.
+- `cargo build --workspace`: build all crates.
+- `cargo test --workspace`: run unit and integration tests.
+- `cargo test -p klaw-core --test runtime_e2e`: run core E2E runtime tests.
+- `cargo fmt --all`: apply Rust formatting.
+- `cargo clippy --workspace --all-targets -- -D warnings`: lint strictly.
+- `cargo run -p klaw-cli -- stdio`: run interactive local agent loop.
+- `cargo run -p klaw-cli -- once --input "hello"`: single request/response run.
 
-### `crates/tool`
-- `Tool` 抽象与 `ToolRegistry`
-- `ToolContext`、`ToolOutput`、`ToolCategory`
-- 本地占位实现：`EchoTool`
+For docs: `mdbook build docs` (or `mdbook serve docs` for local preview).
 
-### `crates/cli`
-- 项目启动入口
-- 本地 `stdin/stdout` 交互运行模式（`cargo run -p klaw-cli`）
+## Coding Style & Naming Conventions
+Follow Rust 2021 defaults and `rustfmt` output (4-space indentation, trailing commas where formatter adds them). Prefer:
+- `snake_case` for modules/functions/files.
+- `PascalCase` for types/traits.
+- small modules with explicit ownership boundaries.
 
-## Project Conventions
+Use `thiserror` for error enums and avoid `unwrap()` in production paths.
 
-- 架构原则：核心运行时不依赖具体 MQ/具体 Provider/具体 Tool 实现。
-- 依赖方向：`cli -> core`，`llm -> core`，`tool -> core`；禁止反向依赖。
-- 可靠性基线：默认 at-least-once + 幂等去重 + 重试 + DLQ。
-- 可扩展方式：新增 MQ/LLM/Tool 通过实现 trait 接入，不改主链路。
-- 测试要求：核心链路至少覆盖成功路径与重试耗尽进 DLQ 路径。
-- 入口规范：统一通过 `crates/cli` 启动，避免在库 crate 中混放 bin 入口。
+## Testing Guidelines
+Place unit tests next to implementation (`mod tests`), and integration tests under `*/tests/` (example: `klaw-core/tests/runtime_e2e.rs`).
+Name tests by behavior, e.g., `validate_fails_when_active_provider_missing`. Add regression tests for bug fixes.
+
+## Commit & Pull Request Guidelines
+Recent history is short, but commit messages should be concise, imperative, and specific (e.g., `add config loading to cli commands`). Keep one logical change per commit.
+
+PRs should include:
+- purpose and impacted crates,
+- test evidence (commands run + results),
+- config/doc updates when behavior changes,
+- sample CLI output when user-facing behavior is modified.
+
+## Security & Configuration Tips
+Never commit API keys. Prefer `env_key` in `~/.klaw/config.toml` (default expects `OPENAI_API_KEY`). If sharing configs, redact credentials.

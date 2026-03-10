@@ -1,17 +1,33 @@
+pub mod shell;
+
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+pub use shell::ShellTool;
+
 /// 工具分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolCategory {
-    /// 系统级工具。
-    System,
-    /// 数据访问工具。
-    Data,
-    /// 运行时辅助工具。
-    Runtime,
+    /// Read-only filesystem operations (read, list, glob).
+    FilesystemRead,
+    /// Write/modify filesystem operations (write, edit, delete).
+    FilesystemWrite,
+    /// Read-only network operations (web search, fetch).
+    NetworkRead,
+    /// Network operations that modify external state (HTTP POST, API calls).
+    NetworkWrite,
+    /// Shell command execution and process spawning.
+    Shell,
+    /// Hardware/peripheral operations (USB, serial, GPIO).
+    Hardware,
+    /// Memory read/write operations (workspace memory, long-term memory).
+    Memory,
+    /// Messaging operations (send messages via channels).
+    Messaging,
+    /// Destructive or high-risk operations (cron delete, etc.).
+    Destructive,
 }
 
 /// 工具执行上下文。
@@ -80,49 +96,5 @@ impl ToolRegistry {
     /// 列出已注册工具名称。
     pub fn list(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
-    }
-}
-
-/// 本地回显工具。
-pub struct EchoTool;
-
-#[async_trait]
-impl Tool for EchoTool {
-    fn name(&self) -> &str {
-        "echo"
-    }
-
-    fn description(&self) -> &str {
-        "Echoes the provided text argument."
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "text": { "type": "string" }
-            },
-            "required": ["text"]
-        })
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Runtime
-    }
-
-    async fn execute(
-        &self,
-        args: serde_json::Value,
-        _ctx: &ToolContext,
-    ) -> Result<ToolOutput, ToolError> {
-        let text = args
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidArgs("missing `text`".to_string()))?;
-
-        Ok(ToolOutput {
-            content_for_model: format!("EchoTool: {text}"),
-            content_for_user: Some(text.to_string()),
-        })
     }
 }

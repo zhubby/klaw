@@ -1,10 +1,13 @@
 [workspace]
 members = [
-    "crates/core",
-    "crates/llm",
-    "crates/tool",
-    "crates/config",
-    "crates/cli",
+    "klaw-core",
+    "klaw-llm",
+    "klaw-tool",
+    "klaw-config",
+    "klaw-cli", 
+    "klaw-mcp", 
+    "klaw-skill", 
+    "klaw-memory",
 ]
 resolver = "2"
 
@@ -25,7 +28,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 clap = { version = "4", features = ["derive", "env"] }
 toml = "0.8"
-klaw-core = { path = "crates/core" }
-klaw-llm = { path = "crates/llm" }
-klaw-tool = { path = "crates/tool" }
-klaw-config = { path = "crates/config" }
+
+zellij-client = { version = "0.43.1"}
+
+klaw-core = { path = "klaw-core" }
+klaw-llm = { path = "klaw-llm" }
+klaw-tool = { path = "klaw-tool" }
+klaw-config = { path = "klaw-config" }
