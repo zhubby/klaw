@@ -1,3 +1,4 @@
+pub mod local_search;
 pub mod memory;
 pub mod shell;
 pub mod sub_agent;
@@ -10,6 +11,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+pub use local_search::LocalSearchTool;
 pub use memory::MemoryTool;
 pub use shell::ShellTool;
 pub use sub_agent::SubAgentTool;
