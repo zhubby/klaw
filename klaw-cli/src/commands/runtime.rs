@@ -25,7 +25,7 @@ pub struct RuntimeBundle {
 pub fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn Error>> {
     let provider = build_provider_from_config(config)?;
     let mut tools = ToolRegistry::default();
-    tools.register(ShellTool::new());
+    tools.register(ShellTool::new(config));
     tools.register(TerminalMultiplexerTool::new());
 
     let runtime = AgentLoop::new(

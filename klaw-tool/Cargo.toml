@@ -11,3 +11,4 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["process"] }
 zellij-client = { workspace = true }
+klaw-config = { workspace = true }

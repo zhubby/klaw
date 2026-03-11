@@ -10,6 +10,8 @@ use thiserror::Error;
 pub struct AppConfig {
     pub model_provider: String,
     pub model_providers: BTreeMap<String, ModelProviderConfig>,
+    #[serde(default)]
+    pub tools: ToolsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +25,29 @@ pub struct ModelProviderConfig {
     pub api_key: Option<String>,
     #[serde(default)]
     pub env_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolsConfig {
+    #[serde(default)]
+    pub shell: ShellConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ShellConfig {
+    #[serde(default = "default_shell_blocked_patterns")]
+    pub blocked_patterns: Vec<String>,
+}
+
+fn default_shell_blocked_patterns() -> Vec<String> {
+    vec![
+        "rm -rf /".to_string(),
+        "rm -rf ~".to_string(),
+        ":(){ :|:& };:".to_string(),
+        "mkfs".to_string(),
+        "shutdown".to_string(),
+        "reboot".to_string(),
+    ]
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +113,9 @@ default_model = "gpt-4o-mini"
 env_key = "OPENAI_API_KEY"
 # You can also provide a literal key directly:
 # api_key = "sk-..."
+
+[tools.shell]
+blocked_patterns = ["rm -rf /", "rm -rf ~", ":(){ :|:& };:", "mkfs", "shutdown", "reboot"]
 "#
 }
 
@@ -182,6 +210,10 @@ mod tests {
             toml::from_str(default_config_template()).expect("default template should parse");
         assert_eq!(parsed.model_provider, "openai");
         assert!(parsed.model_providers.contains_key("openai"));
+        assert_eq!(
+            parsed.tools.shell.blocked_patterns,
+            default_shell_blocked_patterns()
+        );
         validate(&parsed).expect("default template should be valid");
     }
 
@@ -190,9 +222,32 @@ mod tests {
         let cfg = AppConfig {
             model_provider: "missing".to_string(),
             model_providers: BTreeMap::new(),
+            tools: ToolsConfig::default(),
         };
         let err = validate(&cfg).expect_err("should fail");
         assert!(format!("{err}").contains("not found in model_providers"));
+    }
+
+    #[test]
+    fn parse_tools_shell_blocked_patterns_succeeds() {
+        let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[tools.shell]
+blocked_patterns = ["sudo rm -rf /tmp/example"]
+"#;
+
+        let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+        assert_eq!(
+            parsed.tools.shell.blocked_patterns,
+            vec!["sudo rm -rf /tmp/example".to_string()]
+        );
     }
 
     #[test]

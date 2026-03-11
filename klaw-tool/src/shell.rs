@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use klaw_config::AppConfig;
 use serde_json::{json, Value};
 use std::process::Stdio;
 use std::time::Duration;
@@ -12,18 +13,16 @@ pub struct ShellTool {
 }
 
 impl ShellTool {
-    /// 默认模式：启用基础危险命令拦截。
-    pub fn new() -> Self {
+    /// 从应用配置读取 shell 拦截规则。
+    pub fn new(config: &AppConfig) -> Self {
         Self {
-            blocked_patterns: vec![
-                "rm -rf /".to_string(),
-                "rm -rf ~".to_string(),
-                ":(){ :|:& };:".to_string(),
-                "mkfs".to_string(),
-                "shutdown".to_string(),
-                "reboot".to_string(),
-            ],
+            blocked_patterns: config.tools.shell.blocked_patterns.clone(),
         }
+    }
+
+    /// 自定义模式：由配置注入拦截规则。
+    pub fn with_blocked_patterns(blocked_patterns: Vec<String>) -> Self {
+        Self { blocked_patterns }
     }
 
     /// 宽松模式：不拦截命令内容。
@@ -62,12 +61,6 @@ impl ShellTool {
         let code = exit_code.unwrap_or(-1);
         parts.push(format!("[Exit code: {code}]"));
         parts.join("\n")
-    }
-}
-
-impl Default for ShellTool {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -144,12 +137,58 @@ impl Tool for ShellTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_config::{ModelProviderConfig, ShellConfig, ToolsConfig};
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
 
+    fn test_config() -> AppConfig {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "openai".to_string(),
+            ModelProviderConfig {
+                name: None,
+                base_url: "https://api.openai.com/v1".to_string(),
+                wire_api: "chat_completions".to_string(),
+                default_model: "gpt-4o-mini".to_string(),
+                api_key: None,
+                env_key: Some("OPENAI_API_KEY".to_string()),
+            },
+        );
+        AppConfig {
+            model_provider: "openai".to_string(),
+            model_providers: providers,
+            tools: ToolsConfig {
+                shell: ShellConfig {
+                    blocked_patterns: vec!["rm -rf /".to_string()],
+                },
+            },
+        }
+    }
+
+    fn permissive_test_config() -> AppConfig {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "openai".to_string(),
+            ModelProviderConfig {
+                name: None,
+                base_url: "https://api.openai.com/v1".to_string(),
+                wire_api: "chat_completions".to_string(),
+                default_model: "gpt-4o-mini".to_string(),
+                api_key: None,
+                env_key: Some("OPENAI_API_KEY".to_string()),
+            },
+        );
+        AppConfig {
+            model_provider: "openai".to_string(),
+            model_providers: providers,
+            tools: ToolsConfig::default(),
+        }
+    }
+
     #[tokio::test]
     async fn test_shell_echo() {
-        let tool = ShellTool::new();
+        let config = permissive_test_config();
+        let tool = ShellTool::new(&config);
         let ctx = ToolContext {
             session_key: "s1".to_string(),
             metadata: BTreeMap::new(),
@@ -164,7 +203,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_shell_stderr() {
-        let tool = ShellTool::new();
+        let config = permissive_test_config();
+        let tool = ShellTool::new(&config);
         let ctx = ToolContext {
             session_key: "s1".to_string(),
             metadata: BTreeMap::new(),
@@ -180,7 +220,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_shell_with_workspace_from_metadata() {
-        let tool = ShellTool::new();
+        let config = permissive_test_config();
+        let tool = ShellTool::new(&config);
         let dir = std::env::temp_dir().join(format!(
             "klaw-shell-test-{}",
             std::time::SystemTime::now()
@@ -212,7 +253,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_shell_timeout() {
-        let tool = ShellTool::new();
+        let config = permissive_test_config();
+        let tool = ShellTool::new(&config);
         let ctx = ToolContext {
             session_key: "s1".to_string(),
             metadata: BTreeMap::new(),
@@ -226,7 +268,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_dangerous_command_blocked() {
-        let tool = ShellTool::new();
+        let config = test_config();
+        let tool = ShellTool::new(&config);
         let ctx = ToolContext {
             session_key: "s1".to_string(),
             metadata: BTreeMap::new(),
