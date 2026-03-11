@@ -1,5 +1,6 @@
 pub mod shell;
 pub mod terminal_multiplexers;
+pub mod web_search;
 
 use async_trait::async_trait;
 use std::collections::BTreeMap;
@@ -8,6 +9,7 @@ use thiserror::Error;
 
 pub use shell::ShellTool;
 pub use terminal_multiplexers::TerminalMultiplexerTool;
+pub use web_search::WebSearchTool;
 
 /// 工具分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

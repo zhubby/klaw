@@ -20,8 +20,8 @@ Use workspace-level Cargo commands from repo root:
 - `cargo test -p klaw-core --test runtime_e2e`: run core E2E runtime tests.
 - `cargo fmt --all`: apply Rust formatting.
 - `cargo clippy --workspace --all-targets -- -D warnings`: lint strictly.
-- `cargo run -p klaw-cli -- stdio`: run interactive local agent loop.
-- `cargo run -p klaw-cli -- once --input "hello"`: single request/response run.
+- `klaw stdio`: run interactive local agent loop.
+- `klaw once --input "hello"`: single request/response run.
 
 For docs: `mdbook build docs` (or `mdbook serve docs` for local preview).
 
@@ -33,9 +33,15 @@ Follow Rust 2021 defaults and `rustfmt` output (4-space indentation, trailing co
 
 Use `thiserror` for error enums and avoid `unwrap()` in production paths.
 
+When implementing tools in `klaw-tool`, make tool metadata LLM-friendly:
+- Write `description` so model planners can clearly infer **when** to call the tool.
+- Design `parameters` schema with strong guidance (clear field semantics, constraints/defaults, and practical examples) to improve call accuracy and argument quality.
+
 ## Testing Guidelines
 Place unit tests next to implementation (`mod tests`), and integration tests under `*/tests/` (example: `klaw-core/tests/runtime_e2e.rs`).
 Name tests by behavior, e.g., `validate_fails_when_active_provider_missing`. Add regression tests for bug fixes.
+
+For tool and config changes, include enough test cases to cover core paths and edge cases (arg validation, provider/config routing, formatting, and error handling when applicable). Every modification should keep the relevant crate/workspace tests passing before completion.
 
 ## Commit & Pull Request Guidelines
 Recent history is short, but commit messages should be concise, imperative, and specific (e.g., `add config loading to cli commands`). Keep one logical change per commit.

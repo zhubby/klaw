@@ -161,6 +161,7 @@ mod tests {
                 shell: ShellConfig {
                     blocked_patterns: vec!["rm -rf /".to_string()],
                 },
+                ..ToolsConfig::default()
             },
         }
     }

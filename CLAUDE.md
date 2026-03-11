@@ -18,12 +18,25 @@ cargo test -p klaw-core
 cargo test -p klaw-core -- <test_name>
 
 # Run the CLI
-cargo run -p klaw-cli          # Starts interactive stdio mode
-cargo run -p klaw-cli -- --help
+klaw stdio                     # Starts interactive stdio mode
+klaw --help
 
 # One-shot request
-cargo run -p klaw-cli -- once --input "your prompt"
+klaw once --input "your prompt"
 ```
+
+## Tool Metadata & Testing Expectations
+
+When implementing tools in `klaw-tool`, make tool metadata LLM-friendly:
+- Write `description` so model planners can clearly infer when to call the tool.
+- Design `parameters` schema with clear field semantics, constraints/defaults, and practical examples to improve call accuracy.
+
+For tool and config changes, include enough tests for core and edge scenarios:
+- Parameter validation and error paths.
+- Provider/config routing behavior.
+- Output formatting and response parsing behavior (where applicable).
+
+After each modification, ensure the relevant crate/workspace tests pass before considering the task complete.
 
 ## Architecture
 
@@ -37,13 +50,13 @@ cargo run -p klaw-cli -- once --input "your prompt"
 | `klaw-llm` | LLM provider abstraction (OpenAI-compatible, Anthropic) |
 | `klaw-tool` | Tool trait definition and built-in tools (shell, fs, web, etc.) |
 | `klaw-core` | Agent runtime: message protocol, scheduler, reliability controls |
-| `klaw-cli` | CLI entrypoint with stdio/once commands |
+| `klaw-cli` | CLI entrypoint crate (binary: `klaw`) |
 | `klaw-mcp`, `klaw-skill`, `klaw-memory` | Extension points (MCP, skills, memory) |
 
 ### Message Flow
 
 ```
-User Input → klaw-cli → InboundMessage (agent.inbound)
+User Input → klaw → InboundMessage (agent.inbound)
                     → AgentLoop.run_once_reliable()
                     → OutboundMessage (agent.outbound) → Response
                                                ↘ DeadLetterMessage (agent.dlq)

@@ -7,7 +7,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
-#[command(name = "klaw-cli", about = "Klaw command line interface")]
+#[command(name = "klaw", about = "Klaw command line interface")]
 struct Cli {
     /// Path to config file (TOML). Defaults to ~/.klaw/config.toml.
     #[arg(long, global = true)]

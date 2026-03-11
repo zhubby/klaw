@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "klaw"
+path = "src/main.rs"
+
 [dependencies]
 klaw-core = { workspace = true }
 klaw-llm = { workspace = true }

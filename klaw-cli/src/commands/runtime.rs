@@ -6,7 +6,7 @@ use klaw_core::{
     SessionSchedulingPolicy, Subscription,
 };
 use klaw_llm::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
-use klaw_tool::{ShellTool, TerminalMultiplexerTool, ToolRegistry};
+use klaw_tool::{ShellTool, TerminalMultiplexerTool, ToolRegistry, WebSearchTool};
 use std::{collections::BTreeMap, env, error::Error, io, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -27,6 +27,9 @@ pub fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn
     let mut tools = ToolRegistry::default();
     tools.register(ShellTool::new(config));
     tools.register(TerminalMultiplexerTool::new());
+    if config.tools.web_search.enabled {
+        tools.register(WebSearchTool::new(config)?);
+    }
 
     let runtime = AgentLoop::new(
         RunLimits {

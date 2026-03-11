@@ -57,6 +57,8 @@ impl Default for ModelProviderConfig {
 pub struct ToolsConfig {
     #[serde(default)]
     pub shell: ShellConfig,
+    #[serde(default)]
+    pub web_search: WebSearchConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +84,110 @@ fn default_shell_blocked_patterns() -> Vec<String> {
         "shutdown".to_string(),
         "reboot".to_string(),
     ]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSearchConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_web_search_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub tavily: TavilyWebSearchConfig,
+    #[serde(default)]
+    pub brave: BraveWebSearchConfig,
+}
+
+impl Default for WebSearchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: default_web_search_provider(),
+            tavily: TavilyWebSearchConfig::default(),
+            brave: BraveWebSearchConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TavilyWebSearchConfig {
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub env_key: Option<String>,
+    #[serde(default = "default_tavily_search_depth")]
+    pub search_depth: String,
+    #[serde(default)]
+    pub topic: Option<String>,
+    #[serde(default)]
+    pub include_answer: Option<bool>,
+    #[serde(default)]
+    pub include_raw_content: Option<bool>,
+    #[serde(default)]
+    pub include_images: Option<bool>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+}
+
+fn default_web_search_provider() -> String {
+    "tavily".to_string()
+}
+
+impl Default for TavilyWebSearchConfig {
+    fn default() -> Self {
+        Self {
+            base_url: Some("https://api.tavily.com".to_string()),
+            api_key: None,
+            env_key: Some("TAVILY_API_KEY".to_string()),
+            search_depth: default_tavily_search_depth(),
+            topic: None,
+            include_answer: None,
+            include_raw_content: None,
+            include_images: None,
+            project_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BraveWebSearchConfig {
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub env_key: Option<String>,
+    #[serde(default)]
+    pub country: Option<String>,
+    #[serde(default)]
+    pub search_lang: Option<String>,
+    #[serde(default)]
+    pub ui_lang: Option<String>,
+    #[serde(default)]
+    pub safesearch: Option<String>,
+    #[serde(default)]
+    pub freshness: Option<String>,
+}
+
+impl Default for BraveWebSearchConfig {
+    fn default() -> Self {
+        Self {
+            base_url: Some("https://api.search.brave.com".to_string()),
+            api_key: None,
+            env_key: Some("BRAVE_SEARCH_API_KEY".to_string()),
+            country: None,
+            search_lang: None,
+            ui_lang: None,
+            safesearch: None,
+            freshness: None,
+        }
+    }
+}
+
+fn default_tavily_search_depth() -> String {
+    "basic".to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -211,7 +317,56 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         )));
     }
 
+    if config.tools.web_search.enabled {
+        if config.tools.web_search.provider.trim().is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "tools.web_search.provider cannot be empty when enabled".to_string(),
+            ));
+        }
+
+        match config.tools.web_search.provider.as_str() {
+            "tavily" => {
+                if resolve_tavily_web_search_api_key(&config.tools.web_search.tavily).is_none() {
+                    return Err(ConfigError::InvalidConfig(
+                        "tools.web_search.tavily requires api_key or env_key".to_string(),
+                    ));
+                }
+            }
+            "brave" => {
+                if resolve_brave_web_search_api_key(&config.tools.web_search.brave).is_none() {
+                    return Err(ConfigError::InvalidConfig(
+                        "tools.web_search.brave requires api_key or env_key".to_string(),
+                    ));
+                }
+            }
+            other => {
+                return Err(ConfigError::InvalidConfig(format!(
+                    "tools.web_search.provider '{}' is not supported, expected one of: tavily, brave",
+                    other
+                )));
+            }
+        }
+    }
+
     Ok(())
+}
+
+fn resolve_tavily_web_search_api_key(provider: &TavilyWebSearchConfig) -> Option<String> {
+    provider.api_key.clone().or_else(|| {
+        provider
+            .env_key
+            .as_ref()
+            .and_then(|env_name| env::var(env_name).ok())
+    })
+}
+
+fn resolve_brave_web_search_api_key(provider: &BraveWebSearchConfig) -> Option<String> {
+    provider.api_key.clone().or_else(|| {
+        provider
+            .env_key
+            .as_ref()
+            .and_then(|env_name| env::var(env_name).ok())
+    })
 }
 
 #[cfg(test)]
@@ -231,6 +386,16 @@ mod tests {
         assert_eq!(
             parsed.tools.shell.blocked_patterns,
             default_shell_blocked_patterns()
+        );
+        assert!(!parsed.tools.web_search.enabled);
+        assert_eq!(parsed.tools.web_search.provider, "tavily");
+        assert_eq!(
+            parsed.tools.web_search.tavily.env_key.as_deref(),
+            Some("TAVILY_API_KEY")
+        );
+        assert_eq!(
+            parsed.tools.web_search.brave.env_key.as_deref(),
+            Some("BRAVE_SEARCH_API_KEY")
         );
         validate(&parsed).expect("default template should be valid");
     }
@@ -266,6 +431,55 @@ blocked_patterns = ["sudo rm -rf /tmp/example"]
             parsed.tools.shell.blocked_patterns,
             vec!["sudo rm -rf /tmp/example".to_string()]
         );
+    }
+
+    #[test]
+    fn parse_tools_web_search_succeeds() {
+        let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[tools.web_search]
+enabled = false
+provider = "tavily"
+
+[tools.web_search.tavily]
+base_url = "https://api.tavily.com"
+env_key = "TAVILY_API_KEY"
+"#;
+
+        let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+        assert_eq!(parsed.tools.web_search.provider, "tavily");
+        assert_eq!(parsed.tools.web_search.enabled, false);
+        assert_eq!(
+            parsed.tools.web_search.tavily.base_url.as_deref(),
+            Some("https://api.tavily.com")
+        );
+    }
+
+    #[test]
+    fn validate_fails_when_web_search_provider_missing() {
+        let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[tools.web_search]
+enabled = true
+provider = "missing"
+"#;
+        let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+        let err = validate(&parsed).expect_err("should fail");
+        assert!(format!("{err}").contains("is not supported"));
     }
 
     #[test]

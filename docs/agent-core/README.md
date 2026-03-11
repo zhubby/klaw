@@ -14,7 +14,7 @@
 
 可直接本地运行（不依赖外部 MQ）：
 
-`cargo run -p klaw-cli`
+`klaw stdio`
 
 - 输入任意文本并回车
 - 输入 `/exit` 退出
