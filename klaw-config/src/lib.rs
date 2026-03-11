@@ -103,9 +103,57 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub shell: ShellConfig,
     #[serde(default)]
+    pub memory: MemoryToolConfig,
+    #[serde(default)]
     pub web_search: WebSearchConfig,
     #[serde(default)]
     pub sub_agent: SubAgentConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryToolConfig {
+    #[serde(default = "default_memory_tool_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_memory_tool_search_limit")]
+    pub search_limit: usize,
+    #[serde(default = "default_memory_tool_fts_limit")]
+    pub fts_limit: usize,
+    #[serde(default = "default_memory_tool_vector_limit")]
+    pub vector_limit: usize,
+    #[serde(default = "default_memory_tool_use_vector")]
+    pub use_vector: bool,
+}
+
+impl Default for MemoryToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_memory_tool_enabled(),
+            search_limit: default_memory_tool_search_limit(),
+            fts_limit: default_memory_tool_fts_limit(),
+            vector_limit: default_memory_tool_vector_limit(),
+            use_vector: default_memory_tool_use_vector(),
+        }
+    }
+}
+
+fn default_memory_tool_enabled() -> bool {
+    true
+}
+
+fn default_memory_tool_search_limit() -> usize {
+    8
+}
+
+fn default_memory_tool_fts_limit() -> usize {
+    20
+}
+
+fn default_memory_tool_vector_limit() -> usize {
+    20
+}
+
+fn default_memory_tool_use_vector() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -471,6 +519,21 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "tools.sub_agent.max_tool_calls must be greater than 0".to_string(),
         ));
     }
+    if config.tools.memory.search_limit == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "tools.memory.search_limit must be greater than 0".to_string(),
+        ));
+    }
+    if config.tools.memory.fts_limit == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "tools.memory.fts_limit must be greater than 0".to_string(),
+        ));
+    }
+    if config.tools.memory.vector_limit == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "tools.memory.vector_limit must be greater than 0".to_string(),
+        ));
+    }
 
     Ok(())
 }
@@ -514,6 +577,11 @@ mod tests {
             parsed.tools.shell.blocked_patterns,
             default_shell_blocked_patterns()
         );
+        assert!(parsed.tools.memory.enabled);
+        assert_eq!(parsed.tools.memory.search_limit, 8);
+        assert_eq!(parsed.tools.memory.fts_limit, 20);
+        assert_eq!(parsed.tools.memory.vector_limit, 20);
+        assert!(parsed.tools.memory.use_vector);
         assert!(!parsed.tools.web_search.enabled);
         assert_eq!(parsed.tools.web_search.provider, "tavily");
         assert_eq!(
@@ -628,6 +696,24 @@ provider = "missing"
         cfg2.tools.sub_agent.max_tool_calls = 0;
         let err2 = validate(&cfg2).expect_err("should fail");
         assert!(format!("{err2}").contains("max_tool_calls"));
+    }
+
+    #[test]
+    fn validate_fails_when_memory_tool_limits_are_zero() {
+        let mut cfg = AppConfig::default();
+        cfg.tools.memory.search_limit = 0;
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("tools.memory.search_limit"));
+
+        let mut cfg2 = AppConfig::default();
+        cfg2.tools.memory.fts_limit = 0;
+        let err2 = validate(&cfg2).expect_err("should fail");
+        assert!(format!("{err2}").contains("tools.memory.fts_limit"));
+
+        let mut cfg3 = AppConfig::default();
+        cfg3.tools.memory.vector_limit = 0;
+        let err3 = validate(&cfg3).expect_err("should fail");
+        assert!(format!("{err3}").contains("tools.memory.vector_limit"));
     }
 
     #[test]

@@ -2212,6 +2212,7 @@ dependencies = [
  "klaw-agent",
  "klaw-config",
  "klaw-llm",
+ "klaw-memory",
  "reqwest",
  "serde",
  "serde_json",

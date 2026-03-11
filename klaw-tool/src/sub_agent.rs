@@ -259,7 +259,8 @@ impl Tool for SubAgentTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        MemoryConfig, ModelProviderConfig, ShellConfig, ToolsConfig, WebSearchConfig,
+        MemoryConfig, MemoryToolConfig, ModelProviderConfig, ShellConfig, ToolsConfig,
+        WebSearchConfig,
     };
 
     fn test_config() -> Arc<AppConfig> {
@@ -281,6 +282,7 @@ mod tests {
             memory: MemoryConfig::default(),
             tools: ToolsConfig {
                 shell: ShellConfig::default(),
+                memory: MemoryToolConfig::default(),
                 web_search: WebSearchConfig::default(),
                 sub_agent: SubAgentConfig {
                     enabled: true,

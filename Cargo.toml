@@ -40,3 +40,4 @@ klaw-tool = { path = "klaw-tool" }
 klaw-config = { path = "klaw-config" }
 klaw-agent = { path = "klaw-agent" }
 klaw-storage = { path = "klaw-storage" }
+klaw-memory = { path = "klaw-memory" }

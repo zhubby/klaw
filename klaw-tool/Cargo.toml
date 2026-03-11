@@ -14,4 +14,5 @@ zellij-client = { workspace = true }
 klaw-config = { workspace = true }
 klaw-agent = { workspace = true }
 klaw-llm = { workspace = true }
+klaw-memory = { workspace = true }
 reqwest.workspace = true

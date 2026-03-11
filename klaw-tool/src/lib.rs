@@ -1,3 +1,4 @@
+pub mod memory;
 pub mod shell;
 pub mod sub_agent;
 pub mod terminal_multiplexers;
@@ -8,6 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+pub use memory::MemoryTool;
 pub use shell::ShellTool;
 pub use sub_agent::SubAgentTool;
 pub use terminal_multiplexers::TerminalMultiplexerTool;
