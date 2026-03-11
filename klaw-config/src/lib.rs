@@ -14,6 +14,19 @@ pub struct AppConfig {
     pub tools: ToolsConfig,
 }
 
+impl Default for AppConfig {
+    fn default() -> Self {
+        let model_provider = "openai".to_string();
+        let mut model_providers = BTreeMap::new();
+        model_providers.insert(model_provider.clone(), ModelProviderConfig::default());
+        Self {
+            model_provider,
+            model_providers,
+            tools: ToolsConfig::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelProviderConfig {
     #[serde(default)]
@@ -27,16 +40,37 @@ pub struct ModelProviderConfig {
     pub env_key: Option<String>,
 }
 
+impl Default for ModelProviderConfig {
+    fn default() -> Self {
+        Self {
+            name: Some("OpenAI".to_string()),
+            base_url: "https://api.openai.com/v1".to_string(),
+            wire_api: "chat_completions".to_string(),
+            default_model: "gpt-4o-mini".to_string(),
+            api_key: None,
+            env_key: Some("OPENAI_API_KEY".to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolsConfig {
     #[serde(default)]
     pub shell: ShellConfig,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellConfig {
     #[serde(default = "default_shell_blocked_patterns")]
     pub blocked_patterns: Vec<String>,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        Self {
+            blocked_patterns: default_shell_blocked_patterns(),
+        }
+    }
 }
 
 fn default_shell_blocked_patterns() -> Vec<String> {
@@ -99,24 +133,8 @@ pub fn default_config_path() -> Result<PathBuf, ConfigError> {
     Ok(PathBuf::from(home).join(".klaw").join("config.toml"))
 }
 
-pub fn default_config_template() -> &'static str {
-    r#"# Klaw config (TOML)
-# Active provider id from [model_providers]
-model_provider = "openai"
-
-[model_providers.openai]
-name = "OpenAI"
-base_url = "https://api.openai.com/v1"
-wire_api = "chat_completions"
-default_model = "gpt-4o-mini"
-# Prefer env_key for local development.
-env_key = "OPENAI_API_KEY"
-# You can also provide a literal key directly:
-# api_key = "sk-..."
-
-[tools.shell]
-blocked_patterns = ["rm -rf /", "rm -rf ~", ":(){ :|:& };:", "mkfs", "shutdown", "reboot"]
-"#
+pub fn default_config_template() -> String {
+    toml::to_string_pretty(&AppConfig::default()).expect("default app config should serialize")
 }
 
 fn load_from_path(path: &Path, create_if_missing: bool) -> Result<LoadedConfig, ConfigError> {
@@ -206,8 +224,8 @@ mod tests {
 
     #[test]
     fn parse_default_template_succeeds() {
-        let parsed: AppConfig =
-            toml::from_str(default_config_template()).expect("default template should parse");
+        let template = default_config_template();
+        let parsed: AppConfig = toml::from_str(&template).expect("default template should parse");
         assert_eq!(parsed.model_provider, "openai");
         assert!(parsed.model_providers.contains_key("openai"));
         assert_eq!(
