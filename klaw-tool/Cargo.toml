@@ -9,10 +9,11 @@ async-trait.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["process", "net"] }
 zellij-client = { workspace = true }
 klaw-config = { workspace = true }
 klaw-agent = { workspace = true }
 klaw-llm = { workspace = true }
 klaw-memory = { workspace = true }
 reqwest.workspace = true
+ipnet = "2"

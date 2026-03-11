@@ -2,6 +2,7 @@ pub mod memory;
 pub mod shell;
 pub mod sub_agent;
 pub mod terminal_multiplexers;
+pub mod web_fetch;
 pub mod web_search;
 
 use async_trait::async_trait;
@@ -13,6 +14,7 @@ pub use memory::MemoryTool;
 pub use shell::ShellTool;
 pub use sub_agent::SubAgentTool;
 pub use terminal_multiplexers::TerminalMultiplexerTool;
+pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
 
 /// 工具分类。

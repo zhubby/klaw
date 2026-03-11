@@ -8,7 +8,8 @@ use klaw_core::{
 };
 use klaw_storage::{open_default_store, ChatRecord, DefaultSessionStore, SessionStorage};
 use klaw_tool::{
-    MemoryTool, ShellTool, SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebSearchTool,
+    MemoryTool, ShellTool, SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool,
+    WebSearchTool,
 };
 use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
 use tracing::warn;
@@ -35,6 +36,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     tools.register(TerminalMultiplexerTool::new());
     if config.tools.memory.enabled {
         tools.register(MemoryTool::open_default(config).await?);
+    }
+    if config.tools.web_fetch.enabled {
+        tools.register(WebFetchTool::new(config));
     }
     if config.tools.web_search.enabled {
         tools.register(WebSearchTool::new(config)?);

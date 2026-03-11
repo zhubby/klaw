@@ -260,7 +260,7 @@ mod tests {
     use super::*;
     use klaw_config::{
         MemoryConfig, MemoryToolConfig, ModelProviderConfig, ShellConfig, ToolsConfig,
-        WebSearchConfig,
+        WebFetchConfig, WebSearchConfig,
     };
 
     fn test_config() -> Arc<AppConfig> {
@@ -283,6 +283,7 @@ mod tests {
             tools: ToolsConfig {
                 shell: ShellConfig::default(),
                 memory: MemoryToolConfig::default(),
+                web_fetch: WebFetchConfig::default(),
                 web_search: WebSearchConfig::default(),
                 sub_agent: SubAgentConfig {
                     enabled: true,

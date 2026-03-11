@@ -105,6 +105,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub memory: MemoryToolConfig,
     #[serde(default)]
+    pub web_fetch: WebFetchConfig,
+    #[serde(default)]
     pub web_search: WebSearchConfig,
     #[serde(default)]
     pub sub_agent: SubAgentConfig,
@@ -202,6 +204,58 @@ impl Default for WebSearchConfig {
             brave: BraveWebSearchConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebFetchConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_web_fetch_max_chars")]
+    pub max_chars: usize,
+    #[serde(default = "default_web_fetch_timeout_seconds")]
+    pub timeout_seconds: u64,
+    #[serde(default = "default_web_fetch_cache_ttl_minutes")]
+    pub cache_ttl_minutes: u64,
+    #[serde(default = "default_web_fetch_max_redirects")]
+    pub max_redirects: u8,
+    #[serde(default = "default_web_fetch_readability")]
+    pub readability: bool,
+    #[serde(default)]
+    pub ssrf_allowlist: Vec<String>,
+}
+
+impl Default for WebFetchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_chars: default_web_fetch_max_chars(),
+            timeout_seconds: default_web_fetch_timeout_seconds(),
+            cache_ttl_minutes: default_web_fetch_cache_ttl_minutes(),
+            max_redirects: default_web_fetch_max_redirects(),
+            readability: default_web_fetch_readability(),
+            ssrf_allowlist: Vec::new(),
+        }
+    }
+}
+
+fn default_web_fetch_max_chars() -> usize {
+    50_000
+}
+
+fn default_web_fetch_timeout_seconds() -> u64 {
+    15
+}
+
+fn default_web_fetch_cache_ttl_minutes() -> u64 {
+    10
+}
+
+fn default_web_fetch_max_redirects() -> u8 {
+    3
+}
+
+fn default_web_fetch_readability() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -509,6 +563,19 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         }
     }
 
+    if config.tools.web_fetch.enabled {
+        if config.tools.web_fetch.max_chars == 0 {
+            return Err(ConfigError::InvalidConfig(
+                "tools.web_fetch.max_chars must be greater than 0".to_string(),
+            ));
+        }
+        if config.tools.web_fetch.timeout_seconds == 0 {
+            return Err(ConfigError::InvalidConfig(
+                "tools.web_fetch.timeout_seconds must be greater than 0".to_string(),
+            ));
+        }
+    }
+
     if config.tools.sub_agent.max_iterations == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.sub_agent.max_iterations must be greater than 0".to_string(),
@@ -582,6 +649,12 @@ mod tests {
         assert_eq!(parsed.tools.memory.fts_limit, 20);
         assert_eq!(parsed.tools.memory.vector_limit, 20);
         assert!(parsed.tools.memory.use_vector);
+        assert!(!parsed.tools.web_fetch.enabled);
+        assert_eq!(parsed.tools.web_fetch.max_chars, 50_000);
+        assert_eq!(parsed.tools.web_fetch.timeout_seconds, 15);
+        assert_eq!(parsed.tools.web_fetch.cache_ttl_minutes, 10);
+        assert_eq!(parsed.tools.web_fetch.max_redirects, 3);
+        assert!(parsed.tools.web_fetch.readability);
         assert!(!parsed.tools.web_search.enabled);
         assert_eq!(parsed.tools.web_search.provider, "tavily");
         assert_eq!(
@@ -663,6 +736,55 @@ env_key = "TAVILY_API_KEY"
             parsed.tools.web_search.tavily.base_url.as_deref(),
             Some("https://api.tavily.com")
         );
+    }
+
+    #[test]
+    fn parse_tools_web_fetch_succeeds() {
+        let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[tools.web_fetch]
+enabled = true
+max_chars = 12000
+timeout_seconds = 20
+cache_ttl_minutes = 30
+max_redirects = 2
+readability = true
+ssrf_allowlist = ["172.22.0.0/16"]
+"#;
+
+        let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+        assert!(parsed.tools.web_fetch.enabled);
+        assert_eq!(parsed.tools.web_fetch.max_chars, 12000);
+        assert_eq!(parsed.tools.web_fetch.timeout_seconds, 20);
+        assert_eq!(parsed.tools.web_fetch.cache_ttl_minutes, 30);
+        assert_eq!(parsed.tools.web_fetch.max_redirects, 2);
+        assert!(parsed.tools.web_fetch.readability);
+        assert_eq!(
+            parsed.tools.web_fetch.ssrf_allowlist,
+            vec!["172.22.0.0/16".to_string()]
+        );
+    }
+
+    #[test]
+    fn validate_fails_when_web_fetch_limits_are_invalid() {
+        let mut cfg = AppConfig::default();
+        cfg.tools.web_fetch.enabled = true;
+        cfg.tools.web_fetch.max_chars = 0;
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("tools.web_fetch.max_chars"));
+
+        let mut cfg2 = AppConfig::default();
+        cfg2.tools.web_fetch.enabled = true;
+        cfg2.tools.web_fetch.timeout_seconds = 0;
+        let err2 = validate(&cfg2).expect_err("should fail");
+        assert!(format!("{err2}").contains("tools.web_fetch.timeout_seconds"));
     }
 
     #[test]
