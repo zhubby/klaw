@@ -59,7 +59,7 @@ freshness = "pw"
 - 配置不复用：`tavily` 和 `brave` 各自独立读取自身配置。
 - 启用时校验：
   - `provider` 必须为 `tavily` 或 `brave`
-  - 对应 Provider 必须可解析 `api_key`（`api_key` 或 `env_key`）
+  - 对应 Provider 必须配置 `api_key` 或 `env_key`（`env_key` 对应变量值在运行时解析）
 
 ## Tool Metadata（面向 LLM）
 

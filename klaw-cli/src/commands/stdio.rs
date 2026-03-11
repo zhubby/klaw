@@ -13,6 +13,9 @@ pub struct StdioCommand {
     /// Session key used for local conversation.
     #[arg(long, default_value = "stdio:local-chat")]
     pub session_key: String,
+    /// Print model reasoning when provider returns it.
+    #[arg(long, default_value_t = false)]
+    pub show_reasoning: bool,
 }
 
 impl StdioCommand {
@@ -61,10 +64,56 @@ impl StdioCommand {
             .await?;
 
             match maybe_output {
-                Some(content) => println!("agent> {}\n", content),
+                Some(output) => {
+                    println!(
+                        "agent>\n{}\n",
+                        render_agent_output(
+                            &output.content,
+                            output.reasoning.as_deref(),
+                            self.show_reasoning
+                        )
+                    )
+                }
                 None => println!("agent> [no response]\n"),
             }
         }
         Ok(())
+    }
+}
+
+fn render_agent_output(content: &str, reasoning: Option<&str>, show_reasoning: bool) -> String {
+    let mut lines = vec![
+        "--------------------".to_string(),
+        "[answer]".to_string(),
+        content.trim().to_string(),
+    ];
+    if show_reasoning {
+        if let Some(reasoning_text) = reasoning {
+            lines.push(String::new());
+            lines.push("[reasoning]".to_string());
+            lines.extend(reasoning_text.lines().map(|line| format!("> {line}")));
+        }
+    }
+    lines.push("--------------------".to_string());
+    lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_agent_output;
+
+    #[test]
+    fn hides_reasoning_when_flag_disabled() {
+        let view = render_agent_output("done", Some("step1\nstep2"), false);
+        assert!(view.contains("[answer]"));
+        assert!(!view.contains("[reasoning]"));
+    }
+
+    #[test]
+    fn renders_reasoning_block_when_enabled() {
+        let view = render_agent_output("done", Some("step1\nstep2"), true);
+        assert!(view.contains("[reasoning]"));
+        assert!(view.contains("> step1"));
+        assert!(view.contains("> step2"));
     }
 }

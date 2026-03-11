@@ -27,6 +27,12 @@ pub struct RuntimeBundle {
     pub session_store: DefaultSessionStore,
 }
 
+#[derive(Debug, Clone)]
+pub struct AssistantOutput {
+    pub content: String,
+    pub reasoning: Option<String>,
+}
+
 pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn Error>> {
     let provider_instance = build_provider_from_config(config, &config.model_provider)
         .map_err(|err| config_err(err.to_string()))?;
@@ -104,7 +110,7 @@ pub async fn submit_and_get_output(
     input: String,
     session_key: String,
     chat_id: String,
-) -> Result<Option<String>, Box<dyn std::error::Error>> {
+) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let channel = "stdio";
     let header = EnvelopeHeader::new(session_key.clone());
     let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
@@ -163,7 +169,17 @@ pub async fn submit_and_get_output(
                     &msg.payload.channel,
                 )
                 .await?;
-            Ok(Some(msg.payload.content.clone()))
+            let reasoning = msg
+                .payload
+                .metadata
+                .get("reasoning")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+                .filter(|value| !value.trim().is_empty());
+            Ok(Some(AssistantOutput {
+                content: msg.payload.content.clone(),
+                reasoning,
+            }))
         }
         None => {
             warn!(error = ?outcome.error_code, "no outbound response produced");

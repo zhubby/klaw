@@ -27,7 +27,7 @@ impl AgentCommand {
         let maybe_output =
             submit_and_get_output(&runtime, self.input, self.session_key, chat_id).await?;
         match maybe_output {
-            Some(content) => println!("{content}"),
+            Some(output) => println!("{}", output.content),
             None => println!("[no response]"),
         }
         Ok(())

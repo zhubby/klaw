@@ -254,7 +254,7 @@ fn default_shell_max_output_bytes() -> usize {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSearchConfig {
-    #[serde(default)]
+    #[serde(default = "default_web_search_enabled")]
     pub enabled: bool,
     #[serde(default = "default_web_search_provider")]
     pub provider: String,
@@ -267,7 +267,7 @@ pub struct WebSearchConfig {
 impl Default for WebSearchConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: default_web_search_enabled(),
             provider: default_web_search_provider(),
             tavily: TavilyWebSearchConfig::default(),
             brave: BraveWebSearchConfig::default(),
@@ -277,7 +277,7 @@ impl Default for WebSearchConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebFetchConfig {
-    #[serde(default)]
+    #[serde(default = "default_web_fetch_enabled")]
     pub enabled: bool,
     #[serde(default = "default_web_fetch_max_chars")]
     pub max_chars: usize,
@@ -296,7 +296,7 @@ pub struct WebFetchConfig {
 impl Default for WebFetchConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: default_web_fetch_enabled(),
             max_chars: default_web_fetch_max_chars(),
             timeout_seconds: default_web_fetch_timeout_seconds(),
             cache_ttl_minutes: default_web_fetch_cache_ttl_minutes(),
@@ -309,6 +309,10 @@ impl Default for WebFetchConfig {
 
 fn default_web_fetch_max_chars() -> usize {
     50_000
+}
+
+fn default_web_fetch_enabled() -> bool {
+    true
 }
 
 fn default_web_fetch_timeout_seconds() -> u64 {
@@ -329,7 +333,7 @@ fn default_web_fetch_readability() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubAgentConfig {
-    #[serde(default)]
+    #[serde(default = "default_sub_agent_enabled")]
     pub enabled: bool,
     #[serde(default = "default_sub_agent_max_iterations")]
     pub max_iterations: u32,
@@ -344,7 +348,7 @@ pub struct SubAgentConfig {
 impl Default for SubAgentConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: default_sub_agent_enabled(),
             max_iterations: default_sub_agent_max_iterations(),
             max_tool_calls: default_sub_agent_max_tool_calls(),
             inherit_parent_tools: default_sub_agent_inherit_parent_tools(),
@@ -355,6 +359,10 @@ impl Default for SubAgentConfig {
 
 fn default_sub_agent_max_iterations() -> u32 {
     6
+}
+
+fn default_sub_agent_enabled() -> bool {
+    true
 }
 
 fn default_sub_agent_max_tool_calls() -> u32 {
@@ -393,6 +401,10 @@ pub struct TavilyWebSearchConfig {
 
 fn default_web_search_provider() -> String {
     "tavily".to_string()
+}
+
+fn default_web_search_enabled() -> bool {
+    true
 }
 
 impl Default for TavilyWebSearchConfig {
@@ -610,14 +622,14 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
 
         match config.tools.web_search.provider.as_str() {
             "tavily" => {
-                if resolve_tavily_web_search_api_key(&config.tools.web_search.tavily).is_none() {
+                if !has_tavily_web_search_key_source(&config.tools.web_search.tavily) {
                     return Err(ConfigError::InvalidConfig(
                         "tools.web_search.tavily requires api_key or env_key".to_string(),
                     ));
                 }
             }
             "brave" => {
-                if resolve_brave_web_search_api_key(&config.tools.web_search.brave).is_none() {
+                if !has_brave_web_search_key_source(&config.tools.web_search.brave) {
                     return Err(ConfigError::InvalidConfig(
                         "tools.web_search.brave requires api_key or env_key".to_string(),
                     ));
@@ -689,22 +701,26 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn resolve_tavily_web_search_api_key(provider: &TavilyWebSearchConfig) -> Option<String> {
-    provider.api_key.clone().or_else(|| {
-        provider
+fn has_tavily_web_search_key_source(provider: &TavilyWebSearchConfig) -> bool {
+    provider
+        .api_key
+        .as_ref()
+        .is_some_and(|v| !v.trim().is_empty())
+        || provider
             .env_key
             .as_ref()
-            .and_then(|env_name| env::var(env_name).ok())
-    })
+            .is_some_and(|v| !v.trim().is_empty())
 }
 
-fn resolve_brave_web_search_api_key(provider: &BraveWebSearchConfig) -> Option<String> {
-    provider.api_key.clone().or_else(|| {
-        provider
+fn has_brave_web_search_key_source(provider: &BraveWebSearchConfig) -> bool {
+    provider
+        .api_key
+        .as_ref()
+        .is_some_and(|v| !v.trim().is_empty())
+        || provider
             .env_key
             .as_ref()
-            .and_then(|env_name| env::var(env_name).ok())
-    })
+            .is_some_and(|v| !v.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -744,13 +760,13 @@ mod tests {
         assert_eq!(parsed.tools.memory.fts_limit, 20);
         assert_eq!(parsed.tools.memory.vector_limit, 20);
         assert!(parsed.tools.memory.use_vector);
-        assert!(!parsed.tools.web_fetch.enabled);
+        assert!(parsed.tools.web_fetch.enabled);
         assert_eq!(parsed.tools.web_fetch.max_chars, 50_000);
         assert_eq!(parsed.tools.web_fetch.timeout_seconds, 15);
         assert_eq!(parsed.tools.web_fetch.cache_ttl_minutes, 10);
         assert_eq!(parsed.tools.web_fetch.max_redirects, 3);
         assert!(parsed.tools.web_fetch.readability);
-        assert!(!parsed.tools.web_search.enabled);
+        assert!(parsed.tools.web_search.enabled);
         assert_eq!(parsed.tools.web_search.provider, "tavily");
         assert_eq!(
             parsed.tools.web_search.tavily.env_key.as_deref(),
@@ -760,7 +776,7 @@ mod tests {
             parsed.tools.web_search.brave.env_key.as_deref(),
             Some("BRAVE_SEARCH_API_KEY")
         );
-        assert!(!parsed.tools.sub_agent.enabled);
+        assert!(parsed.tools.sub_agent.enabled);
         assert_eq!(parsed.tools.sub_agent.max_iterations, 6);
         assert_eq!(parsed.tools.sub_agent.max_tool_calls, 12);
         assert_eq!(

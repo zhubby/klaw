@@ -256,6 +256,13 @@ impl AgentLoop {
             Ok(output) => {
                 state = self.transition(state, StateTransitionEvent::FinalResponseReady);
                 state = self.transition(state, StateTransitionEvent::Published);
+                let mut response_metadata = BTreeMap::new();
+                if let Some(reasoning) = output.reasoning.filter(|value| !value.trim().is_empty()) {
+                    response_metadata.insert(
+                        "reasoning".to_string(),
+                        serde_json::Value::String(reasoning),
+                    );
+                }
                 ProcessOutcome {
                     final_response: Some(Envelope {
                         header: msg.header.clone(),
@@ -265,7 +272,7 @@ impl AgentLoop {
                             chat_id: msg.payload.chat_id.clone(),
                             content: output.content,
                             reply_to: None,
-                            metadata: BTreeMap::new(),
+                            metadata: response_metadata,
                         },
                     }),
                     error_code: None,

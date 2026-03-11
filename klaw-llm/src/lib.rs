@@ -16,6 +16,12 @@ pub struct LlmMessage {
     pub role: String,
     /// 消息文本内容。
     pub content: String,
+    /// assistant 角色发起的工具调用（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// tool 角色消息对应的工具调用 id（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 /// 暴露给模型的工具定义。
@@ -41,6 +47,9 @@ pub struct ChatOptions {
 /// 模型请求工具调用的描述。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
+    /// 工具调用 id（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// 工具名。
     pub name: String,
     /// 工具参数。
@@ -52,6 +61,9 @@ pub struct ToolCall {
 pub struct LlmResponse {
     /// 文本回复。
     pub content: String,
+    /// 可选的推理内容（部分模型提供）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     /// 模型要求执行的工具调用列表。
     pub tool_calls: Vec<ToolCall>,
 }
@@ -113,6 +125,7 @@ impl LlmProvider for EchoProvider {
 
         Ok(LlmResponse {
             content,
+            reasoning: None,
             tool_calls: Vec::new(),
         })
     }

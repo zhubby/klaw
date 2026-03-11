@@ -27,6 +27,7 @@ pub struct AgentExecutionInput {
 #[derive(Debug, Clone)]
 pub struct AgentExecutionOutput {
     pub content: String,
+    pub reasoning: Option<String>,
 }
 
 #[async_trait]
@@ -110,6 +111,8 @@ pub async fn run_agent_execution(
     let mut llm_messages = vec![LlmMessage {
         role: "user".to_string(),
         content: input.user_content,
+        tool_calls: None,
+        tool_call_id: None,
     }];
     let mut tool_calls_used = 0u32;
 
@@ -129,8 +132,16 @@ pub async fn run_agent_execution(
         if llm_response.tool_calls.is_empty() {
             return Ok(AgentExecutionOutput {
                 content: llm_response.content,
+                reasoning: llm_response.reasoning,
             });
         }
+
+        llm_messages.push(LlmMessage {
+            role: "assistant".to_string(),
+            content: llm_response.content,
+            tool_calls: Some(llm_response.tool_calls.clone()),
+            tool_call_id: None,
+        });
 
         apply_tool_calls(
             tools,
@@ -167,6 +178,8 @@ async fn apply_tool_calls(
         llm_messages.push(LlmMessage {
             role: "tool".to_string(),
             content,
+            tool_calls: None,
+            tool_call_id: call.id,
         });
     }
 
@@ -180,4 +193,113 @@ pub fn resolve_api_key(provider: &ModelProviderConfig) -> Option<String> {
             .as_ref()
             .and_then(|env_name| env::var(env_name).ok())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use klaw_llm::{LlmResponse, ToolCall};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct MockToolExecutor;
+
+    #[async_trait]
+    impl ToolExecutor for MockToolExecutor {
+        fn definitions(&self) -> Vec<ToolDefinition> {
+            vec![ToolDefinition {
+                name: "echo_tool".to_string(),
+                description: "echo".to_string(),
+                parameters: serde_json::json!({"type":"object"}),
+            }]
+        }
+
+        async fn execute(
+            &self,
+            _name: &str,
+            _arguments: Value,
+            _session_key: &str,
+            _metadata: &BTreeMap<String, Value>,
+        ) -> String {
+            "tool-result".to_string()
+        }
+    }
+
+    #[derive(Default)]
+    struct SequencedProvider {
+        call_count: Arc<Mutex<u32>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for SequencedProvider {
+        fn name(&self) -> &str {
+            "sequenced"
+        }
+
+        fn default_model(&self) -> &str {
+            "sequenced-v1"
+        }
+
+        async fn chat(
+            &self,
+            messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            let mut count = self.call_count.lock().expect("mutex poisoned");
+            *count += 1;
+
+            if *count == 1 {
+                return Ok(LlmResponse {
+                    content: String::new(),
+                    reasoning: None,
+                    tool_calls: vec![ToolCall {
+                        id: Some("call_123".to_string()),
+                        name: "echo_tool".to_string(),
+                        arguments: serde_json::json!({}),
+                    }],
+                });
+            }
+
+            assert_eq!(messages.len(), 3);
+            assert_eq!(messages[0].role, "user");
+            assert_eq!(messages[1].role, "assistant");
+            assert!(messages[1].tool_calls.is_some());
+            assert_eq!(messages[2].role, "tool");
+            assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_123"));
+
+            Ok(LlmResponse {
+                content: "done".to_string(),
+                reasoning: Some("inner chain".to_string()),
+                tool_calls: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_preserves_tool_call_sequence_for_provider() {
+        let provider = SequencedProvider::default();
+        let tools = MockToolExecutor;
+        let output = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "hello".to_string(),
+                session_key: "s1".to_string(),
+                tool_metadata: BTreeMap::new(),
+                model: None,
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 4,
+                max_tool_calls: 4,
+            },
+        )
+        .await
+        .expect("agent execution should succeed");
+
+        assert_eq!(output.content, "done");
+        assert_eq!(output.reasoning.as_deref(), Some("inner chain"));
+    }
 }

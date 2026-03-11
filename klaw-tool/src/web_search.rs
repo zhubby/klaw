@@ -36,14 +36,14 @@ trait WebSearchProvider: Send + Sync {
 struct TavilyProvider {
     client: reqwest::Client,
     config: TavilyWebSearchConfig,
-    api_key: String,
+    api_key: Option<String>,
 }
 
 #[derive(Clone)]
 struct BraveProvider {
     client: reqwest::Client,
     config: BraveWebSearchConfig,
-    api_key: String,
+    api_key: Option<String>,
 }
 
 impl WebSearchTool {
@@ -74,6 +74,18 @@ fn resolve_api_key(api_key: &Option<String>, env_key: &Option<String>) -> Option
         env_key
             .as_ref()
             .and_then(|env_name| std::env::var(env_name).ok())
+    })
+}
+
+fn require_api_key(
+    provider_name: &str,
+    api_key: &Option<String>,
+    env_key: &Option<String>,
+) -> Result<String, ToolError> {
+    resolve_api_key(api_key, env_key).ok_or_else(|| {
+        ToolError::ExecutionFailed(format!(
+            "{provider_name} requires api_key or env_key (or the env var must be set)"
+        ))
     })
 }
 
@@ -179,9 +191,7 @@ impl Tool for WebSearchTool {
 
 impl TavilyProvider {
     fn new(config: TavilyWebSearchConfig) -> Result<Self, ToolError> {
-        let api_key = resolve_api_key(&config.api_key, &config.env_key).ok_or_else(|| {
-            ToolError::InvalidArgs("tavily requires api_key or env_key".to_string())
-        })?;
+        let api_key = config.api_key.clone();
         Ok(Self {
             client: build_http_client()?,
             config,
@@ -197,6 +207,7 @@ impl WebSearchProvider for TavilyProvider {
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Vec<SearchResultItem>, ToolError> {
+        let api_key = require_api_key("tavily", &self.api_key, &self.config.env_key)?;
         let url = format!(
             "{}/search",
             self.config
@@ -227,7 +238,7 @@ impl WebSearchProvider for TavilyProvider {
         let mut req = self
             .client
             .post(url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .json(&body);
         if let Some(project_id) = &self.config.project_id {
@@ -263,9 +274,7 @@ impl WebSearchProvider for TavilyProvider {
 
 impl BraveProvider {
     fn new(config: BraveWebSearchConfig) -> Result<Self, ToolError> {
-        let api_key = resolve_api_key(&config.api_key, &config.env_key).ok_or_else(|| {
-            ToolError::InvalidArgs("brave requires api_key or env_key".to_string())
-        })?;
+        let api_key = config.api_key.clone();
         Ok(Self {
             client: build_http_client()?,
             config,
@@ -281,6 +290,7 @@ impl WebSearchProvider for BraveProvider {
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Vec<SearchResultItem>, ToolError> {
+        let api_key = require_api_key("brave", &self.api_key, &self.config.env_key)?;
         let url = format!(
             "{}/res/v1/web/search",
             self.config
@@ -316,7 +326,7 @@ impl WebSearchProvider for BraveProvider {
             .query(&query_params)
             .header("Accept", "application/json")
             .header("Accept-Encoding", "gzip")
-            .header("X-Subscription-Token", self.api_key.clone())
+            .header("X-Subscription-Token", api_key)
             .send()
             .await
             .map_err(|err| ToolError::ExecutionFailed(format!("brave request failed: {err}")))?;

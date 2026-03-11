@@ -11,3 +11,6 @@ thiserror.workspace = true
 tracing.workspace = true
 klaw-config.workspace = true
 klaw-llm.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

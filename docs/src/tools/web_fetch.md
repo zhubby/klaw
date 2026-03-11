@@ -20,7 +20,7 @@
 
 ```toml
 [tools.web_fetch]
-enabled = false
+enabled = true
 max_chars = 50000
 timeout_seconds = 15
 cache_ttl_minutes = 10

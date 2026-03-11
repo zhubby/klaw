@@ -65,10 +65,31 @@ impl LlmProvider for OpenAiCompatibleProvider {
             messages: messages
                 .into_iter()
                 .map(|m| OpenAiMessage {
-                    role: m.role,
-                    content: Some(m.content),
-                    tool_calls: None,
-                    tool_call_id: None,
+                    role: m.role.clone(),
+                    content: if m.role == "assistant"
+                        && m.tool_calls.is_some()
+                        && m.content.is_empty()
+                    {
+                        None
+                    } else {
+                        Some(m.content)
+                    },
+                    reasoning_content: None,
+                    reasoning: None,
+                    tool_calls: m.tool_calls.map(|calls| {
+                        calls
+                            .into_iter()
+                            .map(|call| OpenAiToolCall {
+                                id: call.id,
+                                r#type: "function".to_string(),
+                                function: OpenAiToolCallFunction {
+                                    name: call.name,
+                                    arguments: call.arguments.to_string(),
+                                },
+                            })
+                            .collect()
+                    }),
+                    tool_call_id: m.tool_call_id,
                 })
                 .collect(),
             tools: if tools.is_empty() {
@@ -123,6 +144,11 @@ impl LlmProvider for OpenAiCompatibleProvider {
             .ok_or_else(|| LlmError::InvalidResponse("no choices in response".to_string()))?;
 
         let content = first.message.content.unwrap_or_default();
+        let reasoning = first
+            .message
+            .reasoning_content
+            .or(first.message.reasoning)
+            .filter(|value| !value.trim().is_empty());
         let tool_calls = first
             .message
             .tool_calls
@@ -132,6 +158,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
                     .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments));
                 ToolCall {
+                    id: call.id,
                     name: call.function.name,
                     arguments: args,
                 }
@@ -140,6 +167,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
 
         Ok(LlmResponse {
             content,
+            reasoning,
             tool_calls,
         })
     }
@@ -161,6 +189,10 @@ struct OpenAiMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OpenAiToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -192,10 +224,9 @@ struct OpenAiChoice {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenAiToolCall {
-    #[serde(rename = "id")]
-    _id: Option<String>,
+    id: Option<String>,
     #[serde(rename = "type")]
-    _type: String,
+    r#type: String,
     function: OpenAiToolCallFunction,
 }
 

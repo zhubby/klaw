@@ -146,6 +146,7 @@ impl LlmProvider for AnthropicProvider {
                 }
                 AnthropicResponseContentBlock::ToolUse { name, input, .. } => {
                     tool_calls.push(ToolCall {
+                        id: None,
                         name,
                         arguments: input,
                     });
@@ -156,6 +157,7 @@ impl LlmProvider for AnthropicProvider {
 
         Ok(LlmResponse {
             content: text_chunks.join("\n"),
+            reasoning: None,
             tool_calls,
         })
     }
