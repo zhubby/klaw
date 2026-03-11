@@ -2175,6 +2175,17 @@ version = "0.1.0"
 [[package]]
 name = "klaw-memory"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "klaw-config",
+ "klaw-storage",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "klaw-skill"

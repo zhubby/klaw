@@ -1,18 +1,24 @@
 use crate::{
     jsonl,
+    memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
     ChatRecord, SessionIndex, SessionStorage, StorageError, StoragePaths,
 };
 use async_trait::async_trait;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    FromRow, SqlitePool,
+    Column, FromRow, Row, SqlitePool, TypeInfo,
 };
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct SqlxSessionStore {
     paths: StoragePaths,
+    pool: SqlitePool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SqlxMemoryDb {
     pool: SqlitePool,
 }
 
@@ -83,6 +89,68 @@ impl SqlxSessionStore {
         .await
         .map_err(StorageError::backend)?;
         Ok(())
+    }
+}
+
+impl SqlxMemoryDb {
+    pub async fn open(paths: StoragePaths) -> Result<Self, StorageError> {
+        paths.ensure_dirs().await?;
+        let connect_options = SqliteConnectOptions::new()
+            .filename(&paths.memory_db_path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(connect_options)
+            .await
+            .map_err(StorageError::backend)?;
+        let db = Self { pool };
+        db.execute_batch("PRAGMA journal_mode = WAL;")
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(db)
+    }
+}
+
+#[async_trait]
+impl MemoryDb for SqlxMemoryDb {
+    async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
+        sqlx::query(sql)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(StorageError::backend)
+    }
+
+    async fn execute(&self, sql: &str, params: &[DbValue]) -> Result<u64, StorageError> {
+        let mut query = sqlx::query(sql);
+        for value in params {
+            query = bind_db_value(query, value.clone());
+        }
+        let result = query
+            .execute(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(result.rows_affected())
+    }
+
+    async fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, StorageError> {
+        let mut query = sqlx::query(sql);
+        for value in params {
+            query = bind_db_value(query, value.clone());
+        }
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut values = Vec::with_capacity(row.columns().len());
+            for idx in 0..row.columns().len() {
+                values.push(sqlx_row_value(&row, idx)?);
+            }
+            out.push(DbRow { values });
+        }
+        Ok(out)
     }
 }
 
@@ -215,4 +283,61 @@ impl SessionStorage for SqlxSessionStore {
     fn session_jsonl_path(&self, session_key: &str) -> PathBuf {
         jsonl::session_jsonl_path(&self.paths, session_key)
     }
+}
+
+fn bind_db_value<'q>(
+    query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
+    value: DbValue,
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
+    match value {
+        DbValue::Null => query.bind(Option::<String>::None),
+        DbValue::Integer(v) => query.bind(v),
+        DbValue::Real(v) => query.bind(v),
+        DbValue::Text(v) => query.bind(v),
+        DbValue::Blob(v) => query.bind(v),
+    }
+}
+
+fn sqlx_row_value(row: &sqlx::sqlite::SqliteRow, index: usize) -> Result<DbValue, StorageError> {
+    let type_name = row
+        .columns()
+        .get(index)
+        .map(|col| col.type_info().name().to_ascii_uppercase())
+        .unwrap_or_default();
+
+    if type_name.contains("BLOB") {
+        if let Ok(v) = row.try_get::<Vec<u8>, _>(index) {
+            return Ok(DbValue::Blob(v));
+        }
+    }
+    if type_name.contains("INT") {
+        if let Ok(v) = row.try_get::<i64, _>(index) {
+            return Ok(DbValue::Integer(v));
+        }
+    }
+    if type_name.contains("REAL") || type_name.contains("FLOA") || type_name.contains("DOUB") {
+        if let Ok(v) = row.try_get::<f64, _>(index) {
+            return Ok(DbValue::Real(v));
+        }
+    }
+
+    if let Ok(v) = row.try_get::<String, _>(index) {
+        return Ok(DbValue::Text(v));
+    }
+    if let Ok(v) = row.try_get::<i64, _>(index) {
+        return Ok(DbValue::Integer(v));
+    }
+    if let Ok(v) = row.try_get::<f64, _>(index) {
+        return Ok(DbValue::Real(v));
+    }
+    if let Ok(v) = row.try_get::<Vec<u8>, _>(index) {
+        return Ok(DbValue::Blob(v));
+    }
+    if let Ok(v) = row.try_get::<Option<String>, _>(index) {
+        return Ok(v.map(DbValue::Text).unwrap_or(DbValue::Null));
+    }
+
+    Err(StorageError::backend(format!(
+        "unsupported sqlx value at column index {index}"
+    )))
 }

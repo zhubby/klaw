@@ -1,5 +1,6 @@
 use crate::{
     jsonl,
+    memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
     ChatRecord, SessionIndex, SessionStorage, StorageError, StoragePaths,
 };
@@ -10,6 +11,12 @@ use turso::{value::Value, Builder, Connection, Database, Row};
 #[derive(Debug, Clone)]
 pub struct TursoSessionStore {
     paths: StoragePaths,
+    _db: Database,
+    conn: Connection,
+}
+
+#[derive(Debug, Clone)]
+pub struct TursoMemoryDb {
     _db: Database,
     conn: Connection,
 }
@@ -50,6 +57,57 @@ impl TursoSessionStore {
             .await
             .map_err(StorageError::backend)?;
         Ok(())
+    }
+}
+
+impl TursoMemoryDb {
+    pub async fn open(paths: StoragePaths) -> Result<Self, StorageError> {
+        paths.ensure_dirs().await?;
+        let db = Builder::new_local(&paths.memory_db_path.to_string_lossy())
+            .build()
+            .await
+            .map_err(StorageError::backend)?;
+        let conn = db.connect().map_err(StorageError::backend)?;
+        Ok(Self { _db: db, conn })
+    }
+}
+
+#[async_trait]
+impl MemoryDb for TursoMemoryDb {
+    async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
+        self.conn
+            .execute_batch(sql)
+            .await
+            .map_err(StorageError::backend)
+    }
+
+    async fn execute(&self, sql: &str, params: &[DbValue]) -> Result<u64, StorageError> {
+        let turso_params = to_turso_params(params);
+        self.conn
+            .execute(sql, turso_params)
+            .await
+            .map_err(StorageError::backend)
+    }
+
+    async fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, StorageError> {
+        let turso_params = to_turso_params(params);
+        let mut rows = self
+            .conn
+            .query(sql, turso_params)
+            .await
+            .map_err(StorageError::backend)?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
+            let mut values = Vec::new();
+            for idx in 0..row.column_count() {
+                values.push(from_turso_value(
+                    row.get_value(idx).map_err(StorageError::backend)?,
+                ));
+            }
+            out.push(DbRow { values });
+        }
+        Ok(out)
     }
 }
 
@@ -202,6 +260,29 @@ impl SessionStorage for TursoSessionStore {
 
 fn escape_sql_text(input: &str) -> String {
     input.replace('\'', "''")
+}
+
+fn to_turso_params(values: &[DbValue]) -> Vec<Value> {
+    values
+        .iter()
+        .map(|value| match value {
+            DbValue::Null => Value::Null,
+            DbValue::Integer(v) => Value::Integer(*v),
+            DbValue::Real(v) => Value::Real(*v),
+            DbValue::Text(v) => Value::Text(v.clone()),
+            DbValue::Blob(v) => Value::Blob(v.clone()),
+        })
+        .collect()
+}
+
+fn from_turso_value(value: Value) -> DbValue {
+    match value {
+        Value::Null => DbValue::Null,
+        Value::Integer(v) => DbValue::Integer(v),
+        Value::Real(v) => DbValue::Real(v),
+        Value::Text(v) => DbValue::Text(v),
+        Value::Blob(v) => DbValue::Blob(v),
+    }
 }
 
 fn row_to_session_index(row: &Row) -> Result<SessionIndex, StorageError> {

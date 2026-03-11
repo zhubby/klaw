@@ -258,7 +258,9 @@ impl Tool for SubAgentTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_config::{ModelProviderConfig, ShellConfig, ToolsConfig, WebSearchConfig};
+    use klaw_config::{
+        MemoryConfig, ModelProviderConfig, ShellConfig, ToolsConfig, WebSearchConfig,
+    };
 
     fn test_config() -> Arc<AppConfig> {
         let mut providers = BTreeMap::new();
@@ -276,6 +278,7 @@ mod tests {
         Arc::new(AppConfig {
             model_provider: "openai".to_string(),
             model_providers: providers,
+            memory: MemoryConfig::default(),
             tools: ToolsConfig {
                 shell: ShellConfig::default(),
                 web_search: WebSearchConfig::default(),

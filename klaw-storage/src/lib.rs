@@ -1,5 +1,6 @@
 mod error;
 mod jsonl;
+mod memory_db;
 mod paths;
 mod traits;
 mod types;
@@ -8,6 +9,7 @@ mod util;
 pub mod backend;
 
 pub use error::StorageError;
+pub use memory_db::{DbRow, DbValue, MemoryDb};
 pub use paths::StoragePaths;
 pub use traits::SessionStorage;
 pub use types::{ChatRecord, SessionIndex};
@@ -22,6 +24,10 @@ compile_error!("enable one backend feature: `turso` or `sqlx`");
 pub type DefaultSessionStore = backend::turso::TursoSessionStore;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
 pub type DefaultSessionStore = backend::sqlx::SqlxSessionStore;
+#[cfg(all(feature = "turso", not(feature = "sqlx")))]
+pub type DefaultMemoryDb = backend::turso::TursoMemoryDb;
+#[cfg(all(feature = "sqlx", not(feature = "turso")))]
+pub type DefaultMemoryDb = backend::sqlx::SqlxMemoryDb;
 
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
 pub async fn open_default_store() -> Result<DefaultSessionStore, StorageError> {
@@ -33,6 +39,18 @@ pub async fn open_default_store() -> Result<DefaultSessionStore, StorageError> {
 pub async fn open_default_store() -> Result<DefaultSessionStore, StorageError> {
     let paths = StoragePaths::from_home_dir()?;
     DefaultSessionStore::open(paths).await
+}
+
+#[cfg(all(feature = "turso", not(feature = "sqlx")))]
+pub async fn open_default_memory_db() -> Result<DefaultMemoryDb, StorageError> {
+    let paths = StoragePaths::from_home_dir()?;
+    DefaultMemoryDb::open(paths).await
+}
+
+#[cfg(all(feature = "sqlx", not(feature = "turso")))]
+pub async fn open_default_memory_db() -> Result<DefaultMemoryDb, StorageError> {
+    let paths = StoragePaths::from_home_dir()?;
+    DefaultMemoryDb::open(paths).await
 }
 
 #[cfg(test)]
@@ -91,5 +109,41 @@ mod tests {
             .expect("jsonl file should exist");
         assert!(contents.contains("\"role\":\"user\""));
         assert!(contents.contains("\"content\":\"hello\""));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn storage_paths_include_memory_db() {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!("klaw-storage-paths-{suffix}"));
+        let paths = StoragePaths::from_root(base.clone());
+        assert_eq!(paths.memory_db_path, base.join("memory.db"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn open_default_memory_db_is_idempotent() {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base =
+            std::env::temp_dir().join(format!("klaw-memory-db-test-{}-{suffix}", util::now_ms()));
+        let paths = StoragePaths::from_root(base);
+
+        #[cfg(feature = "turso")]
+        {
+            let _db1 = backend::turso::TursoMemoryDb::open(paths.clone())
+                .await
+                .expect("memory db should open");
+            let _db2 = backend::turso::TursoMemoryDb::open(paths)
+                .await
+                .expect("memory db should reopen");
+        }
+
+        #[cfg(feature = "sqlx")]
+        {
+            let _db1 = backend::sqlx::SqlxMemoryDb::open(paths.clone())
+                .await
+                .expect("memory db should open");
+            let _db2 = backend::sqlx::SqlxMemoryDb::open(paths)
+                .await
+                .expect("memory db should reopen");
+        }
     }
 }

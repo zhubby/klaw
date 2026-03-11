@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub model_provider: String,
     pub model_providers: BTreeMap<String, ModelProviderConfig>,
     #[serde(default)]
+    pub memory: MemoryConfig,
+    #[serde(default)]
     pub tools: ToolsConfig,
 }
 
@@ -22,9 +24,52 @@ impl Default for AppConfig {
         Self {
             model_provider,
             model_providers,
+            memory: MemoryConfig::default(),
             tools: ToolsConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    #[serde(default)]
+    pub embedding: EmbeddingConfig,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            embedding: EmbeddingConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_memory_embedding_provider")]
+    pub provider: String,
+    #[serde(default = "default_memory_embedding_model")]
+    pub model: String,
+}
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: default_memory_embedding_provider(),
+            model: default_memory_embedding_model(),
+        }
+    }
+}
+
+fn default_memory_embedding_provider() -> String {
+    "openai".to_string()
+}
+
+fn default_memory_embedding_model() -> String {
+    "text-embedding-3-small".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -361,6 +406,30 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         )));
     }
 
+    if config.memory.embedding.enabled {
+        if config.memory.embedding.provider.trim().is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "memory.embedding.provider cannot be empty when memory.embedding.enabled=true"
+                    .to_string(),
+            ));
+        }
+        if config.memory.embedding.model.trim().is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "memory.embedding.model cannot be empty when memory.embedding.enabled=true"
+                    .to_string(),
+            ));
+        }
+        if !config
+            .model_providers
+            .contains_key(&config.memory.embedding.provider)
+        {
+            return Err(ConfigError::InvalidConfig(format!(
+                "memory.embedding.provider '{}' not found in model_providers",
+                config.memory.embedding.provider
+            )));
+        }
+    }
+
     if config.tools.web_search.enabled {
         if config.tools.web_search.provider.trim().is_empty() {
             return Err(ConfigError::InvalidConfig(
@@ -438,6 +507,9 @@ mod tests {
         let parsed: AppConfig = toml::from_str(&template).expect("default template should parse");
         assert_eq!(parsed.model_provider, "openai");
         assert!(parsed.model_providers.contains_key("openai"));
+        assert!(!parsed.memory.embedding.enabled);
+        assert_eq!(parsed.memory.embedding.provider, "openai");
+        assert_eq!(parsed.memory.embedding.model, "text-embedding-3-small");
         assert_eq!(
             parsed.tools.shell.blocked_patterns,
             default_shell_blocked_patterns()
@@ -467,6 +539,7 @@ mod tests {
         let cfg = AppConfig {
             model_provider: "missing".to_string(),
             model_providers: BTreeMap::new(),
+            memory: MemoryConfig::default(),
             tools: ToolsConfig::default(),
         };
         let err = validate(&cfg).expect_err("should fail");
@@ -555,6 +628,42 @@ provider = "missing"
         cfg2.tools.sub_agent.max_tool_calls = 0;
         let err2 = validate(&cfg2).expect_err("should fail");
         assert!(format!("{err2}").contains("max_tool_calls"));
+    }
+
+    #[test]
+    fn validate_fails_when_memory_embedding_provider_missing() {
+        let mut cfg = AppConfig::default();
+        cfg.memory.embedding.enabled = true;
+        cfg.memory.embedding.provider = String::new();
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("memory.embedding.provider cannot be empty when"));
+    }
+
+    #[test]
+    fn validate_fails_when_memory_embedding_model_missing() {
+        let mut cfg = AppConfig::default();
+        cfg.memory.embedding.enabled = true;
+        cfg.memory.embedding.model = String::new();
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("memory.embedding.model cannot be empty when"));
+    }
+
+    #[test]
+    fn validate_fails_when_memory_embedding_provider_not_found() {
+        let mut cfg = AppConfig::default();
+        cfg.memory.embedding.enabled = true;
+        cfg.memory.embedding.provider = "missing".to_string();
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("not found in model_providers"));
+    }
+
+    #[test]
+    fn validate_allows_missing_embedding_provider_when_disabled() {
+        let mut cfg = AppConfig::default();
+        cfg.memory.embedding.enabled = false;
+        cfg.memory.embedding.provider = String::new();
+        cfg.memory.embedding.model = String::new();
+        validate(&cfg).expect("should be valid when embedding disabled");
     }
 
     #[test]

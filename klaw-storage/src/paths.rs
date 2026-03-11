@@ -6,6 +6,7 @@ use tokio::fs;
 pub struct StoragePaths {
     pub root_dir: PathBuf,
     pub db_path: PathBuf,
+    pub memory_db_path: PathBuf,
     pub sessions_dir: PathBuf,
 }
 
@@ -18,6 +19,7 @@ impl StoragePaths {
     pub fn from_root(root_dir: PathBuf) -> Self {
         Self {
             db_path: root_dir.join("klaw.db"),
+            memory_db_path: root_dir.join("memory.db"),
             sessions_dir: root_dir.join("sessions"),
             root_dir,
         }

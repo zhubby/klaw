@@ -137,7 +137,7 @@ impl Tool for ShellTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_config::{ModelProviderConfig, ShellConfig, ToolsConfig};
+    use klaw_config::{MemoryConfig, ModelProviderConfig, ShellConfig, ToolsConfig};
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
 
@@ -157,6 +157,7 @@ mod tests {
         AppConfig {
             model_provider: "openai".to_string(),
             model_providers: providers,
+            memory: MemoryConfig::default(),
             tools: ToolsConfig {
                 shell: ShellConfig {
                     blocked_patterns: vec!["rm -rf /".to_string()],
@@ -182,6 +183,7 @@ mod tests {
         AppConfig {
             model_provider: "openai".to_string(),
             model_providers: providers,
+            memory: MemoryConfig::default(),
             tools: ToolsConfig::default(),
         }
     }
