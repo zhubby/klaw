@@ -1,7 +1,7 @@
 //! `klaw-core` 提供 agent 基座的核心抽象与运行时能力。
 
 /// Agent 运行时与主编排模块。
-pub mod agent;
+pub mod agent_loop;
 /// 核心领域消息模型。
 pub mod domain;
 /// 本地/测试用 mock 实现。
@@ -17,7 +17,7 @@ pub mod scheduler;
 /// 传输层抽象。
 pub mod transport;
 
-pub use agent::{
+pub use agent_loop::{
     AgentLoop, AgentRunState, AgentRuntimeError, ProcessOutcome, QueueStrategy, RunLimits,
     SessionSchedulingPolicy, StateTransitionEvent,
 };

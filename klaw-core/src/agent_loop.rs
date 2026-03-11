@@ -510,7 +510,6 @@ impl AgentLoop {
             }
         }
     }
-
 }
 
 fn classify_error_kind(code: Option<ErrorCode>) -> &'static str {
