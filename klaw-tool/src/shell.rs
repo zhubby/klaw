@@ -183,14 +183,6 @@ impl ShellTool {
             .any(|op| command.contains(op))
     }
 
-    fn is_apply_patch_command(command: &str) -> bool {
-        command
-            .split_whitespace()
-            .next()
-            .map(|token| token == "apply_patch")
-            .unwrap_or(false)
-    }
-
     fn parse_approved_prefixes(
         metadata: &std::collections::BTreeMap<String, Value>,
     ) -> Vec<Vec<String>> {
@@ -482,12 +474,6 @@ impl Tool for ShellTool {
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let request = Self::parse_request(args)?;
-        if Self::is_apply_patch_command(&request.command) {
-            return Err(ToolError::ExecutionFailed(
-                "`apply_patch` must run via the dedicated patch tool, not the shell tool"
-                    .to_string(),
-            ));
-        }
 
         let risk = self.classify_risk(&request.command);
         if matches!(risk, CommandRisk::Destructive) {
@@ -826,21 +812,6 @@ mod tests {
             .unwrap();
 
         assert!(result.content_for_model.contains("\"approved\": true"));
-    }
-
-    #[tokio::test]
-    async fn test_apply_patch_is_intercepted() {
-        let config = permissive_test_config();
-        let tool = ShellTool::new(&config);
-
-        let result = tool
-            .execute(json!({"command": "apply_patch <<'PATCH'"}), &base_ctx())
-            .await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("dedicated patch tool"));
     }
 
     #[tokio::test]

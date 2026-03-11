@@ -1,3 +1,4 @@
+pub mod fs;
 pub mod local_search;
 pub mod memory;
 pub mod shell;
@@ -11,6 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+pub use fs::FsTool;
 pub use local_search::LocalSearchTool;
 pub use memory::MemoryTool;
 pub use shell::ShellTool;
