@@ -7,7 +7,7 @@ members = [
     "klaw-cli", 
     "klaw-mcp", 
     "klaw-skill", 
-    "klaw-memory",
+    "klaw-memory", "klaw-cron",
 ]
 resolver = "2"
 

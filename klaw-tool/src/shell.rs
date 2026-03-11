@@ -111,9 +111,9 @@ impl Tool for ShellTool {
         self.validate_command(command)?;
 
         let timeout_secs = match args.get("timeout") {
-            Some(v) => v
-                .as_u64()
-                .ok_or_else(|| ToolError::InvalidArgs("`timeout` must be an integer".to_string()))?,
+            Some(v) => v.as_u64().ok_or_else(|| {
+                ToolError::InvalidArgs("`timeout` must be an integer".to_string())
+            })?,
             None => 60,
         };
 
@@ -128,7 +128,9 @@ impl Tool for ShellTool {
 
         let output = timeout(Duration::from_secs(timeout_secs), process.output())
             .await
-            .map_err(|_| ToolError::ExecutionFailed(format!("command timed out after {timeout_secs}s")))?
+            .map_err(|_| {
+                ToolError::ExecutionFailed(format!("command timed out after {timeout_secs}s"))
+            })?
             .map_err(|err| ToolError::ExecutionFailed(err.to_string()))?;
 
         let content = Self::format_output(&output.stdout, &output.stderr, output.status.code());
@@ -190,7 +192,10 @@ mod tests {
         fs::write(dir.join("sample.txt"), "workspace-ok").unwrap();
 
         let mut metadata = BTreeMap::new();
-        metadata.insert("workspace".to_string(), json!(dir.to_string_lossy().to_string()));
+        metadata.insert(
+            "workspace".to_string(),
+            json!(dir.to_string_lossy().to_string()),
+        );
         let ctx = ToolContext {
             session_key: "s1".to_string(),
             metadata,

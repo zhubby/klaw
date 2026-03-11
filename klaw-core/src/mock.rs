@@ -56,11 +56,7 @@ where
         DeliveryMode::AtLeastOnce
     }
 
-    async fn publish(
-        &self,
-        _topic: &'static str,
-        msg: Envelope<T>,
-    ) -> Result<(), TransportError> {
+    async fn publish(&self, _topic: &'static str, msg: Envelope<T>) -> Result<(), TransportError> {
         self.published.lock().await.push(msg);
         Ok(())
     }
@@ -107,7 +103,10 @@ pub struct InMemorySessionScheduler {
 impl InMemorySessionScheduler {
     /// 创建调度器。
     pub fn new(max_depth: usize, lock_ttl: Duration) -> Self {
-        Self { max_depth, lock_ttl }
+        Self {
+            max_depth,
+            lock_ttl,
+        }
     }
 }
 

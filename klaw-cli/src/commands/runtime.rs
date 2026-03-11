@@ -1,12 +1,12 @@
-use klaw_core::{
-    AgentLoop, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope,
-    EnvelopeHeader, ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker,
-    InMemoryIdempotencyStore, InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy,
-    RunLimits, SessionSchedulingPolicy, Subscription,
-};
 use klaw_config::{AppConfig, ModelProviderConfig};
+use klaw_core::{
+    AgentLoop, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader,
+    ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker, InMemoryIdempotencyStore,
+    InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy, RunLimits,
+    SessionSchedulingPolicy, Subscription,
+};
 use klaw_llm::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
-use klaw_tool::{ShellTool, ToolRegistry};
+use klaw_tool::{ShellTool, TerminalMultiplexerTool, ToolRegistry};
 use std::{collections::BTreeMap, env, error::Error, io, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -26,6 +26,7 @@ pub fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn
     let provider = build_provider_from_config(config)?;
     let mut tools = ToolRegistry::default();
     tools.register(ShellTool::new());
+    tools.register(TerminalMultiplexerTool::new());
 
     let runtime = AgentLoop::new(
         RunLimits {
@@ -120,11 +121,18 @@ pub async fn submit_and_get_output(
     }
 }
 
-fn build_provider_from_config(config: &AppConfig) -> Result<Arc<dyn klaw_llm::LlmProvider>, Box<dyn Error>> {
+fn build_provider_from_config(
+    config: &AppConfig,
+) -> Result<Arc<dyn klaw_llm::LlmProvider>, Box<dyn Error>> {
     let provider = config
         .model_providers
         .get(&config.model_provider)
-        .ok_or_else(|| config_err(format!("model_provider '{}' not found", config.model_provider)))?;
+        .ok_or_else(|| {
+            config_err(format!(
+                "model_provider '{}' not found",
+                config.model_provider
+            ))
+        })?;
 
     match provider.wire_api.as_str() {
         "chat_completions" | "responses" => {}

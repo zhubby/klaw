@@ -5,7 +5,9 @@ use klaw_core::{
     InMemoryTransport, InboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
     Subscription,
 };
-use klaw_llm::{ChatOptions, EchoProvider, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
+use klaw_llm::{
+    ChatOptions, EchoProvider, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition,
+};
 use klaw_tool::ToolRegistry;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
@@ -88,7 +90,9 @@ impl LlmProvider for FailingProvider {
         _model: Option<&str>,
         _options: ChatOptions,
     ) -> Result<LlmResponse, LlmError> {
-        Err(LlmError::ProviderUnavailable("simulated failure".to_string()))
+        Err(LlmError::ProviderUnavailable(
+            "simulated failure".to_string(),
+        ))
     }
 }
 
@@ -166,7 +170,10 @@ async fn run_once_reliable_should_send_to_dlq_after_retry_exhausted() {
         .await
         .expect("run_once_reliable should complete");
 
-    assert_eq!(outcome.error_code, Some(klaw_core::ErrorCode::SentToDeadLetter));
+    assert_eq!(
+        outcome.error_code,
+        Some(klaw_core::ErrorCode::SentToDeadLetter)
+    );
     assert_eq!(outbound_transport.published_messages().await.len(), 0);
     assert_eq!(deadletter_transport.published_messages().await.len(), 1);
 }

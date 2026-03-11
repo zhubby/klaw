@@ -165,8 +165,7 @@ impl CircuitBreaker for InMemoryCircuitBreaker {
     async fn on_failure(&self) {
         let failures = self.consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
         if failures >= self.policy.failure_threshold {
-            let open_until =
-                Self::now_epoch_ms() + self.policy.open_interval.as_millis() as u64;
+            let open_until = Self::now_epoch_ms() + self.policy.open_interval.as_millis() as u64;
             self.open_until_epoch_ms.store(open_until, Ordering::SeqCst);
             self.consecutive_failures.store(0, Ordering::SeqCst);
         }

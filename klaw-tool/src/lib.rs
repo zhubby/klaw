@@ -1,4 +1,5 @@
 pub mod shell;
+pub mod terminal_multiplexers;
 
 use async_trait::async_trait;
 use std::collections::BTreeMap;
@@ -6,6 +7,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub use shell::ShellTool;
+pub use terminal_multiplexers::TerminalMultiplexerTool;
 
 /// 工具分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

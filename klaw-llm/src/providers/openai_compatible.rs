@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use reqwest::{header::USER_AGENT, Client};
 use serde::{Deserialize, Serialize};
 
-use crate::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolCall, ToolDefinition};
+use crate::{
+    ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolCall, ToolDefinition,
+};
 
 /// OpenAI Compatible 配置。
 #[derive(Debug, Clone)]
