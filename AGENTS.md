@@ -43,6 +43,15 @@ Name tests by behavior, e.g., `validate_fails_when_active_provider_missing`. Add
 
 For tool and config changes, include enough test cases to cover core paths and edge cases (arg validation, provider/config routing, formatting, and error handling when applicable). Every modification should keep the relevant crate/workspace tests passing before completion.
 
+## Documentation Guidelines (mdBook)
+When adding or updating docs under `docs/src`, ensure they satisfy mdBook structure and rendering requirements:
+- Every new page must be linked from `docs/src/SUMMARY.md` using a relative path.
+- Use clear heading hierarchy (`#`, `##`, `###`) and stable section names.
+- Prefer fenced code blocks with language tags for commands/config snippets.
+- Use relative links for internal pages and full URLs for external references.
+- Keep examples executable and consistent with current CLI/binary naming (for this repo: `klaw`).
+- Validate documentation build with `mdbook build docs` when doc structure changes.
+
 ## Commit & Pull Request Guidelines
 Recent history is short, but commit messages should be concise, imperative, and specific (e.g., `add config loading to cli commands`). Keep one logical change per commit.
 
