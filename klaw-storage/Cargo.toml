@@ -4,4 +4,16 @@ edition.workspace = true
 license.workspace = true
 version.workspace = true
 
+[features]
+default = ["turso"]
+turso = ["dep:turso"]
+sqlx = ["dep:sqlx"]
+
 [dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util"] }
+sqlx = { workspace = true, optional = true }
+turso = { workspace = true, optional = true }

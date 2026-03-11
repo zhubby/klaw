@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use crate::{
     domain::{DeadLetterMessage, InboundMessage, OutboundMessage},
     protocol::{Envelope, ErrorCode, MessageTopic},
@@ -8,6 +7,7 @@ use crate::{
     },
     transport::{MessageTransport, Subscription, TransportAckHandle, TransportError},
 };
+use async_trait::async_trait;
 use klaw_agent::{
     run_agent_execution, AgentExecutionError, AgentExecutionInput, AgentExecutionLimits,
     ToolExecutor,

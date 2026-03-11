@@ -17,7 +17,7 @@ pub struct StdioCommand {
 
 impl StdioCommand {
     pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
-        let runtime = build_runtime_bundle(config.as_ref())?;
+        let runtime = build_runtime_bundle(config.as_ref()).await?;
         let chat_id = self
             .session_key
             .split(':')

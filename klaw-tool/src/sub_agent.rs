@@ -204,7 +204,9 @@ impl Tool for SubAgentTool {
         let provider_instance = build_provider_from_config(self.config.as_ref(), &provider_id)
             .map_err(|err| ToolError::ExecutionFailed(format!("build provider failed: {err}")))?;
         let child_tools = self.build_child_registry();
-        let executor = RegistryToolExecutor { tools: &child_tools };
+        let executor = RegistryToolExecutor {
+            tools: &child_tools,
+        };
         let parent_session = request
             .context
             .get("session")
@@ -338,8 +340,14 @@ mod tests {
     fn resolve_provider_model_uses_parent_metadata() {
         let tool = SubAgentTool::new(test_config(), ToolRegistry::default());
         let mut metadata = BTreeMap::new();
-        metadata.insert(META_PROVIDER_KEY.to_string(), Value::String("openai".to_string()));
-        metadata.insert(META_MODEL_KEY.to_string(), Value::String("gpt-4.1".to_string()));
+        metadata.insert(
+            META_PROVIDER_KEY.to_string(),
+            Value::String("openai".to_string()),
+        );
+        metadata.insert(
+            META_MODEL_KEY.to_string(),
+            Value::String("gpt-4.1".to_string()),
+        );
         let ctx = ToolContext {
             session_key: "s1".to_string(),
             metadata,

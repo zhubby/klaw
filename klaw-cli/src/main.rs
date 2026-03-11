@@ -1,7 +1,7 @@
 mod commands;
 
 use clap::{Parser, Subcommand};
-use commands::{agent::AgentCommand, stdio::StdioCommand};
+use commands::{agent::AgentCommand, session::SessionCommand, stdio::StdioCommand};
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -23,6 +23,8 @@ enum Commands {
     Stdio(StdioCommand),
     /// Execute one request and print one response.
     Agent(AgentCommand),
+    /// Manage local session indexes in klaw.db.
+    Session(SessionCommand),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -48,6 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Commands::Stdio(cmd) => cmd.run(Arc::clone(&app_config)).await?,
         Commands::Agent(cmd) => cmd.run(app_config).await?,
+        Commands::Session(cmd) => cmd.run().await?,
     }
 
     Ok(())
