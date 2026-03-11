@@ -21,7 +21,7 @@ Use workspace-level Cargo commands from repo root:
 - `cargo fmt --all`: apply Rust formatting.
 - `cargo clippy --workspace --all-targets -- -D warnings`: lint strictly.
 - `klaw stdio`: run interactive local agent loop.
-- `klaw once --input "hello"`: single request/response run.
+- `klaw agent --input "hello"`: single request/response run.
 
 For docs: `mdbook build docs` (or `mdbook serve docs` for local preview).
 

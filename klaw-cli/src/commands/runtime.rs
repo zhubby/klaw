@@ -1,14 +1,14 @@
-use klaw_config::{AppConfig, ModelProviderConfig};
+use klaw_agent::build_provider_from_config;
+use klaw_config::AppConfig;
 use klaw_core::{
     AgentLoop, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader,
     ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker, InMemoryIdempotencyStore,
     InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy, RunLimits,
     SessionSchedulingPolicy, Subscription,
 };
-use klaw_llm::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
-use klaw_tool::{ShellTool, TerminalMultiplexerTool, ToolRegistry, WebSearchTool};
-use std::{collections::BTreeMap, env, error::Error, io, sync::Arc, time::Duration};
-use tracing::{info, warn};
+use klaw_tool::{ShellTool, SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebSearchTool};
+use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
+use tracing::warn;
 
 pub struct RuntimeBundle {
     pub runtime: AgentLoop,
@@ -23,15 +23,20 @@ pub struct RuntimeBundle {
 }
 
 pub fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn Error>> {
-    let provider = build_provider_from_config(config)?;
+    let provider_instance = build_provider_from_config(config, &config.model_provider)
+        .map_err(|err| config_err(err.to_string()))?;
     let mut tools = ToolRegistry::default();
     tools.register(ShellTool::new(config));
     tools.register(TerminalMultiplexerTool::new());
     if config.tools.web_search.enabled {
         tools.register(WebSearchTool::new(config)?);
     }
+    if config.tools.sub_agent.enabled {
+        let parent_tools = tools.clone();
+        tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
+    }
 
-    let runtime = AgentLoop::new(
+    let runtime = AgentLoop::new_with_identity(
         RunLimits {
             max_tool_iterations: 8,
             max_tool_calls: 16,
@@ -44,7 +49,9 @@ pub fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn
             max_queue_depth: 32,
             lock_ttl: Duration::from_secs(15),
         },
-        provider,
+        provider_instance.provider,
+        config.model_provider.clone(),
+        provider_instance.default_model.clone(),
         tools,
     );
 
@@ -122,56 +129,6 @@ pub async fn submit_and_get_output(
             Ok(None)
         }
     }
-}
-
-fn build_provider_from_config(
-    config: &AppConfig,
-) -> Result<Arc<dyn klaw_llm::LlmProvider>, Box<dyn Error>> {
-    let provider = config
-        .model_providers
-        .get(&config.model_provider)
-        .ok_or_else(|| {
-            config_err(format!(
-                "model_provider '{}' not found",
-                config.model_provider
-            ))
-        })?;
-
-    match provider.wire_api.as_str() {
-        "chat_completions" | "responses" => {}
-        other => {
-            return Err(config_err(format!(
-                "unsupported wire_api '{other}' for provider '{}'",
-                config.model_provider
-            )))
-        }
-    }
-
-    let api_key = resolve_api_key(provider).ok_or_else(|| {
-        config_err(format!(
-            "provider '{}' requires api_key or env_key",
-            config.model_provider
-        ))
-    })?;
-
-    info!(provider_id = %config.model_provider, "using configured provider");
-
-    Ok(Arc::new(OpenAiCompatibleProvider::new(
-        OpenAiCompatibleConfig {
-            base_url: provider.base_url.clone(),
-            api_key,
-            default_model: provider.default_model.clone(),
-        },
-    )))
-}
-
-fn resolve_api_key(provider: &ModelProviderConfig) -> Option<String> {
-    provider.api_key.clone().or_else(|| {
-        provider
-            .env_key
-            .as_ref()
-            .and_then(|env_name| env::var(env_name).ok())
-    })
 }
 
 fn config_err(message: String) -> Box<dyn Error> {

@@ -22,7 +22,7 @@ klaw stdio                     # Starts interactive stdio mode
 klaw --help
 
 # One-shot request
-klaw once --input "your prompt"
+klaw agent --input "your prompt"
 ```
 
 ## Tool Metadata & Testing Expectations

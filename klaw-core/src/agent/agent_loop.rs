@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use crate::{
     domain::{DeadLetterMessage, InboundMessage, OutboundMessage},
     protocol::{Envelope, ErrorCode, MessageTopic},
@@ -7,12 +8,16 @@ use crate::{
     },
     transport::{MessageTransport, Subscription, TransportAckHandle, TransportError},
 };
-use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, ToolDefinition};
+use klaw_agent::{
+    run_agent_execution, AgentExecutionError, AgentExecutionInput, AgentExecutionLimits,
+    ToolExecutor,
+};
+use klaw_llm::{LlmError, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::time::sleep;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunState {
@@ -87,7 +92,55 @@ pub struct AgentLoop {
     pub limits: RunLimits,
     pub scheduling: SessionSchedulingPolicy,
     pub provider: Arc<dyn LlmProvider>,
+    pub active_provider_id: String,
+    pub active_model: String,
     pub tools: ToolRegistry,
+}
+
+struct RegistryToolExecutor<'a> {
+    tools: &'a ToolRegistry,
+}
+
+#[async_trait]
+impl ToolExecutor for RegistryToolExecutor<'_> {
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        self.tools
+            .list()
+            .into_iter()
+            .filter_map(|name| self.tools.get(&name))
+            .map(|tool| ToolDefinition {
+                name: tool.name().to_string(),
+                description: tool.description().to_string(),
+                parameters: tool.parameters(),
+            })
+            .collect()
+    }
+
+    async fn execute(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        session_key: &str,
+        metadata: &BTreeMap<String, serde_json::Value>,
+    ) -> String {
+        let Some(tool) = self.tools.get(name) else {
+            return format!("tool `{}` not found", name);
+        };
+
+        match tool
+            .execute(
+                arguments,
+                &ToolContext {
+                    session_key: session_key.to_string(),
+                    metadata: metadata.clone(),
+                },
+            )
+            .await
+        {
+            Ok(output) => output.content_for_model,
+            Err(err) => format!("tool `{}` failed: {}", name, err),
+        }
+    }
 }
 
 impl AgentLoop {
@@ -101,6 +154,26 @@ impl AgentLoop {
             limits,
             scheduling,
             provider,
+            active_provider_id: "default".to_string(),
+            active_model: "default".to_string(),
+            tools,
+        }
+    }
+
+    pub fn new_with_identity(
+        limits: RunLimits,
+        scheduling: SessionSchedulingPolicy,
+        provider: Arc<dyn LlmProvider>,
+        active_provider_id: String,
+        active_model: String,
+        tools: ToolRegistry,
+    ) -> Self {
+        Self {
+            limits,
+            scheduling,
+            provider,
+            active_provider_id,
+            active_model,
             tools,
         }
     }
@@ -147,109 +220,71 @@ impl AgentLoop {
         state = self.transition(state, StateTransitionEvent::Scheduled);
         state = self.transition(state, StateTransitionEvent::ContextBuilt);
 
-        let tool_defs = self.collect_tool_definitions();
-        let mut llm_messages = vec![LlmMessage {
-            role: "user".to_string(),
-            content: msg.payload.content.clone(),
-        }];
-        let mut tool_calls_used = 0u32;
+        let mut tool_metadata = msg.payload.metadata.clone();
+        tool_metadata
+            .entry("agent.provider_id".to_string())
+            .or_insert_with(|| serde_json::Value::String(self.active_provider_id.clone()));
+        tool_metadata
+            .entry("agent.model".to_string())
+            .or_insert_with(|| serde_json::Value::String(self.active_model.clone()));
+        tool_metadata.insert(
+            "agent.parent_session_key".to_string(),
+            serde_json::Value::String(msg.payload.session_key.clone()),
+        );
 
-        for iter in 0..self.limits.max_tool_iterations.max(1) {
-            debug!(iter, "provider chat");
-            state = self.transition(state, StateTransitionEvent::ModelCalled);
-            let llm_response = match self
-                .provider
-                .chat(
-                    llm_messages.clone(),
-                    tool_defs.clone(),
-                    None,
-                    ChatOptions {
-                        temperature: 0.2,
-                        max_tokens: None,
-                    },
-                )
-                .await
-            {
-                Ok(resp) => resp,
-                Err(err) => {
-                    warn!(error = %err, "provider failed");
-                    return ProcessOutcome {
-                        final_response: None,
-                        error_code: Some(map_llm_error_to_code(&err)),
-                        final_state: AgentRunState::Degraded,
-                    };
-                }
-            };
+        state = self.transition(state, StateTransitionEvent::ModelCalled);
+        state = self.transition(state, StateTransitionEvent::ToolRequested);
+        let executor = RegistryToolExecutor { tools: &self.tools };
+        let result = run_agent_execution(
+            self.provider.as_ref(),
+            &executor,
+            AgentExecutionInput {
+                user_content: msg.payload.content.clone(),
+                session_key: msg.payload.session_key.clone(),
+                tool_metadata,
+                model: Some(self.active_model.clone()),
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: self.limits.max_tool_iterations,
+                max_tool_calls: self.limits.max_tool_calls,
+            },
+        )
+        .await;
+        state = self.transition(state, StateTransitionEvent::ToolLoopFinished);
 
-            if llm_response.tool_calls.is_empty() {
+        match result {
+            Ok(output) => {
                 state = self.transition(state, StateTransitionEvent::FinalResponseReady);
                 state = self.transition(state, StateTransitionEvent::Published);
-                return ProcessOutcome {
+                ProcessOutcome {
                     final_response: Some(Envelope {
                         header: msg.header.clone(),
                         metadata: BTreeMap::new(),
                         payload: OutboundMessage {
                             channel: msg.payload.channel.clone(),
                             chat_id: msg.payload.chat_id.clone(),
-                            content: llm_response.content,
+                            content: output.content,
                             reply_to: None,
                             metadata: BTreeMap::new(),
                         },
                     }),
                     error_code: None,
                     final_state: state,
-                };
-            }
-
-            state = self.transition(state, StateTransitionEvent::ToolRequested);
-            for call in llm_response.tool_calls {
-                tool_calls_used += 1;
-                if tool_calls_used > self.limits.max_tool_calls {
-                    return ProcessOutcome {
-                        final_response: None,
-                        error_code: Some(ErrorCode::RetryExhausted),
-                        final_state: AgentRunState::Failed,
-                    };
-                }
-
-                let Some(tool) = self.tools.get(&call.name) else {
-                    llm_messages.push(LlmMessage {
-                        role: "tool".to_string(),
-                        content: format!("tool `{}` not found", call.name),
-                    });
-                    continue;
-                };
-
-                match tool
-                    .execute(
-                        call.arguments,
-                        &ToolContext {
-                            session_key: msg.payload.session_key.clone(),
-                            metadata: msg.payload.metadata.clone(),
-                        },
-                    )
-                    .await
-                {
-                    Ok(output) => llm_messages.push(LlmMessage {
-                        role: "tool".to_string(),
-                        content: output.content_for_model,
-                    }),
-                    Err(err) => {
-                        warn!(tool = %call.name, error = %err, "tool failed");
-                        llm_messages.push(LlmMessage {
-                            role: "tool".to_string(),
-                            content: format!("tool `{}` failed: {}", call.name, err),
-                        });
-                    }
                 }
             }
-            state = self.transition(state, StateTransitionEvent::ToolLoopFinished);
-        }
-
-        ProcessOutcome {
-            final_response: None,
-            error_code: Some(ErrorCode::RetryExhausted),
-            final_state: AgentRunState::Failed,
+            Err(AgentExecutionError::Provider(err)) => {
+                warn!(error = %err, "provider failed");
+                ProcessOutcome {
+                    final_response: None,
+                    error_code: Some(map_llm_error_to_code(&err)),
+                    final_state: AgentRunState::Degraded,
+                }
+            }
+            Err(AgentExecutionError::ToolLoopExhausted) => ProcessOutcome {
+                final_response: None,
+                error_code: Some(ErrorCode::RetryExhausted),
+                final_state: AgentRunState::Failed,
+            },
         }
     }
 
@@ -476,18 +511,6 @@ impl AgentLoop {
         }
     }
 
-    fn collect_tool_definitions(&self) -> Vec<ToolDefinition> {
-        self.tools
-            .list()
-            .into_iter()
-            .filter_map(|name| self.tools.get(&name))
-            .map(|tool| ToolDefinition {
-                name: tool.name().to_string(),
-                description: tool.description().to_string(),
-                parameters: tool.parameters(),
-            })
-            .collect()
-    }
 }
 
 fn classify_error_kind(code: Option<ErrorCode>) -> &'static str {

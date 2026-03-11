@@ -12,4 +12,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["process"] }
 zellij-client = { workspace = true }
 klaw-config = { workspace = true }
+klaw-agent = { workspace = true }
+klaw-llm = { workspace = true }
 reqwest.workspace = true

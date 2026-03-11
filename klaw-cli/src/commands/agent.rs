@@ -5,23 +5,23 @@ use crate::commands::runtime::{build_runtime_bundle, submit_and_get_output};
 use klaw_config::AppConfig;
 
 #[derive(Debug, Args)]
-pub struct OnceCommand {
+pub struct AgentCommand {
     /// Input text for a single request.
     #[arg(long)]
     pub input: String,
     /// Session key used for this one-shot request.
-    #[arg(long, default_value = "stdio:once")]
+    #[arg(long, default_value = "stdio:agent")]
     pub session_key: String,
 }
 
-impl OnceCommand {
+impl AgentCommand {
     pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
         let runtime = build_runtime_bundle(config.as_ref())?;
         let chat_id = self
             .session_key
             .split(':')
             .nth(1)
-            .unwrap_or("once")
+            .unwrap_or("agent")
             .to_string();
 
         let maybe_output =

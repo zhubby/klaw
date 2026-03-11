@@ -407,6 +407,7 @@ mod tests {
             tools: ToolsConfig {
                 shell: ShellConfig::default(),
                 web_search: WebSearchConfig::default(),
+                ..ToolsConfig::default()
             },
         }
     }

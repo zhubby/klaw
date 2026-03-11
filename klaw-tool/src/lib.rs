@@ -1,4 +1,5 @@
 pub mod shell;
+pub mod sub_agent;
 pub mod terminal_multiplexers;
 pub mod web_search;
 
@@ -8,6 +9,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub use shell::ShellTool;
+pub use sub_agent::SubAgentTool;
 pub use terminal_multiplexers::TerminalMultiplexerTool;
 pub use web_search::WebSearchTool;
 
@@ -81,7 +83,7 @@ pub trait Tool: Send + Sync {
 }
 
 /// 工具注册表。
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
 }
@@ -90,6 +92,11 @@ impl ToolRegistry {
     /// 注册工具。
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
         self.tools.insert(tool.name().to_string(), Arc::new(tool));
+    }
+
+    /// 注册共享工具实例。
+    pub fn register_shared(&mut self, tool: Arc<dyn Tool>) {
+        self.tools.insert(tool.name().to_string(), tool);
     }
 
     /// 按名称获取工具。

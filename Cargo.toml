@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "klaw-agent",
     "klaw-core",
     "klaw-llm",
     "klaw-tool",
@@ -7,7 +8,7 @@ members = [
     "klaw-cli", 
     "klaw-mcp", 
     "klaw-skill", 
-    "klaw-memory", "klaw-cron",
+    "klaw-memory", "klaw-cron", "klaw-storage",
 ]
 resolver = "2"
 
@@ -35,3 +36,4 @@ klaw-core = { path = "klaw-core" }
 klaw-llm = { path = "klaw-llm" }
 klaw-tool = { path = "klaw-tool" }
 klaw-config = { path = "klaw-config" }
+klaw-agent = { path = "klaw-agent" }

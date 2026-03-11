@@ -59,6 +59,8 @@ pub struct ToolsConfig {
     pub shell: ShellConfig,
     #[serde(default)]
     pub web_search: WebSearchConfig,
+    #[serde(default)]
+    pub sub_agent: SubAgentConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +109,48 @@ impl Default for WebSearchConfig {
             brave: BraveWebSearchConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubAgentConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_sub_agent_max_iterations")]
+    pub max_iterations: u32,
+    #[serde(default = "default_sub_agent_max_tool_calls")]
+    pub max_tool_calls: u32,
+    #[serde(default = "default_sub_agent_inherit_parent_tools")]
+    pub inherit_parent_tools: bool,
+    #[serde(default = "default_sub_agent_exclude_tools")]
+    pub exclude_tools: Vec<String>,
+}
+
+impl Default for SubAgentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_iterations: default_sub_agent_max_iterations(),
+            max_tool_calls: default_sub_agent_max_tool_calls(),
+            inherit_parent_tools: default_sub_agent_inherit_parent_tools(),
+            exclude_tools: default_sub_agent_exclude_tools(),
+        }
+    }
+}
+
+fn default_sub_agent_max_iterations() -> u32 {
+    6
+}
+
+fn default_sub_agent_max_tool_calls() -> u32 {
+    12
+}
+
+fn default_sub_agent_inherit_parent_tools() -> bool {
+    true
+}
+
+fn default_sub_agent_exclude_tools() -> Vec<String> {
+    vec!["sub_agent".to_string()]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,6 +392,17 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         }
     }
 
+    if config.tools.sub_agent.max_iterations == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "tools.sub_agent.max_iterations must be greater than 0".to_string(),
+        ));
+    }
+    if config.tools.sub_agent.max_tool_calls == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "tools.sub_agent.max_tool_calls must be greater than 0".to_string(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -396,6 +451,13 @@ mod tests {
         assert_eq!(
             parsed.tools.web_search.brave.env_key.as_deref(),
             Some("BRAVE_SEARCH_API_KEY")
+        );
+        assert!(!parsed.tools.sub_agent.enabled);
+        assert_eq!(parsed.tools.sub_agent.max_iterations, 6);
+        assert_eq!(parsed.tools.sub_agent.max_tool_calls, 12);
+        assert_eq!(
+            parsed.tools.sub_agent.exclude_tools,
+            vec!["sub_agent".to_string()]
         );
         validate(&parsed).expect("default template should be valid");
     }
@@ -480,6 +542,19 @@ provider = "missing"
         let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
         let err = validate(&parsed).expect_err("should fail");
         assert!(format!("{err}").contains("is not supported"));
+    }
+
+    #[test]
+    fn validate_fails_when_sub_agent_limits_are_zero() {
+        let mut cfg = AppConfig::default();
+        cfg.tools.sub_agent.max_iterations = 0;
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("max_iterations"));
+
+        let mut cfg2 = AppConfig::default();
+        cfg2.tools.sub_agent.max_tool_calls = 0;
+        let err2 = validate(&cfg2).expect_err("should fail");
+        assert!(format!("{err2}").contains("max_tool_calls"));
     }
 
     #[test]

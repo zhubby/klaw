@@ -1661,10 +1661,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "klaw-agent"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "klaw-config",
+ "klaw-llm",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "klaw-cli"
 version = "0.1.0"
 dependencies = [
  "clap 4.5.60",
+ "klaw-agent",
  "klaw-config",
  "klaw-core",
  "klaw-llm",
@@ -1688,6 +1701,7 @@ name = "klaw-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "klaw-agent",
  "klaw-llm",
  "klaw-tool",
  "serde",
@@ -1726,11 +1740,17 @@ name = "klaw-skill"
 version = "0.1.0"
 
 [[package]]
+name = "klaw-storage"
+version = "0.1.0"
+
+[[package]]
 name = "klaw-tool"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "klaw-agent",
  "klaw-config",
+ "klaw-llm",
  "reqwest",
  "serde",
  "serde_json",
