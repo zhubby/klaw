@@ -1,66 +1,412 @@
 use async_trait::async_trait;
-use klaw_config::AppConfig;
+use klaw_config::{AppConfig, ShellApprovalPolicy};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::{process::Command, time::timeout};
+use tracing::info;
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 
-/// Shell 工具，执行本地 shell 命令并返回输出。
+const DEFAULT_TIMEOUT_MS: u64 = 60_000;
+const META_WORKSPACE: &str = "workspace";
+const META_SHELL_PATH: &str = "shell.path";
+const META_SHELL_APPROVED: &str = "shell.approved";
+const META_APPROVED_PREFIXES: &str = "shell.approved_prefixes";
+
+/// Shell 工具，执行本地 shell 命令并返回结构化输出。
 pub struct ShellTool {
-    blocked_patterns: Vec<String>,
+    config: klaw_config::ShellConfig,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SandboxPermissions {
+    UseDefault,
+    RequireEscalated,
+}
+
+impl Default for SandboxPermissions {
+    fn default() -> Self {
+        Self::UseDefault
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShellRequest {
+    command: String,
+    #[serde(default)]
+    workdir: Option<String>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    login: Option<bool>,
+    #[serde(default)]
+    sandbox_permissions: Option<SandboxPermissions>,
+    #[serde(default)]
+    justification: Option<String>,
+    #[serde(default)]
+    prefix_rule: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandRisk {
+    Safe,
+    Mutating,
+    Destructive,
+}
+
+#[derive(Debug, Serialize)]
+struct ShellExecutionResult {
+    success: bool,
+    command: String,
+    cwd: String,
+    risk: &'static str,
+    sandbox_permissions: SandboxPermissions,
+    approval_required: bool,
+    approved: bool,
+    timed_out: bool,
+    exit_code: Option<i32>,
+    duration_ms: u64,
+    stdout: String,
+    stderr: String,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
 }
 
 impl ShellTool {
-    /// 从应用配置读取 shell 拦截规则。
+    /// 从应用配置读取 shell 规则。
     pub fn new(config: &AppConfig) -> Self {
         Self {
-            blocked_patterns: config.tools.shell.blocked_patterns.clone(),
+            config: config.tools.shell.clone(),
         }
     }
 
     /// 自定义模式：由配置注入拦截规则。
-    pub fn with_blocked_patterns(blocked_patterns: Vec<String>) -> Self {
-        Self { blocked_patterns }
+    pub fn with_config(config: klaw_config::ShellConfig) -> Self {
+        Self { config }
     }
 
-    /// 宽松模式：不拦截命令内容。
+    /// 宽松模式：不拦截命令内容，不要求审批。
     pub fn permissive() -> Self {
-        Self {
-            blocked_patterns: Vec::new(),
-        }
+        let mut config = klaw_config::ShellConfig::default();
+        config.blocked_patterns.clear();
+        config.approval_policy = ShellApprovalPolicy::Never;
+        Self { config }
     }
 
-    fn validate_command(&self, command: &str) -> Result<(), ToolError> {
+    fn parse_request(args: Value) -> Result<ShellRequest, ToolError> {
+        let mut request: ShellRequest = serde_json::from_value(args)
+            .map_err(|err| ToolError::InvalidArgs(format!("invalid request: {err}")))?;
+
+        request.command = request.command.trim().to_string();
+        if request.command.is_empty() {
+            return Err(ToolError::InvalidArgs(
+                "`command` cannot be empty".to_string(),
+            ));
+        }
+
+        if let Some(workdir) = request.workdir.as_mut() {
+            *workdir = workdir.trim().to_string();
+            if workdir.is_empty() {
+                return Err(ToolError::InvalidArgs(
+                    "`workdir` cannot be empty".to_string(),
+                ));
+            }
+        }
+
+        if let Some(justification) = request.justification.as_mut() {
+            *justification = justification.trim().to_string();
+            if justification.is_empty() {
+                return Err(ToolError::InvalidArgs(
+                    "`justification` cannot be empty".to_string(),
+                ));
+            }
+        }
+
+        if let Some(prefix_rule) = request.prefix_rule.as_mut() {
+            if prefix_rule.is_empty() {
+                return Err(ToolError::InvalidArgs(
+                    "`prefix_rule` cannot be empty when provided".to_string(),
+                ));
+            }
+            for item in prefix_rule.iter_mut() {
+                *item = item.trim().to_string();
+                if item.is_empty() {
+                    return Err(ToolError::InvalidArgs(
+                        "`prefix_rule` entries must be non-empty strings".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(request)
+    }
+
+    fn classify_risk(&self, command: &str) -> CommandRisk {
         let normalized = command.to_ascii_lowercase();
-        if let Some(pattern) = self
+        if self
+            .config
             .blocked_patterns
             .iter()
-            .find(|pattern| normalized.contains(&pattern.to_ascii_lowercase()))
+            .any(|pattern| normalized.contains(&pattern.to_ascii_lowercase()))
         {
-            return Err(ToolError::ExecutionFailed(format!(
-                "security violation: blocked pattern `{pattern}`"
-            )));
+            return CommandRisk::Destructive;
         }
-        Ok(())
+
+        if Self::contains_shell_operators(command) {
+            return CommandRisk::Mutating;
+        }
+
+        let Some(first_token) = command.split_whitespace().next() else {
+            return CommandRisk::Mutating;
+        };
+        let first_token = first_token.to_ascii_lowercase();
+        if self
+            .config
+            .safe_commands
+            .iter()
+            .any(|item| item.eq_ignore_ascii_case(&first_token))
+        {
+            CommandRisk::Safe
+        } else {
+            CommandRisk::Mutating
+        }
     }
 
-    fn format_output(stdout: &[u8], stderr: &[u8], exit_code: Option<i32>) -> String {
-        let stdout_text = String::from_utf8_lossy(stdout).trim().to_string();
-        let stderr_text = String::from_utf8_lossy(stderr).trim().to_string();
+    fn contains_shell_operators(command: &str) -> bool {
+        ["&&", "||", "|", ";", ">", "<", "$(", "`"]
+            .iter()
+            .any(|op| command.contains(op))
+    }
 
-        let mut parts = Vec::new();
-        if !stdout_text.is_empty() {
-            parts.push(stdout_text);
+    fn is_apply_patch_command(command: &str) -> bool {
+        command
+            .split_whitespace()
+            .next()
+            .map(|token| token == "apply_patch")
+            .unwrap_or(false)
+    }
+
+    fn parse_approved_prefixes(
+        metadata: &std::collections::BTreeMap<String, Value>,
+    ) -> Vec<Vec<String>> {
+        let Some(raw) = metadata.get(META_APPROVED_PREFIXES) else {
+            return Vec::new();
+        };
+        let Some(items) = raw.as_array() else {
+            return Vec::new();
+        };
+
+        let mut prefixes = Vec::new();
+        for item in items {
+            if let Some(s) = item.as_str() {
+                let tokens: Vec<String> = s
+                    .split_whitespace()
+                    .map(|part| part.trim().to_string())
+                    .filter(|part| !part.is_empty())
+                    .collect();
+                if !tokens.is_empty() {
+                    prefixes.push(tokens);
+                }
+                continue;
+            }
+            if let Some(array) = item.as_array() {
+                let tokens: Vec<String> = array
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|part| part.trim().to_string())
+                    .filter(|part| !part.is_empty())
+                    .collect();
+                if !tokens.is_empty() {
+                    prefixes.push(tokens);
+                }
+            }
         }
-        if !stderr_text.is_empty() {
-            parts.push(format!("--- stderr ---\n{stderr_text}"));
+        prefixes
+    }
+
+    fn prefix_rule_is_preapproved(
+        prefix_rule: Option<&[String]>,
+        metadata: &std::collections::BTreeMap<String, Value>,
+    ) -> bool {
+        let Some(prefix_rule) = prefix_rule else {
+            return false;
+        };
+
+        let approved_prefixes = Self::parse_approved_prefixes(metadata);
+        approved_prefixes.iter().any(|approved| {
+            approved.len() == prefix_rule.len()
+                && approved
+                    .iter()
+                    .zip(prefix_rule.iter())
+                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
+        })
+    }
+
+    fn check_approval(
+        &self,
+        request: &ShellRequest,
+        risk: CommandRisk,
+        metadata: &std::collections::BTreeMap<String, Value>,
+    ) -> Result<(bool, bool, SandboxPermissions), ToolError> {
+        let sandbox_permissions = request.sandbox_permissions.unwrap_or_default();
+        let mut approval_required = !matches!(risk, CommandRisk::Safe);
+        if sandbox_permissions == SandboxPermissions::RequireEscalated {
+            approval_required = true;
         }
 
-        let code = exit_code.unwrap_or(-1);
-        parts.push(format!("[Exit code: {code}]"));
-        parts.join("\n")
+        if !approval_required {
+            return Ok((false, true, sandbox_permissions));
+        }
+
+        if matches!(self.config.approval_policy, ShellApprovalPolicy::Never) {
+            return Err(ToolError::ExecutionFailed(
+                "command requires approval but shell approval policy is `never`".to_string(),
+            ));
+        }
+
+        let approved_via_flag = metadata
+            .get(META_SHELL_APPROVED)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let approved_via_prefix =
+            Self::prefix_rule_is_preapproved(request.prefix_rule.as_deref(), metadata);
+        let approved = approved_via_flag || approved_via_prefix;
+
+        if !approved {
+            let mut hint = String::from(
+                "approval required: set metadata `shell.approved=true` or provide a preapproved `prefix_rule`",
+            );
+            if sandbox_permissions == SandboxPermissions::RequireEscalated
+                && request.justification.is_none()
+            {
+                hint.push_str(
+                    "; `justification` is required when `sandbox_permissions=require_escalated`",
+                );
+            }
+            return Err(ToolError::ExecutionFailed(hint));
+        }
+
+        if sandbox_permissions == SandboxPermissions::RequireEscalated
+            && request.justification.is_none()
+        {
+            return Err(ToolError::InvalidArgs(
+                "`justification` is required when `sandbox_permissions` is `require_escalated`"
+                    .to_string(),
+            ));
+        }
+
+        Ok((true, true, sandbox_permissions))
+    }
+
+    fn resolve_workspace_base(ctx: &ToolContext) -> Result<PathBuf, ToolError> {
+        if let Some(workspace) = ctx.metadata.get(META_WORKSPACE).and_then(Value::as_str) {
+            return std::fs::canonicalize(workspace).map_err(|err| {
+                ToolError::ExecutionFailed(format!("invalid workspace path: {err}"))
+            });
+        }
+        std::env::current_dir().map_err(|err| {
+            ToolError::ExecutionFailed(format!("failed to resolve current dir: {err}"))
+        })
+    }
+
+    fn resolve_cwd(
+        request: &ShellRequest,
+        base: &Path,
+        sandbox_permissions: SandboxPermissions,
+        approved: bool,
+    ) -> Result<PathBuf, ToolError> {
+        let target = match request.workdir.as_deref() {
+            Some(workdir) => {
+                let path = PathBuf::from(workdir);
+                if path.is_absolute() {
+                    path
+                } else {
+                    base.join(path)
+                }
+            }
+            None => base.to_path_buf(),
+        };
+
+        let canonical = std::fs::canonicalize(&target).map_err(|err| {
+            ToolError::ExecutionFailed(format!("invalid workdir `{}`: {err}", target.display()))
+        })?;
+        if !canonical.is_dir() {
+            return Err(ToolError::ExecutionFailed(format!(
+                "workdir `{}` is not a directory",
+                canonical.display()
+            )));
+        }
+
+        if canonical.starts_with(base) {
+            return Ok(canonical);
+        }
+
+        let allowed_outside_workspace =
+            sandbox_permissions == SandboxPermissions::RequireEscalated && approved;
+        if !allowed_outside_workspace {
+            return Err(ToolError::ExecutionFailed(format!(
+                "workdir `{}` is outside workspace `{}`; require escalated approval",
+                canonical.display(),
+                base.display()
+            )));
+        }
+
+        Ok(canonical)
+    }
+
+    fn resolve_timeout(&self, request: &ShellRequest) -> Result<u64, ToolError> {
+        let timeout_ms = request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
+        if timeout_ms == 0 {
+            return Err(ToolError::InvalidArgs(
+                "`timeout_ms` must be greater than 0".to_string(),
+            ));
+        }
+        Ok(timeout_ms.min(self.config.max_timeout_ms))
+    }
+
+    fn resolve_shell_bin(ctx: &ToolContext) -> String {
+        if let Some(shell) = ctx.metadata.get(META_SHELL_PATH).and_then(Value::as_str) {
+            let shell = shell.trim();
+            if !shell.is_empty() {
+                return shell.to_string();
+            }
+        }
+        std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
+    }
+
+    fn shell_args(shell_bin: &str, command: &str, use_login_shell: bool) -> Vec<String> {
+        let normalized = shell_bin.to_ascii_lowercase();
+        if normalized.contains("pwsh") || normalized.contains("powershell") {
+            return vec![
+                "-NoLogo".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                command.to_string(),
+            ];
+        }
+        if use_login_shell {
+            vec!["-lc".to_string(), command.to_string()]
+        } else {
+            vec!["-c".to_string(), command.to_string()]
+        }
+    }
+
+    fn truncate_stream(bytes: &[u8], max: usize) -> (String, bool) {
+        if bytes.len() <= max {
+            return (String::from_utf8_lossy(bytes).trim().to_string(), false);
+        }
+        let truncated = &bytes[..max];
+        (String::from_utf8_lossy(truncated).trim().to_string(), true)
+    }
+
+    fn format_output(result: &ShellExecutionResult) -> Result<String, ToolError> {
+        serde_json::to_string_pretty(result)
+            .map_err(|err| ToolError::ExecutionFailed(format!("failed to serialize output: {err}")))
     }
 }
 
@@ -71,23 +417,62 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command and return stdout/stderr."
+        "Execute a local shell command with workspace-aware path controls, approval checks, timeout/output limits, and structured result output."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
+            "description": "Arguments for shell command execution with approval and sandbox hints.",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The shell command to execute"
+                    "description": "Command string passed to the selected shell.",
+                    "minLength": 1,
+                    "examples": [
+                        "ls -la",
+                        "cargo check --workspace",
+                        "rg -n \"ToolRegistry\" klaw-core/src"
+                    ]
                 },
-                "timeout": {
+                "workdir": {
+                    "type": "string",
+                    "description": "Optional working directory. Relative paths are resolved from workspace metadata.",
+                    "examples": [".", "klaw-tool", "/tmp"]
+                },
+                "timeout_ms": {
                     "type": "integer",
-                    "description": "Timeout in seconds (default: 60)"
+                    "description": "Execution timeout in milliseconds. Defaults to 60000 and is clamped by tools.shell.max_timeout_ms.",
+                    "minimum": 1,
+                    "default": 60000
+                },
+                "login": {
+                    "type": "boolean",
+                    "description": "Whether to run a login shell. Disabled if tools.shell.allow_login_shell=false.",
+                    "default": false
+                },
+                "sandbox_permissions": {
+                    "type": "string",
+                    "enum": ["use_default", "require_escalated"],
+                    "description": "Escalation hint. `require_escalated` requires approval and `justification`.",
+                    "default": "use_default"
+                },
+                "justification": {
+                    "type": "string",
+                    "description": "Required when sandbox_permissions=require_escalated. Explain why escalation is needed."
+                },
+                "prefix_rule": {
+                    "type": "array",
+                    "description": "Optional command prefix used to match pre-approved escalation rules.",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "examples": [["cargo", "test"], ["git", "status"]]
                 }
             },
-            "required": ["command"]
+            "required": ["command"],
+            "additionalProperties": false
         })
     }
 
@@ -96,37 +481,104 @@ impl Tool for ShellTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let command = args
-            .get("command")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError::InvalidArgs("missing `command`".to_string()))?;
-
-        self.validate_command(command)?;
-
-        let timeout_secs = match args.get("timeout") {
-            Some(v) => v.as_u64().ok_or_else(|| {
-                ToolError::InvalidArgs("`timeout` must be an integer".to_string())
-            })?,
-            None => 60,
-        };
-
-        let mut process = Command::new("sh");
-        process.arg("-c").arg(command);
-        process.stdout(Stdio::piped());
-        process.stderr(Stdio::piped());
-
-        if let Some(workspace) = ctx.metadata.get("workspace").and_then(Value::as_str) {
-            process.current_dir(workspace);
+        let request = Self::parse_request(args)?;
+        if Self::is_apply_patch_command(&request.command) {
+            return Err(ToolError::ExecutionFailed(
+                "`apply_patch` must run via the dedicated patch tool, not the shell tool"
+                    .to_string(),
+            ));
         }
 
-        let output = timeout(Duration::from_secs(timeout_secs), process.output())
+        let risk = self.classify_risk(&request.command);
+        if matches!(risk, CommandRisk::Destructive) {
+            return Err(ToolError::ExecutionFailed(
+                "security violation: command matched blocked patterns".to_string(),
+            ));
+        }
+
+        let (approval_required, approved, sandbox_permissions) =
+            self.check_approval(&request, risk, &ctx.metadata)?;
+        let base = Self::resolve_workspace_base(ctx)?;
+        let cwd = Self::resolve_cwd(&request, &base, sandbox_permissions, approved)?;
+        let timeout_ms = self.resolve_timeout(&request)?;
+        let use_login_shell = request.login.unwrap_or(false);
+        if use_login_shell && !self.config.allow_login_shell {
+            return Err(ToolError::ExecutionFailed(
+                "login shell is disabled by config; omit `login` or set it to false".to_string(),
+            ));
+        }
+
+        let shell_bin = Self::resolve_shell_bin(ctx);
+        let args = Self::shell_args(&shell_bin, &request.command, use_login_shell);
+
+        info!(
+            session_key = %ctx.session_key,
+            tool = "shell",
+            command = %request.command,
+            cwd = %cwd.display(),
+            risk = ?risk,
+            approval_required,
+            approved,
+            ?sandbox_permissions,
+            "shell command begin"
+        );
+
+        let started = Instant::now();
+        let mut command = Command::new(&shell_bin);
+        command.args(args);
+        command.current_dir(&cwd);
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+        command.kill_on_drop(true);
+        command.env("KLAW_SESSION_KEY", &ctx.session_key);
+
+        let output = timeout(Duration::from_millis(timeout_ms), command.output())
             .await
             .map_err(|_| {
-                ToolError::ExecutionFailed(format!("command timed out after {timeout_secs}s"))
+                ToolError::ExecutionFailed(format!("command timed out after {timeout_ms}ms"))
             })?
-            .map_err(|err| ToolError::ExecutionFailed(err.to_string()))?;
+            .map_err(|err| {
+                ToolError::ExecutionFailed(format!("failed to execute command: {err}"))
+            })?;
 
-        let content = Self::format_output(&output.stdout, &output.stderr, output.status.code());
+        let per_stream_limit = (self.config.max_output_bytes / 2).max(1);
+        let (stdout, stdout_truncated) = Self::truncate_stream(&output.stdout, per_stream_limit);
+        let (stderr, stderr_truncated) = Self::truncate_stream(&output.stderr, per_stream_limit);
+        let duration_ms = started.elapsed().as_millis() as u64;
+
+        let result = ShellExecutionResult {
+            success: output.status.success(),
+            command: request.command,
+            cwd: cwd.display().to_string(),
+            risk: match risk {
+                CommandRisk::Safe => "safe",
+                CommandRisk::Mutating => "mutating",
+                CommandRisk::Destructive => "destructive",
+            },
+            sandbox_permissions,
+            approval_required,
+            approved,
+            timed_out: false,
+            exit_code: output.status.code(),
+            duration_ms,
+            stdout,
+            stderr,
+            stdout_truncated,
+            stderr_truncated,
+        };
+
+        info!(
+            session_key = %ctx.session_key,
+            tool = "shell",
+            success = result.success,
+            exit_code = result.exit_code,
+            duration_ms = result.duration_ms,
+            stdout_truncated = result.stdout_truncated,
+            stderr_truncated = result.stderr_truncated,
+            "shell command finish"
+        );
+
+        let content = Self::format_output(&result)?;
         Ok(ToolOutput {
             content_for_model: content.clone(),
             content_for_user: Some(content),
@@ -137,37 +589,13 @@ impl Tool for ShellTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_config::{MemoryConfig, ModelProviderConfig, ShellConfig, ToolsConfig};
+    use klaw_config::{
+        MemoryConfig, ModelProviderConfig, ShellApprovalPolicy, ShellConfig, ToolsConfig,
+    };
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
 
-    fn test_config() -> AppConfig {
-        let mut providers = BTreeMap::new();
-        providers.insert(
-            "openai".to_string(),
-            ModelProviderConfig {
-                name: None,
-                base_url: "https://api.openai.com/v1".to_string(),
-                wire_api: "chat_completions".to_string(),
-                default_model: "gpt-4o-mini".to_string(),
-                api_key: None,
-                env_key: Some("OPENAI_API_KEY".to_string()),
-            },
-        );
-        AppConfig {
-            model_provider: "openai".to_string(),
-            model_providers: providers,
-            memory: MemoryConfig::default(),
-            tools: ToolsConfig {
-                shell: ShellConfig {
-                    blocked_patterns: vec!["rm -rf /".to_string()],
-                },
-                ..ToolsConfig::default()
-            },
-        }
-    }
-
-    fn permissive_test_config() -> AppConfig {
+    fn base_config() -> AppConfig {
         let mut providers = BTreeMap::new();
         providers.insert(
             "openai".to_string(),
@@ -188,37 +616,79 @@ mod tests {
         }
     }
 
+    fn test_config() -> AppConfig {
+        let mut cfg = base_config();
+        cfg.tools.shell = ShellConfig {
+            blocked_patterns: vec!["rm -rf /".to_string()],
+            safe_commands: vec![
+                "echo".to_string(),
+                "cat".to_string(),
+                "ls".to_string(),
+                "pwd".to_string(),
+                "sleep".to_string(),
+                "printf".to_string(),
+            ],
+            approval_policy: ShellApprovalPolicy::OnRequest,
+            allow_login_shell: true,
+            max_timeout_ms: 5_000,
+            max_output_bytes: 4 * 1024,
+        };
+        cfg
+    }
+
+    fn permissive_test_config() -> AppConfig {
+        let mut cfg = base_config();
+        cfg.tools.shell = ShellConfig {
+            blocked_patterns: vec![],
+            safe_commands: vec![
+                "echo".to_string(),
+                "cat".to_string(),
+                "ls".to_string(),
+                "pwd".to_string(),
+                "sleep".to_string(),
+                "printf".to_string(),
+            ],
+            approval_policy: ShellApprovalPolicy::Never,
+            allow_login_shell: true,
+            max_timeout_ms: 5_000,
+            max_output_bytes: 4 * 1024,
+        };
+        cfg
+    }
+
+    fn base_ctx() -> ToolContext {
+        ToolContext {
+            session_key: "s1".to_string(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
     #[tokio::test]
     async fn test_shell_echo() {
         let config = permissive_test_config();
         let tool = ShellTool::new(&config);
-        let ctx = ToolContext {
-            session_key: "s1".to_string(),
-            metadata: BTreeMap::new(),
-        };
 
-        let result = tool.execute(json!({"command": "echo hello"}), &ctx).await;
+        let result = tool
+            .execute(json!({"command": "echo hello"}), &base_ctx())
+            .await;
         assert!(result.is_ok());
         let output = result.unwrap().content_for_model;
+        assert!(output.contains("\"success\": true"));
         assert!(output.contains("hello"));
-        assert!(output.contains("[Exit code: 0]"));
     }
 
     #[tokio::test]
-    async fn test_shell_stderr() {
+    async fn test_shell_structured_failure_on_non_zero_exit() {
         let config = permissive_test_config();
         let tool = ShellTool::new(&config);
-        let ctx = ToolContext {
-            session_key: "s1".to_string(),
-            metadata: BTreeMap::new(),
-        };
 
         let result = tool
-            .execute(json!({"command": "echo error >&2"}), &ctx)
+            .execute(json!({"command": "cat does-not-exist.txt"}), &base_ctx())
             .await
             .unwrap();
-        assert!(result.content_for_model.contains("--- stderr ---"));
-        assert!(result.content_for_model.contains("error"));
+
+        assert!(result.content_for_model.contains("\"success\": false"));
+        assert!(result.content_for_model.contains("\"exit_code\": 1"));
     }
 
     #[tokio::test]
@@ -258,27 +728,227 @@ mod tests {
     async fn test_shell_timeout() {
         let config = permissive_test_config();
         let tool = ShellTool::new(&config);
-        let ctx = ToolContext {
-            session_key: "s1".to_string(),
-            metadata: BTreeMap::new(),
-        };
 
         let result = tool
-            .execute(json!({"command": "sleep 2", "timeout": 1}), &ctx)
+            .execute(json!({"command": "sleep 2", "timeout_ms": 10}), &base_ctx())
             .await;
         assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("timed out after 10ms"));
     }
 
     #[tokio::test]
     async fn test_dangerous_command_blocked() {
         let config = test_config();
         let tool = ShellTool::new(&config);
+
+        let result = tool
+            .execute(json!({"command": "rm -rf /"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("security violation"));
+    }
+
+    #[tokio::test]
+    async fn test_mutating_command_requires_approval() {
+        let config = test_config();
+        let tool = ShellTool::new(&config);
+
+        let result = tool
+            .execute(json!({"command": "touch file.txt"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("approval required"));
+    }
+
+    #[tokio::test]
+    async fn test_escalated_requires_justification() {
+        let config = test_config();
+        let tool = ShellTool::new(&config);
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("shell.approved".to_string(), json!(true));
         let ctx = ToolContext {
             session_key: "s1".to_string(),
-            metadata: BTreeMap::new(),
+            metadata,
         };
 
-        let result = tool.execute(json!({"command": "rm -rf /"}), &ctx).await;
+        let result = tool
+            .execute(
+                json!({
+                    "command": "ls",
+                    "sandbox_permissions": "require_escalated"
+                }),
+                &ctx,
+            )
+            .await;
         assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("`justification` is required"));
+    }
+
+    #[tokio::test]
+    async fn test_escalated_with_prefix_rule_can_run_when_preapproved() {
+        let config = test_config();
+        let tool = ShellTool::new(&config);
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "shell.approved_prefixes".to_string(),
+            json!([["ls"], ["cargo", "test"]]),
+        );
+        let ctx = ToolContext {
+            session_key: "s1".to_string(),
+            metadata,
+        };
+
+        let result = tool
+            .execute(
+                json!({
+                    "command": "ls",
+                    "sandbox_permissions": "require_escalated",
+                    "justification": "need unrestricted env for parity",
+                    "prefix_rule": ["ls"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.content_for_model.contains("\"approved\": true"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_patch_is_intercepted() {
+        let config = permissive_test_config();
+        let tool = ShellTool::new(&config);
+
+        let result = tool
+            .execute(json!({"command": "apply_patch <<'PATCH'"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("dedicated patch tool"));
+    }
+
+    #[tokio::test]
+    async fn test_workdir_outside_workspace_requires_escalation() {
+        let config = permissive_test_config();
+        let tool = ShellTool::new(&config);
+
+        let base = std::env::temp_dir().join(format!(
+            "klaw-shell-workspace-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let outside = std::env::temp_dir();
+        fs::create_dir_all(&base).unwrap();
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "workspace".to_string(),
+            json!(base.to_string_lossy().to_string()),
+        );
+        let ctx = ToolContext {
+            session_key: "s1".to_string(),
+            metadata,
+        };
+
+        let result = tool
+            .execute(
+                json!({
+                    "command": "pwd",
+                    "workdir": outside.to_string_lossy().to_string()
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("outside workspace") || err.contains("require escalated approval"),
+            "unexpected error: {err}"
+        );
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn test_login_shell_can_be_disabled() {
+        let mut cfg = permissive_test_config();
+        cfg.tools.shell.allow_login_shell = false;
+        let tool = ShellTool::new(&cfg);
+
+        let result = tool
+            .execute(json!({"command": "echo hi", "login": true}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("login shell is disabled"));
+    }
+
+    #[tokio::test]
+    async fn test_timeout_is_clamped_by_config() {
+        let mut cfg = permissive_test_config();
+        cfg.tools.shell.max_timeout_ms = 100;
+        let tool = ShellTool::new(&cfg);
+
+        let result = tool
+            .execute(
+                json!({"command": "sleep 2", "timeout_ms": 10_000}),
+                &base_ctx(),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("timed out after 100ms"));
+    }
+
+    #[tokio::test]
+    async fn test_unknown_fields_rejected() {
+        let config = permissive_test_config();
+        let tool = ShellTool::new(&config);
+
+        let result = tool
+            .execute(json!({"command": "echo hi", "timeout": 1}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unknown field"));
+    }
+
+    #[tokio::test]
+    async fn test_output_truncation() {
+        let mut cfg = permissive_test_config();
+        cfg.tools.shell.max_output_bytes = 64;
+        let tool = ShellTool::new(&cfg);
+
+        let result = tool
+            .execute(
+                json!({"command": "printf '1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz'"}),
+                &base_ctx(),
+            )
+            .await
+            .unwrap();
+
+        assert!(result
+            .content_for_model
+            .contains("\"stdout_truncated\": true"));
     }
 }

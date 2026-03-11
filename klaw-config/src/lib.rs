@@ -162,14 +162,36 @@ fn default_memory_tool_use_vector() -> bool {
 pub struct ShellConfig {
     #[serde(default = "default_shell_blocked_patterns")]
     pub blocked_patterns: Vec<String>,
+    #[serde(default = "default_shell_safe_commands")]
+    pub safe_commands: Vec<String>,
+    #[serde(default = "default_shell_approval_policy")]
+    pub approval_policy: ShellApprovalPolicy,
+    #[serde(default = "default_shell_allow_login_shell")]
+    pub allow_login_shell: bool,
+    #[serde(default = "default_shell_max_timeout_ms")]
+    pub max_timeout_ms: u64,
+    #[serde(default = "default_shell_max_output_bytes")]
+    pub max_output_bytes: usize,
 }
 
 impl Default for ShellConfig {
     fn default() -> Self {
         Self {
             blocked_patterns: default_shell_blocked_patterns(),
+            safe_commands: default_shell_safe_commands(),
+            approval_policy: default_shell_approval_policy(),
+            allow_login_shell: default_shell_allow_login_shell(),
+            max_timeout_ms: default_shell_max_timeout_ms(),
+            max_output_bytes: default_shell_max_output_bytes(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellApprovalPolicy {
+    Never,
+    OnRequest,
 }
 
 fn default_shell_blocked_patterns() -> Vec<String> {
@@ -181,6 +203,53 @@ fn default_shell_blocked_patterns() -> Vec<String> {
         "shutdown".to_string(),
         "reboot".to_string(),
     ]
+}
+
+fn default_shell_safe_commands() -> Vec<String> {
+    vec![
+        "ls".to_string(),
+        "pwd".to_string(),
+        "cat".to_string(),
+        "echo".to_string(),
+        "head".to_string(),
+        "tail".to_string(),
+        "grep".to_string(),
+        "rg".to_string(),
+        "find".to_string(),
+        "wc".to_string(),
+        "sed".to_string(),
+        "awk".to_string(),
+        "sort".to_string(),
+        "uniq".to_string(),
+        "cut".to_string(),
+        "basename".to_string(),
+        "dirname".to_string(),
+        "date".to_string(),
+        "sleep".to_string(),
+        "printf".to_string(),
+        "which".to_string(),
+        "type".to_string(),
+        "printenv".to_string(),
+        "env".to_string(),
+        "ps".to_string(),
+        "whoami".to_string(),
+    ]
+}
+
+fn default_shell_approval_policy() -> ShellApprovalPolicy {
+    ShellApprovalPolicy::OnRequest
+}
+
+fn default_shell_allow_login_shell() -> bool {
+    true
+}
+
+fn default_shell_max_timeout_ms() -> u64 {
+    120_000
+}
+
+fn default_shell_max_output_bytes() -> usize {
+    128 * 1024
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -601,6 +670,21 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "tools.memory.vector_limit must be greater than 0".to_string(),
         ));
     }
+    if config.tools.shell.safe_commands.is_empty() {
+        return Err(ConfigError::InvalidConfig(
+            "tools.shell.safe_commands must contain at least one command".to_string(),
+        ));
+    }
+    if config.tools.shell.max_timeout_ms == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "tools.shell.max_timeout_ms must be greater than 0".to_string(),
+        ));
+    }
+    if config.tools.shell.max_output_bytes == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "tools.shell.max_output_bytes must be greater than 0".to_string(),
+        ));
+    }
 
     Ok(())
 }
@@ -644,6 +728,17 @@ mod tests {
             parsed.tools.shell.blocked_patterns,
             default_shell_blocked_patterns()
         );
+        assert_eq!(
+            parsed.tools.shell.safe_commands,
+            default_shell_safe_commands()
+        );
+        assert_eq!(
+            parsed.tools.shell.approval_policy,
+            ShellApprovalPolicy::OnRequest
+        );
+        assert!(parsed.tools.shell.allow_login_shell);
+        assert_eq!(parsed.tools.shell.max_timeout_ms, 120_000);
+        assert_eq!(parsed.tools.shell.max_output_bytes, 128 * 1024);
         assert!(parsed.tools.memory.enabled);
         assert_eq!(parsed.tools.memory.search_limit, 8);
         assert_eq!(parsed.tools.memory.fts_limit, 20);
@@ -700,6 +795,11 @@ env_key = "OPENAI_API_KEY"
 
 [tools.shell]
 blocked_patterns = ["sudo rm -rf /tmp/example"]
+safe_commands = ["ls", "cat"]
+approval_policy = "never"
+allow_login_shell = false
+max_timeout_ms = 30000
+max_output_bytes = 64000
 "#;
 
         let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
@@ -707,6 +807,17 @@ blocked_patterns = ["sudo rm -rf /tmp/example"]
             parsed.tools.shell.blocked_patterns,
             vec!["sudo rm -rf /tmp/example".to_string()]
         );
+        assert_eq!(
+            parsed.tools.shell.safe_commands,
+            vec!["ls".to_string(), "cat".to_string()]
+        );
+        assert_eq!(
+            parsed.tools.shell.approval_policy,
+            ShellApprovalPolicy::Never
+        );
+        assert!(!parsed.tools.shell.allow_login_shell);
+        assert_eq!(parsed.tools.shell.max_timeout_ms, 30_000);
+        assert_eq!(parsed.tools.shell.max_output_bytes, 64_000);
     }
 
     #[test]
@@ -836,6 +947,24 @@ provider = "missing"
         cfg3.tools.memory.vector_limit = 0;
         let err3 = validate(&cfg3).expect_err("should fail");
         assert!(format!("{err3}").contains("tools.memory.vector_limit"));
+    }
+
+    #[test]
+    fn validate_fails_when_shell_limits_are_invalid() {
+        let mut cfg = AppConfig::default();
+        cfg.tools.shell.safe_commands.clear();
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("tools.shell.safe_commands"));
+
+        let mut cfg2 = AppConfig::default();
+        cfg2.tools.shell.max_timeout_ms = 0;
+        let err2 = validate(&cfg2).expect_err("should fail");
+        assert!(format!("{err2}").contains("tools.shell.max_timeout_ms"));
+
+        let mut cfg3 = AppConfig::default();
+        cfg3.tools.shell.max_output_bytes = 0;
+        let err3 = validate(&cfg3).expect_err("should fail");
+        assert!(format!("{err3}").contains("tools.shell.max_output_bytes"));
     }
 
     #[test]

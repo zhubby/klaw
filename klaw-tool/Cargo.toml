@@ -17,3 +17,4 @@ klaw-llm = { workspace = true }
 klaw-memory = { workspace = true }
 reqwest.workspace = true
 ipnet = "2"
+tracing.workspace = true

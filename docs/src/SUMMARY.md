@@ -3,6 +3,7 @@
 - [Chapter 1](./chapter_1.md)
 - [Web Fetch Tool](./tools/web_fetch.md)
 - [Tools](./tools/web_search.md)
+- [Shell Tool](./tools/shell.md)
 - [Local Search Tool](./tools/local_search.md)
 - [Memory Tool](./tools/memory.md)
 - [Sub Agent Tool](./tools/sub_agent.md)
