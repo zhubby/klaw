@@ -2209,6 +2209,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "klaw-config",
+ "klaw-tool",
  "reqwest",
  "serde",
  "serde_json",

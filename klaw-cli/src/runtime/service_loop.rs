@@ -1,4 +1,4 @@
-use super::runtime::{drain_runtime_queue, RuntimeBundle};
+use super::{drain_runtime_queue, RuntimeBundle};
 use klaw_config::AppConfig;
 use klaw_core::InboundMessage;
 use klaw_cron::{CronWorker, CronWorkerConfig};

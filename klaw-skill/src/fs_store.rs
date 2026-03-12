@@ -44,6 +44,8 @@ pub struct RegistrySyncReport {
 struct InstalledSkillsManifest {
     #[serde(default)]
     managed: Vec<InstalledSkill>,
+    #[serde(default)]
+    registry_commits: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -269,9 +271,15 @@ where
         }
 
         let mut available_registries = BTreeSet::new();
+        let mut current_registry_commits = BTreeMap::new();
         while let Some(task_result) = join_set.join_next().await {
             match task_result {
                 Ok((registry_name, Ok(Ok(())))) => {
+                    if let Some(commit) =
+                        read_registry_head_commit(&registry_root.join(&registry_name)).await?
+                    {
+                        current_registry_commits.insert(registry_name.clone(), commit);
+                    }
                     info!(registry = %registry_name, "skill registry sync completed");
                     report.synced_registries.push(registry_name.clone());
                     available_registries.insert(registry_name);
@@ -291,6 +299,9 @@ where
                             source,
                         })?
                     {
+                        if let Some(commit) = read_registry_head_commit(&path).await? {
+                            current_registry_commits.insert(registry_name.clone(), commit);
+                        }
                         available_registries.insert(registry_name);
                     }
                 }
@@ -309,6 +320,9 @@ where
                             source,
                         })?
                     {
+                        if let Some(commit) = read_registry_head_commit(&path).await? {
+                            current_registry_commits.insert(registry_name.clone(), commit);
+                        }
                         available_registries.insert(registry_name);
                     }
                 }
@@ -318,9 +332,12 @@ where
             }
         }
 
+        let previous_registry_commits = current_manifest.registry_commits.clone();
         let mut previous_managed = BTreeSet::new();
-        for item in current_manifest.managed {
-            previous_managed.insert(item.name);
+        let mut previous_skill_registry = BTreeMap::new();
+        for item in &current_manifest.managed {
+            previous_skill_registry.insert(item.name.clone(), item.registry.clone());
+            previous_managed.insert(item.name.clone());
         }
 
         let mut desired = BTreeMap::new();
@@ -364,7 +381,15 @@ where
                     path: target_dir,
                 });
             }
-            if target_exists {
+
+            let current_commit = current_registry_commits.get(registry_name).cloned();
+            let previous_commit = previous_registry_commits.get(registry_name).cloned();
+            let previous_registry = previous_skill_registry.get(target_name).cloned();
+            let should_copy = !target_exists
+                || previous_registry.as_deref() != Some(registry_name.as_str())
+                || current_commit != previous_commit;
+
+            if should_copy && target_exists {
                 fs::remove_dir_all(&target_dir)
                     .await
                     .map_err(|source| SkillError::Io {
@@ -374,8 +399,10 @@ where
                     })?;
             }
 
-            copy_dir_recursive(&source_dir, &target_dir).await?;
-            report.installed_skills.push(target_name.clone());
+            if should_copy {
+                copy_dir_recursive(&source_dir, &target_dir).await?;
+                report.installed_skills.push(target_name.clone());
+            }
             next_manifest.managed.push(InstalledSkill {
                 registry: registry_name.clone(),
                 name: target_name.clone(),
@@ -412,6 +439,7 @@ where
                 .cmp(&b.name)
                 .then_with(|| a.registry.cmp(&b.registry))
         });
+        next_manifest.registry_commits = current_registry_commits;
         self.write_installed_manifest(&next_manifest).await?;
         report.synced_registries.sort();
         report.installed_skills.sort();
@@ -717,6 +745,26 @@ async fn sync_source_repository(
         .await?;
     }
     Ok(())
+}
+
+async fn read_registry_head_commit(repo_dir: &Path) -> Result<Option<String>, SkillError> {
+    let git_dir = repo_dir.join(".git");
+    let git_dir_exists = fs::try_exists(&git_dir)
+        .await
+        .map_err(|source| SkillError::Io {
+            op: "try_exists",
+            path: git_dir.clone(),
+            source,
+        })?;
+    if !git_dir_exists {
+        return Ok(None);
+    }
+    let commit = run_git_capture("rev-parse", Some(repo_dir), &["rev-parse", "HEAD"]).await?;
+    let commit = commit.trim().to_string();
+    if commit.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(commit))
 }
 
 async fn resolve_registry_skill_dir(

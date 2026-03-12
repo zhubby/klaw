@@ -76,7 +76,7 @@ fn parse_default_template_succeeds() {
         vec!["sub_agent".to_string()]
     );
     assert!(parsed.mcp.enabled);
-    assert_eq!(parsed.mcp.startup_timeout_seconds, 30);
+    assert_eq!(parsed.mcp.startup_timeout_seconds, 60);
     assert!(parsed.mcp.servers.is_empty());
     validate(&parsed).expect("default template should be valid");
 }

@@ -7,8 +7,8 @@ use tokio::io::AsyncBufReadExt;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::commands::runtime::{build_runtime_bundle, submit_and_get_output};
-use crate::commands::service_loop::{BackgroundServiceConfig, BackgroundServices};
+use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
+use crate::runtime::{build_runtime_bundle, submit_and_get_output};
 use klaw_config::AppConfig;
 
 #[derive(Debug, Args)]

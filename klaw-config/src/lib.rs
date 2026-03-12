@@ -87,7 +87,7 @@ fn default_mcp_enabled() -> bool {
 }
 
 fn default_mcp_startup_timeout_seconds() -> u64 {
-    30
+    60
 }
 
 fn default_mcp_server_enabled() -> bool {

@@ -1,4 +1,5 @@
-use async_trait::async_trait;
+pub mod service_loop;
+
 use klaw_agent::build_provider_from_config;
 use klaw_config::AppConfig;
 use klaw_core::{
@@ -7,15 +8,12 @@ use klaw_core::{
     InMemoryIdempotencyStore, InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy,
     RunLimits, SessionSchedulingPolicy, Subscription, TransportError,
 };
-use klaw_mcp::{
-    format_tool_result_for_model, McpClientHub, McpManager, McpRuntimeHandles, McpToolDescriptor,
-};
+use klaw_mcp::{McpClientHub, McpManager, McpProxyTool, McpRuntimeHandles, McpToolDescriptor};
 use klaw_skill::{open_default_skill_store, InstalledSkill, RegistrySource, SkillStore};
 use klaw_storage::{open_default_store, ChatRecord, DefaultSessionStore, SessionStorage};
 use klaw_tool::{
     CronManagerTool, FsTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
-    SubAgentTool, TerminalMultiplexerTool, Tool, ToolCategory, ToolContext, ToolError, ToolOutput,
-    ToolRegistry, WebFetchTool, WebSearchTool,
+    SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -45,47 +43,6 @@ pub struct RuntimeBundle {
 pub struct AssistantOutput {
     pub content: String,
     pub reasoning: Option<String>,
-}
-
-struct McpProxyTool {
-    descriptor: McpToolDescriptor,
-    hub: Arc<McpClientHub>,
-}
-
-#[async_trait]
-impl Tool for McpProxyTool {
-    fn name(&self) -> &str {
-        &self.descriptor.name
-    }
-
-    fn description(&self) -> &str {
-        &self.descriptor.description
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        self.descriptor.parameters.clone()
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::NetworkWrite
-    }
-
-    async fn execute(
-        &self,
-        args: serde_json::Value,
-        _ctx: &ToolContext,
-    ) -> Result<ToolOutput, ToolError> {
-        let result = self
-            .hub
-            .call_tool(&self.descriptor.server_id, &self.descriptor.tool_name, args)
-            .await
-            .map_err(|err| ToolError::ExecutionFailed(err.to_string()))?;
-        let content = format_tool_result_for_model(&result);
-        Ok(ToolOutput {
-            content_for_model: content.clone(),
-            content_for_user: Some(content),
-        })
-    }
 }
 
 pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn Error>> {
@@ -203,10 +160,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
                     continue;
                 }
                 for descriptor in descriptors {
-                    tools.register(McpProxyTool {
-                        descriptor,
-                        hub: Arc::clone(&hub),
-                    });
+                    tools.register(McpProxyTool::new(descriptor, Arc::clone(&hub)));
                 }
             }
             mcp_hub = Some(hub);

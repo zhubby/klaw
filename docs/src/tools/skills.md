@@ -68,6 +68,8 @@ installed = ["brainstorming"]
 3. 依据 `skills-registry-manifest.json` 做差异清理：
    - 只删除“manifest 中标记为受管”且本次不再安装的 skill；
    - 不删除用户手工放入 `~/.klaw/skills` 的未受管目录，避免冲突。
+4. 将每个 registry 的当前 `HEAD commit` 写入 manifest。
+   - 若某个 registry 的 commit 相比上次发生变化，则该 registry 下受管 skill 会重新拷贝。
 
 ## SkillStore 抽象
 
@@ -84,7 +86,7 @@ installed = ["brainstorming"]
 
 `FileSystemSkillStore` 还提供 registry 安装同步接口：
 
-- `sync_registry_installed_skills(sources, installed)`
+- `sync_registry_installed_skills(sources, installed, sync_timeout_secs)`
 
 其中：
 

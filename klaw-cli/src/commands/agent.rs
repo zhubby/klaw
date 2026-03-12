@@ -2,7 +2,7 @@ use clap::Args;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::commands::runtime::{build_runtime_bundle, submit_and_get_output};
+use crate::runtime::{build_runtime_bundle, submit_and_get_output};
 use klaw_config::AppConfig;
 
 #[derive(Debug, Args)]

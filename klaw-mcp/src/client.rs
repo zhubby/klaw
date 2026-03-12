@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use klaw_config::McpServerConfig;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use serde_json::{json, Value};
 use std::{
     process::Stdio,
@@ -229,6 +229,12 @@ impl SseMcpClient {
     pub(crate) fn new(server: &McpServerConfig) -> Result<Self, McpClientError> {
         let url = server.url.clone().unwrap_or_default();
         let mut headers = HeaderMap::new();
+        // Default SSE/JSON media-type negotiation for MCP servers (e.g. context7).
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/json, text/event-stream"),
+        );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         for (key, value) in &server.headers {
             let name = HeaderName::from_str(key)
                 .map_err(|err| McpClientError::Request(format!("invalid header name: {err}")))?;
@@ -368,4 +374,60 @@ fn parse_tools_list_result(result: &Value) -> Result<Vec<McpRemoteTool>, McpClie
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use klaw_config::{McpServerConfig, McpServerMode};
+    use std::collections::BTreeMap;
+
+    fn sse_server(headers: BTreeMap<String, String>) -> McpServerConfig {
+        McpServerConfig {
+            id: "test-sse".to_string(),
+            enabled: true,
+            mode: McpServerMode::Sse,
+            command: None,
+            args: vec![],
+            env: BTreeMap::new(),
+            cwd: None,
+            url: Some("https://example.com/sse".to_string()),
+            headers,
+        }
+    }
+
+    #[test]
+    fn sse_client_uses_default_headers_when_not_provided() {
+        let client = SseMcpClient::new(&sse_server(BTreeMap::new())).expect("should construct");
+        assert_eq!(
+            client.headers.get(ACCEPT).and_then(|h| h.to_str().ok()),
+            Some("application/json, text/event-stream")
+        );
+        assert_eq!(
+            client
+                .headers
+                .get(CONTENT_TYPE)
+                .and_then(|h| h.to_str().ok()),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn sse_client_allows_user_headers_to_override_defaults() {
+        let mut headers = BTreeMap::new();
+        headers.insert("Accept".to_string(), "application/json".to_string());
+        headers.insert("Content-Type".to_string(), "application/custom".to_string());
+        let client = SseMcpClient::new(&sse_server(headers)).expect("should construct");
+        assert_eq!(
+            client.headers.get(ACCEPT).and_then(|h| h.to_str().ok()),
+            Some("application/json")
+        );
+        assert_eq!(
+            client
+                .headers
+                .get(CONTENT_TYPE)
+                .and_then(|h| h.to_str().ok()),
+            Some("application/custom")
+        );
+    }
 }
