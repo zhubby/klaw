@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use klaw_agent::build_provider_from_config;
 use klaw_config::AppConfig;
 use klaw_core::{
@@ -6,14 +7,24 @@ use klaw_core::{
     InMemoryIdempotencyStore, InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy,
     RunLimits, SessionSchedulingPolicy, Subscription, TransportError,
 };
-use klaw_storage::{open_default_store, ChatRecord, DefaultSessionStore, SessionStorage};
-use klaw_skill::{open_default_skill_store, SkillStore};
-use klaw_tool::{
-    CronManagerTool, FsTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool, SubAgentTool,
-    TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
+use klaw_mcp::{
+    format_tool_result_for_model, McpClientHub, McpManager, McpRuntimeHandles, McpToolDescriptor,
 };
-use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
-use tracing::warn;
+use klaw_skill::{open_default_skill_store, InstalledSkill, RegistrySource, SkillStore};
+use klaw_storage::{open_default_store, ChatRecord, DefaultSessionStore, SessionStorage};
+use klaw_tool::{
+    CronManagerTool, FsTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
+    SubAgentTool, TerminalMultiplexerTool, Tool, ToolCategory, ToolContext, ToolError, ToolOutput,
+    ToolRegistry, WebFetchTool, WebSearchTool,
+};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    io,
+    sync::Arc,
+    time::Duration,
+};
+use tracing::{info, warn};
 
 pub struct RuntimeBundle {
     pub runtime: AgentLoop,
@@ -26,6 +37,8 @@ pub struct RuntimeBundle {
     pub circuit_breaker: InMemoryCircuitBreaker,
     pub subscription: Subscription,
     pub session_store: DefaultSessionStore,
+    pub _mcp_hub: Option<Arc<McpClientHub>>,
+    pub _mcp_runtime_handles: Option<McpRuntimeHandles>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,7 +47,52 @@ pub struct AssistantOutput {
     pub reasoning: Option<String>,
 }
 
+struct McpProxyTool {
+    descriptor: McpToolDescriptor,
+    hub: Arc<McpClientHub>,
+}
+
+#[async_trait]
+impl Tool for McpProxyTool {
+    fn name(&self) -> &str {
+        &self.descriptor.name
+    }
+
+    fn description(&self) -> &str {
+        &self.descriptor.description
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        self.descriptor.parameters.clone()
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::NetworkWrite
+    }
+
+    async fn execute(
+        &self,
+        args: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        let result = self
+            .hub
+            .call_tool(&self.descriptor.server_id, &self.descriptor.tool_name, args)
+            .await
+            .map_err(|err| ToolError::ExecutionFailed(err.to_string()))?;
+        let content = format_tool_result_for_model(&result);
+        Ok(ToolOutput {
+            content_for_model: content.clone(),
+            content_for_user: Some(content),
+        })
+    }
+}
+
 pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn Error>> {
+    info!(
+        provider = %config.model_provider,
+        "building runtime bundle"
+    );
     let provider_instance = build_provider_from_config(config, &config.model_provider)
         .map_err(|err| config_err(err.to_string()))?;
     let session_store = open_default_store().await?;
@@ -45,7 +103,19 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     tools.register(TerminalMultiplexerTool::new());
     tools.register(CronManagerTool::open_default().await?);
     if !config.skills.sources.is_empty() {
-        tools.register(SkillsRegistryTool::open_default(config)?);
+        info!(
+            sources = config.skills.sources.len(),
+            source_names = ?config.skills.sources.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+            "registering skills registry tool"
+        );
+        match SkillsRegistryTool::open_default(config) {
+            Ok(tool) => tools.register(tool),
+            Err(err) => {
+                warn!("skills registry tool disabled: {err}");
+            }
+        }
+    } else {
+        info!("skills registry tool disabled: no configured sources");
     }
     if config.tools.memory.enabled {
         tools.register(MemoryTool::open_default(config).await?);
@@ -56,12 +126,108 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     if config.tools.web_search.enabled {
         tools.register(WebSearchTool::new(config)?);
     }
+
+    let mut mcp_hub = None;
+    let mut mcp_runtime_handles = None;
+    let configured_mcp_servers = config
+        .mcp
+        .servers
+        .iter()
+        .filter(|server| server.enabled)
+        .count();
+    info!(
+        enabled = config.mcp.enabled,
+        configured_servers = configured_mcp_servers,
+        startup_timeout_seconds = config.mcp.startup_timeout_seconds,
+        "bootstrapping mcp servers"
+    );
+    let mut mcp_bootstrap = McpManager::bootstrap(&config.mcp).await;
+    if !mcp_bootstrap.failures.is_empty() {
+        for failure in &mcp_bootstrap.failures {
+            warn!(
+                server = %failure.server_id,
+                reason = %failure.reason,
+                "mcp server bootstrap failed, skipping"
+            );
+        }
+    }
+    if mcp_bootstrap.descriptors.is_empty() {
+        info!("mcp bootstrap completed with no discovered tools");
+    }
+    if !mcp_bootstrap.descriptors.is_empty() {
+        let mut blocked_servers = BTreeSet::new();
+        let mut existing_names: BTreeSet<String> = tools.list().into_iter().collect();
+        let mut by_server: BTreeMap<String, Vec<McpToolDescriptor>> = BTreeMap::new();
+        for descriptor in mcp_bootstrap.descriptors {
+            by_server
+                .entry(descriptor.server_id.clone())
+                .or_default()
+                .push(descriptor);
+        }
+
+        for (server_id, descriptors) in &by_server {
+            if descriptors
+                .iter()
+                .any(|descriptor| existing_names.contains(&descriptor.name))
+            {
+                blocked_servers.insert(server_id.clone());
+                warn!(
+                    server = %server_id,
+                    "mcp server skipped due to tool name conflict with existing registry"
+                );
+                continue;
+            }
+            for descriptor in descriptors {
+                existing_names.insert(descriptor.name.clone());
+            }
+        }
+
+        for server_id in &blocked_servers {
+            mcp_bootstrap.hub.remove(server_id);
+        }
+        mcp_bootstrap
+            .runtime_handles
+            .stdio_servers
+            .retain(|server_id| !blocked_servers.contains(server_id));
+
+        if !mcp_bootstrap.hub.server_ids().is_empty() {
+            let hub = Arc::new(mcp_bootstrap.hub.clone());
+            let active_servers = hub.server_ids();
+            let total_mcp_tools: usize = by_server
+                .iter()
+                .filter(|(server_id, _)| !blocked_servers.contains(*server_id))
+                .map(|(_, descriptors)| descriptors.len())
+                .sum();
+            for (server_id, descriptors) in by_server {
+                if blocked_servers.contains(&server_id) {
+                    continue;
+                }
+                for descriptor in descriptors {
+                    tools.register(McpProxyTool {
+                        descriptor,
+                        hub: Arc::clone(&hub),
+                    });
+                }
+            }
+            mcp_hub = Some(hub);
+            mcp_runtime_handles = Some(mcp_bootstrap.runtime_handles);
+            info!(
+                active_servers = ?active_servers,
+                server_count = active_servers.len(),
+                tool_count = total_mcp_tools,
+                "mcp tools registered"
+            );
+        } else {
+            info!("mcp bootstrap completed with no active servers");
+        }
+    }
+
     if config.tools.sub_agent.enabled {
         let parent_tools = tools.clone();
         tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
     }
 
-    let system_prompt = load_skills_system_prompt().await;
+    let system_prompt = load_skills_system_prompt(config).await;
 
     let runtime = AgentLoop::new_with_identity(
         RunLimits {
@@ -82,6 +248,11 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         tools,
     )
     .with_system_prompt(system_prompt);
+
+    info!(
+        tool_count = runtime.tools.list().len(),
+        "runtime bundle ready"
+    );
 
     Ok(RuntimeBundle {
         runtime,
@@ -111,10 +282,13 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
             visibility_timeout: Duration::from_secs(10),
         },
         session_store,
+        _mcp_hub: mcp_hub,
+        _mcp_runtime_handles: mcp_runtime_handles,
     })
 }
 
-async fn load_skills_system_prompt() -> Option<String> {
+async fn load_skills_system_prompt(config: &AppConfig) -> Option<String> {
+    info!("loading local skills for system prompt");
     let store = match open_default_skill_store() {
         Ok(store) => store,
         Err(err) => {
@@ -122,6 +296,41 @@ async fn load_skills_system_prompt() -> Option<String> {
             return None;
         }
     };
+
+    let sources: Vec<RegistrySource> = config
+        .skills
+        .sources
+        .iter()
+        .map(|source| RegistrySource {
+            name: source.name.clone(),
+            address: source.address.clone(),
+        })
+        .collect();
+    let installed: Vec<InstalledSkill> = config
+        .skills
+        .installed
+        .iter()
+        .map(|item| InstalledSkill {
+            registry: item.registry.clone(),
+            name: item.name.clone(),
+        })
+        .collect();
+    match store
+        .sync_registry_installed_skills(&sources, &installed)
+        .await
+    {
+        Ok(report) => {
+            info!(
+                synced_registries = ?report.synced_registries,
+                installed_skills = ?report.installed_skills,
+                removed_skills = ?report.removed_skills,
+                "registry skills sync completed"
+            );
+        }
+        Err(err) => {
+            warn!("failed to sync registry-installed skills: {err}");
+        }
+    }
 
     let skills = match store.load_all_skill_markdowns().await {
         Ok(items) => items,
@@ -132,8 +341,16 @@ async fn load_skills_system_prompt() -> Option<String> {
     };
 
     if skills.is_empty() {
+        info!("no local skills found for system prompt");
         return None;
     }
+
+    let skill_names: Vec<String> = skills.iter().map(|skill| skill.name.clone()).collect();
+    info!(
+        count = skill_names.len(),
+        names = ?skill_names,
+        "loaded local skills for system prompt"
+    );
 
     let mut prompt = String::from(
         "You must follow the following loaded skill instructions when they are relevant to the user's request.\n",

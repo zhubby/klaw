@@ -400,7 +400,7 @@ impl Tool for ShellTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        CronConfig, MemoryConfig, ModelProviderConfig, ShellApprovalPolicy, ShellConfig,
+        CronConfig, McpConfig, MemoryConfig, ModelProviderConfig, ShellApprovalPolicy, ShellConfig,
         SkillsConfig, ToolsConfig,
     };
     use serde_json::json;
@@ -423,6 +423,7 @@ mod tests {
             model_provider: "openai".to_string(),
             model_providers: providers,
             memory: MemoryConfig::default(),
+            mcp: McpConfig::default(),
             tools: ToolsConfig::default(),
             cron: CronConfig::default(),
             skills: SkillsConfig::default(),

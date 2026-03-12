@@ -13,6 +13,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub memory: MemoryConfig,
     #[serde(default)]
+    pub mcp: McpConfig,
+    #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
     pub cron: CronConfig,
@@ -29,11 +31,71 @@ impl Default for AppConfig {
             model_provider,
             model_providers,
             memory: MemoryConfig::default(),
+            mcp: McpConfig::default(),
             tools: ToolsConfig::default(),
             cron: CronConfig::default(),
             skills: SkillsConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    #[serde(default = "default_mcp_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_mcp_startup_timeout_seconds")]
+    pub startup_timeout_seconds: u64,
+    #[serde(default)]
+    pub servers: Vec<McpServerConfig>,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_mcp_enabled(),
+            startup_timeout_seconds: default_mcp_startup_timeout_seconds(),
+            servers: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpServerMode {
+    Stdio,
+    Sse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub id: String,
+    #[serde(default = "default_mcp_server_enabled")]
+    pub enabled: bool,
+    pub mode: McpServerMode,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+}
+
+fn default_mcp_enabled() -> bool {
+    true
+}
+
+fn default_mcp_startup_timeout_seconds() -> u64 {
+    30
+}
+
+fn default_mcp_server_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +184,8 @@ pub struct ToolsConfig {
 pub struct SkillsConfig {
     #[serde(default = "default_skill_sources")]
     pub sources: Vec<SkillSourceConfig>,
+    #[serde(default)]
+    pub installed: Vec<InstalledSkillConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,10 +194,17 @@ pub struct SkillSourceConfig {
     pub address: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstalledSkillConfig {
+    pub registry: String,
+    pub name: String,
+}
+
 impl Default for SkillsConfig {
     fn default() -> Self {
         Self {
             sources: default_skill_sources(),
+            installed: Vec::new(),
         }
     }
 }
@@ -541,6 +612,12 @@ pub struct LoadedConfig {
     pub created_default: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct MigratedConfig {
+    pub path: PathBuf,
+    pub created_file: bool,
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("cannot resolve home directory for default config path")]
@@ -549,7 +626,7 @@ pub enum ConfigError {
     ConfigNotFound(PathBuf),
     #[error("failed to create config directory: {0}")]
     CreateDir(#[source] std::io::Error),
-    #[error("failed to write default config file: {0}")]
+    #[error("failed to write config file: {0}")]
     WriteConfig(#[source] std::io::Error),
     #[error("failed to read config file {path}: {source}")]
     ReadConfig {
@@ -585,6 +662,26 @@ pub fn default_config_path() -> Result<PathBuf, ConfigError> {
 
 pub fn default_config_template() -> String {
     toml::to_string_pretty(&AppConfig::default()).expect("default app config should serialize")
+}
+
+pub fn migrate_with_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, ConfigError> {
+    let explicit = config_path.map(Path::to_path_buf);
+    let path = match explicit {
+        Some(path) => path,
+        None => default_config_path()?,
+    };
+
+    migrate_path_with_defaults(&path)
+}
+
+pub fn reset_to_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, ConfigError> {
+    let explicit = config_path.map(Path::to_path_buf);
+    let path = match explicit {
+        Some(path) => path,
+        None => default_config_path()?,
+    };
+
+    reset_path_to_defaults(&path)
 }
 
 fn load_from_path(path: &Path, create_if_missing: bool) -> Result<LoadedConfig, ConfigError> {
@@ -623,6 +720,77 @@ fn write_default_config(path: &Path) -> Result<(), ConfigError> {
     }
     fs::write(path, default_config_template()).map_err(ConfigError::WriteConfig)?;
     Ok(())
+}
+
+fn migrate_path_with_defaults(path: &Path) -> Result<MigratedConfig, ConfigError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(ConfigError::CreateDir)?;
+    }
+
+    let default_value = toml::Value::try_from(AppConfig::default())
+        .expect("default app config should convert to toml value");
+    let mut merged_value = default_value;
+    let created_file = !path.exists();
+
+    if !created_file {
+        let raw = fs::read_to_string(path).map_err(|source| ConfigError::ReadConfig {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let existing_value: toml::Value =
+            toml::from_str(&raw).map_err(|source| ConfigError::ParseConfig {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        merge_toml_values(&mut merged_value, existing_value);
+    }
+
+    let config: AppConfig =
+        merged_value
+            .clone()
+            .try_into()
+            .map_err(|source| ConfigError::ParseConfig {
+                path: path.to_path_buf(),
+                source,
+            })?;
+    validate(&config)?;
+
+    let rendered = toml::to_string_pretty(&merged_value).expect("merged config should serialize");
+    fs::write(path, rendered).map_err(ConfigError::WriteConfig)?;
+
+    Ok(MigratedConfig {
+        path: path.to_path_buf(),
+        created_file,
+    })
+}
+
+fn reset_path_to_defaults(path: &Path) -> Result<MigratedConfig, ConfigError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(ConfigError::CreateDir)?;
+    }
+    let created_file = !path.exists();
+    fs::write(path, default_config_template()).map_err(ConfigError::WriteConfig)?;
+    Ok(MigratedConfig {
+        path: path.to_path_buf(),
+        created_file,
+    })
+}
+
+fn merge_toml_values(base: &mut toml::Value, overlay: toml::Value) {
+    match (base, overlay) {
+        (toml::Value::Table(base_table), toml::Value::Table(overlay_table)) => {
+            for (key, overlay_value) in overlay_table {
+                if let Some(base_value) = base_table.get_mut(&key) {
+                    merge_toml_values(base_value, overlay_value);
+                } else {
+                    base_table.insert(key, overlay_value);
+                }
+            }
+        }
+        (base_value, overlay_value) => {
+            *base_value = overlay_value;
+        }
+    }
 }
 
 fn validate(config: &AppConfig) -> Result<(), ConfigError> {
@@ -685,6 +853,59 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         }
     }
 
+    if config.mcp.startup_timeout_seconds == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "mcp.startup_timeout_seconds must be greater than 0".to_string(),
+        ));
+    }
+    let mut mcp_ids = std::collections::BTreeSet::new();
+    for server in &config.mcp.servers {
+        if server.id.trim().is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "mcp.servers.id cannot be empty".to_string(),
+            ));
+        }
+        if !mcp_ids.insert(server.id.trim().to_string()) {
+            return Err(ConfigError::InvalidConfig(format!(
+                "mcp.servers contains duplicated id '{}'",
+                server.id
+            )));
+        }
+        match server.mode {
+            McpServerMode::Stdio => {
+                let command = server.command.as_deref().map(str::trim).unwrap_or_default();
+                if command.is_empty() {
+                    return Err(ConfigError::InvalidConfig(format!(
+                        "mcp.servers '{}' requires non-empty command when mode=stdio",
+                        server.id
+                    )));
+                }
+            }
+            McpServerMode::Sse => {
+                let url = server.url.as_deref().map(str::trim).unwrap_or_default();
+                if url.is_empty() {
+                    return Err(ConfigError::InvalidConfig(format!(
+                        "mcp.servers '{}' requires non-empty url when mode=sse",
+                        server.id
+                    )));
+                }
+                let parsed = url::Url::parse(url).map_err(|err| {
+                    ConfigError::InvalidConfig(format!(
+                        "mcp.servers '{}' has invalid url '{}': {}",
+                        server.id, url, err
+                    ))
+                })?;
+                let scheme = parsed.scheme();
+                if scheme != "http" && scheme != "https" {
+                    return Err(ConfigError::InvalidConfig(format!(
+                        "mcp.servers '{}' url scheme must be http or https",
+                        server.id
+                    )));
+                }
+            }
+        }
+    }
+
     if config.tools.web_search.enabled {
         if config.tools.web_search.provider.trim().is_empty() {
             return Err(ConfigError::InvalidConfig(
@@ -739,9 +960,12 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "tools.sub_agent.max_tool_calls must be greater than 0".to_string(),
         ));
     }
-    if config.skills.sources.iter().any(|source| {
-        source.name.trim().is_empty() || source.address.trim().is_empty()
-    }) {
+    if config
+        .skills
+        .sources
+        .iter()
+        .any(|source| source.name.trim().is_empty() || source.address.trim().is_empty())
+    {
         return Err(ConfigError::InvalidConfig(
             "skills.sources name/address cannot be empty".to_string(),
         ));
@@ -754,6 +978,36 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
                 return Err(ConfigError::InvalidConfig(format!(
                     "skills.sources contains duplicated name '{}'",
                     source.name
+                )));
+            }
+        }
+    }
+    {
+        let source_names: std::collections::BTreeSet<String> = config
+            .skills
+            .sources
+            .iter()
+            .map(|source| source.name.trim().to_string())
+            .collect();
+        let mut pairs = std::collections::BTreeSet::new();
+        for installed in &config.skills.installed {
+            let registry = installed.registry.trim();
+            let name = installed.name.trim();
+            if registry.is_empty() || name.is_empty() {
+                return Err(ConfigError::InvalidConfig(
+                    "skills.installed registry/name cannot be empty".to_string(),
+                ));
+            }
+            if !source_names.contains(registry) {
+                return Err(ConfigError::InvalidConfig(format!(
+                    "skills.installed references unknown registry '{}'",
+                    installed.registry
+                )));
+            }
+            if !pairs.insert((registry.to_string(), name.to_string())) {
+                return Err(ConfigError::InvalidConfig(format!(
+                    "skills.installed contains duplicated entry '{}/{}'",
+                    registry, name
                 )));
             }
         }
@@ -900,6 +1154,7 @@ mod tests {
                 .map(|source| source.address.as_str()),
             Some("https://github.com/anthropics/skills")
         );
+        assert!(parsed.skills.installed.is_empty());
         assert_eq!(parsed.cron.tick_ms, 1_000);
         assert_eq!(parsed.cron.runtime_tick_ms, 200);
         assert_eq!(parsed.cron.runtime_drain_batch, 8);
@@ -908,6 +1163,9 @@ mod tests {
             parsed.tools.sub_agent.exclude_tools,
             vec!["sub_agent".to_string()]
         );
+        assert!(parsed.mcp.enabled);
+        assert_eq!(parsed.mcp.startup_timeout_seconds, 30);
+        assert!(parsed.mcp.servers.is_empty());
         validate(&parsed).expect("default template should be valid");
     }
 
@@ -917,6 +1175,7 @@ mod tests {
             model_provider: "missing".to_string(),
             model_providers: BTreeMap::new(),
             memory: MemoryConfig::default(),
+            mcp: McpConfig::default(),
             tools: ToolsConfig::default(),
             cron: CronConfig::default(),
             skills: SkillsConfig::default(),
@@ -1027,6 +1286,58 @@ ssrf_allowlist = ["172.22.0.0/16"]
     }
 
     #[test]
+    fn parse_mcp_servers_succeeds() {
+        let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[mcp]
+enabled = true
+startup_timeout_seconds = 30
+
+[[mcp.servers]]
+id = "filesystem"
+enabled = true
+mode = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+cwd = "/tmp"
+
+[mcp.servers.env]
+NODE_ENV = "production"
+
+[[mcp.servers]]
+id = "remote"
+enabled = true
+mode = "sse"
+url = "https://mcp.example.com/sse"
+
+[mcp.servers.headers]
+Authorization = "Bearer test"
+"#;
+
+        let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+        assert!(parsed.mcp.enabled);
+        assert_eq!(parsed.mcp.startup_timeout_seconds, 30);
+        assert_eq!(parsed.mcp.servers.len(), 2);
+        assert_eq!(parsed.mcp.servers[0].mode, McpServerMode::Stdio);
+        assert_eq!(parsed.mcp.servers[0].command.as_deref(), Some("npx"),);
+        assert_eq!(
+            parsed.mcp.servers[1].url.as_deref(),
+            Some("https://mcp.example.com/sse")
+        );
+        assert_eq!(
+            parsed.mcp.servers[1].headers.get("Authorization"),
+            Some(&"Bearer test".to_string())
+        );
+    }
+
+    #[test]
     fn validate_fails_when_web_fetch_limits_are_invalid() {
         let mut cfg = AppConfig::default();
         cfg.tools.web_fetch.enabled = true;
@@ -1039,6 +1350,81 @@ ssrf_allowlist = ["172.22.0.0/16"]
         cfg2.tools.web_fetch.timeout_seconds = 0;
         let err2 = validate(&cfg2).expect_err("should fail");
         assert!(format!("{err2}").contains("tools.web_fetch.timeout_seconds"));
+    }
+
+    #[test]
+    fn validate_fails_when_mcp_timeout_is_zero() {
+        let mut cfg = AppConfig::default();
+        cfg.mcp.startup_timeout_seconds = 0;
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("mcp.startup_timeout_seconds"));
+    }
+
+    #[test]
+    fn validate_fails_when_mcp_server_ids_duplicate() {
+        let mut cfg = AppConfig::default();
+        cfg.mcp.servers = vec![
+            McpServerConfig {
+                id: "dup".to_string(),
+                enabled: true,
+                mode: McpServerMode::Stdio,
+                command: Some("echo".to_string()),
+                args: vec![],
+                env: BTreeMap::new(),
+                cwd: None,
+                url: None,
+                headers: BTreeMap::new(),
+            },
+            McpServerConfig {
+                id: "dup".to_string(),
+                enabled: true,
+                mode: McpServerMode::Sse,
+                command: None,
+                args: vec![],
+                env: BTreeMap::new(),
+                cwd: None,
+                url: Some("https://example.com/sse".to_string()),
+                headers: BTreeMap::new(),
+            },
+        ];
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("duplicated id"));
+    }
+
+    #[test]
+    fn validate_fails_when_stdio_server_command_missing() {
+        let mut cfg = AppConfig::default();
+        cfg.mcp.servers = vec![McpServerConfig {
+            id: "stdio".to_string(),
+            enabled: true,
+            mode: McpServerMode::Stdio,
+            command: Some("".to_string()),
+            args: vec![],
+            env: BTreeMap::new(),
+            cwd: None,
+            url: None,
+            headers: BTreeMap::new(),
+        }];
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("mode=stdio"));
+    }
+
+    #[test]
+    fn validate_fails_when_sse_server_url_invalid() {
+        let mut cfg = AppConfig::default();
+        cfg.mcp.servers = vec![McpServerConfig {
+            id: "sse".to_string(),
+            enabled: true,
+            mode: McpServerMode::Sse,
+            command: None,
+            args: vec![],
+            env: BTreeMap::new(),
+            cwd: None,
+            url: Some("ftp://example.com/sse".to_string()),
+            headers: BTreeMap::new(),
+        }];
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("http or https"));
     }
 
     #[test]
@@ -1091,6 +1477,26 @@ provider = "missing"
         });
         let err2 = validate(&cfg2).expect_err("should fail");
         assert!(format!("{err2}").contains("skills.sources"));
+
+        let mut cfg3 = AppConfig::default();
+        cfg3.skills.installed.push(InstalledSkillConfig {
+            registry: "missing".to_string(),
+            name: "code-review".to_string(),
+        });
+        let err3 = validate(&cfg3).expect_err("should fail");
+        assert!(format!("{err3}").contains("unknown registry"));
+
+        let mut cfg4 = AppConfig::default();
+        cfg4.skills.installed.push(InstalledSkillConfig {
+            registry: "anthropic".to_string(),
+            name: "code-review".to_string(),
+        });
+        cfg4.skills.installed.push(InstalledSkillConfig {
+            registry: "anthropic".to_string(),
+            name: "code-review".to_string(),
+        });
+        let err4 = validate(&cfg4).expect_err("should fail");
+        assert!(format!("{err4}").contains("duplicated entry"));
     }
 
     #[test]
@@ -1203,6 +1609,112 @@ provider = "missing"
 
         let loaded2 = load_from_path(&path, false).expect("should reload");
         assert!(!loaded2.created_default);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_path_with_defaults_creates_file_when_missing() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = env::temp_dir().join(format!("klaw-config-migrate-test-{suffix}"));
+        let path = root.join("config.toml");
+
+        let migrated = migrate_path_with_defaults(&path).expect("should create and migrate");
+        assert!(migrated.created_file);
+        assert!(path.exists());
+
+        let loaded = load_from_path(&path, false).expect("migrated file should load");
+        assert_eq!(loaded.config.model_provider, "openai");
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_path_with_defaults_merges_existing_and_preserves_unknown_keys() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = env::temp_dir().join(format!("klaw-config-migrate-test-{suffix}"));
+        let path = root.join("config.toml");
+
+        let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4.1-mini"
+env_key = "OPENAI_API_KEY"
+
+[tools.web_fetch]
+max_chars = 12000
+
+[custom]
+flag = true
+"#;
+        fs::create_dir_all(&root).expect("should create temp root");
+        fs::write(&path, raw).expect("should write source config");
+
+        let migrated =
+            migrate_path_with_defaults(&path).expect("should merge defaults with existing");
+        assert!(!migrated.created_file);
+
+        let loaded = load_from_path(&path, false).expect("migrated file should load");
+        assert_eq!(
+            loaded.config.model_providers["openai"].default_model,
+            "gpt-4.1-mini"
+        );
+        assert_eq!(loaded.config.tools.web_fetch.max_chars, 12000);
+        assert!(loaded.config.tools.memory.enabled);
+
+        let merged_raw = fs::read_to_string(&path).expect("should read migrated config");
+        let merged_value: toml::Value =
+            toml::from_str(&merged_raw).expect("migrated toml should parse");
+        assert_eq!(
+            merged_value["custom"]["flag"].as_bool(),
+            Some(true),
+            "unknown keys should be preserved"
+        );
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reset_path_to_defaults_overwrites_existing_config() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = env::temp_dir().join(format!("klaw-config-reset-test-{suffix}"));
+        let path = root.join("config.toml");
+
+        let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4.1-mini"
+env_key = "OPENAI_API_KEY"
+"#;
+        fs::create_dir_all(&root).expect("should create temp root");
+        fs::write(&path, raw).expect("should write source config");
+
+        let migrated = reset_path_to_defaults(&path).expect("should reset to defaults");
+        assert!(!migrated.created_file);
+
+        let loaded = load_from_path(&path, false).expect("reset file should load");
+        assert_eq!(
+            loaded.config.model_providers["openai"].default_model,
+            "gpt-4o-mini"
+        );
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir_all(&root);

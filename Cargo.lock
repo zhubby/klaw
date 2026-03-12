@@ -2128,15 +2128,18 @@ dependencies = [
 name = "klaw-cli"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "clap 4.5.60",
  "klaw-agent",
  "klaw-config",
  "klaw-core",
  "klaw-cron",
  "klaw-llm",
+ "klaw-mcp",
  "klaw-skill",
  "klaw-storage",
  "klaw-tool",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2149,6 +2152,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "toml",
+ "url",
 ]
 
 [[package]]
@@ -2201,6 +2205,16 @@ dependencies = [
 [[package]]
 name = "klaw-mcp"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "klaw-config",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "klaw-memory"
@@ -2224,6 +2238,7 @@ dependencies = [
  "async-trait",
  "reqwest",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
 ]

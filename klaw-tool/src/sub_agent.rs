@@ -259,9 +259,8 @@ impl Tool for SubAgentTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        CronConfig, MemoryConfig, MemoryToolConfig, ModelProviderConfig, ShellConfig, SkillsConfig,
-        ToolsConfig,
-        WebFetchConfig, WebSearchConfig,
+        CronConfig, McpConfig, MemoryConfig, MemoryToolConfig, ModelProviderConfig, ShellConfig,
+        SkillsConfig, ToolsConfig, WebFetchConfig, WebSearchConfig,
     };
 
     fn test_config() -> Arc<AppConfig> {
@@ -281,6 +280,7 @@ mod tests {
             model_provider: "openai".to_string(),
             model_providers: providers,
             memory: MemoryConfig::default(),
+            mcp: McpConfig::default(),
             tools: ToolsConfig {
                 shell: ShellConfig::default(),
                 memory: MemoryToolConfig::default(),

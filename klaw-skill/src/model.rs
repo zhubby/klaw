@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillSource {
-    GitHubAnthropic { skill_name: String },
+    GitHubAnthropic {
+        skill_name: String,
+    },
     Configured {
         source_name: String,
         skill_name: String,

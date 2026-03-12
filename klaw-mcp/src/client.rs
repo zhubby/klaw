@@ -1,0 +1,371 @@
+use async_trait::async_trait;
+use klaw_config::McpServerConfig;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use serde_json::{json, Value};
+use std::{
+    process::Stdio,
+    str::FromStr,
+    sync::atomic::{AtomicU64, Ordering},
+};
+use thiserror::Error;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    process::{Child, ChildStdin, ChildStdout, Command},
+    sync::Mutex,
+};
+
+#[derive(Debug, Clone)]
+pub(crate) struct McpRemoteTool {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) parameters: Value,
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum McpClientError {
+    #[error("io: {0}")]
+    Io(String),
+    #[error("protocol: {0}")]
+    Protocol(String),
+    #[error("request: {0}")]
+    Request(String),
+}
+
+impl From<std::io::Error> for McpClientError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value.to_string())
+    }
+}
+
+#[async_trait]
+pub(crate) trait McpClient: Send + Sync {
+    async fn initialize(&self) -> Result<(), McpClientError>;
+    async fn list_tools(&self) -> Result<Vec<McpRemoteTool>, McpClientError>;
+    async fn call_tool(&self, tool_name: &str, arguments: Value) -> Result<Value, McpClientError>;
+}
+
+#[derive(Debug)]
+struct StdioIo {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+pub(crate) struct StdioMcpClient {
+    io: Mutex<StdioIo>,
+    next_id: AtomicU64,
+}
+
+impl StdioMcpClient {
+    pub(crate) async fn new(server: &McpServerConfig) -> Result<Self, McpClientError> {
+        let command = server.command.clone().unwrap_or_default();
+        let mut cmd = Command::new(command.trim());
+        cmd.args(server.args.clone());
+        if let Some(cwd) = &server.cwd {
+            cmd.current_dir(cwd);
+        }
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        for (key, value) in &server.env {
+            cmd.env(key, value);
+        }
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|err| McpClientError::Request(format!("spawn failed: {err}")))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| McpClientError::Request("missing child stdin".to_string()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| McpClientError::Request("missing child stdout".to_string()))?;
+
+        Ok(Self {
+            io: Mutex::new(StdioIo {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+            }),
+            next_id: AtomicU64::new(1),
+        })
+    }
+
+    async fn rpc_request(&self, method: &str, params: Value) -> Result<Value, McpClientError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+
+        let mut io = self.io.lock().await;
+        let _ = io.child.id();
+        write_stdio_frame(&mut io.stdin, &payload).await?;
+        io.stdin.flush().await?;
+        loop {
+            let response = read_stdio_frame(&mut io.stdout).await?;
+            let value: Value = serde_json::from_slice(&response)
+                .map_err(|err| McpClientError::Protocol(err.to_string()))?;
+            if value.get("id").and_then(Value::as_u64) != Some(id) {
+                continue;
+            }
+            if let Some(err) = value.get("error") {
+                return Err(McpClientError::Request(err.to_string()));
+            }
+            return Ok(value
+                .get("result")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Default::default())));
+        }
+    }
+
+    async fn rpc_notify(&self, method: &str, params: Value) -> Result<(), McpClientError> {
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        let mut io = self.io.lock().await;
+        let _ = io.child.id();
+        write_stdio_frame(&mut io.stdin, &payload).await?;
+        io.stdin.flush().await?;
+        Ok(())
+    }
+}
+
+async fn write_stdio_frame(stdin: &mut ChildStdin, payload: &Value) -> Result<(), McpClientError> {
+    let bytes =
+        serde_json::to_vec(payload).map_err(|err| McpClientError::Protocol(err.to_string()))?;
+    let header = format!("Content-Length: {}\r\n\r\n", bytes.len());
+    stdin.write_all(header.as_bytes()).await?;
+    stdin.write_all(&bytes).await?;
+    Ok(())
+}
+
+async fn read_stdio_frame(stdout: &mut BufReader<ChildStdout>) -> Result<Vec<u8>, McpClientError> {
+    let mut content_length = None;
+    loop {
+        let mut line = String::new();
+        let n = stdout.read_line(&mut line).await?;
+        if n == 0 {
+            return Err(McpClientError::Protocol(
+                "unexpected EOF while reading MCP headers".to_string(),
+            ));
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break;
+        }
+        let (name, value) = trimmed
+            .split_once(':')
+            .ok_or_else(|| McpClientError::Protocol("invalid MCP header".to_string()))?;
+        if name.eq_ignore_ascii_case("content-length") {
+            let parsed = value
+                .trim()
+                .parse::<usize>()
+                .map_err(|err| McpClientError::Protocol(err.to_string()))?;
+            content_length = Some(parsed);
+        }
+    }
+
+    let len = content_length
+        .ok_or_else(|| McpClientError::Protocol("missing Content-Length header".to_string()))?;
+    let mut body = vec![0u8; len];
+    stdout.read_exact(&mut body).await?;
+    Ok(body)
+}
+
+#[async_trait]
+impl McpClient for StdioMcpClient {
+    async fn initialize(&self) -> Result<(), McpClientError> {
+        let _ = self
+            .rpc_request(
+                "initialize",
+                json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "klaw",
+                        "version": "0.1.0"
+                    }
+                }),
+            )
+            .await?;
+        let _ = self
+            .rpc_notify("notifications/initialized", json!({}))
+            .await;
+        Ok(())
+    }
+
+    async fn list_tools(&self) -> Result<Vec<McpRemoteTool>, McpClientError> {
+        let result = self.rpc_request("tools/list", json!({})).await?;
+        parse_tools_list_result(&result)
+    }
+
+    async fn call_tool(&self, tool_name: &str, arguments: Value) -> Result<Value, McpClientError> {
+        self.rpc_request(
+            "tools/call",
+            json!({
+                "name": tool_name,
+                "arguments": arguments
+            }),
+        )
+        .await
+    }
+}
+
+pub(crate) struct SseMcpClient {
+    client: reqwest::Client,
+    url: String,
+    headers: HeaderMap,
+    next_id: AtomicU64,
+}
+
+impl SseMcpClient {
+    pub(crate) fn new(server: &McpServerConfig) -> Result<Self, McpClientError> {
+        let url = server.url.clone().unwrap_or_default();
+        let mut headers = HeaderMap::new();
+        for (key, value) in &server.headers {
+            let name = HeaderName::from_str(key)
+                .map_err(|err| McpClientError::Request(format!("invalid header name: {err}")))?;
+            let value = HeaderValue::from_str(value).map_err(|err| {
+                McpClientError::Request(format!("invalid header value for {key}: {err}"))
+            })?;
+            headers.insert(name, value);
+        }
+        Ok(Self {
+            client: reqwest::Client::new(),
+            url,
+            headers,
+            next_id: AtomicU64::new(1),
+        })
+    }
+
+    async fn rpc_request(&self, method: &str, params: Value) -> Result<Value, McpClientError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params
+        });
+        let response = self
+            .client
+            .post(&self.url)
+            .headers(self.headers.clone())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| McpClientError::Request(err.to_string()))?;
+        let status = response.status();
+        let value: Value = response
+            .json()
+            .await
+            .map_err(|err| McpClientError::Protocol(err.to_string()))?;
+        if !status.is_success() {
+            return Err(McpClientError::Request(format!(
+                "http status {}: {}",
+                status, value
+            )));
+        }
+        if let Some(err) = value.get("error") {
+            return Err(McpClientError::Request(err.to_string()));
+        }
+        Ok(value
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default())))
+    }
+
+    async fn rpc_notify(&self, method: &str, params: Value) -> Result<(), McpClientError> {
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params
+        });
+        self.client
+            .post(&self.url)
+            .headers(self.headers.clone())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| McpClientError::Request(err.to_string()))?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl McpClient for SseMcpClient {
+    async fn initialize(&self) -> Result<(), McpClientError> {
+        let _ = self
+            .rpc_request(
+                "initialize",
+                json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "klaw",
+                        "version": "0.1.0"
+                    }
+                }),
+            )
+            .await?;
+        let _ = self
+            .rpc_notify("notifications/initialized", json!({}))
+            .await;
+        Ok(())
+    }
+
+    async fn list_tools(&self) -> Result<Vec<McpRemoteTool>, McpClientError> {
+        let result = self.rpc_request("tools/list", json!({})).await?;
+        parse_tools_list_result(&result)
+    }
+
+    async fn call_tool(&self, tool_name: &str, arguments: Value) -> Result<Value, McpClientError> {
+        self.rpc_request(
+            "tools/call",
+            json!({
+                "name": tool_name,
+                "arguments": arguments
+            }),
+        )
+        .await
+    }
+}
+
+fn parse_tools_list_result(result: &Value) -> Result<Vec<McpRemoteTool>, McpClientError> {
+    let tools = result
+        .get("tools")
+        .and_then(Value::as_array)
+        .ok_or_else(|| McpClientError::Protocol("tools/list result missing `tools`".to_string()))?;
+
+    let mut out = Vec::new();
+    for item in tools {
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| McpClientError::Protocol("tool entry missing `name`".to_string()))?;
+        let description = item
+            .get("description")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("MCP tool `{name}`"));
+        let parameters = item
+            .get("inputSchema")
+            .cloned()
+            .or_else(|| item.get("parameters").cloned())
+            .unwrap_or_else(|| json!({"type":"object"}));
+        out.push(McpRemoteTool {
+            name: name.to_string(),
+            description,
+            parameters,
+        });
+    }
+    Ok(out)
+}

@@ -24,4 +24,28 @@ pub enum SkillError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to parse json at `{path}`: {source}")]
+    JsonParse {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("git command failed ({context}): `{command}`: {stderr}")]
+    GitCommand {
+        context: &'static str,
+        command: String,
+        stderr: String,
+    },
+    #[error(
+        "skill `{skill_name}` from registry `{registry}` not found at `{path}`; expected skills/<name>/SKILL.md"
+    )]
+    RegistrySkillNotFound {
+        registry: String,
+        skill_name: String,
+        path: PathBuf,
+    },
+    #[error(
+        "cannot install managed skill `{skill_name}` because `{path}` already exists and is not managed by registry"
+    )]
+    LocalSkillConflict { skill_name: String, path: PathBuf },
 }

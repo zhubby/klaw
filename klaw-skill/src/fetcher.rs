@@ -24,15 +24,15 @@ impl Default for ReqwestSkillFetcher {
 impl SkillFetcher for ReqwestSkillFetcher {
     async fn fetch_markdown(&self, source: &SkillSource) -> Result<String, SkillError> {
         let url = source.remote_markdown_url();
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|source| SkillError::Network {
-                url: url.clone(),
-                source,
-            })?;
+        let response =
+            self.client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|source| SkillError::Network {
+                    url: url.clone(),
+                    source,
+                })?;
 
         let status = response.status();
         if status == reqwest::StatusCode::NOT_FOUND {
@@ -45,12 +45,9 @@ impl SkillFetcher for ReqwestSkillFetcher {
             });
         }
 
-        response
-            .text()
-            .await
-            .map_err(|source| SkillError::Network {
-                url: url.clone(),
-                source,
-            })
+        response.text().await.map_err(|source| SkillError::Network {
+            url: url.clone(),
+            source,
+        })
     }
 }

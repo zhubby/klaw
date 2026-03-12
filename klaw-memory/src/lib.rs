@@ -816,6 +816,7 @@ mod tests {
                     model: "text-embedding-3-small".to_string(),
                 },
             },
+            mcp: klaw_config::McpConfig::default(),
             tools: klaw_config::ToolsConfig::default(),
             cron: klaw_config::CronConfig::default(),
             skills: klaw_config::SkillsConfig::default(),

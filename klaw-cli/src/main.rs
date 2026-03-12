@@ -1,7 +1,9 @@
 mod commands;
 
 use clap::{Parser, Subcommand};
-use commands::{agent::AgentCommand, session::SessionCommand, stdio::StdioCommand};
+use commands::{
+    agent::AgentCommand, config::ConfigCommand, session::SessionCommand, stdio::StdioCommand,
+};
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -19,6 +21,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Manage config files.
+    Config(ConfigCommand),
     /// Start local stdin/stdout interactive agent loop.
     Stdio(StdioCommand),
     /// Execute one request and print one response.
@@ -37,8 +41,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compact()
         .init();
 
-    let cli = Cli::parse();
-    let loaded = klaw_config::load_or_init(cli.config.as_deref())?;
+    let Cli { config, command } = Cli::parse();
+    let command = match command {
+        Commands::Config(cmd) => {
+            cmd.run(config.as_deref())?;
+            return Ok(());
+        }
+        other => other,
+    };
+
+    let loaded = klaw_config::load_or_init(config.as_deref())?;
     if loaded.created_default {
         info!(
             config_path = %loaded.path.display(),
@@ -47,10 +59,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let app_config = Arc::new(loaded.config);
 
-    match cli.command {
+    match command {
         Commands::Stdio(cmd) => cmd.run(Arc::clone(&app_config)).await?,
         Commands::Agent(cmd) => cmd.run(app_config).await?,
         Commands::Session(cmd) => cmd.run().await?,
+        Commands::Config(_) => unreachable!("handled above"),
     }
 
     Ok(())

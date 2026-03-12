@@ -38,10 +38,7 @@ impl SkillsRegistryTool {
                     .to_string(),
             ));
         }
-        Ok(Self {
-            store,
-            sources,
-        })
+        Ok(Self { store, sources })
     }
 
     fn require_action(args: &Value) -> Result<&str, ToolError> {
@@ -78,7 +75,10 @@ impl SkillsRegistryTool {
         })
     }
 
-    fn resolve_source_optional<'a>(&'a self, args: &'a Value) -> Result<Option<&'a SkillSourceDef>, ToolError> {
+    fn resolve_source_optional<'a>(
+        &'a self,
+        args: &'a Value,
+    ) -> Result<Option<&'a SkillSourceDef>, ToolError> {
         let source_name = args
             .get("source")
             .and_then(Value::as_str)
@@ -113,10 +113,7 @@ impl SkillsRegistryTool {
 
     async fn do_delete(&self, args: &Value) -> Result<Value, ToolError> {
         let skill_name = Self::require_skill_name(args)?;
-        self.store
-            .delete(skill_name)
-            .await
-            .map_err(map_skill_err)?;
+        self.store.delete(skill_name).await.map_err(map_skill_err)?;
         Ok(json!({
             "action": "delete",
             "skill_name": skill_name,
