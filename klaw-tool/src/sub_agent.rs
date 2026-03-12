@@ -259,7 +259,8 @@ impl Tool for SubAgentTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        CronConfig, MemoryConfig, MemoryToolConfig, ModelProviderConfig, ShellConfig, ToolsConfig,
+        CronConfig, MemoryConfig, MemoryToolConfig, ModelProviderConfig, ShellConfig, SkillsConfig,
+        ToolsConfig,
         WebFetchConfig, WebSearchConfig,
     };
 
@@ -294,6 +295,7 @@ mod tests {
                 },
             },
             cron: CronConfig::default(),
+            skills: SkillsConfig::default(),
         })
     }
 

@@ -7,9 +7,10 @@ use klaw_core::{
     RunLimits, SessionSchedulingPolicy, Subscription, TransportError,
 };
 use klaw_storage::{open_default_store, ChatRecord, DefaultSessionStore, SessionStorage};
+use klaw_skill::{open_default_skill_store, SkillStore};
 use klaw_tool::{
-    FsTool, LocalSearchTool, MemoryTool, ShellTool, SubAgentTool, TerminalMultiplexerTool,
-    ToolRegistry, WebFetchTool, WebSearchTool,
+    CronManagerTool, FsTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool, SubAgentTool,
+    TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
 use tracing::warn;
@@ -42,6 +43,10 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     tools.register(ShellTool::new(config));
     tools.register(LocalSearchTool::new());
     tools.register(TerminalMultiplexerTool::new());
+    tools.register(CronManagerTool::open_default().await?);
+    if !config.skills.sources.is_empty() {
+        tools.register(SkillsRegistryTool::open_default(config)?);
+    }
     if config.tools.memory.enabled {
         tools.register(MemoryTool::open_default(config).await?);
     }
@@ -55,6 +60,8 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         let parent_tools = tools.clone();
         tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
     }
+
+    let system_prompt = load_skills_system_prompt().await;
 
     let runtime = AgentLoop::new_with_identity(
         RunLimits {
@@ -73,7 +80,8 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         config.model_provider.clone(),
         provider_instance.default_model.clone(),
         tools,
-    );
+    )
+    .with_system_prompt(system_prompt);
 
     Ok(RuntimeBundle {
         runtime,
@@ -104,6 +112,43 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         },
         session_store,
     })
+}
+
+async fn load_skills_system_prompt() -> Option<String> {
+    let store = match open_default_skill_store() {
+        Ok(store) => store,
+        Err(err) => {
+            warn!("failed to open default skill store: {err}");
+            return None;
+        }
+    };
+
+    let skills = match store.load_all_skill_markdowns().await {
+        Ok(items) => items,
+        Err(err) => {
+            warn!("failed to load local skills: {err}");
+            return None;
+        }
+    };
+
+    if skills.is_empty() {
+        return None;
+    }
+
+    let mut prompt = String::from(
+        "You must follow the following loaded skill instructions when they are relevant to the user's request.\n",
+    );
+    for skill in skills {
+        prompt.push_str("\n---\n");
+        prompt.push_str("Skill: ");
+        prompt.push_str(&skill.name);
+        prompt.push('\n');
+        prompt.push_str(&skill.content);
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+    }
+    Some(prompt)
 }
 
 pub async fn submit_and_get_output(

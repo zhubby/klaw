@@ -10,6 +10,8 @@ use std::env;
 use std::sync::Arc;
 use thiserror::Error;
 
+const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
+
 #[derive(Debug, Clone, Copy)]
 pub struct AgentExecutionLimits {
     pub max_tool_iterations: u32,
@@ -108,12 +110,21 @@ pub async fn run_agent_execution(
     limits: AgentExecutionLimits,
 ) -> Result<AgentExecutionOutput, AgentExecutionError> {
     let tool_defs = tools.definitions();
-    let mut llm_messages = vec![LlmMessage {
+    let mut llm_messages = Vec::new();
+    if let Some(system_prompt) = extract_system_prompt(&input.tool_metadata) {
+        llm_messages.push(LlmMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
+    llm_messages.push(LlmMessage {
         role: "user".to_string(),
         content: input.user_content,
         tool_calls: None,
         tool_call_id: None,
-    }];
+    });
     let mut tool_calls_used = 0u32;
 
     for _ in 0..limits.max_tool_iterations.max(1) {
@@ -156,6 +167,15 @@ pub async fn run_agent_execution(
     }
 
     Err(AgentExecutionError::ToolLoopExhausted)
+}
+
+fn extract_system_prompt(metadata: &BTreeMap<String, Value>) -> Option<String> {
+    metadata
+        .get(META_SYSTEM_PROMPT_KEY)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 async fn apply_tool_calls(
@@ -301,5 +321,74 @@ mod tests {
 
         assert_eq!(output.content, "done");
         assert_eq!(output.reasoning.as_deref(), Some("inner chain"));
+    }
+
+    #[derive(Default)]
+    struct CaptureFirstMessageProvider {
+        first_message_role: Arc<Mutex<Option<String>>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for CaptureFirstMessageProvider {
+        fn name(&self) -> &str {
+            "capture"
+        }
+
+        fn default_model(&self) -> &str {
+            "capture-v1"
+        }
+
+        async fn chat(
+            &self,
+            messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            let first_role = messages.first().map(|m| m.role.clone());
+            *self
+                .first_message_role
+                .lock()
+                .expect("mutex poisoned for first role") = first_role;
+            Ok(LlmResponse {
+                content: "ok".to_string(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_includes_system_prompt_from_metadata() {
+        let provider = CaptureFirstMessageProvider::default();
+        let tools = MockToolExecutor;
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            META_SYSTEM_PROMPT_KEY.to_string(),
+            Value::String("skill context".to_string()),
+        );
+        let _ = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "hello".to_string(),
+                session_key: "s1".to_string(),
+                tool_metadata: metadata,
+                model: None,
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 2,
+                max_tool_calls: 2,
+            },
+        )
+        .await
+        .expect("agent execution should succeed");
+
+        let first_role = provider
+            .first_message_role
+            .lock()
+            .expect("mutex poisoned for assert")
+            .clone();
+        assert_eq!(first_role.as_deref(), Some("system"));
     }
 }

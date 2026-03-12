@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub cron: CronConfig,
+    #[serde(default)]
+    pub skills: SkillsConfig,
 }
 
 impl Default for AppConfig {
@@ -29,6 +31,7 @@ impl Default for AppConfig {
             memory: MemoryConfig::default(),
             tools: ToolsConfig::default(),
             cron: CronConfig::default(),
+            skills: SkillsConfig::default(),
         }
     }
 }
@@ -113,6 +116,33 @@ pub struct ToolsConfig {
     pub web_search: WebSearchConfig,
     #[serde(default)]
     pub sub_agent: SubAgentConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsConfig {
+    #[serde(default = "default_skill_sources")]
+    pub sources: Vec<SkillSourceConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSourceConfig {
+    pub name: String,
+    pub address: String,
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            sources: default_skill_sources(),
+        }
+    }
+}
+
+fn default_skill_sources() -> Vec<SkillSourceConfig> {
+    vec![SkillSourceConfig {
+        name: "anthropic".to_string(),
+        address: "https://github.com/anthropics/skills".to_string(),
+    }]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -709,6 +739,25 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "tools.sub_agent.max_tool_calls must be greater than 0".to_string(),
         ));
     }
+    if config.skills.sources.iter().any(|source| {
+        source.name.trim().is_empty() || source.address.trim().is_empty()
+    }) {
+        return Err(ConfigError::InvalidConfig(
+            "skills.sources name/address cannot be empty".to_string(),
+        ));
+    }
+    {
+        let mut names = std::collections::BTreeSet::new();
+        for source in &config.skills.sources {
+            let inserted = names.insert(source.name.trim().to_string());
+            if !inserted {
+                return Err(ConfigError::InvalidConfig(format!(
+                    "skills.sources contains duplicated name '{}'",
+                    source.name
+                )));
+            }
+        }
+    }
     if config.cron.tick_ms == 0 {
         return Err(ConfigError::InvalidConfig(
             "cron.tick_ms must be greater than 0".to_string(),
@@ -841,6 +890,16 @@ mod tests {
         assert!(parsed.tools.sub_agent.enabled);
         assert_eq!(parsed.tools.sub_agent.max_iterations, 6);
         assert_eq!(parsed.tools.sub_agent.max_tool_calls, 12);
+        assert!(!parsed.skills.sources.is_empty());
+        assert_eq!(
+            parsed
+                .skills
+                .sources
+                .iter()
+                .find(|source| source.name == "anthropic")
+                .map(|source| source.address.as_str()),
+            Some("https://github.com/anthropics/skills")
+        );
         assert_eq!(parsed.cron.tick_ms, 1_000);
         assert_eq!(parsed.cron.runtime_tick_ms, 200);
         assert_eq!(parsed.cron.runtime_drain_batch, 8);
@@ -860,6 +919,7 @@ mod tests {
             memory: MemoryConfig::default(),
             tools: ToolsConfig::default(),
             cron: CronConfig::default(),
+            skills: SkillsConfig::default(),
         };
         let err = validate(&cfg).expect_err("should fail");
         assert!(format!("{err}").contains("not found in model_providers"));
@@ -1012,6 +1072,25 @@ provider = "missing"
         cfg2.tools.sub_agent.max_tool_calls = 0;
         let err2 = validate(&cfg2).expect_err("should fail");
         assert!(format!("{err2}").contains("max_tool_calls"));
+    }
+
+    #[test]
+    fn validate_fails_when_skills_config_invalid() {
+        let mut cfg = AppConfig::default();
+        cfg.skills.sources.push(SkillSourceConfig {
+            name: String::new(),
+            address: "https://github.com/anthropics/skills".to_string(),
+        });
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("skills.sources"));
+
+        let mut cfg2 = AppConfig::default();
+        cfg2.skills.sources.push(SkillSourceConfig {
+            name: "empty-address".to_string(),
+            address: String::new(),
+        });
+        let err2 = validate(&cfg2).expect_err("should fail");
+        assert!(format!("{err2}").contains("skills.sources"));
     }
 
     #[test]

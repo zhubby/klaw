@@ -15,6 +15,12 @@ klaw-config = { workspace = true }
 klaw-agent = { workspace = true }
 klaw-llm = { workspace = true }
 klaw-memory = { workspace = true }
+klaw-storage = { workspace = true }
+klaw-skill = { workspace = true }
+uuid = { workspace = true }
+cron = "0.15"
+humantime = "2"
+chrono = "0.4"
 reqwest.workspace = true
 ipnet = "2"
 tracing.workspace = true

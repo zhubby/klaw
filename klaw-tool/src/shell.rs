@@ -401,7 +401,7 @@ mod tests {
     use super::*;
     use klaw_config::{
         CronConfig, MemoryConfig, ModelProviderConfig, ShellApprovalPolicy, ShellConfig,
-        ToolsConfig,
+        SkillsConfig, ToolsConfig,
     };
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
@@ -425,6 +425,7 @@ mod tests {
             memory: MemoryConfig::default(),
             tools: ToolsConfig::default(),
             cron: CronConfig::default(),
+            skills: SkillsConfig::default(),
         }
     }
 

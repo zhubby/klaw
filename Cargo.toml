@@ -45,3 +45,4 @@ klaw-agent = { path = "klaw-agent" }
 klaw-storage = { path = "klaw-storage" }
 klaw-memory = { path = "klaw-memory" }
 klaw-cron = { path = "klaw-cron" }
+klaw-skill = { path = "klaw-skill" }

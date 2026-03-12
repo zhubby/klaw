@@ -1,14 +1,11 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+mod error;
+mod fetcher;
+mod fs_store;
+mod model;
+mod store;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use error::SkillError;
+pub use fetcher::{ReqwestSkillFetcher, SkillFetcher};
+pub use fs_store::{open_default_skill_store, FileSystemSkillStore};
+pub use model::{SkillRecord, SkillSource, SkillSummary};
+pub use store::SkillStore;

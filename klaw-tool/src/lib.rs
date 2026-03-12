@@ -1,7 +1,9 @@
+pub mod cron_manager;
 pub mod fs;
 pub mod local_search;
 pub mod memory;
 pub mod shell;
+pub mod skills_registry;
 pub mod sub_agent;
 pub mod terminal_multiplexers;
 pub mod web_fetch;
@@ -12,10 +14,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+pub use cron_manager::CronManagerTool;
 pub use fs::FsTool;
 pub use local_search::LocalSearchTool;
 pub use memory::MemoryTool;
 pub use shell::ShellTool;
+pub use skills_registry::SkillsRegistryTool;
 pub use sub_agent::SubAgentTool;
 pub use terminal_multiplexers::TerminalMultiplexerTool;
 pub use web_fetch::WebFetchTool;

@@ -2134,6 +2134,7 @@ dependencies = [
  "klaw-core",
  "klaw-cron",
  "klaw-llm",
+ "klaw-skill",
  "klaw-storage",
  "klaw-tool",
  "tokio",
@@ -2219,6 +2220,13 @@ dependencies = [
 [[package]]
 name = "klaw-skill"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+]
 
 [[package]]
 name = "klaw-storage"
@@ -2238,17 +2246,23 @@ name = "klaw-tool"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
+ "cron",
+ "humantime",
  "ipnet",
  "klaw-agent",
  "klaw-config",
  "klaw-llm",
  "klaw-memory",
+ "klaw-skill",
+ "klaw-storage",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
  "zellij-client",
 ]
 
