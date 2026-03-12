@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use tracing::info;
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolRegistry};
 
@@ -143,6 +144,7 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
         let Some(tool) = self.tools.get(name) else {
             return format!("tool `{}` not found", name);
         };
+        info!(tool = name, arguments = %arguments, "calling tool");
         match tool
             .execute(
                 arguments,

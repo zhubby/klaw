@@ -129,6 +129,7 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
         let Some(tool) = self.tools.get(name) else {
             return format!("tool `{}` not found", name);
         };
+        info!(tool = name, arguments = %arguments, "calling tool");
 
         match tool
             .execute(
