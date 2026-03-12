@@ -37,6 +37,9 @@
 skills 配置位于 `AppConfig` 顶层，而不是 `tools` 下：
 
 ```toml
+[skills]
+sync_timeout = 60
+
 [skills.anthropic]
 address = "https://github.com/anthropics/skills"
 
@@ -48,6 +51,7 @@ installed = ["brainstorming"]
 约束：
 
 - `<registry>` 作为表名。
+- `skills.sync_timeout` 为每个 registry 同步任务超时（秒），默认 `60`。
 - `skills.<registry>.address` 非空。
 - `skills.<registry>.installed` 可选，元素非空，且在同一个 registry 内不可重复。
 - `installed` 条目优先按 `skills/<name>` 目录匹配；若未命中，会回退按 `SKILL.md` 中解析出的名称匹配。

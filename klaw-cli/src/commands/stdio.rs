@@ -27,11 +27,7 @@ impl StdioCommand {
         let session_key = self
             .session_key
             .unwrap_or_else(|| format!("stdio:{}", Uuid::new_v4()));
-        let chat_id = session_key
-            .split(':')
-            .nth(1)
-            .unwrap_or("chat")
-            .to_string();
+        let chat_id = session_key.split(':').nth(1).unwrap_or("chat").to_string();
         let background = BackgroundServices::new(
             &runtime,
             BackgroundServiceConfig::from_app_config(config.as_ref()),

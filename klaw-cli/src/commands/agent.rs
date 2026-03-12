@@ -21,11 +21,7 @@ impl AgentCommand {
         let session_key = self
             .session_key
             .unwrap_or_else(|| format!("stdio:{}", Uuid::new_v4()));
-        let chat_id = session_key
-            .split(':')
-            .nth(1)
-            .unwrap_or("chat")
-            .to_string();
+        let chat_id = session_key.split(':').nth(1).unwrap_or("chat").to_string();
 
         let maybe_output =
             submit_and_get_output(&runtime, self.input, session_key, chat_id).await?;

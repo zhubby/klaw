@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
+use tokio::task::JoinSet;
+use tokio::time::{timeout, Duration};
+use tracing::{info, warn};
 
 use crate::{
     ReqwestSkillFetcher, SkillError, SkillFetcher, SkillRecord, SkillSource, SkillStore,
@@ -197,6 +200,7 @@ where
         &self,
         sources: &[RegistrySource],
         installed: &[InstalledSkill],
+        sync_timeout_secs: u64,
     ) -> Result<RegistrySyncReport, SkillError> {
         self.ensure_skills_dir().await?;
         self.ensure_registry_dir().await?;
@@ -244,14 +248,74 @@ where
         }
 
         let registry_root = self.skills_registry_dir();
+        let timeout_duration = Duration::from_secs(sync_timeout_secs.max(1));
         let mut report = RegistrySyncReport::default();
+        let mut join_set = JoinSet::new();
         for (name, address) in &source_map {
+            let registry_root = registry_root.clone();
             let source = RegistrySource {
                 name: name.clone(),
                 address: address.clone(),
             };
-            self.sync_source_repository(&registry_root, &source).await?;
-            report.synced_registries.push(name.clone());
+            join_set.spawn(async move {
+                let registry_name = source.name.clone();
+                let result = timeout(
+                    timeout_duration,
+                    sync_source_repository(&registry_root, &source),
+                )
+                .await;
+                (registry_name, result)
+            });
+        }
+
+        let mut available_registries = BTreeSet::new();
+        while let Some(task_result) = join_set.join_next().await {
+            match task_result {
+                Ok((registry_name, Ok(Ok(())))) => {
+                    info!(registry = %registry_name, "skill registry sync completed");
+                    report.synced_registries.push(registry_name.clone());
+                    available_registries.insert(registry_name);
+                }
+                Ok((registry_name, Ok(Err(err)))) => {
+                    warn!(
+                        registry = %registry_name,
+                        error = %err,
+                        "skill registry sync failed, skipping"
+                    );
+                    let path = registry_root.join(&registry_name);
+                    if fs::try_exists(&path)
+                        .await
+                        .map_err(|source| SkillError::Io {
+                            op: "try_exists",
+                            path: path.clone(),
+                            source,
+                        })?
+                    {
+                        available_registries.insert(registry_name);
+                    }
+                }
+                Ok((registry_name, Err(_elapsed))) => {
+                    warn!(
+                        registry = %registry_name,
+                        timeout_secs = sync_timeout_secs.max(1),
+                        "skill registry sync timed out, skipping"
+                    );
+                    let path = registry_root.join(&registry_name);
+                    if fs::try_exists(&path)
+                        .await
+                        .map_err(|source| SkillError::Io {
+                            op: "try_exists",
+                            path: path.clone(),
+                            source,
+                        })?
+                    {
+                        available_registries.insert(registry_name);
+                    }
+                }
+                Err(join_err) => {
+                    warn!(error = %join_err, "skill registry sync task join failed");
+                }
+            }
         }
 
         let mut previous_managed = BTreeSet::new();
@@ -261,6 +325,14 @@ where
 
         let mut desired = BTreeMap::new();
         for (registry_name, requested_name) in requested {
+            if !available_registries.contains(&registry_name) {
+                warn!(
+                    registry = %registry_name,
+                    skill_name = %requested_name,
+                    "skip installed skill because registry is unavailable"
+                );
+                continue;
+            }
             let repo_dir = registry_root.join(&registry_name);
             let (source_dir, target_name) =
                 resolve_registry_skill_dir(&repo_dir, &requested_name, &registry_name).await?;
@@ -345,85 +417,6 @@ where
         report.installed_skills.sort();
         report.removed_skills.sort();
         Ok(report)
-    }
-
-    async fn sync_source_repository(
-        &self,
-        registry_root: &Path,
-        source: &RegistrySource,
-    ) -> Result<(), SkillError> {
-        let target = registry_root.join(&source.name);
-        let target_exists = fs::try_exists(&target)
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "try_exists",
-                path: target.clone(),
-                source,
-            })?;
-        if !target_exists {
-            let target_str = target.to_string_lossy().to_string();
-            run_git(
-                "clone",
-                None,
-                &["clone", "--depth", "1", &source.address, &target_str],
-            )
-            .await?;
-            return Ok(());
-        }
-
-        let git_dir = target.join(".git");
-        let git_dir_exists = fs::try_exists(&git_dir)
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "try_exists",
-                path: git_dir.clone(),
-                source,
-            })?;
-        if !git_dir_exists {
-            return Err(SkillError::GitCommand {
-                context: "sync",
-                command: format!("expected git repository at {}", target.display()),
-                stderr: "missing .git directory".to_string(),
-            });
-        }
-
-        run_git(
-            "set-url",
-            Some(&target),
-            &["remote", "set-url", "origin", &source.address],
-        )
-        .await?;
-        run_git("fetch", Some(&target), &["fetch", "--depth", "1", "origin"]).await?;
-
-        let head_ref = run_git_capture(
-            "origin-head",
-            Some(&target),
-            &[
-                "symbolic-ref",
-                "--quiet",
-                "--short",
-                "refs/remotes/origin/HEAD",
-            ],
-        )
-        .await
-        .unwrap_or_else(|_| "origin/main".to_string());
-
-        if run_git(
-            "reset",
-            Some(&target),
-            &["reset", "--hard", head_ref.trim()],
-        )
-        .await
-        .is_err()
-        {
-            run_git(
-                "reset",
-                Some(&target),
-                &["reset", "--hard", "origin/master"],
-            )
-            .await?;
-        }
-        Ok(())
     }
 
     async fn read_skill_record(&self, skill_name: &str) -> Result<SkillRecord, SkillError> {
@@ -646,6 +639,84 @@ async fn is_directory(path: &Path, entry: &tokio::fs::DirEntry) -> Result<bool, 
         source,
     })?;
     Ok(ty.is_dir())
+}
+
+async fn sync_source_repository(
+    registry_root: &Path,
+    source: &RegistrySource,
+) -> Result<(), SkillError> {
+    let target = registry_root.join(&source.name);
+    let target_exists = fs::try_exists(&target)
+        .await
+        .map_err(|source| SkillError::Io {
+            op: "try_exists",
+            path: target.clone(),
+            source,
+        })?;
+    if !target_exists {
+        let target_str = target.to_string_lossy().to_string();
+        run_git(
+            "clone",
+            None,
+            &["clone", "--depth", "1", &source.address, &target_str],
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let git_dir = target.join(".git");
+    let git_dir_exists = fs::try_exists(&git_dir)
+        .await
+        .map_err(|source| SkillError::Io {
+            op: "try_exists",
+            path: git_dir.clone(),
+            source,
+        })?;
+    if !git_dir_exists {
+        return Err(SkillError::GitCommand {
+            context: "sync",
+            command: format!("expected git repository at {}", target.display()),
+            stderr: "missing .git directory".to_string(),
+        });
+    }
+
+    run_git(
+        "set-url",
+        Some(&target),
+        &["remote", "set-url", "origin", &source.address],
+    )
+    .await?;
+    run_git("fetch", Some(&target), &["fetch", "--depth", "1", "origin"]).await?;
+
+    let head_ref = run_git_capture(
+        "origin-head",
+        Some(&target),
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    )
+    .await
+    .unwrap_or_else(|_| "origin/main".to_string());
+
+    if run_git(
+        "reset",
+        Some(&target),
+        &["reset", "--hard", head_ref.trim()],
+    )
+    .await
+    .is_err()
+    {
+        run_git(
+            "reset",
+            Some(&target),
+            &["reset", "--hard", "origin/master"],
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 async fn resolve_registry_skill_dir(

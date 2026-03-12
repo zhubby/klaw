@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 
 pub fn session_jsonl_path(paths: &StoragePaths, session_key: &str) -> PathBuf {
-    paths
-        .sessions_dir
-        .join(format!("{}.jsonl", session_id_from_session_key(session_key)))
+    paths.sessions_dir.join(format!(
+        "{}.jsonl",
+        session_id_from_session_key(session_key)
+    ))
 }
 
 fn session_id_from_session_key(session_key: &str) -> &str {
