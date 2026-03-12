@@ -167,54 +167,29 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "tools.sub_agent.max_tool_calls must be greater than 0".to_string(),
         ));
     }
-    if config
-        .skills
-        .sources
-        .iter()
-        .any(|source| source.name.trim().is_empty() || source.address.trim().is_empty())
-    {
+    if config.skills.sync_timeout == 0 {
         return Err(ConfigError::InvalidConfig(
-            "skills.sources name/address cannot be empty".to_string(),
+            "skills.sync_timeout must be greater than 0".to_string(),
         ));
     }
-    {
-        let mut names = std::collections::BTreeSet::new();
-        for source in &config.skills.sources {
-            let inserted = names.insert(source.name.trim().to_string());
-            if !inserted {
-                return Err(ConfigError::InvalidConfig(format!(
-                    "skills.sources contains duplicated name '{}'",
-                    source.name
-                )));
-            }
+    for (registry_name, registry) in &config.skills.registries {
+        if registry_name.trim().is_empty() || registry.address.trim().is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "skills.<registry>.address cannot be empty".to_string(),
+            ));
         }
-    }
-    {
-        let source_names: std::collections::BTreeSet<String> = config
-            .skills
-            .sources
-            .iter()
-            .map(|source| source.name.trim().to_string())
-            .collect();
-        let mut pairs = std::collections::BTreeSet::new();
-        for installed in &config.skills.installed {
-            let registry = installed.registry.trim();
-            let name = installed.name.trim();
-            if registry.is_empty() || name.is_empty() {
-                return Err(ConfigError::InvalidConfig(
-                    "skills.installed registry/name cannot be empty".to_string(),
-                ));
-            }
-            if !source_names.contains(registry) {
+        let mut names = std::collections::BTreeSet::new();
+        for skill_name in &registry.installed {
+            let skill_name = skill_name.trim();
+            if skill_name.is_empty() {
                 return Err(ConfigError::InvalidConfig(format!(
-                    "skills.installed references unknown registry '{}'",
-                    installed.registry
+                    "skills.{registry_name}.installed contains empty skill name"
                 )));
             }
-            if !pairs.insert((registry.to_string(), name.to_string())) {
+            if !names.insert(skill_name.to_string()) {
                 return Err(ConfigError::InvalidConfig(format!(
-                    "skills.installed contains duplicated entry '{}/{}'",
-                    registry, name
+                    "skills.{registry_name}.installed contains duplicated skill '{}'",
+                    skill_name
                 )));
             }
         }

@@ -52,17 +52,21 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.sub_agent.enabled);
     assert_eq!(parsed.tools.sub_agent.max_iterations, 6);
     assert_eq!(parsed.tools.sub_agent.max_tool_calls, 12);
-    assert!(!parsed.skills.sources.is_empty());
+    assert_eq!(parsed.skills.sync_timeout, 60);
+    assert!(!parsed.skills.registries.is_empty());
     assert_eq!(
         parsed
             .skills
-            .sources
-            .iter()
-            .find(|source| source.name == "anthropic")
-            .map(|source| source.address.as_str()),
+            .registries
+            .get("anthropic")
+            .map(|registry| registry.address.as_str()),
         Some("https://github.com/anthropics/skills")
     );
-    assert!(parsed.skills.installed.is_empty());
+    assert!(parsed
+        .skills
+        .registries
+        .get("anthropic")
+        .is_some_and(|registry| registry.installed.is_empty()));
     assert_eq!(parsed.cron.tick_ms, 1_000);
     assert_eq!(parsed.cron.runtime_tick_ms, 200);
     assert_eq!(parsed.cron.runtime_drain_batch, 8);
@@ -371,40 +375,53 @@ fn validate_fails_when_sub_agent_limits_are_zero() {
 #[test]
 fn validate_fails_when_skills_config_invalid() {
     let mut cfg = AppConfig::default();
-    cfg.skills.sources.push(SkillSourceConfig {
-        name: String::new(),
-        address: "https://github.com/anthropics/skills".to_string(),
-    });
+    cfg.skills.sync_timeout = 0;
+    let err0 = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err0}").contains("skills.sync_timeout"));
+
+    let mut cfg = AppConfig::default();
+    cfg.skills.registries.insert(
+        String::new(),
+        SkillRegistryConfig {
+            address: "https://github.com/anthropics/skills".to_string(),
+            installed: vec![],
+        },
+    );
     let err = validate(&cfg).expect_err("should fail");
-    assert!(format!("{err}").contains("skills.sources"));
+    assert!(format!("{err}").contains("skills.<registry>.address"));
 
     let mut cfg2 = AppConfig::default();
-    cfg2.skills.sources.push(SkillSourceConfig {
-        name: "empty-address".to_string(),
-        address: String::new(),
-    });
+    cfg2.skills.registries.insert(
+        "empty-address".to_string(),
+        SkillRegistryConfig {
+            address: String::new(),
+            installed: vec![],
+        },
+    );
     let err2 = validate(&cfg2).expect_err("should fail");
-    assert!(format!("{err2}").contains("skills.sources"));
+    assert!(format!("{err2}").contains("skills.<registry>.address"));
 
     let mut cfg3 = AppConfig::default();
-    cfg3.skills.installed.push(InstalledSkillConfig {
-        registry: "missing".to_string(),
-        name: "code-review".to_string(),
-    });
+    cfg3.skills.registries.insert(
+        "anthropic".to_string(),
+        SkillRegistryConfig {
+            address: "https://github.com/anthropics/skills".to_string(),
+            installed: vec!["".to_string()],
+        },
+    );
     let err3 = validate(&cfg3).expect_err("should fail");
-    assert!(format!("{err3}").contains("unknown registry"));
+    assert!(format!("{err3}").contains("empty skill name"));
 
     let mut cfg4 = AppConfig::default();
-    cfg4.skills.installed.push(InstalledSkillConfig {
-        registry: "anthropic".to_string(),
-        name: "code-review".to_string(),
-    });
-    cfg4.skills.installed.push(InstalledSkillConfig {
-        registry: "anthropic".to_string(),
-        name: "code-review".to_string(),
-    });
+    cfg4.skills.registries.insert(
+        "anthropic".to_string(),
+        SkillRegistryConfig {
+            address: "https://github.com/anthropics/skills".to_string(),
+            installed: vec!["code-review".to_string(), "code-review".to_string()],
+        },
+    );
     let err4 = validate(&cfg4).expect_err("should fail");
-    assert!(format!("{err4}").contains("duplicated entry"));
+    assert!(format!("{err4}").contains("duplicated skill"));
 }
 
 #[test]
@@ -624,5 +641,21 @@ env_key = "OPENAI_API_KEY"
     );
 
     let _ = fs::remove_file(&path);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn validate_config_file_does_not_create_when_missing() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let root = env::temp_dir().join(format!("klaw-config-validate-test-{suffix}"));
+    let path = root.join("config.toml");
+
+    let err = validate_config_file(Some(&path)).expect_err("missing file should fail");
+    assert!(matches!(err, ConfigError::ConfigNotFound(_)));
+    assert!(!path.exists());
+
     let _ = fs::remove_dir_all(&root);
 }

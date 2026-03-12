@@ -37,32 +37,29 @@
 skills 配置位于 `AppConfig` 顶层，而不是 `tools` 下：
 
 ```toml
-[skills]
-sources = [
-  { name = "anthropic", address = "https://github.com/anthropics/skills" },
-  { name = "vercel", address = "https://github.com/vercel-labs/skills" }
-]
-installed = [
-  { registry = "anthropic", name = "create-command" },
-  { registry = "vercel", name = "brainstorming" }
-]
+[skills.anthropic]
+address = "https://github.com/anthropics/skills"
+
+[skills.vercel]
+address = "https://github.com/vercel-labs/skills"
+installed = ["brainstorming"]
 ```
 
 约束：
 
-- `sources[*].name` 非空，且不可重复。
-- `sources[*].address` 非空。
-- `installed[*].registry` 必须引用已配置的 `sources[*].name`。
-- `installed[*].name` 非空。优先按 `skills/<name>` 目录匹配；若未命中，会回退按 `SKILL.md` 中解析出的名称匹配。
+- `<registry>` 作为表名。
+- `skills.<registry>.address` 非空。
+- `skills.<registry>.installed` 可选，元素非空，且在同一个 registry 内不可重复。
+- `installed` 条目优先按 `skills/<name>` 目录匹配；若未命中，会回退按 `SKILL.md` 中解析出的名称匹配。
 
 ## Registry 同步与安装
 
 启动时会执行以下流程：
 
-1. 遍历 `skills.sources`，将每个仓库同步到 `~/.klaw/skills-registry/<source.name>`。
+1. 遍历 `skills.<registry>`，将每个仓库同步到 `~/.klaw/skills-registry/<registry>`。
    - 首次：`git clone`
    - 后续：`git fetch` + `git reset --hard origin/HEAD`（失败时回退 `origin/master`）
-2. 遍历 `skills.installed`，将
+2. 遍历每个 `skills.<registry>.installed`，将
    `~/.klaw/skills-registry/<registry>/skills/<name>` 复制到 `~/.klaw/skills/<name>`。
 3. 依据 `skills-registry-manifest.json` 做差异清理：
    - 只删除“manifest 中标记为受管”且本次不再安装的 skill；
@@ -145,7 +142,7 @@ installed = [
 
 `klaw-config` 已覆盖：
 
-- 顶层 `skills.sources` 默认解析
+- 顶层 `skills.<registry>` 默认解析
 - `name/address` 非法值校验
 - 重名源校验
 

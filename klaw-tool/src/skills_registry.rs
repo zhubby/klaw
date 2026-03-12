@@ -22,19 +22,19 @@ impl SkillsRegistryTool {
         let store = open_default_skill_store()
             .map_err(|err| ToolError::ExecutionFailed(format!("open skill store failed: {err}")))?;
         let mut sources = BTreeMap::new();
-        for source in &config.skills.sources {
-            let download_url_template = resolve_download_template(&source.address)?;
+        for (source_name, registry) in &config.skills.registries {
+            let download_url_template = resolve_download_template(&registry.address)?;
             sources.insert(
-                source.name.clone(),
+                source_name.clone(),
                 SkillSourceDef {
-                    name: source.name.clone(),
+                    name: source_name.clone(),
                     download_url_template,
                 },
             );
         }
         if sources.is_empty() {
             return Err(ToolError::ExecutionFailed(
-                "skills sources are empty; please configure [skills] sources in config.toml"
+                "skills registries are empty; please configure [skills.<registry>] in config.toml"
                     .to_string(),
             ));
         }
@@ -194,7 +194,7 @@ impl Tool for SkillsRegistryTool {
                 },
                 "source": {
                     "type": "string",
-                    "description": "Required for download/update. Optional for get. Source key from top-level config `skills.sources[*].name`."
+                    "description": "Required for download/update. Optional for get. Registry key from top-level config `[skills.<registry>]`."
                 }
             },
             "required": ["action"],

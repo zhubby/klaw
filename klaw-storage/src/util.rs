@@ -10,19 +10,6 @@ pub fn relative_or_absolute_jsonl(root_dir: &Path, file_path: &Path) -> String {
     file_path.to_string_lossy().to_string()
 }
 
-pub fn encode_session_key(session_key: &str) -> String {
-    let mut out = String::with_capacity(session_key.len());
-    for b in session_key.bytes() {
-        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' {
-            out.push(char::from(b));
-        } else {
-            out.push('_');
-            out.push_str(&format!("{b:02x}"));
-        }
-    }
-    out
-}
-
 pub fn now_ms() -> i64 {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)

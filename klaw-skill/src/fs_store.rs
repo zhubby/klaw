@@ -208,7 +208,7 @@ where
             let source_address = source.address.trim();
             if source_name.is_empty() || source_address.is_empty() {
                 return Err(SkillError::InvalidSkillName(
-                    "skills.sources has empty name/address".to_string(),
+                    "skills.<registry>.address cannot be empty".to_string(),
                 ));
             }
             if source_map
@@ -237,7 +237,7 @@ where
             }
             if !source_map.contains_key(registry) {
                 return Err(SkillError::InvalidSkillName(format!(
-                    "installed registry `{registry}` is not configured in sources"
+                    "installed registry `{registry}` is not configured in skills.<registry>"
                 )));
             }
             requested.push((registry.to_string(), name.to_string()));

@@ -15,6 +15,8 @@
 - `turn_count`：已完成轮次
 - `jsonl_path`：对应 JSONL 文件路径
 
+JSONL 文件名默认使用 `session_id`（即 `session_key` 中 `:` 后半段，如 `stdio:local-chat` -> `local-chat.jsonl`）。
+
 ## 轮次规则
 
 `turn_count` 的定义是“完整请求-响应轮次”：

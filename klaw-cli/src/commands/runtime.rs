@@ -102,10 +102,10 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     tools.register(LocalSearchTool::new());
     tools.register(TerminalMultiplexerTool::new());
     tools.register(CronManagerTool::open_default().await?);
-    if !config.skills.sources.is_empty() {
+    if !config.skills.registries.is_empty() {
         info!(
-            sources = config.skills.sources.len(),
-            source_names = ?config.skills.sources.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+            sources = config.skills.registries.len(),
+            source_names = ?config.skills.registries.keys().cloned().collect::<Vec<_>>(),
             "registering skills registry tool"
         );
         match SkillsRegistryTool::open_default(config) {
@@ -299,24 +299,26 @@ async fn load_skills_system_prompt(config: &AppConfig) -> Option<String> {
 
     let sources: Vec<RegistrySource> = config
         .skills
-        .sources
+        .registries
         .iter()
-        .map(|source| RegistrySource {
-            name: source.name.clone(),
-            address: source.address.clone(),
+        .map(|(name, registry)| RegistrySource {
+            name: name.clone(),
+            address: registry.address.clone(),
         })
         .collect();
     let installed: Vec<InstalledSkill> = config
         .skills
-        .installed
+        .registries
         .iter()
-        .map(|item| InstalledSkill {
-            registry: item.registry.clone(),
-            name: item.name.clone(),
+        .flat_map(|(registry_name, registry)| {
+            registry.installed.iter().map(|skill_name| InstalledSkill {
+                registry: registry_name.clone(),
+                name: skill_name.clone(),
+            })
         })
         .collect();
     match store
-        .sync_registry_installed_skills(&sources, &installed)
+        .sync_registry_installed_skills(&sources, &installed, config.skills.sync_timeout)
         .await
     {
         Ok(report) => {

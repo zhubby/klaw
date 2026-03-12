@@ -178,38 +178,38 @@ pub struct ToolsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillsConfig {
-    #[serde(default = "default_skill_sources")]
-    pub sources: Vec<SkillSourceConfig>,
-    #[serde(default)]
-    pub installed: Vec<InstalledSkillConfig>,
+    #[serde(default = "default_skills_sync_timeout")]
+    pub sync_timeout: u64,
+    #[serde(flatten)]
+    pub registries: BTreeMap<String, SkillRegistryConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillSourceConfig {
-    pub name: String,
+pub struct SkillRegistryConfig {
     pub address: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstalledSkillConfig {
-    pub registry: String,
-    pub name: String,
+    #[serde(default)]
+    pub installed: Vec<String>,
 }
 
 impl Default for SkillsConfig {
     fn default() -> Self {
+        let mut registries = BTreeMap::new();
+        registries.insert(
+            "anthropic".to_string(),
+            SkillRegistryConfig {
+                address: "https://github.com/anthropics/skills".to_string(),
+                installed: Vec::new(),
+            },
+        );
         Self {
-            sources: default_skill_sources(),
-            installed: Vec::new(),
+            sync_timeout: default_skills_sync_timeout(),
+            registries,
         }
     }
 }
 
-fn default_skill_sources() -> Vec<SkillSourceConfig> {
-    vec![SkillSourceConfig {
-        name: "anthropic".to_string(),
-        address: "https://github.com/anthropics/skills".to_string(),
-    }]
+fn default_skills_sync_timeout() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -632,7 +632,7 @@ mod validate;
 
 pub use io::{
     default_config_path, default_config_template, load_or_init, migrate_with_defaults,
-    reset_to_defaults, LoadedConfig, MigratedConfig,
+    reset_to_defaults, validate_config_file, LoadedConfig, MigratedConfig,
 };
 #[cfg(test)]
 pub(crate) use io::{load_from_path, migrate_path_with_defaults, reset_path_to_defaults};

@@ -67,9 +67,7 @@
 - 根目录：`~/.klaw`
 - 索引数据库：`~/.klaw/klaw.db`
 - 聊天记录目录：`~/.klaw/sessions/`
-- 聊天记录文件：`<encoded_session_key>.jsonl`
-
-其中 `session_key` 会进行安全编码，避免路径注入与非法字符问题。
+- 聊天记录文件：`<session_id>.jsonl`
 
 ## 定时任务存储
 

@@ -28,6 +28,17 @@ pub fn load_or_init(config_path: Option<&Path>) -> Result<LoadedConfig, ConfigEr
     load_from_path(&path, create_if_missing)
 }
 
+pub fn validate_config_file(config_path: Option<&Path>) -> Result<PathBuf, ConfigError> {
+    let explicit = config_path.map(Path::to_path_buf);
+    let path = match explicit {
+        Some(path) => path,
+        None => default_config_path()?,
+    };
+
+    load_from_path(&path, false)?;
+    Ok(path)
+}
+
 pub fn default_config_path() -> Result<PathBuf, ConfigError> {
     let home = env::var_os("HOME").ok_or(ConfigError::HomeDirUnavailable)?;
     Ok(PathBuf::from(home).join(".klaw").join("config.toml"))

@@ -5,6 +5,7 @@ use std::{
 };
 use tokio::io::AsyncBufReadExt;
 use tracing::info;
+use uuid::Uuid;
 
 use crate::commands::runtime::{build_runtime_bundle, submit_and_get_output};
 use crate::commands::service_loop::{BackgroundServiceConfig, BackgroundServices};
@@ -12,9 +13,9 @@ use klaw_config::AppConfig;
 
 #[derive(Debug, Args)]
 pub struct StdioCommand {
-    /// Session key used for local conversation.
-    #[arg(long, default_value = "stdio:local-chat")]
-    pub session_key: String,
+    /// Session key used for local conversation. Auto-generated as `stdio:<uuid>` when omitted.
+    #[arg(long)]
+    pub session_key: Option<String>,
     /// Print model reasoning when provider returns it.
     #[arg(long, default_value_t = false)]
     pub show_reasoning: bool,
@@ -23,11 +24,13 @@ pub struct StdioCommand {
 impl StdioCommand {
     pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
         let runtime = build_runtime_bundle(config.as_ref()).await?;
-        let chat_id = self
+        let session_key = self
             .session_key
+            .unwrap_or_else(|| format!("stdio:{}", Uuid::new_v4()));
+        let chat_id = session_key
             .split(':')
             .nth(1)
-            .unwrap_or("local-chat")
+            .unwrap_or("chat")
             .to_string();
         let background = BackgroundServices::new(
             &runtime,
@@ -37,7 +40,7 @@ impl StdioCommand {
         println!("Agent stdio mode started.");
         println!("Type your message and press Enter.");
         println!("Use /exit to quit.\n");
-        info!(session_key = self.session_key, "cli started");
+        info!(session_key, "cli started");
 
         let stdin = tokio::io::BufReader::new(tokio::io::stdin());
         let mut lines = stdin.lines();
@@ -75,7 +78,7 @@ impl StdioCommand {
                     let maybe_output = submit_and_get_output(
                         &runtime,
                         input.to_string(),
-                        self.session_key.clone(),
+                        session_key.clone(),
                         chat_id.clone(),
                     )
                     .await?;
@@ -122,6 +125,19 @@ fn render_agent_output(content: &str, reasoning: Option<&str>, show_reasoning: b
 #[cfg(test)]
 mod tests {
     use super::render_agent_output;
+    use super::StdioCommand;
+
+    #[test]
+    fn keeps_explicit_session_key() {
+        let cmd = StdioCommand {
+            session_key: Some("stdio:explicit".to_string()),
+            show_reasoning: false,
+        };
+        let key = cmd
+            .session_key
+            .unwrap_or_else(|| format!("stdio:{}", uuid::Uuid::new_v4()));
+        assert_eq!(key, "stdio:explicit");
+    }
 
     #[test]
     fn hides_reasoning_when_flag_disabled() {
