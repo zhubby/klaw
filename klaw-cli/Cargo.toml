@@ -15,6 +15,7 @@ klaw-llm = { workspace = true }
 klaw-tool = { workspace = true }
 klaw-config = { workspace = true }
 klaw-storage = { workspace = true }
+klaw-cron = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

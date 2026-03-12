@@ -14,24 +14,10 @@ const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const META_WORKSPACE: &str = "workspace";
 const META_SHELL_PATH: &str = "shell.path";
 const META_SHELL_APPROVED: &str = "shell.approved";
-const META_APPROVED_PREFIXES: &str = "shell.approved_prefixes";
 
 /// Shell 工具，执行本地 shell 命令并返回结构化输出。
 pub struct ShellTool {
     config: klaw_config::ShellConfig,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum SandboxPermissions {
-    UseDefault,
-    RequireEscalated,
-}
-
-impl Default for SandboxPermissions {
-    fn default() -> Self {
-        Self::UseDefault
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,14 +28,6 @@ struct ShellRequest {
     workdir: Option<String>,
     #[serde(default)]
     timeout_ms: Option<u64>,
-    #[serde(default)]
-    login: Option<bool>,
-    #[serde(default)]
-    sandbox_permissions: Option<SandboxPermissions>,
-    #[serde(default)]
-    justification: Option<String>,
-    #[serde(default)]
-    prefix_rule: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +43,6 @@ struct ShellExecutionResult {
     command: String,
     cwd: String,
     risk: &'static str,
-    sandbox_permissions: SandboxPermissions,
     approval_required: bool,
     approved: bool,
     timed_out: bool,
@@ -118,31 +95,6 @@ impl ShellTool {
             }
         }
 
-        if let Some(justification) = request.justification.as_mut() {
-            *justification = justification.trim().to_string();
-            if justification.is_empty() {
-                return Err(ToolError::InvalidArgs(
-                    "`justification` cannot be empty".to_string(),
-                ));
-            }
-        }
-
-        if let Some(prefix_rule) = request.prefix_rule.as_mut() {
-            if prefix_rule.is_empty() {
-                return Err(ToolError::InvalidArgs(
-                    "`prefix_rule` cannot be empty when provided".to_string(),
-                ));
-            }
-            for item in prefix_rule.iter_mut() {
-                *item = item.trim().to_string();
-                if item.is_empty() {
-                    return Err(ToolError::InvalidArgs(
-                        "`prefix_rule` entries must be non-empty strings".to_string(),
-                    ));
-                }
-            }
-        }
-
         Ok(request)
     }
 
@@ -183,76 +135,15 @@ impl ShellTool {
             .any(|op| command.contains(op))
     }
 
-    fn parse_approved_prefixes(
-        metadata: &std::collections::BTreeMap<String, Value>,
-    ) -> Vec<Vec<String>> {
-        let Some(raw) = metadata.get(META_APPROVED_PREFIXES) else {
-            return Vec::new();
-        };
-        let Some(items) = raw.as_array() else {
-            return Vec::new();
-        };
-
-        let mut prefixes = Vec::new();
-        for item in items {
-            if let Some(s) = item.as_str() {
-                let tokens: Vec<String> = s
-                    .split_whitespace()
-                    .map(|part| part.trim().to_string())
-                    .filter(|part| !part.is_empty())
-                    .collect();
-                if !tokens.is_empty() {
-                    prefixes.push(tokens);
-                }
-                continue;
-            }
-            if let Some(array) = item.as_array() {
-                let tokens: Vec<String> = array
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(|part| part.trim().to_string())
-                    .filter(|part| !part.is_empty())
-                    .collect();
-                if !tokens.is_empty() {
-                    prefixes.push(tokens);
-                }
-            }
-        }
-        prefixes
-    }
-
-    fn prefix_rule_is_preapproved(
-        prefix_rule: Option<&[String]>,
-        metadata: &std::collections::BTreeMap<String, Value>,
-    ) -> bool {
-        let Some(prefix_rule) = prefix_rule else {
-            return false;
-        };
-
-        let approved_prefixes = Self::parse_approved_prefixes(metadata);
-        approved_prefixes.iter().any(|approved| {
-            approved.len() == prefix_rule.len()
-                && approved
-                    .iter()
-                    .zip(prefix_rule.iter())
-                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
-        })
-    }
-
     fn check_approval(
         &self,
-        request: &ShellRequest,
         risk: CommandRisk,
         metadata: &std::collections::BTreeMap<String, Value>,
-    ) -> Result<(bool, bool, SandboxPermissions), ToolError> {
-        let sandbox_permissions = request.sandbox_permissions.unwrap_or_default();
-        let mut approval_required = !matches!(risk, CommandRisk::Safe);
-        if sandbox_permissions == SandboxPermissions::RequireEscalated {
-            approval_required = true;
-        }
+    ) -> Result<(bool, bool), ToolError> {
+        let approval_required = !matches!(risk, CommandRisk::Safe);
 
         if !approval_required {
-            return Ok((false, true, sandbox_permissions));
+            return Ok((false, true));
         }
 
         if matches!(self.config.approval_policy, ShellApprovalPolicy::Never) {
@@ -265,34 +156,15 @@ impl ShellTool {
             .get(META_SHELL_APPROVED)
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let approved_via_prefix =
-            Self::prefix_rule_is_preapproved(request.prefix_rule.as_deref(), metadata);
-        let approved = approved_via_flag || approved_via_prefix;
+        let approved = approved_via_flag;
 
         if !approved {
-            let mut hint = String::from(
-                "approval required: set metadata `shell.approved=true` or provide a preapproved `prefix_rule`",
-            );
-            if sandbox_permissions == SandboxPermissions::RequireEscalated
-                && request.justification.is_none()
-            {
-                hint.push_str(
-                    "; `justification` is required when `sandbox_permissions=require_escalated`",
-                );
-            }
-            return Err(ToolError::ExecutionFailed(hint));
-        }
-
-        if sandbox_permissions == SandboxPermissions::RequireEscalated
-            && request.justification.is_none()
-        {
-            return Err(ToolError::InvalidArgs(
-                "`justification` is required when `sandbox_permissions` is `require_escalated`"
-                    .to_string(),
+            return Err(ToolError::ExecutionFailed(
+                "approval required: set metadata `shell.approved=true`".to_string(),
             ));
         }
 
-        Ok((true, true, sandbox_permissions))
+        Ok((true, true))
     }
 
     fn resolve_workspace_base(ctx: &ToolContext) -> Result<PathBuf, ToolError> {
@@ -306,12 +178,7 @@ impl ShellTool {
         })
     }
 
-    fn resolve_cwd(
-        request: &ShellRequest,
-        base: &Path,
-        sandbox_permissions: SandboxPermissions,
-        approved: bool,
-    ) -> Result<PathBuf, ToolError> {
+    fn resolve_cwd(request: &ShellRequest, base: &Path) -> Result<PathBuf, ToolError> {
         let target = match request.workdir.as_deref() {
             Some(workdir) => {
                 let path = PathBuf::from(workdir);
@@ -338,17 +205,11 @@ impl ShellTool {
             return Ok(canonical);
         }
 
-        let allowed_outside_workspace =
-            sandbox_permissions == SandboxPermissions::RequireEscalated && approved;
-        if !allowed_outside_workspace {
-            return Err(ToolError::ExecutionFailed(format!(
-                "workdir `{}` is outside workspace `{}`; require escalated approval",
-                canonical.display(),
-                base.display()
-            )));
-        }
-
-        Ok(canonical)
+        Err(ToolError::ExecutionFailed(format!(
+            "workdir `{}` is outside workspace `{}`",
+            canonical.display(),
+            base.display()
+        )))
     }
 
     fn resolve_timeout(&self, request: &ShellRequest) -> Result<u64, ToolError> {
@@ -371,7 +232,7 @@ impl ShellTool {
         std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
     }
 
-    fn shell_args(shell_bin: &str, command: &str, use_login_shell: bool) -> Vec<String> {
+    fn shell_args(shell_bin: &str, command: &str) -> Vec<String> {
         let normalized = shell_bin.to_ascii_lowercase();
         if normalized.contains("pwsh") || normalized.contains("powershell") {
             return vec![
@@ -381,11 +242,7 @@ impl ShellTool {
                 command.to_string(),
             ];
         }
-        if use_login_shell {
-            vec!["-lc".to_string(), command.to_string()]
-        } else {
-            vec!["-c".to_string(), command.to_string()]
-        }
+        vec!["-c".to_string(), command.to_string()]
     }
 
     fn truncate_stream(bytes: &[u8], max: usize) -> (String, bool) {
@@ -415,7 +272,7 @@ impl Tool for ShellTool {
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Arguments for shell command execution with approval and sandbox hints.",
+            "description": "Arguments for shell command execution with approval checks.",
             "properties": {
                 "command": {
                     "type": "string",
@@ -437,30 +294,6 @@ impl Tool for ShellTool {
                     "description": "Execution timeout in milliseconds. Defaults to 60000 and is clamped by tools.shell.max_timeout_ms.",
                     "minimum": 1,
                     "default": 60000
-                },
-                "login": {
-                    "type": "boolean",
-                    "description": "Whether to run a login shell. Disabled if tools.shell.allow_login_shell=false.",
-                    "default": false
-                },
-                "sandbox_permissions": {
-                    "type": "string",
-                    "enum": ["use_default", "require_escalated"],
-                    "description": "Escalation hint. `require_escalated` requires approval and `justification`.",
-                    "default": "use_default"
-                },
-                "justification": {
-                    "type": "string",
-                    "description": "Required when sandbox_permissions=require_escalated. Explain why escalation is needed."
-                },
-                "prefix_rule": {
-                    "type": "array",
-                    "description": "Optional command prefix used to match pre-approved escalation rules.",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "examples": [["cargo", "test"], ["git", "status"]]
                 }
             },
             "required": ["command"],
@@ -482,20 +315,13 @@ impl Tool for ShellTool {
             ));
         }
 
-        let (approval_required, approved, sandbox_permissions) =
-            self.check_approval(&request, risk, &ctx.metadata)?;
+        let (approval_required, approved) = self.check_approval(risk, &ctx.metadata)?;
         let base = Self::resolve_workspace_base(ctx)?;
-        let cwd = Self::resolve_cwd(&request, &base, sandbox_permissions, approved)?;
+        let cwd = Self::resolve_cwd(&request, &base)?;
         let timeout_ms = self.resolve_timeout(&request)?;
-        let use_login_shell = request.login.unwrap_or(false);
-        if use_login_shell && !self.config.allow_login_shell {
-            return Err(ToolError::ExecutionFailed(
-                "login shell is disabled by config; omit `login` or set it to false".to_string(),
-            ));
-        }
 
         let shell_bin = Self::resolve_shell_bin(ctx);
-        let args = Self::shell_args(&shell_bin, &request.command, use_login_shell);
+        let args = Self::shell_args(&shell_bin, &request.command);
 
         info!(
             session_key = %ctx.session_key,
@@ -505,7 +331,6 @@ impl Tool for ShellTool {
             risk = ?risk,
             approval_required,
             approved,
-            ?sandbox_permissions,
             "shell command begin"
         );
 
@@ -541,7 +366,6 @@ impl Tool for ShellTool {
                 CommandRisk::Mutating => "mutating",
                 CommandRisk::Destructive => "destructive",
             },
-            sandbox_permissions,
             approval_required,
             approved,
             timed_out: false,
@@ -576,7 +400,8 @@ impl Tool for ShellTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        MemoryConfig, ModelProviderConfig, ShellApprovalPolicy, ShellConfig, ToolsConfig,
+        CronConfig, MemoryConfig, ModelProviderConfig, ShellApprovalPolicy, ShellConfig,
+        ToolsConfig,
     };
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
@@ -599,6 +424,7 @@ mod tests {
             model_providers: providers,
             memory: MemoryConfig::default(),
             tools: ToolsConfig::default(),
+            cron: CronConfig::default(),
         }
     }
 
@@ -756,7 +582,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_escalated_requires_justification() {
+    async fn test_mutating_command_succeeds_when_approved() {
         let config = test_config();
         let tool = ShellTool::new(&config);
 
@@ -770,41 +596,7 @@ mod tests {
         let result = tool
             .execute(
                 json!({
-                    "command": "ls",
-                    "sandbox_permissions": "require_escalated"
-                }),
-                &ctx,
-            )
-            .await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("`justification` is required"));
-    }
-
-    #[tokio::test]
-    async fn test_escalated_with_prefix_rule_can_run_when_preapproved() {
-        let config = test_config();
-        let tool = ShellTool::new(&config);
-
-        let mut metadata = BTreeMap::new();
-        metadata.insert(
-            "shell.approved_prefixes".to_string(),
-            json!([["ls"], ["cargo", "test"]]),
-        );
-        let ctx = ToolContext {
-            session_key: "s1".to_string(),
-            metadata,
-        };
-
-        let result = tool
-            .execute(
-                json!({
-                    "command": "ls",
-                    "sandbox_permissions": "require_escalated",
-                    "justification": "need unrestricted env for parity",
-                    "prefix_rule": ["ls"]
+                    "command": "touch file.txt"
                 }),
                 &ctx,
             )
@@ -812,10 +604,11 @@ mod tests {
             .unwrap();
 
         assert!(result.content_for_model.contains("\"approved\": true"));
+        let _ = fs::remove_file("file.txt");
     }
 
     #[tokio::test]
-    async fn test_workdir_outside_workspace_requires_escalation() {
+    async fn test_workdir_outside_workspace_is_rejected() {
         let config = permissive_test_config();
         let tool = ShellTool::new(&config);
 
@@ -850,27 +643,8 @@ mod tests {
             .await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("outside workspace") || err.contains("require escalated approval"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("outside workspace"), "unexpected error: {err}");
         let _ = fs::remove_dir_all(base);
-    }
-
-    #[tokio::test]
-    async fn test_login_shell_can_be_disabled() {
-        let mut cfg = permissive_test_config();
-        cfg.tools.shell.allow_login_shell = false;
-        let tool = ShellTool::new(&cfg);
-
-        let result = tool
-            .execute(json!({"command": "echo hi", "login": true}), &base_ctx())
-            .await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("login shell is disabled"));
     }
 
     #[tokio::test]
@@ -899,6 +673,24 @@ mod tests {
 
         let result = tool
             .execute(json!({"command": "echo hi", "timeout": 1}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unknown field"));
+    }
+
+    #[tokio::test]
+    async fn test_removed_fields_rejected_as_unknown() {
+        let config = permissive_test_config();
+        let tool = ShellTool::new(&config);
+
+        let result = tool
+            .execute(
+                json!({
+                    "command": "echo hi",
+                    "sandbox_permissions": "require_escalated"
+                }),
+                &base_ctx(),
+            )
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unknown field"));

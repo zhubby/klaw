@@ -8,7 +8,10 @@ members = [
     "klaw-cli", 
     "klaw-mcp", 
     "klaw-skill", 
-    "klaw-memory", "klaw-cron", "klaw-storage",
+    "klaw-memory", 
+    "klaw-cron", 
+    "klaw-storage", 
+    "klaw-gateway",
 ]
 resolver = "2"
 
@@ -41,3 +44,4 @@ klaw-config = { path = "klaw-config" }
 klaw-agent = { path = "klaw-agent" }
 klaw-storage = { path = "klaw-storage" }
 klaw-memory = { path = "klaw-memory" }
+klaw-cron = { path = "klaw-cron" }

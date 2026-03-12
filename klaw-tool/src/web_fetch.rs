@@ -504,7 +504,8 @@ impl Tool for WebFetchTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        AppConfig, MemoryConfig, ModelProviderConfig, ToolsConfig, WebFetchConfig, WebSearchConfig,
+        AppConfig, CronConfig, MemoryConfig, ModelProviderConfig, ToolsConfig, WebFetchConfig,
+        WebSearchConfig,
     };
     use std::collections::BTreeMap;
 
@@ -539,6 +540,7 @@ mod tests {
                 web_search: WebSearchConfig::default(),
                 ..ToolsConfig::default()
             },
+            cron: CronConfig::default(),
         };
 
         WebFetchTool::new(&app)

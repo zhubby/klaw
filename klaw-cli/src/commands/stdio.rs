@@ -3,9 +3,11 @@ use std::{
     io::{self, Write},
     sync::Arc,
 };
+use tokio::io::AsyncBufReadExt;
 use tracing::info;
 
 use crate::commands::runtime::{build_runtime_bundle, submit_and_get_output};
+use crate::commands::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use klaw_config::AppConfig;
 
 #[derive(Debug, Args)]
@@ -27,54 +29,73 @@ impl StdioCommand {
             .nth(1)
             .unwrap_or("local-chat")
             .to_string();
+        let background = BackgroundServices::new(
+            &runtime,
+            BackgroundServiceConfig::from_app_config(config.as_ref()),
+        );
 
         println!("Agent stdio mode started.");
         println!("Type your message and press Enter.");
         println!("Use /exit to quit.\n");
         info!(session_key = self.session_key, "cli started");
 
-        let stdin = io::stdin();
-        let mut line = String::new();
+        let stdin = tokio::io::BufReader::new(tokio::io::stdin());
+        let mut lines = stdin.lines();
+        let mut cron_tick = tokio::time::interval(background.cron_tick_interval());
+        let mut runtime_tick = tokio::time::interval(background.runtime_tick_interval());
+        print!("you> ");
+        io::stdout().flush()?;
+
         loop {
-            print!("you> ");
-            io::stdout().flush()?;
-
-            line.clear();
-            let bytes = stdin.read_line(&mut line)?;
-            if bytes == 0 {
-                println!("\nEOF received. Bye.");
-                break;
-            }
-
-            let input = line.trim();
-            if input.is_empty() {
-                continue;
-            }
-            if input == "/exit" {
-                println!("Bye.");
-                break;
-            }
-
-            let maybe_output = submit_and_get_output(
-                &runtime,
-                input.to_string(),
-                self.session_key.clone(),
-                chat_id.clone(),
-            )
-            .await?;
-
-            match maybe_output {
-                Some(output) => {
-                    println!(
-                        "agent>\n{}\n",
-                        render_agent_output(
-                            &output.content,
-                            output.reasoning.as_deref(),
-                            self.show_reasoning
-                        )
-                    )
+            tokio::select! {
+                _ = cron_tick.tick() => {
+                    background.on_cron_tick().await;
                 }
-                None => println!("agent> [no response]\n"),
+                _ = runtime_tick.tick() => {
+                    background.on_runtime_tick(&runtime).await;
+                }
+                line = lines.next_line() => {
+                    let maybe_line = line?;
+                    let Some(line) = maybe_line else {
+                        println!("\nEOF received. Bye.");
+                        break;
+                    };
+
+                    let input = line.trim();
+                    if input.is_empty() {
+                        print!("you> ");
+                        io::stdout().flush()?;
+                        continue;
+                    }
+                    if input == "/exit" {
+                        println!("Bye.");
+                        break;
+                    }
+
+                    let maybe_output = submit_and_get_output(
+                        &runtime,
+                        input.to_string(),
+                        self.session_key.clone(),
+                        chat_id.clone(),
+                    )
+                    .await?;
+
+                    match maybe_output {
+                        Some(output) => {
+                            println!(
+                                "agent>\n{}\n",
+                                render_agent_output(
+                                    &output.content,
+                                    output.reasoning.as_deref(),
+                                    self.show_reasoning
+                                )
+                            )
+                        }
+                        None => println!("agent> [no response]\n"),
+                    }
+                    print!("you> ");
+                    io::stdout().flush()?;
+                }
             }
         }
         Ok(())

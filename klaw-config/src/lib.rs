@@ -14,6 +14,8 @@ pub struct AppConfig {
     pub memory: MemoryConfig,
     #[serde(default)]
     pub tools: ToolsConfig,
+    #[serde(default)]
+    pub cron: CronConfig,
 }
 
 impl Default for AppConfig {
@@ -26,6 +28,7 @@ impl Default for AppConfig {
             model_providers,
             memory: MemoryConfig::default(),
             tools: ToolsConfig::default(),
+            cron: CronConfig::default(),
         }
     }
 }
@@ -357,6 +360,45 @@ impl Default for SubAgentConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronConfig {
+    #[serde(default = "default_cron_tick_ms")]
+    pub tick_ms: u64,
+    #[serde(default = "default_cron_runtime_tick_ms")]
+    pub runtime_tick_ms: u64,
+    #[serde(default = "default_cron_runtime_drain_batch")]
+    pub runtime_drain_batch: usize,
+    #[serde(default = "default_cron_batch_limit")]
+    pub batch_limit: i64,
+}
+
+impl Default for CronConfig {
+    fn default() -> Self {
+        Self {
+            tick_ms: default_cron_tick_ms(),
+            runtime_tick_ms: default_cron_runtime_tick_ms(),
+            runtime_drain_batch: default_cron_runtime_drain_batch(),
+            batch_limit: default_cron_batch_limit(),
+        }
+    }
+}
+
+fn default_cron_tick_ms() -> u64 {
+    1_000
+}
+
+fn default_cron_runtime_tick_ms() -> u64 {
+    200
+}
+
+fn default_cron_runtime_drain_batch() -> usize {
+    8
+}
+
+fn default_cron_batch_limit() -> i64 {
+    64
+}
+
 fn default_sub_agent_max_iterations() -> u32 {
     6
 }
@@ -667,6 +709,26 @@ fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "tools.sub_agent.max_tool_calls must be greater than 0".to_string(),
         ));
     }
+    if config.cron.tick_ms == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "cron.tick_ms must be greater than 0".to_string(),
+        ));
+    }
+    if config.cron.runtime_tick_ms == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "cron.runtime_tick_ms must be greater than 0".to_string(),
+        ));
+    }
+    if config.cron.runtime_drain_batch == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "cron.runtime_drain_batch must be greater than 0".to_string(),
+        ));
+    }
+    if config.cron.batch_limit <= 0 {
+        return Err(ConfigError::InvalidConfig(
+            "cron.batch_limit must be greater than 0".to_string(),
+        ));
+    }
     if config.tools.memory.search_limit == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.memory.search_limit must be greater than 0".to_string(),
@@ -779,6 +841,10 @@ mod tests {
         assert!(parsed.tools.sub_agent.enabled);
         assert_eq!(parsed.tools.sub_agent.max_iterations, 6);
         assert_eq!(parsed.tools.sub_agent.max_tool_calls, 12);
+        assert_eq!(parsed.cron.tick_ms, 1_000);
+        assert_eq!(parsed.cron.runtime_tick_ms, 200);
+        assert_eq!(parsed.cron.runtime_drain_batch, 8);
+        assert_eq!(parsed.cron.batch_limit, 64);
         assert_eq!(
             parsed.tools.sub_agent.exclude_tools,
             vec!["sub_agent".to_string()]
@@ -793,6 +859,7 @@ mod tests {
             model_providers: BTreeMap::new(),
             memory: MemoryConfig::default(),
             tools: ToolsConfig::default(),
+            cron: CronConfig::default(),
         };
         let err = validate(&cfg).expect_err("should fail");
         assert!(format!("{err}").contains("not found in model_providers"));
@@ -945,6 +1012,29 @@ provider = "missing"
         cfg2.tools.sub_agent.max_tool_calls = 0;
         let err2 = validate(&cfg2).expect_err("should fail");
         assert!(format!("{err2}").contains("max_tool_calls"));
+    }
+
+    #[test]
+    fn validate_fails_when_cron_limits_are_zero() {
+        let mut cfg = AppConfig::default();
+        cfg.cron.tick_ms = 0;
+        let err = validate(&cfg).expect_err("should fail");
+        assert!(format!("{err}").contains("cron.tick_ms"));
+
+        let mut cfg2 = AppConfig::default();
+        cfg2.cron.runtime_tick_ms = 0;
+        let err2 = validate(&cfg2).expect_err("should fail");
+        assert!(format!("{err2}").contains("cron.runtime_tick_ms"));
+
+        let mut cfg3 = AppConfig::default();
+        cfg3.cron.runtime_drain_batch = 0;
+        let err3 = validate(&cfg3).expect_err("should fail");
+        assert!(format!("{err3}").contains("cron.runtime_drain_batch"));
+
+        let mut cfg4 = AppConfig::default();
+        cfg4.cron.batch_limit = 0;
+        let err4 = validate(&cfg4).expect_err("should fail");
+        assert!(format!("{err4}").contains("cron.batch_limit"));
     }
 
     #[test]

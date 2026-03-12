@@ -1,10 +1,10 @@
 use klaw_agent::build_provider_from_config;
 use klaw_config::AppConfig;
 use klaw_core::{
-    AgentLoop, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader,
-    ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker, InMemoryIdempotencyStore,
-    InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy, RunLimits,
-    SessionSchedulingPolicy, Subscription,
+    AgentLoop, AgentRuntimeError, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy,
+    Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker,
+    InMemoryIdempotencyStore, InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy,
+    RunLimits, SessionSchedulingPolicy, Subscription, TransportError,
 };
 use klaw_storage::{open_default_store, ChatRecord, DefaultSessionStore, SessionStorage};
 use klaw_tool::{
@@ -140,22 +140,8 @@ pub async fn submit_and_get_output(
         })
         .await;
 
-    let outcome = runtime
-        .runtime
-        .run_once_reliable(
-            &runtime.inbound_transport,
-            &runtime.outbound_transport,
-            &runtime.deadletter_transport,
-            &runtime.subscription,
-            &runtime.idempotency,
-            &runtime.retry_policy,
-            &runtime.deadletter_policy,
-            &runtime.circuit_breaker,
-        )
-        .await?;
-
-    let published = runtime.outbound_transport.published_messages().await;
-    match published.last() {
+    let maybe_outbound = run_runtime_once(runtime).await?;
+    match maybe_outbound {
         Some(msg) => {
             let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
             runtime
@@ -183,9 +169,74 @@ pub async fn submit_and_get_output(
             }))
         }
         None => {
-            warn!(error = ?outcome.error_code, "no outbound response produced");
+            warn!("no outbound response produced");
             Ok(None)
         }
+    }
+}
+
+pub async fn drain_runtime_queue(
+    runtime: &RuntimeBundle,
+    max_iterations: usize,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut drained = 0usize;
+    for _ in 0..max_iterations.max(1) {
+        let maybe_outbound = run_runtime_once(runtime).await?;
+        let Some(msg) = maybe_outbound else {
+            break;
+        };
+        let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
+        runtime
+            .session_store
+            .append_chat_record(&msg.header.session_key, &agent_record)
+            .await?;
+        runtime
+            .session_store
+            .complete_turn(
+                &msg.header.session_key,
+                &msg.payload.chat_id,
+                &msg.payload.channel,
+            )
+            .await?;
+        drained += 1;
+    }
+    Ok(drained)
+}
+
+async fn run_runtime_once(
+    runtime: &RuntimeBundle,
+) -> Result<Option<Envelope<OutboundMessage>>, Box<dyn std::error::Error>> {
+    let before_len = runtime.outbound_transport.published_messages().await.len();
+    let result = runtime
+        .runtime
+        .run_once_reliable(
+            &runtime.inbound_transport,
+            &runtime.outbound_transport,
+            &runtime.deadletter_transport,
+            &runtime.subscription,
+            &runtime.idempotency,
+            &runtime.retry_policy,
+            &runtime.deadletter_policy,
+            &runtime.circuit_breaker,
+        )
+        .await;
+
+    match result {
+        Ok(_) => {
+            let published = runtime.outbound_transport.published_messages().await;
+            Ok(published.get(before_len).cloned())
+        }
+        Err(err) if is_queue_empty_error(&err) => Ok(None),
+        Err(err) => Err(Box::new(err)),
+    }
+}
+
+fn is_queue_empty_error(err: &AgentRuntimeError) -> bool {
+    match err {
+        AgentRuntimeError::Transport(TransportError::ConsumeFailed(message)) => {
+            message.contains("queue empty")
+        }
+        _ => false,
     }
 }
 

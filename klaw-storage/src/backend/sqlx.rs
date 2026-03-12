@@ -2,7 +2,8 @@ use crate::{
     jsonl,
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
-    ChatRecord, SessionIndex, SessionStorage, StorageError, StoragePaths,
+    ChatRecord, CronJob, CronScheduleKind, CronStorage, CronTaskRun, CronTaskStatus, NewCronJob,
+    NewCronTaskRun, SessionIndex, SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
 use sqlx::{
@@ -34,6 +35,35 @@ struct SessionIndexRow {
     jsonl_path: String,
 }
 
+#[derive(Debug, Clone, FromRow)]
+struct CronJobRow {
+    id: String,
+    name: String,
+    schedule_kind: String,
+    schedule_expr: String,
+    payload_json: String,
+    enabled: i64,
+    timezone: String,
+    next_run_at_ms: i64,
+    last_run_at_ms: Option<i64>,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct CronTaskRunRow {
+    id: String,
+    cron_id: String,
+    scheduled_at_ms: i64,
+    started_at_ms: Option<i64>,
+    finished_at_ms: Option<i64>,
+    status: String,
+    attempt: i64,
+    error_message: Option<String>,
+    published_message_id: Option<String>,
+    created_at_ms: i64,
+}
+
 impl From<SessionIndexRow> for SessionIndex {
     fn from(value: SessionIndexRow) -> Self {
         Self {
@@ -46,6 +76,54 @@ impl From<SessionIndexRow> for SessionIndex {
             turn_count: value.turn_count,
             jsonl_path: value.jsonl_path,
         }
+    }
+}
+
+impl TryFrom<CronJobRow> for CronJob {
+    type Error = StorageError;
+
+    fn try_from(value: CronJobRow) -> Result<Self, Self::Error> {
+        let schedule_kind = CronScheduleKind::parse(&value.schedule_kind).ok_or_else(|| {
+            StorageError::backend(format!(
+                "invalid cron schedule kind: {}",
+                value.schedule_kind
+            ))
+        })?;
+        Ok(Self {
+            id: value.id,
+            name: value.name,
+            schedule_kind,
+            schedule_expr: value.schedule_expr,
+            payload_json: value.payload_json,
+            enabled: value.enabled != 0,
+            timezone: value.timezone,
+            next_run_at_ms: value.next_run_at_ms,
+            last_run_at_ms: value.last_run_at_ms,
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
+        })
+    }
+}
+
+impl TryFrom<CronTaskRunRow> for CronTaskRun {
+    type Error = StorageError;
+
+    fn try_from(value: CronTaskRunRow) -> Result<Self, Self::Error> {
+        let status = CronTaskStatus::parse(&value.status).ok_or_else(|| {
+            StorageError::backend(format!("invalid cron task status: {}", value.status))
+        })?;
+        Ok(Self {
+            id: value.id,
+            cron_id: value.cron_id,
+            scheduled_at_ms: value.scheduled_at_ms,
+            started_at_ms: value.started_at_ms,
+            finished_at_ms: value.finished_at_ms,
+            status,
+            attempt: value.attempt,
+            error_message: value.error_message,
+            published_message_id: value.published_message_id,
+            created_at_ms: value.created_at_ms,
+        })
     }
 }
 
@@ -84,6 +162,63 @@ impl SqlxSessionStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at_ms
              ON sessions(updated_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS cron (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                schedule_kind TEXT NOT NULL,
+                schedule_expr TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                timezone TEXT NOT NULL DEFAULT 'UTC',
+                next_run_at_ms INTEGER NOT NULL,
+                last_run_at_ms INTEGER,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS cron_task (
+                id TEXT PRIMARY KEY,
+                cron_id TEXT NOT NULL,
+                scheduled_at_ms INTEGER NOT NULL,
+                started_at_ms INTEGER,
+                finished_at_ms INTEGER,
+                status TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                published_message_id TEXT,
+                created_at_ms INTEGER NOT NULL,
+                FOREIGN KEY (cron_id) REFERENCES cron(id) ON DELETE CASCADE
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_cron_enabled_next_run
+             ON cron(enabled, next_run_at_ms)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_cron_task_cron_created
+             ON cron_task(cron_id, created_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_cron_task_status_scheduled
+             ON cron_task(status, scheduled_at_ms)",
         )
         .execute(&self.pool)
         .await
@@ -282,6 +417,250 @@ impl SessionStorage for SqlxSessionStore {
 
     fn session_jsonl_path(&self, session_key: &str) -> PathBuf {
         jsonl::session_jsonl_path(&self.paths, session_key)
+    }
+}
+
+#[async_trait]
+impl CronStorage for SqlxSessionStore {
+    async fn create_cron(&self, input: &NewCronJob) -> Result<CronJob, StorageError> {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO cron (
+                id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone,
+                next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10)",
+        )
+        .bind(&input.id)
+        .bind(&input.name)
+        .bind(input.schedule_kind.as_str())
+        .bind(&input.schedule_expr)
+        .bind(&input.payload_json)
+        .bind(if input.enabled { 1_i64 } else { 0_i64 })
+        .bind(&input.timezone)
+        .bind(input.next_run_at_ms)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        self.get_cron(&input.id).await
+    }
+
+    async fn update_cron(
+        &self,
+        cron_id: &str,
+        patch: &UpdateCronJobPatch,
+    ) -> Result<CronJob, StorageError> {
+        let current = self.get_cron(cron_id).await?;
+        let now = now_ms();
+        sqlx::query(
+            "UPDATE cron
+             SET name = ?1,
+                 schedule_kind = ?2,
+                 schedule_expr = ?3,
+                 payload_json = ?4,
+                 timezone = ?5,
+                 next_run_at_ms = ?6,
+                 updated_at_ms = ?7
+             WHERE id = ?8",
+        )
+        .bind(patch.name.as_ref().unwrap_or(&current.name))
+        .bind(
+            patch
+                .schedule_kind
+                .unwrap_or(current.schedule_kind)
+                .as_str(),
+        )
+        .bind(
+            patch
+                .schedule_expr
+                .as_ref()
+                .unwrap_or(&current.schedule_expr),
+        )
+        .bind(patch.payload_json.as_ref().unwrap_or(&current.payload_json))
+        .bind(patch.timezone.as_ref().unwrap_or(&current.timezone))
+        .bind(patch.next_run_at_ms.unwrap_or(current.next_run_at_ms))
+        .bind(now)
+        .bind(cron_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        self.get_cron(cron_id).await
+    }
+
+    async fn set_enabled(&self, cron_id: &str, enabled: bool) -> Result<(), StorageError> {
+        sqlx::query("UPDATE cron SET enabled = ?1, updated_at_ms = ?2 WHERE id = ?3")
+            .bind(if enabled { 1_i64 } else { 0_i64 })
+            .bind(now_ms())
+            .bind(cron_id)
+            .execute(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(())
+    }
+
+    async fn delete_cron(&self, cron_id: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM cron WHERE id = ?1")
+            .bind(cron_id)
+            .execute(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(())
+    }
+
+    async fn get_cron(&self, cron_id: &str) -> Result<CronJob, StorageError> {
+        let row = sqlx::query_as::<_, CronJobRow>(
+            "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone,
+                    next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+             FROM cron
+             WHERE id = ?1",
+        )
+        .bind(cron_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        row.try_into()
+    }
+
+    async fn list_due_crons(&self, now_ms: i64, limit: i64) -> Result<Vec<CronJob>, StorageError> {
+        let rows = sqlx::query_as::<_, CronJobRow>(
+            "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone,
+                    next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+             FROM cron
+             WHERE enabled = 1 AND next_run_at_ms <= ?1
+             ORDER BY next_run_at_ms ASC
+             LIMIT ?2",
+        )
+        .bind(now_ms)
+        .bind(limit.max(1))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        rows.into_iter().map(TryInto::try_into).collect()
+    }
+
+    async fn claim_next_run(
+        &self,
+        cron_id: &str,
+        expected_next_run_at_ms: i64,
+        new_next_run_at_ms: i64,
+        now_ms: i64,
+    ) -> Result<bool, StorageError> {
+        let result = sqlx::query(
+            "UPDATE cron
+             SET next_run_at_ms = ?1,
+                 last_run_at_ms = ?2,
+                 updated_at_ms = ?3
+             WHERE id = ?4 AND enabled = 1 AND next_run_at_ms = ?5",
+        )
+        .bind(new_next_run_at_ms)
+        .bind(expected_next_run_at_ms)
+        .bind(now_ms)
+        .bind(cron_id)
+        .bind(expected_next_run_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn append_task_run(&self, input: &NewCronTaskRun) -> Result<CronTaskRun, StorageError> {
+        sqlx::query(
+            "INSERT INTO cron_task (
+                id, cron_id, scheduled_at_ms, started_at_ms, finished_at_ms,
+                status, attempt, error_message, published_message_id, created_at_ms
+            ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, NULL, NULL, ?6)",
+        )
+        .bind(&input.id)
+        .bind(&input.cron_id)
+        .bind(input.scheduled_at_ms)
+        .bind(input.status.as_str())
+        .bind(input.attempt)
+        .bind(input.created_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+
+        let row = sqlx::query_as::<_, CronTaskRunRow>(
+            "SELECT id, cron_id, scheduled_at_ms, started_at_ms, finished_at_ms, status,
+                    attempt, error_message, published_message_id, created_at_ms
+             FROM cron_task
+             WHERE id = ?1",
+        )
+        .bind(&input.id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        row.try_into()
+    }
+
+    async fn mark_task_running(
+        &self,
+        run_id: &str,
+        started_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            "UPDATE cron_task
+             SET status = ?1, started_at_ms = ?2
+             WHERE id = ?3",
+        )
+        .bind(CronTaskStatus::Running.as_str())
+        .bind(started_at_ms)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(())
+    }
+
+    async fn mark_task_result(
+        &self,
+        run_id: &str,
+        status: CronTaskStatus,
+        finished_at_ms: i64,
+        error_message: Option<&str>,
+        published_message_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            "UPDATE cron_task
+             SET status = ?1,
+                 finished_at_ms = ?2,
+                 error_message = ?3,
+                 published_message_id = ?4
+             WHERE id = ?5",
+        )
+        .bind(status.as_str())
+        .bind(finished_at_ms)
+        .bind(error_message)
+        .bind(published_message_id)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(())
+    }
+
+    async fn list_task_runs(
+        &self,
+        cron_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<CronTaskRun>, StorageError> {
+        let rows = sqlx::query_as::<_, CronTaskRunRow>(
+            "SELECT id, cron_id, scheduled_at_ms, started_at_ms, finished_at_ms, status,
+                    attempt, error_message, published_message_id, created_at_ms
+             FROM cron_task
+             WHERE cron_id = ?1
+             ORDER BY created_at_ms DESC
+             LIMIT ?2 OFFSET ?3",
+        )
+        .bind(cron_id)
+        .bind(limit.max(1))
+        .bind(offset.max(0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        rows.into_iter().map(TryInto::try_into).collect()
     }
 }
 

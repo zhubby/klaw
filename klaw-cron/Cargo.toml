@@ -5,3 +5,13 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+chrono = "0.4"
+cron = "0.15"
+humantime = "2"
+klaw-core.workspace = true
+klaw-storage.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true

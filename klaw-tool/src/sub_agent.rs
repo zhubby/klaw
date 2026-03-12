@@ -259,7 +259,7 @@ impl Tool for SubAgentTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        MemoryConfig, MemoryToolConfig, ModelProviderConfig, ShellConfig, ToolsConfig,
+        CronConfig, MemoryConfig, MemoryToolConfig, ModelProviderConfig, ShellConfig, ToolsConfig,
         WebFetchConfig, WebSearchConfig,
     };
 
@@ -293,6 +293,7 @@ mod tests {
                     exclude_tools: vec!["sub_agent".to_string()],
                 },
             },
+            cron: CronConfig::default(),
         })
     }
 

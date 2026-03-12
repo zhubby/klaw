@@ -817,6 +817,7 @@ mod tests {
                 },
             },
             tools: klaw_config::ToolsConfig::default(),
+            cron: klaw_config::CronConfig::default(),
         };
 
         let provider = build_embedding_provider_from_config(&config).expect("provider build");
