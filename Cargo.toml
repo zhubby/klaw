@@ -11,7 +11,7 @@ members = [
     "klaw-memory", 
     "klaw-cron", 
     "klaw-storage", 
-    "klaw-gateway",
+    "klaw-gateway", "klaw-channel",
 ]
 resolver = "2"
 
@@ -50,3 +50,4 @@ klaw-cron = { path = "klaw-cron" }
 klaw-skill = { path = "klaw-skill" }
 klaw-mcp = { path = "klaw-mcp" }
 klaw-gateway = { path = "klaw-gateway" }
+klaw-channel = { path = "klaw-channel" }

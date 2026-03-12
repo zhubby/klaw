@@ -1,0 +1,11 @@
+[package]
+name = "klaw-channel"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "io-std", "time"] }
+tracing = { workspace = true }
+uuid = { workspace = true }

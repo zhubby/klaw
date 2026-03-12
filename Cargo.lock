@@ -2205,12 +2205,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "klaw-channel"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "klaw-cli"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap 4.5.60",
  "klaw-agent",
+ "klaw-channel",
  "klaw-config",
  "klaw-core",
  "klaw-cron",
