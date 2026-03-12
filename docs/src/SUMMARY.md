@@ -11,6 +11,7 @@
 - [Memory Tool](./tools/memory.md)
 - [Sub Agent Tool](./tools/sub_agent.md)
 - [Skills 模块与工具](./tools/skills.md)
+- [Gateway](./gateway/websocket.md)
 - [Agent Core](./agent-core/README.md)
   - [Message Protocol](./agent-core/message-protocol.md)
   - [Runtime State Machine](./agent-core/runtime-state-machine.md)

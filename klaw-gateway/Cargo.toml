@@ -5,3 +5,10 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+axum = { workspace = true }
+futures-util = { workspace = true }
+klaw-config = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net", "sync"] }
+tracing = { workspace = true }

@@ -809,6 +809,7 @@ mod tests {
         let config = AppConfig {
             model_provider: "openai".to_string(),
             model_providers: providers,
+            gateway: klaw_config::GatewayConfig::default(),
             memory: klaw_config::MemoryConfig {
                 embedding: klaw_config::EmbeddingConfig {
                     enabled: true,

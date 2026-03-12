@@ -1,4 +1,5 @@
 use crate::{AppConfig, BraveWebSearchConfig, ConfigError, McpServerMode, TavilyWebSearchConfig};
+use std::net::IpAddr;
 
 pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     if config.model_provider.trim().is_empty() {
@@ -34,6 +35,44 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "provider '{}' wire_api cannot be empty",
             config.model_provider
         )));
+    }
+
+    config.gateway.listen_ip.parse::<IpAddr>().map_err(|err| {
+        ConfigError::InvalidConfig(format!(
+            "gateway.listen_ip '{}' is invalid: {}",
+            config.gateway.listen_ip, err
+        ))
+    })?;
+    if config.gateway.listen_port == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "gateway.listen_port must be greater than 0".to_string(),
+        ));
+    }
+    if config.gateway.tls.enabled {
+        let cert_path = config
+            .gateway
+            .tls
+            .cert_path
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        if cert_path.is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "gateway.tls.cert_path cannot be empty when gateway.tls.enabled=true".to_string(),
+            ));
+        }
+        let key_path = config
+            .gateway
+            .tls
+            .key_path
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        if key_path.is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "gateway.tls.key_path cannot be empty when gateway.tls.enabled=true".to_string(),
+            ));
+        }
     }
 
     if config.memory.embedding.enabled {

@@ -7,6 +7,8 @@ pub struct AppConfig {
     pub model_provider: String,
     pub model_providers: BTreeMap<String, ModelProviderConfig>,
     #[serde(default)]
+    pub gateway: GatewayConfig,
+    #[serde(default)]
     pub memory: MemoryConfig,
     #[serde(default)]
     pub mcp: McpConfig,
@@ -26,6 +28,7 @@ impl Default for AppConfig {
         Self {
             model_provider,
             model_providers,
+            gateway: GatewayConfig::default(),
             memory: MemoryConfig::default(),
             mcp: McpConfig::default(),
             tools: ToolsConfig::default(),
@@ -33,6 +36,54 @@ impl Default for AppConfig {
             skills: SkillsConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayConfig {
+    #[serde(default = "default_gateway_listen_ip")]
+    pub listen_ip: String,
+    #[serde(default = "default_gateway_listen_port")]
+    pub listen_port: u16,
+    #[serde(default)]
+    pub tls: GatewayTlsConfig,
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            listen_ip: default_gateway_listen_ip(),
+            listen_port: default_gateway_listen_port(),
+            tls: GatewayTlsConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayTlsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cert_path: Option<String>,
+    #[serde(default)]
+    pub key_path: Option<String>,
+}
+
+impl Default for GatewayTlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cert_path: None,
+            key_path: None,
+        }
+    }
+}
+
+fn default_gateway_listen_ip() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_gateway_listen_port() -> u16 {
+    8080
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

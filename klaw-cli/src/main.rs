@@ -3,7 +3,8 @@ mod runtime;
 
 use clap::{Parser, Subcommand};
 use commands::{
-    agent::AgentCommand, config::ConfigCommand, session::SessionCommand, stdio::StdioCommand,
+    agent::AgentCommand, config::ConfigCommand, gateway::GatewayCommand, session::SessionCommand,
+    stdio::StdioCommand,
 };
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
@@ -28,6 +29,8 @@ enum Commands {
     Stdio(StdioCommand),
     /// Execute one request and print one response.
     Agent(AgentCommand),
+    /// Start websocket gateway service.
+    Gateway(GatewayCommand),
     /// Manage local session indexes in klaw.db.
     Session(SessionCommand),
 }
@@ -63,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match command {
         Commands::Stdio(cmd) => cmd.run(Arc::clone(&app_config)).await?,
         Commands::Agent(cmd) => cmd.run(app_config).await?,
+        Commands::Gateway(cmd) => cmd.run(app_config).await?,
         Commands::Session(cmd) => cmd.run().await?,
         Commands::Config(_) => unreachable!("handled above"),
     }

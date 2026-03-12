@@ -78,6 +78,11 @@ fn parse_default_template_succeeds() {
     assert!(parsed.mcp.enabled);
     assert_eq!(parsed.mcp.startup_timeout_seconds, 60);
     assert!(parsed.mcp.servers.is_empty());
+    assert_eq!(parsed.gateway.listen_ip, "127.0.0.1");
+    assert_eq!(parsed.gateway.listen_port, 8080);
+    assert!(!parsed.gateway.tls.enabled);
+    assert!(parsed.gateway.tls.cert_path.is_none());
+    assert!(parsed.gateway.tls.key_path.is_none());
     validate(&parsed).expect("default template should be valid");
 }
 
@@ -86,6 +91,7 @@ fn validate_fails_when_active_provider_missing() {
     let cfg = AppConfig {
         model_provider: "missing".to_string(),
         model_providers: BTreeMap::new(),
+        gateway: GatewayConfig::default(),
         memory: MemoryConfig::default(),
         mcp: McpConfig::default(),
         tools: ToolsConfig::default(),
@@ -250,6 +256,31 @@ Authorization = "Bearer test"
 }
 
 #[test]
+fn parse_gateway_config_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[gateway]
+listen_ip = "0.0.0.0"
+listen_port = 18080
+
+[gateway.tls]
+enabled = false
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+    assert_eq!(parsed.gateway.listen_ip, "0.0.0.0");
+    assert_eq!(parsed.gateway.listen_port, 18_080);
+    assert!(!parsed.gateway.tls.enabled);
+}
+
+#[test]
 fn validate_fails_when_web_fetch_limits_are_invalid() {
     let mut cfg = AppConfig::default();
     cfg.tools.web_fetch.enabled = true;
@@ -270,6 +301,24 @@ fn validate_fails_when_mcp_timeout_is_zero() {
     cfg.mcp.startup_timeout_seconds = 0;
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("mcp.startup_timeout_seconds"));
+}
+
+#[test]
+fn validate_fails_when_gateway_ip_is_invalid() {
+    let mut cfg = AppConfig::default();
+    cfg.gateway.listen_ip = "invalid-ip".to_string();
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("gateway.listen_ip"));
+}
+
+#[test]
+fn validate_fails_when_gateway_tls_paths_missing() {
+    let mut cfg = AppConfig::default();
+    cfg.gateway.tls.enabled = true;
+    cfg.gateway.tls.cert_path = Some("".to_string());
+    cfg.gateway.tls.key_path = None;
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("gateway.tls.cert_path"));
 }
 
 #[test]

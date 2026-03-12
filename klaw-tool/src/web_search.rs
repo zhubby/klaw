@@ -396,8 +396,8 @@ struct BraveSearchItem {
 mod tests {
     use super::*;
     use klaw_config::{
-        CronConfig, McpConfig, MemoryConfig, ModelProviderConfig, ShellConfig, SkillsConfig,
-        ToolsConfig, WebSearchConfig,
+        CronConfig, GatewayConfig, McpConfig, MemoryConfig, ModelProviderConfig, ShellConfig,
+        SkillsConfig, ToolsConfig, WebSearchConfig,
     };
     use std::collections::BTreeMap;
 
@@ -417,6 +417,7 @@ mod tests {
         AppConfig {
             model_provider: "openai".to_string(),
             model_providers,
+            gateway: GatewayConfig::default(),
             memory: MemoryConfig::default(),
             mcp: McpConfig::default(),
             tools: ToolsConfig {

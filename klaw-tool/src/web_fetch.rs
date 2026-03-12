@@ -504,8 +504,8 @@ impl Tool for WebFetchTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        AppConfig, CronConfig, McpConfig, MemoryConfig, ModelProviderConfig, SkillsConfig,
-        ToolsConfig, WebFetchConfig, WebSearchConfig,
+        AppConfig, CronConfig, GatewayConfig, McpConfig, MemoryConfig, ModelProviderConfig,
+        SkillsConfig, ToolsConfig, WebFetchConfig, WebSearchConfig,
     };
     use std::collections::BTreeMap;
 
@@ -526,6 +526,7 @@ mod tests {
         let app = AppConfig {
             model_provider: "openai".to_string(),
             model_providers: providers,
+            gateway: GatewayConfig::default(),
             memory: MemoryConfig::default(),
             mcp: McpConfig::default(),
             tools: ToolsConfig {

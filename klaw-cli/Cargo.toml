@@ -19,6 +19,7 @@ klaw-storage = { workspace = true }
 klaw-cron = { workspace = true }
 klaw-skill = { workspace = true }
 klaw-mcp = { workspace = true }
+klaw-gateway = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
