@@ -3,10 +3,11 @@ pub mod service_loop;
 use klaw_agent::build_provider_from_config;
 use klaw_config::AppConfig;
 use klaw_core::{
-    AgentLoop, AgentRuntimeError, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy,
-    Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker,
-    InMemoryIdempotencyStore, InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy,
-    RunLimits, SessionSchedulingPolicy, Subscription, TransportError,
+    load_or_create_system_prompt, AgentLoop, AgentRuntimeError, CircuitBreakerPolicy,
+    DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
+    InMemoryCircuitBreaker, InMemoryIdempotencyStore, InMemoryTransport, InboundMessage,
+    OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy, Subscription,
+    TransportError,
 };
 use klaw_mcp::{McpClientHub, McpManager, McpProxyTool, McpRuntimeHandles, McpToolDescriptor};
 use klaw_skill::{open_default_skill_store, InstalledSkill, RegistrySource, SkillStore};
@@ -181,7 +182,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
     }
 
-    let system_prompt = load_skills_system_prompt(config).await;
+    let data_dir_system_prompt = load_data_dir_system_prompt().await;
+    let skills_system_prompt = load_skills_system_prompt(config).await;
+    let system_prompt = compose_system_prompt(data_dir_system_prompt, skills_system_prompt);
 
     let runtime = AgentLoop::new_with_identity(
         RunLimits {
@@ -322,6 +325,34 @@ async fn load_skills_system_prompt(config: &AppConfig) -> Option<String> {
         }
     }
     Some(prompt)
+}
+
+async fn load_data_dir_system_prompt() -> Option<String> {
+    match load_or_create_system_prompt().await {
+        Ok(prompt) => Some(prompt),
+        Err(err) => {
+            warn!("failed to load SYSTEM.md from data dir: {err}");
+            None
+        }
+    }
+}
+
+fn compose_system_prompt(
+    data_dir_system_prompt: Option<String>,
+    runtime_system_prompt: Option<String>,
+) -> Option<String> {
+    let base = data_dir_system_prompt
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let runtime = runtime_system_prompt
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    match (base, runtime) {
+        (Some(base), Some(runtime)) => Some(format!("{base}\n\n{runtime}")),
+        (Some(base), None) => Some(base),
+        (None, Some(runtime)) => Some(runtime),
+        (None, None) => None,
+    }
 }
 
 pub async fn submit_and_get_output(

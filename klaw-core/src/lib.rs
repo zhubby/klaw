@@ -8,6 +8,8 @@ pub mod domain;
 pub mod mock;
 /// 指标、审计、健康抽象。
 pub mod observability;
+/// System prompt 文件管理。
+pub mod prompt;
 /// 协议层与错误码定义。
 pub mod protocol;
 /// 可靠性控制抽象。
@@ -24,6 +26,10 @@ pub use agent_loop::{
 pub use domain::{DeadLetterMessage, InboundMessage, OutboundMessage, SessionKey};
 pub use mock::{InMemoryIdempotencyStore, InMemorySessionScheduler, InMemoryTransport};
 pub use observability::{AgentTelemetry, HealthStatus};
+pub use prompt::{
+    load_or_create_system_prompt, load_or_create_system_prompt_in_dir, PromptError,
+    DEFAULT_SYSTEM_PROMPT, SYSTEM_PROMPT_FILE_NAME,
+};
 pub use protocol::{Envelope, EnvelopeHeader, ErrorCode, MessageTopic, SchemaVersion};
 pub use reliability::{
     CircuitBreaker, CircuitBreakerPolicy, DeadLetterPolicy, ExponentialBackoffRetryPolicy,
