@@ -6,7 +6,6 @@ version.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-crossterm = "0.28"
 futures-util = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }

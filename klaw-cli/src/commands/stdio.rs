@@ -17,6 +17,9 @@ pub struct StdioCommand {
     /// Print model reasoning when provider returns it.
     #[arg(long, default_value_t = false)]
     pub show_reasoning: bool,
+    /// Print tracing logs directly in the terminal instead of writing them to ~/.klaw/logs/stdio.log.
+    #[arg(long, default_value_t = false)]
+    pub verbose_terminal: bool,
 }
 
 impl StdioCommand {

@@ -32,6 +32,12 @@ env_key = "OPENAI_API_KEY"
 klaw stdio
 ```
 
+如果要直接在终端看到 tracing / MCP bootstrap 日志，可改用：
+
+```bash
+klaw stdio --verbose-terminal
+```
+
 - 输入任意文本并回车开始对话
 - 输入 `/exit` 退出
 

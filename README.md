@@ -121,6 +121,12 @@ max_output_bytes = 131072
 klaw stdio
 ```
 
+需要直接在终端查看 tracing 日志时，可使用：
+
+```bash
+klaw stdio --verbose-terminal
+```
+
 - Type any text and press Enter to start a conversation
 - Type `/exit` to exit
 
