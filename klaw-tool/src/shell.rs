@@ -399,10 +399,7 @@ impl Tool for ShellTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_config::{
-        CronConfig, GatewayConfig, HeartbeatConfig, McpConfig, MemoryConfig, ModelProviderConfig,
-        ShellApprovalPolicy, ShellConfig, SkillsConfig, ToolsConfig,
-    };
+    use klaw_config::{ModelProviderConfig, ShellApprovalPolicy, ShellConfig};
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
 
@@ -422,13 +419,7 @@ mod tests {
         AppConfig {
             model_provider: "openai".to_string(),
             model_providers: providers,
-            gateway: GatewayConfig::default(),
-            memory: MemoryConfig::default(),
-            mcp: McpConfig::default(),
-            tools: ToolsConfig::default(),
-            cron: CronConfig::default(),
-            heartbeat: HeartbeatConfig::default(),
-            skills: SkillsConfig::default(),
+            ..Default::default()
         }
     }
 

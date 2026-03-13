@@ -3,6 +3,7 @@ name = "klaw-tool"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+readme = "README.md"
 
 [dependencies]
 async-trait.workspace = true

@@ -100,7 +100,7 @@ mod tests {
         let report = StartupReport {
             skill_names: vec!["git-commit".to_string()],
             tool_names: vec![
-                "fs".to_string(),
+                "apply_patch".to_string(),
                 "memory".to_string(),
                 "sub_agent".to_string(),
                 "web_fetch".to_string(),

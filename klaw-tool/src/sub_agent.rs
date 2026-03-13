@@ -260,11 +260,7 @@ impl Tool for SubAgentTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_config::{
-        CronConfig, GatewayConfig, HeartbeatConfig, McpConfig, MemoryConfig, MemoryToolConfig,
-        ModelProviderConfig, ShellConfig, SkillsConfig, ToolsConfig, WebFetchConfig,
-        WebSearchConfig,
-    };
+    use klaw_config::{ModelProviderConfig, ToolsConfig};
 
     fn test_config() -> Arc<AppConfig> {
         let mut providers = BTreeMap::new();
@@ -282,14 +278,7 @@ mod tests {
         Arc::new(AppConfig {
             model_provider: "openai".to_string(),
             model_providers: providers,
-            gateway: GatewayConfig::default(),
-            memory: MemoryConfig::default(),
-            mcp: McpConfig::default(),
             tools: ToolsConfig {
-                shell: ShellConfig::default(),
-                memory: MemoryToolConfig::default(),
-                web_fetch: WebFetchConfig::default(),
-                web_search: WebSearchConfig::default(),
                 sub_agent: SubAgentConfig {
                     enabled: true,
                     max_iterations: 6,
@@ -297,10 +286,9 @@ mod tests {
                     inherit_parent_tools: true,
                     exclude_tools: vec!["sub_agent".to_string()],
                 },
+                ..Default::default()
             },
-            cron: CronConfig::default(),
-            heartbeat: HeartbeatConfig::default(),
-            skills: SkillsConfig::default(),
+            ..Default::default()
         })
     }
 

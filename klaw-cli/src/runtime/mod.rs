@@ -19,7 +19,7 @@ use klaw_storage::{
     open_default_store, ChatRecord, CronStorage, DefaultSessionStore, SessionStorage,
 };
 use klaw_tool::{
-    CronManagerTool, FsTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
+    ApplyPatchTool, CronManagerTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
     SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
@@ -118,7 +118,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         .await
         .map_err(|err| config_err(format!("heartbeat reconcile failed: {err}")))?;
     let mut tools = ToolRegistry::default();
-    tools.register(FsTool::new());
+    tools.register(ApplyPatchTool::new());
     tools.register(ShellTool::new(config));
     tools.register(LocalSearchTool::new());
     tools.register(TerminalMultiplexerTool::new());
