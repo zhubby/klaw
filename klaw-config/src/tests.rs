@@ -28,6 +28,8 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.shell.allow_login_shell);
     assert_eq!(parsed.tools.shell.max_timeout_ms, 120_000);
     assert_eq!(parsed.tools.shell.max_output_bytes, 128 * 1024);
+    assert!(parsed.tools.shell.workspace.is_none());
+    assert!(parsed.tools.apply_patch.workspace.is_none());
     assert!(!parsed.tools.apply_patch.allow_absolute_paths);
     assert!(parsed.tools.apply_patch.allowed_roots.is_empty());
     assert!(parsed.tools.memory.enabled);
@@ -116,6 +118,7 @@ default_model = "gpt-4o-mini"
 env_key = "OPENAI_API_KEY"
 
 [tools.shell]
+workspace = "/Users/example/shell"
 blocked_patterns = ["sudo rm -rf /tmp/example"]
 safe_commands = ["ls", "cat"]
 approval_policy = "never"
@@ -137,9 +140,42 @@ max_output_bytes = 64000
         parsed.tools.shell.approval_policy,
         ShellApprovalPolicy::Never
     );
+    assert_eq!(
+        parsed.tools.shell.workspace.as_deref(),
+        Some("/Users/example/shell")
+    );
     assert!(!parsed.tools.shell.allow_login_shell);
     assert_eq!(parsed.tools.shell.max_timeout_ms, 30_000);
     assert_eq!(parsed.tools.shell.max_output_bytes, 64_000);
+}
+
+#[test]
+fn parse_tools_workspaces_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[tools.shell]
+workspace = "/Users/example/shell"
+
+[tools.apply_patch]
+workspace = "/Users/example/patch"
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+    assert_eq!(
+        parsed.tools.shell.workspace.as_deref(),
+        Some("/Users/example/shell")
+    );
+    assert_eq!(
+        parsed.tools.apply_patch.workspace.as_deref(),
+        Some("/Users/example/patch")
+    );
 }
 
 #[test]
@@ -154,11 +190,16 @@ default_model = "gpt-4o-mini"
 env_key = "OPENAI_API_KEY"
 
 [tools.apply_patch]
+workspace = "/Users/example/patch"
 allow_absolute_paths = true
 allowed_roots = ["/tmp", "sandbox/allowed"]
 "#;
 
     let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+    assert_eq!(
+        parsed.tools.apply_patch.workspace.as_deref(),
+        Some("/Users/example/patch")
+    );
     assert!(parsed.tools.apply_patch.allow_absolute_paths);
     assert_eq!(
         parsed.tools.apply_patch.allowed_roots,
@@ -606,6 +647,24 @@ fn validate_fails_when_apply_patch_allowed_root_is_empty() {
 
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("tools.apply_patch.allowed_roots"));
+}
+
+#[test]
+fn validate_fails_when_apply_patch_workspace_is_empty() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.apply_patch.workspace = Some(" ".to_string());
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("tools.apply_patch.workspace"));
+}
+
+#[test]
+fn validate_fails_when_shell_workspace_is_empty() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.shell.workspace = Some(" ".to_string());
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("tools.shell.workspace"));
 }
 
 #[test]

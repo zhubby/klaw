@@ -208,6 +208,17 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             ));
         }
     }
+    if config
+        .tools
+        .apply_patch
+        .workspace
+        .as_deref()
+        .is_some_and(|workspace| workspace.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "tools.apply_patch.workspace cannot be empty".to_string(),
+        ));
+    }
 
     if config.tools.sub_agent.max_iterations == 0 {
         return Err(ConfigError::InvalidConfig(
@@ -295,6 +306,17 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     if config.tools.shell.max_output_bytes == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.shell.max_output_bytes must be greater than 0".to_string(),
+        ));
+    }
+    if config
+        .tools
+        .shell
+        .workspace
+        .as_deref()
+        .is_some_and(|workspace| workspace.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "tools.shell.workspace cannot be empty".to_string(),
         ));
     }
 

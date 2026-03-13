@@ -167,15 +167,20 @@ impl ShellTool {
         Ok((true, true))
     }
 
-    fn resolve_workspace_base(ctx: &ToolContext) -> Result<PathBuf, ToolError> {
+    fn resolve_workspace_base(&self, ctx: &ToolContext) -> Result<PathBuf, ToolError> {
         if let Some(workspace) = ctx.metadata.get(META_WORKSPACE).and_then(Value::as_str) {
             return std::fs::canonicalize(workspace).map_err(|err| {
                 ToolError::ExecutionFailed(format!("invalid workspace path: {err}"))
             });
         }
-        std::env::current_dir().map_err(|err| {
-            ToolError::ExecutionFailed(format!("failed to resolve current dir: {err}"))
-        })
+        if let Some(workspace) = self.config.workspace.as_deref() {
+            return std::fs::canonicalize(workspace).map_err(|err| {
+                ToolError::ExecutionFailed(format!("invalid shell workspace path: {err}"))
+            });
+        }
+        std::env::var("HOME")
+            .map(PathBuf::from)
+            .map_err(|err| ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}")))
     }
 
     fn resolve_cwd(request: &ShellRequest, base: &Path) -> Result<PathBuf, ToolError> {
@@ -316,7 +321,7 @@ impl Tool for ShellTool {
         }
 
         let (approval_required, approved) = self.check_approval(risk, &ctx.metadata)?;
-        let base = Self::resolve_workspace_base(ctx)?;
+        let base = self.resolve_workspace_base(ctx)?;
         let cwd = Self::resolve_cwd(&request, &base)?;
         let timeout_ms = self.resolve_timeout(&request)?;
 
@@ -426,6 +431,7 @@ mod tests {
     fn test_config() -> AppConfig {
         let mut cfg = base_config();
         cfg.tools.shell = ShellConfig {
+            workspace: None,
             blocked_patterns: vec!["rm -rf /".to_string()],
             safe_commands: vec![
                 "echo".to_string(),
@@ -446,6 +452,7 @@ mod tests {
     fn permissive_test_config() -> AppConfig {
         let mut cfg = base_config();
         cfg.tools.shell = ShellConfig {
+            workspace: None,
             blocked_patterns: vec![],
             safe_commands: vec![
                 "echo".to_string(),

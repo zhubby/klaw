@@ -187,7 +187,6 @@ fn embedding_provider_build_uses_memory_config() {
     let config = AppConfig {
         model_provider: "openai".to_string(),
         model_providers: providers,
-        gateway: klaw_config::GatewayConfig::default(),
         memory: klaw_config::MemoryConfig {
             embedding: klaw_config::EmbeddingConfig {
                 enabled: true,
@@ -195,11 +194,7 @@ fn embedding_provider_build_uses_memory_config() {
                 model: "text-embedding-3-small".to_string(),
             },
         },
-        mcp: klaw_config::McpConfig::default(),
-        tools: klaw_config::ToolsConfig::default(),
-        cron: klaw_config::CronConfig::default(),
-        heartbeat: klaw_config::HeartbeatConfig::default(),
-        skills: klaw_config::SkillsConfig::default(),
+        ..Default::default()
     };
 
     let provider = build_embedding_provider_from_config(&config).expect("provider build");

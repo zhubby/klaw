@@ -103,15 +103,20 @@ impl ApplyPatchTool {
         Ok(())
     }
 
-    fn resolve_workspace_base(ctx: &ToolContext) -> Result<PathBuf, ToolError> {
+    fn resolve_workspace_base(&self, ctx: &ToolContext) -> Result<PathBuf, ToolError> {
         if let Some(workspace) = ctx.metadata.get(META_WORKSPACE).and_then(Value::as_str) {
             return fs::canonicalize(workspace).map_err(|err| {
                 ToolError::ExecutionFailed(format!("invalid workspace path: {err}"))
             });
         }
-        std::env::current_dir().map_err(|err| {
-            ToolError::ExecutionFailed(format!("failed to resolve current dir: {err}"))
-        })
+        if let Some(workspace) = self.config.workspace.as_deref() {
+            return fs::canonicalize(workspace).map_err(|err| {
+                ToolError::ExecutionFailed(format!("invalid apply_patch workspace path: {err}"))
+            });
+        }
+        std::env::var("HOME")
+            .map(PathBuf::from)
+            .map_err(|err| ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}")))
     }
 
     fn resolve_workspace_path(&self, base: &Path, input_path: &str) -> Result<PathBuf, ToolError> {
@@ -466,7 +471,7 @@ impl Tool for ApplyPatchTool {
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let request = Self::parse_request(args)?;
-        let base = Self::resolve_workspace_base(ctx)?;
+        let base = self.resolve_workspace_base(ctx)?;
         let payload =
             serde_json::to_value(self.apply_patch(&base, request.operations)?).map_err(|err| {
                 ToolError::ExecutionFailed(format!("serialize apply_patch result: {err}"))

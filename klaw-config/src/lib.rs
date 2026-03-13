@@ -369,6 +369,8 @@ pub struct ToolsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyPatchConfig {
+    #[serde(default)]
+    pub workspace: Option<String>,
     #[serde(default = "default_apply_patch_allow_absolute_paths")]
     pub allow_absolute_paths: bool,
     #[serde(default)]
@@ -378,6 +380,7 @@ pub struct ApplyPatchConfig {
 impl Default for ApplyPatchConfig {
     fn default() -> Self {
         Self {
+            workspace: None,
             allow_absolute_paths: default_apply_patch_allow_absolute_paths(),
             allowed_roots: Vec::new(),
         }
@@ -472,6 +475,8 @@ fn default_memory_tool_use_vector() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellConfig {
+    #[serde(default)]
+    pub workspace: Option<String>,
     #[serde(default = "default_shell_blocked_patterns")]
     pub blocked_patterns: Vec<String>,
     #[serde(default = "default_shell_safe_commands")]
@@ -489,6 +494,7 @@ pub struct ShellConfig {
 impl Default for ShellConfig {
     fn default() -> Self {
         Self {
+            workspace: None,
             blocked_patterns: default_shell_blocked_patterns(),
             safe_commands: default_shell_safe_commands(),
             approval_policy: default_shell_approval_policy(),
