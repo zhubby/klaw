@@ -18,3 +18,4 @@
 - `klaw stdio` 的 tracing 日志改为默认写入 `~/.klaw/logs/stdio.log`，避免后台日志覆盖当前输入
 - `klaw stdio` 新增 `--verbose-terminal` 开关，允许调试时显式把 tracing 日志输出回终端
 - `klaw stdio` 现在和 `gateway` 共享统一的 shutdown signal 处理，并在 runtime shutdown 阶段支持第二次信号直接终止进程
+- `klaw stdio`/`agent` 运行时现在会在发起本轮请求前读取会话 JSONL 历史，并把上一轮对话注入到 LLM 请求中

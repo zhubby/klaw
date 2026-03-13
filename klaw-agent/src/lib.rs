@@ -4,6 +4,7 @@ use klaw_llm::{
     ChatOptions, LlmError, LlmMessage, LlmProvider, OpenAiCompatibleConfig,
     OpenAiCompatibleProvider, ToolDefinition,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
@@ -18,9 +19,16 @@ pub struct AgentExecutionLimits {
     pub max_tool_calls: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationMessage {
+    pub role: String,
+    pub content: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentExecutionInput {
     pub user_content: String,
+    pub conversation_history: Vec<ConversationMessage>,
     pub session_key: String,
     pub tool_metadata: BTreeMap<String, Value>,
     pub model: Option<String>,
@@ -119,6 +127,18 @@ pub async fn run_agent_execution(
             tool_call_id: None,
         });
     }
+    llm_messages.extend(
+        input
+            .conversation_history
+            .into_iter()
+            .filter(|message| is_supported_history_role(&message.role))
+            .map(|message| LlmMessage {
+                role: message.role,
+                content: message.content,
+                tool_calls: None,
+                tool_call_id: None,
+            }),
+    );
     llm_messages.push(LlmMessage {
         role: "user".to_string(),
         content: input.user_content,
@@ -176,6 +196,10 @@ fn extract_system_prompt(metadata: &BTreeMap<String, Value>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn is_supported_history_role(role: &str) -> bool {
+    matches!(role, "system" | "user" | "assistant" | "tool")
 }
 
 async fn apply_tool_calls(
@@ -307,6 +331,7 @@ mod tests {
             &tools,
             AgentExecutionInput {
                 user_content: "hello".to_string(),
+                conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
                 tool_metadata: BTreeMap::new(),
                 model: None,
@@ -372,6 +397,7 @@ mod tests {
             &tools,
             AgentExecutionInput {
                 user_content: "hello".to_string(),
+                conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
                 tool_metadata: metadata,
                 model: None,
@@ -390,5 +416,82 @@ mod tests {
             .expect("mutex poisoned for assert")
             .clone();
         assert_eq!(first_role.as_deref(), Some("system"));
+    }
+
+    #[derive(Default)]
+    struct CaptureConversationProvider {
+        messages: Arc<Mutex<Vec<LlmMessage>>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for CaptureConversationProvider {
+        fn name(&self) -> &str {
+            "capture-conversation"
+        }
+
+        fn default_model(&self) -> &str {
+            "capture-conversation-v1"
+        }
+
+        async fn chat(
+            &self,
+            messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            *self.messages.lock().expect("mutex poisoned") = messages;
+            Ok(LlmResponse {
+                content: "ok".to_string(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_includes_prior_conversation_before_current_user_turn() {
+        let provider = CaptureConversationProvider::default();
+        let tools = MockToolExecutor;
+        let _ = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "current".to_string(),
+                conversation_history: vec![
+                    ConversationMessage {
+                        role: "user".to_string(),
+                        content: "previous user".to_string(),
+                    },
+                    ConversationMessage {
+                        role: "assistant".to_string(),
+                        content: "previous assistant".to_string(),
+                    },
+                ],
+                session_key: "s1".to_string(),
+                tool_metadata: BTreeMap::new(),
+                model: None,
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 1,
+                max_tool_calls: 1,
+            },
+        )
+        .await
+        .expect("agent execution should succeed");
+
+        let messages = provider.messages.lock().expect("mutex poisoned").clone();
+        let summary: Vec<(&str, &str)> = messages
+            .iter()
+            .map(|message| (message.role.as_str(), message.content.as_str()))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("user", "previous user"),
+                ("assistant", "previous assistant"),
+                ("user", "current"),
+            ]
+        );
     }
 }

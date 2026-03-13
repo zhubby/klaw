@@ -12,6 +12,8 @@ pub enum StorageError {
     CreateArchivesDir(#[source] std::io::Error),
     #[error("failed to append JSONL record: {0}")]
     WriteJsonl(#[source] std::io::Error),
+    #[error("failed to read JSONL record: {0}")]
+    ReadJsonl(#[source] std::io::Error),
     #[error("failed to serialize JSONL record: {0}")]
     SerializeJson(#[source] serde_json::Error),
     #[error("backend error: {0}")]

@@ -1,6 +1,9 @@
 use crate::{ChatRecord, StorageError, StoragePaths};
-use std::path::PathBuf;
-use tokio::{fs::OpenOptions, io::AsyncWriteExt};
+use std::{io::ErrorKind, path::PathBuf};
+use tokio::{
+    fs::{self, OpenOptions},
+    io::AsyncWriteExt,
+};
 
 pub fn session_jsonl_path(paths: &StoragePaths, session_key: &str) -> PathBuf {
     paths.sessions_dir.join(format!(
@@ -37,6 +40,24 @@ pub async fn append_chat_record(
     Ok(())
 }
 
+pub async fn read_chat_records(
+    paths: &StoragePaths,
+    session_key: &str,
+) -> Result<Vec<ChatRecord>, StorageError> {
+    let file_path = session_jsonl_path(paths, session_key);
+    let contents = match fs::read_to_string(file_path).await {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(StorageError::ReadJsonl(err)),
+    };
+
+    contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<ChatRecord>(line).map_err(StorageError::SerializeJson))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,5 +74,14 @@ mod tests {
         let paths = StoragePaths::from_root("/tmp/klaw-storage-jsonl-test".into());
         let file_path = session_jsonl_path(&paths, "test3");
         assert_eq!(file_path, paths.sessions_dir.join("test3.jsonl"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_chat_records_returns_empty_when_session_file_is_missing() {
+        let paths = StoragePaths::from_root("/tmp/klaw-storage-jsonl-test-missing".into());
+        let records = read_chat_records(&paths, "stdio:missing")
+            .await
+            .expect("missing file should read as empty");
+        assert!(records.is_empty());
     }
 }

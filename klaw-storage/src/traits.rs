@@ -27,6 +27,8 @@ pub trait SessionStorage: Send + Sync {
         record: &ChatRecord,
     ) -> Result<(), StorageError>;
 
+    async fn read_chat_records(&self, session_key: &str) -> Result<Vec<ChatRecord>, StorageError>;
+
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError>;
 
     async fn list_sessions(

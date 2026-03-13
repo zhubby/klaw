@@ -131,6 +131,35 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn read_chat_records_returns_ordered_history() {
+        let store = create_store().await;
+        store
+            .append_chat_record(
+                "stdio:test-history",
+                &ChatRecord::new("user", "hello", Some("m1".to_string())),
+            )
+            .await
+            .expect("first append should succeed");
+        store
+            .append_chat_record(
+                "stdio:test-history",
+                &ChatRecord::new("assistant", "world", Some("m2".to_string())),
+            )
+            .await
+            .expect("second append should succeed");
+
+        let records = store
+            .read_chat_records("stdio:test-history")
+            .await
+            .expect("history read should succeed");
+        let summary: Vec<(&str, &str)> = records
+            .iter()
+            .map(|record| (record.role.as_str(), record.content.as_str()))
+            .collect();
+        assert_eq!(summary, vec![("user", "hello"), ("assistant", "world")]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn storage_paths_include_memory_db() {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let base = std::env::temp_dir().join(format!("klaw-storage-paths-{suffix}"));

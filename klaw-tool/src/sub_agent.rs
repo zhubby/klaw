@@ -231,6 +231,7 @@ impl Tool for SubAgentTool {
             &executor,
             AgentExecutionInput {
                 user_content: request.task,
+                conversation_history: Vec::new(),
                 session_key: format!("{}:subagent", parent_session),
                 tool_metadata: child_metadata,
                 model: Some(model),

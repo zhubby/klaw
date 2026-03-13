@@ -11,6 +11,8 @@ use klaw_llm::{
 use klaw_tool::ToolRegistry;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
+const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
+
 #[tokio::test]
 async fn run_once_should_consume_and_publish() {
     let inbound_transport = InMemoryTransport::new();
@@ -94,6 +96,108 @@ impl LlmProvider for FailingProvider {
             "simulated failure".to_string(),
         ))
     }
+}
+
+#[derive(Default)]
+struct CaptureHistoryProvider;
+
+#[async_trait]
+impl LlmProvider for CaptureHistoryProvider {
+    fn name(&self) -> &str {
+        "capture-history"
+    }
+
+    fn default_model(&self) -> &str {
+        "capture-history-v1"
+    }
+
+    async fn chat(
+        &self,
+        messages: Vec<LlmMessage>,
+        _tools: Vec<ToolDefinition>,
+        _model: Option<&str>,
+        _options: ChatOptions,
+    ) -> Result<LlmResponse, LlmError> {
+        let summary: Vec<(&str, &str)> = messages
+            .iter()
+            .map(|message| (message.role.as_str(), message.content.as_str()))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("user", "previous user"),
+                ("assistant", "previous assistant"),
+                ("user", "current user"),
+            ]
+        );
+        Ok(LlmResponse {
+            content: "ok".to_string(),
+            reasoning: None,
+            tool_calls: Vec::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn run_once_includes_serialized_conversation_history_from_metadata() {
+    let inbound_transport = InMemoryTransport::new();
+    let outbound_transport = InMemoryTransport::new();
+    let idempotency = InMemoryIdempotencyStore::default();
+
+    let inbound = Envelope {
+        header: EnvelopeHeader::new("mq:chat-history"),
+        metadata: BTreeMap::new(),
+        payload: InboundMessage {
+            channel: "mq".to_string(),
+            sender_id: "user-1".to_string(),
+            chat_id: "chat-history".to_string(),
+            session_key: "mq:chat-history".to_string(),
+            content: "current user".to_string(),
+            metadata: BTreeMap::from([(
+                META_CONVERSATION_HISTORY_KEY.to_string(),
+                serde_json::json!([
+                    {"role": "user", "content": "previous user"},
+                    {"role": "assistant", "content": "previous assistant"},
+                ]),
+            )]),
+        },
+    };
+    inbound_transport.enqueue(inbound).await;
+
+    let loop_runtime = AgentLoop::new(
+        RunLimits {
+            max_tool_iterations: 8,
+            max_tool_calls: 16,
+            token_budget: 0,
+            agent_timeout: Duration::from_secs(30),
+            tool_timeout: Duration::from_secs(8),
+        },
+        SessionSchedulingPolicy {
+            strategy: QueueStrategy::Collect,
+            max_queue_depth: 32,
+            lock_ttl: Duration::from_secs(15),
+        },
+        Arc::new(CaptureHistoryProvider),
+        ToolRegistry::default(),
+    );
+
+    let subscription = Subscription {
+        topic: "agent.inbound",
+        consumer_group: "test".to_string(),
+        visibility_timeout: Duration::from_secs(10),
+    };
+
+    let outcome = loop_runtime
+        .run_once(
+            &inbound_transport,
+            &outbound_transport,
+            &subscription,
+            &idempotency,
+        )
+        .await
+        .expect("run_once should succeed");
+
+    assert_eq!(outcome.final_state, AgentRunState::Completed);
 }
 
 #[tokio::test]

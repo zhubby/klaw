@@ -10,7 +10,7 @@ use crate::{
 use async_trait::async_trait;
 use klaw_agent::{
     run_agent_execution, AgentExecutionError, AgentExecutionInput, AgentExecutionLimits,
-    ToolExecutor,
+    ConversationMessage, ToolExecutor,
 };
 use klaw_llm::{LlmError, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
@@ -20,6 +20,7 @@ use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
+const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunState {
@@ -233,7 +234,9 @@ impl AgentLoop {
         state = self.transition(state, StateTransitionEvent::Scheduled);
         state = self.transition(state, StateTransitionEvent::ContextBuilt);
 
+        let conversation_history = extract_conversation_history(&msg.payload.metadata);
         let mut tool_metadata = msg.payload.metadata.clone();
+        tool_metadata.remove(META_CONVERSATION_HISTORY_KEY);
         tool_metadata
             .entry("agent.provider_id".to_string())
             .or_insert_with(|| serde_json::Value::String(self.active_provider_id.clone()));
@@ -258,6 +261,7 @@ impl AgentLoop {
             &executor,
             AgentExecutionInput {
                 user_content: msg.payload.content.clone(),
+                conversation_history,
                 session_key: msg.payload.session_key.clone(),
                 tool_metadata,
                 model: Some(self.active_model.clone()),
@@ -567,6 +571,16 @@ fn heartbeat_response_metadata(
         }
     }
     response_metadata
+}
+
+fn extract_conversation_history(
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> Vec<ConversationMessage> {
+    metadata
+        .get(META_CONVERSATION_HISTORY_KEY)
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Vec<ConversationMessage>>(value).ok())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

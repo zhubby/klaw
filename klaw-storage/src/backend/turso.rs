@@ -297,6 +297,10 @@ impl SessionStorage for TursoSessionStore {
         jsonl::append_chat_record(&self.paths, session_key, record).await
     }
 
+    async fn read_chat_records(&self, session_key: &str) -> Result<Vec<ChatRecord>, StorageError> {
+        jsonl::read_chat_records(&self.paths, session_key).await
+    }
+
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let sql = format!(
             "SELECT session_key, chat_id, channel, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path

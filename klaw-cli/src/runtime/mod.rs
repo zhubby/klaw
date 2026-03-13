@@ -22,6 +22,7 @@ use klaw_tool::{
     ApplyPatchTool, CronManagerTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
     SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
 };
+use serde_json::json;
 use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, time::timeout};
 use tracing::{info, warn};
@@ -105,6 +106,8 @@ pub struct AssistantOutput {
     pub content: String,
     pub reasoning: Option<String>,
 }
+
+const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 
 pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn Error>> {
     info!(
@@ -391,6 +394,10 @@ pub async fn submit_and_get_output(
     session_key: String,
     chat_id: String,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
+    let conversation_history = runtime
+        .session_store
+        .read_chat_records(&session_key)
+        .await?;
     let header = EnvelopeHeader::new(session_key.clone());
     let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
     runtime
@@ -413,7 +420,18 @@ pub async fn submit_and_get_output(
                 chat_id: chat_id.clone(),
                 session_key,
                 content: input,
-                metadata: BTreeMap::new(),
+                metadata: BTreeMap::from([(
+                    META_CONVERSATION_HISTORY_KEY.to_string(),
+                    json!(conversation_history
+                        .into_iter()
+                        .map(|record| {
+                            json!({
+                                "role": record.role,
+                                "content": record.content,
+                            })
+                        })
+                        .collect::<Vec<_>>()),
+                )]),
             },
         })
         .await;
