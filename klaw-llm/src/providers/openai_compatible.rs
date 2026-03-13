@@ -54,11 +54,13 @@ impl OpenAiCompatibleProvider {
     }
 
     fn endpoint(&self) -> String {
-        let suffix = match self.config.wire_api {
-            OpenAiWireApi::ChatCompletions => "chat/completions",
-            OpenAiWireApi::Responses => "responses",
-        };
-        format!("{}/{}", self.config.base_url.trim_end_matches('/'), suffix)
+        match self.config.wire_api {
+            OpenAiWireApi::ChatCompletions => {
+                let normalized_base = normalize_openai_base_url(&self.config.base_url);
+                format!("{}/chat/completions", normalized_base.trim_end_matches('/'))
+            }
+            OpenAiWireApi::Responses => self.config.base_url.trim_end_matches('/').to_string(),
+        }
     }
 
     async fn execute_json<T: Serialize, R: DeserializeOwned>(
@@ -82,7 +84,8 @@ impl OpenAiCompatibleProvider {
                 .await
                 .unwrap_or_else(|_| "<unreadable body>".to_string());
             return Err(LlmError::ProviderUnavailable(format!(
-                "http_status={status}, body={body}"
+                "endpoint={}, http_status={status}, body={body}",
+                self.endpoint()
             )));
         }
 
@@ -204,6 +207,14 @@ impl OpenAiCompatibleProvider {
         let payload: OpenAiResponsesResponse = self.execute_json(&request).await?;
         Ok(parse_responses_payload(payload))
     }
+}
+
+fn normalize_openai_base_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/').to_string();
+    if trimmed == "https://api.openai.com" || trimmed == "http://api.openai.com" {
+        return format!("{trimmed}/v1");
+    }
+    trimmed
 }
 
 #[async_trait]
@@ -706,6 +717,33 @@ mod tests {
         assert_eq!(
             result.tool_calls[0].arguments,
             serde_json::json!({"url":"https://example.com"})
+        );
+    }
+
+    #[test]
+    fn normalize_openai_base_url_appends_v1_for_openai_root() {
+        assert_eq!(
+            normalize_openai_base_url("https://api.openai.com"),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            normalize_openai_base_url("https://api.openai.com/v1"),
+            "https://api.openai.com/v1"
+        );
+    }
+
+    #[test]
+    fn responses_endpoint_uses_configured_base_url_verbatim() {
+        let provider = OpenAiCompatibleProvider::new(OpenAiCompatibleConfig {
+            base_url: "https://coding.dashscope.aliyuncs.com/v1/".to_string(),
+            api_key: "test-key".to_string(),
+            default_model: "test-model".to_string(),
+            wire_api: OpenAiWireApi::Responses,
+        });
+
+        assert_eq!(
+            provider.endpoint(),
+            "https://coding.dashscope.aliyuncs.com/v1"
         );
     }
 }
