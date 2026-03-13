@@ -274,7 +274,7 @@ impl AgentLoop {
             Ok(output) => {
                 state = self.transition(state, StateTransitionEvent::FinalResponseReady);
                 state = self.transition(state, StateTransitionEvent::Published);
-                let mut response_metadata = BTreeMap::new();
+                let mut response_metadata = heartbeat_response_metadata(&msg.payload.metadata);
                 if let Some(reasoning) = output.reasoning.filter(|value| !value.trim().is_empty()) {
                     response_metadata.insert(
                         "reasoning".to_string(),
@@ -554,5 +554,41 @@ fn map_llm_error_to_code(err: &LlmError) -> ErrorCode {
             ErrorCode::ProviderUnavailable
         }
         LlmError::InvalidResponse(_) => ErrorCode::ProviderResponseInvalid,
+    }
+}
+
+fn heartbeat_response_metadata(
+    inbound_metadata: &BTreeMap<String, serde_json::Value>,
+) -> BTreeMap<String, serde_json::Value> {
+    let mut response_metadata = BTreeMap::new();
+    for (key, value) in inbound_metadata {
+        if key == "trigger.kind" || key.starts_with("heartbeat.") {
+            response_metadata.insert(key.clone(), value.clone());
+        }
+    }
+    response_metadata
+}
+
+#[cfg(test)]
+mod tests {
+    use super::heartbeat_response_metadata;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn heartbeat_metadata_is_passthrough_only_for_heartbeat_keys() {
+        let inbound = BTreeMap::from([
+            ("trigger.kind".to_string(), json!("heartbeat")),
+            ("heartbeat.session_key".to_string(), json!("stdio:test")),
+            ("reasoning".to_string(), json!("ignore")),
+        ]);
+
+        let metadata = heartbeat_response_metadata(&inbound);
+        assert_eq!(metadata.get("trigger.kind"), Some(&json!("heartbeat")));
+        assert_eq!(
+            metadata.get("heartbeat.session_key"),
+            Some(&json!("stdio:test"))
+        );
+        assert!(!metadata.contains_key("reasoning"));
     }
 }

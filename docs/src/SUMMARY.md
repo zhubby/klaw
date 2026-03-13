@@ -18,4 +18,6 @@
   - [Reliability Controls](./agent-core/reliability-controls.md)
   - [Observability Audit](./agent-core/observability-audit.md)
   - [Roadmap M1-M4](./agent-core/roadmap-m1-m4.md)
-- [Plans](./plans/memory-turso-hybrid.md)
+- [Plans](./plans/index.md)
+  - [Memory Turso Hybrid](./plans/memory-turso-hybrid.md)
+  - [Heartbeat 模块设计](./plans/heartbeat-module-design.md)

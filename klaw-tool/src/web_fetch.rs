@@ -543,6 +543,7 @@ mod tests {
                 ..ToolsConfig::default()
             },
             cron: CronConfig::default(),
+            heartbeat: HeartbeatConfig::default(),
             skills: SkillsConfig::default(),
         };
 

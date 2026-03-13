@@ -4,6 +4,7 @@ members = [
     "klaw-core",
     "klaw-llm",
     "klaw-tool",
+    "klaw-heartbeat",
     "klaw-config",
     "klaw-cli", 
     "klaw-mcp", 
@@ -42,6 +43,7 @@ zellij-client = { version = "0.43.1"}
 klaw-core = { path = "klaw-core" }
 klaw-llm = { path = "klaw-llm" }
 klaw-tool = { path = "klaw-tool" }
+klaw-heartbeat = { path = "klaw-heartbeat" }
 klaw-config = { path = "klaw-config" }
 klaw-agent = { path = "klaw-agent" }
 klaw-storage = { path = "klaw-storage" }

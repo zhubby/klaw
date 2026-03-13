@@ -2226,6 +2226,7 @@ dependencies = [
  "klaw-core",
  "klaw-cron",
  "klaw-gateway",
+ "klaw-heartbeat",
  "klaw-llm",
  "klaw-mcp",
  "klaw-skill",
@@ -2242,6 +2243,7 @@ dependencies = [
 name = "klaw-config"
 version = "0.1.0"
 dependencies = [
+ "humantime",
  "serde",
  "thiserror 2.0.18",
  "toml",
@@ -2291,6 +2293,19 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "klaw-heartbeat"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "humantime",
+ "klaw-config",
+ "klaw-storage",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

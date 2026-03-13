@@ -71,6 +71,13 @@ fn parse_default_template_succeeds() {
     assert_eq!(parsed.cron.runtime_tick_ms, 200);
     assert_eq!(parsed.cron.runtime_drain_batch, 8);
     assert_eq!(parsed.cron.batch_limit, 64);
+    assert!(parsed.heartbeat.defaults.enabled);
+    assert_eq!(parsed.heartbeat.defaults.every, "30m");
+    assert_eq!(
+        parsed.heartbeat.defaults.silent_ack_token,
+        "HEARTBEAT_OK"
+    );
+    assert!(parsed.heartbeat.sessions.is_empty());
     assert_eq!(
         parsed.tools.sub_agent.exclude_tools,
         vec!["sub_agent".to_string()]
@@ -96,6 +103,7 @@ fn validate_fails_when_active_provider_missing() {
         mcp: McpConfig::default(),
         tools: ToolsConfig::default(),
         cron: CronConfig::default(),
+        heartbeat: HeartbeatConfig::default(),
         skills: SkillsConfig::default(),
     };
     let err = validate(&cfg).expect_err("should fail");
@@ -281,6 +289,40 @@ enabled = false
 }
 
 #[test]
+fn parse_heartbeat_config_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[heartbeat.defaults]
+enabled = true
+every = "45m"
+prompt = "Review session."
+silent_ack_token = "HEARTBEAT_OK"
+timezone = "Asia/Shanghai"
+
+[[heartbeat.sessions]]
+session_key = "stdio:main"
+chat_id = "main"
+channel = "stdio"
+enabled = true
+every = "10m"
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("heartbeat config should parse");
+    assert_eq!(parsed.heartbeat.defaults.every, "45m");
+    assert_eq!(parsed.heartbeat.defaults.timezone, "Asia/Shanghai");
+    assert_eq!(parsed.heartbeat.sessions.len(), 1);
+    assert_eq!(parsed.heartbeat.sessions[0].session_key, "stdio:main");
+    assert_eq!(parsed.heartbeat.sessions[0].every.as_deref(), Some("10m"));
+}
+
+#[test]
 fn validate_fails_when_web_fetch_limits_are_invalid() {
     let mut cfg = AppConfig::default();
     cfg.tools.web_fetch.enabled = true;
@@ -301,6 +343,44 @@ fn validate_fails_when_mcp_timeout_is_zero() {
     cfg.mcp.startup_timeout_seconds = 0;
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("mcp.startup_timeout_seconds"));
+}
+
+#[test]
+fn validate_fails_when_heartbeat_session_keys_duplicate() {
+    let mut cfg = AppConfig::default();
+    cfg.heartbeat.sessions = vec![
+        HeartbeatSessionConfig {
+            session_key: "stdio:dup".to_string(),
+            chat_id: "a".to_string(),
+            channel: "stdio".to_string(),
+            enabled: None,
+            every: None,
+            prompt: None,
+            silent_ack_token: None,
+            timezone: None,
+        },
+        HeartbeatSessionConfig {
+            session_key: "stdio:dup".to_string(),
+            chat_id: "b".to_string(),
+            channel: "stdio".to_string(),
+            enabled: None,
+            every: None,
+            prompt: None,
+            silent_ack_token: None,
+            timezone: None,
+        },
+    ];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("duplicated session_key"));
+}
+
+#[test]
+fn validate_fails_when_heartbeat_every_is_invalid() {
+    let mut cfg = AppConfig::default();
+    cfg.heartbeat.defaults.every = "0s".to_string();
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("heartbeat.defaults.every"));
 }
 
 #[test]

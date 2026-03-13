@@ -17,6 +17,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub cron: CronConfig,
     #[serde(default)]
+    pub heartbeat: HeartbeatConfig,
+    #[serde(default)]
     pub skills: SkillsConfig,
 }
 
@@ -33,9 +35,91 @@ impl Default for AppConfig {
             mcp: McpConfig::default(),
             tools: ToolsConfig::default(),
             cron: CronConfig::default(),
+            heartbeat: HeartbeatConfig::default(),
             skills: SkillsConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatConfig {
+    #[serde(default)]
+    pub defaults: HeartbeatDefaultsConfig,
+    #[serde(default)]
+    pub sessions: Vec<HeartbeatSessionConfig>,
+}
+
+impl Default for HeartbeatConfig {
+    fn default() -> Self {
+        Self {
+            defaults: HeartbeatDefaultsConfig::default(),
+            sessions: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatDefaultsConfig {
+    #[serde(default = "default_heartbeat_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_heartbeat_every")]
+    pub every: String,
+    #[serde(default = "default_heartbeat_prompt")]
+    pub prompt: String,
+    #[serde(default = "default_heartbeat_silent_ack_token")]
+    pub silent_ack_token: String,
+    #[serde(default = "default_heartbeat_timezone")]
+    pub timezone: String,
+}
+
+impl Default for HeartbeatDefaultsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_heartbeat_enabled(),
+            every: default_heartbeat_every(),
+            prompt: default_heartbeat_prompt(),
+            silent_ack_token: default_heartbeat_silent_ack_token(),
+            timezone: default_heartbeat_timezone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatSessionConfig {
+    pub session_key: String,
+    pub chat_id: String,
+    pub channel: String,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub every: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub silent_ack_token: Option<String>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+}
+
+fn default_heartbeat_enabled() -> bool {
+    true
+}
+
+fn default_heartbeat_every() -> String {
+    "30m".to_string()
+}
+
+fn default_heartbeat_prompt() -> String {
+    "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK."
+        .to_string()
+}
+
+fn default_heartbeat_silent_ack_token() -> String {
+    "HEARTBEAT_OK".to_string()
+}
+
+fn default_heartbeat_timezone() -> String {
+    "UTC".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

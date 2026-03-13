@@ -1,4 +1,7 @@
-use crate::{AppConfig, BraveWebSearchConfig, ConfigError, McpServerMode, TavilyWebSearchConfig};
+use crate::{
+    AppConfig, BraveWebSearchConfig, ConfigError, HeartbeatConfig, McpServerMode,
+    TavilyWebSearchConfig,
+};
 use std::net::IpAddr;
 
 pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
@@ -253,6 +256,7 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "cron.batch_limit must be greater than 0".to_string(),
         ));
     }
+    validate_heartbeat(&config.heartbeat)?;
     if config.tools.memory.search_limit == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.memory.search_limit must be greater than 0".to_string(),
@@ -284,6 +288,66 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
 
+    Ok(())
+}
+
+fn validate_heartbeat(heartbeat: &HeartbeatConfig) -> Result<(), ConfigError> {
+    require_non_empty(&heartbeat.defaults.every, "heartbeat.defaults.every")?;
+    require_non_empty(&heartbeat.defaults.prompt, "heartbeat.defaults.prompt")?;
+    require_non_empty(
+        &heartbeat.defaults.silent_ack_token,
+        "heartbeat.defaults.silent_ack_token",
+    )?;
+    require_non_empty(&heartbeat.defaults.timezone, "heartbeat.defaults.timezone")?;
+    validate_heartbeat_every(&heartbeat.defaults.every, "heartbeat.defaults.every")?;
+
+    let mut session_keys = std::collections::BTreeSet::new();
+    for session in &heartbeat.sessions {
+        require_non_empty(&session.session_key, "heartbeat.sessions.session_key")?;
+        require_non_empty(&session.chat_id, "heartbeat.sessions.chat_id")?;
+        require_non_empty(&session.channel, "heartbeat.sessions.channel")?;
+        if !session_keys.insert(session.session_key.trim().to_string()) {
+            return Err(ConfigError::InvalidConfig(format!(
+                "heartbeat.sessions contains duplicated session_key '{}'",
+                session.session_key
+            )));
+        }
+        if let Some(value) = session.every.as_deref() {
+            require_non_empty(value, "heartbeat.sessions.every")?;
+            validate_heartbeat_every(value, "heartbeat.sessions.every")?;
+        }
+        if let Some(value) = session.prompt.as_deref() {
+            require_non_empty(value, "heartbeat.sessions.prompt")?;
+        }
+        if let Some(value) = session.silent_ack_token.as_deref() {
+            require_non_empty(value, "heartbeat.sessions.silent_ack_token")?;
+        }
+        if let Some(value) = session.timezone.as_deref() {
+            require_non_empty(value, "heartbeat.sessions.timezone")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn require_non_empty(value: &str, field_name: &str) -> Result<(), ConfigError> {
+    if value.trim().is_empty() {
+        return Err(ConfigError::InvalidConfig(format!(
+            "{field_name} cannot be empty"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_heartbeat_every(value: &str, field_name: &str) -> Result<(), ConfigError> {
+    let duration = humantime::parse_duration(value).map_err(|err| {
+        ConfigError::InvalidConfig(format!("{field_name} has invalid duration: {err}"))
+    })?;
+    if duration.is_zero() {
+        return Err(ConfigError::InvalidConfig(format!(
+            "{field_name} must be greater than 0"
+        )));
+    }
     Ok(())
 }
 

@@ -396,8 +396,8 @@ struct BraveSearchItem {
 mod tests {
     use super::*;
     use klaw_config::{
-        CronConfig, GatewayConfig, McpConfig, MemoryConfig, ModelProviderConfig, ShellConfig,
-        SkillsConfig, ToolsConfig, WebSearchConfig,
+        CronConfig, GatewayConfig, HeartbeatConfig, McpConfig, MemoryConfig, ModelProviderConfig,
+        ShellConfig, SkillsConfig, ToolsConfig, WebSearchConfig,
     };
     use std::collections::BTreeMap;
 
@@ -426,6 +426,7 @@ mod tests {
                 ..ToolsConfig::default()
             },
             cron: CronConfig::default(),
+            heartbeat: HeartbeatConfig::default(),
             skills: SkillsConfig::default(),
         }
     }

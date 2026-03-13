@@ -9,9 +9,12 @@ use klaw_core::{
     OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy, Subscription,
     TransportError,
 };
+use klaw_heartbeat::{
+    should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
+};
 use klaw_mcp::{McpClientHub, McpManager, McpProxyTool, McpRuntimeHandles, McpToolDescriptor};
 use klaw_skill::{open_default_skill_store, InstalledSkill, RegistrySource, SkillStore};
-use klaw_storage::{open_default_store, ChatRecord, DefaultSessionStore, SessionStorage};
+use klaw_storage::{open_default_store, ChatRecord, CronStorage, DefaultSessionStore, SessionStorage};
 use klaw_tool::{
     CronManagerTool, FsTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
     SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
@@ -54,6 +57,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let provider_instance = build_provider_from_config(config, &config.model_provider)
         .map_err(|err| config_err(err.to_string()))?;
     let session_store = open_default_store().await?;
+    reconcile_heartbeats(config, &session_store)
+        .await
+        .map_err(|err| config_err(format!("heartbeat reconcile failed: {err}")))?;
     let mut tools = ToolRegistry::default();
     tools.register(FsTool::new());
     tools.register(ShellTool::new(config));
@@ -473,7 +479,10 @@ async fn run_runtime_once(
     match result {
         Ok(_) => {
             let published = runtime.outbound_transport.published_messages().await;
-            Ok(published.get(before_len).cloned())
+            Ok(published
+                .get(before_len)
+                .cloned()
+                .filter(should_emit_outbound))
         }
         Err(err) if is_queue_empty_error(&err) => Ok(None),
         Err(err) => Err(Box::new(err)),
@@ -491,4 +500,70 @@ fn is_queue_empty_error(err: &AgentRuntimeError) -> bool {
 
 fn config_err(message: String) -> Box<dyn Error> {
     Box::new(io::Error::other(message))
+}
+
+async fn reconcile_heartbeats<S>(config: &AppConfig, storage: &S) -> Result<(), Box<dyn Error>>
+where
+    S: CronStorage + Send + Sync + Clone + 'static,
+{
+    let specs = specs_from_config(config)?;
+    if specs.is_empty() {
+        return Ok(());
+    }
+
+    let scheduler = CronHeartbeatScheduler::new(Arc::new(storage.clone()));
+    scheduler.reconcile(&specs).await?;
+    Ok(())
+}
+
+fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
+    !should_suppress_output(&msg.payload.content, &msg.payload.metadata)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_emit_outbound;
+    use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn silent_heartbeat_ack_is_filtered() {
+        let msg = Envelope {
+            header: EnvelopeHeader::new("stdio:test"),
+            metadata: BTreeMap::new(),
+            payload: OutboundMessage {
+                channel: "stdio".to_string(),
+                chat_id: "test".to_string(),
+                content: " HEARTBEAT_OK ".to_string(),
+                reply_to: None,
+                metadata: BTreeMap::from([
+                    ("trigger.kind".to_string(), json!("heartbeat")),
+                    (
+                        "heartbeat.silent_ack_token".to_string(),
+                        json!("HEARTBEAT_OK"),
+                    ),
+                ]),
+            },
+        };
+
+        assert!(!should_emit_outbound(&msg));
+    }
+
+    #[test]
+    fn normal_messages_are_not_filtered() {
+        let msg = Envelope {
+            header: EnvelopeHeader::new("stdio:test"),
+            metadata: BTreeMap::new(),
+            payload: OutboundMessage {
+                channel: "stdio".to_string(),
+                chat_id: "test".to_string(),
+                content: "Need action".to_string(),
+                reply_to: None,
+                metadata: BTreeMap::from([("trigger.kind".to_string(), json!("heartbeat"))]),
+            },
+        };
+
+        assert!(should_emit_outbound(&msg));
+    }
 }

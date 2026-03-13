@@ -820,6 +820,7 @@ mod tests {
             mcp: klaw_config::McpConfig::default(),
             tools: klaw_config::ToolsConfig::default(),
             cron: klaw_config::CronConfig::default(),
+            heartbeat: klaw_config::HeartbeatConfig::default(),
             skills: klaw_config::SkillsConfig::default(),
         };
 

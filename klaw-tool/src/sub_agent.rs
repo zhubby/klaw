@@ -261,8 +261,9 @@ impl Tool for SubAgentTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        CronConfig, GatewayConfig, McpConfig, MemoryConfig, MemoryToolConfig, ModelProviderConfig,
-        ShellConfig, SkillsConfig, ToolsConfig, WebFetchConfig, WebSearchConfig,
+        CronConfig, GatewayConfig, HeartbeatConfig, McpConfig, MemoryConfig, MemoryToolConfig,
+        ModelProviderConfig, ShellConfig, SkillsConfig, ToolsConfig, WebFetchConfig,
+        WebSearchConfig,
     };
 
     fn test_config() -> Arc<AppConfig> {
@@ -298,6 +299,7 @@ mod tests {
                 },
             },
             cron: CronConfig::default(),
+            heartbeat: HeartbeatConfig::default(),
             skills: SkillsConfig::default(),
         })
     }

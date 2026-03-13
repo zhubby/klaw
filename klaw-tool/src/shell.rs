@@ -400,7 +400,7 @@ impl Tool for ShellTool {
 mod tests {
     use super::*;
     use klaw_config::{
-        CronConfig, GatewayConfig, McpConfig, MemoryConfig, ModelProviderConfig,
+        CronConfig, GatewayConfig, HeartbeatConfig, McpConfig, MemoryConfig, ModelProviderConfig,
         ShellApprovalPolicy, ShellConfig, SkillsConfig, ToolsConfig,
     };
     use serde_json::json;
@@ -427,6 +427,7 @@ mod tests {
             mcp: McpConfig::default(),
             tools: ToolsConfig::default(),
             cron: CronConfig::default(),
+            heartbeat: HeartbeatConfig::default(),
             skills: SkillsConfig::default(),
         }
     }
