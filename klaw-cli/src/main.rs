@@ -39,15 +39,8 @@ enum Commands {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .with_target(false)
-        .compact()
-        .init();
-
     let Cli { config, command } = Cli::parse();
+    init_tracing(&command);
     let command = match command {
         Commands::Config(cmd) => {
             cmd.run(config.as_deref())?;
@@ -79,4 +72,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn init_tracing(command: &Commands) {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    match command {
+        Commands::Stdio(_) => {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_target(false)
+                .compact()
+                .with_writer(klaw_channel::stdio::make_tracing_writer)
+                .init();
+        }
+        _ => {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_target(false)
+                .compact()
+                .init();
+        }
+    }
 }

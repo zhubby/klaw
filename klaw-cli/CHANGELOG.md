@@ -14,3 +14,4 @@
 
 - `klaw gateway` 增加终止信号处理，并在退出时执行 runtime shutdown
 - `klaw stdio` 在进入交互前等待 MCP bootstrap 完成，避免启动后首条消息才触发就绪校验
+- `klaw stdio` 为交互模式单独初始化终端感知的 tracing writer，后台日志输出后会恢复当前输入行

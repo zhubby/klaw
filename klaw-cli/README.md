@@ -33,4 +33,5 @@
 
 - `stdio` 和 `gateway` 复用 runtime bundle 构建逻辑
 - `stdio` 启动时会在 runtime 与 MCP 完全就绪后打印 ASCII `KLAW` 标记，以及版本、skills、tools、MCP 加载摘要
+- `stdio` 在交互模式下会使用终端感知日志输出，避免后台日志覆盖当前输入中的 prompt
 - `gateway` 在收到终止信号时会执行 runtime shutdown，确保 MCP/bootstrap 资源收尾
