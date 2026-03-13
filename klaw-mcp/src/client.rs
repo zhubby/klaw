@@ -12,7 +12,9 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::Mutex,
+    time::{timeout, Duration},
 };
+use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
 pub(crate) struct McpRemoteTool {
@@ -42,6 +44,9 @@ pub(crate) trait McpClient: Send + Sync {
     async fn initialize(&self) -> Result<(), McpClientError>;
     async fn list_tools(&self) -> Result<Vec<McpRemoteTool>, McpClientError>;
     async fn call_tool(&self, tool_name: &str, arguments: Value) -> Result<Value, McpClientError>;
+    async fn shutdown(&self) -> Result<(), McpClientError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -60,6 +65,7 @@ impl StdioMcpClient {
     pub(crate) async fn new(server: &McpServerConfig) -> Result<Self, McpClientError> {
         let command = server.command.clone().unwrap_or_default();
         let mut cmd = Command::new(command.trim());
+        cmd.kill_on_drop(true);
         cmd.args(server.args.clone());
         if let Some(cwd) = &server.cwd {
             cmd.current_dir(cwd);
@@ -134,6 +140,33 @@ impl StdioMcpClient {
         write_stdio_frame(&mut io.stdin, &payload).await?;
         io.stdin.flush().await?;
         Ok(())
+    }
+
+    async fn shutdown_process(&self) -> Result<(), McpClientError> {
+        let mut io = self.io.lock().await;
+        info!("shutting down stdio mcp child process");
+        io.stdin.shutdown().await?;
+
+        match timeout(Duration::from_millis(500), io.child.wait()).await {
+            Ok(Ok(status)) => {
+                info!(?status, "stdio mcp child exited gracefully");
+                Ok(())
+            }
+            Ok(Err(err)) => Err(McpClientError::Io(err.to_string())),
+            Err(_) => {
+                warn!("stdio mcp child did not exit after stdin shutdown, force killing");
+                io.child
+                    .start_kill()
+                    .map_err(|err| McpClientError::Io(err.to_string()))?;
+                let status = io
+                    .child
+                    .wait()
+                    .await
+                    .map_err(|err| McpClientError::Io(err.to_string()))?;
+                info!(?status, "stdio mcp child exited after force kill");
+                Ok(())
+            }
+        }
     }
 }
 
@@ -215,6 +248,10 @@ impl McpClient for StdioMcpClient {
             }),
         )
         .await
+    }
+
+    async fn shutdown(&self) -> Result<(), McpClientError> {
+        self.shutdown_process().await
     }
 }
 

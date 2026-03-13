@@ -70,6 +70,16 @@ impl McpClientHub {
             .await
             .map_err(|err| McpClientHubError::CallFailed(err.to_string()))
     }
+
+    pub async fn shutdown_all(&self) -> Result<(), McpClientHubError> {
+        for (server_id, client) in &self.clients {
+            client
+                .shutdown()
+                .await
+                .map_err(|err| McpClientHubError::CallFailed(format!("{server_id}: {err}")))?;
+        }
+        Ok(())
+    }
 }
 
 pub fn format_tool_result_for_model(result: &Value) -> String {

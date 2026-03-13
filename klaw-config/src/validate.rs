@@ -1,5 +1,5 @@
 use crate::{
-    AppConfig, BraveWebSearchConfig, ConfigError, HeartbeatConfig, McpServerMode,
+    AppConfig, BraveWebSearchConfig, ChannelsConfig, ConfigError, HeartbeatConfig, McpServerMode,
     TavilyWebSearchConfig,
 };
 use std::net::IpAddr;
@@ -77,6 +77,8 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             ));
         }
     }
+
+    validate_channels(&config.channels)?;
 
     if config.memory.embedding.enabled {
         if config.memory.embedding.provider.trim().is_empty() {
@@ -327,6 +329,26 @@ fn validate_heartbeat(heartbeat: &HeartbeatConfig) -> Result<(), ConfigError> {
         }
     }
 
+    Ok(())
+}
+
+fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
+    let mut ids = std::collections::BTreeSet::new();
+    for account in &channels.dingtalk {
+        require_non_empty(&account.id, "channels.dingtalk.id")?;
+        if !ids.insert(account.id.trim().to_string()) {
+            return Err(ConfigError::InvalidConfig(format!(
+                "channels.dingtalk contains duplicated id '{}'",
+                account.id
+            )));
+        }
+        if !account.enabled {
+            continue;
+        }
+        require_non_empty(&account.client_id, "channels.dingtalk.client_id")?;
+        require_non_empty(&account.client_secret, "channels.dingtalk.client_secret")?;
+        require_non_empty(&account.bot_title, "channels.dingtalk.bot_title")?;
+    }
     Ok(())
 }
 

@@ -2,12 +2,14 @@ use async_trait::async_trait;
 use std::error::Error;
 use std::time::Duration;
 
+pub mod dingtalk;
 pub mod stdio;
 
 pub type ChannelResult<T> = Result<T, Box<dyn Error>>;
 
 #[derive(Debug, Clone)]
 pub struct ChannelRequest {
+    pub channel: String,
     pub input: String,
     pub session_key: String,
     pub chat_id: String,

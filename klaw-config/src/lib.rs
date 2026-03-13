@@ -9,6 +9,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub gateway: GatewayConfig,
     #[serde(default)]
+    pub channels: ChannelsConfig,
+    #[serde(default)]
     pub memory: MemoryConfig,
     #[serde(default)]
     pub mcp: McpConfig,
@@ -31,6 +33,7 @@ impl Default for AppConfig {
             model_provider,
             model_providers,
             gateway: GatewayConfig::default(),
+            channels: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
             mcp: McpConfig::default(),
             tools: ToolsConfig::default(),
@@ -39,6 +42,57 @@ impl Default for AppConfig {
             skills: SkillsConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelsConfig {
+    #[serde(default)]
+    pub dingtalk: Vec<DingtalkConfig>,
+}
+
+impl Default for ChannelsConfig {
+    fn default() -> Self {
+        Self {
+            dingtalk: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DingtalkConfig {
+    pub id: String,
+    #[serde(default = "default_channel_enabled")]
+    pub enabled: bool,
+    pub client_id: String,
+    pub client_secret: String,
+    #[serde(default = "default_dingtalk_bot_title")]
+    pub bot_title: String,
+    #[serde(default)]
+    pub show_reasoning: bool,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+}
+
+impl Default for DingtalkConfig {
+    fn default() -> Self {
+        Self {
+            id: "default".to_string(),
+            enabled: default_channel_enabled(),
+            client_id: String::new(),
+            client_secret: String::new(),
+            bot_title: default_dingtalk_bot_title(),
+            show_reasoning: false,
+            allowlist: Vec::new(),
+        }
+    }
+}
+
+fn default_channel_enabled() -> bool {
+    true
+}
+
+fn default_dingtalk_bot_title() -> String {
+    "Klaw".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

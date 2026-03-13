@@ -23,8 +23,14 @@ impl AgentCommand {
             .unwrap_or_else(|| format!("stdio:{}", Uuid::new_v4()));
         let chat_id = session_key.split(':').nth(1).unwrap_or("chat").to_string();
 
-        let maybe_output =
-            submit_and_get_output(&runtime, self.input, session_key, chat_id).await?;
+        let maybe_output = submit_and_get_output(
+            &runtime,
+            "stdio".to_string(),
+            self.input,
+            session_key,
+            chat_id,
+        )
+        .await?;
         match maybe_output {
             Some(output) => println!("{}", output.content),
             None => println!("[no response]"),

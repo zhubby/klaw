@@ -55,6 +55,11 @@ impl Channel for StdioChannel {
                 _ = runtime_tick.tick() => {
                     runtime.on_runtime_tick().await;
                 }
+                signal = tokio::signal::ctrl_c() => {
+                    signal?;
+                    println!("\nCtrl+C received. Bye.");
+                    break;
+                }
                 line = lines.next_line() => {
                     let maybe_line: Option<String> = line?;
                     let Some(line) = maybe_line else {
@@ -75,6 +80,7 @@ impl Channel for StdioChannel {
 
                     let maybe_output = runtime
                         .submit(ChannelRequest {
+                            channel: self.name().to_string(),
                             input: input.to_string(),
                             session_key: self.session_key.clone(),
                             chat_id: self.chat_id.clone(),

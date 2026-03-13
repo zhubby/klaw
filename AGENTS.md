@@ -25,6 +25,26 @@ Use workspace-level Cargo commands from repo root:
 
 For docs: `mdbook build docs` (or `mdbook serve docs` for local preview).
 
+## Rust Style and Idioms
+
+- Use traits for behaviour boundaries. Prefer generics for hot paths, `dyn Trait` for heterogeneous/runtime dispatch.
+- Derive `Default` when all fields have sensible defaults.
+- Use concrete types (`struct`/`enum`) over `serde_json::Value` wherever shape is known.
+- **Match on types, never strings.** Only convert to strings at serialization/display boundaries.
+- Prefer `From`/`Into`/`TryFrom`/`TryInto` over manual conversions. Ask before adding manual conversion paths.
+- Prefer streaming over non-streaming API calls.
+- Run independent async work concurrently (`tokio::join!`, `futures::join_all`).
+- Never use `block_on` inside async context.
+- **Forbidden:** `Mutex<()>` / `Arc<Mutex<()>>` — mutex must guard actual state.
+- Use `anyhow::Result` for app errors, `thiserror` for library errors. Propagate with `?`.
+- **Never `.unwrap()`/`.expect()` in production.** Workspace lints deny these. Use `?`, `ok_or_else`, `unwrap_or_default`, `unwrap_or_else(|e| e.into_inner())` for locks.
+- Use `time` crate (workspace dep) for date/time — no manual epoch math or magic constants like `86400`.
+- Prefer `chrono` only if already imported in the crate; default to `time` for new code.
+- Prefer crates over subprocesses (`std::process::Command`). Use subprocesses only when no mature crate exists.
+- Prefer guard clauses (early returns) over nested `if` blocks.
+- Prefer iterators/combinators over manual loops. Use `Cow<'_, str>` when allocation is conditional.
+- Keep public API surfaces small. Use `#[must_use]` where return values matter.
+
 ## Coding Style & Naming Conventions
 Follow Rust 2021 defaults and `rustfmt` output (4-space indentation, trailing commas where formatter adds them). Prefer:
 - `snake_case` for modules/functions/files.
@@ -63,3 +83,14 @@ PRs should include:
 
 ## Security & Configuration Tips
 Never commit API keys. Prefer `env_key` in `~/.klaw/config.toml` (default expects `OPENAI_API_KEY`). If sharing configs, redact credentials.
+
+## Module Documentation & Changelog
+Each workspace crate must maintain its own documentation:
+
+**CHANGELOG.md** (at crate root, e.g., `klaw-core/CHANGELOG.md`):
+- Record main changes on every module modification
+- Format with date and type: `Added` / `Changed` / `Fixed` / `Removed`
+
+**README.md** (at crate root):
+- Describe module capabilities, implementation, and architecture
+- Keep in sync with code - update when descriptions become inaccurate

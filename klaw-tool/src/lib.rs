@@ -11,7 +11,7 @@ pub mod web_search;
 
 use async_trait::async_trait;
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
 pub use cron_manager::CronManagerTool;
@@ -97,27 +97,39 @@ pub trait Tool: Send + Sync {
 /// 工具注册表。
 #[derive(Default, Clone)]
 pub struct ToolRegistry {
-    tools: BTreeMap<String, Arc<dyn Tool>>,
+    tools: Arc<RwLock<BTreeMap<String, Arc<dyn Tool>>>>,
 }
 
 impl ToolRegistry {
     /// 注册工具。
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
-        self.tools.insert(tool.name().to_string(), Arc::new(tool));
+        self.register_shared(Arc::new(tool));
     }
 
     /// 注册共享工具实例。
     pub fn register_shared(&mut self, tool: Arc<dyn Tool>) {
-        self.tools.insert(tool.name().to_string(), tool);
+        self.tools
+            .write()
+            .unwrap_or_else(|err| err.into_inner())
+            .insert(tool.name().to_string(), tool);
     }
 
     /// 按名称获取工具。
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.tools.get(name).cloned()
+        self.tools
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .get(name)
+            .cloned()
     }
 
     /// 列出已注册工具名称。
     pub fn list(&self) -> Vec<String> {
-        self.tools.keys().cloned().collect()
+        self.tools
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .keys()
+            .cloned()
+            .collect()
     }
 }

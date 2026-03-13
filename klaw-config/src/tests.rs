@@ -75,6 +75,7 @@ fn parse_default_template_succeeds() {
     assert_eq!(parsed.heartbeat.defaults.every, "30m");
     assert_eq!(parsed.heartbeat.defaults.silent_ack_token, "HEARTBEAT_OK");
     assert!(parsed.heartbeat.sessions.is_empty());
+    assert!(parsed.channels.dingtalk.is_empty());
     assert_eq!(
         parsed.tools.sub_agent.exclude_tools,
         vec!["sub_agent".to_string()]
@@ -96,6 +97,7 @@ fn validate_fails_when_active_provider_missing() {
         model_provider: "missing".to_string(),
         model_providers: BTreeMap::new(),
         gateway: GatewayConfig::default(),
+        channels: ChannelsConfig::default(),
         memory: MemoryConfig::default(),
         mcp: McpConfig::default(),
         tools: ToolsConfig::default(),
@@ -320,6 +322,41 @@ every = "10m"
 }
 
 #[test]
+fn parse_dingtalk_channel_config_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[[channels.dingtalk]]
+id = "ops"
+enabled = true
+client_id = "ding-client"
+client_secret = "ding-secret"
+bot_title = "Ops Bot"
+show_reasoning = true
+allowlist = ["u123", "u456"]
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("dingtalk config should parse");
+    assert_eq!(parsed.channels.dingtalk.len(), 1);
+    let account = &parsed.channels.dingtalk[0];
+    assert_eq!(account.id, "ops");
+    assert!(account.enabled);
+    assert_eq!(account.client_id, "ding-client");
+    assert_eq!(account.bot_title, "Ops Bot");
+    assert!(account.show_reasoning);
+    assert_eq!(
+        account.allowlist,
+        vec!["u123".to_string(), "u456".to_string()]
+    );
+}
+
+#[test]
 fn validate_fails_when_web_fetch_limits_are_invalid() {
     let mut cfg = AppConfig::default();
     cfg.tools.web_fetch.enabled = true;
@@ -396,6 +433,51 @@ fn validate_fails_when_gateway_tls_paths_missing() {
     cfg.gateway.tls.key_path = None;
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("gateway.tls.cert_path"));
+}
+
+#[test]
+fn validate_fails_when_dingtalk_channel_ids_duplicate() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.dingtalk = vec![
+        DingtalkConfig {
+            id: "ops".to_string(),
+            enabled: true,
+            client_id: "client-a".to_string(),
+            client_secret: "secret-a".to_string(),
+            bot_title: "Ops".to_string(),
+            show_reasoning: false,
+            allowlist: vec![],
+        },
+        DingtalkConfig {
+            id: "ops".to_string(),
+            enabled: true,
+            client_id: "client-b".to_string(),
+            client_secret: "secret-b".to_string(),
+            bot_title: "Ops2".to_string(),
+            show_reasoning: false,
+            allowlist: vec![],
+        },
+    ];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("duplicated id"));
+}
+
+#[test]
+fn validate_fails_when_enabled_dingtalk_channel_missing_secret() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.dingtalk = vec![DingtalkConfig {
+        id: "ops".to_string(),
+        enabled: true,
+        client_id: "client-a".to_string(),
+        client_secret: String::new(),
+        bot_title: "Ops".to_string(),
+        show_reasoning: false,
+        allowlist: vec![],
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("channels.dingtalk.client_secret"));
 }
 
 #[test]

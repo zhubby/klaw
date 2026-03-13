@@ -1,6 +1,7 @@
 pub mod service_loop;
 
 use klaw_agent::build_provider_from_config;
+use klaw_channel::{ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
 use klaw_config::AppConfig;
 use klaw_core::{
     load_or_create_system_prompt, AgentLoop, AgentRuntimeError, CircuitBreakerPolicy,
@@ -12,7 +13,7 @@ use klaw_core::{
 use klaw_heartbeat::{
     should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
 };
-use klaw_mcp::{McpClientHub, McpManager, McpProxyTool, McpRuntimeHandles, McpToolDescriptor};
+use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_skill::{open_default_skill_store, InstalledSkill, RegistrySource, SkillStore};
 use klaw_storage::{
     open_default_store, ChatRecord, CronStorage, DefaultSessionStore, SessionStorage,
@@ -21,13 +22,8 @@ use klaw_tool::{
     CronManagerTool, FsTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
     SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    error::Error,
-    io,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 pub struct RuntimeBundle {
@@ -41,8 +37,59 @@ pub struct RuntimeBundle {
     pub circuit_breaker: InMemoryCircuitBreaker,
     pub subscription: Subscription,
     pub session_store: DefaultSessionStore,
-    pub _mcp_hub: Option<Arc<McpClientHub>>,
-    pub _mcp_runtime_handles: Option<McpRuntimeHandles>,
+    pub mcp_bootstrap: Option<Mutex<McpBootstrapHandle>>,
+}
+
+pub struct SharedChannelRuntime {
+    runtime: Arc<RuntimeBundle>,
+    background: Arc<service_loop::BackgroundServices>,
+}
+
+impl SharedChannelRuntime {
+    pub fn new(
+        runtime: Arc<RuntimeBundle>,
+        background: Arc<service_loop::BackgroundServices>,
+    ) -> Self {
+        Self {
+            runtime,
+            background,
+        }
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl ChannelRuntime for SharedChannelRuntime {
+    async fn submit(&self, request: ChannelRequest) -> ChannelResult<Option<ChannelResponse>> {
+        let maybe_output = submit_and_get_output(
+            self.runtime.as_ref(),
+            request.channel,
+            request.input,
+            request.session_key,
+            request.chat_id,
+        )
+        .await?;
+
+        Ok(maybe_output.map(|output| ChannelResponse {
+            content: output.content,
+            reasoning: output.reasoning,
+        }))
+    }
+
+    fn cron_tick_interval(&self) -> Duration {
+        self.background.cron_tick_interval()
+    }
+
+    fn runtime_tick_interval(&self) -> Duration {
+        self.background.runtime_tick_interval()
+    }
+
+    async fn on_cron_tick(&self) {
+        self.background.on_cron_tick().await;
+    }
+
+    async fn on_runtime_tick(&self) {
+        self.background.on_runtime_tick(self.runtime.as_ref()).await;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -93,8 +140,6 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         tools.register(WebSearchTool::new(config)?);
     }
 
-    let mut mcp_hub = None;
-    let mut mcp_runtime_handles = None;
     let configured_mcp_servers = config
         .mcp
         .servers
@@ -107,88 +152,19 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         startup_timeout_seconds = config.mcp.startup_timeout_seconds,
         "bootstrapping mcp servers"
     );
-    let mut mcp_bootstrap = McpManager::bootstrap(&config.mcp).await;
-    if !mcp_bootstrap.failures.is_empty() {
-        for failure in &mcp_bootstrap.failures {
-            warn!(
-                server = %failure.server_id,
-                reason = %failure.reason,
-                "mcp server bootstrap failed, skipping"
-            );
-        }
-    }
-    if mcp_bootstrap.descriptors.is_empty() {
-        info!("mcp bootstrap completed with no discovered tools");
-    }
-    if !mcp_bootstrap.descriptors.is_empty() {
-        let mut blocked_servers = BTreeSet::new();
-        let mut existing_names: BTreeSet<String> = tools.list().into_iter().collect();
-        let mut by_server: BTreeMap<String, Vec<McpToolDescriptor>> = BTreeMap::new();
-        for descriptor in mcp_bootstrap.descriptors {
-            by_server
-                .entry(descriptor.server_id.clone())
-                .or_default()
-                .push(descriptor);
-        }
-
-        for (server_id, descriptors) in &by_server {
-            if descriptors
-                .iter()
-                .any(|descriptor| existing_names.contains(&descriptor.name))
-            {
-                blocked_servers.insert(server_id.clone());
-                warn!(
-                    server = %server_id,
-                    "mcp server skipped due to tool name conflict with existing registry"
-                );
-                continue;
-            }
-            for descriptor in descriptors {
-                existing_names.insert(descriptor.name.clone());
-            }
-        }
-
-        for server_id in &blocked_servers {
-            mcp_bootstrap.hub.remove(server_id);
-        }
-        mcp_bootstrap
-            .runtime_handles
-            .stdio_servers
-            .retain(|server_id| !blocked_servers.contains(server_id));
-
-        if !mcp_bootstrap.hub.server_ids().is_empty() {
-            let hub = Arc::new(mcp_bootstrap.hub.clone());
-            let active_servers = hub.server_ids();
-            let total_mcp_tools: usize = by_server
-                .iter()
-                .filter(|(server_id, _)| !blocked_servers.contains(*server_id))
-                .map(|(_, descriptors)| descriptors.len())
-                .sum();
-            for (server_id, descriptors) in by_server {
-                if blocked_servers.contains(&server_id) {
-                    continue;
-                }
-                for descriptor in descriptors {
-                    tools.register(McpProxyTool::new(descriptor, Arc::clone(&hub)));
-                }
-            }
-            mcp_hub = Some(hub);
-            mcp_runtime_handles = Some(mcp_bootstrap.runtime_handles);
-            info!(
-                active_servers = ?active_servers,
-                server_count = active_servers.len(),
-                tool_count = total_mcp_tools,
-                "mcp tools registered"
-            );
-        } else {
-            info!("mcp bootstrap completed with no active servers");
-        }
-    }
-
     if config.tools.sub_agent.enabled {
         let parent_tools = tools.clone();
         tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
     }
+
+    let mcp_bootstrap = if config.mcp.enabled && configured_mcp_servers > 0 {
+        Some(Mutex::new(McpManager::spawn_bootstrap(
+            config.mcp.clone(),
+            tools.clone(),
+        )))
+    } else {
+        None
+    };
 
     let data_dir_system_prompt = load_data_dir_system_prompt().await;
     let skills_system_prompt = load_skills_system_prompt(config).await;
@@ -247,9 +223,22 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
             visibility_timeout: Duration::from_secs(10),
         },
         session_store,
-        _mcp_hub: mcp_hub,
-        _mcp_runtime_handles: mcp_runtime_handles,
+        mcp_bootstrap,
     })
+}
+
+pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<dyn Error>> {
+    let Some(handle) = &runtime.mcp_bootstrap else {
+        return Ok(());
+    };
+
+    info!("shutting down runtime mcp servers");
+    let mut guard = handle.lock().await;
+    guard
+        .shutdown()
+        .await
+        .map_err(|err| config_err(format!("mcp shutdown failed: {err}")))?;
+    Ok(())
 }
 
 async fn load_skills_system_prompt(config: &AppConfig) -> Option<String> {
@@ -365,11 +354,11 @@ fn compose_system_prompt(
 
 pub async fn submit_and_get_output(
     runtime: &RuntimeBundle,
+    channel: String,
     input: String,
     session_key: String,
     chat_id: String,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
-    let channel = "stdio";
     let header = EnvelopeHeader::new(session_key.clone());
     let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
     runtime
@@ -378,7 +367,7 @@ pub async fn submit_and_get_output(
         .await?;
     runtime
         .session_store
-        .touch_session(&session_key, &chat_id, channel)
+        .touch_session(&session_key, &chat_id, &channel)
         .await?;
 
     runtime
@@ -463,6 +452,7 @@ pub async fn drain_runtime_queue(
 async fn run_runtime_once(
     runtime: &RuntimeBundle,
 ) -> Result<Option<Envelope<OutboundMessage>>, Box<dyn std::error::Error>> {
+    ensure_mcp_ready(runtime).await?;
     let before_len = runtime.outbound_transport.published_messages().await.len();
     let result = runtime
         .runtime
@@ -502,6 +492,78 @@ fn is_queue_empty_error(err: &AgentRuntimeError) -> bool {
 
 fn config_err(message: String) -> Box<dyn Error> {
     Box::new(io::Error::other(message))
+}
+
+async fn ensure_mcp_ready(runtime: &RuntimeBundle) -> Result<(), Box<dyn Error>> {
+    let Some(handle) = &runtime.mcp_bootstrap else {
+        return Ok(());
+    };
+
+    let mut guard = handle.lock().await;
+    if !guard.is_ready() {
+        info!("waiting for mcp bootstrap to complete before assembling tools");
+    }
+    let summary = guard
+        .wait_until_ready()
+        .await
+        .map_err(|err| config_err(format!("mcp bootstrap failed: {err}")))?;
+    validate_mcp_summary(&summary)?;
+    info!(
+        active_servers = ?summary.active_servers,
+        required_stdio_servers = ?summary.required_stdio_servers,
+        active_stdio_servers = ?summary.active_stdio_servers,
+        failed_servers = summary.failures.len(),
+        tool_count = summary.tool_count,
+        "mcp readiness gate passed"
+    );
+    Ok(())
+}
+
+fn validate_mcp_summary(summary: &McpBootstrapSummary) -> Result<(), Box<dyn Error>> {
+    let stdio_failures: Vec<String> = summary
+        .failures
+        .iter()
+        .filter(|failure| {
+            summary
+                .required_stdio_servers
+                .iter()
+                .any(|server_id| server_id == &failure.server_id)
+        })
+        .map(|failure| format!("{}: {}", failure.server_id, failure.reason))
+        .collect();
+
+    let missing_stdio_servers: Vec<String> = summary
+        .required_stdio_servers
+        .iter()
+        .filter(|server_id| {
+            let has_failure = summary
+                .failures
+                .iter()
+                .any(|failure| &failure.server_id == *server_id);
+            !summary
+                .active_stdio_servers
+                .iter()
+                .any(|active_id| active_id == *server_id)
+                && !has_failure
+        })
+        .cloned()
+        .collect();
+
+    if !stdio_failures.is_empty() || !missing_stdio_servers.is_empty() {
+        let mut reasons = Vec::new();
+        reasons.extend(stdio_failures);
+        reasons.extend(
+            missing_stdio_servers
+                .into_iter()
+                .map(|server_id| format!("{server_id}: startup verification did not complete")),
+        );
+        return Err(config_err(format!(
+            "configured stdio mcp servers are not ready: {}",
+            reasons.join("; ")
+        )));
+    }
+
+    Ok(())
 }
 
 async fn reconcile_heartbeats<S>(config: &AppConfig, storage: &S) -> Result<(), Box<dyn Error>>
