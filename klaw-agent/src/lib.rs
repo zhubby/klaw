@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
 use klaw_llm::{
     ChatOptions, LlmError, LlmMessage, LlmProvider, OpenAiCompatibleConfig,
-    OpenAiCompatibleProvider, ToolDefinition,
+    OpenAiCompatibleProvider, OpenAiWireApi, ToolDefinition,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -100,14 +100,27 @@ pub fn build_provider_from_config(
 
     let api_key = resolve_api_key(provider)
         .ok_or_else(|| ProviderBuildError::MissingApiKey(provider_id.to_string()))?;
+    let default_model = config
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .unwrap_or(provider.default_model.as_str())
+        .to_string();
 
     Ok(ProviderInstance {
         provider: Arc::new(OpenAiCompatibleProvider::new(OpenAiCompatibleConfig {
             base_url: provider.base_url.clone(),
             api_key,
-            default_model: provider.default_model.clone(),
+            default_model: default_model.clone(),
+            wire_api: OpenAiWireApi::parse(provider.wire_api.as_str()).ok_or_else(|| {
+                ProviderBuildError::UnsupportedWireApi {
+                    provider_id: provider_id.to_string(),
+                    wire_api: provider.wire_api.clone(),
+                }
+            })?,
         })),
-        default_model: provider.default_model.clone(),
+        default_model,
     })
 }
 
@@ -156,6 +169,19 @@ pub async fn run_agent_execution(
                 ChatOptions {
                     temperature: 0.2,
                     max_tokens: None,
+                    max_output_tokens: None,
+                    previous_response_id: None,
+                    instructions: None,
+                    metadata: None,
+                    include: None,
+                    store: None,
+                    parallel_tool_calls: None,
+                    tool_choice: None,
+                    text: None,
+                    reasoning: None,
+                    truncation: None,
+                    user: None,
+                    service_tier: None,
                 },
             )
             .await?;
@@ -243,6 +269,7 @@ pub fn resolve_api_key(provider: &ModelProviderConfig) -> Option<String> {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use klaw_config::AppConfig;
     use klaw_llm::{LlmResponse, ToolCall};
     use std::sync::{Arc, Mutex};
 
@@ -493,5 +520,38 @@ mod tests {
                 ("user", "current"),
             ]
         );
+    }
+
+    #[test]
+    fn build_provider_from_config_supports_responses_wire_api() {
+        let mut config = AppConfig::default();
+        let provider = config
+            .model_providers
+            .get_mut(&config.model_provider)
+            .unwrap_or_else(|| panic!("missing default provider '{}'", config.model_provider));
+        provider.wire_api = "responses".to_string();
+        provider.api_key = Some("test-key".to_string());
+        provider.env_key = None;
+
+        let built = build_provider_from_config(&config, &config.model_provider);
+        assert!(built.is_ok());
+    }
+
+    #[test]
+    fn build_provider_from_config_prefers_root_model_override() {
+        let mut config = AppConfig::default();
+        let provider = config
+            .model_providers
+            .get_mut(&config.model_provider)
+            .unwrap_or_else(|| panic!("missing default provider '{}'", config.model_provider));
+        provider.default_model = "gpt-4o-mini".to_string();
+        provider.api_key = Some("test-key".to_string());
+        provider.env_key = None;
+        config.model = Some("gpt-4.1-mini".to_string());
+
+        let built = build_provider_from_config(&config, &config.model_provider)
+            .expect("provider should build");
+        assert_eq!(built.default_model, "gpt-4.1-mini");
+        assert_eq!(built.provider.default_model(), "gpt-4.1-mini");
     }
 }

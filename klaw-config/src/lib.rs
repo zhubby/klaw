@@ -5,6 +5,8 @@ use thiserror::Error;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub model_provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
     pub model_providers: BTreeMap<String, ModelProviderConfig>,
     #[serde(default)]
     pub gateway: GatewayConfig,
@@ -31,6 +33,7 @@ impl Default for AppConfig {
         model_providers.insert(model_provider.clone(), ModelProviderConfig::default());
         Self {
             model_provider,
+            model: None,
             model_providers,
             gateway: GatewayConfig::default(),
             channels: ChannelsConfig::default(),

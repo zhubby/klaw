@@ -9,6 +9,7 @@ fn parse_default_template_succeeds() {
     let template = default_config_template();
     let parsed: AppConfig = toml::from_str(&template).expect("default template should parse");
     assert_eq!(parsed.model_provider, "openai");
+    assert!(parsed.model.is_none());
     assert!(parsed.model_providers.contains_key("openai"));
     assert!(!parsed.memory.embedding.enabled);
     assert_eq!(parsed.memory.embedding.provider, "openai");
@@ -96,6 +97,23 @@ fn parse_default_template_succeeds() {
 }
 
 #[test]
+fn parse_root_model_override_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+model = "gpt-4.1-mini"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+    assert_eq!(parsed.model.as_deref(), Some("gpt-4.1-mini"));
+}
+
+#[test]
 fn validate_fails_when_active_provider_missing() {
     let cfg = AppConfig {
         model_provider: "missing".to_string(),
@@ -104,6 +122,14 @@ fn validate_fails_when_active_provider_missing() {
     };
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("not found in model_providers"));
+}
+
+#[test]
+fn validate_fails_when_root_model_is_blank() {
+    let mut cfg = AppConfig::default();
+    cfg.model = Some("   ".to_string());
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("model cannot be empty when configured"));
 }
 
 #[test]

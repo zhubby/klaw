@@ -9,6 +9,7 @@
 
 ## Commands
 
+- 全局参数：`--config <PATH>`、`--log-level <trace|debug|info|warn|error>`
 - `klaw stdio`
 - `klaw agent --input "..."`
 - `klaw gateway`

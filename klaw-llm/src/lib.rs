@@ -6,7 +6,7 @@ use thiserror::Error;
 
 pub use providers::{
     anthropic::{AnthropicConfig, AnthropicProvider},
-    openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleProvider},
+    openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleProvider, OpenAiWireApi},
 };
 
 /// LLM 对话消息。
@@ -42,6 +42,45 @@ pub struct ChatOptions {
     pub temperature: f32,
     /// 最大生成 token（可选）。
     pub max_tokens: Option<u32>,
+    /// Responses API 输出 token 上限（可选，优先于 max_tokens）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    /// Responses API 复用上轮 response id（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
+    /// Responses API 指令字段（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    /// Responses API 元数据（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Responses API include 参数（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
+    /// Responses API 是否持久化结果（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    /// Responses API 是否并行 tool calls（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+    /// Responses API tool_choice 参数（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+    /// Responses API text 参数（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<serde_json::Value>,
+    /// Responses API reasoning 参数（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<serde_json::Value>,
+    /// Responses API truncation 参数（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<String>,
+    /// OpenAI user 字段（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    /// OpenAI service_tier 字段（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
 }
 
 /// 模型请求工具调用的描述。

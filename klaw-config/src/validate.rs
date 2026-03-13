@@ -10,6 +10,15 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "model_provider cannot be empty".to_string(),
         ));
     }
+    if config
+        .model
+        .as_deref()
+        .is_some_and(|model| model.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "model cannot be empty when configured".to_string(),
+        ));
+    }
 
     let active = config
         .model_providers

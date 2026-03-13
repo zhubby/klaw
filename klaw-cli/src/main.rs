@@ -1,7 +1,7 @@
 mod commands;
 mod runtime;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     agent::AgentCommand, archive::ArchiveCommand, config::ConfigCommand, daemon::DaemonCommand,
     gateway::GatewayCommand, session::SessionCommand, stdio::StdioCommand,
@@ -23,8 +23,33 @@ struct Cli {
     #[arg(long, global = true)]
     config: Option<PathBuf>,
 
+    /// Set tracing log level globally. Supported: trace, debug, info, warn, error.
+    #[arg(long, global = true, value_enum)]
+    log_level: Option<LogLevel>,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevel {
+    const fn as_filter(self) -> &'static str {
+        match self {
+            Self::Trace => "trace",
+            Self::Debug => "debug",
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -47,8 +72,12 @@ enum Commands {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let Cli { config, command } = Cli::parse();
-    init_tracing(&command)?;
+    let Cli {
+        config,
+        log_level,
+        command,
+    } = Cli::parse();
+    init_tracing(&command, log_level)?;
     let command = match command {
         Commands::Config(cmd) => {
             cmd.run(config.as_deref())?;
@@ -83,8 +112,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn init_tracing(command: &Commands) -> Result<(), Box<dyn std::error::Error>> {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+fn init_tracing(
+    command: &Commands,
+    log_level: Option<LogLevel>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let env_filter = build_env_filter(log_level);
 
     match command {
         Commands::Stdio(cmd) if cmd.verbose_terminal => {
@@ -124,6 +156,22 @@ fn init_tracing(command: &Commands) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn build_env_filter(log_level: Option<LogLevel>) -> EnvFilter {
+    match log_level {
+        Some(level) => {
+            // Keep app-level debug/trace while suppressing noisy DB internals.
+            let filter = format!(
+                "{},sqlx=warn,sqlx::query=warn,sqlx::query::logger=warn,\
+                turso=warn,turso_core=warn,turso_ext=warn,turso_sync_engine=warn,\
+                turso_parser=warn,turso_sdk_kit=warn,turso_sync_sdk_kit=warn",
+                level.as_filter()
+            );
+            EnvFilter::new(filter)
+        }
+        None => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct FileTracingWriter {
     file: Arc<Mutex<std::fs::File>>,
@@ -146,5 +194,34 @@ impl Write for FileTracingWriter {
     fn flush(&mut self) -> io::Result<()> {
         let mut file = self.file.lock().unwrap_or_else(|err| err.into_inner());
         file.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parse_global_log_level_before_subcommand() {
+        let cli = Cli::parse_from(["klaw", "--log-level", "debug", "stdio"]);
+        assert_eq!(cli.log_level, Some(LogLevel::Debug));
+        assert!(matches!(cli.command, Commands::Stdio(_)));
+    }
+
+    #[test]
+    fn parse_global_log_level_after_subcommand() {
+        let cli = Cli::parse_from(["klaw", "stdio", "--log-level", "trace"]);
+        assert_eq!(cli.log_level, Some(LogLevel::Trace));
+        assert!(matches!(cli.command, Commands::Stdio(_)));
+    }
+
+    #[test]
+    fn build_env_filter_includes_sqlx_suppression_when_log_level_is_set() {
+        let filter = build_env_filter(Some(LogLevel::Debug));
+        let rendered = filter.to_string();
+        assert!(rendered.contains("debug"));
+        assert!(rendered.contains("sqlx=warn"));
+        assert!(rendered.contains("turso=warn"));
     }
 }

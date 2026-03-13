@@ -6,7 +6,8 @@
       "Bash(git push:*)",
       "Bash(cd /Users/zhubby/Repository/klaw/docs && mdbook build 2>&1)",
       "Bash(mdbook build:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(git mv /Users/zhubby/Workspaces/klaw/task_plan.md /Users/zhubby/Workspaces/klaw/docs/src/plans/task-plan-add-klaw-archive.md)"
     ]
   }
 }
