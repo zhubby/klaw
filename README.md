@@ -29,6 +29,7 @@ User Input → InboundMessage (agent.inbound)
 | `klaw-core` | Agent runtime: message protocol, scheduler, reliability controls |
 | `klaw-cli` | CLI entrypoint (binary: `klaw`) |
 | `klaw-storage` | Storage abstraction layer (session/cron persistence) |
+| `klaw-archive` | Media archive service (file persistence and indexing) |
 | `klaw-gateway` | WebSocket gateway service |
 | `klaw-skill` | Skills lifecycle management |
 | `klaw-memory` | Long-term memory service (BM25 + Vector) |
@@ -171,6 +172,15 @@ klaw session list
 
 # Get session details
 klaw session get --session-key "stdio:my-chat"
+
+# List archived files
+klaw archive list
+
+# Push a local file into archive storage
+klaw archive push --path ./report.pdf
+
+# Pull an archived file back to disk
+klaw archive pull --archive-id "<archive-id>"
 ```
 
 ## Core Concepts
@@ -180,6 +190,7 @@ klaw session get --session-key "stdio:my-chat"
 - **InboundMessage**: Normalized incoming messages from any channel (Telegram, Discord, Webhook, etc.)
 - **OutboundMessage**: Normalized outgoing messages to channels
 - **session_key**: `{channel}:{chat_id}` - ensures serial execution for the same session
+- **MediaReference**: Structured media placeholder emitted by channels for future archive-aware flows
 
 ### AgentLoop
 

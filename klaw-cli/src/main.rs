@@ -3,8 +3,8 @@ mod runtime;
 
 use clap::{Parser, Subcommand};
 use commands::{
-    agent::AgentCommand, config::ConfigCommand, daemon::DaemonCommand, gateway::GatewayCommand,
-    session::SessionCommand, stdio::StdioCommand,
+    agent::AgentCommand, archive::ArchiveCommand, config::ConfigCommand, daemon::DaemonCommand,
+    gateway::GatewayCommand, session::SessionCommand, stdio::StdioCommand,
 };
 use klaw_storage::StoragePaths;
 use std::{
@@ -41,6 +41,8 @@ enum Commands {
     Gateway(GatewayCommand),
     /// Manage local session indexes in klaw.db.
     Session(SessionCommand),
+    /// Manage archived media files in archive.db and archives/.
+    Archive(ArchiveCommand),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -73,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Agent(cmd) => cmd.run(app_config).await?,
         Commands::Gateway(cmd) => cmd.run(app_config).await?,
         Commands::Session(cmd) => cmd.run().await?,
+        Commands::Archive(cmd) => cmd.run().await?,
         Commands::Config(_) => unreachable!("handled above"),
         Commands::Daemon(_) => unreachable!("handled above"),
     }

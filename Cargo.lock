@@ -2248,11 +2248,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "klaw-archive"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "klaw-core",
+ "klaw-storage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "klaw-channel"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures-util",
+ "klaw-core",
  "reqwest",
  "rustls",
  "serde",
@@ -2271,6 +2289,7 @@ dependencies = [
  "async-trait",
  "clap 4.5.60",
  "klaw-agent",
+ "klaw-archive",
  "klaw-channel",
  "klaw-config",
  "klaw-core",

@@ -1,6 +1,6 @@
 # 存储概述
 
-`klaw-storage` 提供 session 和 cron 的持久化能力。
+`klaw-storage` 提供 session、cron 与 archive 相关持久化所需的路径和底层 SQLite 访问能力。
 
 ## Session 索引
 
@@ -45,11 +45,30 @@
 | `error_message` | 失败原因 |
 | `published_message_id` | 成功发布的消息 ID |
 
+## Archive 归档
+
+### archives 表
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 归档记录主键 |
+| `source_kind` | 来源类型 |
+| `media_kind` | 识别后的媒体类别 |
+| `content_sha256` | 内容哈希 |
+| `size_bytes` | 文件大小 |
+| `storage_rel_path` | 相对存储路径 |
+| `session_key` | 关联会话键 |
+| `chat_id` | 关联对话 ID |
+| `metadata_json` | 扩展元数据 |
+| `created_at_ms` | 写入时间 |
+
 ## 索引优化
 
 - `cron(enabled, next_run_at_ms)` - 加速到期任务扫描
 - `cron_task(cron_id, created_at_ms DESC)` - 按任务查历史
 - `cron_task(status, scheduled_at_ms)` - 按状态和时间过滤
+- `archives(content_sha256)` - 加速按内容哈希查重
+- `archives(session_key)` / `archives(chat_id)` - 加速按上下文检索归档
 
 ## 后端实现
 
@@ -59,3 +78,4 @@
 详细文档：
 - [Session 存储语义](./session.md)
 - [Cron 存储语义](./cron.md)
+- [Archive 存储语义](./archive.md)

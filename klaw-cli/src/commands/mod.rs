@@ -1,7 +1,9 @@
 pub mod agent;
+pub mod archive;
 pub mod config;
 pub mod daemon;
 pub mod gateway;
 pub mod session;
+pub mod signal;
 pub mod startup_display;
 pub mod stdio;

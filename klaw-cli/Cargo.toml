@@ -14,6 +14,7 @@ klaw-core = { workspace = true }
 klaw-agent = { workspace = true }
 klaw-llm = { workspace = true }
 klaw-tool = { workspace = true }
+klaw-archive = { workspace = true }
 klaw-heartbeat = { workspace = true }
 klaw-config = { workspace = true }
 klaw-storage = { workspace = true }

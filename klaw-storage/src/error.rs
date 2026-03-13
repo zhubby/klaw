@@ -8,6 +8,8 @@ pub enum StorageError {
     CreateDataDir(#[source] std::io::Error),
     #[error("failed to create sessions directory: {0}")]
     CreateSessionsDir(#[source] std::io::Error),
+    #[error("failed to create archives directory: {0}")]
+    CreateArchivesDir(#[source] std::io::Error),
     #[error("failed to append JSONL record: {0}")]
     WriteJsonl(#[source] std::io::Error),
     #[error("failed to serialize JSONL record: {0}")]

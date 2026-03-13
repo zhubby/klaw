@@ -1,4 +1,5 @@
 use crate::{Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
+use std::future::Future;
 use std::io::{self, Write};
 use tokio::io::AsyncBufReadExt;
 use tracing::info;
@@ -49,14 +50,20 @@ impl Channel for StdioChannel {
         loop {
             tokio::select! {
                 _ = cron_tick.tick() => {
-                    runtime.on_cron_tick().await;
+                    if run_until_shutdown(runtime.on_cron_tick()).await?.is_none() {
+                        println!("\nShutdown signal received. Bye.");
+                        break;
+                    }
                 }
                 _ = runtime_tick.tick() => {
-                    runtime.on_runtime_tick().await;
+                    if run_until_shutdown(runtime.on_runtime_tick()).await?.is_none() {
+                        println!("\nShutdown signal received. Bye.");
+                        break;
+                    }
                 }
-                signal = tokio::signal::ctrl_c() => {
+                signal = shutdown_signal() => {
                     signal?;
-                    println!("\nCtrl+C received. Bye.");
+                    println!("\nShutdown signal received. Bye.");
                     break;
                 }
                 line = lines.next_line() => {
@@ -77,14 +84,20 @@ impl Channel for StdioChannel {
                         break;
                     }
 
-                    let maybe_output = runtime
-                        .submit(ChannelRequest {
-                            channel: self.name().to_string(),
-                            input: input.to_string(),
-                            session_key: self.session_key.clone(),
-                            chat_id: self.chat_id.clone(),
-                        })
-                        .await?;
+                    let request = ChannelRequest {
+                        channel: self.name().to_string(),
+                        input: input.to_string(),
+                        session_key: self.session_key.clone(),
+                        chat_id: self.chat_id.clone(),
+                        media_references: Vec::new(),
+                    };
+                    let maybe_output = match run_until_shutdown(runtime.submit(request)).await? {
+                        Some(output) => output?,
+                        None => {
+                            println!("\nShutdown signal received. Bye.");
+                            break;
+                        }
+                    };
 
                     match maybe_output {
                         Some(output) => {
@@ -105,6 +118,40 @@ impl Channel for StdioChannel {
         }
 
         Ok(())
+    }
+}
+
+async fn shutdown_signal() -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                signal = tokio::signal::ctrl_c() => signal,
+                _ = terminate.recv() => Ok(()),
+            }
+        } else {
+            tokio::signal::ctrl_c().await
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
+}
+
+async fn run_until_shutdown<F, T>(future: F) -> io::Result<Option<T>>
+where
+    F: Future<Output = T>,
+{
+    tokio::select! {
+        output = future => Ok(Some(output)),
+        signal = shutdown_signal() => {
+            signal?;
+            Ok(None)
+        }
     }
 }
 

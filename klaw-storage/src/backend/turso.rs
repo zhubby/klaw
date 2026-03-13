@@ -22,6 +22,12 @@ pub struct TursoMemoryDb {
     conn: Connection,
 }
 
+#[derive(Debug, Clone)]
+pub struct TursoArchiveDb {
+    _db: Database,
+    conn: Connection,
+}
+
 impl TursoSessionStore {
     pub async fn open(paths: StoragePaths) -> Result<Self, StorageError> {
         paths.ensure_dirs().await?;
@@ -105,8 +111,59 @@ impl TursoMemoryDb {
     }
 }
 
+impl TursoArchiveDb {
+    pub async fn open(paths: StoragePaths) -> Result<Self, StorageError> {
+        paths.ensure_dirs().await?;
+        let db = Builder::new_local(&paths.archive_db_path.to_string_lossy())
+            .build()
+            .await
+            .map_err(StorageError::backend)?;
+        let conn = db.connect().map_err(StorageError::backend)?;
+        Ok(Self { _db: db, conn })
+    }
+}
+
 #[async_trait]
 impl MemoryDb for TursoMemoryDb {
+    async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
+        self.conn
+            .execute_batch(sql)
+            .await
+            .map_err(StorageError::backend)
+    }
+
+    async fn execute(&self, sql: &str, params: &[DbValue]) -> Result<u64, StorageError> {
+        let turso_params = to_turso_params(params);
+        self.conn
+            .execute(sql, turso_params)
+            .await
+            .map_err(StorageError::backend)
+    }
+
+    async fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, StorageError> {
+        let turso_params = to_turso_params(params);
+        let mut rows = self
+            .conn
+            .query(sql, turso_params)
+            .await
+            .map_err(StorageError::backend)?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
+            let mut values = Vec::new();
+            for idx in 0..row.column_count() {
+                values.push(from_turso_value(
+                    row.get_value(idx).map_err(StorageError::backend)?,
+                ));
+            }
+            out.push(DbRow { values });
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
+impl MemoryDb for TursoArchiveDb {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
         self.conn
             .execute_batch(sql)

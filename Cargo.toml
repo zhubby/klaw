@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "klaw-agent",
+    "klaw-archive",
     "klaw-core",
     "klaw-llm",
     "klaw-tool",
@@ -40,10 +41,14 @@ clap = { version = "4", features = ["derive", "env"] }
 toml = "0.8"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros"] }
 turso = { version = "0.4.3"}
+time = { version = "0.3", features = ["formatting"] }
+sha2 = "0.10"
+hex = "0.4"
 
 zellij-client = { version = "0.43.1"}
 
 klaw-core = { path = "klaw-core" }
+klaw-archive = { path = "klaw-archive" }
 klaw-llm = { path = "klaw-llm" }
 klaw-tool = { path = "klaw-tool" }
 klaw-heartbeat = { path = "klaw-heartbeat" }

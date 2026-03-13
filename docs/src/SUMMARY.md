@@ -20,6 +20,7 @@
   - [存储概述](./storage/overview.md)
   - [Session 存储](./storage/session.md)
   - [Cron 存储](./storage/cron.md)
+  - [Archive 存储](./storage/archive.md)
 - [网关](./gateway/README.md)
   - [WebSocket](./gateway/websocket.md)
 - [设计计划](./plans/README.md)

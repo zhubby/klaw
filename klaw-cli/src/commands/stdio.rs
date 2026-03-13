@@ -2,6 +2,7 @@ use clap::Args;
 use std::sync::Arc;
 
 use super::startup_display::print_startup_banner;
+use crate::commands::signal::shutdown_signal;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
     build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle, SharedChannelRuntime,
@@ -36,8 +37,19 @@ impl StdioCommand {
         let adapter = SharedChannelRuntime::new(runtime.clone(), background);
 
         let mut channel = StdioChannel::new(self.session_key, self.show_reasoning);
-        let run_result = channel.run(&adapter).await;
-        let shutdown_result = shutdown_runtime_bundle(runtime.as_ref()).await;
+        let run_result = tokio::select! {
+            result = channel.run(&adapter) => result,
+            _ = shutdown_signal() => {
+                println!("\nShutdown signal received. Bye.");
+                Ok(())
+            }
+        };
+        let shutdown_result = tokio::select! {
+            result = shutdown_runtime_bundle(runtime.as_ref()) => result,
+            _ = shutdown_signal() => {
+                std::process::exit(130);
+            }
+        };
         run_result?;
         shutdown_result
     }

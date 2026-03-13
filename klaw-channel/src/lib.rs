@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use klaw_core::MediaReference;
 use std::error::Error;
 use std::time::Duration;
 
@@ -13,6 +14,7 @@ pub struct ChannelRequest {
     pub input: String,
     pub session_key: String,
     pub chat_id: String,
+    pub media_references: Vec<MediaReference>,
 }
 
 #[derive(Debug, Clone)]

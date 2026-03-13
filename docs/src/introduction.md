@@ -29,6 +29,7 @@ User Input → InboundMessage (agent.inbound)
 | `klaw-core` | Agent 运行时：消息协议、调度器、可靠性控制 |
 | `klaw-cli` | CLI 入口（binary: `klaw`） |
 | `klaw-storage` | 存储抽象层（session/cron持久化） |
+| `klaw-archive` | 媒体归档服务（文件落盘与索引） |
 | `klaw-gateway` | WebSocket 网关服务 |
 | `klaw-skill` | Skills 生命周期管理 |
 | `klaw-memory` | 长期记忆服务（BM25 + Vector） |

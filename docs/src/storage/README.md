@@ -1,6 +1,6 @@
 # 存储模块
 
-`klaw-storage` 是 Klaw 的本地存储抽象层，提供统一的存储 trait 对外接口。
+`klaw-storage` 与相关领域模块共同构成 Klaw 的本地存储层：`klaw-storage` 负责路径与通用持久化抽象，`klaw-memory` 与 `klaw-archive` 在其之上实现各自领域服务。
 
 ## 设计目标
 
@@ -45,8 +45,11 @@ klaw-storage = { path = "../klaw-storage", default-features = false, features = 
 ├── config.toml       # 配置文件
 ├── klaw.db          # SQLite 索引数据库
 ├── memory.db        # 记忆数据库（可选）
-└── sessions/        # 会话 JSONL 文件
-    └── <session_id>.jsonl
+├── archive.db       # 媒体归档索引数据库
+├── sessions/        # 会话 JSONL 文件
+│   └── <session_id>.jsonl
+└── archives/        # 归档媒体文件
+    └── <YYYY-MM-DD>/<uuid>.<ext>
 ```
 
 ## 核心 API
@@ -74,6 +77,19 @@ pub trait CronStorage {
 }
 ```
 
+### Archive 存储
+
+`klaw-archive` 在 `klaw-storage` 提供的 `DefaultArchiveDb` 和 `StoragePaths` 之上实现媒体归档服务：
+
+```rust
+pub trait ArchiveService {
+    async fn ingest_path(&self, input: ArchiveIngestInput, source_path: &Path) -> Result<ArchiveRecord>;
+    async fn ingest_bytes(&self, input: ArchiveIngestInput, bytes: &[u8]) -> Result<ArchiveRecord>;
+    async fn find(&self, query: ArchiveQuery) -> Result<Vec<ArchiveRecord>>;
+    async fn get(&self, archive_id: &str) -> Result<ArchiveRecord>;
+}
+```
+
 ## Session 语义
 
 - `turn_count` 表示"已完成轮次"（用户请求 + agent 响应）
@@ -89,3 +105,4 @@ pub trait CronStorage {
 详细文档：
 - [Session 存储](./session.md)
 - [Cron 存储](./cron.md)
+- [Archive 存储](./archive.md)

@@ -16,3 +16,4 @@ tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
 urlencoding = { workspace = true }
 uuid = { workspace = true }
+klaw-core = { workspace = true }

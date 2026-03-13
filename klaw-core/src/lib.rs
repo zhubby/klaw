@@ -4,6 +4,8 @@
 pub mod agent_loop;
 /// 核心领域消息模型。
 pub mod domain;
+/// 跨模块媒体引用模型。
+pub mod media;
 /// 本地/测试用 mock 实现。
 pub mod mock;
 /// 指标、审计、健康抽象。
@@ -24,6 +26,7 @@ pub use agent_loop::{
     SessionSchedulingPolicy, StateTransitionEvent,
 };
 pub use domain::{DeadLetterMessage, InboundMessage, OutboundMessage, SessionKey};
+pub use media::{MediaReference, MediaSourceKind};
 pub use mock::{InMemoryIdempotencyStore, InMemorySessionScheduler, InMemoryTransport};
 pub use observability::{AgentTelemetry, HealthStatus};
 pub use prompt::{

@@ -7,6 +7,7 @@ use klaw_config::AppConfig;
 use std::sync::Arc;
 
 use super::startup_display::print_startup_banner;
+use crate::commands::signal::shutdown_signal;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
     build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle, SharedChannelRuntime,
@@ -84,26 +85,5 @@ impl GatewayCommand {
             })
             .await?;
         Ok(())
-    }
-}
-
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-
-        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
-                _ = terminate.recv() => {}
-            }
-        } else {
-            let _ = tokio::signal::ctrl_c().await;
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
     }
 }

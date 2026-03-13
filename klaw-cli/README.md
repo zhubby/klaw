@@ -4,7 +4,7 @@
 
 - 顶层 `clap` 命令解析
 - 配置加载与校验
-- 启动交互式、单次请求、网关和会话管理命令
+- 启动交互式、单次请求、网关、会话和归档管理命令
 - 管理 `klaw gateway` 的用户级守护进程安装与生命周期
 
 ## Commands
@@ -13,6 +13,7 @@
 - `klaw agent --input "..."`
 - `klaw gateway`
 - `klaw session ...`
+- `klaw archive list|get|push|pull`
 - `klaw config ...`
 - `klaw daemon install|status|uninstall|start|stop|restart`
 
@@ -35,4 +36,5 @@
 - `stdio` 启动时会在 runtime 与 MCP 完全就绪后打印 ASCII `KLAW` 标记，以及版本、skills、tools、MCP 加载摘要
 - `stdio` 默认会将 tracing 日志写入 `~/.klaw/logs/stdio.log`，避免后台日志覆盖当前输入中的 prompt
 - `stdio --verbose-terminal` 可显式把 tracing 日志重新打回终端，便于排查启动或 MCP 问题
+- `stdio` 与 `gateway` 都监听统一的 shutdown signal；`stdio` 在运行阶段可中断，在 shutdown 阶段再次收到信号会直接退出
 - `gateway` 在收到终止信号时会执行 runtime shutdown，确保 MCP/bootstrap 资源收尾

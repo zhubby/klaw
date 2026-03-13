@@ -23,6 +23,11 @@ pub struct SqlxMemoryDb {
     pool: SqlitePool,
 }
 
+#[derive(Debug, Clone)]
+pub struct SqlxArchiveDb {
+    pool: SqlitePool,
+}
+
 #[derive(Debug, Clone, FromRow)]
 struct SessionIndexRow {
     session_key: String,
@@ -246,6 +251,25 @@ impl SqlxMemoryDb {
     }
 }
 
+impl SqlxArchiveDb {
+    pub async fn open(paths: StoragePaths) -> Result<Self, StorageError> {
+        paths.ensure_dirs().await?;
+        let connect_options = SqliteConnectOptions::new()
+            .filename(&paths.archive_db_path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(connect_options)
+            .await
+            .map_err(StorageError::backend)?;
+        let db = Self { pool };
+        db.execute_batch("PRAGMA journal_mode = WAL;")
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(db)
+    }
+}
+
 #[async_trait]
 impl MemoryDb for SqlxMemoryDb {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
@@ -286,6 +310,50 @@ impl MemoryDb for SqlxMemoryDb {
             out.push(DbRow { values });
         }
         Ok(out)
+    }
+}
+
+#[async_trait]
+impl MemoryDb for SqlxArchiveDb {
+    async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
+        sqlx::query(sql)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(StorageError::backend)
+    }
+
+    async fn execute(&self, sql: &str, params: &[DbValue]) -> Result<u64, StorageError> {
+        let mut query = sqlx::query(sql);
+        for param in params {
+            query = bind_sqlx_value(query, param);
+        }
+        query
+            .execute(&self.pool)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(StorageError::backend)
+    }
+
+    async fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, StorageError> {
+        let mut query = sqlx::query(sql);
+        for param in params {
+            query = bind_sqlx_value(query, param);
+        }
+
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        rows.iter()
+            .map(|row| {
+                let mut values = Vec::new();
+                for idx in 0..row.len() {
+                    values.push(sqlx_row_value(row, idx)?);
+                }
+                Ok(DbRow { values })
+            })
+            .collect()
     }
 }
 

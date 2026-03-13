@@ -194,6 +194,7 @@ impl StdioMcpClient {
     async fn stop_stderr_task(&self) {
         let mut guard = self.stderr_task.lock().await;
         if let Some(task) = guard.take() {
+            task.abort();
             let _ = task.await;
         }
     }

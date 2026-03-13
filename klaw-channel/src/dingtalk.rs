@@ -1,8 +1,9 @@
 use crate::{Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
 use futures_util::{SinkExt, StreamExt};
+use klaw_core::{MediaReference, MediaSourceKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::OnceLock;
 use tokio::time::{self, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -281,6 +282,7 @@ impl DingtalkChannel {
                 input: inbound.text.clone(),
                 session_key: format!("dingtalk:{}:{}", self.config.account_id, inbound.chat_id),
                 chat_id: inbound.chat_id.clone(),
+                media_references: inbound.media_references.clone(),
             })
             .await;
 
@@ -457,13 +459,14 @@ struct StreamAck<'a> {
     data: &'a str,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct InboundEvent {
     event_id: String,
     chat_id: String,
     sender_id: String,
     session_webhook: String,
     text: String,
+    media_references: Vec<MediaReference>,
 }
 
 async fn send_ack(
@@ -551,6 +554,7 @@ fn parse_inbound_event(value: &Value) -> Option<InboundEvent> {
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_else(|| "text".to_string());
     let text = extract_dingtalk_message_text(value, &msg_type)?;
+    let media_references = extract_dingtalk_media_references(value, &msg_type, &event_id);
 
     Some(InboundEvent {
         event_id,
@@ -558,6 +562,7 @@ fn parse_inbound_event(value: &Value) -> Option<InboundEvent> {
         sender_id,
         session_webhook,
         text,
+        media_references,
     })
 }
 
@@ -604,6 +609,71 @@ fn extract_dingtalk_message_text(value: &Value, msg_type: &str) -> Option<String
     Some(fallback)
 }
 
+fn extract_dingtalk_media_references(
+    value: &Value,
+    msg_type: &str,
+    event_id: &str,
+) -> Vec<MediaReference> {
+    let mut metadata = BTreeMap::new();
+    metadata.insert(
+        "dingtalk.msg_type".to_string(),
+        Value::String(msg_type.to_string()),
+    );
+
+    match msg_type {
+        "audio" | "voice" => {
+            if let Some(duration) = value
+                .pointer("/audio/duration")
+                .or_else(|| value.pointer("/voice/duration"))
+                .and_then(Value::as_i64)
+            {
+                metadata.insert(
+                    "dingtalk.duration_seconds".to_string(),
+                    Value::from(duration),
+                );
+            }
+            vec![MediaReference {
+                source_kind: MediaSourceKind::ChannelInbound,
+                filename: None,
+                mime_type: None,
+                remote_url: None,
+                bytes: None,
+                message_id: Some(event_id.to_string()),
+                metadata,
+            }]
+        }
+        "picture" | "image" | "photo" => {
+            let filename = value
+                .pointer("/picture/fileName")
+                .or_else(|| value.pointer("/image/fileName"))
+                .or_else(|| value.pointer("/photo/fileName"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            if let Some(download_code) = value
+                .pointer("/picture/downloadCode")
+                .or_else(|| value.pointer("/image/downloadCode"))
+                .and_then(Value::as_str)
+                .filter(|code| !code.trim().is_empty())
+            {
+                metadata.insert(
+                    "dingtalk.download_code".to_string(),
+                    Value::String(download_code.to_string()),
+                );
+            }
+            vec![MediaReference {
+                source_kind: MediaSourceKind::ChannelInbound,
+                filename,
+                mime_type: None,
+                remote_url: None,
+                bytes: None,
+                message_id: Some(event_id.to_string()),
+                metadata,
+            }]
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn is_sender_allowed(allowlist: &[String], sender_id: &str) -> bool {
     if allowlist.is_empty() {
         return true;
@@ -638,8 +708,9 @@ fn render_agent_output(output: &ChannelResponse, show_reasoning: bool) -> String
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_dingtalk_message_text, is_sender_allowed, parse_inbound_event, parse_stream_data,
-        render_agent_output, resolve_chat_id, DingtalkApiClient, InboundEvent,
+        extract_dingtalk_media_references, extract_dingtalk_message_text, is_sender_allowed,
+        parse_inbound_event, parse_stream_data, render_agent_output, resolve_chat_id,
+        DingtalkApiClient, InboundEvent,
     };
     use crate::ChannelResponse;
 
@@ -663,6 +734,7 @@ mod tests {
                 sender_id: "staff_1".to_string(),
                 session_webhook: "https://example/session".to_string(),
                 text: "hello".to_string(),
+                media_references: Vec::new(),
             }
         );
     }
@@ -682,6 +754,11 @@ mod tests {
         let parsed = parse_inbound_event(&payload).expect("should parse picture");
         assert_eq!(parsed.chat_id, "cid_2");
         assert!(parsed.text.contains("图片消息"));
+        assert_eq!(parsed.media_references.len(), 1);
+        assert_eq!(
+            parsed.media_references[0].filename.as_deref(),
+            Some("screen.png")
+        );
     }
 
     #[test]
@@ -742,5 +819,22 @@ mod tests {
         });
         let text = extract_dingtalk_message_text(&payload, "audio").expect("audio fallback");
         assert!(text.contains("语音消息"));
+    }
+
+    #[test]
+    fn audio_message_exposes_media_placeholder() {
+        let payload = serde_json::json!({
+            "audio": { "duration": 8 }
+        });
+        let media = extract_dingtalk_media_references(&payload, "audio", "msg-a1");
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].message_id.as_deref(), Some("msg-a1"));
+        assert_eq!(
+            media[0]
+                .metadata
+                .get("dingtalk.duration_seconds")
+                .and_then(serde_json::Value::as_i64),
+            Some(8)
+        );
     }
 }

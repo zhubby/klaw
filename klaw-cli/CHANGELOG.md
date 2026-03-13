@@ -5,6 +5,7 @@
 ### Added
 
 - 新增 `klaw daemon` 子命令，支持 `install`、`status`、`uninstall`、`start`、`stop`、`restart`
+- 新增 `klaw archive` 子命令，支持 `list`、`get`、`push`、`pull`
 - 新增 `systemd --user` 与 `launchd` 用户级服务文件渲染与管理逻辑
 - 新增 daemon 相关单元测试和计划文档
 - 新增 `klaw stdio` 启动 ASCII `KLAW` 标记与版本、skills、tools、MCP 加载摘要输出
@@ -16,3 +17,4 @@
 - `klaw stdio` 在进入交互前等待 MCP bootstrap 完成，避免启动后首条消息才触发就绪校验
 - `klaw stdio` 的 tracing 日志改为默认写入 `~/.klaw/logs/stdio.log`，避免后台日志覆盖当前输入
 - `klaw stdio` 新增 `--verbose-terminal` 开关，允许调试时显式把 tracing 日志输出回终端
+- `klaw stdio` 现在和 `gateway` 共享统一的 shutdown signal 处理，并在 runtime shutdown 阶段支持第二次信号直接终止进程

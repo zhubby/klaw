@@ -31,6 +31,10 @@ pub type DefaultSessionStore = backend::sqlx::SqlxSessionStore;
 pub type DefaultMemoryDb = backend::turso::TursoMemoryDb;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
 pub type DefaultMemoryDb = backend::sqlx::SqlxMemoryDb;
+#[cfg(all(feature = "turso", not(feature = "sqlx")))]
+pub type DefaultArchiveDb = backend::turso::TursoArchiveDb;
+#[cfg(all(feature = "sqlx", not(feature = "turso")))]
+pub type DefaultArchiveDb = backend::sqlx::SqlxArchiveDb;
 
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
 pub async fn open_default_store() -> Result<DefaultSessionStore, StorageError> {
@@ -54,6 +58,18 @@ pub async fn open_default_memory_db() -> Result<DefaultMemoryDb, StorageError> {
 pub async fn open_default_memory_db() -> Result<DefaultMemoryDb, StorageError> {
     let paths = StoragePaths::from_home_dir()?;
     DefaultMemoryDb::open(paths).await
+}
+
+#[cfg(all(feature = "turso", not(feature = "sqlx")))]
+pub async fn open_default_archive_db() -> Result<DefaultArchiveDb, StorageError> {
+    let paths = StoragePaths::from_home_dir()?;
+    DefaultArchiveDb::open(paths).await
+}
+
+#[cfg(all(feature = "sqlx", not(feature = "turso")))]
+pub async fn open_default_archive_db() -> Result<DefaultArchiveDb, StorageError> {
+    let paths = StoragePaths::from_home_dir()?;
+    DefaultArchiveDb::open(paths).await
 }
 
 #[cfg(test)]
@@ -120,6 +136,8 @@ mod tests {
         let base = std::env::temp_dir().join(format!("klaw-storage-paths-{suffix}"));
         let paths = StoragePaths::from_root(base.clone());
         assert_eq!(paths.memory_db_path, base.join("memory.db"));
+        assert_eq!(paths.archive_db_path, base.join("archive.db"));
+        assert_eq!(paths.archives_dir, base.join("archives"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -147,6 +165,34 @@ mod tests {
             let _db2 = backend::sqlx::SqlxMemoryDb::open(paths)
                 .await
                 .expect("memory db should reopen");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn open_default_archive_db_is_idempotent() {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base =
+            std::env::temp_dir().join(format!("klaw-archive-db-test-{}-{suffix}", util::now_ms()));
+        let paths = StoragePaths::from_root(base);
+
+        #[cfg(feature = "turso")]
+        {
+            let _db1 = backend::turso::TursoArchiveDb::open(paths.clone())
+                .await
+                .expect("archive db should open");
+            let _db2 = backend::turso::TursoArchiveDb::open(paths)
+                .await
+                .expect("archive db should reopen");
+        }
+
+        #[cfg(feature = "sqlx")]
+        {
+            let _db1 = backend::sqlx::SqlxArchiveDb::open(paths.clone())
+                .await
+                .expect("archive db should open");
+            let _db2 = backend::sqlx::SqlxArchiveDb::open(paths)
+                .await
+                .expect("archive db should reopen");
         }
     }
 
