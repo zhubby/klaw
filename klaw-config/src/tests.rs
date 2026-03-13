@@ -73,10 +73,7 @@ fn parse_default_template_succeeds() {
     assert_eq!(parsed.cron.batch_limit, 64);
     assert!(parsed.heartbeat.defaults.enabled);
     assert_eq!(parsed.heartbeat.defaults.every, "30m");
-    assert_eq!(
-        parsed.heartbeat.defaults.silent_ack_token,
-        "HEARTBEAT_OK"
-    );
+    assert_eq!(parsed.heartbeat.defaults.silent_ack_token, "HEARTBEAT_OK");
     assert!(parsed.heartbeat.sessions.is_empty());
     assert_eq!(
         parsed.tools.sub_agent.exclude_tools,

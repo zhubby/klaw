@@ -14,7 +14,9 @@ use klaw_heartbeat::{
 };
 use klaw_mcp::{McpClientHub, McpManager, McpProxyTool, McpRuntimeHandles, McpToolDescriptor};
 use klaw_skill::{open_default_skill_store, InstalledSkill, RegistrySource, SkillStore};
-use klaw_storage::{open_default_store, ChatRecord, CronStorage, DefaultSessionStore, SessionStorage};
+use klaw_storage::{
+    open_default_store, ChatRecord, CronStorage, DefaultSessionStore, SessionStorage,
+};
 use klaw_tool::{
     CronManagerTool, FsTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
     SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,

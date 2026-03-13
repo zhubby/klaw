@@ -98,10 +98,7 @@ pub fn is_heartbeat_metadata(metadata: &BTreeMap<String, Value>) -> bool {
         .is_some_and(|value| value == TRIGGER_KIND_HEARTBEAT)
 }
 
-pub fn should_suppress_output(
-    content: &str,
-    metadata: &BTreeMap<String, Value>,
-) -> bool {
+pub fn should_suppress_output(content: &str, metadata: &BTreeMap<String, Value>) -> bool {
     if !is_heartbeat_metadata(metadata) {
         return false;
     }
