@@ -34,7 +34,6 @@ impl Channel for StdioChannel {
     }
 
     async fn run(&mut self, runtime: &dyn ChannelRuntime) -> ChannelResult<()> {
-        println!("Agent stdio mode started.");
         println!("Type your message and press Enter.");
         println!("Use /exit to quit.\n");
         info!(session_key = %self.session_key, "stdio channel started");

@@ -60,6 +60,7 @@ pub async fn run_gateway(config: &GatewayConfig) -> Result<(), GatewayError> {
         .await
         .map_err(GatewayError::Bind)?;
     info!(listen_addr = %socket_addr, "gateway websocket server started");
+    println!("{:<18} ws://{socket_addr}/ws/chat", "🌐 Gateway");
 
     axum::serve(listener, app)
         .await

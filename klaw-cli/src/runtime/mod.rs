@@ -26,6 +26,13 @@ use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+#[derive(Debug, Clone, Default)]
+pub struct StartupReport {
+    pub skill_names: Vec<String>,
+    pub tool_names: Vec<String>,
+    pub mcp_summary: Option<McpBootstrapSummary>,
+}
+
 pub struct RuntimeBundle {
     pub runtime: AgentLoop,
     pub inbound_transport: InMemoryTransport<InboundMessage>,
@@ -38,6 +45,7 @@ pub struct RuntimeBundle {
     pub subscription: Subscription,
     pub session_store: DefaultSessionStore,
     pub mcp_bootstrap: Option<Mutex<McpBootstrapHandle>>,
+    pub startup_report: StartupReport,
 }
 
 pub struct SharedChannelRuntime {
@@ -167,8 +175,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     };
 
     let data_dir_system_prompt = load_data_dir_system_prompt().await;
-    let skills_system_prompt = load_skills_system_prompt(config).await;
-    let system_prompt = compose_system_prompt(data_dir_system_prompt, skills_system_prompt);
+    let loaded_skills = load_skills_system_prompt(config).await;
+    let skill_names = loaded_skills.skill_names.clone();
+    let system_prompt = compose_system_prompt(data_dir_system_prompt, loaded_skills.prompt);
 
     let runtime = AgentLoop::new_with_identity(
         RunLimits {
@@ -196,6 +205,11 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     );
 
     Ok(RuntimeBundle {
+        startup_report: StartupReport {
+            skill_names,
+            tool_names: runtime.tools.list(),
+            mcp_summary: None,
+        },
         runtime,
         inbound_transport: InMemoryTransport::new(),
         outbound_transport: InMemoryTransport::new(),
@@ -241,13 +255,19 @@ pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<
     Ok(())
 }
 
-async fn load_skills_system_prompt(config: &AppConfig) -> Option<String> {
+#[derive(Debug, Clone, Default)]
+struct LoadedSkillsPrompt {
+    prompt: Option<String>,
+    skill_names: Vec<String>,
+}
+
+async fn load_skills_system_prompt(config: &AppConfig) -> LoadedSkillsPrompt {
     info!("loading local skills for system prompt");
     let store = match open_default_skill_store() {
         Ok(store) => store,
         Err(err) => {
             warn!("failed to open default skill store: {err}");
-            return None;
+            return LoadedSkillsPrompt::default();
         }
     };
 
@@ -292,13 +312,13 @@ async fn load_skills_system_prompt(config: &AppConfig) -> Option<String> {
         Ok(items) => items,
         Err(err) => {
             warn!("failed to load local skills: {err}");
-            return None;
+            return LoadedSkillsPrompt::default();
         }
     };
 
     if skills.is_empty() {
         info!("no local skills found for system prompt");
-        return None;
+        return LoadedSkillsPrompt::default();
     }
 
     let skill_names: Vec<String> = skills.iter().map(|skill| skill.name.clone()).collect();
@@ -321,7 +341,10 @@ async fn load_skills_system_prompt(config: &AppConfig) -> Option<String> {
             prompt.push('\n');
         }
     }
-    Some(prompt)
+    LoadedSkillsPrompt {
+        prompt: Some(prompt),
+        skill_names,
+    }
 }
 
 async fn load_data_dir_system_prompt() -> Option<String> {
@@ -452,7 +475,6 @@ pub async fn drain_runtime_queue(
 async fn run_runtime_once(
     runtime: &RuntimeBundle,
 ) -> Result<Option<Envelope<OutboundMessage>>, Box<dyn std::error::Error>> {
-    ensure_mcp_ready(runtime).await?;
     let before_len = runtime.outbound_transport.published_messages().await.len();
     let result = runtime
         .runtime
@@ -494,76 +516,29 @@ fn config_err(message: String) -> Box<dyn Error> {
     Box::new(io::Error::other(message))
 }
 
-async fn ensure_mcp_ready(runtime: &RuntimeBundle) -> Result<(), Box<dyn Error>> {
-    let Some(handle) = &runtime.mcp_bootstrap else {
-        return Ok(());
+pub async fn finalize_startup_report(
+    runtime: &mut RuntimeBundle,
+) -> Result<StartupReport, Box<dyn Error>> {
+    let mcp_summary = match &runtime.mcp_bootstrap {
+        Some(handle) => {
+            let mut guard = handle.lock().await;
+            if guard.is_ready() {
+                Some(
+                    guard
+                        .wait_until_ready()
+                        .await
+                        .map_err(|err| config_err(format!("mcp bootstrap failed: {err}")))?,
+                )
+            } else {
+                None
+            }
+        }
+        None => None,
     };
 
-    let mut guard = handle.lock().await;
-    if !guard.is_ready() {
-        info!("waiting for mcp bootstrap to complete before assembling tools");
-    }
-    let summary = guard
-        .wait_until_ready()
-        .await
-        .map_err(|err| config_err(format!("mcp bootstrap failed: {err}")))?;
-    validate_mcp_summary(&summary)?;
-    info!(
-        active_servers = ?summary.active_servers,
-        required_stdio_servers = ?summary.required_stdio_servers,
-        active_stdio_servers = ?summary.active_stdio_servers,
-        failed_servers = summary.failures.len(),
-        tool_count = summary.tool_count,
-        "mcp readiness gate passed"
-    );
-    Ok(())
-}
-
-fn validate_mcp_summary(summary: &McpBootstrapSummary) -> Result<(), Box<dyn Error>> {
-    let stdio_failures: Vec<String> = summary
-        .failures
-        .iter()
-        .filter(|failure| {
-            summary
-                .required_stdio_servers
-                .iter()
-                .any(|server_id| server_id == &failure.server_id)
-        })
-        .map(|failure| format!("{}: {}", failure.server_id, failure.reason))
-        .collect();
-
-    let missing_stdio_servers: Vec<String> = summary
-        .required_stdio_servers
-        .iter()
-        .filter(|server_id| {
-            let has_failure = summary
-                .failures
-                .iter()
-                .any(|failure| &failure.server_id == *server_id);
-            !summary
-                .active_stdio_servers
-                .iter()
-                .any(|active_id| active_id == *server_id)
-                && !has_failure
-        })
-        .cloned()
-        .collect();
-
-    if !stdio_failures.is_empty() || !missing_stdio_servers.is_empty() {
-        let mut reasons = Vec::new();
-        reasons.extend(stdio_failures);
-        reasons.extend(
-            missing_stdio_servers
-                .into_iter()
-                .map(|server_id| format!("{server_id}: startup verification did not complete")),
-        );
-        return Err(config_err(format!(
-            "configured stdio mcp servers are not ready: {}",
-            reasons.join("; ")
-        )));
-    }
-
-    Ok(())
+    runtime.startup_report.tool_names = runtime.runtime.tools.list();
+    runtime.startup_report.mcp_summary = mcp_summary;
+    Ok(runtime.startup_report.clone())
 }
 
 async fn reconcile_heartbeats<S>(config: &AppConfig, storage: &S) -> Result<(), Box<dyn Error>>

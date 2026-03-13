@@ -6,8 +6,11 @@ use klaw_channel::{
 use klaw_config::AppConfig;
 use std::sync::Arc;
 
+use super::startup_display::print_startup_banner;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
-use crate::runtime::{build_runtime_bundle, shutdown_runtime_bundle, SharedChannelRuntime};
+use crate::runtime::{
+    build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle, SharedChannelRuntime,
+};
 use tracing::{info, warn};
 
 #[derive(Debug, Args)]
@@ -15,7 +18,11 @@ pub struct GatewayCommand {}
 
 impl GatewayCommand {
     pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
-        let runtime = Arc::new(build_runtime_bundle(config.as_ref()).await?);
+        let mut runtime = build_runtime_bundle(config.as_ref()).await?;
+        let startup_report = finalize_startup_report(&mut runtime).await?;
+        print_startup_banner(config.as_ref(), &startup_report);
+
+        let runtime = Arc::new(runtime);
         let background = Arc::new(BackgroundServices::new(
             runtime.as_ref(),
             BackgroundServiceConfig::from_app_config(config.as_ref()),

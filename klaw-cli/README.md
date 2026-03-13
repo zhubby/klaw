@@ -32,4 +32,5 @@
 ## Runtime Integration
 
 - `stdio` 和 `gateway` 复用 runtime bundle 构建逻辑
+- `stdio` 启动时会在 runtime 与 MCP 完全就绪后打印 ASCII `KLAW` 标记，以及版本、skills、tools、MCP 加载摘要
 - `gateway` 在收到终止信号时会执行 runtime shutdown，确保 MCP/bootstrap 资源收尾
