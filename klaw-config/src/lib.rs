@@ -354,6 +354,8 @@ impl Default for ModelProviderConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolsConfig {
     #[serde(default)]
+    pub apply_patch: ApplyPatchConfig,
+    #[serde(default)]
     pub shell: ShellConfig,
     #[serde(default)]
     pub memory: MemoryToolConfig,
@@ -363,6 +365,27 @@ pub struct ToolsConfig {
     pub web_search: WebSearchConfig,
     #[serde(default)]
     pub sub_agent: SubAgentConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyPatchConfig {
+    #[serde(default = "default_apply_patch_allow_absolute_paths")]
+    pub allow_absolute_paths: bool,
+    #[serde(default)]
+    pub allowed_roots: Vec<String>,
+}
+
+impl Default for ApplyPatchConfig {
+    fn default() -> Self {
+        Self {
+            allow_absolute_paths: default_apply_patch_allow_absolute_paths(),
+            allowed_roots: Vec::new(),
+        }
+    }
+}
+
+fn default_apply_patch_allow_absolute_paths() -> bool {
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

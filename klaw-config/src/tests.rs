@@ -28,6 +28,8 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.shell.allow_login_shell);
     assert_eq!(parsed.tools.shell.max_timeout_ms, 120_000);
     assert_eq!(parsed.tools.shell.max_output_bytes, 128 * 1024);
+    assert!(!parsed.tools.apply_patch.allow_absolute_paths);
+    assert!(parsed.tools.apply_patch.allowed_roots.is_empty());
     assert!(parsed.tools.memory.enabled);
     assert_eq!(parsed.tools.memory.search_limit, 8);
     assert_eq!(parsed.tools.memory.fts_limit, 20);
@@ -96,14 +98,7 @@ fn validate_fails_when_active_provider_missing() {
     let cfg = AppConfig {
         model_provider: "missing".to_string(),
         model_providers: BTreeMap::new(),
-        gateway: GatewayConfig::default(),
-        channels: ChannelsConfig::default(),
-        memory: MemoryConfig::default(),
-        mcp: McpConfig::default(),
-        tools: ToolsConfig::default(),
-        cron: CronConfig::default(),
-        heartbeat: HeartbeatConfig::default(),
-        skills: SkillsConfig::default(),
+        ..Default::default()
     };
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("not found in model_providers"));
@@ -145,6 +140,30 @@ max_output_bytes = 64000
     assert!(!parsed.tools.shell.allow_login_shell);
     assert_eq!(parsed.tools.shell.max_timeout_ms, 30_000);
     assert_eq!(parsed.tools.shell.max_output_bytes, 64_000);
+}
+
+#[test]
+fn parse_tools_apply_patch_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[tools.apply_patch]
+allow_absolute_paths = true
+allowed_roots = ["/tmp", "sandbox/allowed"]
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+    assert!(parsed.tools.apply_patch.allow_absolute_paths);
+    assert_eq!(
+        parsed.tools.apply_patch.allowed_roots,
+        vec!["/tmp".to_string(), "sandbox/allowed".to_string()]
+    );
 }
 
 #[test]
@@ -578,6 +597,15 @@ fn validate_fails_when_sub_agent_limits_are_zero() {
     cfg2.tools.sub_agent.max_tool_calls = 0;
     let err2 = validate(&cfg2).expect_err("should fail");
     assert!(format!("{err2}").contains("max_tool_calls"));
+}
+
+#[test]
+fn validate_fails_when_apply_patch_allowed_root_is_empty() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.apply_patch.allowed_roots = vec![" ".to_string()];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("tools.apply_patch.allowed_roots"));
 }
 
 #[test]

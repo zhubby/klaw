@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use klaw_config::{AppConfig, ApplyPatchConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -11,7 +12,9 @@ const META_WORKSPACE: &str = "workspace";
 const MAX_PATCH_OPERATIONS: usize = 50;
 const MAX_CONTENT_BYTES: usize = 1_000_000;
 
-pub struct ApplyPatchTool;
+pub struct ApplyPatchTool {
+    config: ApplyPatchConfig,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,8 +46,10 @@ enum ResolvedPatchOperation {
 }
 
 impl ApplyPatchTool {
-    pub fn new() -> Self {
-        Self
+    pub fn new(config: &AppConfig) -> Self {
+        Self {
+            config: config.tools.apply_patch.clone(),
+        }
     }
 
     fn parse_request(args: Value) -> Result<ApplyPatchRequest, ToolError> {
@@ -109,7 +114,7 @@ impl ApplyPatchTool {
         })
     }
 
-    fn resolve_workspace_path(base: &Path, input_path: &str) -> Result<PathBuf, ToolError> {
+    fn resolve_workspace_path(&self, base: &Path, input_path: &str) -> Result<PathBuf, ToolError> {
         let raw = PathBuf::from(input_path.trim());
         let candidate = if raw.is_absolute() {
             raw
@@ -124,13 +129,12 @@ impl ApplyPatchTool {
                     candidate.display()
                 ))
             })?;
-            if canonical.starts_with(base) {
+            if self.is_allowed_path(base, &canonical)? {
                 return Ok(canonical);
             }
             return Err(ToolError::ExecutionFailed(format!(
-                "path `{}` is outside workspace `{}`",
+                "path `{}` is not allowed by apply_patch policy",
                 canonical.display(),
-                base.display()
             )));
         }
 
@@ -147,11 +151,10 @@ impl ApplyPatchTool {
                 ancestor.display()
             ))
         })?;
-        if !canonical_ancestor.starts_with(base) {
+        if !self.is_allowed_path(base, &canonical_ancestor)? {
             return Err(ToolError::ExecutionFailed(format!(
-                "path `{}` is outside workspace `{}`",
+                "path `{}` is not allowed by apply_patch policy",
                 candidate.display(),
-                base.display()
             )));
         }
 
@@ -161,7 +164,47 @@ impl ApplyPatchTool {
         Ok(canonical_ancestor.join(suffix))
     }
 
+    fn is_allowed_path(&self, workspace_base: &Path, path: &Path) -> Result<bool, ToolError> {
+        if path.starts_with(workspace_base) {
+            return Ok(true);
+        }
+
+        if path.is_absolute() && self.config.allow_absolute_paths {
+            return Ok(true);
+        }
+
+        for root in &self.config.allowed_roots {
+            let allowed_root = self.resolve_allowed_root(workspace_base, root)?;
+            if path.starts_with(&allowed_root) {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn resolve_allowed_root(
+        &self,
+        workspace_base: &Path,
+        root: &str,
+    ) -> Result<PathBuf, ToolError> {
+        let raw = PathBuf::from(root.trim());
+        let target = if raw.is_absolute() {
+            raw
+        } else {
+            workspace_base.join(raw)
+        };
+
+        fs::canonicalize(&target).map_err(|err| {
+            ToolError::ExecutionFailed(format!(
+                "invalid apply_patch allowed root `{}`: {err}",
+                target.display()
+            ))
+        })
+    }
+
     fn resolve_operations(
+        &self,
         base: &Path,
         operations: Vec<PatchOperation>,
     ) -> Result<Vec<ResolvedPatchOperation>, ToolError> {
@@ -169,21 +212,21 @@ impl ApplyPatchTool {
             .into_iter()
             .map(|operation| match operation {
                 PatchOperation::AddFile { path, content } => Ok(ResolvedPatchOperation::AddFile {
-                    path: Self::resolve_workspace_path(base, &path)?,
+                    path: self.resolve_workspace_path(base, &path)?,
                     content,
                 }),
                 PatchOperation::UpdateFile { path, content } => {
                     Ok(ResolvedPatchOperation::UpdateFile {
-                        path: Self::resolve_workspace_path(base, &path)?,
+                        path: self.resolve_workspace_path(base, &path)?,
                         content,
                     })
                 }
                 PatchOperation::DeleteFile { path } => Ok(ResolvedPatchOperation::DeleteFile {
-                    path: Self::resolve_workspace_path(base, &path)?,
+                    path: self.resolve_workspace_path(base, &path)?,
                 }),
                 PatchOperation::MoveFile { from, to } => Ok(ResolvedPatchOperation::MoveFile {
-                    from: Self::resolve_workspace_path(base, &from)?,
-                    to: Self::resolve_workspace_path(base, &to)?,
+                    from: self.resolve_workspace_path(base, &from)?,
+                    to: self.resolve_workspace_path(base, &to)?,
                 }),
             })
             .collect()
@@ -250,8 +293,12 @@ impl ApplyPatchTool {
         Ok(path.is_file())
     }
 
-    fn apply_patch(base: &Path, operations: Vec<PatchOperation>) -> Result<PatchResult, ToolError> {
-        let operations = Self::resolve_operations(base, operations)?;
+    fn apply_patch(
+        &self,
+        base: &Path,
+        operations: Vec<PatchOperation>,
+    ) -> Result<PatchResult, ToolError> {
+        let operations = self.resolve_operations(base, operations)?;
         Self::validate_operations(&operations)?;
 
         let mut summary = Vec::with_capacity(operations.len());
@@ -323,7 +370,9 @@ impl ApplyPatchTool {
 
 impl Default for ApplyPatchTool {
     fn default() -> Self {
-        Self::new()
+        Self {
+            config: ApplyPatchConfig::default(),
+        }
     }
 }
 
@@ -344,7 +393,7 @@ impl Tool for ApplyPatchTool {
             "properties": {
                 "operations": {
                     "type": "array",
-                    "description": "Ordered file patch operations. Paths may be relative to the workspace or absolute paths inside the workspace.",
+                    "description": "Ordered file patch operations. Relative paths resolve from the workspace. Absolute paths are allowed only if they remain inside the workspace or match tools.apply_patch policy.",
                     "maxItems": MAX_PATCH_OPERATIONS,
                     "items": {
                         "type": "object",
@@ -419,7 +468,7 @@ impl Tool for ApplyPatchTool {
         let request = Self::parse_request(args)?;
         let base = Self::resolve_workspace_base(ctx)?;
         let payload =
-            serde_json::to_value(Self::apply_patch(&base, request.operations)?).map_err(|err| {
+            serde_json::to_value(self.apply_patch(&base, request.operations)?).map_err(|err| {
                 ToolError::ExecutionFailed(format!("serialize apply_patch result: {err}"))
             })?;
 
@@ -436,6 +485,7 @@ impl Tool for ApplyPatchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_config::AppConfig;
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -461,10 +511,14 @@ mod tests {
         }
     }
 
+    fn test_tool() -> ApplyPatchTool {
+        ApplyPatchTool::new(&AppConfig::default())
+    }
+
     #[tokio::test]
     async fn apply_patch_runs_multi_file_operations() {
         let workspace = temp_workspace();
-        let tool = ApplyPatchTool::new();
+        let tool = test_tool();
 
         let out = tool
             .execute(
@@ -488,7 +542,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_legacy_read_and_write_shapes() {
         let workspace = temp_workspace();
-        let tool = ApplyPatchTool::new();
+        let tool = test_tool();
 
         let out = tool
             .execute(
@@ -510,7 +564,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_access_outside_workspace() {
         let workspace = temp_workspace();
-        let tool = ApplyPatchTool::new();
+        let tool = test_tool();
         let out = tool
             .execute(
                 json!({
@@ -523,14 +577,14 @@ mod tests {
             .await;
 
         assert!(out.is_err());
-        assert!(out.unwrap_err().to_string().contains("outside workspace"));
+        assert!(out.unwrap_err().to_string().contains("not allowed"));
     }
 
     #[tokio::test]
     async fn validates_batch_before_writing() {
         let workspace = temp_workspace();
         fs::write(workspace.join("keep.txt"), "safe").unwrap();
-        let tool = ApplyPatchTool::new();
+        let tool = test_tool();
 
         let out = tool
             .execute(
@@ -547,5 +601,51 @@ mod tests {
         assert!(out.is_err());
         let content = fs::read_to_string(workspace.join("keep.txt")).unwrap();
         assert_eq!(content, "safe");
+    }
+
+    #[tokio::test]
+    async fn allows_absolute_paths_when_configured() {
+        let workspace = temp_workspace();
+        let outside_dir = temp_workspace();
+        let outside_file = outside_dir.join("allowed.txt");
+        let mut config = AppConfig::default();
+        config.tools.apply_patch.allow_absolute_paths = true;
+        let tool = ApplyPatchTool::new(&config);
+
+        tool.execute(
+            json!({
+                "operations": [
+                    {"op": "add_file", "path": outside_file.to_string_lossy(), "content": "ok"}
+                ]
+            }),
+            &test_ctx(&workspace),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(outside_file).unwrap(), "ok");
+    }
+
+    #[tokio::test]
+    async fn allows_whitelisted_roots_without_global_absolute_access() {
+        let workspace = temp_workspace();
+        let outside_dir = temp_workspace();
+        let outside_file = outside_dir.join("allowed.txt");
+        let mut config = AppConfig::default();
+        config.tools.apply_patch.allowed_roots = vec![outside_dir.to_string_lossy().to_string()];
+        let tool = ApplyPatchTool::new(&config);
+
+        tool.execute(
+            json!({
+                "operations": [
+                    {"op": "add_file", "path": outside_file.to_string_lossy(), "content": "ok"}
+                ]
+            }),
+            &test_ctx(&workspace),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(outside_file).unwrap(), "ok");
     }
 }

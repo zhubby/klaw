@@ -201,6 +201,14 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         }
     }
 
+    for root in &config.tools.apply_patch.allowed_roots {
+        if root.trim().is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "tools.apply_patch.allowed_roots cannot contain empty paths".to_string(),
+            ));
+        }
+    }
+
     if config.tools.sub_agent.max_iterations == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.sub_agent.max_iterations must be greater than 0".to_string(),

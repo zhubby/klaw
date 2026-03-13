@@ -23,7 +23,7 @@ use klaw_tool::{
     SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::timeout};
 use tracing::{info, warn};
 
 #[derive(Debug, Clone, Default)]
@@ -118,7 +118,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         .await
         .map_err(|err| config_err(format!("heartbeat reconcile failed: {err}")))?;
     let mut tools = ToolRegistry::default();
-    tools.register(ApplyPatchTool::new());
+    tools.register(ApplyPatchTool::new(config));
     tools.register(ShellTool::new(config));
     tools.register(LocalSearchTool::new());
     tools.register(TerminalMultiplexerTool::new());
@@ -248,10 +248,19 @@ pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<
 
     info!("shutting down runtime mcp servers");
     let mut guard = handle.lock().await;
-    guard
-        .shutdown()
-        .await
-        .map_err(|err| config_err(format!("mcp shutdown failed: {err}")))?;
+    let shutdown_deadline = Duration::from_secs(2);
+    match timeout(shutdown_deadline, guard.shutdown()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            return Err(config_err(format!("mcp shutdown failed: {err}")));
+        }
+        Err(_) => {
+            warn!(
+                timeout_seconds = shutdown_deadline.as_secs(),
+                "mcp shutdown timed out; continuing process exit"
+            );
+        }
+    }
     Ok(())
 }
 

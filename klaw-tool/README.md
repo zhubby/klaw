@@ -5,7 +5,7 @@
 ## Responsibilities
 
 - define tool interfaces through the shared `Tool` trait
-- implement local tools such as `fs`, `shell`, `memory`, `web_fetch`, and `web_search`
+- implement local tools such as `apply_patch`, `shell`, `memory`, `web_fetch`, and `web_search`
 - keep tool metadata LLM-friendly so planners can infer when and how to call each tool
 
 ## Architecture
@@ -17,4 +17,6 @@
 ## Current Notes
 
 - the `apply_patch` tool is intentionally patch-oriented and only supports batched file mutations
+- `tools.apply_patch.allow_absolute_paths = true` allows any absolute path outside the workspace
+- `tools.apply_patch.allowed_roots = ["/some/path"]` allows specific extra directories while keeping the default workspace boundary elsewhere
 - read-only file inspection should be handled by other tools or higher-level runtime capabilities
