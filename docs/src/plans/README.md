@@ -4,6 +4,14 @@
 
 ## 当前计划
 
+### [Daemon Management](./daemon-management.md)
+
+`klaw daemon` 守护进程管理计划：
+
+- **托管目标**：仅管理 `klaw gateway`
+- **平台范围**：`launchd` 用户级 + `systemd --user`
+- **阶段目标**：先补齐安装/状态/卸载，再覆盖 start/stop/restart 生命周期控制
+
 ### [Memory Turso Hybrid](./memory-turso-hybrid.md)
 
 Memory 模块实施计划（Turso/libSQL 优先）：

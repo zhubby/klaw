@@ -3,7 +3,7 @@ use klaw_config::AppConfig;
 use klaw_core::InboundMessage;
 use klaw_cron::{CronWorker, CronWorkerConfig};
 use klaw_storage::DefaultSessionStore;
-use std::time::Duration;
+use std::{sync::Mutex, time::Duration};
 use tracing::warn;
 
 pub type StdioCronWorker =
@@ -42,6 +42,7 @@ impl Default for BackgroundServiceConfig {
 pub struct BackgroundServices {
     cron_worker: StdioCronWorker,
     config: BackgroundServiceConfig,
+    runtime_drain_error: Mutex<Option<String>>,
 }
 
 impl BackgroundServices {
@@ -57,6 +58,7 @@ impl BackgroundServices {
         Self {
             cron_worker,
             config,
+            runtime_drain_error: Mutex::new(None),
         }
     }
 
@@ -76,7 +78,21 @@ impl BackgroundServices {
 
     pub async fn on_runtime_tick(&self, runtime: &RuntimeBundle) {
         if let Err(err) = drain_runtime_queue(runtime, self.config.runtime_drain_batch).await {
-            warn!(error = %err, "background runtime drain failed");
+            let message = err.to_string();
+            let mut last_error = self
+                .runtime_drain_error
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if last_error.as_deref() != Some(message.as_str()) {
+                warn!(error = %message, "background runtime drain failed");
+                *last_error = Some(message);
+            }
+        } else {
+            let mut last_error = self
+                .runtime_drain_error
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *last_error = None;
         }
     }
 }

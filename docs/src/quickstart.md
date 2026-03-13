@@ -49,6 +49,22 @@ klaw gateway
 
 启动后连接 `ws://127.0.0.1:8080/ws/chat?session_key=your-room`
 
+### Daemon 模式（用户级守护进程）
+
+```bash
+klaw daemon install
+klaw daemon status
+```
+
+- `install` 会把 `klaw gateway` 注册为当前用户的系统服务并立即启动
+- macOS 使用 `launchd`，Linux 使用 `systemd --user`
+- 如需停止或卸载：
+
+```bash
+klaw daemon stop
+klaw daemon uninstall
+```
+
 ## 配置工具
 
 ### 启用 Web Search

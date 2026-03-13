@@ -3,18 +3,25 @@ use klaw_config::McpServerConfig;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use serde_json::{json, Value};
 use std::{
+    collections::VecDeque,
     process::Stdio,
     str::FromStr,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 use thiserror::Error;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command},
     sync::Mutex,
+    task::JoinHandle,
     time::{timeout, Duration},
 };
 use tracing::{info, warn};
+
+const STDERR_TAIL_LIMIT: usize = 50;
 
 #[derive(Debug, Clone)]
 pub(crate) struct McpRemoteTool {
@@ -47,6 +54,9 @@ pub(crate) trait McpClient: Send + Sync {
     async fn shutdown(&self) -> Result<(), McpClientError> {
         Ok(())
     }
+    async fn stderr_tail(&self) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -59,6 +69,8 @@ struct StdioIo {
 pub(crate) struct StdioMcpClient {
     io: Mutex<StdioIo>,
     next_id: AtomicU64,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    stderr_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl StdioMcpClient {
@@ -72,7 +84,7 @@ impl StdioMcpClient {
         }
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         for (key, value) in &server.env {
             cmd.env(key, value);
         }
@@ -88,6 +100,12 @@ impl StdioMcpClient {
             .stdout
             .take()
             .ok_or_else(|| McpClientError::Request("missing child stdout".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| McpClientError::Request("missing child stderr".to_string()))?;
+        let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LIMIT)));
+        let stderr_task = tokio::spawn(capture_stderr(stderr, Arc::clone(&stderr_tail)));
 
         Ok(Self {
             io: Mutex::new(StdioIo {
@@ -96,6 +114,8 @@ impl StdioMcpClient {
                 stdout: BufReader::new(stdout),
             }),
             next_id: AtomicU64::new(1),
+            stderr_tail,
+            stderr_task: Mutex::new(Some(stderr_task)),
         })
     }
 
@@ -150,6 +170,7 @@ impl StdioMcpClient {
         match timeout(Duration::from_millis(500), io.child.wait()).await {
             Ok(Ok(status)) => {
                 info!(?status, "stdio mcp child exited gracefully");
+                self.stop_stderr_task().await;
                 Ok(())
             }
             Ok(Err(err)) => Err(McpClientError::Io(err.to_string())),
@@ -164,8 +185,25 @@ impl StdioMcpClient {
                     .await
                     .map_err(|err| McpClientError::Io(err.to_string()))?;
                 info!(?status, "stdio mcp child exited after force kill");
+                self.stop_stderr_task().await;
                 Ok(())
             }
+        }
+    }
+
+    async fn stop_stderr_task(&self) {
+        let mut guard = self.stderr_task.lock().await;
+        if let Some(task) = guard.take() {
+            let _ = task.await;
+        }
+    }
+
+    async fn stderr_tail_snapshot(&self) -> Option<String> {
+        let lines = self.stderr_tail.lock().await;
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.iter().cloned().collect::<Vec<_>>().join("\n"))
         }
     }
 }
@@ -252,6 +290,34 @@ impl McpClient for StdioMcpClient {
 
     async fn shutdown(&self) -> Result<(), McpClientError> {
         self.shutdown_process().await
+    }
+
+    async fn stderr_tail(&self) -> Option<String> {
+        self.stderr_tail_snapshot().await
+    }
+}
+
+async fn capture_stderr(stderr: ChildStderr, tail: Arc<Mutex<VecDeque<String>>>) {
+    let mut reader = BufReader::new(stderr).lines();
+    loop {
+        match reader.next_line().await {
+            Ok(Some(line)) => {
+                let mut guard = tail.lock().await;
+                if guard.len() == STDERR_TAIL_LIMIT {
+                    guard.pop_front();
+                }
+                guard.push_back(line);
+            }
+            Ok(None) => break,
+            Err(err) => {
+                let mut guard = tail.lock().await;
+                if guard.len() == STDERR_TAIL_LIMIT {
+                    guard.pop_front();
+                }
+                guard.push_back(format!("[stderr read error] {err}"));
+                break;
+            }
+        }
     }
 }
 

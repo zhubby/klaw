@@ -7,7 +7,7 @@ use klaw_config::AppConfig;
 use std::sync::Arc;
 
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
-use crate::runtime::{build_runtime_bundle, SharedChannelRuntime};
+use crate::runtime::{build_runtime_bundle, shutdown_runtime_bundle, SharedChannelRuntime};
 use tracing::{info, warn};
 
 #[derive(Debug, Args)]
@@ -20,7 +20,7 @@ impl GatewayCommand {
             runtime.as_ref(),
             BackgroundServiceConfig::from_app_config(config.as_ref()),
         ));
-        let adapter = Arc::new(SharedChannelRuntime::new(runtime, background));
+        let adapter = Arc::new(SharedChannelRuntime::new(runtime.clone(), background));
         let dingtalk_configs = config.channels.dingtalk.clone();
         let gateway_config = config.gateway.clone();
 
@@ -53,9 +53,50 @@ impl GatewayCommand {
                     });
                 }
 
-                klaw_gateway::run_gateway(&gateway_config).await
+                let mut gateway_task = tokio::task::spawn_local(async move {
+                    klaw_gateway::run_gateway(&gateway_config).await
+                });
+                let run_result = tokio::select! {
+                    result = &mut gateway_task => {
+                        match result {
+                            Ok(result) => result.map_err(Box::<dyn std::error::Error>::from),
+                            Err(err) => Err(Box::<dyn std::error::Error>::from(err)),
+                        }
+                    }
+                    _ = shutdown_signal() => {
+                        info!("shutdown signal received, stopping gateway");
+                        gateway_task.abort();
+                        let _ = gateway_task.await;
+                        Ok(())
+                    }
+                };
+
+                let shutdown_result = shutdown_runtime_bundle(runtime.as_ref()).await;
+                run_result?;
+                shutdown_result
             })
             .await?;
         Ok(())
+    }
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+        } else {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
     }
 }

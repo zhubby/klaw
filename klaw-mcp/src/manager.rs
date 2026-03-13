@@ -50,6 +50,11 @@ struct ServerBootstrapOk {
     tools: Vec<McpRemoteTool>,
 }
 
+struct ServerBootstrapErr {
+    reason: String,
+    stderr_tail: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct McpBootstrapSummary {
     pub active_servers: Vec<String>,
@@ -182,16 +187,31 @@ async fn bootstrap_with_factory(
         let factory = Arc::clone(&factory);
         join_set.spawn(async move {
             let fut = async {
-                let client = factory.create_client(&server).await?;
-                client
-                    .initialize()
-                    .await
-                    .map_err(|err| McpBootstrapError::Other(err.to_string()))?;
-                let tools = client
-                    .list_tools()
-                    .await
-                    .map_err(|err| McpBootstrapError::Other(err.to_string()))?;
-                Ok::<ServerBootstrapOk, McpBootstrapError>(ServerBootstrapOk {
+                let client = match factory.create_client(&server).await {
+                    Ok(client) => client,
+                    Err(err) => {
+                        return Err(ServerBootstrapErr {
+                            reason: err.to_string(),
+                            stderr_tail: None,
+                        });
+                    }
+                };
+                if let Err(err) = client.initialize().await {
+                    return Err(ServerBootstrapErr {
+                        reason: err.to_string(),
+                        stderr_tail: client.stderr_tail().await,
+                    });
+                }
+                let tools = match client.list_tools().await {
+                    Ok(tools) => tools,
+                    Err(err) => {
+                        return Err(ServerBootstrapErr {
+                            reason: err.to_string(),
+                            stderr_tail: client.stderr_tail().await,
+                        });
+                    }
+                };
+                Ok::<ServerBootstrapOk, ServerBootstrapErr>(ServerBootstrapOk {
                     index,
                     server_id: server.id.clone(),
                     mode: server.mode,
@@ -203,7 +223,10 @@ async fn bootstrap_with_factory(
                 Ok(outcome) => (server_id, outcome),
                 Err(_) => (
                     server_id,
-                    Err(McpBootstrapError::Timeout { timeout_seconds }),
+                    Err(ServerBootstrapErr {
+                        reason: McpBootstrapError::Timeout { timeout_seconds }.to_string(),
+                        stderr_tail: None,
+                    }),
                 ),
             }
         });
@@ -224,16 +247,15 @@ async fn bootstrap_with_factory(
                 oks.push(ok);
             }
             Ok((server_id, Err(err))) => {
+                let reason = format_failure_reason(&err.reason, err.stderr_tail.as_deref());
                 warn!(
                     server = %server_id,
-                    reason = %err,
+                    reason = %reason,
+                    stderr_tail = err.stderr_tail.as_deref().unwrap_or(""),
                     status = "failed",
                     "mcp server bootstrap failed"
                 );
-                failures.push(McpBootstrapFailure {
-                    server_id,
-                    reason: err.to_string(),
-                });
+                failures.push(McpBootstrapFailure { server_id, reason });
             }
             Err(err) => {
                 warn!(
@@ -296,6 +318,15 @@ async fn bootstrap_with_factory(
         hub,
         runtime_handles,
         failures,
+    }
+}
+
+fn format_failure_reason(reason: &str, stderr_tail: Option<&str>) -> String {
+    match stderr_tail {
+        Some(stderr_tail) if !stderr_tail.trim().is_empty() => {
+            format!("{reason}; stderr: {}", stderr_tail.replace('\n', " | "))
+        }
+        _ => reason.to_string(),
     }
 }
 

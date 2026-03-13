@@ -3,8 +3,8 @@ mod runtime;
 
 use clap::{Parser, Subcommand};
 use commands::{
-    agent::AgentCommand, config::ConfigCommand, gateway::GatewayCommand, session::SessionCommand,
-    stdio::StdioCommand,
+    agent::AgentCommand, config::ConfigCommand, daemon::DaemonCommand, gateway::GatewayCommand,
+    session::SessionCommand, stdio::StdioCommand,
 };
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
@@ -25,6 +25,8 @@ struct Cli {
 enum Commands {
     /// Manage config files.
     Config(ConfigCommand),
+    /// Manage the user-level gateway daemon.
+    Daemon(DaemonCommand),
     /// Start local stdin/stdout interactive agent loop.
     Stdio(StdioCommand),
     /// Execute one request and print one response.
@@ -51,6 +53,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cmd.run(config.as_deref())?;
             return Ok(());
         }
+        Commands::Daemon(cmd) => {
+            cmd.run(config.as_deref())?;
+            return Ok(());
+        }
         other => other,
     };
 
@@ -69,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Gateway(cmd) => cmd.run(app_config).await?,
         Commands::Session(cmd) => cmd.run().await?,
         Commands::Config(_) => unreachable!("handled above"),
+        Commands::Daemon(_) => unreachable!("handled above"),
     }
 
     Ok(())

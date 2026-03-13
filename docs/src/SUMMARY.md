@@ -23,5 +23,6 @@
 - [网关](./gateway/README.md)
   - [WebSocket](./gateway/websocket.md)
 - [设计计划](./plans/README.md)
+  - [Daemon Management](./plans/daemon-management.md)
   - [Memory Turso Hybrid](./plans/memory-turso-hybrid.md)
   - [Heartbeat 模块设计](./plans/heartbeat-module-design.md)
