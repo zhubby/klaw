@@ -4,7 +4,8 @@
 
 ### Changed
 - added debug-level tool result logging in `sub_agent`'s delegated tool executor after each tool call (success/failure), with output truncation
-- `skills_registry install` now short-circuits with `already_installed: true` when the target skill already exists from the same configured source/template
+- `skills_registry install` now indexes managed skills through `skills-registry-manifest.json` and reads installed content from local registry mirrors instead of copying into `~/.klaw/skills`
+- `skills_registry uninstall` now supports mixed-mode removal and returns `removed_managed` / `removed_local` flags
 - added a 15-second timeout guard around `skills_registry install` download path to avoid long-running install hangs under unstable network conditions
 - redesigned `skills_registry` actions for clearer semantics: `install`, `uninstall`, `list_installed`, `show`, `load_all`
 - replaced old `download/update/delete/list/get` action names in the `skills_registry` tool schema and runtime dispatch

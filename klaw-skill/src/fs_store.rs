@@ -11,8 +11,8 @@ use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
 
 use crate::{
-    ReqwestSkillFetcher, SkillError, SkillFetcher, SkillRecord, SkillSource, SkillStore,
-    SkillSummary,
+    ReqwestSkillFetcher, SkillError, SkillFetcher, SkillRecord, SkillSource, SkillSourceKind,
+    SkillStore, SkillSummary,
 };
 
 const DEFAULT_KLAW_DIR: &str = ".klaw";
@@ -46,6 +46,14 @@ struct InstalledSkillsManifest {
     managed: Vec<InstalledSkill>,
     #[serde(default)]
     registry_commits: BTreeMap<String, String>,
+    #[serde(default)]
+    stale_registries: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillUninstallResult {
+    pub removed_managed: bool,
+    pub removed_local: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -332,15 +340,22 @@ where
             }
         }
 
-        let previous_registry_commits = current_manifest.registry_commits.clone();
-        let mut previous_managed = BTreeSet::new();
-        let mut previous_skill_registry = BTreeMap::new();
-        for item in &current_manifest.managed {
-            previous_skill_registry.insert(item.name.clone(), item.registry.clone());
-            previous_managed.insert(item.name.clone());
+        let previous_managed: BTreeSet<(String, String)> = current_manifest
+            .managed
+            .iter()
+            .map(|item| (item.registry.clone(), item.name.clone()))
+            .collect();
+        let mut stale_registries = BTreeSet::new();
+        for source_name in source_map.keys() {
+            if !report.synced_registries.iter().any(|it| it == source_name)
+                && available_registries.contains(source_name)
+            {
+                stale_registries.insert(source_name.clone());
+            }
         }
 
-        let mut desired = BTreeMap::new();
+        let mut desired = BTreeSet::new();
+        let mut desired_names = BTreeSet::new();
         for (registry_name, requested_name) in requested {
             if !available_registries.contains(&registry_name) {
                 warn!(
@@ -351,86 +366,33 @@ where
                 continue;
             }
             let repo_dir = registry_root.join(&registry_name);
-            let (source_dir, target_name) =
+            let (_source_dir, target_name) =
                 resolve_registry_skill_dir(&repo_dir, &requested_name, &registry_name).await?;
-            if desired
-                .insert(target_name.clone(), (registry_name.clone(), source_dir))
-                .is_some()
-            {
+            if !desired_names.insert(target_name.clone()) {
                 return Err(SkillError::InvalidSkillName(format!(
                     "duplicate installed skill target `{target_name}`"
+                )));
+            }
+            if !desired.insert((registry_name.clone(), target_name.clone())) {
+                return Err(SkillError::InvalidSkillName(format!(
+                    "duplicate installed skill `{target_name}` in registry `{registry_name}`"
                 )));
             }
         }
 
         let mut next_manifest = InstalledSkillsManifest::default();
-        let desired_names: BTreeSet<String> = desired.keys().cloned().collect();
-        for (target_name, (registry_name, source_dir)) in &desired {
-            let target_dir = self.skills_dir.join(target_name);
-            let target_exists =
-                fs::try_exists(&target_dir)
-                    .await
-                    .map_err(|source| SkillError::Io {
-                        op: "try_exists",
-                        path: target_dir.clone(),
-                        source,
-                    })?;
-            if target_exists && !previous_managed.contains(target_name) {
-                return Err(SkillError::LocalSkillConflict {
-                    skill_name: target_name.clone(),
-                    path: target_dir,
-                });
-            }
-
-            let current_commit = current_registry_commits.get(registry_name).cloned();
-            let previous_commit = previous_registry_commits.get(registry_name).cloned();
-            let previous_registry = previous_skill_registry.get(target_name).cloned();
-            let should_copy = !target_exists
-                || previous_registry.as_deref() != Some(registry_name.as_str())
-                || current_commit != previous_commit;
-
-            if should_copy && target_exists {
-                fs::remove_dir_all(&target_dir)
-                    .await
-                    .map_err(|source| SkillError::Io {
-                        op: "remove_dir_all",
-                        path: target_dir.clone(),
-                        source,
-                    })?;
-            }
-
-            if should_copy {
-                copy_dir_recursive(&source_dir, &target_dir).await?;
-                report.installed_skills.push(target_name.clone());
-            }
+        for (registry_name, target_name) in &desired {
             next_manifest.managed.push(InstalledSkill {
                 registry: registry_name.clone(),
                 name: target_name.clone(),
             });
-        }
-
-        for managed_name in &previous_managed {
-            if desired_names.contains(managed_name) {
-                continue;
+            if !previous_managed.contains(&(registry_name.clone(), target_name.clone())) {
+                report.installed_skills.push(target_name.clone());
             }
-            let target_dir = self.skills_dir.join(managed_name);
-            let target_exists =
-                fs::try_exists(&target_dir)
-                    .await
-                    .map_err(|source| SkillError::Io {
-                        op: "try_exists",
-                        path: target_dir.clone(),
-                        source,
-                    })?;
-            if target_exists {
-                fs::remove_dir_all(&target_dir)
-                    .await
-                    .map_err(|source| SkillError::Io {
-                        op: "remove_dir_all",
-                        path: target_dir,
-                        source,
-                    })?;
-                report.removed_skills.push(managed_name.clone());
+        }
+        for (registry_name, skill_name) in &previous_managed {
+            if !desired.contains(&(registry_name.clone(), skill_name.clone())) {
+                report.removed_skills.push(skill_name.clone());
             }
         }
 
@@ -440,6 +402,7 @@ where
                 .then_with(|| a.registry.cmp(&b.registry))
         });
         next_manifest.registry_commits = current_registry_commits;
+        next_manifest.stale_registries = stale_registries;
         self.write_installed_manifest(&next_manifest).await?;
         report.synced_registries.sort();
         report.installed_skills.sort();
@@ -447,7 +410,7 @@ where
         Ok(report)
     }
 
-    async fn read_skill_record(&self, skill_name: &str) -> Result<SkillRecord, SkillError> {
+    async fn read_local_skill_record(&self, skill_name: &str) -> Result<SkillRecord, SkillError> {
         let path = self.skill_markdown_path(skill_name);
         let exists = fs::try_exists(&path)
             .await
@@ -475,10 +438,210 @@ where
 
         Ok(SkillRecord {
             name: skill_name.to_string(),
-            source: SkillSource::github_anthropic(skill_name),
+            source: SkillSource::configured("local", skill_name, ""),
             local_path: path,
             content,
             updated_at_ms: modified_time_ms(&metadata).unwrap_or_default(),
+            source_kind: SkillSourceKind::Local,
+            registry: None,
+            stale: None,
+        })
+    }
+
+    async fn read_registry_skill_record(
+        &self,
+        registry: &str,
+        skill_name: &str,
+        stale: bool,
+    ) -> Result<SkillRecord, SkillError> {
+        let repo_dir = self.skills_registry_dir().join(registry);
+        let (skill_dir, resolved_name) =
+            resolve_registry_skill_dir(&repo_dir, skill_name, registry).await?;
+        let path = skill_dir.join(SKILL_MARKDOWN_FILE);
+        let content = fs::read_to_string(&path)
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "read_to_string",
+                path: path.clone(),
+                source,
+            })?;
+        let metadata = fs::metadata(&path).await.map_err(|source| SkillError::Io {
+            op: "metadata",
+            path: path.clone(),
+            source,
+        })?;
+
+        Ok(SkillRecord {
+            name: resolved_name.clone(),
+            source: SkillSource::configured(registry, &resolved_name, ""),
+            local_path: path,
+            content,
+            updated_at_ms: modified_time_ms(&metadata).unwrap_or_default(),
+            source_kind: SkillSourceKind::Registry,
+            registry: Some(registry.to_string()),
+            stale: Some(stale),
+        })
+    }
+
+    async fn load_managed_index(
+        &self,
+    ) -> Result<(InstalledSkillsManifest, BTreeMap<String, (String, bool)>), SkillError> {
+        let manifest = self.load_installed_manifest().await?;
+        let mut managed = BTreeMap::new();
+        for item in &manifest.managed {
+            let stale = manifest.stale_registries.contains(&item.registry);
+            if managed
+                .insert(item.name.clone(), (item.registry.clone(), stale))
+                .is_some()
+            {
+                return Err(SkillError::InvalidSkillName(format!(
+                    "duplicate managed skill `{}` in manifest",
+                    item.name
+                )));
+            }
+        }
+        Ok((manifest, managed))
+    }
+
+    fn to_summary(record: &SkillRecord) -> SkillSummary {
+        SkillSummary {
+            name: record.name.clone(),
+            local_path: record.local_path.clone(),
+            updated_at_ms: record.updated_at_ms,
+            source_kind: record.source_kind,
+            registry: record.registry.clone(),
+            stale: record.stale,
+        }
+    }
+
+    async fn list_local_summaries(
+        &self,
+        managed_by_name: &BTreeMap<String, (String, bool)>,
+    ) -> Result<Vec<SkillSummary>, SkillError> {
+        self.ensure_skills_dir().await?;
+        let mut items = Vec::new();
+        let mut entries =
+            fs::read_dir(&self.skills_dir)
+                .await
+                .map_err(|source| SkillError::Io {
+                    op: "read_dir",
+                    path: self.skills_dir.clone(),
+                    source,
+                })?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "next_entry",
+                path: self.skills_dir.clone(),
+                source,
+            })?
+        {
+            let path = entry.path();
+            if !is_directory(&path, &entry).await? {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+                continue;
+            };
+            if managed_by_name.contains_key(name) {
+                warn!(skill_name = %name, "skip local skill because managed registry skill has higher priority");
+                continue;
+            }
+            let record = self.read_local_skill_record(name).await?;
+            items.push(Self::to_summary(&record));
+        }
+        Ok(items)
+    }
+
+    pub async fn install_registry_skill(
+        &self,
+        registry: &str,
+        skill_name: &str,
+    ) -> Result<(SkillRecord, bool), SkillError> {
+        let requested_name = Self::validate_skill_name(skill_name)?;
+        let registry_name = registry.trim();
+        if registry_name.is_empty() {
+            return Err(SkillError::InvalidSkillName(
+                "installed skill registry cannot be empty".to_string(),
+            ));
+        }
+        let stale;
+        let mut manifest = self.load_installed_manifest().await?;
+        stale = manifest.stale_registries.contains(registry_name);
+        let record = self
+            .read_registry_skill_record(registry_name, &requested_name, stale)
+            .await?;
+        if manifest
+            .managed
+            .iter()
+            .any(|it| it.name == record.name && it.registry != registry_name)
+        {
+            return Err(SkillError::InvalidSkillName(format!(
+                "managed skill `{}` already indexed from another registry",
+                record.name
+            )));
+        }
+        let already_installed = manifest
+            .managed
+            .iter()
+            .any(|it| it.registry == registry_name && it.name == record.name);
+        if !already_installed {
+            manifest.managed.push(InstalledSkill {
+                registry: registry_name.to_string(),
+                name: record.name.clone(),
+            });
+            manifest.managed.sort_by(|a, b| {
+                a.name
+                    .cmp(&b.name)
+                    .then_with(|| a.registry.cmp(&b.registry))
+            });
+            self.write_installed_manifest(&manifest).await?;
+        }
+        Ok((record, already_installed))
+    }
+
+    pub async fn uninstall_skill(
+        &self,
+        skill_name: &str,
+    ) -> Result<SkillUninstallResult, SkillError> {
+        let name = Self::validate_skill_name(skill_name)?;
+        let mut manifest = self.load_installed_manifest().await?;
+        let before_len = manifest.managed.len();
+        manifest.managed.retain(|item| item.name != name);
+        let removed_managed = manifest.managed.len() != before_len;
+        if removed_managed {
+            self.write_installed_manifest(&manifest).await?;
+        }
+
+        let skill_dir = self.skills_dir.join(&name);
+        let exists = fs::try_exists(&skill_dir)
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "try_exists",
+                path: skill_dir.clone(),
+                source,
+            })?;
+        let removed_local = if exists {
+            fs::remove_dir_all(&skill_dir)
+                .await
+                .map_err(|source| SkillError::Io {
+                    op: "remove_dir_all",
+                    path: skill_dir,
+                    source,
+                })?;
+            true
+        } else {
+            false
+        };
+
+        if !removed_managed && !removed_local {
+            return Err(SkillError::SkillNotFound(name));
+        }
+        Ok(SkillUninstallResult {
+            removed_managed,
+            removed_local,
         })
     }
 
@@ -541,7 +704,7 @@ where
         let source = SkillSource::configured(source_name, &name, download_url_template);
         let markdown = self.fetcher.fetch_markdown(&source).await?;
         self.write_skill_markdown_atomic(&name, &markdown).await?;
-        let mut record = self.read_skill_record(&name).await?;
+        let mut record = self.read_local_skill_record(&name).await?;
         record.source = source;
         Ok(record)
     }
@@ -569,58 +732,27 @@ where
     }
 
     async fn list(&self) -> Result<Vec<SkillSummary>, SkillError> {
-        self.ensure_skills_dir().await?;
         let mut items = Vec::new();
-        let mut entries =
-            fs::read_dir(&self.skills_dir)
+        let (manifest, managed_by_name) = self.load_managed_index().await?;
+        for item in &manifest.managed {
+            match self
+                .read_registry_skill_record(
+                    &item.registry,
+                    &item.name,
+                    manifest.stale_registries.contains(&item.registry),
+                )
                 .await
-                .map_err(|source| SkillError::Io {
-                    op: "read_dir",
-                    path: self.skills_dir.clone(),
-                    source,
-                })?;
-
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "next_entry",
-                path: self.skills_dir.clone(),
-                source,
-            })?
-        {
-            let path = entry.path();
-            if !is_directory(&path, &entry).await? {
-                continue;
+            {
+                Ok(record) => items.push(Self::to_summary(&record)),
+                Err(err) => warn!(
+                    registry = %item.registry,
+                    skill_name = %item.name,
+                    error = %err,
+                    "skip managed registry skill in list"
+                ),
             }
-            let Some(name) = path.file_name().and_then(OsStr::to_str) else {
-                continue;
-            };
-            let skill_md_path = self.skill_markdown_path(name);
-            let exists = fs::try_exists(&skill_md_path)
-                .await
-                .map_err(|source| SkillError::Io {
-                    op: "try_exists",
-                    path: skill_md_path.clone(),
-                    source,
-                })?;
-            if !exists {
-                continue;
-            }
-
-            let metadata = fs::metadata(&skill_md_path)
-                .await
-                .map_err(|source| SkillError::Io {
-                    op: "metadata",
-                    path: skill_md_path.clone(),
-                    source,
-                })?;
-            items.push(SkillSummary {
-                name: name.to_string(),
-                local_path: skill_md_path,
-                updated_at_ms: modified_time_ms(&metadata).unwrap_or_default(),
-            });
         }
+        items.extend(self.list_local_summaries(&managed_by_name).await?);
 
         items.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(items)
@@ -628,7 +760,13 @@ where
 
     async fn get(&self, skill_name: &str) -> Result<SkillRecord, SkillError> {
         let name = Self::validate_skill_name(skill_name)?;
-        self.read_skill_record(&name).await
+        let (_manifest, managed_by_name) = self.load_managed_index().await?;
+        if let Some((registry, stale)) = managed_by_name.get(&name) {
+            return self
+                .read_registry_skill_record(registry, &name, *stale)
+                .await;
+        }
+        self.read_local_skill_record(&name).await
     }
 
     async fn update(&self, skill_name: &str) -> Result<SkillRecord, SkillError> {
@@ -646,10 +784,56 @@ where
     }
 
     async fn load_all_skill_markdowns(&self) -> Result<Vec<SkillRecord>, SkillError> {
-        let skills = self.list().await?;
-        let mut records = Vec::with_capacity(skills.len());
-        for skill in skills {
-            records.push(self.get(&skill.name).await?);
+        let (manifest, managed_by_name) = self.load_managed_index().await?;
+        let mut records = Vec::new();
+        for item in &manifest.managed {
+            match self
+                .read_registry_skill_record(
+                    &item.registry,
+                    &item.name,
+                    manifest.stale_registries.contains(&item.registry),
+                )
+                .await
+            {
+                Ok(record) => records.push(record),
+                Err(err) => warn!(
+                    registry = %item.registry,
+                    skill_name = %item.name,
+                    error = %err,
+                    "skip managed registry skill in load_all"
+                ),
+            }
+        }
+        self.ensure_skills_dir().await?;
+        let mut entries =
+            fs::read_dir(&self.skills_dir)
+                .await
+                .map_err(|source| SkillError::Io {
+                    op: "read_dir",
+                    path: self.skills_dir.clone(),
+                    source,
+                })?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "next_entry",
+                path: self.skills_dir.clone(),
+                source,
+            })?
+        {
+            let path = entry.path();
+            if !is_directory(&path, &entry).await? {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+                continue;
+            };
+            if managed_by_name.contains_key(name) {
+                warn!(skill_name = %name, "skip local skill in load_all because managed registry skill has higher priority");
+                continue;
+            }
+            records.push(self.read_local_skill_record(name).await?);
         }
         records.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(records)
@@ -889,58 +1073,6 @@ fn parse_skill_name_from_markdown(markdown: &str) -> Option<String> {
     None
 }
 
-async fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), SkillError> {
-    let source_path = source.to_path_buf();
-    let target_path = target.to_path_buf();
-    tokio::task::spawn_blocking(move || copy_dir_recursive_blocking(&source_path, &target_path))
-        .await
-        .map_err(|source_err| SkillError::Io {
-            op: "join copy task",
-            path: target.to_path_buf(),
-            source: std::io::Error::other(source_err.to_string()),
-        })?
-}
-
-fn copy_dir_recursive_blocking(source: &Path, target: &Path) -> Result<(), SkillError> {
-    std::fs::create_dir_all(target).map_err(|source_err| SkillError::Io {
-        op: "create_dir_all",
-        path: target.to_path_buf(),
-        source: source_err,
-    })?;
-
-    let entries = std::fs::read_dir(source).map_err(|source_err| SkillError::Io {
-        op: "read_dir",
-        path: source.to_path_buf(),
-        source: source_err,
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|source_err| SkillError::Io {
-            op: "read_dir_entry",
-            path: source.to_path_buf(),
-            source: source_err,
-        })?;
-        let from = entry.path();
-        let to = target.join(entry.file_name());
-        let metadata = entry.metadata().map_err(|source_err| SkillError::Io {
-            op: "metadata",
-            path: from.clone(),
-            source: source_err,
-        })?;
-        if metadata.is_dir() {
-            copy_dir_recursive_blocking(&from, &to)?;
-            continue;
-        }
-        if metadata.is_file() {
-            std::fs::copy(&from, &to).map_err(|source_err| SkillError::Io {
-                op: "copy",
-                path: from,
-                source: source_err,
-            })?;
-        }
-    }
-    Ok(())
-}
-
 async fn run_git(
     context: &'static str,
     cwd: Option<&Path>,
@@ -1039,6 +1171,27 @@ mod tests {
     fn test_root() -> PathBuf {
         let nonce = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("klaw-skill-test-{}-{nonce}", now_ms()))
+    }
+
+    async fn write_registry_skill(
+        root: &Path,
+        registry: &str,
+        skill_name: &str,
+        content: &str,
+    ) -> PathBuf {
+        let dir = root
+            .join(SKILLS_REGISTRY_DIR_NAME)
+            .join(registry)
+            .join("skills")
+            .join(skill_name);
+        fs::create_dir_all(&dir)
+            .await
+            .expect("create registry skill dir");
+        let path = dir.join(SKILL_MARKDOWN_FILE);
+        fs::write(&path, content)
+            .await
+            .expect("write registry skill markdown");
+        path
     }
 
     #[tokio::test]
@@ -1140,5 +1293,160 @@ mod tests {
         let store2 = FileSystemSkillStore::with_fetcher(root.clone(), fetcher2);
         let updated = store2.update("planner").await.expect("update");
         assert_eq!(updated.content, "# v2");
+    }
+
+    #[tokio::test]
+    async fn install_registry_skill_indexes_manifest_without_copying_to_local_skills() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        let registry_path =
+            write_registry_skill(&root, "vercel-labs", "find-skills", "# find").await;
+
+        let (record, already_installed) = store
+            .install_registry_skill("vercel-labs", "find-skills")
+            .await
+            .expect("install registry skill");
+        assert!(!already_installed);
+        assert_eq!(record.name, "find-skills");
+        assert_eq!(record.source_kind, SkillSourceKind::Registry);
+        assert_eq!(record.local_path, registry_path);
+
+        let local_copied_path = root
+            .join(SKILLS_DIR_NAME)
+            .join("find-skills")
+            .join(SKILL_MARKDOWN_FILE);
+        let copied_exists = fs::try_exists(&local_copied_path)
+            .await
+            .expect("check copied file");
+        assert!(!copied_exists);
+
+        let manifest = store
+            .load_installed_manifest()
+            .await
+            .expect("load manifest");
+        assert_eq!(manifest.managed.len(), 1);
+        assert_eq!(manifest.managed[0].registry, "vercel-labs");
+        assert_eq!(manifest.managed[0].name, "find-skills");
+    }
+
+    #[tokio::test]
+    async fn list_and_load_all_merge_registry_and_local_and_registry_wins_on_conflict() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        write_registry_skill(&root, "vercel-labs", "demo", "# managed").await;
+        let local_demo = root.join(SKILLS_DIR_NAME).join("demo");
+        let local_only = root.join(SKILLS_DIR_NAME).join("local-only");
+        fs::create_dir_all(&local_demo)
+            .await
+            .expect("create local demo");
+        fs::create_dir_all(&local_only)
+            .await
+            .expect("create local-only");
+        fs::write(local_demo.join(SKILL_MARKDOWN_FILE), "# local-placeholder")
+            .await
+            .expect("write local demo");
+        fs::write(local_only.join(SKILL_MARKDOWN_FILE), "# local-only")
+            .await
+            .expect("write local-only");
+        store
+            .install_registry_skill("vercel-labs", "demo")
+            .await
+            .expect("install managed");
+
+        let list = store.list().await.expect("list");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].name, "demo");
+        assert_eq!(list[0].source_kind, SkillSourceKind::Registry);
+        assert_eq!(list[1].name, "local-only");
+        assert_eq!(list[1].source_kind, SkillSourceKind::Local);
+
+        let demo = store.get("demo").await.expect("get managed demo");
+        assert_eq!(demo.content, "# managed");
+        assert_eq!(demo.source_kind, SkillSourceKind::Registry);
+
+        let all = store.load_all_skill_markdowns().await.expect("load_all");
+        assert_eq!(all.len(), 2);
+        let managed = all
+            .iter()
+            .find(|item| item.name == "demo")
+            .expect("managed present");
+        assert_eq!(managed.content, "# managed");
+        let local = all
+            .iter()
+            .find(|item| item.name == "local-only")
+            .expect("local present");
+        assert_eq!(local.content, "# local-only");
+    }
+
+    #[tokio::test]
+    async fn stale_registry_skills_are_marked_stale_in_records() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        write_registry_skill(&root, "vercel-labs", "demo", "# managed").await;
+        let mut manifest = InstalledSkillsManifest::default();
+        manifest.managed.push(InstalledSkill {
+            registry: "vercel-labs".to_string(),
+            name: "demo".to_string(),
+        });
+        manifest.stale_registries.insert("vercel-labs".to_string());
+        store
+            .write_installed_manifest(&manifest)
+            .await
+            .expect("write manifest");
+
+        let record = store.get("demo").await.expect("get stale managed");
+        assert_eq!(record.source_kind, SkillSourceKind::Registry);
+        assert_eq!(record.stale, Some(true));
+    }
+
+    #[tokio::test]
+    async fn uninstall_skill_removes_both_managed_index_and_local_directory() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        write_registry_skill(&root, "vercel-labs", "demo", "# managed").await;
+        store
+            .install_registry_skill("vercel-labs", "demo")
+            .await
+            .expect("install managed");
+
+        let local_demo = root.join(SKILLS_DIR_NAME).join("demo");
+        fs::create_dir_all(&local_demo)
+            .await
+            .expect("create local demo");
+        fs::write(local_demo.join(SKILL_MARKDOWN_FILE), "# local")
+            .await
+            .expect("write local demo");
+
+        let removed = store.uninstall_skill("demo").await.expect("uninstall");
+        assert!(removed.removed_managed);
+        assert!(removed.removed_local);
+
+        let manifest = store
+            .load_installed_manifest()
+            .await
+            .expect("load manifest");
+        assert!(manifest.managed.is_empty());
+        let exists = fs::try_exists(&local_demo)
+            .await
+            .expect("check local removed");
+        assert!(!exists);
+    }
+
+    #[tokio::test]
+    async fn install_registry_skill_rejects_same_name_from_different_registry() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        write_registry_skill(&root, "vercel-labs", "demo", "# managed-a").await;
+        write_registry_skill(&root, "openai", "demo", "# managed-b").await;
+
+        store
+            .install_registry_skill("vercel-labs", "demo")
+            .await
+            .expect("install first registry");
+        let err = store
+            .install_registry_skill("openai", "demo")
+            .await
+            .expect_err("duplicate managed name should fail");
+        assert!(matches!(err, SkillError::InvalidSkillName(_)));
     }
 }

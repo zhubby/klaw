@@ -63,13 +63,15 @@ installed = ["brainstorming"]
 1. 遍历 `skills.<registry>`，将每个仓库同步到 `~/.klaw/skills-registry/<registry>`。
    - 首次：`git clone`
    - 后续：`git fetch` + `git reset --hard origin/HEAD`（失败时回退 `origin/master`）
-2. 遍历每个 `skills.<registry>.installed`，将
-   `~/.klaw/skills-registry/<registry>/skills/<name>` 复制到 `~/.klaw/skills/<name>`。
-3. 依据 `skills-registry-manifest.json` 做差异清理：
-   - 只删除“manifest 中标记为受管”且本次不再安装的 skill；
-   - 不删除用户手工放入 `~/.klaw/skills` 的未受管目录，避免冲突。
-4. 将每个 registry 的当前 `HEAD commit` 写入 manifest。
-   - 若某个 registry 的 commit 相比上次发生变化，则该 registry 下受管 skill 会重新拷贝。
+2. 使用 `skills-registry-manifest.json` 作为受管 registry skills 的唯一索引：
+   - `managed` 记录安装了哪些 `<registry>/<skill>`
+   - `registry_commits` 记录每个 registry 当前 `HEAD commit`
+   - `stale_registries` 记录同步失败但可用本地缓存的 registry
+3. `install` 只写 manifest 索引，不再复制 skill 到 `~/.klaw/skills`。
+4. `list/get/load_all` 合并两类来源：
+   - manifest 索引的 registry skills（直接读取 `~/.klaw/skills-registry`）
+   - 本地手工 skills（`~/.klaw/skills`）
+   - 同名冲突时 registry(managed) 优先，本地同名会被忽略并告警。
 
 ## SkillStore 抽象
 
@@ -117,7 +119,7 @@ installed = ["brainstorming"]
 运行时行为：
 
 1. 先执行 registry 同步与 `installed` 安装。
-2. 再从本地 `~/.klaw/skills/**/SKILL.md` 加载全部 skill 文本。
+2. 再从“registry 索引 + 本地目录”的合并视图加载全部 skill 文本。
 3. 拼接成统一 system prompt 文本，并在模型调用前注入。
 
 这样可确保已安装 skill 在请求处理阶段对模型持续生效。
@@ -132,7 +134,7 @@ installed = ["brainstorming"]
 - 网络失败 / 远端状态异常
 - 文件 I/O 失败
 - git 同步失败
-- 受管 skill 与本地非受管同名目录冲突
+- manifest 中受管 skill 重名冲突
 
 工具层统一映射为 `ToolError::ExecutionFailed`，并返回可读错误信息。
 

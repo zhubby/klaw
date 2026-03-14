@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use klaw_config::AppConfig;
-use klaw_skill::{
-    open_default_skill_store, FileSystemSkillStore, ReqwestSkillFetcher, SkillSource, SkillStore,
-};
+use klaw_skill::{open_default_skill_store, FileSystemSkillStore, ReqwestSkillFetcher, SkillStore};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, ffi::OsStr, path::PathBuf};
 use tokio::fs;
@@ -13,7 +11,6 @@ use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 #[derive(Debug, Clone)]
 struct SkillSourceDef {
     name: String,
-    download_url_template: String,
 }
 
 pub struct SkillsRegistryTool {
@@ -39,12 +36,11 @@ impl SkillsRegistryTool {
             .map_err(|err| ToolError::ExecutionFailed(format!("open skill store failed: {err}")))?;
         let mut sources = BTreeMap::new();
         for (source_name, registry) in &config.skills.registries {
-            let download_url_template = resolve_download_template(&registry.address)?;
+            let _download_url_template = resolve_download_template(&registry.address)?;
             sources.insert(
                 source_name.clone(),
                 SkillSourceDef {
                     name: source_name.clone(),
-                    download_url_template,
                 },
             );
         }
@@ -138,27 +134,9 @@ impl SkillsRegistryTool {
     async fn do_install(&self, args: &Value) -> Result<Value, ToolError> {
         let skill_name = Self::require_skill_name(args)?;
         let source = self.resolve_source(args)?;
-        if let Ok(existing) = self.store.get(skill_name).await {
-            if source_matches_requested(
-                &existing.source,
-                &source.name,
-                &source.download_url_template,
-            ) {
-                return Ok(json!({
-                    "action": "install",
-                    "source": source.name,
-                    "already_installed": true,
-                    "skill": existing
-                }));
-            }
-        }
-        let record = timeout(
+        let (record, already_installed) = timeout(
             Duration::from_secs(INSTALL_TIMEOUT_SECS),
-            self.store.download_with_source(
-                skill_name,
-                &source.name,
-                &source.download_url_template,
-            ),
+            self.store.install_registry_skill(&source.name, skill_name),
         )
         .await
         .map_err(|_| {
@@ -171,18 +149,24 @@ impl SkillsRegistryTool {
         Ok(json!({
             "action": "install",
             "source": source.name,
-            "already_installed": false,
+            "already_installed": already_installed,
             "skill": record
         }))
     }
 
     async fn do_uninstall(&self, args: &Value) -> Result<Value, ToolError> {
         let skill_name = Self::require_skill_name(args)?;
-        self.store.delete(skill_name).await.map_err(map_skill_err)?;
+        let removed = self
+            .store
+            .uninstall_skill(skill_name)
+            .await
+            .map_err(map_skill_err)?;
         Ok(json!({
             "action": "uninstall",
             "skill_name": skill_name,
-            "deleted": true
+            "deleted": removed.removed_managed || removed.removed_local,
+            "removed_managed": removed.removed_managed,
+            "removed_local": removed.removed_local
         }))
     }
 
@@ -346,7 +330,7 @@ impl Tool for SkillsRegistryTool {
     }
 
     fn description(&self) -> &str {
-        "Install, uninstall, inspect, and hydrate local skills under ~/.klaw/skills, and search configured registry mirrors under ~/.klaw/skills-registry. Supports install/uninstall/list_installed/search/show/load_all actions."
+        "Install, uninstall, inspect, and hydrate skills from a merged view of local manual skills (~/.klaw/skills) and managed registry-indexed skills (~/.klaw/skills-registry + skills-registry-manifest.json). Supports install/uninstall/list_installed/search/show/load_all actions."
     }
 
     fn parameters(&self) -> Value {
@@ -371,7 +355,7 @@ impl Tool for SkillsRegistryTool {
                     "additionalProperties": false
                 },
                 {
-                    "description": "Uninstall an installed local skill.",
+                    "description": "Uninstall by skill name. Removes managed registry index entries and/or local skill directories.",
                     "properties": {
                         "action": { "const": "uninstall" },
                         "skill_name": {
@@ -476,21 +460,6 @@ impl Tool for SkillsRegistryTool {
 
 fn map_skill_err(err: klaw_skill::SkillError) -> ToolError {
     ToolError::ExecutionFailed(err.to_string())
-}
-
-fn source_matches_requested(source: &SkillSource, source_name: &str, template: &str) -> bool {
-    match source {
-        SkillSource::Configured {
-            source_name: existing_source_name,
-            download_url_template,
-            ..
-        } => existing_source_name == source_name && download_url_template == template,
-        SkillSource::GitHubAnthropic { .. } => {
-            source_name == "anthropic"
-                && template
-                    == "https://raw.githubusercontent.com/anthropics/skills/main/skills/{skill_name}/SKILL.md"
-        }
-    }
 }
 
 fn resolve_download_template(raw_value: &str) -> Result<String, ToolError> {
@@ -615,10 +584,7 @@ fn score_registry_match(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        extract_skill_description, score_registry_match, source_matches_requested, tokenize_query,
-    };
-    use klaw_skill::SkillSource;
+    use super::{extract_skill_description, score_registry_match, tokenize_query};
 
     #[test]
     fn description_uses_first_non_heading_line() {
@@ -643,25 +609,5 @@ mod tests {
             "Translate text between Japanese and English.",
         );
         assert!(not_matched.is_none());
-    }
-
-    #[test]
-    fn source_match_requires_same_registry_and_template() {
-        let source = SkillSource::configured("vercel-labs", "find-skills", "http://x/{skill_name}");
-        assert!(source_matches_requested(
-            &source,
-            "vercel-labs",
-            "http://x/{skill_name}"
-        ));
-        assert!(!source_matches_requested(
-            &source,
-            "vercel-labs",
-            "http://y/{skill_name}"
-        ));
-        assert!(!source_matches_requested(
-            &source,
-            "anthropic",
-            "http://x/{skill_name}"
-        ));
     }
 }

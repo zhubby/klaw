@@ -54,6 +54,9 @@ pub struct SkillSummary {
     pub name: String,
     pub local_path: PathBuf,
     pub updated_at_ms: i64,
+    pub source_kind: SkillSourceKind,
+    pub registry: Option<String>,
+    pub stale: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,4 +66,14 @@ pub struct SkillRecord {
     pub local_path: PathBuf,
     pub content: String,
     pub updated_at_ms: i64,
+    pub source_kind: SkillSourceKind,
+    pub registry: Option<String>,
+    pub stale: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillSourceKind {
+    Local,
+    Registry,
 }

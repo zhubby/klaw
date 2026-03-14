@@ -161,8 +161,13 @@ pub async fn run_agent_execution(
     });
     let mut tool_calls_used = 0u32;
 
-    let max_tool_iterations = limits.max_tool_iterations.max(1);
-    for _ in 0..max_tool_iterations {
+    let max_tool_iterations = limits.max_tool_iterations;
+    let mut iteration = 0u32;
+    loop {
+        if max_tool_iterations > 0 && iteration >= max_tool_iterations {
+            break;
+        }
+        iteration = iteration.saturating_add(1);
         let llm_response = provider
             .chat(
                 llm_messages.clone(),
@@ -216,6 +221,7 @@ pub async fn run_agent_execution(
 
     warn!(
         max_tool_iterations,
+        iterations_used = iteration,
         tool_calls_used,
         max_tool_calls = limits.max_tool_calls,
         "agent tool loop exhausted by iteration limit"
@@ -247,7 +253,7 @@ async fn apply_tool_calls(
 ) -> Result<(), AgentExecutionError> {
     for call in tool_calls {
         *tool_calls_used += 1;
-        if *tool_calls_used > max_tool_calls {
+        if max_tool_calls > 0 && *tool_calls_used > max_tool_calls {
             warn!(
                 tool_calls_used = *tool_calls_used,
                 max_tool_calls, "agent tool loop exhausted by tool call limit"
@@ -385,6 +391,31 @@ mod tests {
 
         assert_eq!(output.content, "done");
         assert_eq!(output.reasoning.as_deref(), Some("inner chain"));
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_treats_zero_limits_as_unbounded() {
+        let provider = SequencedProvider::default();
+        let tools = MockToolExecutor;
+        let output = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "hello".to_string(),
+                conversation_history: Vec::new(),
+                session_key: "s1".to_string(),
+                tool_metadata: BTreeMap::new(),
+                model: None,
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 0,
+                max_tool_calls: 0,
+            },
+        )
+        .await
+        .expect("agent execution should succeed with unbounded limits");
+
+        assert_eq!(output.content, "done");
     }
 
     #[derive(Default)]

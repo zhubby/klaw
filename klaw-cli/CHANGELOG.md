@@ -11,7 +11,7 @@
 
 - 统一在 `ChannelRequest -> InboundMessage` 转换点输出 `info` 日志，打印各 channel 入站规范化后的 `inbound` 数据
 - Runtime 启动改为加载可用 provider registry，并在每条消息按会话 metadata 选择 provider/model
-- Runtime 默认 tool 循环上限翻倍：`max_tool_iterations` 从 `8` 提高到 `16`，`max_tool_calls` 从 `16` 提高到 `32`
+- Runtime 默认 tool 循环上限改为不设限：`max_tool_iterations=0`、`max_tool_calls=0`（`0` 表示不设限）
 
 ## 2026-03-13
 

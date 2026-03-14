@@ -530,8 +530,8 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
 
     let runtime = AgentLoop::new_with_identity(
         RunLimits {
-            max_tool_iterations: 16,
-            max_tool_calls: 32,
+            max_tool_iterations: 0,
+            max_tool_calls: 0,
             token_budget: 0,
             agent_timeout: Duration::from_secs(30),
             tool_timeout: Duration::from_secs(8),
