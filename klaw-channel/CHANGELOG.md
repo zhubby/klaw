@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-03-14
+
+### Changed
+
+- `dingtalk` 通道在 `debug` 日志输出订阅回调原始事件 payload（保留原始事件排查能力）
+- README 补充 IM channel 适配契约，明确会话命令与 provider/model 路由由 runtime 统一处理
+
 ## 2026-03-13
 
 ### Added

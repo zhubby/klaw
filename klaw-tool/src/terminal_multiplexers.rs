@@ -515,33 +515,70 @@ impl Tool for TerminalMultiplexerTool {
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["start_or_resume", "send", "capture", "terminate", "list_sessions", "kill_all"]
+            "description": "Operate one terminal multiplexer action per request.",
+            "oneOf": [
+                {
+                    "description": "Start a new session or resume an existing one.",
+                    "properties": {
+                        "action": { "const": "start_or_resume" },
+                        "session": { "type": "string", "description": "Session name." },
+                        "timeout": { "type": "integer", "description": "Command timeout in seconds (default 20)." }
+                    },
+                    "required": ["action", "session"],
+                    "additionalProperties": false
                 },
-                "session": {
-                    "type": "string",
-                    "description": "session name (required for start_or_resume/send/capture/terminate)"
+                {
+                    "description": "Send text input to a session.",
+                    "properties": {
+                        "action": { "const": "send" },
+                        "session": { "type": "string", "description": "Session name." },
+                        "content": { "type": "string", "description": "Text to send." },
+                        "press_enter": { "type": "boolean", "description": "Append Enter after sending text (default true)." },
+                        "timeout": { "type": "integer", "description": "Command timeout in seconds (default 20)." }
+                    },
+                    "required": ["action", "session", "content"],
+                    "additionalProperties": false
                 },
-                "content": {
-                    "type": "string",
-                    "description": "text to send when action=send"
+                {
+                    "description": "Capture session output.",
+                    "properties": {
+                        "action": { "const": "capture" },
+                        "session": { "type": "string", "description": "Session name." },
+                        "full": { "type": "boolean", "description": "Capture full scrollback (default false)." },
+                        "timeout": { "type": "integer", "description": "Command timeout in seconds (default 20)." }
+                    },
+                    "required": ["action", "session"],
+                    "additionalProperties": false
                 },
-                "press_enter": {
-                    "type": "boolean",
-                    "description": "append Enter after sending text, default true"
+                {
+                    "description": "Terminate one session.",
+                    "properties": {
+                        "action": { "const": "terminate" },
+                        "session": { "type": "string", "description": "Session name." },
+                        "timeout": { "type": "integer", "description": "Command timeout in seconds (default 20)." }
+                    },
+                    "required": ["action", "session"],
+                    "additionalProperties": false
                 },
-                "full": {
-                    "type": "boolean",
-                    "description": "capture full scrollback when action=capture, default false"
+                {
+                    "description": "List all active sessions.",
+                    "properties": {
+                        "action": { "const": "list_sessions" },
+                        "timeout": { "type": "integer", "description": "Command timeout in seconds (default 20)." }
+                    },
+                    "required": ["action"],
+                    "additionalProperties": false
                 },
-                "timeout": {
-                    "type": "integer",
-                    "description": "command timeout in seconds (default 20)"
+                {
+                    "description": "Terminate all sessions.",
+                    "properties": {
+                        "action": { "const": "kill_all" },
+                        "timeout": { "type": "integer", "description": "Command timeout in seconds (default 20)." }
+                    },
+                    "required": ["action"],
+                    "additionalProperties": false
                 }
-            },
-            "required": ["action"]
+            ]
         })
     }
 

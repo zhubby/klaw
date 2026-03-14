@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-14
+
+### Changed
+- 在触发 `ToolLoopExhausted` 时增加 `warn` 日志，区分 `max_tool_calls` 与 `max_tool_iterations` 两种上限命中场景，并输出当前计数与阈值。
+
 ## 2026-03-13
 
 ### Changed

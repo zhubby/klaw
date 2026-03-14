@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolRegistry};
 
@@ -17,6 +17,7 @@ const META_PROVIDER_KEY: &str = "agent.provider_id";
 const META_MODEL_KEY: &str = "agent.model";
 const META_PARENT_SESSION_KEY: &str = "sub_agent.parent_session_key";
 const META_CONTEXT_KEY: &str = "sub_agent.context";
+const TOOL_RESULT_LOG_LIMIT: usize = 4000;
 
 pub struct SubAgentTool {
     config: Arc<AppConfig>,
@@ -155,10 +156,34 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
             )
             .await
         {
-            Ok(output) => output.content_for_model,
-            Err(err) => format!("tool `{}` failed: {}", name, err),
+            Ok(output) => {
+                debug!(
+                    tool = name,
+                    result = %truncate_for_log(&output.content_for_model, TOOL_RESULT_LOG_LIMIT),
+                    "tool result"
+                );
+                output.content_for_model
+            }
+            Err(err) => {
+                let message = format!("tool `{}` failed: {}", name, err);
+                debug!(
+                    tool = name,
+                    result = %truncate_for_log(&message, TOOL_RESULT_LOG_LIMIT),
+                    "tool result"
+                );
+                message
+            }
         }
     }
+}
+
+fn truncate_for_log(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let mut truncated = value.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...[truncated]");
+    truncated
 }
 
 #[async_trait]

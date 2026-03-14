@@ -8,6 +8,7 @@
 - expose protocol envelopes, scheduling, reliability, and transport abstractions
 - host shared cross-crate models such as `MediaReference`
 - provide the main `AgentLoop` runtime
+- route per-message provider/model selection from inbound metadata (`agent.provider_id`, `agent.model`)
 
 ## Notes
 

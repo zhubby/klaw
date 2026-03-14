@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-14
+
+### Added
+
+- 新增 `channels.disable_session_commands_for` 配置项，用于按 channel 关闭通用会话命令（`/new`、`/help`、`/model-provider`、`/model`）
+
 ## 2026-03-13
 
 ### Added

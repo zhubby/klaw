@@ -17,10 +17,11 @@ use klaw_tool::{ToolContext, ToolRegistry};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
+const TOOL_RESULT_LOG_LIMIT: usize = 4000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunState {
@@ -95,6 +96,7 @@ pub struct AgentLoop {
     pub limits: RunLimits,
     pub scheduling: SessionSchedulingPolicy,
     pub provider: Arc<dyn LlmProvider>,
+    pub provider_registry: BTreeMap<String, Arc<dyn LlmProvider>>,
     pub active_provider_id: String,
     pub active_model: String,
     pub tools: ToolRegistry,
@@ -142,10 +144,34 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
             )
             .await
         {
-            Ok(output) => output.content_for_model,
-            Err(err) => format!("tool `{}` failed: {}", name, err),
+            Ok(output) => {
+                debug!(
+                    tool = name,
+                    result = %truncate_for_log(&output.content_for_model, TOOL_RESULT_LOG_LIMIT),
+                    "tool result"
+                );
+                output.content_for_model
+            }
+            Err(err) => {
+                let message = format!("tool `{}` failed: {}", name, err);
+                debug!(
+                    tool = name,
+                    result = %truncate_for_log(&message, TOOL_RESULT_LOG_LIMIT),
+                    "tool result"
+                );
+                message
+            }
         }
     }
+}
+
+fn truncate_for_log(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let mut truncated = value.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...[truncated]");
+    truncated
 }
 
 impl AgentLoop {
@@ -158,7 +184,8 @@ impl AgentLoop {
         Self {
             limits,
             scheduling,
-            provider,
+            provider: provider.clone(),
+            provider_registry: BTreeMap::from([("default".to_string(), provider)]),
             active_provider_id: "default".to_string(),
             active_model: "default".to_string(),
             tools,
@@ -177,12 +204,21 @@ impl AgentLoop {
         Self {
             limits,
             scheduling,
-            provider,
+            provider: provider.clone(),
+            provider_registry: BTreeMap::from([(active_provider_id.clone(), provider)]),
             active_provider_id,
             active_model,
             tools,
             system_prompt: None,
         }
+    }
+
+    pub fn with_provider_registry(
+        mut self,
+        provider_registry: BTreeMap<String, Arc<dyn LlmProvider>>,
+    ) -> Self {
+        self.provider_registry = provider_registry;
+        self
     }
 
     pub fn with_system_prompt(mut self, system_prompt: Option<String>) -> Self {
@@ -235,14 +271,46 @@ impl AgentLoop {
         state = self.transition(state, StateTransitionEvent::ContextBuilt);
 
         let conversation_history = extract_conversation_history(&msg.payload.metadata);
+        let requested_provider_id = msg
+            .payload
+            .metadata
+            .get("agent.provider_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| self.active_provider_id.clone());
+        let (resolved_provider_id, provider) =
+            if let Some(provider) = self.provider_registry.get(&requested_provider_id) {
+                (requested_provider_id, Arc::clone(provider))
+            } else {
+                warn!(
+                    requested_provider = requested_provider_id.as_str(),
+                    fallback_provider = self.active_provider_id.as_str(),
+                    "provider override not found, falling back to active provider"
+                );
+                (self.active_provider_id.clone(), Arc::clone(&self.provider))
+            };
+        let resolved_model = msg
+            .payload
+            .metadata
+            .get("agent.model")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| self.active_model.clone());
+
         let mut tool_metadata = msg.payload.metadata.clone();
         tool_metadata.remove(META_CONVERSATION_HISTORY_KEY);
-        tool_metadata
-            .entry("agent.provider_id".to_string())
-            .or_insert_with(|| serde_json::Value::String(self.active_provider_id.clone()));
-        tool_metadata
-            .entry("agent.model".to_string())
-            .or_insert_with(|| serde_json::Value::String(self.active_model.clone()));
+        tool_metadata.insert(
+            "agent.provider_id".to_string(),
+            serde_json::Value::String(resolved_provider_id.clone()),
+        );
+        tool_metadata.insert(
+            "agent.model".to_string(),
+            serde_json::Value::String(resolved_model.clone()),
+        );
         tool_metadata.insert(
             "agent.parent_session_key".to_string(),
             serde_json::Value::String(msg.payload.session_key.clone()),
@@ -257,14 +325,14 @@ impl AgentLoop {
         state = self.transition(state, StateTransitionEvent::ToolRequested);
         let executor = RegistryToolExecutor { tools: &self.tools };
         let result = run_agent_execution(
-            self.provider.as_ref(),
+            provider.as_ref(),
             &executor,
             AgentExecutionInput {
                 user_content: msg.payload.content.clone(),
                 conversation_history,
                 session_key: msg.payload.session_key.clone(),
                 tool_metadata,
-                model: Some(self.active_model.clone()),
+                model: Some(resolved_model),
             },
             AgentExecutionLimits {
                 max_tool_iterations: self.limits.max_tool_iterations,
@@ -585,9 +653,15 @@ fn extract_conversation_history(
 
 #[cfg(test)]
 mod tests {
-    use super::heartbeat_response_metadata;
+    use super::{
+        heartbeat_response_metadata, AgentLoop, QueueStrategy, RunLimits, SessionSchedulingPolicy,
+    };
+    use crate::{domain::InboundMessage, protocol::EnvelopeHeader};
+    use async_trait::async_trait;
+    use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
+    use klaw_tool::ToolRegistry;
     use serde_json::json;
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
     #[test]
     fn heartbeat_metadata_is_passthrough_only_for_heartbeat_keys() {
@@ -604,5 +678,93 @@ mod tests {
             Some(&json!("stdio:test"))
         );
         assert!(!metadata.contains_key("reasoning"));
+    }
+
+    struct NamedProvider {
+        id: String,
+    }
+
+    #[async_trait]
+    impl LlmProvider for NamedProvider {
+        fn name(&self) -> &str {
+            &self.id
+        }
+
+        fn default_model(&self) -> &str {
+            "default-model"
+        }
+
+        async fn chat(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            Ok(LlmResponse {
+                content: format!("provider={} model={}", self.id, model.unwrap_or("none")),
+                reasoning: None,
+                tool_calls: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn process_message_uses_provider_and_model_from_metadata() {
+        let default_provider: Arc<dyn LlmProvider> = Arc::new(NamedProvider {
+            id: "openai".to_string(),
+        });
+        let anthropic_provider: Arc<dyn LlmProvider> = Arc::new(NamedProvider {
+            id: "anthropic".to_string(),
+        });
+        let agent = AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 1,
+                max_tool_calls: 1,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(1),
+                tool_timeout: Duration::from_secs(1),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 1,
+                lock_ttl: Duration::from_secs(1),
+            },
+            default_provider,
+            "openai".to_string(),
+            "gpt-4o-mini".to_string(),
+            ToolRegistry::default(),
+        )
+        .with_provider_registry(BTreeMap::from([
+            (
+                "openai".to_string(),
+                Arc::new(NamedProvider {
+                    id: "openai".to_string(),
+                }) as Arc<dyn LlmProvider>,
+            ),
+            ("anthropic".to_string(), anthropic_provider),
+        ]));
+
+        let inbound = crate::protocol::Envelope {
+            header: EnvelopeHeader::new("im:chat-1"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "im".to_string(),
+                sender_id: "u1".to_string(),
+                chat_id: "chat-1".to_string(),
+                session_key: "im:chat-1".to_string(),
+                content: "hello".to_string(),
+                metadata: BTreeMap::from([
+                    ("agent.provider_id".to_string(), json!("anthropic")),
+                    ("agent.model".to_string(), json!("claude-opus-4")),
+                ]),
+            },
+        };
+        let outcome = agent.process_message(inbound, false).await;
+        let response = outcome.final_response.expect("response should be present");
+        assert_eq!(
+            response.payload.content,
+            "provider=anthropic model=claude-opus-4"
+        );
     }
 }

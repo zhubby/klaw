@@ -14,6 +14,12 @@
 - 通道层只负责 I/O、协议适配和交互体验，不承载 agent 业务逻辑
 - `ChannelRequest` 现在可携带 `media_references`，用于未来的媒体归档或下载流程
 
+## IM Channel 适配契约
+
+- channel 只负责把平台消息规范化为 `ChannelRequest`（文本、chat_id、session_key）
+- 统一会话命令（`/new`、`/help`、`/model-provider`、`/model`）由 runtime 处理，不在 channel 层实现业务分支
+- channel 仅消费 `ChannelResponse` 并回发，不持有 provider/model 路由策略
+
 ## Stdio Interaction
 
 - `stdio` 保持标准行输入，兼容普通终端和中文输入法

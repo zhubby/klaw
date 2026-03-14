@@ -8,6 +8,7 @@
 - 支持读取/初始化 `~/.klaw/config.toml`。
 - 支持按默认配置迁移已有配置文件。
 - 校验 provider、工具、MCP、gateway、heartbeat 等配置合法性。
+- 支持按 channel 配置会话命令开关（`channels.disable_session_commands_for`）。
 
 ## 模型配置
 

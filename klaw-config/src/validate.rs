@@ -388,6 +388,9 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
         require_non_empty(&account.client_secret, "channels.dingtalk.client_secret")?;
         require_non_empty(&account.bot_title, "channels.dingtalk.bot_title")?;
     }
+    for channel in &channels.disable_session_commands_for {
+        require_non_empty(channel, "channels.disable_session_commands_for")?;
+    }
     Ok(())
 }
 

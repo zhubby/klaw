@@ -29,6 +29,12 @@ pub struct SessionIndex {
     pub session_key: String,
     pub chat_id: String,
     pub channel: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_session_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub last_message_at_ms: i64,

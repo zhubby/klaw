@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-03-14
+
+### Added
+- added session routing/model state persistence fields in `sessions` (`active_session_key`, `model_provider`, `model`)
+- added `SessionStorage` APIs for session route/model lifecycle: `get_or_create_session_state`, `set_active_session`, `set_model_provider`, `set_model`
+
+### Changed
+- changed SQLx/Turso session store initialization to run idempotent schema upgrades for new session state columns
+
 ## 2026-03-13
 
 ### Added

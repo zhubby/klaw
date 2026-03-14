@@ -90,8 +90,8 @@ installed = ["brainstorming"]
 
 其中：
 
-- `update` 语义是“重下载并覆盖”。
-- `list/get` 用于本地查询。
+- `install` 对已存在 skill 会覆盖写入，可作为“重新安装”使用。
+- `list_installed/show` 用于本地查询。
 
 ## SkillsRegistryTool（工具层）
 
@@ -99,17 +99,17 @@ installed = ["brainstorming"]
 
 支持 action：
 
-- `download`（需 `source` + `skill_name`）
-- `update`（需 `source` + `skill_name`）
-- `delete`（需 `skill_name`）
-- `list`
-- `get`（需 `skill_name`，`source` 可选，仅用于输出上下文）
+- `install`（需 `source` + `skill_name`）
+- `uninstall`（需 `skill_name`）
+- `list_installed`
+- `search`（需 `query`，`source` 可选，支持 `limit`）
+- `show`（需 `skill_name`，`source` 可选，仅用于输出上下文）
 - `load_all`
 
 典型调用示例：
 
 ```json
-{"action":"download","source":"vercel","skill_name":"find-skills"}
+{"action":"install","source":"vercel","skill_name":"find-skills"}
 ```
 
 ## 启动加载与 System Prompt 注入

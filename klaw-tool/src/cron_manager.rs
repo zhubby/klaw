@@ -340,26 +340,94 @@ impl Tool for CronManagerTool {
         json!({
             "type": "object",
             "description": "Manage cron job definitions and run records in storage.",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "update", "delete", "get", "list_due", "list_runs", "set_enabled"]
+            "oneOf": [
+                {
+                    "description": "Create a cron job definition.",
+                    "properties": {
+                        "action": { "const": "create" },
+                        "id": { "type": "string", "description": "Optional cron job id. Auto-generated when omitted." },
+                        "name": { "type": "string", "description": "Cron display name." },
+                        "schedule_kind": { "type": "string", "enum": ["cron", "every"] },
+                        "schedule_expr": { "type": "string", "description": "Cron expression or every interval string (e.g. 30s, 5m)." },
+                        "payload": { "type": "object", "description": "InboundMessage payload object to publish when triggered." },
+                        "payload_json": { "type": "string", "description": "Payload JSON string alternative to `payload`." },
+                        "enabled": { "type": "boolean", "description": "Whether the cron starts enabled. Defaults to true." },
+                        "timezone": { "type": "string", "description": "Timezone label. Defaults to UTC." },
+                        "next_run_at_ms": { "type": "integer", "description": "Optional explicit next run timestamp in ms." }
+                    },
+                    "required": ["action", "name", "schedule_kind", "schedule_expr"],
+                    "anyOf": [
+                        { "required": ["payload"] },
+                        { "required": ["payload_json"] }
+                    ],
+                    "additionalProperties": false
                 },
-                "id": { "type": "string", "description": "Cron job id for update/delete/get/list_runs/set_enabled." },
-                "name": { "type": "string", "description": "Cron display name." },
-                "schedule_kind": { "type": "string", "enum": ["cron", "every"] },
-                "schedule_expr": { "type": "string", "description": "Cron expression or every interval string (e.g. 30s, 5m)." },
-                "payload": { "type": "object", "description": "InboundMessage payload object to publish when triggered." },
-                "payload_json": { "type": "string", "description": "Payload JSON string alternative to `payload`." },
-                "enabled": { "type": "boolean" },
-                "timezone": { "type": "string", "default": "UTC" },
-                "next_run_at_ms": { "type": "integer" },
-                "now_ms": { "type": "integer", "description": "Reference timestamp for list_due." },
-                "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIST_LIMIT, "default": DEFAULT_LIST_LIMIT },
-                "offset": { "type": "integer", "minimum": 0, "default": 0 }
-            },
-            "required": ["action"],
-            "additionalProperties": false
+                {
+                    "description": "Update an existing cron job definition.",
+                    "properties": {
+                        "action": { "const": "update" },
+                        "id": { "type": "string", "description": "Cron job id." },
+                        "name": { "type": "string", "description": "Updated cron display name." },
+                        "schedule_kind": { "type": "string", "enum": ["cron", "every"] },
+                        "schedule_expr": { "type": "string", "description": "Updated schedule expression." },
+                        "payload": { "type": "object", "description": "Updated payload object." },
+                        "payload_json": { "type": "string", "description": "Updated payload JSON string." },
+                        "timezone": { "type": "string", "description": "Updated timezone label." },
+                        "next_run_at_ms": { "type": "integer", "description": "Optional explicit next run timestamp in ms." }
+                    },
+                    "required": ["action", "id"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Delete a cron job definition.",
+                    "properties": {
+                        "action": { "const": "delete" },
+                        "id": { "type": "string", "description": "Cron job id." }
+                    },
+                    "required": ["action", "id"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Get one cron job definition by id.",
+                    "properties": {
+                        "action": { "const": "get" },
+                        "id": { "type": "string", "description": "Cron job id." }
+                    },
+                    "required": ["action", "id"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Set enabled status on one cron job.",
+                    "properties": {
+                        "action": { "const": "set_enabled" },
+                        "id": { "type": "string", "description": "Cron job id." },
+                        "enabled": { "type": "boolean", "description": "Target enabled state." }
+                    },
+                    "required": ["action", "id", "enabled"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "List due cron jobs at a reference timestamp.",
+                    "properties": {
+                        "action": { "const": "list_due" },
+                        "now_ms": { "type": "integer", "description": "Reference timestamp in ms. Defaults to current time." },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIST_LIMIT, "default": DEFAULT_LIST_LIMIT }
+                    },
+                    "required": ["action"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "List run records for one cron job.",
+                    "properties": {
+                        "action": { "const": "list_runs" },
+                        "id": { "type": "string", "description": "Cron job id." },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIST_LIMIT, "default": DEFAULT_LIST_LIMIT },
+                        "offset": { "type": "integer", "minimum": 0, "default": 0 }
+                    },
+                    "required": ["action", "id"],
+                    "additionalProperties": false
+                }
+            ]
         })
     }
 

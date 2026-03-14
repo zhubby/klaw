@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
 use thiserror::Error;
+use tracing::warn;
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 
@@ -160,7 +161,8 @@ pub async fn run_agent_execution(
     });
     let mut tool_calls_used = 0u32;
 
-    for _ in 0..limits.max_tool_iterations.max(1) {
+    let max_tool_iterations = limits.max_tool_iterations.max(1);
+    for _ in 0..max_tool_iterations {
         let llm_response = provider
             .chat(
                 llm_messages.clone(),
@@ -212,6 +214,12 @@ pub async fn run_agent_execution(
         .await?;
     }
 
+    warn!(
+        max_tool_iterations,
+        tool_calls_used,
+        max_tool_calls = limits.max_tool_calls,
+        "agent tool loop exhausted by iteration limit"
+    );
     Err(AgentExecutionError::ToolLoopExhausted)
 }
 
@@ -240,6 +248,10 @@ async fn apply_tool_calls(
     for call in tool_calls {
         *tool_calls_used += 1;
         if *tool_calls_used > max_tool_calls {
+            warn!(
+                tool_calls_used = *tool_calls_used,
+                max_tool_calls, "agent tool loop exhausted by tool call limit"
+            );
             return Err(AgentExecutionError::ToolLoopExhausted);
         }
         let content = tools

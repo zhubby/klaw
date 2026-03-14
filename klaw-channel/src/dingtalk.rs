@@ -255,6 +255,7 @@ impl DingtalkChannel {
         let Some(payload) = parse_stream_data(&envelope.data) else {
             return send_ack(ws, envelope, "").await;
         };
+        debug!(payload = ?payload, "received dingtalk raw subscription event");
 
         let Some(inbound) = parse_inbound_event(&payload) else {
             return send_ack(ws, envelope, "").await;

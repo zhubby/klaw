@@ -160,6 +160,75 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn session_route_state_persists_provider_model_and_active_session() {
+        let store = create_store().await;
+        let base = store
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "openai",
+                "gpt-4o-mini",
+            )
+            .await
+            .expect("base session should be created");
+        assert_eq!(
+            base.active_session_key.as_deref(),
+            Some("dingtalk:acc:chat-1")
+        );
+        assert_eq!(base.model_provider.as_deref(), Some("openai"));
+        assert_eq!(base.model.as_deref(), Some("gpt-4o-mini"));
+
+        let _new_active = store
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1:child",
+                "chat-1",
+                "dingtalk",
+                "openai",
+                "gpt-4o-mini",
+            )
+            .await
+            .expect("child session should be created");
+        let updated_base = store
+            .set_active_session(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "dingtalk:acc:chat-1:child",
+            )
+            .await
+            .expect("active session should be updated");
+        assert_eq!(
+            updated_base.active_session_key.as_deref(),
+            Some("dingtalk:acc:chat-1:child")
+        );
+
+        let switched = store
+            .set_model_provider(
+                "dingtalk:acc:chat-1:child",
+                "chat-1",
+                "dingtalk",
+                "anthropic",
+                "claude-3-7-sonnet",
+            )
+            .await
+            .expect("provider should be updated");
+        assert_eq!(switched.model_provider.as_deref(), Some("anthropic"));
+        assert_eq!(switched.model.as_deref(), Some("claude-3-7-sonnet"));
+
+        let updated_model = store
+            .set_model(
+                "dingtalk:acc:chat-1:child",
+                "chat-1",
+                "dingtalk",
+                "claude-opus-4",
+            )
+            .await
+            .expect("model should be updated");
+        assert_eq!(updated_model.model.as_deref(), Some("claude-opus-4"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn storage_paths_include_memory_db() {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let base = std::env::temp_dir().join(format!("klaw-storage-paths-{suffix}"));

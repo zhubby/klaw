@@ -29,6 +29,8 @@ impl AgentCommand {
             self.input,
             session_key,
             chat_id,
+            runtime.default_provider_id.clone(),
+            runtime.runtime.active_model.clone(),
         )
         .await?;
         match maybe_output {

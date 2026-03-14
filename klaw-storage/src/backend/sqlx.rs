@@ -33,6 +33,9 @@ struct SessionIndexRow {
     session_key: String,
     chat_id: String,
     channel: String,
+    active_session_key: Option<String>,
+    model_provider: Option<String>,
+    model: Option<String>,
     created_at_ms: i64,
     updated_at_ms: i64,
     last_message_at_ms: i64,
@@ -75,6 +78,9 @@ impl From<SessionIndexRow> for SessionIndex {
             session_key: value.session_key,
             chat_id: value.chat_id,
             channel: value.channel,
+            active_session_key: value.active_session_key,
+            model_provider: value.model_provider,
+            model: value.model,
             created_at_ms: value.created_at_ms,
             updated_at_ms: value.updated_at_ms,
             last_message_at_ms: value.last_message_at_ms,
@@ -154,6 +160,9 @@ impl SqlxSessionStore {
                 session_key TEXT PRIMARY KEY,
                 chat_id TEXT NOT NULL,
                 channel TEXT NOT NULL,
+                active_session_key TEXT,
+                model_provider TEXT,
+                model TEXT,
                 created_at_ms INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL,
                 last_message_at_ms INTEGER NOT NULL,
@@ -164,6 +173,18 @@ impl SqlxSessionStore {
         .execute(&self.pool)
         .await
         .map_err(StorageError::backend)?;
+        self.ensure_session_column(
+            "active_session_key",
+            "ALTER TABLE sessions ADD COLUMN active_session_key TEXT",
+        )
+        .await?;
+        self.ensure_session_column(
+            "model_provider",
+            "ALTER TABLE sessions ADD COLUMN model_provider TEXT",
+        )
+        .await?;
+        self.ensure_session_column("model", "ALTER TABLE sessions ADD COLUMN model TEXT")
+            .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at_ms
              ON sessions(updated_at_ms DESC)",
@@ -229,6 +250,22 @@ impl SqlxSessionStore {
         .await
         .map_err(StorageError::backend)?;
         Ok(())
+    }
+
+    async fn ensure_session_column(&self, column: &str, sql: &str) -> Result<(), StorageError> {
+        let result = sqlx::query(sql).execute(&self.pool).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("duplicate column name") {
+                    return Ok(());
+                }
+                Err(StorageError::backend(format!(
+                    "failed to ensure sessions.{column} column: {message}"
+                )))
+            }
+        }
     }
 }
 
@@ -370,8 +407,8 @@ impl SessionStorage for SqlxSessionStore {
         let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
         sqlx::query(
             "INSERT INTO sessions (
-                session_key, chat_id, channel, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)
+                session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4, ?5, ?6, 0, ?7)
             ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
@@ -425,8 +462,8 @@ impl SessionStorage for SqlxSessionStore {
         if updated.rows_affected() == 0 {
             sqlx::query(
                 "INSERT INTO sessions (
-                    session_key, chat_id, channel, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+                    session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+                ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4, ?5, ?6, 1, ?7)",
             )
             .bind(session_key)
             .bind(chat_id)
@@ -457,7 +494,7 @@ impl SessionStorage for SqlxSessionStore {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let row = sqlx::query_as::<_, SessionIndexRow>(
-            "SELECT session_key, chat_id, channel, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              WHERE session_key = ?1",
         )
@@ -468,13 +505,152 @@ impl SessionStorage for SqlxSessionStore {
         Ok(row.into())
     }
 
+    async fn get_or_create_session_state(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        default_provider: &str,
+        default_model: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let now = now_ms();
+        let jsonl_path = self.session_jsonl_path(session_key);
+        let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
+        sqlx::query(
+            "INSERT INTO sessions (
+                session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)
+            ON CONFLICT(session_key) DO UPDATE SET
+                chat_id=excluded.chat_id,
+                channel=excluded.channel,
+                updated_at_ms=excluded.updated_at_ms,
+                active_session_key=COALESCE(sessions.active_session_key, excluded.active_session_key),
+                model_provider=COALESCE(sessions.model_provider, excluded.model_provider),
+                model=COALESCE(sessions.model, excluded.model),
+                jsonl_path=excluded.jsonl_path",
+        )
+        .bind(session_key)
+        .bind(chat_id)
+        .bind(channel)
+        .bind(session_key)
+        .bind(default_provider)
+        .bind(default_model)
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .bind(jsonl_path_str)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        self.get_session(session_key).await
+    }
+
+    async fn set_active_session(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        active_session_key: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let now = now_ms();
+        let updated = sqlx::query(
+            "UPDATE sessions
+             SET chat_id = ?1,
+                 channel = ?2,
+                 updated_at_ms = ?3,
+                 active_session_key = ?4
+             WHERE session_key = ?5",
+        )
+        .bind(chat_id)
+        .bind(channel)
+        .bind(now)
+        .bind(active_session_key)
+        .bind(session_key)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting active_session_key"
+            )));
+        }
+        self.get_session(session_key).await
+    }
+
+    async fn set_model_provider(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        model_provider: &str,
+        model: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let now = now_ms();
+        let updated = sqlx::query(
+            "UPDATE sessions
+             SET chat_id = ?1,
+                 channel = ?2,
+                 updated_at_ms = ?3,
+                 model_provider = ?4,
+                 model = ?5
+             WHERE session_key = ?6",
+        )
+        .bind(chat_id)
+        .bind(channel)
+        .bind(now)
+        .bind(model_provider)
+        .bind(model)
+        .bind(session_key)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting model_provider"
+            )));
+        }
+        self.get_session(session_key).await
+    }
+
+    async fn set_model(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        model: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let now = now_ms();
+        let updated = sqlx::query(
+            "UPDATE sessions
+             SET chat_id = ?1,
+                 channel = ?2,
+                 updated_at_ms = ?3,
+                 model = ?4
+             WHERE session_key = ?5",
+        )
+        .bind(chat_id)
+        .bind(channel)
+        .bind(now)
+        .bind(model)
+        .bind(session_key)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting model"
+            )));
+        }
+        self.get_session(session_key).await
+    }
+
     async fn list_sessions(
         &self,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let rows = sqlx::query_as::<_, SessionIndexRow>(
-            "SELECT session_key, chat_id, channel, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              ORDER BY updated_at_ms DESC
              LIMIT ?1 OFFSET ?2",

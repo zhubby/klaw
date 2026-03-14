@@ -23,9 +23,16 @@ use klaw_tool::{
     SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use serde_json::json;
-use std::{collections::BTreeMap, error::Error, io, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    io,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{sync::Mutex, time::timeout};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
@@ -36,6 +43,9 @@ pub struct StartupReport {
 
 pub struct RuntimeBundle {
     pub runtime: AgentLoop,
+    pub default_provider_id: String,
+    pub provider_default_models: BTreeMap<String, String>,
+    pub disable_session_commands_for: BTreeSet<String>,
     pub inbound_transport: InMemoryTransport<InboundMessage>,
     pub outbound_transport: InMemoryTransport<OutboundMessage>,
     pub deadletter_transport: InMemoryTransport<DeadLetterMessage>,
@@ -69,12 +79,37 @@ impl SharedChannelRuntime {
 #[async_trait::async_trait(?Send)]
 impl ChannelRuntime for SharedChannelRuntime {
     async fn submit(&self, request: ChannelRequest) -> ChannelResult<Option<ChannelResponse>> {
+        if !is_channel_commands_disabled(self.runtime.as_ref(), &request.channel)
+            && request.input.trim_start().starts_with('/')
+        {
+            if let Some(response) = handle_im_command(
+                self.runtime.as_ref(),
+                request.channel.clone(),
+                request.session_key.clone(),
+                request.chat_id.clone(),
+                request.input.clone(),
+            )
+            .await?
+            {
+                return Ok(Some(response));
+            }
+        }
+
+        let route = resolve_session_route(
+            self.runtime.as_ref(),
+            &request.channel,
+            &request.session_key,
+            &request.chat_id,
+        )
+        .await?;
         let maybe_output = submit_and_get_output(
             self.runtime.as_ref(),
             request.channel,
             request.input,
-            request.session_key,
+            route.active_session_key,
             request.chat_id,
+            route.model_provider,
+            route.model,
         )
         .await?;
 
@@ -108,14 +143,325 @@ pub struct AssistantOutput {
 }
 
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
+const META_PROVIDER_KEY: &str = "agent.provider_id";
+const META_MODEL_KEY: &str = "agent.model";
+
+#[derive(Debug, Clone)]
+struct SessionRoute {
+    active_session_key: String,
+    model_provider: String,
+    model: String,
+}
+
+fn is_channel_commands_disabled(runtime: &RuntimeBundle, channel: &str) -> bool {
+    runtime.disable_session_commands_for.contains(channel)
+}
+
+fn parse_im_command(input: &str) -> Option<(&str, Option<&str>)> {
+    let trimmed = input.trim();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+    let rest = trimmed.trim_start_matches('/').trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let command = parts.next()?.trim();
+    let arg = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Some((command, arg))
+}
+
+fn first_arg_token(arg: Option<&str>) -> Option<&str> {
+    arg.and_then(|raw| raw.split_whitespace().next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+async fn resolve_session_route(
+    runtime: &RuntimeBundle,
+    channel: &str,
+    base_session_key: &str,
+    chat_id: &str,
+) -> Result<SessionRoute, Box<dyn Error>> {
+    let base = runtime
+        .session_store
+        .get_or_create_session_state(
+            base_session_key,
+            chat_id,
+            channel,
+            &runtime.default_provider_id,
+            default_model_for_provider(runtime, &runtime.default_provider_id),
+        )
+        .await?;
+    let active_session_key = base
+        .active_session_key
+        .clone()
+        .unwrap_or_else(|| base_session_key.to_string());
+    let provider = base
+        .model_provider
+        .clone()
+        .unwrap_or_else(|| runtime.default_provider_id.clone());
+    let model_default = default_model_for_provider(runtime, &provider).to_string();
+    let active = runtime
+        .session_store
+        .get_or_create_session_state(
+            &active_session_key,
+            chat_id,
+            channel,
+            &provider,
+            &model_default,
+        )
+        .await?;
+    let model_provider = active.model_provider.unwrap_or(provider);
+    let model = active.model.unwrap_or(model_default);
+    Ok(SessionRoute {
+        active_session_key,
+        model_provider,
+        model,
+    })
+}
+
+fn default_model_for_provider<'a>(runtime: &'a RuntimeBundle, provider_id: &str) -> &'a str {
+    runtime
+        .provider_default_models
+        .get(provider_id)
+        .map(String::as_str)
+        .unwrap_or(runtime.runtime.active_model.as_str())
+}
+
+fn render_help_text(runtime: &RuntimeBundle) -> String {
+    let mut lines = vec![
+        "📘 **Command Center**".to_string(),
+        String::new(),
+        "```text".to_string(),
+    ];
+    lines.push(format!("{:<24}{}", "/new", "Start a new session context"));
+    lines.push(format!("{:<24}{}", "/help", "Show this help"));
+    if runtime.provider_default_models.len() > 1 {
+        lines.push(format!(
+            "{:<24}{}",
+            "/model-provider", "List available providers"
+        ));
+        lines.push(format!(
+            "{:<24}{}",
+            "/model-provider <id>", "Switch provider for current session"
+        ));
+    }
+    lines.push(format!("{:<24}{}", "/model", "Show current model"));
+    lines.push(format!(
+        "{:<24}{}",
+        "/model <model_name>", "Update current model for current session"
+    ));
+    lines.push("```".to_string());
+    if runtime.provider_default_models.len() > 1 {
+        let providers = runtime
+            .provider_default_models
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(String::new());
+        lines.push(format!("🧩 Providers: {providers}"));
+    }
+    lines.join("\n")
+}
+
+async fn handle_im_command(
+    runtime: &RuntimeBundle,
+    channel: String,
+    base_session_key: String,
+    chat_id: String,
+    input: String,
+) -> Result<Option<ChannelResponse>, Box<dyn Error>> {
+    let Some((command, arg)) = parse_im_command(&input) else {
+        return Ok(None);
+    };
+    let route = resolve_session_route(runtime, &channel, &base_session_key, &chat_id).await?;
+    let response = match command {
+        "help" => ChannelResponse {
+            content: render_help_text(runtime),
+            reasoning: None,
+        },
+        "new" => {
+            let new_session_key = format!("{base_session_key}:{}", Uuid::new_v4().simple());
+            runtime
+                .session_store
+                .get_or_create_session_state(
+                    &new_session_key,
+                    &chat_id,
+                    &channel,
+                    &route.model_provider,
+                    &route.model,
+                )
+                .await?;
+            runtime
+                .session_store
+                .set_active_session(&base_session_key, &chat_id, &channel, &new_session_key)
+                .await?;
+            ChannelResponse {
+                content: format!(
+                    "🆕 **New session started**\n\n🧵 Session: `{new_session_key}`\n🧩 Provider: `{}`\n🤖 Model: `{}`",
+                    route.model_provider, route.model
+                ),
+                reasoning: None,
+            }
+        }
+        "model-provider" => {
+            if runtime.provider_default_models.len() <= 1 && arg.is_none() {
+                return Ok(Some(ChannelResponse {
+                    content: "ℹ️ Only one provider is configured, so switching is not required."
+                        .to_string(),
+                    reasoning: None,
+                }));
+            }
+            if let Some(provider_id) = first_arg_token(arg) {
+                let Some(default_model) = runtime.provider_default_models.get(provider_id) else {
+                    let all = runtime
+                        .provider_default_models
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Ok(Some(ChannelResponse {
+                        content: format!(
+                            "❌ Unknown provider: `{provider_id}`\n🧩 Available: {all}"
+                        ),
+                        reasoning: None,
+                    }));
+                };
+                runtime
+                    .session_store
+                    .set_model_provider(
+                        &route.active_session_key,
+                        &chat_id,
+                        &channel,
+                        provider_id,
+                        default_model,
+                    )
+                    .await?;
+                runtime
+                    .session_store
+                    .set_model_provider(
+                        &base_session_key,
+                        &chat_id,
+                        &channel,
+                        provider_id,
+                        default_model,
+                    )
+                    .await?;
+                ChannelResponse {
+                    content: format!(
+                        "✅ **Provider switched**\n\n🧩 Provider: `{provider_id}`\n🤖 Model: `{default_model}`"
+                    ),
+                    reasoning: None,
+                }
+            } else {
+                let lines = runtime
+                    .provider_default_models
+                    .iter()
+                    .map(|(id, model)| {
+                        if id == &route.model_provider {
+                            format!("• `{id}`  ← current (default: `{model}`)")
+                        } else {
+                            format!("• `{id}`  (default: `{model}`)")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                ChannelResponse {
+                    content: format!("🧩 **Providers**\n\n{lines}"),
+                    reasoning: None,
+                }
+            }
+        }
+        "model" => {
+            if let Some(model) = first_arg_token(arg) {
+                if model.trim().is_empty() {
+                    return Ok(Some(ChannelResponse {
+                        content: "❌ Model name cannot be empty.".to_string(),
+                        reasoning: None,
+                    }));
+                }
+                runtime
+                    .session_store
+                    .set_model(&route.active_session_key, &chat_id, &channel, model)
+                    .await?;
+                runtime
+                    .session_store
+                    .set_model(&base_session_key, &chat_id, &channel, model)
+                    .await?;
+                ChannelResponse {
+                    content: format!(
+                        "✅ **Model updated**\n\n🧩 Provider: `{}`\n🤖 Model: `{model}`",
+                        route.model_provider
+                    ),
+                    reasoning: None,
+                }
+            } else {
+                ChannelResponse {
+                    content: format!(
+                        "🤖 **Current model**\n\n🧩 Provider: `{}`\n🤖 Model: `{}`",
+                        route.model_provider, route.model
+                    ),
+                    reasoning: None,
+                }
+            }
+        }
+        other => {
+            let help = render_help_text(runtime);
+            ChannelResponse {
+                content: format!("❌ Unknown command: `/{other}`\n\n{help}"),
+                reasoning: None,
+            }
+        }
+    };
+    Ok(Some(response))
+}
 
 pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, Box<dyn Error>> {
     info!(
         provider = %config.model_provider,
         "building runtime bundle"
     );
-    let provider_instance = build_provider_from_config(config, &config.model_provider)
-        .map_err(|err| config_err(err.to_string()))?;
+    let mut provider_registry = BTreeMap::new();
+    let mut provider_default_models = BTreeMap::new();
+    for provider_id in config.model_providers.keys() {
+        match build_provider_from_config(config, provider_id) {
+            Ok(instance) => {
+                provider_default_models.insert(provider_id.clone(), instance.default_model.clone());
+                provider_registry.insert(provider_id.clone(), instance.provider);
+            }
+            Err(err) => {
+                warn!(
+                    provider_id = provider_id.as_str(),
+                    error = %err,
+                    "provider is configured but unavailable at startup; skipping"
+                );
+            }
+        }
+    }
+    let default_provider = provider_registry
+        .get(&config.model_provider)
+        .cloned()
+        .ok_or_else(|| {
+            config_err(format!(
+                "default provider '{}' is missing",
+                config.model_provider
+            ))
+        })?;
+    let default_model = provider_default_models
+        .get(&config.model_provider)
+        .cloned()
+        .ok_or_else(|| {
+            config_err(format!(
+                "default model for provider '{}' is missing",
+                config.model_provider
+            ))
+        })?;
     let session_store = open_default_store().await?;
     reconcile_heartbeats(config, &session_store)
         .await
@@ -184,8 +530,8 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
 
     let runtime = AgentLoop::new_with_identity(
         RunLimits {
-            max_tool_iterations: 8,
-            max_tool_calls: 16,
+            max_tool_iterations: 16,
+            max_tool_calls: 32,
             token_budget: 0,
             agent_timeout: Duration::from_secs(30),
             tool_timeout: Duration::from_secs(8),
@@ -195,11 +541,12 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
             max_queue_depth: 32,
             lock_ttl: Duration::from_secs(15),
         },
-        provider_instance.provider,
+        default_provider,
         config.model_provider.clone(),
-        provider_instance.default_model.clone(),
+        default_model,
         tools,
     )
+    .with_provider_registry(provider_registry)
     .with_system_prompt(system_prompt);
 
     info!(
@@ -208,6 +555,15 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     );
 
     Ok(RuntimeBundle {
+        default_provider_id: config.model_provider.clone(),
+        provider_default_models,
+        disable_session_commands_for: config
+            .channels
+            .disable_session_commands_for
+            .iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect(),
         startup_report: StartupReport {
             skill_names,
             tool_names: runtime.tools.list(),
@@ -393,6 +749,8 @@ pub async fn submit_and_get_output(
     input: String,
     session_key: String,
     chat_id: String,
+    model_provider: String,
+    model: String,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let conversation_history = runtime
         .session_store
@@ -409,30 +767,40 @@ pub async fn submit_and_get_output(
         .touch_session(&session_key, &chat_id, &channel)
         .await?;
 
+    let inbound_payload = InboundMessage {
+        channel: channel.to_string(),
+        sender_id: "local-user".to_string(),
+        chat_id: chat_id.clone(),
+        session_key,
+        content: input,
+        metadata: BTreeMap::from([
+            (
+                META_CONVERSATION_HISTORY_KEY.to_string(),
+                json!(conversation_history
+                    .into_iter()
+                    .map(|record| {
+                        json!({
+                            "role": record.role,
+                            "content": record.content,
+                        })
+                    })
+                    .collect::<Vec<_>>()),
+            ),
+            (
+                META_PROVIDER_KEY.to_string(),
+                serde_json::Value::String(model_provider),
+            ),
+            (META_MODEL_KEY.to_string(), serde_json::Value::String(model)),
+        ]),
+    };
+    info!(inbound = ?inbound_payload, "channel inbound normalized");
+
     runtime
         .inbound_transport
         .enqueue(Envelope {
             header,
             metadata: BTreeMap::new(),
-            payload: InboundMessage {
-                channel: channel.to_string(),
-                sender_id: "local-user".to_string(),
-                chat_id: chat_id.clone(),
-                session_key,
-                content: input,
-                metadata: BTreeMap::from([(
-                    META_CONVERSATION_HISTORY_KEY.to_string(),
-                    json!(conversation_history
-                        .into_iter()
-                        .map(|record| {
-                            json!({
-                                "role": record.role,
-                                "content": record.content,
-                            })
-                        })
-                        .collect::<Vec<_>>()),
-                )]),
-            },
+            payload: inbound_payload,
         })
         .await;
 
@@ -588,7 +956,7 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::should_emit_outbound;
+    use super::{first_arg_token, parse_im_command, should_emit_outbound};
     use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -631,5 +999,29 @@ mod tests {
         };
 
         assert!(should_emit_outbound(&msg));
+    }
+
+    #[test]
+    fn parse_im_command_supports_name_and_optional_arg() {
+        assert_eq!(parse_im_command("/help"), Some(("help", None)));
+        assert_eq!(
+            parse_im_command("/model-provider openai"),
+            Some(("model-provider", Some("openai")))
+        );
+        assert_eq!(
+            parse_im_command("/model qwen-plus /help"),
+            Some(("model", Some("qwen-plus /help")))
+        );
+        assert_eq!(parse_im_command("hello"), None);
+    }
+
+    #[test]
+    fn first_arg_token_uses_first_token_only() {
+        assert_eq!(first_arg_token(Some("openai /help")), Some("openai"));
+        assert_eq!(
+            first_arg_token(Some("qwen-plus extra words")),
+            Some("qwen-plus")
+        );
+        assert_eq!(first_arg_token(Some("   ")), None);
     }
 }

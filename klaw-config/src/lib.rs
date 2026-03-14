@@ -51,12 +51,15 @@ impl Default for AppConfig {
 pub struct ChannelsConfig {
     #[serde(default)]
     pub dingtalk: Vec<DingtalkConfig>,
+    #[serde(default)]
+    pub disable_session_commands_for: Vec<String>,
 }
 
 impl Default for ChannelsConfig {
     fn default() -> Self {
         Self {
             dingtalk: Vec::new(),
+            disable_session_commands_for: Vec::new(),
         }
     }
 }

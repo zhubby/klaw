@@ -52,6 +52,9 @@ impl TursoSessionStore {
                     session_key TEXT PRIMARY KEY,
                     chat_id TEXT NOT NULL,
                     channel TEXT NOT NULL,
+                    active_session_key TEXT,
+                    model_provider TEXT,
+                    model TEXT,
                     created_at_ms INTEGER NOT NULL,
                     updated_at_ms INTEGER NOT NULL,
                     last_message_at_ms INTEGER NOT NULL,
@@ -95,7 +98,35 @@ impl TursoSessionStore {
             )
             .await
             .map_err(StorageError::backend)?;
+        self.ensure_session_column("active_session_key", "TEXT")
+            .await?;
+        self.ensure_session_column("model_provider", "TEXT").await?;
+        self.ensure_session_column("model", "TEXT").await?;
         Ok(())
+    }
+
+    async fn ensure_session_column(
+        &self,
+        column: &str,
+        column_type: &str,
+    ) -> Result<(), StorageError> {
+        let sql = format!("ALTER TABLE sessions ADD COLUMN {column} {column_type}");
+        let result = self.conn.execute(&sql, ()).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("duplicate column name")
+                    || message.contains("already exists")
+                    || message.contains("duplicate")
+                {
+                    return Ok(());
+                }
+                Err(StorageError::backend(format!(
+                    "failed to ensure sessions.{column} column: {message}"
+                )))
+            }
+        }
     }
 }
 
@@ -214,8 +245,8 @@ impl SessionStorage for TursoSessionStore {
         let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
         let sql = format!(
             "INSERT INTO sessions (
-                session_key, chat_id, channel, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-             ) VALUES ('{}', '{}', '{}', {}, {}, {}, 0, '{}')
+                session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+             ) VALUES ('{}', '{}', '{}', NULL, NULL, NULL, {}, {}, {}, 0, '{}')
              ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
@@ -271,8 +302,8 @@ impl SessionStorage for TursoSessionStore {
         if affected == 0 {
             let insert_sql = format!(
                 "INSERT INTO sessions (
-                    session_key, chat_id, channel, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-                ) VALUES ('{}', '{}', '{}', {}, {}, {}, 1, '{}')",
+                    session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+                ) VALUES ('{}', '{}', '{}', NULL, NULL, NULL, {}, {}, {}, 1, '{}')",
                 escape_sql_text(session_key),
                 escape_sql_text(chat_id),
                 escape_sql_text(channel),
@@ -303,7 +334,7 @@ impl SessionStorage for TursoSessionStore {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let sql = format!(
-            "SELECT session_key, chat_id, channel, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              WHERE session_key = '{}'
              LIMIT 1",
@@ -322,13 +353,156 @@ impl SessionStorage for TursoSessionStore {
         row_to_session_index(&row)
     }
 
+    async fn get_or_create_session_state(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        default_provider: &str,
+        default_model: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let now = now_ms();
+        let jsonl_path = self.session_jsonl_path(session_key);
+        let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
+        let sql = format!(
+            "INSERT INTO sessions (
+                session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+             ) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', {}, {}, {}, 0, '{}')
+             ON CONFLICT(session_key) DO UPDATE SET
+                chat_id=excluded.chat_id,
+                channel=excluded.channel,
+                updated_at_ms=excluded.updated_at_ms,
+                active_session_key=COALESCE(sessions.active_session_key, excluded.active_session_key),
+                model_provider=COALESCE(sessions.model_provider, excluded.model_provider),
+                model=COALESCE(sessions.model, excluded.model),
+                jsonl_path=excluded.jsonl_path",
+            escape_sql_text(session_key),
+            escape_sql_text(chat_id),
+            escape_sql_text(channel),
+            escape_sql_text(session_key),
+            escape_sql_text(default_provider),
+            escape_sql_text(default_model),
+            now,
+            now,
+            now,
+            escape_sql_text(&jsonl_path_str)
+        );
+        self.conn
+            .execute(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        self.get_session(session_key).await
+    }
+
+    async fn set_active_session(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        active_session_key: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let sql = format!(
+            "UPDATE sessions
+             SET chat_id = '{}',
+                 channel = '{}',
+                 updated_at_ms = {},
+                 active_session_key = '{}'
+             WHERE session_key = '{}'",
+            escape_sql_text(chat_id),
+            escape_sql_text(channel),
+            now_ms(),
+            escape_sql_text(active_session_key),
+            escape_sql_text(session_key)
+        );
+        let affected = self
+            .conn
+            .execute(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        if affected == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting active_session_key"
+            )));
+        }
+        self.get_session(session_key).await
+    }
+
+    async fn set_model_provider(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        model_provider: &str,
+        model: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let sql = format!(
+            "UPDATE sessions
+             SET chat_id = '{}',
+                 channel = '{}',
+                 updated_at_ms = {},
+                 model_provider = '{}',
+                 model = '{}'
+             WHERE session_key = '{}'",
+            escape_sql_text(chat_id),
+            escape_sql_text(channel),
+            now_ms(),
+            escape_sql_text(model_provider),
+            escape_sql_text(model),
+            escape_sql_text(session_key)
+        );
+        let affected = self
+            .conn
+            .execute(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        if affected == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting model_provider"
+            )));
+        }
+        self.get_session(session_key).await
+    }
+
+    async fn set_model(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        model: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let sql = format!(
+            "UPDATE sessions
+             SET chat_id = '{}',
+                 channel = '{}',
+                 updated_at_ms = {},
+                 model = '{}'
+             WHERE session_key = '{}'",
+            escape_sql_text(chat_id),
+            escape_sql_text(channel),
+            now_ms(),
+            escape_sql_text(model),
+            escape_sql_text(session_key)
+        );
+        let affected = self
+            .conn
+            .execute(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        if affected == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting model"
+            )));
+        }
+        self.get_session(session_key).await
+    }
+
     async fn list_sessions(
         &self,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let sql = format!(
-            "SELECT session_key, chat_id, channel, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              ORDER BY updated_at_ms DESC
              LIMIT {} OFFSET {}",
@@ -678,11 +852,14 @@ fn row_to_session_index(row: &Row) -> Result<SessionIndex, StorageError> {
         session_key: value_to_string(row.get_value(0).map_err(StorageError::backend)?)?,
         chat_id: value_to_string(row.get_value(1).map_err(StorageError::backend)?)?,
         channel: value_to_string(row.get_value(2).map_err(StorageError::backend)?)?,
-        created_at_ms: value_to_i64(row.get_value(3).map_err(StorageError::backend)?)?,
-        updated_at_ms: value_to_i64(row.get_value(4).map_err(StorageError::backend)?)?,
-        last_message_at_ms: value_to_i64(row.get_value(5).map_err(StorageError::backend)?)?,
-        turn_count: value_to_i64(row.get_value(6).map_err(StorageError::backend)?)?,
-        jsonl_path: value_to_string(row.get_value(7).map_err(StorageError::backend)?)?,
+        active_session_key: value_to_opt_string(row.get_value(3).map_err(StorageError::backend)?),
+        model_provider: value_to_opt_string(row.get_value(4).map_err(StorageError::backend)?),
+        model: value_to_opt_string(row.get_value(5).map_err(StorageError::backend)?),
+        created_at_ms: value_to_i64(row.get_value(6).map_err(StorageError::backend)?)?,
+        updated_at_ms: value_to_i64(row.get_value(7).map_err(StorageError::backend)?)?,
+        last_message_at_ms: value_to_i64(row.get_value(8).map_err(StorageError::backend)?)?,
+        turn_count: value_to_i64(row.get_value(9).map_err(StorageError::backend)?)?,
+        jsonl_path: value_to_string(row.get_value(10).map_err(StorageError::backend)?)?,
     })
 }
 

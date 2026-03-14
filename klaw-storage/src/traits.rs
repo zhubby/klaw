@@ -31,6 +31,40 @@ pub trait SessionStorage: Send + Sync {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError>;
 
+    async fn get_or_create_session_state(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        default_provider: &str,
+        default_model: &str,
+    ) -> Result<SessionIndex, StorageError>;
+
+    async fn set_active_session(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        active_session_key: &str,
+    ) -> Result<SessionIndex, StorageError>;
+
+    async fn set_model_provider(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        model_provider: &str,
+        model: &str,
+    ) -> Result<SessionIndex, StorageError>;
+
+    async fn set_model(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        model: &str,
+    ) -> Result<SessionIndex, StorageError>;
+
     async fn list_sessions(
         &self,
         limit: i64,

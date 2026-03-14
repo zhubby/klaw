@@ -113,43 +113,42 @@ impl Tool for MemoryTool {
         json!({
             "type": "object",
             "description": "Memory operation request. Scope and retrieval strategy are auto-managed by runtime config to reduce argument complexity.",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["add", "search"],
-                    "description": "Operation to perform."
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Memory text content, required for add."
-                },
-                "metadata": {
-                    "type": "object",
-                    "description": "Optional structured metadata for filtering/traceability.",
-                    "additionalProperties": true
-                },
-                "pinned": {
-                    "type": "boolean",
-                    "description": "Pinned flag for add.",
-                    "default": false
-                },
-                "query": {
-                    "type": "string",
-                    "description": "Search query text, required for search."
-                }
-            },
-            "required": ["action"],
             "oneOf": [
                 {
-                    "properties": { "action": { "const": "add" } },
-                    "required": ["action", "content"]
+                    "description": "Add one memory record to the current session scope.",
+                    "properties": {
+                        "action": { "const": "add" },
+                        "content": {
+                            "type": "string",
+                            "description": "Memory text content."
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "description": "Optional structured metadata for filtering/traceability.",
+                            "additionalProperties": true
+                        },
+                        "pinned": {
+                            "type": "boolean",
+                            "description": "Pinned flag for add.",
+                            "default": false
+                        }
+                    },
+                    "required": ["action", "content"],
+                    "additionalProperties": false
                 },
                 {
-                    "properties": { "action": { "const": "search" } },
-                    "required": ["action", "query"]
+                    "description": "Search memory records in the current session scope.",
+                    "properties": {
+                        "action": { "const": "search" },
+                        "query": {
+                            "type": "string",
+                            "description": "Search query text."
+                        }
+                    },
+                    "required": ["action", "query"],
+                    "additionalProperties": false
                 }
-            ],
-            "additionalProperties": false
+            ]
         })
     }
 
