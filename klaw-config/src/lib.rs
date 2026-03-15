@@ -77,6 +77,8 @@ pub struct DingtalkConfig {
     pub show_reasoning: bool,
     #[serde(default)]
     pub allowlist: Vec<String>,
+    #[serde(default)]
+    pub proxy: DingtalkProxyConfig,
 }
 
 impl Default for DingtalkConfig {
@@ -89,6 +91,23 @@ impl Default for DingtalkConfig {
             bot_title: default_dingtalk_bot_title(),
             show_reasoning: false,
             allowlist: Vec::new(),
+            proxy: DingtalkProxyConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DingtalkProxyConfig {
+    pub enabled: bool,
+    pub url: String,
+}
+
+impl Default for DingtalkProxyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: String::new(),
         }
     }
 }

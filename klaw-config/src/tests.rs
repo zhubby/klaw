@@ -440,6 +440,8 @@ allowlist = ["u123", "u456"]
         account.allowlist,
         vec!["u123".to_string(), "u456".to_string()]
     );
+    assert!(!account.proxy.enabled);
+    assert!(account.proxy.url.is_empty());
 }
 
 #[test]
@@ -533,6 +535,7 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             bot_title: "Ops".to_string(),
             show_reasoning: false,
             allowlist: vec![],
+            proxy: DingtalkProxyConfig::default(),
         },
         DingtalkConfig {
             id: "ops".to_string(),
@@ -542,6 +545,7 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             bot_title: "Ops2".to_string(),
             show_reasoning: false,
             allowlist: vec![],
+            proxy: DingtalkProxyConfig::default(),
         },
     ];
 
@@ -560,10 +564,53 @@ fn validate_fails_when_enabled_dingtalk_channel_missing_secret() {
         bot_title: "Ops".to_string(),
         show_reasoning: false,
         allowlist: vec![],
+        proxy: DingtalkProxyConfig::default(),
     }];
 
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("channels.dingtalk.client_secret"));
+}
+
+#[test]
+fn validate_fails_when_enabled_dingtalk_proxy_missing_url() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.dingtalk = vec![DingtalkConfig {
+        id: "ops".to_string(),
+        enabled: true,
+        client_id: "client-a".to_string(),
+        client_secret: "secret-a".to_string(),
+        bot_title: "Ops".to_string(),
+        show_reasoning: false,
+        allowlist: vec![],
+        proxy: DingtalkProxyConfig {
+            enabled: true,
+            url: String::new(),
+        },
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("channels.dingtalk.proxy.url"));
+}
+
+#[test]
+fn validate_fails_when_enabled_dingtalk_proxy_has_invalid_scheme() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.dingtalk = vec![DingtalkConfig {
+        id: "ops".to_string(),
+        enabled: true,
+        client_id: "client-a".to_string(),
+        client_secret: "secret-a".to_string(),
+        bot_title: "Ops".to_string(),
+        show_reasoning: false,
+        allowlist: vec![],
+        proxy: DingtalkProxyConfig {
+            enabled: true,
+            url: "socks5://127.0.0.1:1080".to_string(),
+        },
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("proxy url scheme must be http or https"));
 }
 
 #[test]

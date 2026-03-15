@@ -387,6 +387,24 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
         require_non_empty(&account.client_id, "channels.dingtalk.client_id")?;
         require_non_empty(&account.client_secret, "channels.dingtalk.client_secret")?;
         require_non_empty(&account.bot_title, "channels.dingtalk.bot_title")?;
+        if account.proxy.enabled {
+            require_non_empty(&account.proxy.url, "channels.dingtalk.proxy.url")?;
+            let parsed = url::Url::parse(account.proxy.url.trim()).map_err(|err| {
+                ConfigError::InvalidConfig(format!(
+                    "channels.dingtalk '{}' has invalid proxy url '{}': {}",
+                    account.id,
+                    account.proxy.url.trim(),
+                    err
+                ))
+            })?;
+            let scheme = parsed.scheme();
+            if scheme != "http" && scheme != "https" {
+                return Err(ConfigError::InvalidConfig(format!(
+                    "channels.dingtalk '{}' proxy url scheme must be http or https",
+                    account.id
+                )));
+            }
+        }
     }
     for channel in &channels.disable_session_commands_for {
         require_non_empty(channel, "channels.disable_session_commands_for")?;

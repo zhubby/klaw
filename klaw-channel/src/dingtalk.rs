@@ -7,8 +7,12 @@ use klaw_archive::{
 use klaw_core::{MediaReference, MediaSourceKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::OnceLock;
+use std::time::Instant;
+use tokio::sync::watch;
 use tokio::time::{self, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{debug, info, warn};
@@ -23,6 +27,9 @@ const OAPI_ASR_TRANSLATE_PATH: &str = "/topapi/asr/voice/translate";
 const INLINE_MEDIA_MAX_BYTES: usize = 20 * 1024 * 1024;
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const WS_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const EVENT_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
+const EVENT_DEDUP_MAX_ENTRIES: usize = 20_000;
 const APPROVAL_APPROVE_ACTION: &str = "approve";
 const APPROVAL_REJECT_ACTION: &str = "reject";
 static RUSTLS_PROVIDER_INSTALLED: OnceLock<()> = OnceLock::new();
@@ -36,6 +43,7 @@ pub struct DingtalkChannelConfig {
     pub bot_title: String,
     pub show_reasoning: bool,
     pub allowlist: Vec<String>,
+    pub proxy: DingtalkProxyConfig,
 }
 
 impl Default for DingtalkChannelConfig {
@@ -47,6 +55,23 @@ impl Default for DingtalkChannelConfig {
             bot_title: "Klaw".to_string(),
             show_reasoning: false,
             allowlist: Vec::new(),
+            proxy: DingtalkProxyConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DingtalkProxyConfig {
+    pub enabled: bool,
+    pub url: String,
+}
+
+impl Default for DingtalkProxyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: String::new(),
         }
     }
 }
@@ -55,16 +80,17 @@ impl Default for DingtalkChannelConfig {
 pub struct DingtalkChannel {
     config: DingtalkChannelConfig,
     client: DingtalkApiClient,
-    seen_event_ids: HashSet<String>,
+    event_deduper: EventDeduper,
 }
 
 impl DingtalkChannel {
-    pub fn new(config: DingtalkChannelConfig) -> Self {
-        Self {
+    pub fn new(config: DingtalkChannelConfig) -> ChannelResult<Self> {
+        let client = DingtalkApiClient::new(&config.proxy)?;
+        Ok(Self {
             config,
-            client: DingtalkApiClient::new(),
-            seen_event_ids: HashSet::new(),
-        }
+            client,
+            event_deduper: EventDeduper::new(EVENT_DEDUP_TTL, EVENT_DEDUP_MAX_ENTRIES),
+        })
     }
 
     fn validate_config(&self) -> ChannelResult<()> {
@@ -76,20 +102,21 @@ impl DingtalkChannel {
         }
         Ok(())
     }
-}
 
-#[async_trait::async_trait(?Send)]
-impl Channel for DingtalkChannel {
-    fn name(&self) -> &'static str {
-        "dingtalk"
-    }
-
-    async fn run(&mut self, runtime: &dyn ChannelRuntime) -> ChannelResult<()> {
+    pub async fn run_until_shutdown(
+        &mut self,
+        runtime: &dyn ChannelRuntime,
+        shutdown: &mut watch::Receiver<bool>,
+    ) -> ChannelResult<()> {
         self.validate_config()?;
         ensure_rustls_crypto_provider();
         info!("dingtalk channel started");
 
         loop {
+            if *shutdown.borrow() {
+                info!("dingtalk shutdown requested before reconnect");
+                return Ok(());
+            }
             let ticket = match self
                 .client
                 .open_stream_connection(&self.config.client_id, &self.config.client_secret)
@@ -98,7 +125,15 @@ impl Channel for DingtalkChannel {
                 Ok(ticket) => ticket,
                 Err(err) => {
                     warn!(error = %err, "failed to open dingtalk stream connection");
-                    time::sleep(RECONNECT_DELAY).await;
+                    tokio::select! {
+                        _ = time::sleep(RECONNECT_DELAY) => {}
+                        changed = shutdown.changed() => {
+                            if changed.is_ok() && *shutdown.borrow() {
+                                info!("dingtalk shutdown requested while reconnect waiting");
+                                return Ok(());
+                            }
+                        }
+                    }
                     continue;
                 }
             };
@@ -113,7 +148,15 @@ impl Channel for DingtalkChannel {
                         timeout_secs = CONNECT_TIMEOUT.as_secs(),
                         "dingtalk stream connection timed out"
                     );
-                    time::sleep(RECONNECT_DELAY).await;
+                    tokio::select! {
+                        _ = time::sleep(RECONNECT_DELAY) => {}
+                        changed = shutdown.changed() => {
+                            if changed.is_ok() && *shutdown.borrow() {
+                                info!("dingtalk shutdown requested while reconnect waiting");
+                                return Ok(());
+                            }
+                        }
+                    }
                     continue;
                 }
             };
@@ -127,14 +170,51 @@ impl Channel for DingtalkChannel {
                     );
                     let mut cron_tick = time::interval(runtime.cron_tick_interval());
                     let mut runtime_tick = time::interval(runtime.runtime_tick_interval());
+                    let mut keepalive_tick = time::interval(WS_KEEPALIVE_INTERVAL);
+                    let mut cron_job: Option<Pin<Box<dyn Future<Output = ()> + '_>>> = None;
+                    let mut runtime_job: Option<Pin<Box<dyn Future<Output = ()> + '_>>> = None;
 
                     loop {
                         tokio::select! {
+                            changed = shutdown.changed() => {
+                                if changed.is_ok() && *shutdown.borrow() {
+                                    info!("dingtalk shutdown requested, closing websocket");
+                                    if let Err(err) = ws.send(Message::Close(None)).await {
+                                        warn!(error = %err, "failed to send dingtalk websocket close frame");
+                                    }
+                                    let _ = time::timeout(Duration::from_secs(1), ws.next()).await;
+                                    return Ok(());
+                                }
+                            }
+                            _ = async {
+                                if let Some(job) = cron_job.as_mut() {
+                                    job.await;
+                                }
+                            }, if cron_job.is_some() => {
+                                cron_job = None;
+                            }
+                            _ = async {
+                                if let Some(job) = runtime_job.as_mut() {
+                                    job.await;
+                                }
+                            }, if runtime_job.is_some() => {
+                                runtime_job = None;
+                            }
                             _ = cron_tick.tick() => {
-                                runtime.on_cron_tick().await;
+                                if cron_job.is_none() {
+                                    cron_job = Some(Box::pin(runtime.on_cron_tick()));
+                                }
                             }
                             _ = runtime_tick.tick() => {
-                                runtime.on_runtime_tick().await;
+                                if runtime_job.is_none() {
+                                    runtime_job = Some(Box::pin(runtime.on_runtime_tick()));
+                                }
+                            }
+                            _ = keepalive_tick.tick() => {
+                                if let Err(err) = ws.send(Message::Ping(Vec::new().into())).await {
+                                    warn!(error = %err, "failed to send dingtalk websocket keepalive ping");
+                                    break;
+                                }
                             }
                             message = ws.next() => {
                                 let Some(message) = message else {
@@ -183,8 +263,28 @@ impl Channel for DingtalkChannel {
                 }
             }
 
-            time::sleep(RECONNECT_DELAY).await;
+            tokio::select! {
+                _ = time::sleep(RECONNECT_DELAY) => {}
+                changed = shutdown.changed() => {
+                    if changed.is_ok() && *shutdown.borrow() {
+                        info!("dingtalk shutdown requested while reconnect waiting");
+                        return Ok(());
+                    }
+                }
+            }
         }
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl Channel for DingtalkChannel {
+    fn name(&self) -> &'static str {
+        "dingtalk"
+    }
+
+    async fn run(&mut self, runtime: &dyn ChannelRuntime) -> ChannelResult<()> {
+        let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        self.run_until_shutdown(runtime, &mut shutdown_rx).await
     }
 }
 
@@ -271,7 +371,7 @@ impl DingtalkChannel {
 
         if let Some(card_callback) = parse_card_callback_event(&payload) {
             if let Some(event_id) = card_callback.event_id.as_deref() {
-                if !self.seen_event_ids.insert(event_id.to_string()) {
+                if !self.event_deduper.insert_if_new(event_id) {
                     debug!(event_id, "ignoring duplicated dingtalk card callback");
                     return send_ack(ws, envelope, "").await;
                 }
@@ -323,11 +423,7 @@ impl DingtalkChannel {
                 }
                 Ok(None) => {}
                 Err(err) => {
-                    warn!(
-                        chat_id = card_callback.chat_id.as_str(),
-                        error = %err,
-                        "dingtalk card callback submit failed"
-                    );
+                    return Err(err);
                 }
             }
 
@@ -346,7 +442,7 @@ impl DingtalkChannel {
             return send_ack(ws, envelope, "").await;
         }
 
-        if !self.seen_event_ids.insert(inbound.event_id.clone()) {
+        if !self.event_deduper.insert_if_new(inbound.event_id.as_str()) {
             debug!(
                 event_id = inbound.event_id.as_str(),
                 "ignoring duplicated dingtalk event"
@@ -447,11 +543,7 @@ impl DingtalkChannel {
             }
             Ok(None) => {}
             Err(err) => {
-                warn!(
-                    chat_id = inbound.chat_id.as_str(),
-                    error = %err,
-                    "dingtalk runtime submit failed"
-                );
+                return Err(err);
             }
         }
 
@@ -667,10 +759,17 @@ struct StreamConnectionTicket {
 }
 
 impl DingtalkApiClient {
-    fn new() -> Self {
-        Self {
-            http: reqwest::Client::new(),
+    fn new(proxy: &DingtalkProxyConfig) -> ChannelResult<Self> {
+        let mut builder = reqwest::Client::builder().no_proxy();
+        if proxy.enabled {
+            let proxy_url = proxy.url.trim();
+            if proxy_url.is_empty() {
+                return Err("dingtalk proxy.url is required when proxy.enabled=true".into());
+            }
+            builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
         }
+        let http = builder.build()?;
+        Ok(Self { http })
     }
 
     async fn open_stream_connection(
@@ -1062,6 +1161,57 @@ struct CardCallbackEvent {
     sender_id: String,
     chat_id: String,
     session_webhook: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct EventDeduper {
+    ttl: Duration,
+    max_entries: usize,
+    seen_at: HashMap<String, Instant>,
+    order: VecDeque<(Instant, String)>,
+}
+
+impl EventDeduper {
+    fn new(ttl: Duration, max_entries: usize) -> Self {
+        Self {
+            ttl,
+            max_entries: max_entries.max(1),
+            seen_at: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn insert_if_new(&mut self, event_id: &str) -> bool {
+        self.prune();
+        if self.seen_at.contains_key(event_id) {
+            return false;
+        }
+        let now = Instant::now();
+        let event_id = event_id.to_string();
+        self.seen_at.insert(event_id.clone(), now);
+        self.order.push_back((now, event_id));
+        self.prune();
+        true
+    }
+
+    fn prune(&mut self) {
+        let now = Instant::now();
+        while let Some((seen_at, event_id)) = self.order.front().cloned() {
+            let expired = now.duration_since(seen_at) >= self.ttl;
+            let overflowed = self.seen_at.len() > self.max_entries;
+            if !expired && !overflowed {
+                break;
+            }
+            self.order.pop_front();
+            if self
+                .seen_at
+                .get(event_id.as_str())
+                .is_some_and(|recorded_at| *recorded_at == seen_at)
+            {
+                self.seen_at.remove(event_id.as_str());
+            }
+        }
+    }
 }
 
 async fn send_ack(
@@ -1671,8 +1821,7 @@ fn normalize_uuid_token(token: &str) -> Option<String> {
         ch.is_whitespace()
             || matches!(
                 ch,
-                ','
-                    | '.'
+                ',' | '.'
                     | ';'
                     | ':'
                     | '，'
@@ -1755,10 +1904,12 @@ mod tests {
         extract_shell_approval_id, is_sender_allowed, parse_card_callback_event,
         parse_inbound_event, parse_stream_data, render_agent_output, resolve_chat_id,
         resolve_download_code_candidates, ApprovalAction, CardCallbackEvent, DingtalkApiClient,
-        InboundEvent,
+        EventDeduper, InboundEvent,
     };
     use crate::ChannelResponse;
     use std::collections::BTreeMap;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn parse_inbound_text_event_reads_dingtalk_shape() {
@@ -1892,6 +2043,30 @@ mod tests {
             parsed.get("text").and_then(|v| v.get("content")),
             Some(&serde_json::json!("hello"))
         );
+    }
+
+    #[test]
+    fn event_deduper_rejects_duplicates_within_ttl() {
+        let mut deduper = EventDeduper::new(Duration::from_millis(30), 10);
+        assert!(deduper.insert_if_new("evt-1"));
+        assert!(!deduper.insert_if_new("evt-1"));
+    }
+
+    #[test]
+    fn event_deduper_expires_entries_after_ttl() {
+        let mut deduper = EventDeduper::new(Duration::from_millis(5), 10);
+        assert!(deduper.insert_if_new("evt-1"));
+        thread::sleep(Duration::from_millis(8));
+        assert!(deduper.insert_if_new("evt-1"));
+    }
+
+    #[test]
+    fn event_deduper_evicts_oldest_when_capacity_reached() {
+        let mut deduper = EventDeduper::new(Duration::from_secs(5), 2);
+        assert!(deduper.insert_if_new("evt-1"));
+        assert!(deduper.insert_if_new("evt-2"));
+        assert!(deduper.insert_if_new("evt-3"));
+        assert!(deduper.insert_if_new("evt-1"));
     }
 
     #[test]

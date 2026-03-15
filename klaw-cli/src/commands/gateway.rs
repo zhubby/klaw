@@ -1,10 +1,9 @@
 use clap::Args;
-use klaw_channel::{
-    dingtalk::{DingtalkChannel, DingtalkChannelConfig},
-    Channel,
-};
+use klaw_channel::dingtalk::{DingtalkChannel, DingtalkChannelConfig, DingtalkProxyConfig};
 use klaw_config::AppConfig;
 use std::sync::Arc;
+use tokio::sync::watch;
+use tokio::time;
 
 use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
@@ -35,23 +34,44 @@ impl GatewayCommand {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async move {
+                let (shutdown_tx, shutdown_rx) = watch::channel(false);
+                let mut dingtalk_handles = Vec::new();
                 for channel_config in dingtalk_configs.into_iter().filter(|cfg| cfg.enabled) {
                     let adapter = Arc::clone(&adapter);
-                    tokio::task::spawn_local(async move {
+                    let mut channel_shutdown = shutdown_rx.clone();
+                    let handle = tokio::task::spawn_local(async move {
                         let account_id = channel_config.id.clone();
-                        let mut channel = DingtalkChannel::new(DingtalkChannelConfig {
+                        let channel_config = DingtalkChannelConfig {
                             account_id: channel_config.id,
                             client_id: channel_config.client_id,
                             client_secret: channel_config.client_secret,
                             bot_title: channel_config.bot_title,
                             show_reasoning: channel_config.show_reasoning,
                             allowlist: channel_config.allowlist,
-                        });
+                            proxy: DingtalkProxyConfig {
+                                enabled: channel_config.proxy.enabled,
+                                url: channel_config.proxy.url,
+                            },
+                        };
+                        let mut channel = match DingtalkChannel::new(channel_config) {
+                            Ok(channel) => channel,
+                            Err(err) => {
+                                warn!(
+                                    account_id = account_id.as_str(),
+                                    error = %err,
+                                    "failed to initialize dingtalk channel"
+                                );
+                                return;
+                            }
+                        };
                         info!(
                             account_id = account_id.as_str(),
                             "starting dingtalk channel"
                         );
-                        if let Err(err) = channel.run(adapter.as_ref()).await {
+                        if let Err(err) = channel
+                            .run_until_shutdown(adapter.as_ref(), &mut channel_shutdown)
+                            .await
+                        {
                             warn!(
                                 account_id = account_id.as_str(),
                                 error = %err,
@@ -59,6 +79,7 @@ impl GatewayCommand {
                             );
                         }
                     });
+                    dingtalk_handles.push(handle);
                 }
 
                 let mut gateway_task = tokio::task::spawn_local(async move {
@@ -73,8 +94,14 @@ impl GatewayCommand {
                     }
                     _ = shutdown_signal() => {
                         info!("shutdown signal received, stopping gateway");
+                        let _ = shutdown_tx.send(true);
                         gateway_task.abort();
                         let _ = gateway_task.await;
+                        for handle in dingtalk_handles {
+                            if let Err(err) = time::timeout(std::time::Duration::from_secs(2), handle).await {
+                                warn!(error = %err, "timed out waiting dingtalk channel to stop");
+                            }
+                        }
                         Ok(())
                     }
                 };

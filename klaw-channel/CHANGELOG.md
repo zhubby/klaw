@@ -19,6 +19,17 @@
 - `dingtalk` 通道新增 shell 审批卡片流：检测 `approval_id` 时优先发送 ActionCard（批准/拒绝按钮），并支持解析卡片回调事件转成 `/approve`、`/reject` 会话命令
 - `dingtalk` 审批卡片触发条件现在同时支持文本 `approval_id=...` 与 JSON `approval.id` 形态（兼容独立 approval tool 输出）
 
+### Fixed
+
+- `dingtalk` websocket 主循环改为“收包优先 + 后台 tick 协作轮询”，避免 `on_cron_tick`/`on_runtime_tick` 阻塞导致的收包延迟和连接重置
+- `dingtalk` 事件去重从无界 `HashSet` 改为带 TTL 与容量上限的去重器，避免长期运行内存持续增长
+- `dingtalk` 在 runtime `submit` 失败时不再回 ACK，避免先去重再 ACK 导致失败事件被永久吞掉
+
+### Changed
+
+- `dingtalk` HTTP 客户端默认禁用系统代理；仅在 `proxy.enabled=true` 且提供 `proxy.url` 时显式走代理
+- `dingtalk` 通道新增可取消运行入口，接收到 shutdown 信号时会主动发送 websocket `Close` 帧并等待短暂握手回包
+
 ## 2026-03-13
 
 ### Added

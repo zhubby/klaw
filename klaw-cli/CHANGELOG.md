@@ -11,6 +11,8 @@
 - `/approve <approval_id>` now attempts immediate shell execution after approval and returns execution output/failure hint in the same response
 - `/approve <approval_id>` now re-enters `submit_and_get_output` after shell execution, so the model can produce a final user-facing response from tool output
 - `submit_and_get_output` 增加媒体引用参数，并将 channel 传入的 `media_references` 写入 `InboundMessage`，避免 runtime 丢失入站媒体
+- `klaw gateway` 现在支持按 `channels.dingtalk[].proxy` 初始化 dingtalk 通道代理策略；默认禁用代理
+- `klaw gateway` 收到退出信号时会先广播 dingtalk 通道 shutdown，再等待通道优雅关闭 websocket（超时后记录警告）
 
 ## 2026-03-14
 

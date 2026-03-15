@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-03-15
+
+### Added
+
+- `channels.dingtalk` 新增 `proxy` 配置：`proxy.enabled`（默认 `false`）与 `proxy.url`
+
+### Changed
+
+- `channels.dingtalk.proxy.enabled=true` 时会校验 `proxy.url` 非空且必须为 `http/https` URL
+
 ## 2026-03-14
 
 ### Added
