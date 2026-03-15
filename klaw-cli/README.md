@@ -35,6 +35,7 @@
 
 - `stdio` 和 `gateway` 复用 runtime bundle 构建逻辑
 - runtime 内置通用 IM 会话命令路由：`/help`、`/new`、`/model-provider`、`/model`
+- runtime 内置审批命令：`/approve <approval_id>`、`/reject <approval_id>`
 - 普通消息默认按 Base Session -> Active Session 路由，可在会话中途切换 provider/model 并持久化
 - `stdio` 启动时会在 runtime 与 MCP 完全就绪后打印 ASCII `KLAW` 标记，以及版本、skills、tools、MCP 加载摘要
 - `stdio` 默认会将 tracing 日志写入 `~/.klaw/logs/stdio.log`，避免后台日志覆盖当前输入中的 prompt

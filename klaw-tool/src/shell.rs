@@ -1,6 +1,8 @@
+use crate::approval::{ApprovalCreateInput, ApprovalStoreService};
+use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ShellApprovalPolicy};
-use klaw_storage::{DefaultSessionStore, NewApprovalRecord, SessionStorage};
+use klaw_storage::{DefaultSessionStore, SessionStorage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -10,9 +12,6 @@ use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use tokio::{process::Command, time::timeout};
 use tracing::info;
-use uuid::Uuid;
-
-use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const META_WORKSPACE: &str = "workspace";
@@ -233,29 +232,29 @@ impl ShellTool {
         }
 
         if let Some(store) = self.store.as_ref() {
-            let approval_id = Uuid::new_v4().to_string();
-            let now_ms = Self::now_ms();
-            let approval = NewApprovalRecord {
-                id: approval_id.clone(),
-                session_key: session_key.to_string(),
-                tool_name: "shell".to_string(),
-                command_hash,
-                command_preview: Self::command_preview(command),
-                command_text: command.trim().to_string(),
-                risk_level: match risk {
-                    CommandRisk::Safe => "safe".to_string(),
-                    CommandRisk::Mutating => "mutating".to_string(),
-                    CommandRisk::Destructive => "destructive".to_string(),
-                },
-                requested_by: "agent".to_string(),
-                justification: None,
-                expires_at_ms: now_ms + (APPROVAL_TTL_MINUTES * 60_000),
-            };
-            store.create_approval(&approval).await.map_err(|err| {
-                ToolError::ExecutionFailed(format!("failed to create approval request: {err}"))
-            })?;
+            let approval = ApprovalStoreService::new(store.clone())
+                .create(ApprovalCreateInput {
+                    session_key: session_key.to_string(),
+                    tool_name: "shell".to_string(),
+                    command_text: command.trim().to_string(),
+                    command_preview: Some(Self::command_preview(command)),
+                    command_hash: Some(command_hash),
+                    risk_level: Some(
+                        match risk {
+                            CommandRisk::Safe => "safe",
+                            CommandRisk::Mutating => "mutating",
+                            CommandRisk::Destructive => "destructive",
+                        }
+                        .to_string(),
+                    ),
+                    requested_by: Some("agent".to_string()),
+                    justification: None,
+                    expires_in_minutes: Some(APPROVAL_TTL_MINUTES),
+                })
+                .await?;
             return Err(ToolError::ExecutionFailed(format!(
-                "approval required: approval_id={approval_id}; approve it then retry with metadata `shell.approval_id`"
+                "approval required: approval_id={}; approve it then retry with metadata `shell.approval_id`",
+                approval.id
             )));
         }
 

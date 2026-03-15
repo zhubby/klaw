@@ -5,7 +5,9 @@
 ### Changed
 
 - runtime tool registration now injects `session_store` into `ShellTool`, enabling persistent approval request creation/validation for shell commands
+- runtime now also registers `ApprovalTool` with shared `session_store`, enabling generic approval lifecycle operations via tool calls
 - added `/approve <approval_id>` channel command to approve pending shell requests within the current/base session scope and return retry guidance
+- added `/reject <approval_id>` channel command to reject pending shell requests within the current/base session scope
 - `/approve <approval_id>` now attempts immediate shell execution after approval and returns execution output/failure hint in the same response
 - `/approve <approval_id>` now re-enters `submit_and_get_output` after shell execution, so the model can produce a final user-facing response from tool output
 - `submit_and_get_output` 增加媒体引用参数，并将 channel 传入的 `media_references` 写入 `InboundMessage`，避免 runtime 丢失入站媒体

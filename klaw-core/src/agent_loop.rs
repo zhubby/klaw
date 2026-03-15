@@ -272,6 +272,14 @@ impl AgentLoop {
 
         let conversation_history = extract_conversation_history(&msg.payload.metadata);
         let user_media = extract_user_media(&msg.payload);
+        if !msg.payload.media_references.is_empty() {
+            info!(
+                message_id = %msg.header.message_id,
+                media_references = msg.payload.media_references.len(),
+                user_media = user_media.len(),
+                "agent inbound media summary"
+            );
+        }
         let requested_provider_id = msg
             .payload
             .metadata
@@ -675,6 +683,13 @@ fn extract_user_media(inbound: &InboundMessage) -> Vec<LlmMedia> {
                         .map(ToOwned::to_owned)
                 })
                 .filter(|value| !value.trim().is_empty());
+            let is_image = mime_type
+                .as_deref()
+                .map(|value| value.trim().to_ascii_lowercase().starts_with("image/"))
+                .unwrap_or_else(|| url.trim().to_ascii_lowercase().starts_with("data:image/"));
+            if !is_image {
+                return None;
+            }
             Some(LlmMedia { mime_type, url })
         })
         .collect()
@@ -690,7 +705,11 @@ mod tests {
     use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
     use klaw_tool::ToolRegistry;
     use serde_json::json;
-    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     #[test]
     fn heartbeat_metadata_is_passthrough_only_for_heartbeat_keys() {
@@ -732,6 +751,42 @@ mod tests {
         ) -> Result<LlmResponse, LlmError> {
             Ok(LlmResponse {
                 content: format!("provider={} model={}", self.id, model.unwrap_or("none")),
+                reasoning: None,
+                tool_calls: Vec::new(),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct CaptureMediaProvider {
+        user_media_count: Arc<Mutex<Option<usize>>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for CaptureMediaProvider {
+        fn name(&self) -> &str {
+            "capture-media"
+        }
+
+        fn default_model(&self) -> &str {
+            "capture-media-v1"
+        }
+
+        async fn chat(
+            &self,
+            messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            let user_media = messages
+                .iter()
+                .find(|message| message.role == "user")
+                .map(|message| message.media.len())
+                .unwrap_or_default();
+            *self.user_media_count.lock().expect("mutex poisoned") = Some(user_media);
+            Ok(LlmResponse {
+                content: "ok".to_string(),
                 reasoning: None,
                 tool_calls: Vec::new(),
             })
@@ -796,5 +851,69 @@ mod tests {
             response.payload.content,
             "provider=anthropic model=claude-opus-4"
         );
+    }
+
+    #[tokio::test]
+    async fn process_message_only_forwards_image_media_to_provider() {
+        let capture = Arc::new(CaptureMediaProvider::default());
+        let provider = Arc::clone(&capture) as Arc<dyn LlmProvider>;
+        let agent = AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 1,
+                max_tool_calls: 1,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(1),
+                tool_timeout: Duration::from_secs(1),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 1,
+                lock_ttl: Duration::from_secs(1),
+            },
+            Arc::clone(&provider),
+            "capture-media".to_string(),
+            "capture-media-v1".to_string(),
+            ToolRegistry::default(),
+        )
+        .with_provider_registry(BTreeMap::from([("capture-media".to_string(), provider)]));
+
+        let inbound = crate::protocol::Envelope {
+            header: EnvelopeHeader::new("im:chat-2"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "im".to_string(),
+                sender_id: "u1".to_string(),
+                chat_id: "chat-2".to_string(),
+                session_key: "im:chat-2".to_string(),
+                content: "hello".to_string(),
+                media_references: vec![
+                    crate::MediaReference {
+                        source_kind: crate::MediaSourceKind::ChannelInbound,
+                        filename: None,
+                        mime_type: Some("image/png".to_string()),
+                        remote_url: Some("data:image/png;base64,AAAA".to_string()),
+                        bytes: None,
+                        message_id: None,
+                        metadata: BTreeMap::new(),
+                    },
+                    crate::MediaReference {
+                        source_kind: crate::MediaSourceKind::ChannelInbound,
+                        filename: None,
+                        mime_type: Some("audio/wav".to_string()),
+                        remote_url: Some("data:audio/wav;base64,AAAA".to_string()),
+                        bytes: None,
+                        message_id: None,
+                        metadata: BTreeMap::new(),
+                    },
+                ],
+                metadata: BTreeMap::new(),
+            },
+        };
+        let _ = agent.process_message(inbound, false).await;
+        let captured_count = *capture
+            .user_media_count
+            .lock()
+            .expect("capture media mutex poisoned");
+        assert_eq!(captured_count, Some(1));
     }
 }

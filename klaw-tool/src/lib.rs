@@ -1,4 +1,5 @@
 pub mod apply_patch;
+pub mod approval;
 pub mod cron_manager;
 pub mod local_search;
 pub mod memory;
@@ -15,6 +16,7 @@ use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
 pub use apply_patch::ApplyPatchTool;
+pub use approval::ApprovalTool;
 pub use cron_manager::CronManagerTool;
 pub use local_search::LocalSearchTool;
 pub use memory::MemoryTool;

@@ -14,12 +14,17 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{debug, info, warn};
 
 const DINGTALK_OPEN_API_BASE: &str = "https://api.dingtalk.com";
+const DINGTALK_OAPI_BASE: &str = "https://oapi.dingtalk.com";
 const CONNECTION_OPEN_PATH: &str = "/v1.0/gateway/connections/open";
 const ACCESS_TOKEN_PATH: &str = "/v1.0/oauth2/accessToken";
 const MESSAGE_FILE_DOWNLOAD_PATH: &str = "/v1.0/robot/messageFiles/download";
-const INLINE_MEDIA_MAX_BYTES: usize = 8 * 1024 * 1024;
+const OAPI_MEDIA_UPLOAD_PATH: &str = "/media/upload";
+const OAPI_ASR_TRANSLATE_PATH: &str = "/topapi/asr/voice/translate";
+const INLINE_MEDIA_MAX_BYTES: usize = 20 * 1024 * 1024;
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const APPROVAL_APPROVE_ACTION: &str = "approve";
+const APPROVAL_REJECT_ACTION: &str = "reject";
 static RUSTLS_PROVIDER_INSTALLED: OnceLock<()> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -264,6 +269,71 @@ impl DingtalkChannel {
         };
         debug!(payload = ?payload, "received dingtalk raw subscription event");
 
+        if let Some(card_callback) = parse_card_callback_event(&payload) {
+            if let Some(event_id) = card_callback.event_id.as_deref() {
+                if !self.seen_event_ids.insert(event_id.to_string()) {
+                    debug!(event_id, "ignoring duplicated dingtalk card callback");
+                    return send_ack(ws, envelope, "").await;
+                }
+            }
+
+            if !is_sender_allowed(&self.config.allowlist, &card_callback.sender_id) {
+                warn!(
+                    sender = card_callback.sender_id.as_str(),
+                    "dingtalk sender blocked by allowlist"
+                );
+                return send_ack(ws, envelope, "").await;
+            }
+
+            let command = format!(
+                "/{} {}",
+                card_callback.action.as_command(),
+                card_callback.approval_id
+            );
+            let session_key = format!(
+                "dingtalk:{}:{}",
+                self.config.account_id, card_callback.chat_id
+            );
+            let maybe_output = runtime
+                .submit(ChannelRequest {
+                    channel: self.name().to_string(),
+                    input: command,
+                    session_key,
+                    chat_id: card_callback.chat_id.clone(),
+                    media_references: Vec::new(),
+                })
+                .await;
+
+            match maybe_output {
+                Ok(Some(output)) => {
+                    if let Some(webhook) = card_callback.session_webhook.as_deref() {
+                        let body = render_agent_output(&output, self.config.show_reasoning);
+                        if let Err(err) = self
+                            .client
+                            .send_session_webhook_markdown(webhook, &self.config.bot_title, &body)
+                            .await
+                        {
+                            warn!(
+                                chat_id = card_callback.chat_id.as_str(),
+                                error = %err,
+                                "failed to send dingtalk callback reply"
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    warn!(
+                        chat_id = card_callback.chat_id.as_str(),
+                        error = %err,
+                        "dingtalk card callback submit failed"
+                    );
+                }
+            }
+
+            return send_ack(ws, envelope, "").await;
+        }
+
         let Some(mut inbound) = parse_inbound_event(&payload) else {
             return send_ack(ws, envelope, "").await;
         };
@@ -287,6 +357,24 @@ impl DingtalkChannel {
         let session_key = format!("dingtalk:{}:{}", self.config.account_id, inbound.chat_id);
         self.materialize_media_references(&session_key, &mut inbound)
             .await;
+        let total_media = inbound.media_references.len();
+        let inline_media = inbound
+            .media_references
+            .iter()
+            .filter(|media| {
+                media
+                    .remote_url
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+            })
+            .count();
+        if total_media > 0 {
+            info!(
+                event_id = inbound.event_id.as_str(),
+                total_media, inline_media, "dingtalk inbound media materialized"
+            );
+        }
 
         let maybe_output = runtime
             .submit(ChannelRequest {
@@ -300,21 +388,61 @@ impl DingtalkChannel {
 
         match maybe_output {
             Ok(Some(output)) => {
-                let body = render_agent_output(&output, self.config.show_reasoning);
-                if let Err(err) = self
-                    .client
-                    .send_session_webhook_markdown(
-                        &inbound.session_webhook,
-                        &self.config.bot_title,
-                        &body,
-                    )
-                    .await
-                {
-                    warn!(
-                        chat_id = inbound.chat_id.as_str(),
-                        error = %err,
-                        "failed to send dingtalk reply"
+                if let Some(approval_id) = extract_shell_approval_id(&output.content) {
+                    let body = format!(
+                        "### 需要审批\n\n{}\n\n---\n审批单: `{}`\n\n点击按钮后将发送审批指令。",
+                        escape_markdown_for_action_card(&output.content),
+                        approval_id
                     );
+                    if let Err(err) = self
+                        .client
+                        .send_session_webhook_action_card(
+                            &inbound.session_webhook,
+                            "审批请求",
+                            &body,
+                            &approval_id,
+                        )
+                        .await
+                    {
+                        warn!(
+                            chat_id = inbound.chat_id.as_str(),
+                            error = %err,
+                            "failed to send dingtalk approval action card; fallback to markdown"
+                        );
+                        let markdown = render_agent_output(&output, self.config.show_reasoning);
+                        if let Err(err) = self
+                            .client
+                            .send_session_webhook_markdown(
+                                &inbound.session_webhook,
+                                &self.config.bot_title,
+                                &markdown,
+                            )
+                            .await
+                        {
+                            warn!(
+                                chat_id = inbound.chat_id.as_str(),
+                                error = %err,
+                                "failed to send dingtalk reply"
+                            );
+                        }
+                    }
+                } else {
+                    let body = render_agent_output(&output, self.config.show_reasoning);
+                    if let Err(err) = self
+                        .client
+                        .send_session_webhook_markdown(
+                            &inbound.session_webhook,
+                            &self.config.bot_title,
+                            &body,
+                        )
+                        .await
+                    {
+                        warn!(
+                            chat_id = inbound.chat_id.as_str(),
+                            error = %err,
+                            "failed to send dingtalk reply"
+                        );
+                    }
                 }
             }
             Ok(None) => {}
@@ -334,14 +462,10 @@ impl DingtalkChannel {
         if inbound.media_references.is_empty() {
             return;
         }
-        let has_downloadable_media = inbound.media_references.iter().any(|media| {
-            media
-                .metadata
-                .get("dingtalk.download_code")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty())
-        });
+        let has_downloadable_media = inbound
+            .media_references
+            .iter()
+            .any(|media| !resolve_download_code_candidates(&media.metadata).is_empty());
         if !has_downloadable_media {
             return;
         }
@@ -373,34 +497,81 @@ impl DingtalkChannel {
                 return;
             }
         };
+        let mut attempted_audio_asr = false;
 
         for media in &mut inbound.media_references {
-            let download_code = media
-                .metadata
-                .get("dingtalk.download_code")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
-            let Some(download_code) = download_code else {
+            let download_candidates = resolve_download_code_candidates(&media.metadata);
+            if download_candidates.is_empty() {
                 continue;
-            };
-
-            let bytes = match self
-                .client
-                .download_message_file(&access_token, &download_code)
-                .await
-            {
-                Ok(bytes) => bytes,
-                Err(err) => {
+            }
+            let mut bytes: Option<Vec<u8>> = None;
+            let mut selected_code_source: Option<&'static str> = None;
+            let mut last_download_error: Option<String> = None;
+            for (download_code, code_source) in download_candidates {
+                match self
+                    .client
+                    .download_message_file(
+                        &access_token,
+                        inbound.robot_code.as_str(),
+                        download_code.as_str(),
+                    )
+                    .await
+                {
+                    Ok(downloaded) => {
+                        bytes = Some(downloaded);
+                        selected_code_source = Some(code_source);
+                        break;
+                    }
+                    Err(err) => {
+                        last_download_error = Some(err.to_string());
+                        warn!(
+                            event_id = inbound.event_id.as_str(),
+                            code_source,
+                            error = %err,
+                            "failed to download dingtalk media content with candidate code"
+                        );
+                    }
+                }
+            }
+            let Some(bytes) = bytes else {
+                if let Some(error) = last_download_error {
                     warn!(
                         event_id = inbound.event_id.as_str(),
-                        error = %err,
-                        "failed to download dingtalk media content"
+                        error = error.as_str(),
+                        "failed to download dingtalk media content after trying all candidate codes"
                     );
-                    continue;
                 }
+                continue;
             };
+            let code_source = selected_code_source.unwrap_or("unknown");
+            media.metadata.insert(
+                "dingtalk.download_code_source".to_string(),
+                Value::String(code_source.to_string()),
+            );
+            if !attempted_audio_asr
+                && inbound.audio_recognition.is_none()
+                && matches!(inbound.msg_type.as_str(), "audio" | "voice")
+            {
+                attempted_audio_asr = true;
+                match self.client.transcribe_audio(&access_token, &bytes).await {
+                    Ok(transcript) => {
+                        info!(
+                            event_id = inbound.event_id.as_str(),
+                            transcript_chars = transcript.chars().count(),
+                            "dingtalk audio transcript generated via asr"
+                        );
+                        inbound.audio_recognition = Some(transcript.clone());
+                        inbound.text = transcript;
+                    }
+                    Err(err) => {
+                        warn!(
+                            event_id = inbound.event_id.as_str(),
+                            error = %err,
+                            "dingtalk asr transcript failed, keeping fallback audio summary"
+                        );
+                    }
+                }
+            }
 
             let metadata =
                 serde_json::to_value(media.metadata.clone()).unwrap_or_else(|_| Value::Null);
@@ -417,6 +588,15 @@ impl DingtalkChannel {
 
             match archive_service.ingest_bytes(ingest_input, &bytes).await {
                 Ok(record) => {
+                    info!(
+                        event_id = inbound.event_id.as_str(),
+                        archive_id = record.id.as_str(),
+                        storage_rel_path = record.storage_rel_path.as_str(),
+                        media_kind = record.media_kind.as_str(),
+                        mime_type = record.mime_type.as_deref().unwrap_or("unknown"),
+                        size_bytes = record.size_bytes,
+                        "dingtalk media archived"
+                    );
                     media.message_id = Some(inbound.event_id.clone());
                     if media.filename.is_none() {
                         media.filename = record.original_filename.clone();
@@ -553,6 +733,9 @@ impl DingtalkApiClient {
             .http
             .post(url)
             .json(&serde_json::json!({
+                "appKey": client_id,
+                "appSecret": client_secret,
+                // Keep compatibility fields for gateways that still accept clientId/clientSecret.
                 "clientId": client_id,
                 "clientSecret": client_secret,
             }))
@@ -581,16 +764,18 @@ impl DingtalkApiClient {
     async fn download_message_file(
         &self,
         access_token: &str,
+        robot_code: &str,
         download_code: &str,
     ) -> ChannelResult<Vec<u8>> {
-        let url = format!(
-            "{DINGTALK_OPEN_API_BASE}{MESSAGE_FILE_DOWNLOAD_PATH}?downloadCode={}",
-            urlencoding::encode(download_code)
-        );
+        let url = format!("{DINGTALK_OPEN_API_BASE}{MESSAGE_FILE_DOWNLOAD_PATH}");
         let response = self
             .http
-            .get(url)
+            .post(url)
             .header("x-acs-dingtalk-access-token", access_token)
+            .json(&serde_json::json!({
+                "downloadCode": download_code,
+                "robotCode": robot_code,
+            }))
             .send()
             .await?;
 
@@ -607,8 +792,121 @@ impl DingtalkApiClient {
             .into());
         }
 
-        let bytes = response.bytes().await?;
+        let body: Value = response.json().await?;
+        let download_url = body
+            .get("downloadUrl")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!("missing downloadUrl in dingtalk download response body={body}")
+            })?;
+        let file_response = self.http.get(download_url).send().await?;
+        if !file_response.status().is_success() {
+            let status = file_response.status();
+            let body = file_response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable body>".to_string());
+            return Err(format!(
+                "dingtalk media file fetch failed: HTTP {} body={}",
+                status, body
+            )
+            .into());
+        }
+        let bytes = file_response.bytes().await?;
         Ok(bytes.to_vec())
+    }
+
+    async fn transcribe_audio(
+        &self,
+        access_token: &str,
+        audio_bytes: &[u8],
+    ) -> ChannelResult<String> {
+        let media_id = self.upload_voice_media(access_token, audio_bytes).await?;
+        let url = format!(
+            "{DINGTALK_OAPI_BASE}{OAPI_ASR_TRANSLATE_PATH}?access_token={}",
+            urlencoding::encode(access_token)
+        );
+        let response = self
+            .http
+            .post(url)
+            .json(&serde_json::json!({
+                "media_id": media_id,
+            }))
+            .send()
+            .await?;
+        let status = response.status();
+        let body: Value = response.json().await?;
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk asr translate request failed: HTTP {} body={}",
+                status, body
+            )
+            .into());
+        }
+        let errcode = body.get("errcode").and_then(Value::as_i64).unwrap_or(-1);
+        if errcode != 0 {
+            let errmsg = body
+                .get("errmsg")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            return Err(format!(
+                "dingtalk asr failed: errcode={errcode} errmsg={errmsg} body={body}"
+            )
+            .into());
+        }
+        body.get("result")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| format!("missing result in dingtalk asr response body={body}").into())
+    }
+
+    async fn upload_voice_media(
+        &self,
+        access_token: &str,
+        audio_bytes: &[u8],
+    ) -> ChannelResult<String> {
+        let url = format!(
+            "{DINGTALK_OAPI_BASE}{OAPI_MEDIA_UPLOAD_PATH}?access_token={}&type=voice",
+            urlencoding::encode(access_token)
+        );
+        let part = reqwest::multipart::Part::bytes(audio_bytes.to_vec())
+            .file_name("voice.wav")
+            .mime_str("audio/wav")?;
+        let form = reqwest::multipart::Form::new().part("media", part);
+        let response = self.http.post(url).multipart(form).send().await?;
+        let status = response.status();
+        let body: Value = response.json().await?;
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk media upload failed: HTTP {} body={}",
+                status, body
+            )
+            .into());
+        }
+        let errcode = body.get("errcode").and_then(Value::as_i64).unwrap_or(-1);
+        if errcode != 0 {
+            let errmsg = body
+                .get("errmsg")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            return Err(format!(
+                "dingtalk media upload failed: errcode={errcode} errmsg={errmsg} body={body}"
+            )
+            .into());
+        }
+        body.get("media_id")
+            .or_else(|| body.get("mediaId"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                format!("missing media_id in dingtalk media upload response body={body}").into()
+            })
     }
 
     async fn send_session_webhook_markdown(
@@ -640,6 +938,51 @@ impl DingtalkApiClient {
             .into());
         }
 
+        Ok(())
+    }
+
+    async fn send_session_webhook_action_card(
+        &self,
+        session_webhook: &str,
+        title: &str,
+        text: &str,
+        approval_id: &str,
+    ) -> ChannelResult<()> {
+        let approve_url = dingtalk_command_action_url(APPROVAL_APPROVE_ACTION, approval_id);
+        let reject_url = dingtalk_command_action_url(APPROVAL_REJECT_ACTION, approval_id);
+        let response = self
+            .http
+            .post(session_webhook)
+            .json(&serde_json::json!({
+                "msgtype": "actionCard",
+                "actionCard": {
+                    "title": title,
+                    "text": text,
+                    "btnOrientation": "1",
+                    "btns": [
+                        {
+                            "title": "批准",
+                            "actionURL": approve_url
+                        },
+                        {
+                            "title": "拒绝",
+                            "actionURL": reject_url
+                        }
+                    ]
+                }
+            }))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk session webhook actionCard send failed with HTTP {}: {}",
+                status, body
+            )
+            .into());
+        }
         Ok(())
     }
 
@@ -687,10 +1030,38 @@ struct StreamAck<'a> {
 struct InboundEvent {
     event_id: String,
     chat_id: String,
+    robot_code: String,
+    msg_type: String,
     sender_id: String,
     session_webhook: String,
     text: String,
+    audio_recognition: Option<String>,
     media_references: Vec<MediaReference>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalAction {
+    Approve,
+    Reject,
+}
+
+impl ApprovalAction {
+    fn as_command(self) -> &'static str {
+        match self {
+            Self::Approve => APPROVAL_APPROVE_ACTION,
+            Self::Reject => APPROVAL_REJECT_ACTION,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CardCallbackEvent {
+    event_id: Option<String>,
+    action: ApprovalAction,
+    approval_id: String,
+    sender_id: String,
+    chat_id: String,
+    session_webhook: Option<String>,
 }
 
 async fn send_ack(
@@ -730,6 +1101,14 @@ fn parse_stream_data(data: &Value) -> Option<Value> {
     }
 }
 
+fn dingtalk_command_action_url(action: &str, approval_id: &str) -> String {
+    let command = format!("/{action} {approval_id}");
+    format!(
+        "dtmd://dingtalkclient/sendMessage?content={}",
+        urlencoding::encode(&command)
+    )
+}
+
 fn resolve_chat_id(data: &Value, sender_id: &str) -> String {
     let is_private_chat = data
         .get("conversationType")
@@ -765,6 +1144,12 @@ fn parse_inbound_event(value: &Value) -> Option<InboundEvent> {
         .map(str::trim)
         .filter(|s| !s.is_empty())?
         .to_string();
+    let robot_code = value
+        .get("robotCode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_string();
     let event_id = value
         .get("msgId")
         .and_then(Value::as_str)
@@ -777,20 +1162,151 @@ fn parse_inbound_event(value: &Value) -> Option<InboundEvent> {
         .and_then(Value::as_str)
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_else(|| "text".to_string());
-    let text = extract_dingtalk_message_text(value, &msg_type)?;
+    let audio_recognition = extract_audio_recognition_text(value);
+    let text = extract_dingtalk_message_text(value, &msg_type, audio_recognition.as_deref())?;
     let media_references = extract_dingtalk_media_references(value, &msg_type, &event_id);
 
     Some(InboundEvent {
         event_id,
         chat_id,
+        robot_code,
+        msg_type,
         sender_id,
         session_webhook,
         text,
+        audio_recognition,
         media_references,
     })
 }
 
-fn extract_dingtalk_message_text(value: &Value, msg_type: &str) -> Option<String> {
+fn parse_card_callback_event(value: &Value) -> Option<CardCallbackEvent> {
+    let action_raw = extract_callback_action_value(value)?;
+    let (action, approval_id) = parse_approval_action_token(&action_raw)?;
+    let sender_id = callback_sender_id(value);
+    let chat_id = callback_chat_id(value, &sender_id);
+    let session_webhook = callback_session_webhook(value);
+    let event_id = callback_event_id(value);
+    Some(CardCallbackEvent {
+        event_id,
+        action,
+        approval_id,
+        sender_id,
+        chat_id,
+        session_webhook,
+    })
+}
+
+fn extract_callback_action_value(value: &Value) -> Option<String> {
+    [
+        "/value",
+        "/actionValue",
+        "/action/value",
+        "/callbackData/value",
+        "/callbackData/action",
+        "/cardPrivateData/value",
+        "/cardPrivateData/action",
+        "/content/value",
+        "/content/action",
+    ]
+    .iter()
+    .find_map(|pointer| {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn parse_approval_action_token(value: &str) -> Option<(ApprovalAction, String)> {
+    let lowered = value.trim().to_ascii_lowercase();
+    for (prefix, action) in [
+        ("approve:", ApprovalAction::Approve),
+        ("approve_", ApprovalAction::Approve),
+        ("approve-", ApprovalAction::Approve),
+        ("reject:", ApprovalAction::Reject),
+        ("reject_", ApprovalAction::Reject),
+        ("reject-", ApprovalAction::Reject),
+    ] {
+        if let Some(rest) = lowered.strip_prefix(prefix) {
+            let approval_id = rest.trim().to_string();
+            if !approval_id.is_empty() {
+                return Some((action, approval_id));
+            }
+        }
+    }
+    None
+}
+
+fn callback_sender_id(value: &Value) -> String {
+    [
+        "/senderStaffId",
+        "/staffId",
+        "/senderId",
+        "/userId",
+        "/operatorStaffId",
+        "/eventOperatorStaffId",
+    ]
+    .iter()
+    .find_map(|pointer| {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned)
+    })
+    .unwrap_or_else(|| "unknown-user".to_string())
+}
+
+fn callback_chat_id(value: &Value, sender_id: &str) -> String {
+    value
+        .pointer("/conversationId")
+        .or_else(|| value.pointer("/chatbotConversationId"))
+        .or_else(|| value.pointer("/chatId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| sender_id.to_string())
+}
+
+fn callback_session_webhook(value: &Value) -> Option<String> {
+    value
+        .pointer("/sessionWebhook")
+        .or_else(|| value.pointer("/conversation/sessionWebhook"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn callback_event_id(value: &Value) -> Option<String> {
+    [
+        "/eventId",
+        "/event_id",
+        "/msgId",
+        "/messageId",
+        "/callbackId",
+        "/processQueryKey",
+    ]
+    .iter()
+    .find_map(|pointer| {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn extract_dingtalk_message_text(
+    value: &Value,
+    msg_type: &str,
+    audio_recognition: Option<&str>,
+) -> Option<String> {
     if msg_type == "text" {
         return value
             .pointer("/text/content")
@@ -846,6 +1362,12 @@ fn extract_dingtalk_message_text(value: &Value, msg_type: &str) -> Option<String
 
     let fallback = match msg_type {
         "audio" | "voice" => {
+            if let Some(recognition) = audio_recognition
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                return Some(recognition.to_string());
+            }
             let duration = value
                 .pointer("/audio/duration")
                 .or_else(|| value.pointer("/voice/duration"))
@@ -860,13 +1382,14 @@ fn extract_dingtalk_message_text(value: &Value, msg_type: &str) -> Option<String
             let title = value
                 .pointer("/picture/fileName")
                 .or_else(|| value.pointer("/image/fileName"))
+                .or_else(|| value.pointer("/content/fileName"))
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(|name| format!("（{name}）"))
                 .unwrap_or_default();
             format!(
-                "[DingTalk图片消息{title}]\n用户发送了一张图片。当前通道暂不支持自动下载原图，请引导用户补充图片内容的文字描述。"
+                "[DingTalk图片消息{title}]\n用户发送了一张图片。"
             )
         }
         other => format!(
@@ -960,9 +1483,41 @@ fn extract_dingtalk_media_references(
                     Value::from(duration),
                 );
             }
+            if let Some(download_code) = value
+                .pointer("/audio/downloadCode")
+                .or_else(|| value.pointer("/voice/downloadCode"))
+                .or_else(|| value.pointer("/content/downloadCode"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|code| !code.is_empty())
+            {
+                metadata.insert(
+                    "dingtalk.download_code".to_string(),
+                    Value::String(download_code.to_string()),
+                );
+            }
+            if let Some(picture_download_code) = value
+                .pointer("/audio/pictureDownloadCode")
+                .or_else(|| value.pointer("/voice/pictureDownloadCode"))
+                .or_else(|| value.pointer("/content/pictureDownloadCode"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|code| !code.is_empty())
+            {
+                metadata.insert(
+                    "dingtalk.picture_download_code".to_string(),
+                    Value::String(picture_download_code.to_string()),
+                );
+            }
+            let filename = value
+                .pointer("/audio/fileName")
+                .or_else(|| value.pointer("/voice/fileName"))
+                .or_else(|| value.pointer("/content/fileName"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
             vec![MediaReference {
                 source_kind: MediaSourceKind::ChannelInbound,
-                filename: None,
+                filename,
                 mime_type: None,
                 remote_url: None,
                 bytes: None,
@@ -975,11 +1530,13 @@ fn extract_dingtalk_media_references(
                 .pointer("/picture/fileName")
                 .or_else(|| value.pointer("/image/fileName"))
                 .or_else(|| value.pointer("/photo/fileName"))
+                .or_else(|| value.pointer("/content/fileName"))
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
             if let Some(download_code) = value
                 .pointer("/picture/downloadCode")
                 .or_else(|| value.pointer("/image/downloadCode"))
+                .or_else(|| value.pointer("/content/downloadCode"))
                 .and_then(Value::as_str)
                 .filter(|code| !code.trim().is_empty())
             {
@@ -991,6 +1548,7 @@ fn extract_dingtalk_media_references(
             if let Some(picture_download_code) = value
                 .pointer("/picture/pictureDownloadCode")
                 .or_else(|| value.pointer("/image/pictureDownloadCode"))
+                .or_else(|| value.pointer("/content/pictureDownloadCode"))
                 .and_then(Value::as_str)
                 .filter(|code| !code.trim().is_empty())
             {
@@ -1013,6 +1571,40 @@ fn extract_dingtalk_media_references(
     }
 }
 
+fn extract_audio_recognition_text(value: &Value) -> Option<String> {
+    value
+        .pointer("/content/recognition")
+        .or_else(|| value.pointer("/audio/recognition"))
+        .or_else(|| value.pointer("/voice/recognition"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn resolve_download_code_candidates(
+    metadata: &BTreeMap<String, Value>,
+) -> Vec<(String, &'static str)> {
+    let mut out = Vec::new();
+    if let Some(code) = metadata
+        .get("dingtalk.picture_download_code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        out.push((code.to_string(), "picture_download_code"));
+    }
+    if let Some(code) = metadata
+        .get("dingtalk.download_code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        out.push((code.to_string(), "download_code"));
+    }
+    out
+}
+
 fn is_sender_allowed(allowlist: &[String], sender_id: &str) -> bool {
     if allowlist.is_empty() {
         return true;
@@ -1021,6 +1613,118 @@ fn is_sender_allowed(allowlist: &[String], sender_id: &str) -> bool {
     allowlist
         .iter()
         .any(|entry| entry == "*" || entry == sender_id)
+}
+
+fn extract_shell_approval_id(content: &str) -> Option<String> {
+    if let Ok(value) = serde_json::from_str::<Value>(content) {
+        if let Some(token) = value
+            .pointer("/approval/id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            return Some(token.to_string());
+        }
+        if let Some(token) = value
+            .get("approval_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            return Some(token.to_string());
+        }
+    }
+    let marker = "approval_id=";
+    if let Some(idx) = content.find(marker) {
+        let rest = &content[idx + marker.len()..];
+        let token = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
+            .collect::<String>();
+        if !token.is_empty() {
+            return Some(token);
+        }
+    }
+
+    extract_uuid_like_approval_id(content)
+}
+
+fn extract_uuid_like_approval_id(content: &str) -> Option<String> {
+    let lowered = content.to_ascii_lowercase();
+    let hinted = lowered.contains("approval id")
+        || lowered.contains("approval_id")
+        || content.contains("审批 ID")
+        || content.contains("审批id")
+        || content.contains("审批单");
+    if !hinted {
+        return None;
+    }
+
+    content
+        .split(|ch: char| ch.is_whitespace() || ",.;:，。；：()[]{}<>\"'`".contains(ch))
+        .filter_map(normalize_uuid_token)
+        .find(|token| is_uuid_like(token))
+}
+
+fn normalize_uuid_token(token: &str) -> Option<String> {
+    let trimmed = token.trim_matches(|ch: char| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                ','
+                    | '.'
+                    | ';'
+                    | ':'
+                    | '，'
+                    | '。'
+                    | '；'
+                    | '：'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '<'
+                    | '>'
+                    | '"'
+                    | '\''
+                    | '`'
+            )
+    });
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = trimmed
+        .chars()
+        .map(|ch| match ch {
+            '–' | '—' | '−' => '-',
+            _ => ch,
+        })
+        .collect::<String>();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn is_uuid_like(token: &str) -> bool {
+    let segments = token.split('-').collect::<Vec<_>>();
+    if segments.len() != 5 {
+        return false;
+    }
+    let expected = [8, 4, 4, 4, 12];
+    segments.iter().zip(expected).all(|(segment, len)| {
+        segment.len() == len && segment.chars().all(|ch| ch.is_ascii_hexdigit())
+    })
+}
+
+fn escape_markdown_for_action_card(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn render_agent_output(output: &ChannelResponse, show_reasoning: bool) -> String {
@@ -1047,11 +1751,14 @@ fn render_agent_output(output: &ChannelResponse, show_reasoning: bool) -> String
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_dingtalk_media_references, extract_dingtalk_message_text, is_sender_allowed,
+        extract_dingtalk_media_references, extract_dingtalk_message_text,
+        extract_shell_approval_id, is_sender_allowed, parse_card_callback_event,
         parse_inbound_event, parse_stream_data, render_agent_output, resolve_chat_id,
-        DingtalkApiClient, InboundEvent,
+        resolve_download_code_candidates, ApprovalAction, CardCallbackEvent, DingtalkApiClient,
+        InboundEvent,
     };
     use crate::ChannelResponse;
+    use std::collections::BTreeMap;
 
     #[test]
     fn parse_inbound_text_event_reads_dingtalk_shape() {
@@ -1060,6 +1767,7 @@ mod tests {
             "conversationId": "cid_1",
             "sessionWebhook": "https://example/session",
             "msgId": "mid_1",
+            "robotCode": "robot_1",
             "senderStaffId": "staff_1",
             "text": { "content": "hello" }
         });
@@ -1070,9 +1778,12 @@ mod tests {
             InboundEvent {
                 event_id: "mid_1".to_string(),
                 chat_id: "cid_1".to_string(),
+                robot_code: "robot_1".to_string(),
+                msg_type: "text".to_string(),
                 sender_id: "staff_1".to_string(),
                 session_webhook: "https://example/session".to_string(),
                 text: "hello".to_string(),
+                audio_recognition: None,
                 media_references: Vec::new(),
             }
         );
@@ -1085,6 +1796,7 @@ mod tests {
             "conversationId": "cid_2",
             "sessionWebhook": "https://example/session2",
             "msgId": "mid_2",
+            "robotCode": "robot_2",
             "senderStaffId": "staff_2",
             "msgtype": "picture",
             "picture": { "fileName": "screen.png" }
@@ -1101,12 +1813,46 @@ mod tests {
     }
 
     #[test]
+    fn parse_inbound_picture_event_reads_content_download_codes() {
+        let payload = serde_json::json!({
+            "conversationType": "1",
+            "sessionWebhook": "https://example/session4",
+            "msgId": "mid_4",
+            "robotCode": "robot_4",
+            "senderStaffId": "staff_4",
+            "msgtype": "picture",
+            "content": {
+                "downloadCode": "d-code-1",
+                "pictureDownloadCode": "p-code-1"
+            }
+        });
+
+        let parsed = parse_inbound_event(&payload).expect("should parse picture content");
+        assert_eq!(parsed.media_references.len(), 1);
+        assert_eq!(
+            parsed.media_references[0]
+                .metadata
+                .get("dingtalk.download_code")
+                .and_then(serde_json::Value::as_str),
+            Some("d-code-1")
+        );
+        assert_eq!(
+            parsed.media_references[0]
+                .metadata
+                .get("dingtalk.picture_download_code")
+                .and_then(serde_json::Value::as_str),
+            Some("p-code-1")
+        );
+    }
+
+    #[test]
     fn parse_inbound_richtext_event_extracts_text_and_pictures() {
         let payload = serde_json::json!({
             "conversationType": 2,
             "conversationId": "cid_3",
             "sessionWebhook": "https://example/session3",
             "msgId": "mid_3",
+            "robotCode": "robot_3",
             "senderStaffId": "staff_3",
             "msgtype": "richText",
             "content": {
@@ -1194,7 +1940,7 @@ mod tests {
         let payload = serde_json::json!({
             "audio": { "duration": 8 }
         });
-        let text = extract_dingtalk_message_text(&payload, "audio").expect("audio fallback");
+        let text = extract_dingtalk_message_text(&payload, "audio", None).expect("audio fallback");
         assert!(text.contains("语音消息"));
     }
 
@@ -1213,5 +1959,102 @@ mod tests {
                 .and_then(serde_json::Value::as_i64),
             Some(8)
         );
+    }
+
+    #[test]
+    fn resolve_download_code_prefers_picture_download_code() {
+        let metadata = BTreeMap::from([
+            (
+                "dingtalk.download_code".to_string(),
+                serde_json::json!("download-code"),
+            ),
+            (
+                "dingtalk.picture_download_code".to_string(),
+                serde_json::json!("picture-code"),
+            ),
+        ]);
+        let resolved = resolve_download_code_candidates(&metadata)
+            .into_iter()
+            .next()
+            .expect("should resolve");
+        assert_eq!(resolved.0, "picture-code");
+        assert_eq!(resolved.1, "picture_download_code");
+    }
+
+    #[test]
+    fn audio_message_prefers_recognition_text() {
+        let payload = serde_json::json!({
+            "content": { "recognition": "这是一段语音转文字" },
+            "audio": { "duration": 5 }
+        });
+        let text = extract_dingtalk_message_text(&payload, "audio", Some("这是一段语音转文字"))
+            .expect("audio recognition");
+        assert_eq!(text, "这是一段语音转文字");
+    }
+
+    #[test]
+    fn extract_shell_approval_id_from_text() {
+        let content =
+            "approval required: approval_id=123e4567-e89b-12d3-a456-426614174000; retry later";
+        let approval_id = extract_shell_approval_id(content).expect("approval id");
+        assert_eq!(approval_id, "123e4567-e89b-12d3-a456-426614174000");
+    }
+
+    #[test]
+    fn extract_shell_approval_id_from_json_payload() {
+        let content = serde_json::json!({
+            "action": "request",
+            "approval": { "id": "approval-json-1" }
+        })
+        .to_string();
+        let approval_id = extract_shell_approval_id(&content).expect("approval id");
+        assert_eq!(approval_id, "approval-json-1");
+    }
+
+    #[test]
+    fn extract_shell_approval_id_from_natural_language() {
+        let content =
+            "我已经请求了批准。审批 ID 是 e4d1e3bf-2d00-49da-b091-23e818a83483。请您批准该操作。";
+        let approval_id = extract_shell_approval_id(content).expect("approval id");
+        assert_eq!(approval_id, "e4d1e3bf-2d00-49da-b091-23e818a83483");
+    }
+
+    #[test]
+    fn parse_card_callback_event_reads_approve_token() {
+        let payload = serde_json::json!({
+            "eventId": "evt-1",
+            "conversationId": "cid-1",
+            "sessionWebhook": "https://example/session",
+            "senderStaffId": "staff-1",
+            "value": "approve_approval-123"
+        });
+        let parsed = parse_card_callback_event(&payload).expect("callback");
+        assert_eq!(
+            parsed,
+            CardCallbackEvent {
+                event_id: Some("evt-1".to_string()),
+                action: ApprovalAction::Approve,
+                approval_id: "approval-123".to_string(),
+                sender_id: "staff-1".to_string(),
+                chat_id: "cid-1".to_string(),
+                session_webhook: Some("https://example/session".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_card_callback_event_reads_reject_token_from_nested_payload() {
+        let payload = serde_json::json!({
+            "userId": "staff-2",
+            "callbackData": {
+                "action": "reject:approval-99"
+            }
+        });
+        let parsed = parse_card_callback_event(&payload).expect("callback");
+        assert_eq!(parsed.action, ApprovalAction::Reject);
+        assert_eq!(parsed.approval_id, "approval-99");
+        assert_eq!(parsed.chat_id, "staff-2");
+        assert_eq!(parsed.sender_id, "staff-2");
+        assert!(parsed.session_webhook.is_none());
     }
 }

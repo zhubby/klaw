@@ -3,6 +3,7 @@
 ## 2026-03-15
 
 ### Added
+- added `approval` tool with persisted lifecycle actions: `request`, `get`, `resolve` (approve/reject), backed by `SessionStorage` approval records
 - added session-backed shell approval requests: mutating shell commands now persist pending approval records (with `approval_id`) when a session store is available
 - added metadata-based approval replay path for shell commands via `shell.approval_id` with one-time consume semantics against approved records
 - added auto-consume behavior for approved shell requests by `(session_key, command_hash)` so retries can pass without explicitly carrying `shell.approval_id`

@@ -20,8 +20,9 @@ use klaw_storage::{
     SessionStorage,
 };
 use klaw_tool::{
-    ApplyPatchTool, CronManagerTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
-    SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
+    ApplyPatchTool, ApprovalTool, CronManagerTool, LocalSearchTool, MemoryTool, ShellTool,
+    SkillsRegistryTool, SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry,
+    WebFetchTool, WebSearchTool,
 };
 use serde_json::json;
 use std::{
@@ -304,6 +305,10 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
         "{:<24}{}",
         "/approve <approval_id>", "Approve a pending shell command"
     ));
+    lines.push(format!(
+        "{:<24}{}",
+        "/reject <approval_id>", "Reject a pending shell command"
+    ));
     lines.push("```".to_string());
     if runtime.provider_default_models.len() > 1 {
         let providers = runtime
@@ -570,6 +575,80 @@ async fn handle_im_command(
                 },
             }
         }
+        "reject" => {
+            let Some(approval_id) = first_arg_token(arg) else {
+                return Ok(Some(ChannelResponse {
+                    content: "❌ Usage: `/reject <approval_id>`".to_string(),
+                    reasoning: None,
+                }));
+            };
+            let approval = match runtime.session_store.get_approval(approval_id).await {
+                Ok(approval) => approval,
+                Err(_) => {
+                    return Ok(Some(ChannelResponse {
+                        content: format!("❌ Approval not found: `{approval_id}`"),
+                        reasoning: None,
+                    }));
+                }
+            };
+            if approval.session_key != route.active_session_key
+                && approval.session_key != base_session_key
+            {
+                return Ok(Some(ChannelResponse {
+                    content: format!(
+                        "❌ Approval `{approval_id}` does not belong to current session."
+                    ),
+                    reasoning: None,
+                }));
+            }
+            if approval.tool_name != "shell" {
+                return Ok(Some(ChannelResponse {
+                    content: format!(
+                        "❌ Approval `{approval_id}` is for unsupported tool `{}`.",
+                        approval.tool_name
+                    ),
+                    reasoning: None,
+                }));
+            }
+
+            match approval.status {
+                ApprovalStatus::Pending => {
+                    if approval.expires_at_ms < now_ms() {
+                        let _ = runtime
+                            .session_store
+                            .update_approval_status(
+                                approval_id,
+                                ApprovalStatus::Expired,
+                                Some("channel-user"),
+                            )
+                            .await?;
+                        return Ok(Some(ChannelResponse {
+                            content: format!("⌛ Approval expired: `{approval_id}`"),
+                            reasoning: None,
+                        }));
+                    }
+                    runtime
+                        .session_store
+                        .update_approval_status(
+                            approval_id,
+                            ApprovalStatus::Rejected,
+                            Some("channel-user"),
+                        )
+                        .await?;
+                    ChannelResponse {
+                        content: format!("🛑 Approval rejected: `{approval_id}`"),
+                        reasoning: None,
+                    }
+                }
+                other => ChannelResponse {
+                    content: format!(
+                        "ℹ️ Approval `{approval_id}` is already `{}`.",
+                        other.as_str()
+                    ),
+                    reasoning: None,
+                },
+            }
+        }
         other => {
             let help = render_help_text(runtime);
             ChannelResponse {
@@ -628,6 +707,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let mut tools = ToolRegistry::default();
     tools.register(ApplyPatchTool::new(config));
     tools.register(ShellTool::with_store(config, session_store.clone()));
+    tools.register(ApprovalTool::with_store(session_store.clone()));
     tools.register(LocalSearchTool::new());
     tools.register(TerminalMultiplexerTool::new());
     tools.register(CronManagerTool::open_default().await?);
