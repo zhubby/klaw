@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
 use klaw_llm::{
-    ChatOptions, LlmError, LlmMessage, LlmProvider, OpenAiCompatibleConfig,
+    ChatOptions, LlmError, LlmMedia, LlmMessage, LlmProvider, OpenAiCompatibleConfig,
     OpenAiCompatibleProvider, OpenAiWireApi, ToolDefinition,
 };
 use serde::{Deserialize, Serialize};
@@ -29,6 +29,7 @@ pub struct ConversationMessage {
 #[derive(Debug, Clone)]
 pub struct AgentExecutionInput {
     pub user_content: String,
+    pub user_media: Vec<LlmMedia>,
     pub conversation_history: Vec<ConversationMessage>,
     pub session_key: String,
     pub tool_metadata: BTreeMap<String, Value>,
@@ -137,6 +138,7 @@ pub async fn run_agent_execution(
         llm_messages.push(LlmMessage {
             role: "system".to_string(),
             content: system_prompt,
+            media: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         });
@@ -149,6 +151,7 @@ pub async fn run_agent_execution(
             .map(|message| LlmMessage {
                 role: message.role,
                 content: message.content,
+                media: Vec::new(),
                 tool_calls: None,
                 tool_call_id: None,
             }),
@@ -156,6 +159,7 @@ pub async fn run_agent_execution(
     llm_messages.push(LlmMessage {
         role: "user".to_string(),
         content: input.user_content,
+        media: input.user_media,
         tool_calls: None,
         tool_call_id: None,
     });
@@ -203,6 +207,7 @@ pub async fn run_agent_execution(
         llm_messages.push(LlmMessage {
             role: "assistant".to_string(),
             content: llm_response.content,
+            media: Vec::new(),
             tool_calls: Some(llm_response.tool_calls.clone()),
             tool_call_id: None,
         });
@@ -266,6 +271,7 @@ async fn apply_tool_calls(
         llm_messages.push(LlmMessage {
             role: "tool".to_string(),
             content,
+            media: Vec::new(),
             tool_calls: None,
             tool_call_id: call.id,
         });
@@ -376,6 +382,7 @@ mod tests {
             &tools,
             AgentExecutionInput {
                 user_content: "hello".to_string(),
+                user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
                 tool_metadata: BTreeMap::new(),
@@ -402,6 +409,7 @@ mod tests {
             &tools,
             AgentExecutionInput {
                 user_content: "hello".to_string(),
+                user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
                 tool_metadata: BTreeMap::new(),
@@ -467,6 +475,7 @@ mod tests {
             &tools,
             AgentExecutionInput {
                 user_content: "hello".to_string(),
+                user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
                 tool_metadata: metadata,
@@ -528,6 +537,7 @@ mod tests {
             &tools,
             AgentExecutionInput {
                 user_content: "current".to_string(),
+                user_media: Vec::new(),
                 conversation_history: vec![
                     ConversationMessage {
                         role: "user".to_string(),

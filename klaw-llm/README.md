@@ -5,9 +5,11 @@
 ## 能力
 
 - 统一 `LlmProvider` trait，向上层暴露单轮 `chat` 接口。
+- `LlmMessage` 支持 `media` 字段（URL/data URL），用于多模态用户输入。
 - OpenAI-compatible provider：
   - `chat_completions` wire API。
   - `responses` wire API（含 function call / function_call_output 映射）。
+  - 多模态内容映射（`text + image_url` / `input_text + input_image`）。
 - Anthropic provider（Messages API）。
 
 ## 架构

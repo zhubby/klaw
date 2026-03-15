@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-15
+
+### Changed
+- `AgentExecutionInput` 新增 `user_media` 字段，允许在当前用户轮次同时传入文本与媒体
+- `run_agent_execution` 组装 `LlmMessage` 时会携带 `user_media`，并保持历史/system/tool 消息媒体为空
+
 ## 2026-03-14
 
 ### Changed

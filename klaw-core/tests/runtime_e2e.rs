@@ -28,6 +28,7 @@ async fn run_once_should_consume_and_publish() {
             chat_id: "chat-1".to_string(),
             session_key: "mq:chat-1".to_string(),
             content: "hello".to_string(),
+            media_references: Vec::new(),
             metadata: BTreeMap::new(),
         },
     };
@@ -153,6 +154,7 @@ async fn run_once_includes_serialized_conversation_history_from_metadata() {
             chat_id: "chat-history".to_string(),
             session_key: "mq:chat-history".to_string(),
             content: "current user".to_string(),
+            media_references: Vec::new(),
             metadata: BTreeMap::from([(
                 META_CONVERSATION_HISTORY_KEY.to_string(),
                 serde_json::json!([
@@ -232,6 +234,7 @@ async fn run_once_reliable_should_send_to_dlq_after_retry_exhausted() {
             chat_id: "chat-2".to_string(),
             session_key: "mq:chat-2".to_string(),
             content: "hello".to_string(),
+            media_references: Vec::new(),
             metadata: BTreeMap::new(),
         },
     };

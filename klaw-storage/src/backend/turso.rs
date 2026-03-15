@@ -571,7 +571,10 @@ impl SessionStorage for TursoSessionStore {
         Ok(out)
     }
 
-    async fn create_approval(&self, input: &NewApprovalRecord) -> Result<ApprovalRecord, StorageError> {
+    async fn create_approval(
+        &self,
+        input: &NewApprovalRecord,
+    ) -> Result<ApprovalRecord, StorageError> {
         let now = now_ms();
         let sql = format!(
             "INSERT INTO approvals (

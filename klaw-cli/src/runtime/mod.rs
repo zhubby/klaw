@@ -7,8 +7,8 @@ use klaw_core::{
     load_or_create_system_prompt, AgentLoop, AgentRuntimeError, CircuitBreakerPolicy,
     DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
     InMemoryCircuitBreaker, InMemoryIdempotencyStore, InMemoryTransport, InboundMessage,
-    OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy, Subscription,
-    TransportError,
+    MediaReference, OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
+    Subscription, TransportError,
 };
 use klaw_heartbeat::{
     should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
@@ -29,8 +29,8 @@ use std::{
     error::Error,
     io,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
     time::Duration,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::Mutex, time::timeout};
 use tracing::{info, warn};
@@ -112,6 +112,7 @@ impl ChannelRuntime for SharedChannelRuntime {
             request.chat_id,
             route.model_provider,
             route.model,
+            request.media_references,
         )
         .await?;
 
@@ -197,7 +198,10 @@ async fn execute_approved_shell(
     command_text: &str,
 ) -> Result<String, Box<dyn Error>> {
     let Some(shell_tool) = runtime.runtime.tools.get("shell") else {
-        return Ok("⚠️ shell tool unavailable; approval has been recorded but command was not executed.".to_string());
+        return Ok(
+            "⚠️ shell tool unavailable; approval has been recorded but command was not executed."
+                .to_string(),
+        );
     };
     let mut metadata = BTreeMap::new();
     metadata.insert(
@@ -471,7 +475,8 @@ async fn handle_im_command(
                     }));
                 }
             };
-            if approval.session_key != route.active_session_key && approval.session_key != base_session_key
+            if approval.session_key != route.active_session_key
+                && approval.session_key != base_session_key
             {
                 return Ok(Some(ChannelResponse {
                     content: format!(
@@ -539,6 +544,7 @@ async fn handle_im_command(
                         chat_id.clone(),
                         route.model_provider.clone(),
                         route.model.clone(),
+                        Vec::new(),
                     )
                     .await?;
                     match maybe_output {
@@ -904,6 +910,7 @@ pub async fn submit_and_get_output(
     chat_id: String,
     model_provider: String,
     model: String,
+    media_references: Vec<MediaReference>,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let conversation_history = runtime
         .session_store
@@ -926,6 +933,7 @@ pub async fn submit_and_get_output(
         chat_id: chat_id.clone(),
         session_key,
         content: input,
+        media_references,
         metadata: BTreeMap::from([
             (
                 META_CONVERSATION_HISTORY_KEY.to_string(),

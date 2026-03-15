@@ -87,7 +87,10 @@ impl ShellTool {
     }
 
     /// 自定义模式并注入审批存储。
-    pub fn with_config_and_store(config: klaw_config::ShellConfig, store: DefaultSessionStore) -> Self {
+    pub fn with_config_and_store(
+        config: klaw_config::ShellConfig,
+        store: DefaultSessionStore,
+    ) -> Self {
         Self {
             config,
             store: Some(store),
@@ -916,7 +919,9 @@ mod tests {
             .execute(json!({"command": "touch file.txt"}), &approved_ctx)
             .await
             .expect("approved command should execute");
-        assert!(approved_exec.content_for_model.contains("\"approved\": true"));
+        assert!(approved_exec
+            .content_for_model
+            .contains("\"approved\": true"));
 
         let consumed = store
             .get_approval(&approval_id)
@@ -1007,7 +1012,9 @@ mod tests {
             .execute(json!({"command": "touch file.txt"}), &base_ctx())
             .await
             .expect("approved command should execute by hash match");
-        assert!(approved_exec.content_for_model.contains("\"approved\": true"));
+        assert!(approved_exec
+            .content_for_model
+            .contains("\"approved\": true"));
 
         let consumed = store
             .get_approval(&approval_id)

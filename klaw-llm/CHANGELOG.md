@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-03-15
+
+### Changed
+- `LlmMessage` 新增 `media` 字段，支持在单条用户消息中携带媒体 URL
+- `OpenAiCompatibleProvider` 现在会将媒体映射到多模态请求块：
+  - `chat_completions`: `content` 支持 `text` + `image_url` 组合
+  - `responses`: `content` 支持 `input_text` + `input_image` 组合
+- 新增媒体请求块构建单元测试，覆盖 `responses` 输入序列化
+
 ## 2026-03-13
 
 ### Added

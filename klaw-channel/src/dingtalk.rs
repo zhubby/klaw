@@ -1,5 +1,9 @@
 use crate::{Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use futures_util::{SinkExt, StreamExt};
+use klaw_archive::{
+    open_default_archive_service, ArchiveIngestInput, ArchiveService, ArchiveSourceKind,
+};
 use klaw_core::{MediaReference, MediaSourceKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,6 +15,9 @@ use tracing::{debug, info, warn};
 
 const DINGTALK_OPEN_API_BASE: &str = "https://api.dingtalk.com";
 const CONNECTION_OPEN_PATH: &str = "/v1.0/gateway/connections/open";
+const ACCESS_TOKEN_PATH: &str = "/v1.0/oauth2/accessToken";
+const MESSAGE_FILE_DOWNLOAD_PATH: &str = "/v1.0/robot/messageFiles/download";
+const INLINE_MEDIA_MAX_BYTES: usize = 8 * 1024 * 1024;
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 static RUSTLS_PROVIDER_INSTALLED: OnceLock<()> = OnceLock::new();
@@ -257,7 +264,7 @@ impl DingtalkChannel {
         };
         debug!(payload = ?payload, "received dingtalk raw subscription event");
 
-        let Some(inbound) = parse_inbound_event(&payload) else {
+        let Some(mut inbound) = parse_inbound_event(&payload) else {
             return send_ack(ws, envelope, "").await;
         };
 
@@ -277,11 +284,15 @@ impl DingtalkChannel {
             return send_ack(ws, envelope, "").await;
         }
 
+        let session_key = format!("dingtalk:{}:{}", self.config.account_id, inbound.chat_id);
+        self.materialize_media_references(&session_key, &mut inbound)
+            .await;
+
         let maybe_output = runtime
             .submit(ChannelRequest {
                 channel: self.name().to_string(),
                 input: inbound.text.clone(),
-                session_key: format!("dingtalk:{}:{}", self.config.account_id, inbound.chat_id),
+                session_key,
                 chat_id: inbound.chat_id.clone(),
                 media_references: inbound.media_references.clone(),
             })
@@ -317,6 +328,150 @@ impl DingtalkChannel {
         }
 
         send_ack(ws, envelope, "").await
+    }
+
+    async fn materialize_media_references(&self, session_key: &str, inbound: &mut InboundEvent) {
+        if inbound.media_references.is_empty() {
+            return;
+        }
+        let has_downloadable_media = inbound.media_references.iter().any(|media| {
+            media
+                .metadata
+                .get("dingtalk.download_code")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+        });
+        if !has_downloadable_media {
+            return;
+        }
+
+        let archive_service = match open_default_archive_service().await {
+            Ok(service) => service,
+            Err(err) => {
+                warn!(
+                    event_id = inbound.event_id.as_str(),
+                    error = %err,
+                    "failed to open archive service for dingtalk media ingestion"
+                );
+                return;
+            }
+        };
+
+        let access_token = match self
+            .client
+            .fetch_access_token(&self.config.client_id, &self.config.client_secret)
+            .await
+        {
+            Ok(token) => token,
+            Err(err) => {
+                warn!(
+                    event_id = inbound.event_id.as_str(),
+                    error = %err,
+                    "failed to fetch dingtalk access token for media download"
+                );
+                return;
+            }
+        };
+
+        for media in &mut inbound.media_references {
+            let download_code = media
+                .metadata
+                .get("dingtalk.download_code")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let Some(download_code) = download_code else {
+                continue;
+            };
+
+            let bytes = match self
+                .client
+                .download_message_file(&access_token, &download_code)
+                .await
+            {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!(
+                        event_id = inbound.event_id.as_str(),
+                        error = %err,
+                        "failed to download dingtalk media content"
+                    );
+                    continue;
+                }
+            };
+
+            let metadata =
+                serde_json::to_value(media.metadata.clone()).unwrap_or_else(|_| Value::Null);
+            let ingest_input = ArchiveIngestInput {
+                source_kind: ArchiveSourceKind::from(media.source_kind),
+                filename: media.filename.clone(),
+                declared_mime_type: media.mime_type.clone(),
+                session_key: Some(session_key.to_string()),
+                channel: Some(self.name().to_string()),
+                chat_id: Some(inbound.chat_id.clone()),
+                message_id: Some(inbound.event_id.clone()),
+                metadata,
+            };
+
+            match archive_service.ingest_bytes(ingest_input, &bytes).await {
+                Ok(record) => {
+                    media.message_id = Some(inbound.event_id.clone());
+                    if media.filename.is_none() {
+                        media.filename = record.original_filename.clone();
+                    }
+                    if media.mime_type.is_none() {
+                        media.mime_type = record.mime_type.clone();
+                    }
+                    if bytes.len() <= INLINE_MEDIA_MAX_BYTES {
+                        let mime_for_inline = media
+                            .mime_type
+                            .clone()
+                            .or_else(|| record.mime_type.clone())
+                            .unwrap_or_else(|| "application/octet-stream".to_string());
+                        media.remote_url = Some(format!(
+                            "data:{mime_for_inline};base64,{}",
+                            BASE64_STANDARD.encode(&bytes)
+                        ));
+                        media
+                            .metadata
+                            .insert("dingtalk.inline_media".to_string(), Value::Bool(true));
+                    } else {
+                        media
+                            .metadata
+                            .insert("dingtalk.inline_media".to_string(), Value::Bool(false));
+                        media.metadata.insert(
+                            "dingtalk.inline_media_skipped_bytes".to_string(),
+                            Value::from(bytes.len() as i64),
+                        );
+                    }
+                    media
+                        .metadata
+                        .insert("archive.id".to_string(), Value::String(record.id.clone()));
+                    media.metadata.insert(
+                        "archive.storage_rel_path".to_string(),
+                        Value::String(record.storage_rel_path),
+                    );
+                    media.metadata.insert(
+                        "archive.size_bytes".to_string(),
+                        Value::from(record.size_bytes),
+                    );
+                    if let Some(mime_type) = record.mime_type {
+                        media
+                            .metadata
+                            .insert("archive.mime_type".to_string(), Value::String(mime_type));
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        event_id = inbound.event_id.as_str(),
+                        error = %err,
+                        "failed to ingest dingtalk media into archive"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -386,6 +541,74 @@ impl DingtalkApiClient {
             .to_string();
 
         Ok(StreamConnectionTicket { endpoint, ticket })
+    }
+
+    async fn fetch_access_token(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+    ) -> ChannelResult<String> {
+        let url = format!("{DINGTALK_OPEN_API_BASE}{ACCESS_TOKEN_PATH}");
+        let response = self
+            .http
+            .post(url)
+            .json(&serde_json::json!({
+                "clientId": client_id,
+                "clientSecret": client_secret,
+            }))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body: Value = response.json().await?;
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk access token request failed: HTTP {} body={}",
+                status, body
+            )
+            .into());
+        }
+
+        body.get("accessToken")
+            .or_else(|| body.get("access_token"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| "missing accessToken from dingtalk access token response".into())
+    }
+
+    async fn download_message_file(
+        &self,
+        access_token: &str,
+        download_code: &str,
+    ) -> ChannelResult<Vec<u8>> {
+        let url = format!(
+            "{DINGTALK_OPEN_API_BASE}{MESSAGE_FILE_DOWNLOAD_PATH}?downloadCode={}",
+            urlencoding::encode(download_code)
+        );
+        let response = self
+            .http
+            .get(url)
+            .header("x-acs-dingtalk-access-token", access_token)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable body>".to_string());
+            return Err(format!(
+                "dingtalk media download failed: HTTP {} body={}",
+                status, body
+            )
+            .into());
+        }
+
+        let bytes = response.bytes().await?;
+        Ok(bytes.to_vec())
     }
 
     async fn send_session_webhook_markdown(
@@ -576,6 +799,50 @@ fn extract_dingtalk_message_text(value: &Value, msg_type: &str) -> Option<String
             .filter(|s| !s.is_empty())
             .map(ToOwned::to_owned);
     }
+    if msg_type == "richtext" || msg_type == "rich_text" {
+        if let Some(rich_blocks) = value.pointer("/content/richText").and_then(Value::as_array) {
+            let rich_text = rich_blocks
+                .iter()
+                .filter_map(|block| {
+                    let block_type = block
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .map(|ty| ty.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    if block_type != "text" {
+                        return None;
+                    }
+                    block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            let normalized_text = rich_text.trim();
+            if !normalized_text.is_empty() {
+                return Some(normalized_text.to_string());
+            }
+
+            let picture_count = rich_blocks
+                .iter()
+                .filter(|block| {
+                    block
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .map(|ty| ty.eq_ignore_ascii_case("picture"))
+                        .unwrap_or(false)
+                })
+                .count();
+            if picture_count > 0 {
+                return Some(format!(
+                    "[DingTalk富文本消息]\n用户发送了 {picture_count} 张图片。请结合图片内容回答用户。"
+                ));
+            }
+        }
+    }
 
     let fallback = match msg_type {
         "audio" | "voice" => {
@@ -622,6 +889,66 @@ fn extract_dingtalk_media_references(
     );
 
     match msg_type {
+        "richtext" | "rich_text" => {
+            let Some(rich_blocks) = value.pointer("/content/richText").and_then(Value::as_array)
+            else {
+                return Vec::new();
+            };
+
+            rich_blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(index, block)| {
+                    let block_type = block
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .map(|ty| ty.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    if block_type != "picture" && block_type != "image" {
+                        return None;
+                    }
+
+                    let filename = block
+                        .get("fileName")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned);
+                    let mut item_metadata = metadata.clone();
+                    item_metadata.insert("dingtalk.richtext_index".to_string(), Value::from(index));
+                    if let Some(download_code) = block
+                        .get("downloadCode")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|code| !code.is_empty())
+                    {
+                        item_metadata.insert(
+                            "dingtalk.download_code".to_string(),
+                            Value::String(download_code.to_string()),
+                        );
+                    }
+                    if let Some(picture_download_code) = block
+                        .get("pictureDownloadCode")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|code| !code.is_empty())
+                    {
+                        item_metadata.insert(
+                            "dingtalk.picture_download_code".to_string(),
+                            Value::String(picture_download_code.to_string()),
+                        );
+                    }
+                    Some(MediaReference {
+                        source_kind: MediaSourceKind::ChannelInbound,
+                        filename,
+                        mime_type: None,
+                        remote_url: None,
+                        bytes: None,
+                        message_id: Some(event_id.to_string()),
+                        metadata: item_metadata,
+                    })
+                })
+                .collect()
+        }
         "audio" | "voice" => {
             if let Some(duration) = value
                 .pointer("/audio/duration")
@@ -659,6 +986,17 @@ fn extract_dingtalk_media_references(
                 metadata.insert(
                     "dingtalk.download_code".to_string(),
                     Value::String(download_code.to_string()),
+                );
+            }
+            if let Some(picture_download_code) = value
+                .pointer("/picture/pictureDownloadCode")
+                .or_else(|| value.pointer("/image/pictureDownloadCode"))
+                .and_then(Value::as_str)
+                .filter(|code| !code.trim().is_empty())
+            {
+                metadata.insert(
+                    "dingtalk.picture_download_code".to_string(),
+                    Value::String(picture_download_code.to_string()),
                 );
             }
             vec![MediaReference {
@@ -759,6 +1097,44 @@ mod tests {
         assert_eq!(
             parsed.media_references[0].filename.as_deref(),
             Some("screen.png")
+        );
+    }
+
+    #[test]
+    fn parse_inbound_richtext_event_extracts_text_and_pictures() {
+        let payload = serde_json::json!({
+            "conversationType": 2,
+            "conversationId": "cid_3",
+            "sessionWebhook": "https://example/session3",
+            "msgId": "mid_3",
+            "senderStaffId": "staff_3",
+            "msgtype": "richText",
+            "content": {
+                "richText": [
+                    { "type": "picture", "downloadCode": "code-1", "pictureDownloadCode": "pcode-1" },
+                    { "type": "text", "text": "\n" },
+                    { "type": "picture", "downloadCode": "code-2", "pictureDownloadCode": "pcode-2" },
+                    { "type": "text", "text": "\n这是啥" }
+                ]
+            }
+        });
+
+        let parsed = parse_inbound_event(&payload).expect("should parse richText");
+        assert_eq!(parsed.text, "这是啥");
+        assert_eq!(parsed.media_references.len(), 2);
+        assert_eq!(
+            parsed.media_references[0]
+                .metadata
+                .get("dingtalk.download_code")
+                .and_then(serde_json::Value::as_str),
+            Some("code-1")
+        );
+        assert_eq!(
+            parsed.media_references[1]
+                .metadata
+                .get("dingtalk.picture_download_code")
+                .and_then(serde_json::Value::as_str),
+            Some("pcode-2")
         );
     }
 

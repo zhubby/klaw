@@ -12,7 +12,7 @@
 - `Channel` trait 定义通道生命周期与运行入口
 - `ChannelRuntime` trait 抽象上层 runtime 提交、定时 tick 和后台服务能力
 - 通道层只负责 I/O、协议适配和交互体验，不承载 agent 业务逻辑
-- `ChannelRequest` 现在可携带 `media_references`，用于未来的媒体归档或下载流程
+- `ChannelRequest` 可携带 `media_references`；`dingtalk` 会在入站阶段解析富文本图片、下载媒体并写入 archive，再把媒体引用透传给 runtime
 
 ## IM Channel 适配契约
 

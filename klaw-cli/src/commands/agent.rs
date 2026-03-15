@@ -31,6 +31,7 @@ impl AgentCommand {
             chat_id,
             runtime.default_provider_id.clone(),
             runtime.runtime.active_model.clone(),
+            Vec::new(),
         )
         .await?;
         match maybe_output {

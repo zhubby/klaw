@@ -16,12 +16,22 @@ pub struct LlmMessage {
     pub role: String,
     /// 消息文本内容。
     pub content: String,
+    /// 用户消息携带的媒体 URL（例如 https://... 或 data: URL）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<LlmMedia>,
     /// assistant 角色发起的工具调用（可选）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     /// tool 角色消息对应的工具调用 id（可选）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmMedia {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    pub url: String,
 }
 
 /// 暴露给模型的工具定义。

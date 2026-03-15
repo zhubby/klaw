@@ -6,6 +6,12 @@
 - added debug-level tool result logging in `AgentLoop` executor after each tool call (success/failure), with output truncation to prevent oversized log lines
 - changed `AgentLoop` to support runtime provider registry routing, selecting provider/model from inbound metadata (`agent.provider_id` / `agent.model`) per message
 
+## 2026-03-15
+
+### Changed
+- `InboundMessage` 新增 `media_references` 字段（`serde(default)`），用于跨 channel/runtime/agent 透传媒体引用
+- `AgentLoop` 在构建当前用户消息时会从 `media_references` 提取可用媒体 URL，传给 LLM 执行层
+
 ## 2026-03-13
 
 ### Added

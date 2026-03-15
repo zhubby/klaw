@@ -14,7 +14,8 @@ pub use paths::StoragePaths;
 pub use traits::{CronStorage, SessionStorage};
 pub use types::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronTaskRun,
-    CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun, SessionIndex, UpdateCronJobPatch,
+    CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun, SessionIndex,
+    UpdateCronJobPatch,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -416,7 +417,12 @@ mod tests {
         assert_eq!(approved.approved_by.as_deref(), Some("user"));
 
         let consumed = store
-            .consume_approved_shell_command("approval-1", "stdio:approval", "abc123", util::now_ms())
+            .consume_approved_shell_command(
+                "approval-1",
+                "stdio:approval",
+                "abc123",
+                util::now_ms(),
+            )
             .await
             .expect("consume should succeed");
         assert!(consumed);

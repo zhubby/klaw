@@ -5,6 +5,7 @@
 ## Responsibilities
 
 - define inbound/outbound/dead-letter message models
+- include `InboundMessage.media_references` for media-aware message turns
 - expose protocol envelopes, scheduling, reliability, and transport abstractions
 - host shared cross-crate models such as `MediaReference`
 - provide the main `AgentLoop` runtime

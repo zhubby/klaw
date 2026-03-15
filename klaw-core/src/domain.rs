@@ -1,3 +1,4 @@
+use crate::media::MediaReference;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -17,6 +18,9 @@ pub struct InboundMessage {
     pub session_key: SessionKey,
     /// 用户可读文本内容。
     pub content: String,
+    /// 当前消息携带的媒体引用。
+    #[serde(default)]
+    pub media_references: Vec<MediaReference>,
     /// 附加元数据，用于路由/策略扩展。
     pub metadata: BTreeMap<String, serde_json::Value>,
 }

@@ -12,7 +12,7 @@ use klaw_agent::{
     run_agent_execution, AgentExecutionError, AgentExecutionInput, AgentExecutionLimits,
     ConversationMessage, ToolExecutor,
 };
-use klaw_llm::{LlmError, LlmProvider, ToolDefinition};
+use klaw_llm::{LlmError, LlmMedia, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use thiserror::Error;
@@ -271,6 +271,7 @@ impl AgentLoop {
         state = self.transition(state, StateTransitionEvent::ContextBuilt);
 
         let conversation_history = extract_conversation_history(&msg.payload.metadata);
+        let user_media = extract_user_media(&msg.payload);
         let requested_provider_id = msg
             .payload
             .metadata
@@ -329,6 +330,7 @@ impl AgentLoop {
             &executor,
             AgentExecutionInput {
                 user_content: msg.payload.content.clone(),
+                user_media,
                 conversation_history,
                 session_key: msg.payload.session_key.clone(),
                 tool_metadata,
@@ -651,6 +653,33 @@ fn extract_conversation_history(
         .unwrap_or_default()
 }
 
+fn extract_user_media(inbound: &InboundMessage) -> Vec<LlmMedia> {
+    inbound
+        .media_references
+        .iter()
+        .filter_map(|media| {
+            let url = media
+                .remote_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)?;
+            let mime_type = media
+                .mime_type
+                .clone()
+                .or_else(|| {
+                    media
+                        .metadata
+                        .get("archive.mime_type")
+                        .and_then(serde_json::Value::as_str)
+                        .map(ToOwned::to_owned)
+                })
+                .filter(|value| !value.trim().is_empty());
+            Some(LlmMedia { mime_type, url })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -754,6 +783,7 @@ mod tests {
                 chat_id: "chat-1".to_string(),
                 session_key: "im:chat-1".to_string(),
                 content: "hello".to_string(),
+                media_references: Vec::new(),
                 metadata: BTreeMap::from([
                     ("agent.provider_id".to_string(), json!("anthropic")),
                     ("agent.model".to_string(), json!("claude-opus-4")),

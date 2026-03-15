@@ -71,7 +71,10 @@ pub trait SessionStorage: Send + Sync {
         offset: i64,
     ) -> Result<Vec<SessionIndex>, StorageError>;
 
-    async fn create_approval(&self, input: &NewApprovalRecord) -> Result<ApprovalRecord, StorageError>;
+    async fn create_approval(
+        &self,
+        input: &NewApprovalRecord,
+    ) -> Result<ApprovalRecord, StorageError>;
 
     async fn get_approval(&self, approval_id: &str) -> Result<ApprovalRecord, StorageError>;
 

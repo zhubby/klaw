@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
+base64 = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }
@@ -17,3 +18,4 @@ tracing = { workspace = true }
 urlencoding = { workspace = true }
 uuid = { workspace = true }
 klaw-core = { workspace = true }
+klaw-archive = { workspace = true }

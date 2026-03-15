@@ -111,14 +111,7 @@ impl OpenAiCompatibleProvider {
                 .into_iter()
                 .map(|m| OpenAiMessage {
                     role: m.role.clone(),
-                    content: if m.role == "assistant"
-                        && m.tool_calls.is_some()
-                        && m.content.is_empty()
-                    {
-                        None
-                    } else {
-                        Some(m.content)
-                    },
+                    content: map_chat_message_content(&m),
                     reasoning_content: None,
                     reasoning: None,
                     tool_calls: m.tool_calls.map(|calls| {
@@ -148,7 +141,11 @@ impl OpenAiCompatibleProvider {
             .next()
             .ok_or_else(|| LlmError::InvalidResponse("no choices in response".to_string()))?;
 
-        let content = first.message.content.unwrap_or_default();
+        let content = first
+            .message
+            .content
+            .map(extract_chat_message_text)
+            .unwrap_or_default();
         let reasoning = first
             .message
             .reasoning_content
@@ -303,10 +300,14 @@ fn build_responses_input(messages: Vec<LlmMessage>) -> Vec<OpenAiResponsesInputI
             }
 
             if !message.content.trim().is_empty() {
+                let content = build_responses_message_content(&message);
+                if content.is_empty() {
+                    continue;
+                }
                 input.push(OpenAiResponsesInputItem::Message(
                     OpenAiResponsesInputMessage {
                         role: "user".to_string(),
-                        content: message.content,
+                        content,
                     },
                 ));
             }
@@ -314,10 +315,25 @@ fn build_responses_input(messages: Vec<LlmMessage>) -> Vec<OpenAiResponsesInputI
         }
 
         if !message.content.trim().is_empty() {
+            let content = build_responses_message_content(&message);
+            if content.is_empty() {
+                continue;
+            }
             input.push(OpenAiResponsesInputItem::Message(
                 OpenAiResponsesInputMessage {
                     role: message.role.clone(),
-                    content: message.content,
+                    content,
+                },
+            ));
+        } else if !message.media.is_empty() {
+            let content = build_responses_message_content(&message);
+            if content.is_empty() {
+                continue;
+            }
+            input.push(OpenAiResponsesInputItem::Message(
+                OpenAiResponsesInputMessage {
+                    role: message.role.clone(),
+                    content,
                 },
             ));
         }
@@ -339,6 +355,67 @@ fn build_responses_input(messages: Vec<LlmMessage>) -> Vec<OpenAiResponsesInputI
     }
 
     input
+}
+
+fn map_chat_message_content(message: &LlmMessage) -> Option<OpenAiChatMessageContent> {
+    let has_media = !message.media.is_empty();
+    if message.role == "assistant"
+        && message.tool_calls.is_some()
+        && message.content.is_empty()
+        && !has_media
+    {
+        return None;
+    }
+    if !has_media {
+        return Some(OpenAiChatMessageContent::Text(message.content.clone()));
+    }
+
+    let mut parts = Vec::new();
+    let text = message.content.trim();
+    if !text.is_empty() {
+        parts.push(OpenAiChatMessageContentPart::Text {
+            text: text.to_string(),
+        });
+    }
+    for media in &message.media {
+        let url = media.url.trim();
+        if url.is_empty() {
+            continue;
+        }
+        parts.push(OpenAiChatMessageContentPart::ImageUrl {
+            image_url: OpenAiChatImageUrl {
+                url: url.to_string(),
+            },
+        });
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(OpenAiChatMessageContent::Parts(parts))
+    }
+}
+
+fn build_responses_message_content(
+    message: &LlmMessage,
+) -> Vec<OpenAiResponsesInputMessageContent> {
+    let mut content = Vec::new();
+    let text = message.content.trim();
+    if !text.is_empty() {
+        content.push(OpenAiResponsesInputMessageContent::InputText {
+            text: text.to_string(),
+        });
+    }
+    for media in &message.media {
+        let url = media.url.trim();
+        if url.is_empty() {
+            continue;
+        }
+        content.push(OpenAiResponsesInputMessageContent::InputImage {
+            image_url: url.to_string(),
+        });
+    }
+    content
 }
 
 fn parse_responses_payload(payload: OpenAiResponsesResponse) -> LlmResponse {
@@ -433,6 +510,20 @@ fn decode_responses_arguments(raw: Value) -> Value {
     }
 }
 
+fn extract_chat_message_text(content: OpenAiChatMessageContent) -> String {
+    match content {
+        OpenAiChatMessageContent::Text(text) => text,
+        OpenAiChatMessageContent::Parts(parts) => parts
+            .into_iter()
+            .filter_map(|part| match part {
+                OpenAiChatMessageContentPart::Text { text } => Some(text),
+                OpenAiChatMessageContentPart::ImageUrl { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct OpenAiChatCompletionRequest {
     model: String,
@@ -488,7 +579,7 @@ struct OpenAiResponsesRequest {
 struct OpenAiMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<OpenAiChatMessageContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -497,6 +588,27 @@ struct OpenAiMessage {
     tool_calls: Option<Vec<OpenAiToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum OpenAiChatMessageContent {
+    Text(String),
+    Parts(Vec<OpenAiChatMessageContentPart>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum OpenAiChatMessageContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: OpenAiChatImageUrl },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OpenAiChatImageUrl {
+    url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -534,7 +646,16 @@ enum OpenAiResponsesInputItem {
 #[derive(Debug, Serialize)]
 struct OpenAiResponsesInputMessage {
     role: String,
-    content: String,
+    content: Vec<OpenAiResponsesInputMessageContent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum OpenAiResponsesInputMessageContent {
+    #[serde(rename = "input_text")]
+    InputText { text: String },
+    #[serde(rename = "input_image")]
+    InputImage { image_url: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -642,12 +763,14 @@ mod tests {
             LlmMessage {
                 role: "user".to_string(),
                 content: "hello".to_string(),
+                media: Vec::new(),
                 tool_calls: None,
                 tool_call_id: None,
             },
             LlmMessage {
                 role: "assistant".to_string(),
                 content: String::new(),
+                media: Vec::new(),
                 tool_calls: Some(vec![ToolCall {
                     id: Some("call_123".to_string()),
                     name: "web_search".to_string(),
@@ -658,6 +781,7 @@ mod tests {
             LlmMessage {
                 role: "tool".to_string(),
                 content: "tool-result".to_string(),
+                media: Vec::new(),
                 tool_calls: None,
                 tool_call_id: Some("call_123".to_string()),
             },
@@ -665,7 +789,10 @@ mod tests {
 
         let value = serde_json::to_value(input).unwrap_or(Value::Null);
         let expected = serde_json::json!([
-            {"role":"user","content":"hello"},
+            {
+                "role":"user",
+                "content":[{"type":"input_text","text":"hello"}]
+            },
             {
                 "type":"function_call",
                 "call_id":"call_123",
@@ -718,6 +845,32 @@ mod tests {
             result.tool_calls[0].arguments,
             serde_json::json!({"url":"https://example.com"})
         );
+    }
+
+    #[test]
+    fn build_responses_input_includes_input_image_blocks() {
+        let input = build_responses_input(vec![LlmMessage {
+            role: "user".to_string(),
+            content: "what is in this image?".to_string(),
+            media: vec![crate::LlmMedia {
+                mime_type: Some("image/png".to_string()),
+                url: "data:image/png;base64,Zm9v".to_string(),
+            }],
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+
+        let value = serde_json::to_value(input).unwrap_or(Value::Null);
+        let expected = serde_json::json!([
+            {
+                "role":"user",
+                "content":[
+                    {"type":"input_text","text":"what is in this image?"},
+                    {"type":"input_image","image_url":"data:image/png;base64,Zm9v"}
+                ]
+            }
+        ]);
+        assert_eq!(value, expected);
     }
 
     #[test]

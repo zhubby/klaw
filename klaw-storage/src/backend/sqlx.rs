@@ -768,7 +768,10 @@ impl SessionStorage for SqlxSessionStore {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn create_approval(&self, input: &NewApprovalRecord) -> Result<ApprovalRecord, StorageError> {
+    async fn create_approval(
+        &self,
+        input: &NewApprovalRecord,
+    ) -> Result<ApprovalRecord, StorageError> {
         let now = now_ms();
         sqlx::query(
             "INSERT INTO approvals (
