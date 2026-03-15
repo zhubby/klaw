@@ -1,0 +1,10 @@
+[package]
+name = "klaw-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+eframe = { workspace = true }
+egui = { workspace = true }

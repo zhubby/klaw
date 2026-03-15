@@ -13,6 +13,7 @@
 - `klaw stdio`
 - `klaw agent --input "..."`
 - `klaw gateway`
+- `klaw gui`
 - `klaw session ...`
 - `klaw archive list|get|push|pull`
 - `klaw config ...`

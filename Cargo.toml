@@ -14,6 +14,7 @@ members = [
     "klaw-cron", 
     "klaw-storage", 
     "klaw-gateway", "klaw-channel",
+    "klaw-gui",
 ]
 resolver = "2"
 
@@ -45,6 +46,9 @@ time = { version = "0.3", features = ["formatting"] }
 sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
+anyhow = "1"
+egui = "0.33.3"
+eframe = "0.33.3"
 
 zellij-client = { version = "0.43.1"}
 humantime = "2"
@@ -67,3 +71,4 @@ klaw-skill = { path = "klaw-skill" }
 klaw-mcp = { path = "klaw-mcp" }
 klaw-gateway = { path = "klaw-gateway" }
 klaw-channel = { path = "klaw-channel" }
+klaw-gui = { path = "klaw-gui" }

@@ -4,6 +4,7 @@
 
 ### Changed
 
+- added `klaw gui` subcommand to launch the desktop workbench UI via `klaw-gui`
 - runtime tool registration now injects `session_store` into `ShellTool`, enabling persistent approval request creation/validation for shell commands
 - runtime now also registers `ApprovalTool` with shared `session_store`, enabling generic approval lifecycle operations via tool calls
 - added `/approve <approval_id>` channel command to approve pending shell requests within the current/base session scope and return retry guidance

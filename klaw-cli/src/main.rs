@@ -4,7 +4,7 @@ mod runtime;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     agent::AgentCommand, archive::ArchiveCommand, config::ConfigCommand, daemon::DaemonCommand,
-    gateway::GatewayCommand, session::SessionCommand, stdio::StdioCommand,
+    gateway::GatewayCommand, gui::GuiCommand, session::SessionCommand, stdio::StdioCommand,
 };
 use klaw_storage::StoragePaths;
 use std::{
@@ -64,6 +64,8 @@ enum Commands {
     Agent(AgentCommand),
     /// Start websocket gateway service.
     Gateway(GatewayCommand),
+    /// Start klaw desktop workbench GUI.
+    Gui(GuiCommand),
     /// Manage local session indexes in klaw.db.
     Session(SessionCommand),
     /// Manage archived media files in archive.db and archives/.
@@ -78,17 +80,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         command,
     } = Cli::parse();
     init_tracing(&command, log_level)?;
-    let command = match command {
-        Commands::Config(cmd) => {
-            cmd.run(config.as_deref())?;
-            return Ok(());
+    if is_pre_runtime_command(&command) {
+        match command {
+            Commands::Config(cmd) => cmd.run(config.as_deref())?,
+            Commands::Daemon(cmd) => cmd.run(config.as_deref())?,
+            Commands::Gui(cmd) => cmd.run()?,
+            _ => unreachable!("pre-runtime guard must keep this branch exhaustive"),
         }
-        Commands::Daemon(cmd) => {
-            cmd.run(config.as_deref())?;
-            return Ok(());
-        }
-        other => other,
-    };
+        return Ok(());
+    }
 
     let loaded = klaw_config::load_or_init(config.as_deref())?;
     if loaded.created_default {
@@ -103,6 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Stdio(cmd) => cmd.run(Arc::clone(&app_config)).await?,
         Commands::Agent(cmd) => cmd.run(app_config).await?,
         Commands::Gateway(cmd) => cmd.run(app_config).await?,
+        Commands::Gui(_) => unreachable!("handled above"),
         Commands::Session(cmd) => cmd.run().await?,
         Commands::Archive(cmd) => cmd.run().await?,
         Commands::Config(_) => unreachable!("handled above"),
@@ -110,6 +111,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn is_pre_runtime_command(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Config(_) | Commands::Daemon(_) | Commands::Gui(_)
+    )
 }
 
 fn init_tracing(
@@ -223,5 +231,17 @@ mod tests {
         assert!(rendered.contains("debug"));
         assert!(rendered.contains("sqlx=warn"));
         assert!(rendered.contains("turso=warn"));
+    }
+
+    #[test]
+    fn parse_gui_subcommand() {
+        let cli = Cli::parse_from(["klaw", "gui"]);
+        assert!(matches!(cli.command, Commands::Gui(_)));
+    }
+
+    #[test]
+    fn gui_is_pre_runtime_command() {
+        let cli = Cli::parse_from(["klaw", "gui"]);
+        assert!(is_pre_runtime_command(&cli.command));
     }
 }
