@@ -32,3 +32,9 @@
 - memory panel now shows real memory-layer statistics through `klaw-memory` abstraction
 - persisted app window size in UI state and restore on startup (non-fullscreen mode)
 - tool panel now renders config-backed tool cards, supports per-tool edit windows, and persists `tools.*` fields (enabled toggles and tool-specific settings) to `config.toml`
+- system monitor panel now shows real-time CPU and memory cards with usage percent and absolute memory usage
+- top File menu now includes `Force Persist Layout` to flush layout persistence immediately
+- heartbeat panel now supports managing `heartbeat.defaults` and `heartbeat.sessions` (add/edit/delete/reload/save)
+- sidebar now includes `Session`, `Approval`, and `Skill` menus; `Provider` menu title renamed to `Model Provider`
+- status bar now includes runtime provider override dropdown (from `model_providers`) for dynamic runtime provider switching
+- system monitor now shows four real-time cards (CPU/memory/data-dir disk usage/app uptime) and detailed system information in English

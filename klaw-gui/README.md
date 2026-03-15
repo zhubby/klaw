@@ -6,7 +6,9 @@
 
 - Workbench shell with left navigation and center tab workspace
 - Top menu bar (File/View/Window/Help)
+  - File menu includes `Force Persist Layout` to immediately flush layout state to disk
 - Bottom status bar with version and theme-mode switcher
+  - Runtime provider override dropdown on the right (select from `model_providers` without editing config)
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
   - includes tabs/theme/fullscreen and window size
 - System CJK font fallback via `fontdb` to avoid Chinese text missing-glyph rendering
@@ -14,17 +16,20 @@
 - Single-tab-per-menu behavior (click to open or activate)
 - Placeholder panel renderers for:
   - profile
+  - session
+  - approval
   - configuration
-  - provider (config-bound list + add/edit window)
+  - model provider (config-bound list + add/edit window)
   - channel (config-bound list + add/edit window)
   - cron (db-bound list + add/edit window)
-  - heartbeat
+  - heartbeat (config-backed defaults/session management, add/edit/delete)
   - mcp (config-bound list + add/edit window)
+  - skill (installed skill management menu placeholder)
   - skill registry (config-bound list + add/edit window)
   - memory
   - archive (db-bound query + detail view)
   - tool
-  - system-monitor
+  - system-monitor (real-time CPU/memory cards with usage percentage and amount)
 - Configuration panel features:
   - load and edit `config.toml` raw text
   - TOML syntax highlighting (section/key/value/comment)

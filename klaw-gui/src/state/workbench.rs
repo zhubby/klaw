@@ -52,7 +52,9 @@ impl WorkbenchState {
             UiAction::OpenMenu(menu) => self.open_or_activate(menu),
             UiAction::ActivateTab(tab_id) => self.activate(tab_id),
             UiAction::CloseTab(tab_id) => self.close(tab_id),
-            UiAction::CloseWindow
+            UiAction::SetRuntimeProviderOverride(_)
+            | UiAction::CloseWindow
+            | UiAction::ForcePersistLayout
             | UiAction::ToggleFullscreen
             | UiAction::MinimizeWindow
             | UiAction::ZoomWindow

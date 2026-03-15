@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WorkbenchMenu {
     Profile,
+    Session,
+    Approval,
     Configuration,
     Provider,
     Channel,
@@ -11,6 +13,7 @@ pub enum WorkbenchMenu {
     Heartbeat,
     Mcp,
     Skill,
+    SkillManage,
     Memory,
     Archive,
     Tool,
@@ -18,8 +21,10 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 12] = [
+    pub const ALL: [WorkbenchMenu; 15] = [
         WorkbenchMenu::Profile,
+        WorkbenchMenu::Session,
+        WorkbenchMenu::Approval,
         WorkbenchMenu::Configuration,
         WorkbenchMenu::Provider,
         WorkbenchMenu::Channel,
@@ -27,6 +32,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Heartbeat,
         WorkbenchMenu::Mcp,
         WorkbenchMenu::Skill,
+        WorkbenchMenu::SkillManage,
         WorkbenchMenu::Memory,
         WorkbenchMenu::Archive,
         WorkbenchMenu::Tool,
@@ -36,6 +42,8 @@ impl WorkbenchMenu {
     pub const fn id_key(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => "profile",
+            WorkbenchMenu::Session => "session",
+            WorkbenchMenu::Approval => "approval",
             WorkbenchMenu::Configuration => "configuration",
             WorkbenchMenu::Provider => "provider",
             WorkbenchMenu::Channel => "channel",
@@ -43,6 +51,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Heartbeat => "heartbeat",
             WorkbenchMenu::Mcp => "mcp",
             WorkbenchMenu::Skill => "skill-registry",
+            WorkbenchMenu::SkillManage => "skill",
             WorkbenchMenu::Memory => "memory",
             WorkbenchMenu::Archive => "archive",
             WorkbenchMenu::Tool => "tool",
@@ -53,13 +62,16 @@ impl WorkbenchMenu {
     pub const fn title(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => "Profile",
+            WorkbenchMenu::Session => "Session",
+            WorkbenchMenu::Approval => "Approval",
             WorkbenchMenu::Configuration => "Configuration",
-            WorkbenchMenu::Provider => "Provider",
+            WorkbenchMenu::Provider => "Model Provider",
             WorkbenchMenu::Channel => "Channel",
             WorkbenchMenu::Cron => "Cron",
             WorkbenchMenu::Heartbeat => "Heartbeat",
             WorkbenchMenu::Mcp => "MCP",
             WorkbenchMenu::Skill => "Skill Registry",
+            WorkbenchMenu::SkillManage => "Skill",
             WorkbenchMenu::Memory => "Memory",
             WorkbenchMenu::Archive => "Archive",
             WorkbenchMenu::Tool => "Tool",
@@ -70,6 +82,8 @@ impl WorkbenchMenu {
     pub const fn icon(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => regular::USER_CIRCLE,
+            WorkbenchMenu::Session => regular::USERS,
+            WorkbenchMenu::Approval => regular::SEAL_CHECK,
             WorkbenchMenu::Configuration => regular::TOOLBOX,
             WorkbenchMenu::Provider => regular::BRAIN,
             WorkbenchMenu::Channel => regular::USERS,
@@ -77,6 +91,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Heartbeat => regular::HEARTBEAT,
             WorkbenchMenu::Mcp => regular::PLUG,
             WorkbenchMenu::Skill => regular::PUZZLE_PIECE,
+            WorkbenchMenu::SkillManage => regular::PUZZLE_PIECE,
             WorkbenchMenu::Memory => regular::MEMORY,
             WorkbenchMenu::Archive => regular::ARCHIVE,
             WorkbenchMenu::Tool => regular::TOOLBOX,

@@ -863,13 +863,8 @@ impl ToolPanel {
         }
     }
 
-    fn render_tool_card(
-        ui: &mut egui::Ui,
-        name: &str,
-        description: &str,
-        enabled: bool,
-        edit_clicked: &mut bool,
-    ) {
+    fn render_tool_card(ui: &mut egui::Ui, name: &str, description: &str, enabled: bool) -> bool {
+        let mut edit_clicked = false;
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_min_width(320.0);
             ui.vertical(|ui| {
@@ -888,10 +883,11 @@ impl ToolPanel {
                 ui.label(description);
                 ui.add_space(8.0);
                 if ui.button("Edit").clicked() {
-                    *edit_clicked = true;
+                    edit_clicked = true;
                 }
             });
         });
+        edit_clicked
     }
 }
 
@@ -915,168 +911,133 @@ impl PanelRenderer for ToolPanel {
         });
         ui.separator();
 
-        let mut edit_apply_patch = false;
-        let mut edit_shell = false;
-        let mut edit_approval = false;
-        let mut edit_local_search = false;
-        let mut edit_terminal_multiplexers = false;
-        let mut edit_cron_manager = false;
-        let mut edit_skills_registry = false;
-        let mut edit_memory = false;
-        let mut edit_web_fetch = false;
-        let mut edit_web_search = false;
-        let mut edit_sub_agent = false;
+        let mut edit_key: Option<&'static str> = None;
 
         egui::ScrollArea::vertical()
             .id_salt("tool-card-scroll")
             .show(ui, |ui| {
+                let cards: [(&str, &str, bool, &str); 11] = [
+                    (
+                        "apply_patch",
+                        "Patch workspace files with constrained path policy.",
+                        self.config.tools.apply_patch.enabled,
+                        "apply_patch",
+                    ),
+                    (
+                        "shell",
+                        "Execute local shell commands with approval policy.",
+                        self.config.tools.shell.enabled,
+                        "shell",
+                    ),
+                    (
+                        "approval",
+                        "Manage approval lifecycle for high-risk actions.",
+                        self.config.tools.approval.enabled,
+                        "approval",
+                    ),
+                    (
+                        "local_search",
+                        "Search local workspace files and snippets.",
+                        self.config.tools.local_search.enabled,
+                        "local_search",
+                    ),
+                    (
+                        "terminal_multiplexers",
+                        "Operate tmux/zellij sessions for long-running tasks.",
+                        self.config.tools.terminal_multiplexers.enabled,
+                        "terminal_multiplexers",
+                    ),
+                    (
+                        "cron_manager",
+                        "Create and control scheduled cron jobs.",
+                        self.config.tools.cron_manager.enabled,
+                        "cron_manager",
+                    ),
+                    (
+                        "skills_registry",
+                        "Search/install/list skills from configured registries.",
+                        self.config.tools.skills_registry.enabled,
+                        "skills_registry",
+                    ),
+                    (
+                        "memory",
+                        "Persist and retrieve long-term memory records.",
+                        self.config.tools.memory.enabled,
+                        "memory",
+                    ),
+                    (
+                        "web_fetch",
+                        "Fetch and extract web page content safely.",
+                        self.config.tools.web_fetch.enabled,
+                        "web_fetch",
+                    ),
+                    (
+                        "web_search",
+                        "Search web results via configured provider.",
+                        self.config.tools.web_search.enabled,
+                        "web_search",
+                    ),
+                    (
+                        "sub_agent",
+                        "Delegate focused tasks to a bounded child agent.",
+                        self.config.tools.sub_agent.enabled,
+                        "sub_agent",
+                    ),
+                ];
+
+                let min_card_width = 340.0_f32;
+                let available_width = ui.available_width().max(min_card_width);
+                let columns = (available_width / min_card_width).floor().max(1.0) as usize;
                 egui::Grid::new("tool-card-grid")
-                    .num_columns(2)
+                    .num_columns(columns)
                     .spacing([12.0, 12.0])
                     .show(ui, |ui| {
-                        Self::render_tool_card(
-                            ui,
-                            "apply_patch",
-                            "Patch workspace files with constrained path policy.",
-                            self.config.tools.apply_patch.enabled,
-                            &mut edit_apply_patch,
-                        );
-                        Self::render_tool_card(
-                            ui,
-                            "shell",
-                            "Execute local shell commands with approval policy.",
-                            self.config.tools.shell.enabled,
-                            &mut edit_shell,
-                        );
-                        ui.end_row();
-
-                        Self::render_tool_card(
-                            ui,
-                            "approval",
-                            "Manage approval lifecycle for high-risk actions.",
-                            self.config.tools.approval.enabled,
-                            &mut edit_approval,
-                        );
-                        Self::render_tool_card(
-                            ui,
-                            "local_search",
-                            "Search local workspace files and snippets.",
-                            self.config.tools.local_search.enabled,
-                            &mut edit_local_search,
-                        );
-                        ui.end_row();
-
-                        Self::render_tool_card(
-                            ui,
-                            "terminal_multiplexers",
-                            "Operate tmux/zellij sessions for long-running tasks.",
-                            self.config.tools.terminal_multiplexers.enabled,
-                            &mut edit_terminal_multiplexers,
-                        );
-                        Self::render_tool_card(
-                            ui,
-                            "cron_manager",
-                            "Create and control scheduled cron jobs.",
-                            self.config.tools.cron_manager.enabled,
-                            &mut edit_cron_manager,
-                        );
-                        ui.end_row();
-
-                        Self::render_tool_card(
-                            ui,
-                            "skills_registry",
-                            "Search/install/list skills from configured registries.",
-                            self.config.tools.skills_registry.enabled,
-                            &mut edit_skills_registry,
-                        );
-                        Self::render_tool_card(
-                            ui,
-                            "memory",
-                            "Persist and retrieve long-term memory records.",
-                            self.config.tools.memory.enabled,
-                            &mut edit_memory,
-                        );
-                        ui.end_row();
-
-                        Self::render_tool_card(
-                            ui,
-                            "web_fetch",
-                            "Fetch and extract web page content safely.",
-                            self.config.tools.web_fetch.enabled,
-                            &mut edit_web_fetch,
-                        );
-                        Self::render_tool_card(
-                            ui,
-                            "web_search",
-                            "Search web results via configured provider.",
-                            self.config.tools.web_search.enabled,
-                            &mut edit_web_search,
-                        );
-                        ui.end_row();
-
-                        Self::render_tool_card(
-                            ui,
-                            "sub_agent",
-                            "Delegate focused tasks to a bounded child agent.",
-                            self.config.tools.sub_agent.enabled,
-                            &mut edit_sub_agent,
-                        );
-                        ui.end_row();
+                        for (idx, (name, description, enabled, key)) in cards.iter().enumerate() {
+                            if Self::render_tool_card(ui, name, description, *enabled) {
+                                edit_key = Some(key);
+                            }
+                            let is_row_end = (idx + 1) % columns == 0;
+                            let is_last = idx + 1 == cards.len();
+                            if is_row_end || is_last {
+                                ui.end_row();
+                            }
+                        }
                     });
             });
 
-        if edit_apply_patch {
-            self.open_apply_patch();
-        }
-        if edit_shell {
-            self.open_shell();
-        }
-        if edit_approval {
-            self.open_toggle(
+        match edit_key {
+            Some("apply_patch") => self.open_apply_patch(),
+            Some("shell") => self.open_shell(),
+            Some("approval") => self.open_toggle(
                 "approval",
                 "Edit Tool: approval",
                 self.config.tools.approval.enabled,
-            );
-        }
-        if edit_local_search {
-            self.open_toggle(
+            ),
+            Some("local_search") => self.open_toggle(
                 "local_search",
                 "Edit Tool: local_search",
                 self.config.tools.local_search.enabled,
-            );
-        }
-        if edit_terminal_multiplexers {
-            self.open_toggle(
+            ),
+            Some("terminal_multiplexers") => self.open_toggle(
                 "terminal_multiplexers",
                 "Edit Tool: terminal_multiplexers",
                 self.config.tools.terminal_multiplexers.enabled,
-            );
-        }
-        if edit_cron_manager {
-            self.open_toggle(
+            ),
+            Some("cron_manager") => self.open_toggle(
                 "cron_manager",
                 "Edit Tool: cron_manager",
                 self.config.tools.cron_manager.enabled,
-            );
-        }
-        if edit_skills_registry {
-            self.open_toggle(
+            ),
+            Some("skills_registry") => self.open_toggle(
                 "skills_registry",
                 "Edit Tool: skills_registry",
                 self.config.tools.skills_registry.enabled,
-            );
-        }
-        if edit_memory {
-            self.open_memory();
-        }
-        if edit_web_fetch {
-            self.open_web_fetch();
-        }
-        if edit_web_search {
-            self.open_web_search();
-        }
-        if edit_sub_agent {
-            self.open_sub_agent();
+            ),
+            Some("memory") => self.open_memory(),
+            Some("web_fetch") => self.open_web_fetch(),
+            Some("web_search") => self.open_web_search(),
+            Some("sub_agent") => self.open_sub_agent(),
+            _ => {}
         }
 
         self.render_form_window(ui, notifications);

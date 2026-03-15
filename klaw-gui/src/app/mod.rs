@@ -44,6 +44,9 @@ impl KlawGuiApp {
                 self.save_state_now();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+            UiAction::ForcePersistLayout => {
+                self.save_state_now();
+            }
             UiAction::ToggleFullscreen => {
                 self.state.apply(action);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.state.fullscreen));
@@ -63,7 +66,8 @@ impl KlawGuiApp {
                 theme::apply_theme(ctx, self.state.theme_mode);
                 self.mark_state_dirty();
             }
-            UiAction::ShowAbout
+            UiAction::SetRuntimeProviderOverride(_)
+            | UiAction::ShowAbout
             | UiAction::HideAbout
             | UiAction::OpenMenu(_)
             | UiAction::ActivateTab(_)
