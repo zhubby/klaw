@@ -19,11 +19,11 @@ klaw-memory = { workspace = true }
 klaw-storage = { workspace = true }
 klaw-skill = { workspace = true }
 uuid = { workspace = true }
-cron = "0.15"
-humantime = "2"
-chrono = "0.4"
+cron = { workspace = true }
+humantime = { workspace = true }
+chrono = { workspace = true }
 reqwest.workspace = true
-ipnet = "2"
+ipnet = { workspace = true }
 tracing.workspace = true
 sha2.workspace = true
 time.workspace = true

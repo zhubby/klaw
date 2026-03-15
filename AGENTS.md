@@ -45,6 +45,29 @@ For docs: `mdbook build docs` (or `mdbook serve docs` for local preview).
 - Prefer iterators/combinators over manual loops. Use `Cow<'_, str>` when allocation is conditional.
 - Keep public API surfaces small. Use `#[must_use]` where return values matter.
 
+## Workspace Dependency Management
+
+All crates share a single source of truth for dependencies in the root `Cargo.toml`:
+
+- **All dependencies must be declared in `[workspace.dependencies]`** at the repository root.
+- Individual crates reference workspace dependencies using `{ workspace = true }` syntax.
+- Path-based internal crates (e.g., `klaw-core`, `klaw-llm`) must also use `{ workspace = true }`.
+- Optional/feature-gated dependencies use `{ workspace = true, optional = true }`.
+- When adding features to a workspace dependency in a crate, use `{ workspace = true, features = [...] }`.
+
+Example:
+```toml
+# Root Cargo.toml
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "rt"] }
+
+# Sub-crate Cargo.toml
+[dependencies]
+serde = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+```
+
 ## Coding Style & Naming Conventions
 Follow Rust 2021 defaults and `rustfmt` output (4-space indentation, trailing commas where formatter adds them). Prefer:
 - `snake_case` for modules/functions/files.

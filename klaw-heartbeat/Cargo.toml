@@ -10,7 +10,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 klaw-config = { workspace = true }
 klaw-storage = { workspace = true }
-humantime = "2"
+humantime = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

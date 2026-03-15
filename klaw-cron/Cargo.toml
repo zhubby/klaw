@@ -6,9 +6,9 @@ version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-chrono = "0.4"
-cron = "0.15"
-humantime = "2"
+chrono = { workspace = true }
+cron = { workspace = true }
+humantime = { workspace = true }
 klaw-core.workspace = true
 klaw-storage.workspace = true
 serde_json.workspace = true

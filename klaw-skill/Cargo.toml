@@ -5,10 +5,10 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
-async-trait.workspace = true
+async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-thiserror.workspace = true
+thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
-reqwest.workspace = true
-tracing.workspace = true
+reqwest = { workspace = true }
+tracing = { workspace = true }

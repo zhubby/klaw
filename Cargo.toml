@@ -47,6 +47,11 @@ hex = "0.4"
 base64 = "0.22"
 
 zellij-client = { version = "0.43.1"}
+humantime = "2"
+url = "2"
+chrono = "0.4"
+cron = "0.15"
+ipnet = "2"
 
 klaw-core = { path = "klaw-core" }
 klaw-archive = { path = "klaw-archive" }

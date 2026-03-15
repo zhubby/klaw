@@ -5,13 +5,13 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-async-trait.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-klaw-config.workspace = true
-klaw-llm.workspace = true
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+klaw-config = { workspace = true }
+klaw-llm = { workspace = true }
 
 [dev-dependencies]
-tokio.workspace = true
+tokio = { workspace = true }
