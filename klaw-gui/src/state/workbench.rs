@@ -1,7 +1,8 @@
 use crate::domain::menu::WorkbenchMenu;
 use crate::state::UiAction;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TabId {
     pub menu: WorkbenchMenu,
 }
@@ -12,7 +13,7 @@ impl TabId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkbenchTab {
     pub id: TabId,
     pub menu: WorkbenchMenu,
@@ -31,7 +32,7 @@ impl WorkbenchTab {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkbenchState {
     pub tabs: Vec<WorkbenchTab>,
     pub active_tab: Option<TabId>,

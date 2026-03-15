@@ -1,3 +1,4 @@
+use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRegistry, RenderCtx};
 use crate::state::{UiAction, UiState};
 
@@ -5,6 +6,7 @@ pub fn show_workbench(
     ui: &mut egui::Ui,
     state: &UiState,
     panels: &mut PanelRegistry,
+    notifications: &mut NotificationCenter,
 ) -> Vec<UiAction> {
     let mut actions = Vec::new();
 
@@ -29,7 +31,7 @@ pub fn show_workbench(
             menu: active.menu,
             tab_title: active.title.as_str(),
         };
-        panels.render_for(ui, &ctx);
+        panels.render_for(ui, &ctx, notifications);
     } else {
         ui.heading("No open tabs");
         ui.label("Use the sidebar to open a module.");

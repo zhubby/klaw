@@ -4,7 +4,12 @@ use crate::widgets::placeholder;
 pub struct ToolPanel;
 
 impl PanelRenderer for ToolPanel {
-    fn render(&mut self, ui: &mut egui::Ui, ctx: &RenderCtx<'_>) {
+    fn render(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &RenderCtx<'_>,
+        _notifications: &mut crate::notifications::NotificationCenter,
+    ) {
         ui.heading(ctx.tab_title);
         ui.label("Tool registry and execution status (mock)");
         ui.separator();

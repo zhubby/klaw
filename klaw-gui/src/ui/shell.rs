@@ -1,3 +1,4 @@
+use crate::notifications::NotificationCenter;
 use crate::panels::PanelRegistry;
 use crate::state::{ThemeMode, UiAction, UiState};
 use crate::ui::{sidebar, workbench};
@@ -6,6 +7,7 @@ use egui_phosphor::regular;
 #[derive(Default)]
 pub struct ShellUi {
     panels: PanelRegistry,
+    notifications: NotificationCenter,
 }
 
 impl ShellUi {
@@ -128,7 +130,12 @@ impl ShellUi {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            actions.extend(workbench::show_workbench(ui, state, &mut self.panels));
+            actions.extend(workbench::show_workbench(
+                ui,
+                state,
+                &mut self.panels,
+                &mut self.notifications,
+            ));
         });
 
         if state.show_about {
@@ -145,6 +152,8 @@ impl ShellUi {
                     }
                 });
         }
+
+        self.notifications.show(ctx);
 
         actions
     }

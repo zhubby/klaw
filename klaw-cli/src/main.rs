@@ -84,7 +84,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match command {
             Commands::Config(cmd) => cmd.run(config.as_deref())?,
             Commands::Daemon(cmd) => cmd.run(config.as_deref())?,
-            Commands::Gui(cmd) => cmd.run()?,
             _ => unreachable!("pre-runtime guard must keep this branch exhaustive"),
         }
         return Ok(());
@@ -102,8 +101,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match command {
         Commands::Stdio(cmd) => cmd.run(Arc::clone(&app_config)).await?,
         Commands::Agent(cmd) => cmd.run(app_config).await?,
-        Commands::Gateway(cmd) => cmd.run(app_config).await?,
-        Commands::Gui(_) => unreachable!("handled above"),
+        Commands::Gateway(cmd) => cmd.run(Arc::clone(&app_config)).await?,
+        Commands::Gui(cmd) => cmd.run(app_config).await?,
         Commands::Session(cmd) => cmd.run().await?,
         Commands::Archive(cmd) => cmd.run().await?,
         Commands::Config(_) => unreachable!("handled above"),
@@ -114,10 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn is_pre_runtime_command(command: &Commands) -> bool {
-    matches!(
-        command,
-        Commands::Config(_) | Commands::Daemon(_) | Commands::Gui(_)
-    )
+    matches!(command, Commands::Config(_) | Commands::Daemon(_))
 }
 
 fn init_tracing(
@@ -242,6 +238,6 @@ mod tests {
     #[test]
     fn gui_is_pre_runtime_command() {
         let cli = Cli::parse_from(["klaw", "gui"]);
-        assert!(is_pre_runtime_command(&cli.command));
+        assert!(!is_pre_runtime_command(&cli.command));
     }
 }

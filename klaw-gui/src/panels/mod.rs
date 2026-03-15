@@ -1,5 +1,6 @@
 mod archive;
 mod channel;
+mod configuration;
 mod cron;
 mod heartbeat;
 mod mcp;
@@ -11,6 +12,7 @@ mod system_monitor;
 mod tool;
 
 use crate::domain::menu::WorkbenchMenu;
+use crate::notifications::NotificationCenter;
 
 pub struct RenderCtx<'a> {
     pub menu: WorkbenchMenu,
@@ -18,11 +20,17 @@ pub struct RenderCtx<'a> {
 }
 
 pub trait PanelRenderer {
-    fn render(&mut self, ui: &mut egui::Ui, ctx: &RenderCtx<'_>);
+    fn render(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &RenderCtx<'_>,
+        notifications: &mut NotificationCenter,
+    );
 }
 
 pub struct PanelRegistry {
     profile: profile::ProfilePanel,
+    configuration: configuration::ConfigurationPanel,
     provider: provider::ProviderPanel,
     channel: channel::ChannelPanel,
     cron: cron::CronPanel,
@@ -39,14 +47,15 @@ impl Default for PanelRegistry {
     fn default() -> Self {
         Self {
             profile: profile::ProfilePanel,
-            provider: provider::ProviderPanel,
-            channel: channel::ChannelPanel,
-            cron: cron::CronPanel,
+            configuration: configuration::ConfigurationPanel::default(),
+            provider: provider::ProviderPanel::default(),
+            channel: channel::ChannelPanel::default(),
+            cron: cron::CronPanel::default(),
             heartbeat: heartbeat::HeartbeatPanel,
-            mcp: mcp::McpPanel,
-            skill: skill::SkillPanel,
+            mcp: mcp::McpPanel::default(),
+            skill: skill::SkillPanel::default(),
             memory: memory::MemoryPanel,
-            archive: archive::ArchivePanel,
+            archive: archive::ArchivePanel::default(),
             tool: tool::ToolPanel,
             system_monitor: system_monitor::SystemMonitorPanel,
         }
@@ -54,19 +63,25 @@ impl Default for PanelRegistry {
 }
 
 impl PanelRegistry {
-    pub fn render_for(&mut self, ui: &mut egui::Ui, ctx: &RenderCtx<'_>) {
+    pub fn render_for(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &RenderCtx<'_>,
+        notifications: &mut NotificationCenter,
+    ) {
         match ctx.menu {
-            WorkbenchMenu::Profile => self.profile.render(ui, ctx),
-            WorkbenchMenu::Provider => self.provider.render(ui, ctx),
-            WorkbenchMenu::Channel => self.channel.render(ui, ctx),
-            WorkbenchMenu::Cron => self.cron.render(ui, ctx),
-            WorkbenchMenu::Heartbeat => self.heartbeat.render(ui, ctx),
-            WorkbenchMenu::Mcp => self.mcp.render(ui, ctx),
-            WorkbenchMenu::Skill => self.skill.render(ui, ctx),
-            WorkbenchMenu::Memory => self.memory.render(ui, ctx),
-            WorkbenchMenu::Archive => self.archive.render(ui, ctx),
-            WorkbenchMenu::Tool => self.tool.render(ui, ctx),
-            WorkbenchMenu::SystemMonitor => self.system_monitor.render(ui, ctx),
+            WorkbenchMenu::Profile => self.profile.render(ui, ctx, notifications),
+            WorkbenchMenu::Configuration => self.configuration.render(ui, ctx, notifications),
+            WorkbenchMenu::Provider => self.provider.render(ui, ctx, notifications),
+            WorkbenchMenu::Channel => self.channel.render(ui, ctx, notifications),
+            WorkbenchMenu::Cron => self.cron.render(ui, ctx, notifications),
+            WorkbenchMenu::Heartbeat => self.heartbeat.render(ui, ctx, notifications),
+            WorkbenchMenu::Mcp => self.mcp.render(ui, ctx, notifications),
+            WorkbenchMenu::Skill => self.skill.render(ui, ctx, notifications),
+            WorkbenchMenu::Memory => self.memory.render(ui, ctx, notifications),
+            WorkbenchMenu::Archive => self.archive.render(ui, ctx, notifications),
+            WorkbenchMenu::Tool => self.tool.render(ui, ctx, notifications),
+            WorkbenchMenu::SystemMonitor => self.system_monitor.render(ui, ctx, notifications),
         }
     }
 }

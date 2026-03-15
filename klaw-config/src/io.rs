@@ -2,6 +2,7 @@ use crate::{validate, AppConfig, ConfigError};
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    sync::{Arc, RwLock},
 };
 
 #[derive(Debug, Clone)]
@@ -15,6 +16,120 @@ pub struct LoadedConfig {
 pub struct MigratedConfig {
     pub path: PathBuf,
     pub created_file: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfigSnapshot {
+    pub path: PathBuf,
+    pub config: AppConfig,
+    pub raw_toml: String,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfigStore {
+    inner: Arc<RwLock<ConfigSnapshot>>,
+}
+
+impl ConfigStore {
+    pub fn open(config_path: Option<&Path>) -> Result<Self, ConfigError> {
+        let loaded = load_or_init(config_path)?;
+        let raw_toml =
+            fs::read_to_string(&loaded.path).map_err(|source| ConfigError::ReadConfig {
+                path: loaded.path.clone(),
+                source,
+            })?;
+        let snapshot = ConfigSnapshot {
+            path: loaded.path,
+            config: loaded.config,
+            raw_toml,
+            revision: 1,
+        };
+        Ok(Self {
+            inner: Arc::new(RwLock::new(snapshot)),
+        })
+    }
+
+    pub fn snapshot(&self) -> ConfigSnapshot {
+        self.inner
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone()
+    }
+
+    pub fn save_raw_toml(&self, raw: &str) -> Result<ConfigSnapshot, ConfigError> {
+        let path = self
+            .inner
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .path
+            .clone();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(ConfigError::CreateDir)?;
+        }
+        let config = parse_and_validate_config(&path, raw)?;
+        fs::write(&path, raw).map_err(ConfigError::WriteConfig)?;
+        let mut guard = self.inner.write().unwrap_or_else(|err| err.into_inner());
+        let next_revision = guard.revision.saturating_add(1);
+        *guard = ConfigSnapshot {
+            path,
+            config,
+            raw_toml: raw.to_string(),
+            revision: next_revision,
+        };
+        Ok(guard.clone())
+    }
+
+    pub fn validate_raw_toml(&self, raw: &str) -> Result<(), ConfigError> {
+        let path = self
+            .inner
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .path
+            .clone();
+        parse_and_validate_config(&path, raw)?;
+        Ok(())
+    }
+
+    pub fn reload(&self) -> Result<ConfigSnapshot, ConfigError> {
+        let mut guard = self.inner.write().unwrap_or_else(|err| err.into_inner());
+        let path = guard.path.clone();
+        let raw_toml = fs::read_to_string(&path).map_err(|source| ConfigError::ReadConfig {
+            path: path.clone(),
+            source,
+        })?;
+        let config = parse_and_validate_config(&path, &raw_toml)?;
+        let next_revision = guard.revision.saturating_add(1);
+        *guard = ConfigSnapshot {
+            path,
+            config,
+            raw_toml,
+            revision: next_revision,
+        };
+        Ok(guard.clone())
+    }
+
+    pub fn reset_to_defaults(&self) -> Result<ConfigSnapshot, ConfigError> {
+        let path = self
+            .inner
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .path
+            .clone();
+        reset_path_to_defaults(&path)?;
+        self.reload()
+    }
+
+    pub fn migrate_with_defaults(&self) -> Result<ConfigSnapshot, ConfigError> {
+        let path = self
+            .inner
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .path
+            .clone();
+        migrate_path_with_defaults(&path)?;
+        self.reload()
+    }
 }
 
 pub fn load_or_init(config_path: Option<&Path>) -> Result<LoadedConfig, ConfigError> {
@@ -178,4 +293,13 @@ fn merge_toml_values(base: &mut toml::Value, overlay: toml::Value) {
             *base_value = overlay_value;
         }
     }
+}
+
+fn parse_and_validate_config(path: &Path, raw: &str) -> Result<AppConfig, ConfigError> {
+    let config: AppConfig = toml::from_str(raw).map_err(|source| ConfigError::ParseConfig {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    validate(&config)?;
+    Ok(config)
 }

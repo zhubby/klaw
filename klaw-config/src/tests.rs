@@ -114,6 +114,25 @@ env_key = "OPENAI_API_KEY"
 }
 
 #[test]
+fn parse_storage_root_dir_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[storage]
+root_dir = "/tmp/klaw-data"
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+    assert_eq!(parsed.storage.root_dir.as_deref(), Some("/tmp/klaw-data"));
+}
+
+#[test]
 fn validate_fails_when_active_provider_missing() {
     let cfg = AppConfig {
         model_provider: "missing".to_string(),
@@ -741,6 +760,15 @@ fn validate_fails_when_shell_workspace_is_empty() {
 }
 
 #[test]
+fn validate_fails_when_storage_root_dir_is_empty() {
+    let mut cfg = AppConfig::default();
+    cfg.storage.root_dir = Some("   ".to_string());
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("storage.root_dir"));
+}
+
+#[test]
 fn validate_fails_when_skills_config_invalid() {
     let mut cfg = AppConfig::default();
     cfg.skills.sync_timeout = 0;
@@ -1025,5 +1053,163 @@ fn validate_config_file_does_not_create_when_missing() {
     assert!(matches!(err, ConfigError::ConfigNotFound(_)));
     assert!(!path.exists());
 
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn config_store_save_updates_shared_snapshot_revision() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let path = root.join("config.toml");
+
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+"#;
+    fs::create_dir_all(&root).expect("should create temp root");
+    fs::write(&path, raw).expect("should write source config");
+
+    let store = ConfigStore::open(Some(&path)).expect("store should open");
+    let store_clone = store.clone();
+    let before = store.snapshot();
+    assert_eq!(before.revision, 1);
+
+    let next_raw = raw.replace("gpt-4o-mini", "gpt-4.1-mini");
+    let saved = store
+        .save_raw_toml(&next_raw)
+        .expect("save should parse, validate and persist");
+    assert_eq!(saved.revision, 2);
+    assert_eq!(
+        saved.config.model_providers["openai"].default_model,
+        "gpt-4.1-mini"
+    );
+
+    let clone_snapshot = store_clone.snapshot();
+    assert_eq!(clone_snapshot.revision, 2);
+    assert_eq!(
+        clone_snapshot.config.model_providers["openai"].default_model,
+        "gpt-4.1-mini"
+    );
+
+    let disk_raw = fs::read_to_string(&path).expect("saved config should be written");
+    assert!(disk_raw.contains("gpt-4.1-mini"));
+
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn config_store_reset_and_migrate_refresh_snapshot_from_disk() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let path = root.join("config.toml");
+
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4.1-mini"
+env_key = "OPENAI_API_KEY"
+"#;
+    fs::create_dir_all(&root).expect("should create temp root");
+    fs::write(&path, raw).expect("should write source config");
+
+    let store = ConfigStore::open(Some(&path)).expect("store should open");
+    let reset_snapshot = store.reset_to_defaults().expect("reset should succeed");
+    assert!(reset_snapshot.revision >= 2);
+    assert_eq!(
+        reset_snapshot.config.model_providers["openai"].default_model,
+        "gpt-4o-mini"
+    );
+
+    let merge_raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4.1-mini"
+env_key = "OPENAI_API_KEY"
+
+[custom]
+flag = true
+"#;
+    fs::write(&path, merge_raw).expect("should rewrite source config");
+    let migrated_snapshot = store
+        .migrate_with_defaults()
+        .expect("migrate should succeed");
+    assert!(migrated_snapshot.revision >= 3);
+    assert_eq!(
+        migrated_snapshot.config.model_providers["openai"].default_model,
+        "gpt-4.1-mini"
+    );
+    assert!(migrated_snapshot.raw_toml.contains("[custom]"));
+
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn config_store_validate_raw_toml_works_without_persisting() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let path = root.join("config.toml");
+    fs::create_dir_all(&root).expect("should create temp root");
+    fs::write(
+        &path,
+        r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+"#,
+    )
+    .expect("should write source config");
+
+    let store = ConfigStore::open(Some(&path)).expect("store should open");
+    let valid_raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4.1-mini"
+env_key = "OPENAI_API_KEY"
+"#;
+    store
+        .validate_raw_toml(valid_raw)
+        .expect("valid config should pass validation");
+    let invalid_raw = "model_provider = \"openai\"\n[broken";
+    let err = store
+        .validate_raw_toml(invalid_raw)
+        .expect_err("invalid config should fail");
+    assert!(matches!(err, ConfigError::ParseConfig { .. }));
+
+    let disk_raw = fs::read_to_string(&path).expect("source config should still exist");
+    assert!(
+        disk_raw.contains("gpt-4o-mini"),
+        "validate should not write to disk"
+    );
+
+    let _ = fs::remove_file(&path);
     let _ = fs::remove_dir_all(&root);
 }

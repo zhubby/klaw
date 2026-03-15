@@ -4,7 +4,12 @@ use crate::widgets::placeholder;
 pub struct SystemMonitorPanel;
 
 impl PanelRenderer for SystemMonitorPanel {
-    fn render(&mut self, ui: &mut egui::Ui, ctx: &RenderCtx<'_>) {
+    fn render(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &RenderCtx<'_>,
+        _notifications: &mut crate::notifications::NotificationCenter,
+    ) {
         ui.heading(ctx.tab_title);
         ui.label("Runtime health and observability (mock)");
         ui.separator();

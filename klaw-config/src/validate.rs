@@ -328,6 +328,16 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "tools.shell.workspace cannot be empty".to_string(),
         ));
     }
+    if config
+        .storage
+        .root_dir
+        .as_deref()
+        .is_some_and(|root_dir| root_dir.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "storage.root_dir cannot be empty when configured".to_string(),
+        ));
+    }
 
     Ok(())
 }

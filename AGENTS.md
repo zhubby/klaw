@@ -117,3 +117,10 @@ Each workspace crate must maintain its own documentation:
 **README.md** (at crate root):
 - Describe module capabilities, implementation, and architecture
 - Keep in sync with code - update when descriptions become inaccurate
+
+## GUI Layout Notes (egui)
+- Use `StripBuilder` for major vertical regions (header/editor/footer) to keep sizing predictable.
+- Let header/content text use natural height; avoid hard-coded header heights that create blank gaps.
+- Keep editor width equal to parent container width (`available_width` + `add_sized`).
+- When parent height is below the panel minimum height, enable one outer scroll area for the whole panel.
+- Prefer global toast notifications (`egui-notify`) for operation feedback; avoid inline success/error blocks that shift layout.

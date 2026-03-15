@@ -6,6 +6,8 @@ use thiserror::Error;
 pub enum CronError {
     #[error("invalid schedule: {0}")]
     InvalidSchedule(String),
+    #[error("invalid cron row: {0}")]
+    InvalidCronRow(String),
     #[error("storage error: {0}")]
     Storage(#[from] StorageError),
     #[error("transport error: {0}")]

@@ -4,7 +4,12 @@ use crate::widgets::placeholder;
 pub struct ProfilePanel;
 
 impl PanelRenderer for ProfilePanel {
-    fn render(&mut self, ui: &mut egui::Ui, ctx: &RenderCtx<'_>) {
+    fn render(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &RenderCtx<'_>,
+        _notifications: &mut crate::notifications::NotificationCenter,
+    ) {
         ui.heading(ctx.tab_title);
         ui.label("Workspace profile summary (mock data)");
         ui.separator();

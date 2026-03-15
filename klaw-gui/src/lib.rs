@@ -1,5 +1,6 @@
 mod app;
 mod domain;
+mod notifications;
 mod panels;
 mod state;
 mod theme;

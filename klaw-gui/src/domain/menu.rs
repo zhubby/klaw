@@ -1,6 +1,10 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+use egui_phosphor::regular;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WorkbenchMenu {
     Profile,
+    Configuration,
     Provider,
     Channel,
     Cron,
@@ -14,8 +18,9 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 11] = [
+    pub const ALL: [WorkbenchMenu; 12] = [
         WorkbenchMenu::Profile,
+        WorkbenchMenu::Configuration,
         WorkbenchMenu::Provider,
         WorkbenchMenu::Channel,
         WorkbenchMenu::Cron,
@@ -31,12 +36,13 @@ impl WorkbenchMenu {
     pub const fn id_key(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => "profile",
+            WorkbenchMenu::Configuration => "configuration",
             WorkbenchMenu::Provider => "provider",
             WorkbenchMenu::Channel => "channel",
             WorkbenchMenu::Cron => "cron",
             WorkbenchMenu::Heartbeat => "heartbeat",
             WorkbenchMenu::Mcp => "mcp",
-            WorkbenchMenu::Skill => "skill",
+            WorkbenchMenu::Skill => "skill-registry",
             WorkbenchMenu::Memory => "memory",
             WorkbenchMenu::Archive => "archive",
             WorkbenchMenu::Tool => "tool",
@@ -47,12 +53,13 @@ impl WorkbenchMenu {
     pub const fn title(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => "Profile",
+            WorkbenchMenu::Configuration => "Configuration",
             WorkbenchMenu::Provider => "Provider",
             WorkbenchMenu::Channel => "Channel",
             WorkbenchMenu::Cron => "Cron",
             WorkbenchMenu::Heartbeat => "Heartbeat",
             WorkbenchMenu::Mcp => "MCP",
-            WorkbenchMenu::Skill => "Skill",
+            WorkbenchMenu::Skill => "Skill Registry",
             WorkbenchMenu::Memory => "Memory",
             WorkbenchMenu::Archive => "Archive",
             WorkbenchMenu::Tool => "Tool",
@@ -63,6 +70,7 @@ impl WorkbenchMenu {
     pub const fn icon(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => regular::USER_CIRCLE,
+            WorkbenchMenu::Configuration => regular::TOOLBOX,
             WorkbenchMenu::Provider => regular::BRAIN,
             WorkbenchMenu::Channel => regular::USERS,
             WorkbenchMenu::Cron => regular::CLOCK,
@@ -104,5 +112,10 @@ mod tests {
             assert!(!menu.default_tab_title().is_empty());
         }
     }
+
+    #[test]
+    fn configuration_menu_is_registered() {
+        assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Configuration));
+        assert_eq!(WorkbenchMenu::Configuration.id_key(), "configuration");
+    }
 }
-use egui_phosphor::regular;

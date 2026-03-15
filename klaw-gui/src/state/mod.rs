@@ -1,6 +1,8 @@
+pub mod persistence;
 pub mod workbench;
 
 use crate::domain::menu::WorkbenchMenu;
+use serde::{Deserialize, Serialize};
 use workbench::TabId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +20,7 @@ pub enum UiAction {
     CycleTheme,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeMode {
     System,
     Light,
@@ -35,7 +37,7 @@ impl ThemeMode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
     pub workbench: workbench::WorkbenchState,
     pub theme_mode: ThemeMode,

@@ -14,6 +14,9 @@
 - `submit_and_get_output` 增加媒体引用参数，并将 channel 传入的 `media_references` 写入 `InboundMessage`，避免 runtime 丢失入站媒体
 - `klaw gateway` 现在支持按 `channels.dingtalk[].proxy` 初始化 dingtalk 通道代理策略；默认禁用代理
 - `klaw gateway` 收到退出信号时会先广播 dingtalk 通道 shutdown，再等待通道优雅关闭 websocket（超时后记录警告）
+- `klaw gui` 启动路径改为和 `gateway` 对齐：进入 runtime 启动/初始化与 dingtalk channel 生命周期管理，但不启动 web gateway 服务
+- `klaw gateway`/`klaw gui` 共享 dingtalk channel 启停辅助逻辑，并统一在主任务退出后执行 channel 关闭等待
+- 修复 macOS 下 `klaw gui` 在非主线程初始化 `winit EventLoop` 导致 panic 的问题：GUI 事件循环改为主线程运行
 
 ## 2026-03-14
 
