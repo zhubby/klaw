@@ -62,17 +62,17 @@ impl WorkbenchMenu {
 
     pub const fn icon(self) -> &'static str {
         match self {
-            WorkbenchMenu::Profile => "[PRF]",
-            WorkbenchMenu::Provider => "[PRV]",
-            WorkbenchMenu::Channel => "[CHN]",
-            WorkbenchMenu::Cron => "[CRN]",
-            WorkbenchMenu::Heartbeat => "[HBT]",
-            WorkbenchMenu::Mcp => "[MCP]",
-            WorkbenchMenu::Skill => "[SKL]",
-            WorkbenchMenu::Memory => "[MEM]",
-            WorkbenchMenu::Archive => "[ARC]",
-            WorkbenchMenu::Tool => "[TOL]",
-            WorkbenchMenu::SystemMonitor => "[MON]",
+            WorkbenchMenu::Profile => regular::USER_CIRCLE,
+            WorkbenchMenu::Provider => regular::BRAIN,
+            WorkbenchMenu::Channel => regular::USERS,
+            WorkbenchMenu::Cron => regular::CLOCK,
+            WorkbenchMenu::Heartbeat => regular::HEARTBEAT,
+            WorkbenchMenu::Mcp => regular::PLUG,
+            WorkbenchMenu::Skill => regular::PUZZLE_PIECE,
+            WorkbenchMenu::Memory => regular::MEMORY,
+            WorkbenchMenu::Archive => regular::ARCHIVE,
+            WorkbenchMenu::Tool => regular::TOOLBOX,
+            WorkbenchMenu::SystemMonitor => regular::CHART_LINE,
         }
     }
 
@@ -105,3 +105,4 @@ mod tests {
         }
     }
 }
+use egui_phosphor::regular;

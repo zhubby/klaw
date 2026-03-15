@@ -8,3 +8,4 @@ license.workspace = true
 anyhow = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+egui-phosphor = { workspace = true }

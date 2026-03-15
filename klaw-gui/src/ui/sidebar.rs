@@ -4,8 +4,7 @@ use crate::state::{UiAction, UiState};
 pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
     let mut actions = Vec::new();
 
-    ui.heading("Klaw Workbench");
-    ui.label("Modules");
+    ui.label(egui::RichText::new("Klaw").strong().size(30.0));
     ui.separator();
 
     for menu in WorkbenchMenu::ALL {

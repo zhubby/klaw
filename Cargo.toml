@@ -7,12 +7,12 @@ members = [
     "klaw-tool",
     "klaw-heartbeat",
     "klaw-config",
-    "klaw-cli", 
-    "klaw-mcp", 
-    "klaw-skill", 
-    "klaw-memory", 
-    "klaw-cron", 
-    "klaw-storage", 
+    "klaw-cli",
+    "klaw-mcp",
+    "klaw-skill",
+    "klaw-memory",
+    "klaw-cron",
+    "klaw-storage",
     "klaw-gateway", "klaw-channel",
     "klaw-gui",
 ]
@@ -49,8 +49,8 @@ base64 = "0.22"
 anyhow = "1"
 egui = "0.33.3"
 eframe = "0.33.3"
+egui-phosphor = "0.11.0"
 
-zellij-client = { version = "0.43.1"}
 humantime = "2"
 url = "2"
 chrono = "0.4"

@@ -1,16 +1,16 @@
-pub fn apply_theme(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-    style.spacing.button_padding = egui::vec2(10.0, 6.0);
-    style.spacing.window_margin = egui::Margin::same(10);
+use crate::state::ThemeMode;
 
-    let mut visuals = egui::Visuals::dark();
-    visuals.override_text_color = Some(egui::Color32::from_rgb(232, 240, 248));
-    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(64, 78, 103);
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(34, 43, 58);
-    visuals.panel_fill = egui::Color32::from_rgb(22, 28, 38);
-    visuals.extreme_bg_color = egui::Color32::from_rgb(17, 22, 30);
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    ctx.set_fonts(fonts);
+}
 
-    style.visuals = visuals;
-    ctx.set_style(style);
+pub fn apply_theme(ctx: &egui::Context, theme_mode: ThemeMode) {
+    let preference = match theme_mode {
+        ThemeMode::System => egui::ThemePreference::System,
+        ThemeMode::Light => egui::ThemePreference::Light,
+        ThemeMode::Dark => egui::ThemePreference::Dark,
+    };
+    ctx.set_theme(preference);
 }

@@ -10,3 +10,6 @@
 - typed menu model, UI action reducer, and workbench tab state machine
 - placeholder panel renderer abstraction and per-module panel implementations
 - crate-level README and architecture documentation
+- top menu bar with File/View/Window/Help actions
+- bottom status bar with version indicator and theme switch icon
+- `egui-phosphor` icon font integration for sidebar menu items and status UI

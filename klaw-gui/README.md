@@ -5,6 +5,8 @@
 ## Capabilities
 
 - Workbench shell with left navigation and center tab workspace
+- Top menu bar (File/View/Window/Help)
+- Bottom status bar with version and theme-mode switcher
 - Strongly typed menu model for workspace modules
 - Single-tab-per-menu behavior (click to open or activate)
 - Placeholder panel renderers for:
@@ -29,6 +31,8 @@
 - `panels/`: module-specific placeholder panels
 - `widgets/`: shared reusable UI widgets
 - `theme.rs`: centralized theme setup
+  - system-follow default
+  - light/dark/system cycling
 
 ## Running
 
