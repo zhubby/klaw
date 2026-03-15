@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-15
+
+### Added
+- added session-backed shell approval requests: mutating shell commands now persist pending approval records (with `approval_id`) when a session store is available
+- added metadata-based approval replay path for shell commands via `shell.approval_id` with one-time consume semantics against approved records
+- added auto-consume behavior for approved shell requests by `(session_key, command_hash)` so retries can pass without explicitly carrying `shell.approval_id`
+- approval request persistence now stores full command text to support post-approval immediate execution flows
+
+### Changed
+- `ShellTool` now supports store injection (`with_store`, `with_config_and_store`) while preserving legacy `shell.approved=true` fallback behavior
+
 ## 2026-03-14
 
 ### Changed

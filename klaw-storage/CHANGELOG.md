@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-15
+
+### Added
+- added `approvals` persistence model (`ApprovalRecord`, `ApprovalStatus`, `NewApprovalRecord`) and `SessionStorage` APIs for create/get/update/consume lifecycle
+- added `approvals` table + indexes in both SQLx and Turso backends, with `session_key` foreign key linkage to `sessions`
+- added `consume_latest_approved_shell_command` storage API and backend support to consume approved shell requests by session + command hash
+- approvals now persist `command_text` for exact command replay after approval
+
 ## 2026-03-14
 
 ### Added

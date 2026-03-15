@@ -16,11 +16,12 @@ use klaw_heartbeat::{
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_skill::{open_default_skill_store, InstalledSkill, RegistrySource, SkillStore};
 use klaw_storage::{
-    open_default_store, ChatRecord, CronStorage, DefaultSessionStore, SessionStorage,
+    open_default_store, ApprovalStatus, ChatRecord, CronStorage, DefaultSessionStore,
+    SessionStorage,
 };
 use klaw_tool::{
     ApplyPatchTool, CronManagerTool, LocalSearchTool, MemoryTool, ShellTool, SkillsRegistryTool,
-    SubAgentTool, TerminalMultiplexerTool, ToolRegistry, WebFetchTool, WebSearchTool,
+    SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use serde_json::json;
 use std::{
@@ -28,6 +29,7 @@ use std::{
     error::Error,
     io,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
     time::Duration,
 };
 use tokio::{sync::Mutex, time::timeout};
@@ -181,6 +183,44 @@ fn first_arg_token(arg: Option<&str>) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+async fn execute_approved_shell(
+    runtime: &RuntimeBundle,
+    approval_id: &str,
+    session_key: &str,
+    command_text: &str,
+) -> Result<String, Box<dyn Error>> {
+    let Some(shell_tool) = runtime.runtime.tools.get("shell") else {
+        return Ok("⚠️ shell tool unavailable; approval has been recorded but command was not executed.".to_string());
+    };
+    let mut metadata = BTreeMap::new();
+    metadata.insert(
+        "shell.approval_id".to_string(),
+        serde_json::Value::String(approval_id.to_string()),
+    );
+    let output = shell_tool
+        .execute(
+            json!({ "command": command_text }),
+            &ToolContext {
+                session_key: session_key.to_string(),
+                metadata,
+            },
+        )
+        .await;
+    match output {
+        Ok(output) => Ok(output
+            .content_for_user
+            .unwrap_or_else(|| output.content_for_model)),
+        Err(err) => Ok(format!("tool `shell` failed: {err}")),
+    }
+}
+
 async fn resolve_session_route(
     runtime: &RuntimeBundle,
     channel: &str,
@@ -255,6 +295,10 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
     lines.push(format!(
         "{:<24}{}",
         "/model <model_name>", "Update current model for current session"
+    ));
+    lines.push(format!(
+        "{:<24}{}",
+        "/approve <approval_id>", "Approve a pending shell command"
     ));
     lines.push("```".to_string());
     if runtime.provider_default_models.len() > 1 {
@@ -411,6 +455,115 @@ async fn handle_im_command(
                 }
             }
         }
+        "approve" => {
+            let Some(approval_id) = first_arg_token(arg) else {
+                return Ok(Some(ChannelResponse {
+                    content: "❌ Usage: `/approve <approval_id>`".to_string(),
+                    reasoning: None,
+                }));
+            };
+            let approval = match runtime.session_store.get_approval(approval_id).await {
+                Ok(approval) => approval,
+                Err(_) => {
+                    return Ok(Some(ChannelResponse {
+                        content: format!("❌ Approval not found: `{approval_id}`"),
+                        reasoning: None,
+                    }));
+                }
+            };
+            if approval.session_key != route.active_session_key && approval.session_key != base_session_key
+            {
+                return Ok(Some(ChannelResponse {
+                    content: format!(
+                        "❌ Approval `{approval_id}` does not belong to current session."
+                    ),
+                    reasoning: None,
+                }));
+            }
+            if approval.tool_name != "shell" {
+                return Ok(Some(ChannelResponse {
+                    content: format!(
+                        "❌ Approval `{approval_id}` is for unsupported tool `{}`.",
+                        approval.tool_name
+                    ),
+                    reasoning: None,
+                }));
+            }
+            match approval.status {
+                ApprovalStatus::Pending => {
+                    if approval.expires_at_ms < now_ms() {
+                        let _ = runtime
+                            .session_store
+                            .update_approval_status(
+                                approval_id,
+                                ApprovalStatus::Expired,
+                                Some("channel-user"),
+                            )
+                            .await?;
+                        return Ok(Some(ChannelResponse {
+                            content: format!("⌛ Approval expired: `{approval_id}`"),
+                            reasoning: None,
+                        }));
+                    }
+                    let approved = runtime
+                        .session_store
+                        .update_approval_status(
+                            approval_id,
+                            ApprovalStatus::Approved,
+                            Some("channel-user"),
+                        )
+                        .await?;
+                    let execution_result = execute_approved_shell(
+                        runtime,
+                        &approved.id,
+                        &approved.session_key,
+                        &approved.command_text,
+                    )
+                    .await?;
+                    let model_followup_input = format!(
+                        "审批已通过并已执行命令。请基于以下执行结果给出最终回复。\n\
+                        要求：\n\
+                        1) 先说明成功/失败\n\
+                        2) 如果失败，指出最关键原因和下一步建议\n\
+                        3) 不要再调用任何工具\n\n\
+                        approval_id: {}\n\
+                        command: {}\n\
+                        shell_result:\n{}",
+                        approved.id, approved.command_preview, execution_result
+                    );
+                    let maybe_output = submit_and_get_output(
+                        runtime,
+                        channel.clone(),
+                        model_followup_input,
+                        approved.session_key.clone(),
+                        chat_id.clone(),
+                        route.model_provider.clone(),
+                        route.model.clone(),
+                    )
+                    .await?;
+                    match maybe_output {
+                        Some(output) => ChannelResponse {
+                            content: output.content,
+                            reasoning: output.reasoning,
+                        },
+                        None => ChannelResponse {
+                            content: format!(
+                                "✅ **Approval granted and command executed**\n\n{}",
+                                execution_result
+                            ),
+                            reasoning: None,
+                        },
+                    }
+                }
+                other => ChannelResponse {
+                    content: format!(
+                        "ℹ️ Approval `{approval_id}` is already `{}`.",
+                        other.as_str()
+                    ),
+                    reasoning: None,
+                },
+            }
+        }
         other => {
             let help = render_help_text(runtime);
             ChannelResponse {
@@ -468,7 +621,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         .map_err(|err| config_err(format!("heartbeat reconcile failed: {err}")))?;
     let mut tools = ToolRegistry::default();
     tools.register(ApplyPatchTool::new(config));
-    tools.register(ShellTool::new(config));
+    tools.register(ShellTool::with_store(config, session_store.clone()));
     tools.register(LocalSearchTool::new());
     tools.register(TerminalMultiplexerTool::new());
     tools.register(CronManagerTool::open_default().await?);

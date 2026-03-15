@@ -2,8 +2,9 @@ use crate::{
     jsonl,
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
-    ChatRecord, CronJob, CronScheduleKind, CronStorage, CronTaskRun, CronTaskStatus, NewCronJob,
-    NewCronTaskRun, SessionIndex, SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
+    ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
+    CronTaskRun, CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun, SessionIndex,
+    SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
 use sqlx::{
@@ -72,6 +73,25 @@ struct CronTaskRunRow {
     created_at_ms: i64,
 }
 
+#[derive(Debug, Clone, FromRow)]
+struct ApprovalRow {
+    id: String,
+    session_key: String,
+    tool_name: String,
+    command_hash: String,
+    command_preview: String,
+    command_text: String,
+    risk_level: String,
+    status: String,
+    requested_by: String,
+    approved_by: Option<String>,
+    justification: Option<String>,
+    expires_at_ms: i64,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    consumed_at_ms: Option<i64>,
+}
+
 impl From<SessionIndexRow> for SessionIndex {
     fn from(value: SessionIndexRow) -> Self {
         Self {
@@ -134,6 +154,33 @@ impl TryFrom<CronTaskRunRow> for CronTaskRun {
             error_message: value.error_message,
             published_message_id: value.published_message_id,
             created_at_ms: value.created_at_ms,
+        })
+    }
+}
+
+impl TryFrom<ApprovalRow> for ApprovalRecord {
+    type Error = StorageError;
+
+    fn try_from(value: ApprovalRow) -> Result<Self, Self::Error> {
+        let status = ApprovalStatus::parse(&value.status).ok_or_else(|| {
+            StorageError::backend(format!("invalid approval status: {}", value.status))
+        })?;
+        Ok(Self {
+            id: value.id,
+            session_key: value.session_key,
+            tool_name: value.tool_name,
+            command_hash: value.command_hash,
+            command_preview: value.command_preview,
+            command_text: value.command_text,
+            risk_level: value.risk_level,
+            status,
+            requested_by: value.requested_by,
+            approved_by: value.approved_by,
+            justification: value.justification,
+            expires_at_ms: value.expires_at_ms,
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
+            consumed_at_ms: value.consumed_at_ms,
         })
     }
 }
@@ -249,6 +296,48 @@ impl SqlxSessionStore {
         .execute(&self.pool)
         .await
         .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS approvals (
+                id TEXT PRIMARY KEY,
+                session_key TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                command_hash TEXT NOT NULL,
+                command_preview TEXT NOT NULL,
+                command_text TEXT NOT NULL,
+                risk_level TEXT NOT NULL,
+                status TEXT NOT NULL,
+                requested_by TEXT NOT NULL,
+                approved_by TEXT,
+                justification TEXT,
+                expires_at_ms INTEGER NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                consumed_at_ms INTEGER,
+                FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        self.ensure_approval_column(
+            "command_text",
+            "ALTER TABLE approvals ADD COLUMN command_text TEXT NOT NULL DEFAULT ''",
+        )
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_approvals_session_status
+             ON approvals(session_key, status, created_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_approvals_expiry
+             ON approvals(status, expires_at_ms)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
         Ok(())
     }
 
@@ -263,6 +352,22 @@ impl SqlxSessionStore {
                 }
                 Err(StorageError::backend(format!(
                     "failed to ensure sessions.{column} column: {message}"
+                )))
+            }
+        }
+    }
+
+    async fn ensure_approval_column(&self, column: &str, sql: &str) -> Result<(), StorageError> {
+        let result = sqlx::query(sql).execute(&self.pool).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("duplicate column name") {
+                    return Ok(());
+                }
+                Err(StorageError::backend(format!(
+                    "failed to ensure approvals.{column} column: {message}"
                 )))
             }
         }
@@ -661,6 +766,140 @@ impl SessionStorage for SqlxSessionStore {
         .await
         .map_err(StorageError::backend)?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn create_approval(&self, input: &NewApprovalRecord) -> Result<ApprovalRecord, StorageError> {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO approvals (
+                id, session_key, tool_name, command_hash, command_preview, command_text, risk_level, status,
+                requested_by, approved_by, justification, expires_at_ms, created_at_ms, updated_at_ms, consumed_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?12, ?13, NULL)",
+        )
+        .bind(&input.id)
+        .bind(&input.session_key)
+        .bind(&input.tool_name)
+        .bind(&input.command_hash)
+        .bind(&input.command_preview)
+        .bind(&input.command_text)
+        .bind(&input.risk_level)
+        .bind(ApprovalStatus::Pending.as_str())
+        .bind(&input.requested_by)
+        .bind(&input.justification)
+        .bind(input.expires_at_ms)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        self.get_approval(&input.id).await
+    }
+
+    async fn get_approval(&self, approval_id: &str) -> Result<ApprovalRecord, StorageError> {
+        let row = sqlx::query_as::<_, ApprovalRow>(
+            "SELECT id, session_key, tool_name, command_hash, command_preview, command_text, risk_level, status,
+                    requested_by, approved_by, justification, expires_at_ms, created_at_ms, updated_at_ms, consumed_at_ms
+             FROM approvals
+             WHERE id = ?1",
+        )
+        .bind(approval_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        ApprovalRecord::try_from(row)
+    }
+
+    async fn update_approval_status(
+        &self,
+        approval_id: &str,
+        status: ApprovalStatus,
+        approved_by: Option<&str>,
+    ) -> Result<ApprovalRecord, StorageError> {
+        let now = now_ms();
+        let updated = sqlx::query(
+            "UPDATE approvals
+             SET status = ?1,
+                 approved_by = ?2,
+                 updated_at_ms = ?3
+             WHERE id = ?4",
+        )
+        .bind(status.as_str())
+        .bind(approved_by)
+        .bind(now)
+        .bind(approval_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "approval '{approval_id}' not found when setting status"
+            )));
+        }
+        self.get_approval(approval_id).await
+    }
+
+    async fn consume_approved_shell_command(
+        &self,
+        approval_id: &str,
+        session_key: &str,
+        command_hash: &str,
+        now_ms: i64,
+    ) -> Result<bool, StorageError> {
+        let updated = sqlx::query(
+            "UPDATE approvals
+             SET status = ?1,
+                 consumed_at_ms = ?2,
+                 updated_at_ms = ?2
+             WHERE id = ?3
+               AND session_key = ?4
+               AND tool_name = 'shell'
+               AND command_hash = ?5
+               AND status = ?6
+               AND consumed_at_ms IS NULL
+               AND expires_at_ms >= ?2",
+        )
+        .bind(ApprovalStatus::Consumed.as_str())
+        .bind(now_ms)
+        .bind(approval_id)
+        .bind(session_key)
+        .bind(command_hash)
+        .bind(ApprovalStatus::Approved.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(updated.rows_affected() > 0)
+    }
+
+    async fn consume_latest_approved_shell_command(
+        &self,
+        session_key: &str,
+        command_hash: &str,
+        now_ms: i64,
+    ) -> Result<bool, StorageError> {
+        let approval_id = sqlx::query_scalar::<_, String>(
+            "SELECT id
+             FROM approvals
+             WHERE session_key = ?1
+               AND tool_name = 'shell'
+               AND command_hash = ?2
+               AND status = ?3
+               AND consumed_at_ms IS NULL
+               AND expires_at_ms >= ?4
+             ORDER BY created_at_ms DESC
+             LIMIT 1",
+        )
+        .bind(session_key)
+        .bind(command_hash)
+        .bind(ApprovalStatus::Approved.as_str())
+        .bind(now_ms)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        let Some(approval_id) = approval_id else {
+            return Ok(false);
+        };
+        self.consume_approved_shell_command(&approval_id, session_key, command_hash, now_ms)
+            .await
     }
 
     fn session_jsonl_path(&self, session_key: &str) -> PathBuf {

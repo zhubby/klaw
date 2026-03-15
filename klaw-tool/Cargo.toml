@@ -25,3 +25,5 @@ chrono = "0.4"
 reqwest.workspace = true
 ipnet = "2"
 tracing.workspace = true
+sha2.workspace = true
+time.workspace = true

@@ -13,8 +13,8 @@ pub use memory_db::{DbRow, DbValue, MemoryDb};
 pub use paths::StoragePaths;
 pub use traits::{CronStorage, SessionStorage};
 pub use types::{
-    ChatRecord, CronJob, CronScheduleKind, CronTaskRun, CronTaskStatus, NewCronJob, NewCronTaskRun,
-    SessionIndex, UpdateCronJobPatch,
+    ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronTaskRun,
+    CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun, SessionIndex, UpdateCronJobPatch,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -380,5 +380,93 @@ mod tests {
         assert_eq!(runs[0].published_message_id.as_deref(), Some("message-1"));
         assert_eq!(runs[0].started_at_ms, Some(2010));
         assert_eq!(runs[0].finished_at_ms, Some(2020));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approval_lifecycle_create_approve_consume() {
+        let store = create_store().await;
+        let session = store
+            .touch_session("stdio:approval", "approval-chat", "stdio")
+            .await
+            .expect("session should exist for approval foreign key");
+        assert_eq!(session.session_key, "stdio:approval");
+
+        let created = store
+            .create_approval(&NewApprovalRecord {
+                id: "approval-1".to_string(),
+                session_key: "stdio:approval".to_string(),
+                tool_name: "shell".to_string(),
+                command_hash: "abc123".to_string(),
+                command_preview: "touch file.txt".to_string(),
+                command_text: "touch file.txt".to_string(),
+                risk_level: "mutating".to_string(),
+                requested_by: "agent".to_string(),
+                justification: None,
+                expires_at_ms: util::now_ms() + 60_000,
+            })
+            .await
+            .expect("create approval should succeed");
+        assert_eq!(created.status, ApprovalStatus::Pending);
+
+        let approved = store
+            .update_approval_status("approval-1", ApprovalStatus::Approved, Some("user"))
+            .await
+            .expect("approve should succeed");
+        assert_eq!(approved.status, ApprovalStatus::Approved);
+        assert_eq!(approved.approved_by.as_deref(), Some("user"));
+
+        let consumed = store
+            .consume_approved_shell_command("approval-1", "stdio:approval", "abc123", util::now_ms())
+            .await
+            .expect("consume should succeed");
+        assert!(consumed);
+
+        let post = store
+            .get_approval("approval-1")
+            .await
+            .expect("approval should still exist");
+        assert_eq!(post.status, ApprovalStatus::Consumed);
+        assert!(post.consumed_at_ms.is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approval_consume_latest_by_session_and_command_hash() {
+        let store = create_store().await;
+        store
+            .touch_session("stdio:approval2", "approval-chat2", "stdio")
+            .await
+            .expect("session should exist for approval foreign key");
+
+        store
+            .create_approval(&NewApprovalRecord {
+                id: "approval-latest-1".to_string(),
+                session_key: "stdio:approval2".to_string(),
+                tool_name: "shell".to_string(),
+                command_hash: "samehash".to_string(),
+                command_preview: "touch a.txt".to_string(),
+                command_text: "touch a.txt".to_string(),
+                risk_level: "mutating".to_string(),
+                requested_by: "agent".to_string(),
+                justification: None,
+                expires_at_ms: util::now_ms() + 60_000,
+            })
+            .await
+            .expect("create should succeed");
+        store
+            .update_approval_status("approval-latest-1", ApprovalStatus::Approved, Some("user"))
+            .await
+            .expect("approve should succeed");
+
+        let consumed = store
+            .consume_latest_approved_shell_command("stdio:approval2", "samehash", util::now_ms())
+            .await
+            .expect("consume latest should succeed");
+        assert!(consumed);
+
+        let post = store
+            .get_approval("approval-latest-1")
+            .await
+            .expect("approval should exist");
+        assert_eq!(post.status, ApprovalStatus::Consumed);
     }
 }

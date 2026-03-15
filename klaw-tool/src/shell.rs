@@ -1,12 +1,16 @@
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ShellApprovalPolicy};
+use klaw_storage::{DefaultSessionStore, NewApprovalRecord, SessionStorage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
+use time::OffsetDateTime;
 use tokio::{process::Command, time::timeout};
 use tracing::info;
+use uuid::Uuid;
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 
@@ -14,10 +18,13 @@ const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const META_WORKSPACE: &str = "workspace";
 const META_SHELL_PATH: &str = "shell.path";
 const META_SHELL_APPROVED: &str = "shell.approved";
+const META_SHELL_APPROVAL_ID: &str = "shell.approval_id";
+const APPROVAL_TTL_MINUTES: i64 = 10;
 
 /// Shell 工具，执行本地 shell 命令并返回结构化输出。
 pub struct ShellTool {
     config: klaw_config::ShellConfig,
+    store: Option<DefaultSessionStore>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,12 +66,32 @@ impl ShellTool {
     pub fn new(config: &AppConfig) -> Self {
         Self {
             config: config.tools.shell.clone(),
+            store: None,
+        }
+    }
+
+    /// 从应用配置读取 shell 规则，并注入会话存储用于审批单持久化。
+    pub fn with_store(config: &AppConfig, store: DefaultSessionStore) -> Self {
+        Self {
+            config: config.tools.shell.clone(),
+            store: Some(store),
         }
     }
 
     /// 自定义模式：由配置注入拦截规则。
     pub fn with_config(config: klaw_config::ShellConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            store: None,
+        }
+    }
+
+    /// 自定义模式并注入审批存储。
+    pub fn with_config_and_store(config: klaw_config::ShellConfig, store: DefaultSessionStore) -> Self {
+        Self {
+            config,
+            store: Some(store),
+        }
     }
 
     /// 宽松模式：不拦截命令内容，不要求审批。
@@ -72,7 +99,10 @@ impl ShellTool {
         let mut config = klaw_config::ShellConfig::default();
         config.blocked_patterns.clear();
         config.approval_policy = ShellApprovalPolicy::Never;
-        Self { config }
+        Self {
+            config,
+            store: None,
+        }
     }
 
     fn parse_request(args: Value) -> Result<ShellRequest, ToolError> {
@@ -135,9 +165,11 @@ impl ShellTool {
             .any(|op| command.contains(op))
     }
 
-    fn check_approval(
+    async fn check_approval(
         &self,
         risk: CommandRisk,
+        command: &str,
+        session_key: &str,
         metadata: &std::collections::BTreeMap<String, Value>,
     ) -> Result<(bool, bool), ToolError> {
         let approval_required = !matches!(risk, CommandRisk::Safe);
@@ -156,15 +188,77 @@ impl ShellTool {
             .get(META_SHELL_APPROVED)
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let approved = approved_via_flag;
-
-        if !approved {
-            return Err(ToolError::ExecutionFailed(
-                "approval required: set metadata `shell.approved=true`".to_string(),
-            ));
+        if approved_via_flag {
+            return Ok((true, true));
         }
 
-        Ok((true, true))
+        let command_hash = Self::command_hash(command);
+        if let (Some(store), Some(approval_id)) = (
+            self.store.as_ref(),
+            metadata.get(META_SHELL_APPROVAL_ID).and_then(Value::as_str),
+        ) {
+            let consumed = store
+                .consume_approved_shell_command(
+                    approval_id,
+                    session_key,
+                    &command_hash,
+                    Self::now_ms(),
+                )
+                .await
+                .map_err(|err| {
+                    ToolError::ExecutionFailed(format!(
+                        "failed to validate approval `{approval_id}`: {err}"
+                    ))
+                })?;
+            if consumed {
+                return Ok((true, true));
+            }
+        }
+
+        if let Some(store) = self.store.as_ref() {
+            let consumed = store
+                .consume_latest_approved_shell_command(session_key, &command_hash, Self::now_ms())
+                .await
+                .map_err(|err| {
+                    ToolError::ExecutionFailed(format!(
+                        "failed to consume approved command for session `{session_key}`: {err}"
+                    ))
+                })?;
+            if consumed {
+                return Ok((true, true));
+            }
+        }
+
+        if let Some(store) = self.store.as_ref() {
+            let approval_id = Uuid::new_v4().to_string();
+            let now_ms = Self::now_ms();
+            let approval = NewApprovalRecord {
+                id: approval_id.clone(),
+                session_key: session_key.to_string(),
+                tool_name: "shell".to_string(),
+                command_hash,
+                command_preview: Self::command_preview(command),
+                command_text: command.trim().to_string(),
+                risk_level: match risk {
+                    CommandRisk::Safe => "safe".to_string(),
+                    CommandRisk::Mutating => "mutating".to_string(),
+                    CommandRisk::Destructive => "destructive".to_string(),
+                },
+                requested_by: "agent".to_string(),
+                justification: None,
+                expires_at_ms: now_ms + (APPROVAL_TTL_MINUTES * 60_000),
+            };
+            store.create_approval(&approval).await.map_err(|err| {
+                ToolError::ExecutionFailed(format!("failed to create approval request: {err}"))
+            })?;
+            return Err(ToolError::ExecutionFailed(format!(
+                "approval required: approval_id={approval_id}; approve it then retry with metadata `shell.approval_id`"
+            )));
+        }
+
+        Err(ToolError::ExecutionFailed(
+            "approval required: set metadata `shell.approved=true`".to_string(),
+        ))
     }
 
     fn resolve_workspace_base(&self, ctx: &ToolContext) -> Result<PathBuf, ToolError> {
@@ -262,6 +356,27 @@ impl ShellTool {
         serde_json::to_string_pretty(result)
             .map_err(|err| ToolError::ExecutionFailed(format!("failed to serialize output: {err}")))
     }
+
+    fn command_hash(command: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(command.trim().as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn command_preview(command: &str) -> String {
+        let trimmed = command.trim();
+        let max = 160;
+        if trimmed.chars().count() <= max {
+            return trimmed.to_string();
+        }
+        let mut preview = trimmed.chars().take(max).collect::<String>();
+        preview.push_str("...");
+        preview
+    }
+
+    fn now_ms() -> i64 {
+        (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
+    }
 }
 
 #[async_trait]
@@ -320,7 +435,9 @@ impl Tool for ShellTool {
             ));
         }
 
-        let (approval_required, approved) = self.check_approval(risk, &ctx.metadata)?;
+        let (approval_required, approved) = self
+            .check_approval(risk, &request.command, &ctx.session_key, &ctx.metadata)
+            .await?;
         let base = self.resolve_workspace_base(ctx)?;
         let cwd = Self::resolve_cwd(&request, &base)?;
         let timeout_ms = self.resolve_timeout(&request)?;
@@ -405,8 +522,12 @@ impl Tool for ShellTool {
 mod tests {
     use super::*;
     use klaw_config::{ModelProviderConfig, ShellApprovalPolicy, ShellConfig};
+    use klaw_storage::{ApprovalStatus, SessionStorage, StoragePaths};
     use serde_json::json;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::{collections::BTreeMap, fs};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn base_config() -> AppConfig {
         let mut providers = BTreeMap::new();
@@ -475,6 +596,17 @@ mod tests {
             session_key: "s1".to_string(),
             metadata: BTreeMap::new(),
         }
+    }
+
+    async fn create_store() -> DefaultSessionStore {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!(
+            "klaw-shell-approval-test-{}-{suffix}",
+            ShellTool::now_ms()
+        ));
+        DefaultSessionStore::open(StoragePaths::from_root(base))
+            .await
+            .expect("store should open")
     }
 
     #[tokio::test]
@@ -715,5 +847,174 @@ mod tests {
         assert!(result
             .content_for_model
             .contains("\"stdout_truncated\": true"));
+    }
+
+    #[tokio::test]
+    async fn test_mutating_command_creates_pending_approval() {
+        let config = test_config();
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "stdio")
+            .await
+            .expect("session should exist");
+        let tool = ShellTool::with_store(&config, store.clone());
+
+        let result = tool
+            .execute(json!({"command": "touch file.txt"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("approval_id="), "unexpected error: {err}");
+        let approval_id = err
+            .split("approval_id=")
+            .nth(1)
+            .and_then(|tail| tail.split(';').next())
+            .expect("approval id should be present");
+        let approval = store
+            .get_approval(approval_id)
+            .await
+            .expect("approval should be persisted");
+        assert_eq!(approval.session_key, "s1");
+        assert_eq!(approval.tool_name, "shell");
+        assert_eq!(approval.status.as_str(), "pending");
+    }
+
+    #[tokio::test]
+    async fn test_mutating_command_executes_with_approved_approval_id_once() {
+        let config = test_config();
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "stdio")
+            .await
+            .expect("session should exist");
+        let tool = ShellTool::with_store(&config, store.clone());
+
+        let first = tool
+            .execute(json!({"command": "touch file.txt"}), &base_ctx())
+            .await;
+        assert!(first.is_err());
+        let first_err = first.unwrap_err().to_string();
+        let approval_id = first_err
+            .split("approval_id=")
+            .nth(1)
+            .and_then(|tail| tail.split(';').next())
+            .expect("approval id should be present")
+            .to_string();
+
+        store
+            .update_approval_status(&approval_id, ApprovalStatus::Approved, Some("user"))
+            .await
+            .expect("approval should transition to approved");
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("shell.approval_id".to_string(), json!(approval_id.clone()));
+        let approved_ctx = ToolContext {
+            session_key: "s1".to_string(),
+            metadata,
+        };
+        let approved_exec = tool
+            .execute(json!({"command": "touch file.txt"}), &approved_ctx)
+            .await
+            .expect("approved command should execute");
+        assert!(approved_exec.content_for_model.contains("\"approved\": true"));
+
+        let consumed = store
+            .get_approval(&approval_id)
+            .await
+            .expect("approval should exist");
+        assert_eq!(consumed.status, ApprovalStatus::Consumed);
+    }
+
+    #[tokio::test]
+    async fn test_consumed_approval_id_cannot_be_replayed() {
+        let config = test_config();
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "stdio")
+            .await
+            .expect("session should exist");
+        let tool = ShellTool::with_store(&config, store.clone());
+
+        let first = tool
+            .execute(json!({"command": "touch file.txt"}), &base_ctx())
+            .await;
+        let first_err = first.expect_err("should require approval").to_string();
+        let approval_id = first_err
+            .split("approval_id=")
+            .nth(1)
+            .and_then(|tail| tail.split(';').next())
+            .expect("approval id should be present")
+            .to_string();
+
+        store
+            .update_approval_status(&approval_id, ApprovalStatus::Approved, Some("user"))
+            .await
+            .expect("approval should transition to approved");
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("shell.approval_id".to_string(), json!(approval_id.clone()));
+        let approved_ctx = ToolContext {
+            session_key: "s1".to_string(),
+            metadata: metadata.clone(),
+        };
+        let _ = tool
+            .execute(json!({"command": "touch file.txt"}), &approved_ctx)
+            .await
+            .expect("first approved execution should pass");
+
+        let replay = tool
+            .execute(
+                json!({"command": "touch file.txt"}),
+                &ToolContext {
+                    session_key: "s1".to_string(),
+                    metadata,
+                },
+            )
+            .await;
+        let replay_err = replay.expect_err("replay should fail").to_string();
+        assert!(replay_err.contains("approval required"));
+
+        let _ = fs::remove_file("file.txt");
+    }
+
+    #[tokio::test]
+    async fn test_mutating_command_executes_after_approve_without_metadata_id() {
+        let config = test_config();
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "stdio")
+            .await
+            .expect("session should exist");
+        let tool = ShellTool::with_store(&config, store.clone());
+
+        let first = tool
+            .execute(json!({"command": "touch file.txt"}), &base_ctx())
+            .await;
+        let first_err = first.expect_err("should require approval").to_string();
+        let approval_id = first_err
+            .split("approval_id=")
+            .nth(1)
+            .and_then(|tail| tail.split(';').next())
+            .expect("approval id should be present")
+            .to_string();
+
+        store
+            .update_approval_status(&approval_id, ApprovalStatus::Approved, Some("user"))
+            .await
+            .expect("approval should transition to approved");
+
+        let approved_exec = tool
+            .execute(json!({"command": "touch file.txt"}), &base_ctx())
+            .await
+            .expect("approved command should execute by hash match");
+        assert!(approved_exec.content_for_model.contains("\"approved\": true"));
+
+        let consumed = store
+            .get_approval(&approval_id)
+            .await
+            .expect("approval should exist");
+        assert_eq!(consumed.status, ApprovalStatus::Consumed);
+
+        let _ = fs::remove_file("file.txt");
     }
 }

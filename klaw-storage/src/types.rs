@@ -44,6 +44,74 @@ pub struct SessionIndex {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ApprovalStatus {
+    Pending,
+    Approved,
+    Rejected,
+    Expired,
+    Consumed,
+}
+
+impl ApprovalStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Expired => "expired",
+            Self::Consumed => "consumed",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "approved" => Some(Self::Approved),
+            "rejected" => Some(Self::Rejected),
+            "expired" => Some(Self::Expired),
+            "consumed" => Some(Self::Consumed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRecord {
+    pub id: String,
+    pub session_key: String,
+    pub tool_name: String,
+    pub command_hash: String,
+    pub command_preview: String,
+    pub command_text: String,
+    pub risk_level: String,
+    pub status: ApprovalStatus,
+    pub requested_by: String,
+    pub approved_by: Option<String>,
+    pub justification: Option<String>,
+    pub expires_at_ms: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub consumed_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewApprovalRecord {
+    pub id: String,
+    pub session_key: String,
+    pub tool_name: String,
+    pub command_hash: String,
+    pub command_preview: String,
+    pub command_text: String,
+    pub risk_level: String,
+    pub requested_by: String,
+    pub justification: Option<String>,
+    pub expires_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum CronScheduleKind {
     Cron,
     Every,
