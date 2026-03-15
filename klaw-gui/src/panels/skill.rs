@@ -211,6 +211,7 @@ impl SkillPanel {
         };
 
         egui::Window::new(form.title())
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
             .show(ui.ctx(), |ui| {

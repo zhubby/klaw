@@ -1,5 +1,5 @@
 use crate::state::persistence;
-use crate::state::{UiAction, UiState};
+use crate::state::{UiAction, UiState, WindowSize};
 use crate::theme;
 use crate::ui::shell::ShellUi;
 use std::time::{Duration, Instant};
@@ -27,6 +27,14 @@ impl KlawGuiApp {
         creation_ctx
             .egui_ctx
             .send_viewport_cmd(egui::ViewportCommand::Fullscreen(app.state.fullscreen));
+        if let Some(size) = app.state.window_size {
+            creation_ctx
+                .egui_ctx
+                .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                    size.width as f32,
+                    size.height as f32,
+                )));
+        }
         app
     }
 
@@ -76,10 +84,28 @@ impl KlawGuiApp {
             self.last_state_save_at = Instant::now();
         }
     }
+
+    fn sync_window_size_from_viewport(&mut self, ctx: &egui::Context) {
+        if self.state.fullscreen {
+            return;
+        }
+        let size = ctx.input(|input| input.viewport().inner_rect.map(|rect| rect.size()));
+        let Some(size) = size else {
+            return;
+        };
+        let width = size.x.max(1.0).round() as u32;
+        let height = size.y.max(1.0).round() as u32;
+        let next = Some(WindowSize { width, height });
+        if self.state.window_size != next {
+            self.state.window_size = next;
+            self.mark_state_dirty();
+        }
+    }
 }
 
 impl eframe::App for KlawGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.sync_window_size_from_viewport(ctx);
         theme::apply_theme(ctx, self.state.theme_mode);
         let actions = self.shell.render(ctx, &self.state);
         for action in actions {

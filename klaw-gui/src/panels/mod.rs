@@ -54,9 +54,9 @@ impl Default for PanelRegistry {
             heartbeat: heartbeat::HeartbeatPanel,
             mcp: mcp::McpPanel::default(),
             skill: skill::SkillPanel::default(),
-            memory: memory::MemoryPanel,
+            memory: memory::MemoryPanel::default(),
             archive: archive::ArchivePanel::default(),
-            tool: tool::ToolPanel,
+            tool: tool::ToolPanel::default(),
             system_monitor: system_monitor::SystemMonitorPanel,
         }
     }

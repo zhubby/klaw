@@ -2872,6 +2872,7 @@ dependencies = [
  "klaw-archive",
  "klaw-config",
  "klaw-cron",
+ "klaw-memory",
  "serde",
  "serde_json",
  "tokio",

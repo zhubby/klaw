@@ -413,6 +413,49 @@ impl SqlxArchiveDb {
 }
 
 #[async_trait]
+impl MemoryDb for SqlxSessionStore {
+    async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
+        sqlx::query(sql)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(StorageError::backend)
+    }
+
+    async fn execute(&self, sql: &str, params: &[DbValue]) -> Result<u64, StorageError> {
+        let mut query = sqlx::query(sql);
+        for value in params {
+            query = bind_db_value(query, value.clone());
+        }
+        let result = query
+            .execute(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(result.rows_affected())
+    }
+
+    async fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, StorageError> {
+        let mut query = sqlx::query(sql);
+        for value in params {
+            query = bind_db_value(query, value.clone());
+        }
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut values = Vec::with_capacity(row.columns().len());
+            for idx in 0..row.columns().len() {
+                values.push(sqlx_row_value(&row, idx)?);
+            }
+            out.push(DbRow { values });
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
 impl MemoryDb for SqlxMemoryDb {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
         sqlx::query(sql)

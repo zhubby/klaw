@@ -8,6 +8,7 @@
 - Top menu bar (File/View/Window/Help)
 - Bottom status bar with version and theme-mode switcher
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
+  - includes tabs/theme/fullscreen and window size
 - System CJK font fallback via `fontdb` to avoid Chinese text missing-glyph rendering
 - Strongly typed menu model for workspace modules
 - Single-tab-per-menu behavior (click to open or activate)
@@ -44,6 +45,9 @@
 - Skill Registry panel features:
   - read/write `skills.sync_timeout` and registries
   - add/edit registries via `egui::Window`
+- Memory panel features:
+  - read memory-layer aggregate stats via `klaw-memory` stats abstraction
+  - show total/pinned/embedded/scope/recency/index metrics and top scopes
 - Cron panel features:
   - read/manage cron jobs and task runs via `klaw-cron` manager abstraction
   - add/edit cron jobs via `egui::Window`

@@ -17,6 +17,7 @@
 - `klaw gui` 启动路径改为和 `gateway` 对齐：进入 runtime 启动/初始化与 dingtalk channel 生命周期管理，但不启动 web gateway 服务
 - `klaw gateway`/`klaw gui` 共享 dingtalk channel 启停辅助逻辑，并统一在主任务退出后执行 channel 关闭等待
 - 修复 macOS 下 `klaw gui` 在非主线程初始化 `winit EventLoop` 导致 panic 的问题：GUI 事件循环改为主线程运行
+- runtime 工具注册改为统一读取 `tools.*.enabled` 开关：`apply_patch`、`shell`、`approval`、`local_search`、`terminal_multiplexers`、`cron_manager`、`skills_registry`、`memory`、`web_fetch`、`web_search`、`sub_agent`
 
 ## 2026-03-14
 

@@ -42,7 +42,15 @@ pub struct UiState {
     pub workbench: workbench::WorkbenchState,
     pub theme_mode: ThemeMode,
     pub fullscreen: bool,
+    #[serde(default)]
+    pub window_size: Option<WindowSize>,
     pub show_about: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WindowSize {
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Default for UiState {
@@ -51,6 +59,7 @@ impl Default for UiState {
             workbench: workbench::WorkbenchState::new_with_default(WorkbenchMenu::Profile),
             theme_mode: ThemeMode::System,
             fullscreen: false,
+            window_size: None,
             show_about: false,
         }
     }

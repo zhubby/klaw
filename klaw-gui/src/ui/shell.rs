@@ -140,6 +140,7 @@ impl ShellUi {
 
         if state.show_about {
             egui::Window::new("About Klaw Workbench")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {

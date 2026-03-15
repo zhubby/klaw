@@ -554,6 +554,7 @@ mod tests {
     fn test_config() -> AppConfig {
         let mut cfg = base_config();
         cfg.tools.shell = ShellConfig {
+            enabled: true,
             workspace: None,
             blocked_patterns: vec!["rm -rf /".to_string()],
             safe_commands: vec![
@@ -575,6 +576,7 @@ mod tests {
     fn permissive_test_config() -> AppConfig {
         let mut cfg = base_config();
         cfg.tools.shell = ShellConfig {
+            enabled: true,
             workspace: None,
             blocked_patterns: vec![],
             safe_commands: vec![

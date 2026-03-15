@@ -1,15 +1,16 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use klaw_archive::{
-    open_default_archive_service, ArchiveMediaKind, ArchiveQuery, ArchiveRecord, ArchiveService,
-    ArchiveSourceKind, SqliteArchiveService,
+    open_default_archive_service, ArchiveError, ArchiveMediaKind, ArchiveQuery, ArchiveRecord,
+    ArchiveService, ArchiveSourceKind, SqliteArchiveService,
 };
-use tokio::runtime::{Builder, Runtime};
+use std::future::Future;
+use std::thread;
+use tokio::runtime::Builder;
 
 #[derive(Default)]
 pub struct ArchivePanel {
-    runtime: Option<Runtime>,
-    service: Option<SqliteArchiveService>,
+    loaded: bool,
     items: Vec<ArchiveRecord>,
     selected_id: Option<String>,
     session_key_filter: String,
@@ -21,29 +22,10 @@ pub struct ArchivePanel {
 }
 
 impl ArchivePanel {
-    fn ensure_service_loaded(&mut self, notifications: &mut NotificationCenter) {
-        if self.runtime.is_some() && self.service.is_some() {
+    fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
+        if self.loaded {
             return;
         }
-
-        let runtime = match Builder::new_current_thread().enable_all().build() {
-            Ok(runtime) => runtime,
-            Err(err) => {
-                notifications.error(format!("Failed to create runtime: {err}"));
-                return;
-            }
-        };
-
-        let service = match runtime.block_on(open_default_archive_service()) {
-            Ok(service) => service,
-            Err(err) => {
-                notifications.error(format!("Failed to open archive service: {err}"));
-                return;
-            }
-        };
-
-        self.runtime = Some(runtime);
-        self.service = Some(service);
         if self.limit_text.is_empty() {
             self.limit_text = "50".to_string();
         }
@@ -51,11 +33,6 @@ impl ArchivePanel {
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
-        let (Some(runtime), Some(service)) = (self.runtime.as_ref(), self.service.as_ref()) else {
-            notifications.error("Archive service is not available");
-            return;
-        };
-
         let source_kind = match parse_source_kind(&self.source_kind_filter) {
             Ok(value) => value,
             Err(err) => {
@@ -83,9 +60,10 @@ impl ArchivePanel {
             offset,
         };
 
-        match runtime.block_on(service.find(query)) {
+        match run_archive_task(move |service| async move { service.find(query).await }) {
             Ok(items) => {
                 self.items = items;
+                self.loaded = true;
             }
             Err(err) => notifications.error(format!("Failed to query archives: {err}")),
         }
@@ -104,7 +82,7 @@ impl PanelRenderer for ArchivePanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
-        self.ensure_service_loaded(notifications);
+        self.ensure_loaded(notifications);
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
@@ -182,6 +160,7 @@ impl PanelRenderer for ArchivePanel {
 
         if let Some(item) = self.selected_item().cloned() {
             egui::Window::new("Archive Details")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(true)
                 .show(ui.ctx(), |ui| {
@@ -220,6 +199,34 @@ impl PanelRenderer for ArchivePanel {
                     }
                 });
         }
+    }
+}
+
+fn run_archive_task<T, F, Fut>(op: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(SqliteArchiveService) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T, ArchiveError>> + Send + 'static,
+{
+    let join = thread::spawn(move || {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to build runtime: {err}"))?;
+
+        runtime.block_on(async move {
+            let service = open_default_archive_service()
+                .await
+                .map_err(|err| format!("failed to open archive service: {err}"))?;
+            op(service)
+                .await
+                .map_err(|err| format!("archive operation failed: {err}"))
+        })
+    });
+
+    match join.join() {
+        Ok(result) => result,
+        Err(_) => Err("archive operation thread panicked".to_string()),
     }
 }
 

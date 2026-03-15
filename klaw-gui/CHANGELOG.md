@@ -29,3 +29,6 @@
 - cron panel now integrates storage DB operations: list jobs/runs, add/edit via window, and enable/disable/delete
 - archive panel now reads `archive.db` through storage DB interface with filters and detail view
 - refactored GUI cron/archive to call `klaw-cron` and `klaw-archive` abstractions instead of direct storage operations
+- memory panel now shows real memory-layer statistics through `klaw-memory` abstraction
+- persisted app window size in UI state and restore on startup (non-fullscreen mode)
+- tool panel now renders config-backed tool cards, supports per-tool edit windows, and persists `tools.*` fields (enabled toggles and tool-specific settings) to `config.toml`

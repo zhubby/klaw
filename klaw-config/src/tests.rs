@@ -29,7 +29,14 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.shell.allow_login_shell);
     assert_eq!(parsed.tools.shell.max_timeout_ms, 120_000);
     assert_eq!(parsed.tools.shell.max_output_bytes, 128 * 1024);
+    assert!(parsed.tools.shell.enabled);
+    assert!(parsed.tools.approval.enabled);
+    assert!(parsed.tools.local_search.enabled);
+    assert!(parsed.tools.terminal_multiplexers.enabled);
+    assert!(parsed.tools.cron_manager.enabled);
+    assert!(parsed.tools.skills_registry.enabled);
     assert!(parsed.tools.shell.workspace.is_none());
+    assert!(parsed.tools.apply_patch.enabled);
     assert!(parsed.tools.apply_patch.workspace.is_none());
     assert!(!parsed.tools.apply_patch.allow_absolute_paths);
     assert!(parsed.tools.apply_patch.allowed_roots.is_empty());
@@ -163,6 +170,7 @@ default_model = "gpt-4o-mini"
 env_key = "OPENAI_API_KEY"
 
 [tools.shell]
+enabled = true
 workspace = "/Users/example/shell"
 blocked_patterns = ["sudo rm -rf /tmp/example"]
 safe_commands = ["ls", "cat"]
@@ -189,6 +197,7 @@ max_output_bytes = 64000
         parsed.tools.shell.workspace.as_deref(),
         Some("/Users/example/shell")
     );
+    assert!(parsed.tools.shell.enabled);
     assert!(!parsed.tools.shell.allow_login_shell);
     assert_eq!(parsed.tools.shell.max_timeout_ms, 30_000);
     assert_eq!(parsed.tools.shell.max_output_bytes, 64_000);
@@ -235,6 +244,7 @@ default_model = "gpt-4o-mini"
 env_key = "OPENAI_API_KEY"
 
 [tools.apply_patch]
+enabled = true
 workspace = "/Users/example/patch"
 allow_absolute_paths = true
 allowed_roots = ["/tmp", "sandbox/allowed"]
@@ -245,6 +255,7 @@ allowed_roots = ["/tmp", "sandbox/allowed"]
         parsed.tools.apply_patch.workspace.as_deref(),
         Some("/Users/example/patch")
     );
+    assert!(parsed.tools.apply_patch.enabled);
     assert!(parsed.tools.apply_patch.allow_absolute_paths);
     assert_eq!(
         parsed.tools.apply_patch.allowed_roots,
@@ -733,12 +744,30 @@ fn validate_fails_when_sub_agent_limits_are_zero() {
 }
 
 #[test]
+fn validate_allows_invalid_sub_agent_limits_when_disabled() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.sub_agent.enabled = false;
+    cfg.tools.sub_agent.max_iterations = 0;
+    cfg.tools.sub_agent.max_tool_calls = 0;
+    validate(&cfg).expect("should be valid when sub_agent is disabled");
+}
+
+#[test]
 fn validate_fails_when_apply_patch_allowed_root_is_empty() {
     let mut cfg = AppConfig::default();
     cfg.tools.apply_patch.allowed_roots = vec![" ".to_string()];
 
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("tools.apply_patch.allowed_roots"));
+}
+
+#[test]
+fn validate_allows_invalid_apply_patch_config_when_disabled() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.apply_patch.enabled = false;
+    cfg.tools.apply_patch.workspace = Some(" ".to_string());
+    cfg.tools.apply_patch.allowed_roots = vec![" ".to_string()];
+    validate(&cfg).expect("should be valid when apply_patch is disabled");
 }
 
 #[test]
@@ -757,6 +786,17 @@ fn validate_fails_when_shell_workspace_is_empty() {
 
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("tools.shell.workspace"));
+}
+
+#[test]
+fn validate_allows_invalid_shell_config_when_disabled() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.shell.enabled = false;
+    cfg.tools.shell.workspace = Some(" ".to_string());
+    cfg.tools.shell.safe_commands.clear();
+    cfg.tools.shell.max_timeout_ms = 0;
+    cfg.tools.shell.max_output_bytes = 0;
+    validate(&cfg).expect("should be valid when shell is disabled");
 }
 
 #[test]
@@ -859,6 +899,16 @@ fn validate_fails_when_memory_tool_limits_are_zero() {
     cfg3.tools.memory.vector_limit = 0;
     let err3 = validate(&cfg3).expect_err("should fail");
     assert!(format!("{err3}").contains("tools.memory.vector_limit"));
+}
+
+#[test]
+fn validate_allows_invalid_memory_tool_limits_when_disabled() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.memory.enabled = false;
+    cfg.tools.memory.search_limit = 0;
+    cfg.tools.memory.fts_limit = 0;
+    cfg.tools.memory.vector_limit = 0;
+    validate(&cfg).expect("should be valid when memory tool is disabled");
 }
 
 #[test]

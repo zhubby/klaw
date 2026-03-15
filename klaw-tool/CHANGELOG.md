@@ -12,6 +12,7 @@
 ### Changed
 - `ShellTool` now supports store injection (`with_store`, `with_config_and_store`) while preserving legacy `shell.approved=true` fallback behavior
 - `sub_agent` 调用链适配新的 `AgentExecutionInput.user_media` 字段，确保子代理执行仍显式使用空媒体上下文
+- `shell` 测试配置同步新增 `tools.shell.enabled` 字段，确保与配置模型一致
 
 ## 2026-03-14
 

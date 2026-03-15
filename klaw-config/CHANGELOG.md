@@ -8,11 +8,15 @@
 - 新增 `[storage].root_dir` 配置项，支持声明自定义数据目录根路径
 - 新增 `ConfigStore` / `ConfigSnapshot`，支持进程内共享配置快照与保存后内存同步
 - `ConfigStore` 新增 `validate_raw_toml`，支持仅校验不落盘
+- 新增 `ToolEnabled` trait，用于统一返回工具配置的开关状态（`enabled()`）
+- `tools` 下新增开关配置块：`approval`、`local_search`、`terminal_multiplexers`、`cron_manager`、`skills_registry`
 
 ### Changed
 
 - `channels.dingtalk.proxy.enabled=true` 时会校验 `proxy.url` 非空且必须为 `http/https` URL
 - 配置校验新增 `storage.root_dir` 非空白约束
+- `tools.apply_patch`、`tools.shell` 新增 `enabled` 配置（默认 `true`）
+- 对 `apply_patch`/`shell`/`memory`/`sub_agent` 的参数校验改为仅在对应工具 `enabled=true` 时生效
 
 ## 2026-03-14
 

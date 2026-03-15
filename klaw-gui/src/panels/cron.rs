@@ -95,8 +95,10 @@ impl CronPanel {
 
     fn load_runs(&mut self, cron_id: &str, notifications: &mut NotificationCenter) {
         let cron_id = cron_id.to_string();
-        match run_cron_task(move |manager| async move { manager.list_runs(&cron_id, 30, 0).await })
-        {
+        let cron_id_for_query = cron_id.clone();
+        match run_cron_task(move |manager| async move {
+            manager.list_runs(&cron_id_for_query, 30, 0).await
+        }) {
             Ok(runs) => {
                 self.selected_cron_id = Some(cron_id);
                 self.runs = runs;
@@ -216,13 +218,22 @@ impl CronPanel {
         }
     }
 
-    fn set_enabled(&mut self, cron_id: &str, enabled: bool, notifications: &mut NotificationCenter) {
+    fn set_enabled(
+        &mut self,
+        cron_id: &str,
+        enabled: bool,
+        notifications: &mut NotificationCenter,
+    ) {
         let cron_id = cron_id.to_string();
-        match run_cron_task(move |manager| async move {
-            manager.set_enabled(&cron_id, enabled).await
-        }) {
+        match run_cron_task(
+            move |manager| async move { manager.set_enabled(&cron_id, enabled).await },
+        ) {
             Ok(()) => {
-                notifications.success(if enabled { "Cron enabled" } else { "Cron disabled" });
+                notifications.success(if enabled {
+                    "Cron enabled"
+                } else {
+                    "Cron disabled"
+                });
                 self.refresh_jobs(notifications);
             }
             Err(err) => notifications.error(format!("Failed to set enabled: {err}")),
@@ -231,7 +242,10 @@ impl CronPanel {
 
     fn delete_cron(&mut self, cron_id: &str, notifications: &mut NotificationCenter) {
         let cron_id = cron_id.to_string();
-        match run_cron_task(move |manager| async move { manager.delete_job(&cron_id).await }) {
+        let cron_id_for_delete = cron_id.clone();
+        match run_cron_task(
+            move |manager| async move { manager.delete_job(&cron_id_for_delete).await },
+        ) {
             Ok(()) => {
                 notifications.success("Cron job deleted");
                 if self.selected_cron_id.as_deref() == Some(cron_id.as_str()) {
@@ -252,6 +266,7 @@ impl CronPanel {
         };
 
         egui::Window::new(form.title())
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
             .show(ui.ctx(), |ui| {
@@ -386,7 +401,11 @@ impl PanelRenderer for CronPanel {
                             ui.label(job.schedule_expr.clone());
                             ui.label(if job.enabled { "yes" } else { "no" });
                             ui.label(job.next_run_at_ms.to_string());
-                            ui.label(job.last_run_at_ms.map(|v| v.to_string()).unwrap_or_default());
+                            ui.label(
+                                job.last_run_at_ms
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_default(),
+                            );
                             ui.label(job.updated_at_ms.to_string());
 
                             ui.horizontal(|ui| {
@@ -434,7 +453,11 @@ impl PanelRenderer for CronPanel {
                             ui.label(run.status.as_str());
                             ui.label(run.scheduled_at_ms.to_string());
                             ui.label(run.started_at_ms.map(|v| v.to_string()).unwrap_or_default());
-                            ui.label(run.finished_at_ms.map(|v| v.to_string()).unwrap_or_default());
+                            ui.label(
+                                run.finished_at_ms
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_default(),
+                            );
                             ui.label(run.error_message.clone().unwrap_or_default());
                             ui.end_row();
                         }
@@ -444,6 +467,7 @@ impl PanelRenderer for CronPanel {
 
         if let Some(cron_id) = self.delete_confirm_id.clone() {
             egui::Window::new("Delete cron job")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {

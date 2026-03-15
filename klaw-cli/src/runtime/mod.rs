@@ -2,7 +2,7 @@ pub mod service_loop;
 
 use klaw_agent::build_provider_from_config;
 use klaw_channel::{ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
-use klaw_config::AppConfig;
+use klaw_config::{AppConfig, ToolEnabled};
 use klaw_core::{
     load_or_create_system_prompt, AgentLoop, AgentRuntimeError, CircuitBreakerPolicy,
     DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
@@ -705,13 +705,25 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         .await
         .map_err(|err| config_err(format!("heartbeat reconcile failed: {err}")))?;
     let mut tools = ToolRegistry::default();
-    tools.register(ApplyPatchTool::new(config));
-    tools.register(ShellTool::with_store(config, session_store.clone()));
-    tools.register(ApprovalTool::with_store(session_store.clone()));
-    tools.register(LocalSearchTool::new());
-    tools.register(TerminalMultiplexerTool::new());
-    tools.register(CronManagerTool::open_default().await?);
-    if !config.skills.registries.is_empty() {
+    if config.tools.apply_patch.enabled() {
+        tools.register(ApplyPatchTool::new(config));
+    }
+    if config.tools.shell.enabled() {
+        tools.register(ShellTool::with_store(config, session_store.clone()));
+    }
+    if config.tools.approval.enabled() {
+        tools.register(ApprovalTool::with_store(session_store.clone()));
+    }
+    if config.tools.local_search.enabled() {
+        tools.register(LocalSearchTool::new());
+    }
+    if config.tools.terminal_multiplexers.enabled() {
+        tools.register(TerminalMultiplexerTool::new());
+    }
+    if config.tools.cron_manager.enabled() {
+        tools.register(CronManagerTool::open_default().await?);
+    }
+    if config.tools.skills_registry.enabled() && !config.skills.registries.is_empty() {
         info!(
             sources = config.skills.registries.len(),
             source_names = ?config.skills.registries.keys().cloned().collect::<Vec<_>>(),
@@ -723,16 +735,18 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
                 warn!("skills registry tool disabled: {err}");
             }
         }
+    } else if !config.tools.skills_registry.enabled() {
+        info!("skills registry tool disabled by config");
     } else {
         info!("skills registry tool disabled: no configured sources");
     }
-    if config.tools.memory.enabled {
+    if config.tools.memory.enabled() {
         tools.register(MemoryTool::open_default(config).await?);
     }
-    if config.tools.web_fetch.enabled {
+    if config.tools.web_fetch.enabled() {
         tools.register(WebFetchTool::new(config));
     }
-    if config.tools.web_search.enabled {
+    if config.tools.web_search.enabled() {
         tools.register(WebSearchTool::new(config)?);
     }
 
@@ -748,7 +762,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         startup_timeout_seconds = config.mcp.startup_timeout_seconds,
         "bootstrapping mcp servers"
     );
-    if config.tools.sub_agent.enabled {
+    if config.tools.sub_agent.enabled() {
         let parent_tools = tools.clone();
         tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
     }

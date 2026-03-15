@@ -392,6 +392,16 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub shell: ShellConfig,
     #[serde(default)]
+    pub approval: ApprovalToolConfig,
+    #[serde(default)]
+    pub local_search: LocalSearchConfig,
+    #[serde(default)]
+    pub terminal_multiplexers: TerminalMultiplexersConfig,
+    #[serde(default)]
+    pub cron_manager: CronManagerConfig,
+    #[serde(default)]
+    pub skills_registry: SkillsRegistryToolConfig,
+    #[serde(default)]
     pub memory: MemoryToolConfig,
     #[serde(default)]
     pub web_fetch: WebFetchConfig,
@@ -401,8 +411,14 @@ pub struct ToolsConfig {
     pub sub_agent: SubAgentConfig,
 }
 
+pub trait ToolEnabled {
+    fn enabled(&self) -> bool;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyPatchConfig {
+    #[serde(default = "default_apply_patch_enabled")]
+    pub enabled: bool,
     #[serde(default)]
     pub workspace: Option<String>,
     #[serde(default = "default_apply_patch_allow_absolute_paths")]
@@ -414,6 +430,7 @@ pub struct ApplyPatchConfig {
 impl Default for ApplyPatchConfig {
     fn default() -> Self {
         Self {
+            enabled: default_apply_patch_enabled(),
             workspace: None,
             allow_absolute_paths: default_apply_patch_allow_absolute_paths(),
             allowed_roots: Vec::new(),
@@ -421,8 +438,138 @@ impl Default for ApplyPatchConfig {
     }
 }
 
+impl ToolEnabled for ApplyPatchConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_apply_patch_enabled() -> bool {
+    true
+}
+
 fn default_apply_patch_allow_absolute_paths() -> bool {
     false
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalToolConfig {
+    #[serde(default = "default_approval_tool_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for ApprovalToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_approval_tool_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for ApprovalToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_approval_tool_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalSearchConfig {
+    #[serde(default = "default_local_search_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for LocalSearchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_local_search_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for LocalSearchConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_local_search_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalMultiplexersConfig {
+    #[serde(default = "default_terminal_multiplexers_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for TerminalMultiplexersConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_terminal_multiplexers_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for TerminalMultiplexersConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_terminal_multiplexers_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronManagerConfig {
+    #[serde(default = "default_cron_manager_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for CronManagerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_cron_manager_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for CronManagerConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_cron_manager_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsRegistryToolConfig {
+    #[serde(default = "default_skills_registry_tool_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for SkillsRegistryToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_skills_registry_tool_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for SkillsRegistryToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_skills_registry_tool_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -487,6 +634,12 @@ impl Default for MemoryToolConfig {
     }
 }
 
+impl ToolEnabled for MemoryToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
 fn default_memory_tool_enabled() -> bool {
     true
 }
@@ -509,6 +662,8 @@ fn default_memory_tool_use_vector() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellConfig {
+    #[serde(default = "default_shell_enabled")]
+    pub enabled: bool,
     #[serde(default)]
     pub workspace: Option<String>,
     #[serde(default = "default_shell_blocked_patterns")]
@@ -528,6 +683,7 @@ pub struct ShellConfig {
 impl Default for ShellConfig {
     fn default() -> Self {
         Self {
+            enabled: default_shell_enabled(),
             workspace: None,
             blocked_patterns: default_shell_blocked_patterns(),
             safe_commands: default_shell_safe_commands(),
@@ -536,6 +692,12 @@ impl Default for ShellConfig {
             max_timeout_ms: default_shell_max_timeout_ms(),
             max_output_bytes: default_shell_max_output_bytes(),
         }
+    }
+}
+
+impl ToolEnabled for ShellConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
     }
 }
 
@@ -555,6 +717,10 @@ fn default_shell_blocked_patterns() -> Vec<String> {
         "shutdown".to_string(),
         "reboot".to_string(),
     ]
+}
+
+fn default_shell_enabled() -> bool {
+    true
 }
 
 fn default_shell_safe_commands() -> Vec<String> {
@@ -627,6 +793,12 @@ impl Default for WebSearchConfig {
     }
 }
 
+impl ToolEnabled for WebSearchConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebFetchConfig {
     #[serde(default = "default_web_fetch_enabled")]
@@ -656,6 +828,12 @@ impl Default for WebFetchConfig {
             readability: default_web_fetch_readability(),
             ssrf_allowlist: Vec::new(),
         }
+    }
+}
+
+impl ToolEnabled for WebFetchConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
     }
 }
 
@@ -706,6 +884,12 @@ impl Default for SubAgentConfig {
             inherit_parent_tools: default_sub_agent_inherit_parent_tools(),
             exclude_tools: default_sub_agent_exclude_tools(),
         }
+    }
+}
+
+impl ToolEnabled for SubAgentConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
     }
 }
 

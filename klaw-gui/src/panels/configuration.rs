@@ -445,6 +445,7 @@ impl PanelRenderer for ConfigurationPanel {
 
         if let Some(action) = self.pending_confirm {
             egui::Window::new("Unsaved changes")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {

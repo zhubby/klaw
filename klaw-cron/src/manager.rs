@@ -1,8 +1,7 @@
 use crate::{time::now_ms, CronError, ScheduleSpec};
 use klaw_storage::{
-    open_default_memory_db, open_default_store, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, DbRow, DbValue, DefaultMemoryDb, DefaultSessionStore, MemoryDb, NewCronJob,
-    UpdateCronJobPatch,
+    open_default_store, CronJob, CronScheduleKind, CronStorage, CronTaskRun, DbRow, DbValue,
+    DefaultSessionStore, MemoryDb, NewCronJob, UpdateCronJobPatch,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -22,28 +21,28 @@ impl Default for CronListQuery {
 
 pub struct SqliteCronManager {
     store: DefaultSessionStore,
-    db: DefaultMemoryDb,
 }
 
 impl SqliteCronManager {
     pub async fn open_default() -> Result<Self, CronError> {
         let store = open_default_store().await?;
-        let db = open_default_memory_db().await?;
-        Ok(Self { store, db })
+        Ok(Self { store })
     }
 
-    pub fn from_handles(store: DefaultSessionStore, db: DefaultMemoryDb) -> Self {
-        Self { store, db }
+    pub fn from_store(store: DefaultSessionStore) -> Self {
+        Self { store }
     }
 
     pub async fn list_jobs(&self, query: CronListQuery) -> Result<Vec<CronJob>, CronError> {
         let limit = query.limit.max(1);
         let offset = query.offset.max(0);
-        let sql = "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms FROM cron ORDER BY updated_at_ms DESC LIMIT ?1 OFFSET ?2";
-        let rows = self
-            .db
-            .query(sql, &[DbValue::Integer(limit), DbValue::Integer(offset)])
-            .await?;
+        let sql = format!(
+            "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms \
+             FROM cron \
+             ORDER BY updated_at_ms DESC \
+             LIMIT {limit} OFFSET {offset}"
+        );
+        let rows = self.store.query(&sql, &[]).await?;
         rows.into_iter().map(row_to_cron_job).collect()
     }
 

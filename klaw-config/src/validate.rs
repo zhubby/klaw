@@ -210,31 +210,33 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         }
     }
 
-    for root in &config.tools.apply_patch.allowed_roots {
-        if root.trim().is_empty() {
+    if config.tools.apply_patch.enabled {
+        for root in &config.tools.apply_patch.allowed_roots {
+            if root.trim().is_empty() {
+                return Err(ConfigError::InvalidConfig(
+                    "tools.apply_patch.allowed_roots cannot contain empty paths".to_string(),
+                ));
+            }
+        }
+        if config
+            .tools
+            .apply_patch
+            .workspace
+            .as_deref()
+            .is_some_and(|workspace| workspace.trim().is_empty())
+        {
             return Err(ConfigError::InvalidConfig(
-                "tools.apply_patch.allowed_roots cannot contain empty paths".to_string(),
+                "tools.apply_patch.workspace cannot be empty".to_string(),
             ));
         }
     }
-    if config
-        .tools
-        .apply_patch
-        .workspace
-        .as_deref()
-        .is_some_and(|workspace| workspace.trim().is_empty())
-    {
-        return Err(ConfigError::InvalidConfig(
-            "tools.apply_patch.workspace cannot be empty".to_string(),
-        ));
-    }
 
-    if config.tools.sub_agent.max_iterations == 0 {
+    if config.tools.sub_agent.enabled && config.tools.sub_agent.max_iterations == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.sub_agent.max_iterations must be greater than 0".to_string(),
         ));
     }
-    if config.tools.sub_agent.max_tool_calls == 0 {
+    if config.tools.sub_agent.enabled && config.tools.sub_agent.max_tool_calls == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.sub_agent.max_tool_calls must be greater than 0".to_string(),
         ));
@@ -287,42 +289,43 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
     validate_heartbeat(&config.heartbeat)?;
-    if config.tools.memory.search_limit == 0 {
+    if config.tools.memory.enabled && config.tools.memory.search_limit == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.memory.search_limit must be greater than 0".to_string(),
         ));
     }
-    if config.tools.memory.fts_limit == 0 {
+    if config.tools.memory.enabled && config.tools.memory.fts_limit == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.memory.fts_limit must be greater than 0".to_string(),
         ));
     }
-    if config.tools.memory.vector_limit == 0 {
+    if config.tools.memory.enabled && config.tools.memory.vector_limit == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.memory.vector_limit must be greater than 0".to_string(),
         ));
     }
-    if config.tools.shell.safe_commands.is_empty() {
+    if config.tools.shell.enabled && config.tools.shell.safe_commands.is_empty() {
         return Err(ConfigError::InvalidConfig(
             "tools.shell.safe_commands must contain at least one command".to_string(),
         ));
     }
-    if config.tools.shell.max_timeout_ms == 0 {
+    if config.tools.shell.enabled && config.tools.shell.max_timeout_ms == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.shell.max_timeout_ms must be greater than 0".to_string(),
         ));
     }
-    if config.tools.shell.max_output_bytes == 0 {
+    if config.tools.shell.enabled && config.tools.shell.max_output_bytes == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.shell.max_output_bytes must be greater than 0".to_string(),
         ));
     }
-    if config
-        .tools
-        .shell
-        .workspace
-        .as_deref()
-        .is_some_and(|workspace| workspace.trim().is_empty())
+    if config.tools.shell.enabled
+        && config
+            .tools
+            .shell
+            .workspace
+            .as_deref()
+            .is_some_and(|workspace| workspace.trim().is_empty())
     {
         return Err(ConfigError::InvalidConfig(
             "tools.shell.workspace cannot be empty".to_string(),
