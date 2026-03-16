@@ -20,6 +20,7 @@ pub trait Tool: Send + Sync {
 基础执行能力，默认启用：
 
 - [Shell](./built-in/shell.md) - 可控的 shell 执行，支持审批和风险分级
+- [Apply Patch](./built-in/apply_patch.md) - 批量文件编辑（添加、更新、删除、移动）
 - [本地搜索](./built-in/local_search.md) - 基于 ripgrep 的代码检索
 - [记忆](./built-in/memory.md) - 长期记忆存储与检索
 

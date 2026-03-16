@@ -55,14 +55,21 @@ User Input → InboundMessage (agent.inbound)
 ## 安装 mdbook
 
 ```bash
-# 使用 cargo 安装 mdbook (推荐使用 v0.4.x 版本)
-# 注意：v0.5.x 版本存在字体渲染问题，请使用 v0.4.40
+# 使用 cargo 安装 mdbook (推荐使用 v0.4.40 版本)
+# 注意：v0.5.x 版本存在字体渲染问题
 cargo install mdbook --version 0.4.40
 
-# 可选：安装预处理器和主题支持
-cargo install mdbook-mermaid    # Mermaid 图表支持
+# 安装 Mermaid 预处理器（图表支持）
+cargo install mdbook-mermaid --version 0.14.0
+
+# 可选：其他预处理器
 cargo install mdbook-katex      # LaTeX 数学公式支持
 ```
+
+**版本兼容性说明：**
+- `mdbook` v0.5.x 存在字体渲染问题（Missing font github）
+- `mdbook-admonish` v1.20.0 存在 TOML 解析 bug，暂时无法使用
+- 推荐组合：`mdbook@0.4.40` + `mdbook-mermaid@0.14.0`
 
 ## 构建文档
 

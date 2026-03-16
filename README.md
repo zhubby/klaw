@@ -1,6 +1,6 @@
 # Klaw
 
-Klaw is a Rust-based AI Agent framework with an MQ-style message passing architecture and built-in reliability controls.
+Klaw is a Rust-based AI Agent.
 
 ## Features
 

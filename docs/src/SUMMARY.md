@@ -10,6 +10,7 @@
   - [路线图 M1-M4](./agent-core/roadmap-m1-m4.md)
 - [工具](./tools/README.md)
   - [Shell](./tools/built-in/shell.md)
+  - [Apply Patch](./tools/built-in/apply_patch.md)
   - [本地搜索](./tools/built-in/local_search.md)
   - [记忆](./tools/built-in/memory.md)
   - [Web Fetch](./tools/web/web_fetch.md)
