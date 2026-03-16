@@ -126,7 +126,11 @@ impl CronManagerTool {
         Ok((schedule_kind, schedule_expr))
     }
 
-    fn parse_payload_json(args: &Value, ctx: &ToolContext) -> Result<String, ToolError> {
+    fn parse_payload_json(
+        args: &Value,
+        ctx: &ToolContext,
+        default_session_key: Option<&str>,
+    ) -> Result<String, ToolError> {
         if let Some(raw) = args.get("payload_json") {
             let payload = raw
                 .as_str()
@@ -158,7 +162,7 @@ impl CronManagerTool {
             });
         }
 
-        build_payload_from_shortcut(args, ctx)
+        build_payload_from_shortcut(args, ctx, default_session_key)
     }
 
     fn compute_next_run_ms(
@@ -197,7 +201,8 @@ impl CronManagerTool {
         let id = Self::optional_str(args, "id")?.unwrap_or_else(|| Uuid::new_v4().to_string());
         let name = Self::require_str(args, "name")?;
         let (schedule_kind, schedule_expr) = Self::resolve_create_schedule(args)?;
-        let payload_json = Self::parse_payload_json(args, ctx)?;
+        let default_session_key = format!("cron:{id}");
+        let payload_json = Self::parse_payload_json(args, ctx, Some(&default_session_key))?;
         let enabled = Self::optional_bool(args, "enabled")?.unwrap_or(true);
         let timezone = Self::optional_str(args, "timezone")?.unwrap_or_else(|| "UTC".to_string());
         let next_run_at_ms = match Self::optional_i64(args, "next_run_at_ms")? {
@@ -239,7 +244,11 @@ impl CronManagerTool {
             || args.get("payload_json").is_some()
             || args.get("message").is_some()
         {
-            Some(Self::parse_payload_json(args, ctx)?)
+            Some(Self::parse_payload_json(
+                args,
+                ctx,
+                Some(&format!("cron:{cron_id}")),
+            )?)
         } else {
             None
         };
@@ -413,7 +422,7 @@ impl Tool for CronManagerTool {
                         "channel": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to the current session channel, or `cron` if it cannot be inferred." },
                         "sender_id": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to `system`." },
                         "chat_id": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to the current session chat id when it can be inferred." },
-                        "session_key": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to the current tool session key." },
+                        "session_key": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to an isolated cron session such as `cron:<job_id>`." },
                         "metadata": { "type": "object", "description": "Optional metadata object used only with `message` shortcut. Defaults to `{}`." },
                         "enabled": { "description": "Whether the cron starts enabled. Defaults to true. Prefer a boolean; string values like `\"true\"` and `\"false\"` are also accepted.", "oneOf": [{ "type": "boolean" }, { "type": "string" }] },
                         "timezone": { "type": "string", "description": "Timezone label. Defaults to UTC." },
@@ -441,7 +450,7 @@ impl Tool for CronManagerTool {
                         "channel": { "type": "string", "description": "Optional override used only with `message` shortcut." },
                         "sender_id": { "type": "string", "description": "Optional override used only with `message` shortcut." },
                         "chat_id": { "type": "string", "description": "Optional override used only with `message` shortcut." },
-                        "session_key": { "type": "string", "description": "Optional override used only with `message` shortcut." },
+                        "session_key": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to an isolated cron session such as `cron:<job_id>`." },
                         "metadata": { "type": "object", "description": "Optional metadata object used only with `message` shortcut." },
                         "timezone": { "type": "string", "description": "Updated timezone label." },
                         "next_run_at_ms": { "type": "integer", "description": "Optional explicit next run timestamp in ms." }
@@ -610,7 +619,11 @@ fn parse_payload_object(raw: &str, field_name: &str) -> Result<String, ToolError
     })
 }
 
-fn build_payload_from_shortcut(args: &Value, ctx: &ToolContext) -> Result<String, ToolError> {
+fn build_payload_from_shortcut(
+    args: &Value,
+    ctx: &ToolContext,
+    default_session_key: Option<&str>,
+) -> Result<String, ToolError> {
     let message = args
         .get("message")
         .and_then(Value::as_str)
@@ -643,7 +656,8 @@ fn build_payload_from_shortcut(args: &Value, ctx: &ToolContext) -> Result<String
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(|| ctx.session_key.clone());
+        .or_else(|| default_session_key.map(ToString::to_string))
+        .unwrap_or_else(|| "cron".to_string());
     let sender_id = args
         .get("sender_id")
         .and_then(Value::as_str)
@@ -936,6 +950,14 @@ mod tests {
                 .get(cron_id)
                 .cloned()
                 .ok_or_else(|| StorageError::backend("cron not found"))
+        }
+
+        async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError> {
+            let mut out = self.jobs.lock().await.values().cloned().collect::<Vec<_>>();
+            out.sort_by_key(|j| std::cmp::Reverse(j.updated_at_ms));
+            let skip = offset.max(0) as usize;
+            let take = limit.max(1) as usize;
+            Ok(out.into_iter().skip(skip).take(take).collect())
         }
 
         async fn list_due_crons(
@@ -1254,7 +1276,7 @@ mod tests {
         );
         assert_eq!(
             payload.get("session_key").and_then(Value::as_str),
-            Some("dingtalk:chat-99")
+            Some("cron:job-shortcut")
         );
         assert_eq!(
             payload.get("sender_id").and_then(Value::as_str),
@@ -1314,6 +1336,10 @@ mod tests {
         assert_eq!(
             payload.get("chat_id").and_then(Value::as_str),
             Some("chat-99")
+        );
+        assert_eq!(
+            payload.get("session_key").and_then(Value::as_str),
+            Some("cron:job-dingtalk-shortcut")
         );
     }
 }

@@ -8,6 +8,7 @@
 - expanded `cron_manager` schema descriptions and validation errors with concrete accepted examples so retries converge faster after invalid input
 - `cron_manager` payload validation now enforces the full `InboundMessage` shape at create/update time instead of deferring schema errors to runtime execution
 - `cron_manager` now supports a `message` shortcut that builds a valid cron inbound payload from the current tool session context, so models no longer need to spell out the full payload structure for common in-chat scheduling flows
+- `cron_manager` `message` shortcut now defaults to isolated cron session keys like `cron:<job_id>` instead of reusing the current interactive session, avoiding silent conversation-history growth across scheduled runs
 
 ## 2026-03-15
 
