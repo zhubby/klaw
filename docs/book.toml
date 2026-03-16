@@ -1,4 +1,25 @@
 [book]
+title = "Klaw Documentation"
 authors = ["zhubby"]
-language = "en"
+language = "zh-CN"
 src = "src"
+description = "Klaw - Rust-based AI Agent Framework with MQ-style message passing and reliability controls"
+
+[output.html]
+git-repository-url = "https://github.com/zhubby/klaw"
+git-repository-icon = "fa-github"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["docs/mdbook-admonish.css"]
+
+[output.html.fold]
+enable = true
+level = 1
+
+[preprocessor]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.1.0" # do not edit: managed by `mdbook-admonish install`
