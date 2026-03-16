@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-16
+
+### Changed
+
+- `klaw gui` 现在支持在技能安装、卸载和 registry sync 后热重载运行中 runtime 的 skills system prompt，无需重启 GUI runtime
+
 ## 2026-03-15
 
 ### Changed

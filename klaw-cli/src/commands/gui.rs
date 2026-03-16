@@ -8,7 +8,8 @@ use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
-    build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle, SharedChannelRuntime,
+    build_runtime_bundle, finalize_startup_report, reload_runtime_skills_prompt,
+    shutdown_runtime_bundle, SharedChannelRuntime,
 };
 use tracing::{info, warn};
 
@@ -19,6 +20,7 @@ impl GuiCommand {
     pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
         let (startup_tx, startup_rx) = std::sync::mpsc::channel::<Result<_, String>>();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (runtime_cmd_tx, runtime_cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let config_for_thread = config.as_ref().clone();
         let dingtalk_configs = config.channels.dingtalk.clone();
 
@@ -50,21 +52,37 @@ impl GuiCommand {
                     local
                         .run_until(async move {
                             let mut shutdown_rx = shutdown_rx;
+                            let mut runtime_cmd_rx = runtime_cmd_rx;
+                            let mut runtime_cmd_open = true;
                             let mut dingtalk_handles = spawn_enabled_channels(
                                 dingtalk_configs,
                                 Arc::clone(&adapter),
                                 shutdown_rx.clone(),
                             );
 
-                            let shutdown_by_signal = tokio::select! {
-                                changed = shutdown_rx.changed() => {
-                                    match changed {
-                                        Ok(()) => !*shutdown_rx.borrow(),
-                                        Err(_) => false,
+                            let shutdown_by_signal = loop {
+                                tokio::select! {
+                                    changed = shutdown_rx.changed() => {
+                                        match changed {
+                                            Ok(()) => break !*shutdown_rx.borrow(),
+                                            Err(_) => break false,
+                                        }
                                     }
-                                }
-                                _ = shutdown_signal() => {
-                                    true
+                                    _ = shutdown_signal() => {
+                                        break true
+                                    }
+                                    command = runtime_cmd_rx.recv(), if runtime_cmd_open => {
+                                        match command {
+                                            Some(klaw_gui::RuntimeCommand::ReloadSkillsPrompt) => {
+                                                if let Err(err) = reload_runtime_skills_prompt(runtime.as_ref()).await {
+                                                    warn!(error = %err, "failed to reload runtime skills prompt");
+                                                }
+                                            }
+                                            None => {
+                                                runtime_cmd_open = false;
+                                            }
+                                        }
+                                    }
                                 }
                             };
                             if shutdown_by_signal {
@@ -95,7 +113,9 @@ impl GuiCommand {
             startup_result.map_err(|err| io::Error::other(format!("gui startup failed: {err}")))?;
         print_startup_banner(config.as_ref(), &startup_report);
 
+        klaw_gui::install_runtime_command_sender(runtime_cmd_tx);
         let gui_result = klaw_gui::run();
+        klaw_gui::clear_runtime_command_sender();
         let _ = shutdown_tx.send(true);
         let worker_result = worker
             .join()

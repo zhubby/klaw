@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::runtime_bridge;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillRegistryConfig};
 use klaw_skill::RegistrySyncReport;
 use klaw_skill::{open_default_skill_store, FileSystemSkillStore, InstalledSkill, RegistrySource};
@@ -78,6 +79,12 @@ pub struct SkillPanel {
 }
 
 impl SkillPanel {
+    fn request_runtime_skills_reload(notifications: &mut NotificationCenter) {
+        if let Err(err) = runtime_bridge::request_reload_skills_prompt() {
+            notifications.warning(format!("Runtime skills prompt reload not sent: {err}"));
+        }
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -122,6 +129,7 @@ impl SkillPanel {
                 Ok(snapshot) => {
                     self.apply_snapshot(snapshot);
                     notifications.success(success_message);
+                    Self::request_runtime_skills_reload(notifications);
                 }
                 Err(err) => notifications.error(format!("Save failed: {err}")),
             },
@@ -229,6 +237,7 @@ impl SkillPanel {
                         if let Err(err) = self.reload_snapshot_silently() {
                             notifications.warning(err);
                         }
+                        Self::request_runtime_skills_reload(notifications);
                         notifications.success(format!(
                             "Registry `{registry_name}` synced: added {}, removed {}",
                             report.installed_skills.len(),

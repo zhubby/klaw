@@ -11,6 +11,7 @@
 - skill panel now manages installed skills via `klaw-skill`, including list/detail, registry sync, and uninstall flows
 - skill registry sync entry now lives on the `Skill Registry` list actions instead of the installed `Skill` panel
 - skill panel now includes an install window with registry selection and scrollable install/uninstall actions per registry skill
+- GUI skill actions now trigger a runtime skills-prompt reload command so newly changed skills can apply to subsequent requests without restarting the GUI runtime
 
 ## 2026-03-15
 

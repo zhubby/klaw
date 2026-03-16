@@ -5,7 +5,7 @@ use klaw_approval::{
     ApprovalManager, ApprovalResolveDecision, ApprovalStatus, SqliteApprovalManager,
 };
 use klaw_channel::{ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
-use klaw_config::{AppConfig, ToolEnabled};
+use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
 use klaw_core::{
     load_or_create_system_prompt, AgentLoop, AgentRuntimeError, CircuitBreakerPolicy,
     DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
@@ -884,6 +884,20 @@ pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<
         }
     }
     Ok(())
+}
+
+pub async fn reload_runtime_skills_prompt(
+    runtime: &RuntimeBundle,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let store = ConfigStore::open(None)?;
+    let snapshot = store.snapshot();
+    let data_dir_system_prompt = load_data_dir_system_prompt().await;
+    let loaded_skills = load_skills_system_prompt(&snapshot.config).await;
+    let skill_names = loaded_skills.skill_names.clone();
+    let system_prompt = compose_system_prompt(data_dir_system_prompt, loaded_skills.prompt);
+    runtime.runtime.set_system_prompt(system_prompt);
+    info!(skills = ?skill_names, "reloaded runtime skills prompt");
+    Ok(skill_names)
 }
 
 #[derive(Debug, Clone, Default)]

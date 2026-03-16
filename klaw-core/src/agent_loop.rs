@@ -14,7 +14,11 @@ use klaw_agent::{
 };
 use klaw_llm::{LlmError, LlmMedia, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 use thiserror::Error;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
@@ -100,7 +104,7 @@ pub struct AgentLoop {
     pub active_provider_id: String,
     pub active_model: String,
     pub tools: ToolRegistry,
-    pub system_prompt: Option<String>,
+    pub system_prompt: RwLock<Option<String>>,
 }
 
 struct RegistryToolExecutor<'a> {
@@ -189,7 +193,7 @@ impl AgentLoop {
             active_provider_id: "default".to_string(),
             active_model: "default".to_string(),
             tools,
-            system_prompt: None,
+            system_prompt: RwLock::new(None),
         }
     }
 
@@ -209,7 +213,7 @@ impl AgentLoop {
             active_provider_id,
             active_model,
             tools,
-            system_prompt: None,
+            system_prompt: RwLock::new(None),
         }
     }
 
@@ -221,11 +225,27 @@ impl AgentLoop {
         self
     }
 
-    pub fn with_system_prompt(mut self, system_prompt: Option<String>) -> Self {
-        self.system_prompt = system_prompt
+    pub fn with_system_prompt(self, system_prompt: Option<String>) -> Self {
+        self.set_system_prompt(system_prompt);
+        self
+    }
+
+    pub fn set_system_prompt(&self, system_prompt: Option<String>) {
+        let next = system_prompt
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        self
+        let mut guard = self
+            .system_prompt
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = next;
+    }
+
+    pub fn system_prompt(&self) -> Option<String> {
+        self.system_prompt
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     pub fn transition(&self, state: AgentRunState, event: StateTransitionEvent) -> AgentRunState {
@@ -324,10 +344,10 @@ impl AgentLoop {
             "agent.parent_session_key".to_string(),
             serde_json::Value::String(msg.payload.session_key.clone()),
         );
-        if let Some(system_prompt) = &self.system_prompt {
+        if let Some(system_prompt) = self.system_prompt() {
             tool_metadata
                 .entry(META_SYSTEM_PROMPT_KEY.to_string())
-                .or_insert_with(|| serde_json::Value::String(system_prompt.clone()));
+                .or_insert_with(|| serde_json::Value::String(system_prompt));
         }
 
         state = self.transition(state, StateTransitionEvent::ModelCalled);

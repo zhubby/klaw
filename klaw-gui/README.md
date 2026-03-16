@@ -50,12 +50,14 @@
   - read/write `skills.sync_timeout` and registries
   - add/edit registries via `egui::Window`
   - sync a registry's installed skills directly from the registry list actions
+  - request a runtime skills-prompt reload after registry config/save and sync actions
 - Skill panel features:
   - read installed skills from `klaw-skill` merged store view
   - inspect source metadata and `SKILL.md` content in a detail window
   - open an install window with registry selection and a scrollable registry skill table
   - install/uninstall registry skills directly from the selected registry catalog
   - uninstall local skills and registry-managed skills
+  - request a runtime skills-prompt reload after install/uninstall actions
 - Memory panel features:
   - read memory-layer aggregate stats via `klaw-memory` stats abstraction
   - show total/pinned/embedded/scope/recency/index metrics and top scopes

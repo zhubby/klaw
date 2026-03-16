@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-16
+
+### Changed
+- `AgentLoop` system prompt is now hot-reloadable at runtime via interior locking and a `set_system_prompt` API
+
 ## 2026-03-14
 
 ### Changed

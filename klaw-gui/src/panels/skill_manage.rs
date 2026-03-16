@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::runtime_bridge;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_skill::{
     open_default_skill_store, FileSystemSkillStore, RegistrySkillSummary, SkillRecord,
@@ -33,6 +34,12 @@ pub struct SkillManagePanel {
 }
 
 impl SkillManagePanel {
+    fn request_runtime_skills_reload(notifications: &mut NotificationCenter) {
+        if let Err(err) = runtime_bridge::request_reload_skills_prompt() {
+            notifications.warning(format!("Runtime skills prompt reload not sent: {err}"));
+        }
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.config_store.is_some() {
             return;
@@ -198,11 +205,13 @@ impl SkillManagePanel {
                     self.reload_install_window_catalog(&mut window);
                     self.install_window = Some(window);
                 }
+                Self::request_runtime_skills_reload(notifications);
                 notifications.success(format!(
                     "Installed `{skill_id}` from registry `{registry_name}`"
                 ));
             }
             Err(err) => {
+                Self::request_runtime_skills_reload(notifications);
                 notifications.warning(format!(
                     "Saved `{skill_id}` in config, but install did not complete immediately: {err}"
                 ));
@@ -258,11 +267,13 @@ impl SkillManagePanel {
                     self.reload_install_window_catalog(&mut window);
                     self.install_window = Some(window);
                 }
+                Self::request_runtime_skills_reload(notifications);
                 notifications.success(format!(
                     "Uninstalled `{skill_id}` from registry `{registry_name}`"
                 ));
             }
             Err(err) => {
+                Self::request_runtime_skills_reload(notifications);
                 notifications.warning(format!(
                     "Removed `{skill_id}` from config, but registry uninstall did not complete immediately: {err}"
                 ));
@@ -316,6 +327,7 @@ impl SkillManagePanel {
                     self.detail_window_open = false;
                 }
                 self.load_items(notifications, false);
+                Self::request_runtime_skills_reload(notifications);
                 notifications.success(format_uninstall_result(skill_name, registry, &result));
             }
             Err(err) => {
