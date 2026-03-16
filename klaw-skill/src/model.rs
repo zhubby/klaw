@@ -60,6 +60,13 @@ pub struct SkillSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistrySkillSummary {
+    pub id: String,
+    pub name: String,
+    pub local_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillRecord {
     pub name: String,
     pub source: SkillSource,

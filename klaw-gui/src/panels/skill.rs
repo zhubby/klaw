@@ -1,7 +1,16 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillRegistryConfig};
+use klaw_skill::RegistrySyncReport;
+use klaw_skill::{open_default_skill_store, FileSystemSkillStore, InstalledSkill, RegistrySource};
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::Duration;
+use tokio::runtime::Builder;
+
+const SYNC_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone)]
 struct SkillRegistryForm {
@@ -64,6 +73,8 @@ pub struct SkillPanel {
     config: AppConfig,
     form: Option<SkillRegistryForm>,
     sync_timeout_text: String,
+    syncing_registry: Option<String>,
+    sync_result_rx: Option<Receiver<(String, Result<RegistrySyncReport, String>)>>,
 }
 
 impl SkillPanel {
@@ -132,6 +143,17 @@ impl SkillPanel {
         }
     }
 
+    fn reload_snapshot_silently(&mut self) -> Result<(), String> {
+        let Some(store) = self.store.as_ref() else {
+            return Err("Configuration store is not available".to_string());
+        };
+        let snapshot = store
+            .reload()
+            .map_err(|err| format!("Reload failed: {err}"))?;
+        self.apply_snapshot(snapshot);
+        Ok(())
+    }
+
     fn save_sync_timeout(&mut self, notifications: &mut NotificationCenter) {
         let timeout = match self.sync_timeout_text.trim().parse::<u64>() {
             Ok(value) => value,
@@ -144,6 +166,88 @@ impl SkillPanel {
         let mut next = self.config.clone();
         next.skills.sync_timeout = timeout;
         self.save_config(next, notifications, "skills.sync_timeout saved");
+    }
+
+    fn sync_registry(&mut self, registry_name: &str, notifications: &mut NotificationCenter) {
+        if self.syncing_registry.is_some() {
+            notifications.warning("A skill registry sync is already running");
+            return;
+        }
+
+        let Some(registry) = self.config.skills.registries.get(registry_name) else {
+            notifications.error(format!("Skill registry `{registry_name}` not found"));
+            return;
+        };
+
+        let timeout = match self.sync_timeout_text.trim().parse::<u64>() {
+            Ok(value) => value,
+            Err(_) => {
+                notifications.error("skills.sync_timeout must be a positive integer");
+                return;
+            }
+        };
+
+        let source = RegistrySource {
+            name: registry_name.to_string(),
+            address: registry.address.clone(),
+        };
+        let installed = registry
+            .installed
+            .iter()
+            .map(|skill_name| InstalledSkill {
+                registry: registry_name.to_string(),
+                name: skill_name.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let registry_name = registry_name.to_string();
+        let status_registry_name = registry_name.clone();
+        let (tx, rx) = mpsc::channel();
+        self.syncing_registry = Some(registry_name.clone());
+        self.sync_result_rx = Some(rx);
+        thread::spawn(move || {
+            let result = run_skill_sync_task(source, installed, timeout);
+            let _ = tx.send((registry_name, result));
+        });
+        notifications.info(format!(
+            "Started syncing registry `{}`",
+            status_registry_name
+        ));
+    }
+
+    fn poll_sync_result(&mut self, notifications: &mut NotificationCenter) {
+        let Some(rx) = self.sync_result_rx.as_ref() else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok((registry_name, result)) => {
+                self.sync_result_rx = None;
+                self.syncing_registry = None;
+                match result {
+                    Ok(report) => {
+                        if let Err(err) = self.reload_snapshot_silently() {
+                            notifications.warning(err);
+                        }
+                        notifications.success(format!(
+                            "Registry `{registry_name}` synced: added {}, removed {}",
+                            report.installed_skills.len(),
+                            report.removed_skills.len()
+                        ));
+                    }
+                    Err(err) => {
+                        notifications
+                            .error(format!("Failed to sync registry `{registry_name}`: {err}"));
+                    }
+                }
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.sync_result_rx = None;
+                self.syncing_registry = None;
+                notifications.error("Skill registry sync worker disconnected");
+            }
+        }
     }
 
     fn open_add_registry(&mut self) {
@@ -265,6 +369,10 @@ impl PanelRenderer for SkillPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
+        self.poll_sync_result(notifications);
+        if self.sync_result_rx.is_some() {
+            ui.ctx().request_repaint_after(SYNC_POLL_INTERVAL);
+        }
 
         ui.heading(ctx.tab_title);
         ui.label(Self::status_label(self.config_path.as_deref()));
@@ -328,9 +436,24 @@ impl PanelRenderer for SkillPanel {
                         ui.label(&registry.address);
                         ui.label(registry.installed.len().to_string());
                         ui.label(registry.installed.join(", "));
-                        if ui.button("Edit").clicked() {
-                            self.open_edit_registry(&name);
-                        }
+                        ui.horizontal(|ui| {
+                            let is_syncing =
+                                self.syncing_registry.as_deref() == Some(name.as_str());
+                            if is_syncing {
+                                ui.add(egui::Spinner::new().size(14.0));
+                            } else if ui
+                                .add_enabled(
+                                    self.syncing_registry.is_none(),
+                                    egui::Button::new("Sync"),
+                                )
+                                .clicked()
+                            {
+                                self.sync_registry(&name, notifications);
+                            }
+                            if ui.button("Edit").clicked() {
+                                self.open_edit_registry(&name);
+                            }
+                        });
                         ui.end_row();
                     }
                 });
@@ -396,5 +519,41 @@ mod tests {
             updated.skills.registries["private"].address,
             "https://example.com/v2"
         );
+    }
+}
+
+fn run_skill_sync_task(
+    source: RegistrySource,
+    installed: Vec<InstalledSkill>,
+    timeout: u64,
+) -> Result<klaw_skill::RegistrySyncReport, String> {
+    run_skill_task(move |store| async move {
+        store
+            .sync_registry_installed_skills(&[source], &installed, timeout)
+            .await
+    })
+}
+
+fn run_skill_task<T, F, Fut>(op: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(FileSystemSkillStore) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T, klaw_skill::SkillError>> + Send + 'static,
+{
+    let join = thread::spawn(move || {
+        let store = open_default_skill_store()
+            .map_err(|err| format!("failed to open skill store: {err}"))?;
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to build runtime: {err}"))?;
+        runtime
+            .block_on(op(store))
+            .map_err(|err| format!("skill operation failed: {err}"))
+    });
+
+    match join.join() {
+        Ok(result) => result,
+        Err(_) => Err("skill operation thread panicked".to_string()),
     }
 }

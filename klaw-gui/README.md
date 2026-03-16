@@ -49,10 +49,12 @@
 - Skill Registry panel features:
   - read/write `skills.sync_timeout` and registries
   - add/edit registries via `egui::Window`
+  - sync a registry's installed skills directly from the registry list actions
 - Skill panel features:
   - read installed skills from `klaw-skill` merged store view
-  - inspect source metadata and `SKILL.md` content
-  - sync managed registry installs from current `config.toml`
+  - inspect source metadata and `SKILL.md` content in a detail window
+  - open an install window with registry selection and a scrollable registry skill table
+  - install/uninstall registry skills directly from the selected registry catalog
   - uninstall local skills and registry-managed skills
 - Memory panel features:
   - read memory-layer aggregate stats via `klaw-memory` stats abstraction

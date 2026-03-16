@@ -9,6 +9,8 @@
 - session panel now lists indexed sessions in a table via `klaw-session` manager abstractions instead of a placeholder view
 - approval panel now lists approvals in a table and routes approve/reject/consume actions through `klaw-approval`
 - skill panel now manages installed skills via `klaw-skill`, including list/detail, registry sync, and uninstall flows
+- skill registry sync entry now lives on the `Skill Registry` list actions instead of the installed `Skill` panel
+- skill panel now includes an install window with registry selection and scrollable install/uninstall actions per registry skill
 
 ## 2026-03-15
 

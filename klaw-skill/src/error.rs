@@ -44,6 +44,8 @@ pub enum SkillError {
         skill_name: String,
         path: PathBuf,
     },
+    #[error("skill registry `{registry}` is unavailable at `{path}`")]
+    RegistryUnavailable { registry: String, path: PathBuf },
     #[error(
         "cannot install managed skill `{skill_name}` because `{path}` already exists and is not managed by registry"
     )]

@@ -11,8 +11,8 @@ use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
 
 use crate::{
-    ReqwestSkillFetcher, SkillError, SkillFetcher, SkillRecord, SkillSource, SkillSourceKind,
-    SkillStore, SkillSummary,
+    RegistrySkillSummary, ReqwestSkillFetcher, SkillError, SkillFetcher, SkillRecord, SkillSource,
+    SkillSourceKind, SkillStore, SkillSummary,
 };
 
 const DEFAULT_KLAW_DIR: &str = ".klaw";
@@ -340,9 +340,11 @@ where
             }
         }
 
-        let previous_managed: BTreeSet<(String, String)> = current_manifest
+        let targeted_registries: BTreeSet<String> = source_map.keys().cloned().collect();
+        let previous_targeted_managed: BTreeSet<(String, String)> = current_manifest
             .managed
             .iter()
+            .filter(|item| targeted_registries.contains(&item.registry))
             .map(|item| (item.registry.clone(), item.name.clone()))
             .collect();
         let mut stale_registries = BTreeSet::new();
@@ -380,17 +382,20 @@ where
             }
         }
 
-        let mut next_manifest = InstalledSkillsManifest::default();
+        let mut next_manifest = current_manifest.clone();
+        next_manifest
+            .managed
+            .retain(|item| !targeted_registries.contains(&item.registry));
         for (registry_name, target_name) in &desired {
             next_manifest.managed.push(InstalledSkill {
                 registry: registry_name.clone(),
                 name: target_name.clone(),
             });
-            if !previous_managed.contains(&(registry_name.clone(), target_name.clone())) {
+            if !previous_targeted_managed.contains(&(registry_name.clone(), target_name.clone())) {
                 report.installed_skills.push(target_name.clone());
             }
         }
-        for (registry_name, skill_name) in &previous_managed {
+        for (registry_name, skill_name) in &previous_targeted_managed {
             if !desired.contains(&(registry_name.clone(), skill_name.clone())) {
                 report.removed_skills.push(skill_name.clone());
             }
@@ -401,8 +406,16 @@ where
                 .cmp(&b.name)
                 .then_with(|| a.registry.cmp(&b.registry))
         });
-        next_manifest.registry_commits = current_registry_commits;
-        next_manifest.stale_registries = stale_registries;
+        next_manifest
+            .registry_commits
+            .retain(|registry, _| !targeted_registries.contains(registry));
+        next_manifest
+            .registry_commits
+            .extend(current_registry_commits);
+        next_manifest
+            .stale_registries
+            .retain(|registry| !targeted_registries.contains(registry));
+        next_manifest.stale_registries.extend(stale_registries);
         self.write_installed_manifest(&next_manifest).await?;
         report.synced_registries.sort();
         report.installed_skills.sort();
@@ -600,6 +613,119 @@ where
             self.write_installed_manifest(&manifest).await?;
         }
         Ok((record, already_installed))
+    }
+
+    pub async fn list_registry_skills(
+        &self,
+        registry: &str,
+    ) -> Result<Vec<RegistrySkillSummary>, SkillError> {
+        let registry_name = registry.trim();
+        if registry_name.is_empty() {
+            return Err(SkillError::InvalidSkillName(
+                "installed skill registry cannot be empty".to_string(),
+            ));
+        }
+
+        let repo_dir = self.skills_registry_dir().join(registry_name);
+        let skills_root = repo_dir.join("skills");
+        let exists = fs::try_exists(&skills_root)
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "try_exists",
+                path: skills_root.clone(),
+                source,
+            })?;
+        if !exists {
+            return Err(SkillError::RegistryUnavailable {
+                registry: registry_name.to_string(),
+                path: skills_root,
+            });
+        }
+
+        let mut entries = fs::read_dir(&skills_root)
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "read_dir",
+                path: skills_root.clone(),
+                source,
+            })?;
+        let mut items = Vec::new();
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "next_entry",
+                path: skills_root.clone(),
+                source,
+            })?
+        {
+            let skill_dir = entry.path();
+            if !is_directory(&skill_dir, &entry).await? {
+                continue;
+            }
+            let Some(folder_name) = skill_dir
+                .file_name()
+                .and_then(OsStr::to_str)
+                .map(ToString::to_string)
+            else {
+                continue;
+            };
+            let path = skill_dir.join(SKILL_MARKDOWN_FILE);
+            let md_exists = fs::try_exists(&path)
+                .await
+                .map_err(|source| SkillError::Io {
+                    op: "try_exists",
+                    path: path.clone(),
+                    source,
+                })?;
+            if !md_exists {
+                continue;
+            }
+            let content = fs::read_to_string(&path)
+                .await
+                .map_err(|source| SkillError::Io {
+                    op: "read_to_string",
+                    path: path.clone(),
+                    source,
+                })?;
+            let name = parse_skill_name_from_markdown(&content).or(Some(folder_name.clone()));
+            let Some(name) = name else {
+                continue;
+            };
+            items.push(RegistrySkillSummary {
+                id: folder_name,
+                name,
+                local_path: path,
+            });
+        }
+        items.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        items.dedup_by(|a, b| a.id == b.id);
+        Ok(items)
+    }
+
+    pub async fn uninstall_registry_skill(
+        &self,
+        registry: &str,
+        skill_name: &str,
+    ) -> Result<(), SkillError> {
+        let registry_name = registry.trim();
+        if registry_name.is_empty() {
+            return Err(SkillError::InvalidSkillName(
+                "installed skill registry cannot be empty".to_string(),
+            ));
+        }
+        let name = Self::validate_skill_name(skill_name)?;
+
+        let mut manifest = self.load_installed_manifest().await?;
+        let before_len = manifest.managed.len();
+        manifest
+            .managed
+            .retain(|item| !(item.registry == registry_name && item.name == name));
+        if manifest.managed.len() == before_len {
+            return Err(SkillError::SkillNotFound(name));
+        }
+        self.write_installed_manifest(&manifest).await?;
+        Ok(())
     }
 
     pub async fn uninstall_skill(
@@ -1088,10 +1214,55 @@ async fn run_git_capture(
 ) -> Result<String, SkillError> {
     let args_owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
     let cwd_owned = cwd.map(Path::to_path_buf);
+    let first = run_git_capture_once(context, cwd_owned.clone(), args_owned.clone()).await;
+    match first {
+        Ok(output) => Ok(output),
+        Err(SkillError::GitCommand {
+            context,
+            command,
+            stderr,
+        }) => {
+            let Some(lock_path) = parse_git_lock_path(&stderr) else {
+                return Err(SkillError::GitCommand {
+                    context,
+                    command,
+                    stderr,
+                });
+            };
+
+            if !lock_path.exists() {
+                return Err(SkillError::GitCommand {
+                    context,
+                    command,
+                    stderr,
+                });
+            }
+
+            tracing::warn!(
+                lock_path = %lock_path.display(),
+                "removing stale git lock file and retrying"
+            );
+            std::fs::remove_file(&lock_path).map_err(|source| SkillError::Io {
+                op: "remove_file",
+                path: lock_path.clone(),
+                source,
+            })?;
+
+            run_git_capture_once(context, cwd_owned, args_owned).await
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn run_git_capture_once(
+    context: &'static str,
+    cwd: Option<PathBuf>,
+    args: Vec<String>,
+) -> Result<String, SkillError> {
     tokio::task::spawn_blocking(move || {
         let mut command = Command::new("git");
-        command.args(&args_owned);
-        if let Some(dir) = cwd_owned {
+        command.args(&args);
+        if let Some(dir) = cwd {
             command.current_dir(dir);
         }
         let output = command.output().map_err(|source| SkillError::Io {
@@ -1103,7 +1274,7 @@ async fn run_git_capture(
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(SkillError::GitCommand {
                 context,
-                command: format!("git {}", args_owned.join(" ")),
+                command: format!("git {}", args.join(" ")),
                 stderr,
             });
         }
@@ -1115,6 +1286,25 @@ async fn run_git_capture(
         path: PathBuf::from("git"),
         source: std::io::Error::other(source.to_string()),
     })?
+}
+
+fn parse_git_lock_path(stderr: &str) -> Option<PathBuf> {
+    if !stderr.contains("Another git process seems to be running in this repository") {
+        return None;
+    }
+
+    let prefix = "Unable to create '";
+    let suffix = "': File exists.";
+    stderr.lines().find_map(|line| {
+        let start = line.find(prefix)?;
+        let path = &line[start + prefix.len()..];
+        let end = path.find(suffix)?;
+        let candidate = &path[..end];
+        if !candidate.ends_with(".lock") {
+            return None;
+        }
+        Some(PathBuf::from(candidate))
+    })
 }
 
 fn modified_time_ms(metadata: &std::fs::Metadata) -> Option<i64> {
@@ -1136,6 +1326,7 @@ fn now_ms() -> i64 {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -1192,6 +1383,51 @@ mod tests {
             .await
             .expect("write registry skill markdown");
         path
+    }
+
+    fn init_local_git_registry_repo(root: &Path, registry: &str, skill_name: &str) -> PathBuf {
+        let repo_dir = root.join(format!("repo-{registry}"));
+        std::fs::create_dir_all(repo_dir.join("skills").join(skill_name))
+            .expect("create repo skill dir");
+        std::fs::write(
+            repo_dir
+                .join("skills")
+                .join(skill_name)
+                .join(SKILL_MARKDOWN_FILE),
+            format!("# {skill_name}"),
+        )
+        .expect("write repo skill");
+
+        let init = Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&repo_dir)
+            .output()
+            .expect("git init");
+        assert!(init.status.success(), "git init failed: {:?}", init);
+
+        let add = Command::new("git")
+            .args(["add", "."])
+            .current_dir(&repo_dir)
+            .output()
+            .expect("git add");
+        assert!(add.status.success(), "git add failed: {:?}", add);
+
+        let commit = Command::new("git")
+            .args([
+                "-c",
+                "user.name=Klaw Test",
+                "-c",
+                "user.email=klaw-test@example.com",
+                "commit",
+                "-m",
+                "init",
+            ])
+            .current_dir(&repo_dir)
+            .output()
+            .expect("git commit");
+        assert!(commit.status.success(), "git commit failed: {:?}", commit);
+
+        repo_dir
     }
 
     #[tokio::test]
@@ -1430,6 +1666,130 @@ mod tests {
             .await
             .expect("check local removed");
         assert!(!exists);
+    }
+
+    #[tokio::test]
+    async fn list_registry_skills_reads_registry_catalog() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        let _ = write_registry_skill(&root, "vercel-labs", "folder-one", "# alpha").await;
+        let _ = write_registry_skill(&root, "vercel-labs", "folder-two", "# beta").await;
+
+        let skills = store
+            .list_registry_skills("vercel-labs")
+            .await
+            .expect("list registry skills");
+
+        assert_eq!(skills.len(), 2);
+        assert_eq!(skills[0].id, "folder-one");
+        assert_eq!(skills[0].name, "alpha");
+        assert_eq!(skills[1].id, "folder-two");
+        assert_eq!(skills[1].name, "beta");
+    }
+
+    #[tokio::test]
+    async fn uninstall_registry_skill_removes_only_target_manifest_entry() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        write_registry_skill(&root, "vercel-labs", "demo", "# demo").await;
+        write_registry_skill(&root, "openai", "helper", "# helper").await;
+        store
+            .install_registry_skill("vercel-labs", "demo")
+            .await
+            .expect("install demo");
+        store
+            .install_registry_skill("openai", "helper")
+            .await
+            .expect("install helper");
+
+        store
+            .uninstall_registry_skill("vercel-labs", "demo")
+            .await
+            .expect("uninstall demo");
+
+        let manifest = store
+            .load_installed_manifest()
+            .await
+            .expect("load manifest");
+        assert_eq!(manifest.managed.len(), 1);
+        assert_eq!(manifest.managed[0].registry, "openai");
+        assert_eq!(manifest.managed[0].name, "helper");
+    }
+
+    #[tokio::test]
+    async fn partial_registry_sync_preserves_other_manifest_entries() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        let openai_repo = init_local_git_registry_repo(&root, "openai", "demo");
+
+        let mut manifest = InstalledSkillsManifest::default();
+        manifest.managed.push(InstalledSkill {
+            registry: "openclaw".to_string(),
+            name: "legacy".to_string(),
+        });
+        manifest
+            .registry_commits
+            .insert("openclaw".to_string(), "old-openclaw-commit".to_string());
+        manifest.stale_registries.insert("openclaw".to_string());
+        store
+            .write_installed_manifest(&manifest)
+            .await
+            .expect("write initial manifest");
+
+        let report = store
+            .sync_registry_installed_skills(
+                &[RegistrySource {
+                    name: "openai".to_string(),
+                    address: openai_repo.display().to_string(),
+                }],
+                &[InstalledSkill {
+                    registry: "openai".to_string(),
+                    name: "demo".to_string(),
+                }],
+                5,
+            )
+            .await
+            .expect("partial sync should succeed");
+
+        assert_eq!(report.installed_skills, vec!["demo"]);
+
+        let manifest = store
+            .load_installed_manifest()
+            .await
+            .expect("load final manifest");
+        assert!(manifest
+            .managed
+            .iter()
+            .any(|item| item.registry == "openclaw" && item.name == "legacy"));
+        assert!(manifest
+            .managed
+            .iter()
+            .any(|item| item.registry == "openai" && item.name == "demo"));
+        assert_eq!(
+            manifest
+                .registry_commits
+                .get("openclaw")
+                .map(String::as_str),
+            Some("old-openclaw-commit")
+        );
+        assert!(manifest.registry_commits.contains_key("openai"));
+        assert!(manifest.stale_registries.contains("openclaw"));
+    }
+
+    #[test]
+    fn parse_git_lock_path_extracts_lock_file_from_stderr() {
+        let stderr = "fatal: Unable to create '/tmp/demo/.git/shallow.lock': File exists.\n\nAnother git process seems to be running in this repository, e.g.\nan editor opened by 'git commit'.";
+
+        let path = parse_git_lock_path(stderr).expect("lock path should parse");
+
+        assert_eq!(path, PathBuf::from("/tmp/demo/.git/shallow.lock"));
+    }
+
+    #[test]
+    fn parse_git_lock_path_ignores_non_lock_git_failures() {
+        let stderr = "fatal: couldn't find remote ref main";
+
+        assert!(parse_git_lock_path(stderr).is_none());
     }
 
     #[tokio::test]

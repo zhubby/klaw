@@ -2,14 +2,20 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_skill::{
-    open_default_skill_store, FileSystemSkillStore, InstalledSkill, RegistrySource,
-    RegistrySyncReport, SkillRecord, SkillSourceKind, SkillStore, SkillSummary,
-    SkillUninstallResult,
+    open_default_skill_store, FileSystemSkillStore, RegistrySkillSummary, SkillRecord,
+    SkillSourceKind, SkillStore, SkillSummary, SkillUninstallResult,
 };
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::thread;
 use tokio::runtime::Builder;
+
+#[derive(Debug, Clone, Default)]
+struct InstallSkillWindow {
+    selected_registry: String,
+    skills: Vec<RegistrySkillSummary>,
+    error: Option<String>,
+}
 
 #[derive(Default)]
 pub struct SkillManagePanel {
@@ -20,8 +26,10 @@ pub struct SkillManagePanel {
     skill_root: Option<PathBuf>,
     loaded: bool,
     items: Vec<SkillSummary>,
-    selected_name: Option<String>,
-    selected_record: Option<SkillRecord>,
+    detail_name: Option<String>,
+    detail_record: Option<SkillRecord>,
+    detail_window_open: bool,
+    install_window: Option<InstallSkillWindow>,
 }
 
 impl SkillManagePanel {
@@ -71,17 +79,17 @@ impl SkillManagePanel {
         };
         self.apply_snapshot(snapshot);
 
-        let requested = self.selected_name.clone();
         match load_skill_list() {
             Ok((skill_root, items)) => {
                 self.skill_root = Some(skill_root);
                 self.items = items;
                 self.loaded = true;
-                self.selected_name = Self::choose_selected_name(&self.items, requested.as_deref());
-                if let Some(name) = self.selected_name.clone() {
-                    self.load_detail(&name, notifications);
-                } else {
-                    self.selected_record = None;
+                if let Some(current_name) = self.detail_name.as_deref() {
+                    if !self.items.iter().any(|item| item.name == current_name) {
+                        self.detail_name = None;
+                        self.detail_record = None;
+                        self.detail_window_open = false;
+                    }
                 }
             }
             Err(err) => notifications.error(format!("Failed to load installed skills: {err}")),
@@ -91,37 +99,174 @@ impl SkillManagePanel {
     fn load_detail(&mut self, skill_name: &str, notifications: &mut NotificationCenter) {
         match load_skill_detail(skill_name.to_string()) {
             Ok(record) => {
-                self.selected_name = Some(skill_name.to_string());
-                self.selected_record = Some(record);
+                self.detail_name = Some(skill_name.to_string());
+                self.detail_record = Some(record);
+                self.detail_window_open = true;
             }
             Err(err) => {
-                self.selected_record = None;
+                self.detail_record = None;
+                self.detail_window_open = false;
                 notifications.error(format!("Failed to load skill `{skill_name}`: {err}"));
             }
         }
     }
 
-    fn sync_managed_skills(&mut self, notifications: &mut NotificationCenter) {
+    fn open_install_window(&mut self, notifications: &mut NotificationCenter) {
+        if self.config.skills.registries.is_empty() {
+            notifications.warning("No skill registry configured");
+            return;
+        }
+
+        let selected_registry = self
+            .install_window
+            .as_ref()
+            .map(|window| window.selected_registry.clone())
+            .filter(|name| self.config.skills.registries.contains_key(name))
+            .or_else(|| self.config.skills.registries.keys().next().cloned())
+            .unwrap_or_default();
+
+        let mut window = InstallSkillWindow {
+            selected_registry,
+            ..InstallSkillWindow::default()
+        };
+        self.reload_install_window_catalog(&mut window);
+        if let Some(error) = window.error.as_ref() {
+            notifications.warning(error.clone());
+        }
+        self.install_window = Some(window);
+    }
+
+    fn reload_install_window_catalog(&self, window: &mut InstallSkillWindow) {
+        if window.selected_registry.is_empty() {
+            window.skills.clear();
+            window.error = Some("Select a registry first".to_string());
+            return;
+        }
+
+        match load_registry_catalog(window.selected_registry.clone()) {
+            Ok(skills) => {
+                window.skills = skills;
+                window.error = None;
+            }
+            Err(err) => {
+                window.skills.clear();
+                window.error = Some(err);
+            }
+        }
+    }
+
+    fn install_registry_skill(
+        &mut self,
+        registry_name: &str,
+        skill_id: &str,
+        notifications: &mut NotificationCenter,
+    ) {
         self.ensure_store_loaded(notifications);
         let Some(store) = self.config_store.as_ref() else {
             return;
         };
 
-        let snapshot = match store.reload() {
-            Ok(snapshot) => snapshot,
+        let (next_config, changed) =
+            Self::add_skill_to_config(self.config.clone(), registry_name, skill_id);
+        if !changed {
+            notifications.info(format!("`{skill_id}` is already installed"));
+            return;
+        }
+
+        let raw = match toml::to_string_pretty(&next_config) {
+            Ok(raw) => raw,
             Err(err) => {
-                notifications.error(format!("Failed to reload config: {err}"));
+                notifications.error(format!("Failed to render config TOML: {err}"));
                 return;
             }
         };
-        self.apply_snapshot(snapshot.clone());
 
-        match sync_skills_from_config(snapshot.config) {
-            Ok(report) => {
-                self.load_items(notifications, false);
-                notifications.success(format_sync_report(&report));
+        match store.save_raw_toml(&raw) {
+            Ok(snapshot) => self.apply_snapshot(snapshot),
+            Err(err) => {
+                notifications.error(format!(
+                    "Failed to save installed skill `{skill_id}` to config: {err}"
+                ));
+                return;
             }
-            Err(err) => notifications.error(format!("Managed skill sync failed: {err}")),
+        }
+
+        match install_registry_skill_in_store(registry_name.to_string(), skill_id.to_string()) {
+            Ok((_record, _already_installed)) => {
+                self.load_items(notifications, false);
+                if let Some(mut window) = self.install_window.take() {
+                    self.reload_install_window_catalog(&mut window);
+                    self.install_window = Some(window);
+                }
+                notifications.success(format!(
+                    "Installed `{skill_id}` from registry `{registry_name}`"
+                ));
+            }
+            Err(err) => {
+                notifications.warning(format!(
+                    "Saved `{skill_id}` in config, but install did not complete immediately: {err}"
+                ));
+            }
+        }
+    }
+
+    fn uninstall_registry_skill_from_window(
+        &mut self,
+        registry_name: &str,
+        skill_id: &str,
+        notifications: &mut NotificationCenter,
+    ) {
+        self.ensure_store_loaded(notifications);
+        let Some(store) = self.config_store.as_ref() else {
+            return;
+        };
+
+        let (next_config, changed) =
+            Self::remove_skill_from_config(self.config.clone(), registry_name, skill_id);
+        if !changed {
+            notifications.info(format!("`{skill_id}` is not installed"));
+            return;
+        }
+
+        let raw = match toml::to_string_pretty(&next_config) {
+            Ok(raw) => raw,
+            Err(err) => {
+                notifications.error(format!("Failed to render config TOML: {err}"));
+                return;
+            }
+        };
+
+        match store.save_raw_toml(&raw) {
+            Ok(snapshot) => self.apply_snapshot(snapshot),
+            Err(err) => {
+                notifications.error(format!(
+                    "Failed to update config while uninstalling `{skill_id}`: {err}"
+                ));
+                return;
+            }
+        }
+
+        match uninstall_registry_skill_from_store(registry_name.to_string(), skill_id.to_string()) {
+            Ok(()) => {
+                if self.detail_name.as_deref() == Some(skill_id) {
+                    self.detail_name = None;
+                    self.detail_record = None;
+                    self.detail_window_open = false;
+                }
+                self.load_items(notifications, false);
+                if let Some(mut window) = self.install_window.take() {
+                    self.reload_install_window_catalog(&mut window);
+                    self.install_window = Some(window);
+                }
+                notifications.success(format!(
+                    "Uninstalled `{skill_id}` from registry `{registry_name}`"
+                ));
+            }
+            Err(err) => {
+                notifications.warning(format!(
+                    "Removed `{skill_id}` from config, but registry uninstall did not complete immediately: {err}"
+                ));
+            }
         }
     }
 
@@ -165,6 +310,11 @@ impl SkillManagePanel {
 
         match uninstall_skill_from_store(skill_name.to_string()) {
             Ok(result) => {
+                if self.detail_name.as_deref() == Some(skill_name) {
+                    self.detail_name = None;
+                    self.detail_record = None;
+                    self.detail_window_open = false;
+                }
                 self.load_items(notifications, false);
                 notifications.success(format_uninstall_result(skill_name, registry, &result));
             }
@@ -179,15 +329,6 @@ impl SkillManagePanel {
                 }
             }
         }
-    }
-
-    fn choose_selected_name(items: &[SkillSummary], requested: Option<&str>) -> Option<String> {
-        if let Some(requested_name) = requested {
-            if items.iter().any(|item| item.name == requested_name) {
-                return Some(requested_name.to_string());
-            }
-        }
-        items.first().map(|item| item.name.clone())
     }
 
     fn remove_skill_from_config(
@@ -205,6 +346,27 @@ impl SkillManagePanel {
             .retain(|installed| installed != skill_name);
         let changed = before != registry.installed.len();
         (config, changed)
+    }
+
+    fn add_skill_to_config(
+        mut config: AppConfig,
+        registry_name: &str,
+        skill_name: &str,
+    ) -> (AppConfig, bool) {
+        let Some(registry) = config.skills.registries.get_mut(registry_name) else {
+            return (config, false);
+        };
+
+        if registry
+            .installed
+            .iter()
+            .any(|installed| installed == skill_name)
+        {
+            return (config, false);
+        }
+        registry.installed.push(skill_name.to_string());
+        registry.installed.sort();
+        (config, true)
     }
 
     fn source_label(summary: &SkillSummary) -> &'static str {
@@ -226,6 +388,213 @@ impl SkillManagePanel {
         match path {
             Some(path) => format!("Config: {}", path.display()),
             None => "Config: (not loaded)".to_string(),
+        }
+    }
+
+    fn render_detail_window(&mut self, ctx: &egui::Context) {
+        if !self.detail_window_open {
+            return;
+        }
+
+        let Some(record) = self.detail_record.as_ref() else {
+            self.detail_window_open = false;
+            return;
+        };
+
+        let viewport_height = ctx.input(|input| {
+            input
+                .viewport()
+                .inner_rect
+                .map(|rect| rect.height())
+                .unwrap_or(760.0)
+        });
+        let window_max_height = (viewport_height - 96.0).clamp(360.0, 680.0);
+        let markdown_height = (window_max_height - 180.0).clamp(180.0, 360.0);
+
+        let mut open = self.detail_window_open;
+        egui::Window::new(format!("Skill Detail: {}", record.name))
+            .open(&mut open)
+            .resizable(true)
+            .default_width(820.0)
+            .default_height(window_max_height.min(540.0))
+            .max_height(window_max_height)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(format!("Name: {}", record.name));
+                    ui.label(format!(
+                        "Source: {}",
+                        match record.source_kind {
+                            SkillSourceKind::Local => "local",
+                            SkillSourceKind::Registry => "registry",
+                        }
+                    ));
+                    ui.label(format!(
+                        "Registry: {}",
+                        record.registry.as_deref().unwrap_or("-")
+                    ));
+                    ui.label(format!(
+                        "State: {}",
+                        match record.stale {
+                            Some(true) => "stale",
+                            Some(false) => "fresh",
+                            None => "-",
+                        }
+                    ));
+                });
+                ui.label(format!("Path: {}", record.local_path.display()));
+                ui.label(format!("Updated (ms): {}", record.updated_at_ms));
+                ui.separator();
+
+                let mut content = record.content.clone();
+                egui::ScrollArea::vertical()
+                    .id_salt(("skill-detail-markdown", &record.name))
+                    .max_height(markdown_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            [ui.available_width(), markdown_height],
+                            egui::TextEdit::multiline(&mut content)
+                                .desired_width(f32::INFINITY)
+                                .font(egui::TextStyle::Monospace)
+                                .interactive(false),
+                        );
+                    });
+            });
+        self.detail_window_open = open;
+        if !self.detail_window_open {
+            self.detail_name = None;
+            self.detail_record = None;
+        }
+    }
+
+    fn render_install_window(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some(window) = self.install_window.as_mut() else {
+            return;
+        };
+
+        let mut open = true;
+        let mut selected_registry = window.selected_registry.clone();
+        let registry_names = self
+            .config
+            .skills
+            .registries
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut toggle_action: Option<(String, String, bool)> = None;
+        let selected_installed = self
+            .config
+            .skills
+            .registries
+            .get(&selected_registry)
+            .map(|registry| registry.installed.clone())
+            .unwrap_or_default();
+
+        egui::Window::new("Install Skill")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(900.0)
+            .default_height(520.0)
+            .max_width(960.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Registry");
+                    egui::ComboBox::from_id_salt("skill-install-registry")
+                        .selected_text(if selected_registry.is_empty() {
+                            "(select registry)"
+                        } else {
+                            selected_registry.as_str()
+                        })
+                        .show_ui(ui, |ui| {
+                            for name in &registry_names {
+                                ui.selectable_value(
+                                    &mut selected_registry,
+                                    name.clone(),
+                                    name.as_str(),
+                                );
+                            }
+                        });
+                });
+
+                if let Some(error) = window.error.as_ref() {
+                    ui.add_space(6.0);
+                    ui.label(error);
+                }
+
+                ui.separator();
+                egui::ScrollArea::both()
+                    .id_salt("skill-install-table-scroll")
+                    .max_height(320.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Grid::new("skill-install-grid")
+                            .striped(true)
+                            .min_col_width(120.0)
+                            .show(ui, |ui| {
+                                ui.strong("Action");
+                                ui.strong("Skill");
+                                ui.strong("ID");
+                                ui.strong("Path");
+                                ui.end_row();
+
+                                for skill in &window.skills {
+                                    let installed = selected_installed
+                                        .iter()
+                                        .any(|name| name == &skill.id || name == &skill.name);
+                                    if ui
+                                        .button(if installed { "Uninstall" } else { "Install" })
+                                        .clicked()
+                                    {
+                                        toggle_action = Some((
+                                            selected_registry.clone(),
+                                            skill.id.clone(),
+                                            installed,
+                                        ));
+                                    }
+                                    ui.label(&skill.name);
+                                    ui.monospace(&skill.id);
+                                    ui.label(skill.local_path.display().to_string());
+                                    ui.end_row();
+                                }
+                            });
+                    });
+            });
+
+        if !open {
+            self.install_window = None;
+            return;
+        }
+
+        let registry_changed = self
+            .install_window
+            .as_ref()
+            .map(|current| current.selected_registry != selected_registry)
+            .unwrap_or(false);
+        if registry_changed {
+            if let Some(mut current) = self.install_window.take() {
+                current.selected_registry = selected_registry.clone();
+                self.reload_install_window_catalog(&mut current);
+                if let Some(error) = current.error.as_ref() {
+                    notifications.warning(error.clone());
+                }
+                self.install_window = Some(current);
+            }
+        }
+
+        if let Some((registry_name, skill_name, installed)) = toggle_action {
+            if installed {
+                self.uninstall_registry_skill_from_window(
+                    &registry_name,
+                    &skill_name,
+                    notifications,
+                );
+            } else {
+                self.install_registry_skill(&registry_name, &skill_name, notifications);
+            }
         }
     }
 }
@@ -261,8 +630,8 @@ impl PanelRenderer for SkillManagePanel {
             if ui.button("Refresh").clicked() {
                 self.load_items(notifications, true);
             }
-            if ui.button("Sync Managed Skills").clicked() {
-                self.sync_managed_skills(notifications);
+            if ui.button("Install").clicked() {
+                self.open_install_window(notifications);
             }
         });
         ui.separator();
@@ -289,11 +658,7 @@ impl PanelRenderer for SkillManagePanel {
                             ui.end_row();
 
                             for item in &self.items {
-                                if self.selected_name.as_deref() == Some(item.name.as_str()) {
-                                    ui.strong(&item.name);
-                                } else {
-                                    ui.label(&item.name);
-                                }
+                                ui.label(&item.name);
                                 ui.label(Self::source_label(&item));
                                 ui.label(item.registry.as_deref().unwrap_or("-"));
                                 ui.label(Self::stale_label(&item));
@@ -321,47 +686,8 @@ impl PanelRenderer for SkillManagePanel {
         if let Some((skill_name, registry)) = remove_skill {
             self.uninstall_skill(&skill_name, registry.as_deref(), notifications);
         }
-
-        ui.separator();
-        ui.label("Skill Details");
-        if let Some(record) = self.selected_record.as_ref() {
-            ui.horizontal(|ui| {
-                ui.label(format!("Name: {}", record.name));
-                ui.label(format!(
-                    "Source: {}",
-                    match record.source_kind {
-                        SkillSourceKind::Local => "local",
-                        SkillSourceKind::Registry => "registry",
-                    }
-                ));
-                ui.label(format!(
-                    "Registry: {}",
-                    record.registry.as_deref().unwrap_or("-")
-                ));
-                ui.label(format!(
-                    "State: {}",
-                    match record.stale {
-                        Some(true) => "stale",
-                        Some(false) => "fresh",
-                        None => "-",
-                    }
-                ));
-            });
-            ui.label(format!("Path: {}", record.local_path.display()));
-            ui.label(format!("Updated (ms): {}", record.updated_at_ms));
-            ui.add_space(6.0);
-
-            let mut content = record.content.clone();
-            ui.add(
-                egui::TextEdit::multiline(&mut content)
-                    .desired_rows(18)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace)
-                    .interactive(false),
-            );
-        } else {
-            ui.label("Select a skill to inspect its content.");
-        }
+        self.render_detail_window(ui.ctx());
+        self.render_install_window(ui.ctx(), notifications);
     }
 }
 
@@ -377,47 +703,34 @@ fn load_skill_detail(skill_name: String) -> Result<SkillRecord, String> {
     run_skill_task(move |store| async move { store.get(&skill_name).await })
 }
 
-fn uninstall_skill_from_store(skill_name: String) -> Result<SkillUninstallResult, String> {
-    run_skill_task(move |store| async move { store.uninstall_skill(&skill_name).await })
+fn load_registry_catalog(registry_name: String) -> Result<Vec<RegistrySkillSummary>, String> {
+    run_skill_task(move |store| async move { store.list_registry_skills(&registry_name).await })
 }
 
-fn sync_skills_from_config(config: AppConfig) -> Result<RegistrySyncReport, String> {
-    let sources = config
-        .skills
-        .registries
-        .iter()
-        .map(|(name, registry)| RegistrySource {
-            name: name.clone(),
-            address: registry.address.clone(),
-        })
-        .collect::<Vec<_>>();
-    let installed = config
-        .skills
-        .registries
-        .iter()
-        .flat_map(|(registry_name, registry)| {
-            registry.installed.iter().map(|skill_name| InstalledSkill {
-                registry: registry_name.clone(),
-                name: skill_name.clone(),
-            })
-        })
-        .collect::<Vec<_>>();
-    let timeout = config.skills.sync_timeout;
-
+fn install_registry_skill_in_store(
+    registry_name: String,
+    skill_name: String,
+) -> Result<(SkillRecord, bool), String> {
     run_skill_task(move |store| async move {
         store
-            .sync_registry_installed_skills(&sources, &installed, timeout)
+            .install_registry_skill(&registry_name, &skill_name)
             .await
     })
 }
 
-fn format_sync_report(report: &RegistrySyncReport) -> String {
-    format!(
-        "Synced {} registries, added {}, removed {}",
-        report.synced_registries.len(),
-        report.installed_skills.len(),
-        report.removed_skills.len()
-    )
+fn uninstall_skill_from_store(skill_name: String) -> Result<SkillUninstallResult, String> {
+    run_skill_task(move |store| async move { store.uninstall_skill(&skill_name).await })
+}
+
+fn uninstall_registry_skill_from_store(
+    registry_name: String,
+    skill_name: String,
+) -> Result<(), String> {
+    run_skill_task(move |store| async move {
+        store
+            .uninstall_registry_skill(&registry_name, &skill_name)
+            .await
+    })
 }
 
 fn format_uninstall_result(
@@ -490,28 +803,22 @@ mod tests {
     }
 
     #[test]
-    fn choose_selected_name_falls_back_to_first_item() {
-        let items = vec![
-            SkillSummary {
-                name: "alpha".to_string(),
-                local_path: PathBuf::from("/tmp/alpha/SKILL.md"),
-                updated_at_ms: 1,
-                source_kind: SkillSourceKind::Local,
-                registry: None,
-                stale: None,
+    fn add_skill_to_config_appends_and_sorts() {
+        let mut config = AppConfig::default();
+        config.skills.registries.insert(
+            "private".to_string(),
+            klaw_config::SkillRegistryConfig {
+                address: "https://example.com/private.git".to_string(),
+                installed: vec!["zeta".to_string()],
             },
-            SkillSummary {
-                name: "beta".to_string(),
-                local_path: PathBuf::from("/tmp/beta/SKILL.md"),
-                updated_at_ms: 2,
-                source_kind: SkillSourceKind::Registry,
-                registry: Some("anthropic".to_string()),
-                stale: Some(false),
-            },
-        ];
+        );
 
-        let selected = SkillManagePanel::choose_selected_name(&items, Some("missing"));
+        let (next, changed) = SkillManagePanel::add_skill_to_config(config, "private", "alpha");
 
-        assert_eq!(selected.as_deref(), Some("alpha"));
+        assert!(changed);
+        assert_eq!(
+            next.skills.registries["private"].installed,
+            vec!["alpha", "zeta"]
+        );
     }
 }

@@ -6,7 +6,9 @@
 
 - Manage local manual skills under `~/.klaw/skills`
 - Sync configured registry mirrors under `~/.klaw/skills-registry`
+- Recover from stale git lock files during registry sync by removing leftover `*.lock` files and retrying once
 - Index managed registry installations via `~/.klaw/skills-registry-manifest.json`
+- List available skills from a synced registry mirror and support registry-specific managed uninstall
 - Load a merged runtime view of skills (managed registry + local manual)
 - Expose source metadata for each loaded skill (`local` vs `registry`, registry name, stale state)
 

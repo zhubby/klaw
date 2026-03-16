@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-16
+
+### Fixed
+- registry sync now recovers from stale git lock files such as `.git/shallow.lock` by removing the leftover lock and retrying once
+
+### Added
+- added registry catalog listing and registry-specific managed uninstall APIs for GUI skill installation workflows
+
 ## 2026-03-14
 
 ### Changed
