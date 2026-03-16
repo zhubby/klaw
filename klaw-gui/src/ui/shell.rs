@@ -254,12 +254,12 @@ impl ShellUi {
         });
 
         if state.show_about {
-            egui::Window::new("About Klaw Workbench")
+            egui::Window::new("About Klaw")
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label(format!("{} Klaw Workbench", regular::INFO));
+                    ui.label(format!("{} Klaw", regular::INFO));
                     ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
                     ui.label("Desktop UI shell built with egui.");
                     ui.add_space(8.0);

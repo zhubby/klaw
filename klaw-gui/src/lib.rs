@@ -15,7 +15,7 @@ pub use state::UiAction;
 pub fn run() -> anyhow::Result<()> {
     let viewport = configure_platform_viewport(
         egui::ViewportBuilder::default()
-            .with_title("Klaw Workbench")
+            .with_title("Klaw")
             .with_decorations(false)
             .with_titlebar_shown(false)
             .with_titlebar_buttons_shown(false)
@@ -26,7 +26,7 @@ pub fn run() -> anyhow::Result<()> {
         ..eframe::NativeOptions::default()
     };
     eframe::run_native(
-        "Klaw Workbench",
+        "Klaw",
         native_options,
         Box::new(|creation_ctx| Ok(Box::new(app::KlawGuiApp::new(creation_ctx)))),
     )
