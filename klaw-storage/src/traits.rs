@@ -119,6 +119,8 @@ pub trait CronStorage: Send + Sync {
 
     async fn get_cron(&self, cron_id: &str) -> Result<CronJob, StorageError>;
 
+    async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError>;
+
     async fn list_due_crons(&self, now_ms: i64, limit: i64) -> Result<Vec<CronJob>, StorageError>;
 
     async fn claim_next_run(

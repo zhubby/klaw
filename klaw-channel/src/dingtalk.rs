@@ -276,6 +276,43 @@ impl DingtalkChannel {
     }
 }
 
+pub async fn send_session_webhook_markdown_via_proxy(
+    proxy: &DingtalkProxyConfig,
+    session_webhook: &str,
+    title: &str,
+    text: &str,
+) -> ChannelResult<()> {
+    let client = DingtalkApiClient::new(proxy)?;
+    client
+        .send_session_webhook_markdown(session_webhook, title, text)
+        .await
+}
+
+fn callback_runtime_metadata(
+    session_webhook: Option<&str>,
+    bot_title: &str,
+) -> BTreeMap<String, serde_json::Value> {
+    let mut metadata = BTreeMap::new();
+    if let Some(session_webhook) = session_webhook
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        metadata.insert(
+            "channel.dingtalk.session_webhook".to_string(),
+            serde_json::Value::String(session_webhook.to_string()),
+        );
+        metadata.insert(
+            "channel.dingtalk.bot_title".to_string(),
+            serde_json::Value::String(bot_title.to_string()),
+        );
+        metadata.insert(
+            "channel.delivery_mode".to_string(),
+            serde_json::Value::String("direct_reply".to_string()),
+        );
+    }
+    metadata
+}
+
 #[async_trait::async_trait(?Send)]
 impl Channel for DingtalkChannel {
     fn name(&self) -> &'static str {
@@ -401,6 +438,10 @@ impl DingtalkChannel {
                     session_key,
                     chat_id: card_callback.chat_id.clone(),
                     media_references: Vec::new(),
+                    metadata: callback_runtime_metadata(
+                        card_callback.session_webhook.as_deref(),
+                        &self.config.bot_title,
+                    ),
                 })
                 .await;
 
@@ -479,6 +520,10 @@ impl DingtalkChannel {
                 session_key,
                 chat_id: inbound.chat_id.clone(),
                 media_references: inbound.media_references.clone(),
+                metadata: callback_runtime_metadata(
+                    Some(&inbound.session_webhook),
+                    &self.config.bot_title,
+                ),
             })
             .await;
 

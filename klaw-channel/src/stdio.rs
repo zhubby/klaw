@@ -1,4 +1,5 @@
 use crate::{Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{self, Write};
 use tokio::io::AsyncBufReadExt;
@@ -90,6 +91,7 @@ impl Channel for StdioChannel {
                         session_key: self.session_key.clone(),
                         chat_id: self.chat_id.clone(),
                         media_references: Vec::new(),
+                        metadata: BTreeMap::new(),
                     };
                     let maybe_output = match run_until_shutdown(runtime.submit(request)).await? {
                         Some(output) => output?,

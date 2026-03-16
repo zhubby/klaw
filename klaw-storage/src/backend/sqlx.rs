@@ -1055,6 +1055,22 @@ impl CronStorage for SqlxSessionStore {
         row.try_into()
     }
 
+    async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError> {
+        let rows = sqlx::query_as::<_, CronJobRow>(
+            "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone,
+                    next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+             FROM cron
+             ORDER BY updated_at_ms DESC
+             LIMIT ?1 OFFSET ?2",
+        )
+        .bind(limit.max(1))
+        .bind(offset.max(0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        rows.into_iter().map(TryInto::try_into).collect()
+    }
+
     async fn list_due_crons(&self, now_ms: i64, limit: i64) -> Result<Vec<CronJob>, StorageError> {
         let rows = sqlx::query_as::<_, CronJobRow>(
             "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone,

@@ -4,6 +4,8 @@
 
 ### Changed
 
+- cron panel now supports `Run Now` from both the jobs table and the task-runs header, routed through the live GUI runtime so manual execution immediately creates a run record and enqueues the inbound work
+- cron form now validates `payload_json` against the full `InboundMessage` schema before saving, so missing required fields like `channel` are caught in the GUI
 - macOS GUI startup now sets the app icon from `assets/icons/logo.icns`
 - system monitor summary cards now render in a fixed 2x2 equal-width layout instead of content-sized columns
 - session panel now lists indexed sessions in a table via `klaw-session` manager abstractions instead of a placeholder view

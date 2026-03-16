@@ -664,7 +664,7 @@ fn heartbeat_response_metadata(
 ) -> BTreeMap<String, serde_json::Value> {
     let mut response_metadata = BTreeMap::new();
     for (key, value) in inbound_metadata {
-        if key == "trigger.kind" || key.starts_with("heartbeat.") {
+        if key == "trigger.kind" || key.starts_with("heartbeat.") || key.starts_with("channel.") {
             response_metadata.insert(key.clone(), value.clone());
         }
     }

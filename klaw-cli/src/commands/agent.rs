@@ -1,4 +1,5 @@
 use clap::Args;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -32,6 +33,7 @@ impl AgentCommand {
             runtime.default_provider_id.clone(),
             runtime.runtime.active_model.clone(),
             Vec::new(),
+            BTreeMap::new(),
         )
         .await?;
         match maybe_output {

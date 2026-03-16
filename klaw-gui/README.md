@@ -70,6 +70,7 @@
 - Cron panel features:
   - read/manage cron jobs and task runs via `klaw-cron` manager abstraction
   - add/edit cron jobs via `egui::Window`
+  - manually trigger `Run Now` from the jobs table or runs section through the live GUI runtime
 - Archive panel features:
   - query archives via `klaw-archive` service abstraction with filters
   - inspect archive record details and metadata in a detail window

@@ -46,7 +46,10 @@ impl GuiCommand {
                         runtime.as_ref(),
                         BackgroundServiceConfig::from_app_config(&config_for_thread),
                     ));
-                    let adapter = Arc::new(SharedChannelRuntime::new(runtime.clone(), background));
+                    let adapter = Arc::new(SharedChannelRuntime::new(
+                        runtime.clone(),
+                        Arc::clone(&background),
+                    ));
 
                     let local = tokio::task::LocalSet::new();
                     local
@@ -77,6 +80,13 @@ impl GuiCommand {
                                                 if let Err(err) = reload_runtime_skills_prompt(runtime.as_ref()).await {
                                                     warn!(error = %err, "failed to reload runtime skills prompt");
                                                 }
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::RunCronNow { cron_id, response }) => {
+                                                let result = background.run_cron_now(&cron_id).await;
+                                                if result.is_ok() {
+                                                    background.on_runtime_tick(runtime.as_ref()).await;
+                                                }
+                                                let _ = response.send(result);
                                             }
                                             None => {
                                                 runtime_cmd_open = false;

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use klaw_core::MediaReference;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ pub struct ChannelRequest {
     pub session_key: String,
     pub chat_id: String,
     pub media_references: Vec<MediaReference>,
+    pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]

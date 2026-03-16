@@ -58,47 +58,17 @@ where
                 continue;
             }
 
-            let run_id = Uuid::new_v4().to_string();
-            self.storage
-                .append_task_run(&NewCronTaskRun {
-                    id: run_id.clone(),
-                    cron_id: job.id.clone(),
-                    scheduled_at_ms: job.next_run_at_ms,
-                    status: CronTaskStatus::Pending,
-                    attempt: 0,
-                    created_at_ms: now,
-                })
-                .await?;
-            self.storage.mark_task_running(&run_id, now_ms()).await?;
-
-            match self.publish_inbound(&job).await {
-                Ok(message_id) => {
-                    self.storage
-                        .mark_task_result(
-                            &run_id,
-                            CronTaskStatus::Success,
-                            now_ms(),
-                            None,
-                            Some(&message_id),
-                        )
-                        .await?;
-                    executed += 1;
-                }
-                Err(err) => {
-                    self.storage
-                        .mark_task_result(
-                            &run_id,
-                            CronTaskStatus::Failed,
-                            now_ms(),
-                            Some(&err.to_string()),
-                            None,
-                        )
-                        .await?;
-                }
+            if self.execute_job_run(&job, job.next_run_at_ms).await.is_ok() {
+                executed += 1;
             }
         }
 
         Ok(executed)
+    }
+
+    pub async fn run_job_now(&self, cron_id: &str) -> Result<String, CronError> {
+        let job = self.storage.get_cron(cron_id).await?;
+        self.execute_job_run(&job, now_ms()).await
     }
 
     pub async fn run_until_stopped(
@@ -132,5 +102,51 @@ where
             .publish(MessageTopic::Inbound.as_str(), envelope)
             .await?;
         Ok(message_id)
+    }
+
+    async fn execute_job_run(
+        &self,
+        job: &CronJob,
+        scheduled_at_ms: i64,
+    ) -> Result<String, CronError> {
+        let run_id = Uuid::new_v4().to_string();
+        self.storage
+            .append_task_run(&NewCronTaskRun {
+                id: run_id.clone(),
+                cron_id: job.id.clone(),
+                scheduled_at_ms,
+                status: CronTaskStatus::Pending,
+                attempt: 0,
+                created_at_ms: now_ms(),
+            })
+            .await?;
+        self.storage.mark_task_running(&run_id, now_ms()).await?;
+
+        match self.publish_inbound(job).await {
+            Ok(message_id) => {
+                self.storage
+                    .mark_task_result(
+                        &run_id,
+                        CronTaskStatus::Success,
+                        now_ms(),
+                        None,
+                        Some(&message_id),
+                    )
+                    .await?;
+                Ok(message_id)
+            }
+            Err(err) => {
+                self.storage
+                    .mark_task_result(
+                        &run_id,
+                        CronTaskStatus::Failed,
+                        now_ms(),
+                        Some(&err.to_string()),
+                        None,
+                    )
+                    .await?;
+                Err(err)
+            }
+        }
     }
 }

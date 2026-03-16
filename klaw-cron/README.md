@@ -6,6 +6,7 @@
 
 - Parse and validate cron/every schedules (`ScheduleSpec`)
 - Execute due jobs and publish inbound messages (`CronWorker`)
+- Execute a single cron job immediately for manual triggers (`CronWorker::run_job_now`)
 - Manage cron jobs/runs through a higher-level service (`SqliteCronManager`)
 
 ## Main APIs

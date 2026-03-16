@@ -894,6 +894,29 @@ impl CronStorage for TursoSessionStore {
         row_to_cron_job(&row)
     }
 
+    async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError> {
+        let sql = format!(
+            "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone,
+                    next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+             FROM cron
+             ORDER BY updated_at_ms DESC
+             LIMIT {}
+             OFFSET {}",
+            limit.max(1),
+            offset.max(0)
+        );
+        let mut rows = self
+            .conn
+            .query(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
+            out.push(row_to_cron_job(&row)?);
+        }
+        Ok(out)
+    }
+
     async fn list_due_crons(&self, now_ms: i64, limit: i64) -> Result<Vec<CronJob>, StorageError> {
         let sql = format!(
             "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone,

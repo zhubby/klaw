@@ -115,6 +115,7 @@ impl ChannelRuntime for SharedChannelRuntime {
             route.model_provider,
             route.model,
             request.media_references,
+            request.metadata,
         )
         .await?;
 
@@ -557,6 +558,7 @@ async fn handle_im_command(
                         route.model_provider.clone(),
                         route.model.clone(),
                         Vec::new(),
+                        BTreeMap::new(),
                     )
                     .await?;
                     match maybe_output {
@@ -1029,6 +1031,7 @@ pub async fn submit_and_get_output(
     model_provider: String,
     model: String,
     media_references: Vec<MediaReference>,
+    request_metadata: BTreeMap<String, serde_json::Value>,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let sessions = session_manager(runtime);
     let conversation_history = sessions.read_chat_records(&session_key).await?;
@@ -1048,8 +1051,9 @@ pub async fn submit_and_get_output(
         session_key,
         content: input,
         media_references,
-        metadata: BTreeMap::from([
-            (
+        metadata: {
+            let mut metadata = request_metadata;
+            metadata.insert(
                 META_CONVERSATION_HISTORY_KEY.to_string(),
                 json!(conversation_history
                     .into_iter()
@@ -1060,13 +1064,14 @@ pub async fn submit_and_get_output(
                         })
                     })
                     .collect::<Vec<_>>()),
-            ),
-            (
+            );
+            metadata.insert(
                 META_PROVIDER_KEY.to_string(),
                 serde_json::Value::String(model_provider),
-            ),
-            (META_MODEL_KEY.to_string(), serde_json::Value::String(model)),
-        ]),
+            );
+            metadata.insert(META_MODEL_KEY.to_string(), serde_json::Value::String(model));
+            metadata
+        },
     };
     info!(inbound = ?inbound_payload, "channel inbound normalized");
 

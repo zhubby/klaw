@@ -11,7 +11,8 @@ mod widgets;
 pub use domain::menu::WorkbenchMenu;
 pub use panels::{PanelRenderer, RenderCtx};
 pub use runtime_bridge::{
-    clear_runtime_command_sender, install_runtime_command_sender, RuntimeCommand,
+    clear_runtime_command_sender, install_runtime_command_sender, request_run_cron_now,
+    RuntimeCommand,
 };
 pub use state::workbench::{TabId, WorkbenchState, WorkbenchTab};
 pub use state::UiAction;

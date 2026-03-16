@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-16
+
+### Added
+
+- `CronWorker::run_job_now` for ad hoc execution of a single cron job without waiting for the next poll cycle or mutating its scheduled next-run timestamp
+
 ## 2026-03-15
 
 ### Added

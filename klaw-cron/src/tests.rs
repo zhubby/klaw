@@ -60,6 +60,14 @@ impl CronStorage for FakeStorage {
             .ok_or_else(|| StorageError::backend("not found"))
     }
 
+    async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError> {
+        let mut jobs: Vec<CronJob> = self.jobs.lock().expect("lock").iter().cloned().collect();
+        jobs.sort_by_key(|job| std::cmp::Reverse(job.updated_at_ms));
+        let skip = offset.max(0) as usize;
+        let take = limit.max(1) as usize;
+        Ok(jobs.into_iter().skip(skip).take(take).collect())
+    }
+
     async fn list_due_crons(&self, now_ms: i64, limit: i64) -> Result<Vec<CronJob>, StorageError> {
         let mut jobs: Vec<CronJob> = self
             .jobs
@@ -223,6 +231,54 @@ async fn run_tick_publishes_inbound_and_marks_success() {
     );
 
     let runs = storage.list_task_runs("job-1", 10, 0).await.expect("runs");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, CronTaskStatus::Success);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_job_now_publishes_inbound_and_records_run_without_schedule_claim() {
+    let storage = Arc::new(FakeStorage::default());
+    let transport = Arc::new(InMemoryTransport::new());
+    let next_run_at_ms = now_ms() + 60_000;
+    storage
+        .create_cron(&NewCronJob {
+            id: "job-manual".to_string(),
+            name: "job".to_string(),
+            schedule_kind: CronScheduleKind::Every,
+            schedule_expr: "5s".to_string(),
+            payload_json: "{\"channel\":\"cron\",\"sender_id\":\"system\",\"chat_id\":\"chat1\",\"session_key\":\"cron:chat1\",\"content\":\"hello\",\"metadata\":{}}".to_string(),
+            enabled: true,
+            timezone: "UTC".to_string(),
+            next_run_at_ms,
+        })
+        .await
+        .expect("create job");
+
+    let worker = CronWorker::new(
+        storage.clone(),
+        transport.clone(),
+        CronWorkerConfig::default(),
+    );
+    worker.run_job_now("job-manual").await.expect("manual run");
+
+    let messages = transport.published_messages().await;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0]
+            .payload
+            .metadata
+            .get("cron_id")
+            .and_then(|v| v.as_str()),
+        Some("job-manual")
+    );
+
+    let job = storage.get_cron("job-manual").await.expect("job");
+    assert_eq!(job.next_run_at_ms, next_run_at_ms);
+
+    let runs = storage
+        .list_task_runs("job-manual", 10, 0)
+        .await
+        .expect("runs");
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].status, CronTaskStatus::Success);
 }

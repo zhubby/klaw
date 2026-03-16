@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::request_run_cron_now;
 use klaw_cron::{
     CronError, CronJob, CronListQuery, CronScheduleKind, CronTaskRun, NewCronJob,
     SqliteCronManager, UpdateCronJobPatch,
@@ -61,7 +62,7 @@ impl CronForm {
 pub struct CronPanel {
     loaded: bool,
     jobs: Vec<CronJob>,
-    selected_cron_id: Option<String>,
+    runs_cron_id: Option<String>,
     runs: Vec<CronTaskRun>,
     form: Option<CronForm>,
     delete_confirm_id: Option<String>,
@@ -85,7 +86,7 @@ impl CronPanel {
             Ok(jobs) => {
                 self.jobs = jobs;
                 self.loaded = true;
-                if let Some(id) = self.selected_cron_id.clone() {
+                if let Some(id) = self.runs_cron_id.clone() {
                     self.load_runs(&id, notifications);
                 }
             }
@@ -100,7 +101,7 @@ impl CronPanel {
             manager.list_runs(&cron_id_for_query, 30, 0).await
         }) {
             Ok(runs) => {
-                self.selected_cron_id = Some(cron_id);
+                self.runs_cron_id = Some(cron_id);
                 self.runs = runs;
             }
             Err(err) => notifications.error(format!("Failed to load task runs: {err}")),
@@ -146,8 +147,17 @@ impl CronPanel {
             notifications.error("Payload JSON cannot be empty");
             return;
         }
-        if serde_json::from_str::<serde_json::Value>(&payload_json).is_err() {
-            notifications.error("Payload JSON is invalid");
+        let payload_value = match serde_json::from_str::<serde_json::Value>(&payload_json) {
+            Ok(value) => value,
+            Err(err) => {
+                notifications.error(format!("Payload JSON is invalid: {err}"));
+                return;
+            }
+        };
+        if let Err(err) = validate_inbound_payload_value(&payload_value) {
+            notifications.error(format!(
+                "Payload JSON must be a valid InboundMessage-like object: {err}"
+            ));
             return;
         }
 
@@ -248,13 +258,24 @@ impl CronPanel {
         ) {
             Ok(()) => {
                 notifications.success("Cron job deleted");
-                if self.selected_cron_id.as_deref() == Some(cron_id.as_str()) {
-                    self.selected_cron_id = None;
+                if self.runs_cron_id.as_deref() == Some(cron_id.as_str()) {
+                    self.runs_cron_id = None;
                     self.runs.clear();
                 }
                 self.refresh_jobs(notifications);
             }
             Err(err) => notifications.error(format!("Failed to delete cron job: {err}")),
+        }
+    }
+
+    fn run_cron_now(&mut self, cron_id: &str, notifications: &mut NotificationCenter) {
+        match request_run_cron_now(cron_id) {
+            Ok(message_id) => {
+                notifications.success(format!("Cron executed: {message_id}"));
+                self.refresh_jobs(notifications);
+                self.load_runs(cron_id, notifications);
+            }
+            Err(err) => notifications.error(format!("Failed to run cron now: {err}")),
         }
     }
 
@@ -346,6 +367,75 @@ impl CronPanel {
             self.form = None;
         }
     }
+    fn render_runs_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let Some(cron_id) = self.runs_cron_id.clone() else {
+            return;
+        };
+
+        let mut keep_open = true;
+        egui::Window::new(format!("Task Runs: {cron_id}"))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(true)
+            .open(&mut keep_open)
+            .show(ui.ctx(), |ui| {
+                ui.set_min_width(820.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Refresh Runs").clicked() {
+                        self.load_runs(&cron_id, notifications);
+                    }
+                    if ui.button("Run Now").clicked() {
+                        self.run_cron_now(&cron_id, notifications);
+                    }
+                });
+
+                ui.separator();
+
+                if self.runs.is_empty() {
+                    ui.label("No task runs found.");
+                    return;
+                }
+
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Grid::new("cron-run-grid")
+                        .striped(true)
+                        .num_columns(6)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.strong("Run ID");
+                            ui.strong("Status");
+                            ui.strong("Scheduled(ms)");
+                            ui.strong("Started(ms)");
+                            ui.strong("Finished(ms)");
+                            ui.strong("Error");
+                            ui.end_row();
+
+                            for run in &self.runs {
+                                ui.label(&run.id);
+                                ui.label(run.status.as_str());
+                                ui.label(run.scheduled_at_ms.to_string());
+                                ui.label(
+                                    run.started_at_ms
+                                        .map(|v: i64| v.to_string())
+                                        .unwrap_or_default(),
+                                );
+                                ui.label(
+                                    run.finished_at_ms
+                                        .map(|v: i64| v.to_string())
+                                        .unwrap_or_default(),
+                                );
+                                ui.label(run.error_message.clone().unwrap_or_default());
+                                ui.end_row();
+                            }
+                        });
+                });
+            });
+
+        if !keep_open {
+            self.runs_cron_id = None;
+            self.runs.clear();
+        }
+    }
 }
 
 impl PanelRenderer for CronPanel {
@@ -370,100 +460,70 @@ impl PanelRenderer for CronPanel {
         ui.separator();
         ui.label(format!("Jobs: {}", self.jobs.len()));
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            if self.jobs.is_empty() {
-                ui.label("No cron jobs found in database.");
-            } else {
-                egui::Grid::new("cron-list-grid")
-                    .striped(true)
-                    .num_columns(9)
-                    .spacing([12.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.strong("ID");
-                        ui.strong("Name");
-                        ui.strong("Kind");
-                        ui.strong("Expr");
-                        ui.strong("Enabled");
-                        ui.strong("Next Run(ms)");
-                        ui.strong("Last Run(ms)");
-                        ui.strong("Updated(ms)");
-                        ui.strong("Actions");
-                        ui.end_row();
-
-                        let jobs = self.jobs.clone();
-                        for job in jobs {
-                            ui.label(job.id.clone());
-                            ui.label(job.name.clone());
-                            ui.label(match job.schedule_kind {
-                                CronScheduleKind::Cron => "cron",
-                                CronScheduleKind::Every => "every",
-                            });
-                            ui.label(job.schedule_expr.clone());
-                            ui.label(if job.enabled { "yes" } else { "no" });
-                            ui.label(job.next_run_at_ms.to_string());
-                            ui.label(
-                                job.last_run_at_ms
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_default(),
-                            );
-                            ui.label(job.updated_at_ms.to_string());
-
-                            ui.horizontal(|ui| {
-                                if ui.button("Runs").clicked() {
-                                    self.load_runs(&job.id, notifications);
-                                }
-                                if ui.button("Edit").clicked() {
-                                    self.open_edit_form(&job.id);
-                                }
-                                let toggle_text = if job.enabled { "Disable" } else { "Enable" };
-                                if ui.button(toggle_text).clicked() {
-                                    self.set_enabled(&job.id, !job.enabled, notifications);
-                                }
-                                if ui.button("Delete").clicked() {
-                                    self.delete_confirm_id = Some(job.id.clone());
-                                }
-                            });
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.jobs.is_empty() {
+                    ui.label("No cron jobs found in database.");
+                } else {
+                    egui::Grid::new("cron-list-grid")
+                        .striped(true)
+                        .num_columns(9)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.strong("ID");
+                            ui.strong("Name");
+                            ui.strong("Kind");
+                            ui.strong("Expr");
+                            ui.strong("Enabled");
+                            ui.strong("Next Run(ms)");
+                            ui.strong("Last Run(ms)");
+                            ui.strong("Updated(ms)");
+                            ui.strong("Actions");
                             ui.end_row();
-                        }
-                    });
-            }
-        });
 
-        if let Some(cron_id) = self.selected_cron_id.clone() {
-            ui.separator();
-            ui.heading(format!("Task Runs: {cron_id}"));
-            if self.runs.is_empty() {
-                ui.label("No task runs found.");
-            } else {
-                egui::Grid::new("cron-run-grid")
-                    .striped(true)
-                    .num_columns(6)
-                    .spacing([12.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.strong("Run ID");
-                        ui.strong("Status");
-                        ui.strong("Scheduled(ms)");
-                        ui.strong("Started(ms)");
-                        ui.strong("Finished(ms)");
-                        ui.strong("Error");
-                        ui.end_row();
+                            let jobs = self.jobs.clone();
+                            for job in jobs {
+                                ui.label(job.id.clone());
+                                ui.label(job.name.clone());
+                                ui.label(match job.schedule_kind {
+                                    CronScheduleKind::Cron => "cron",
+                                    CronScheduleKind::Every => "every",
+                                });
+                                ui.label(job.schedule_expr.clone());
+                                ui.label(if job.enabled { "yes" } else { "no" });
+                                ui.label(job.next_run_at_ms.to_string());
+                                ui.label(
+                                    job.last_run_at_ms
+                                        .map(|v| v.to_string())
+                                        .unwrap_or_default(),
+                                );
+                                ui.label(job.updated_at_ms.to_string());
 
-                        for run in &self.runs {
-                            ui.label(&run.id);
-                            ui.label(run.status.as_str());
-                            ui.label(run.scheduled_at_ms.to_string());
-                            ui.label(run.started_at_ms.map(|v| v.to_string()).unwrap_or_default());
-                            ui.label(
-                                run.finished_at_ms
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_default(),
-                            );
-                            ui.label(run.error_message.clone().unwrap_or_default());
-                            ui.end_row();
-                        }
-                    });
-            }
-        }
+                                ui.horizontal(|ui| {
+                                    if ui.button("Runs").clicked() {
+                                        self.load_runs(&job.id, notifications);
+                                    }
+                                    if ui.button("Run Now").clicked() {
+                                        self.run_cron_now(&job.id, notifications);
+                                    }
+                                    if ui.button("Edit").clicked() {
+                                        self.open_edit_form(&job.id);
+                                    }
+                                    let toggle_text =
+                                        if job.enabled { "Disable" } else { "Enable" };
+                                    if ui.button(toggle_text).clicked() {
+                                        self.set_enabled(&job.id, !job.enabled, notifications);
+                                    }
+                                    if ui.button("Delete").clicked() {
+                                        self.delete_confirm_id = Some(job.id.clone());
+                                    }
+                                });
+                                ui.end_row();
+                            }
+                        });
+                }
+            });
 
         if let Some(cron_id) = self.delete_confirm_id.clone() {
             egui::Window::new("Delete cron job")
@@ -484,6 +544,7 @@ impl PanelRenderer for CronPanel {
                 });
         }
 
+        self.render_runs_window(ui, notifications);
         self.render_form_window(ui, notifications);
     }
 }
@@ -513,5 +574,43 @@ where
     match join.join() {
         Ok(result) => result,
         Err(_) => Err("cron operation thread panicked".to_string()),
+    }
+}
+
+fn validate_inbound_payload_value(payload: &serde_json::Value) -> Result<(), String> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "payload must be a JSON object".to_string())?;
+
+    require_string_field(object, "channel")?;
+    require_string_field(object, "sender_id")?;
+    require_string_field(object, "chat_id")?;
+    require_string_field(object, "session_key")?;
+    require_string_field(object, "content")?;
+
+    match object.get("metadata") {
+        Some(serde_json::Value::Object(_)) => {}
+        Some(_) => return Err("`metadata` must be a JSON object".to_string()),
+        None => return Err("missing required field `metadata`".to_string()),
+    }
+
+    if let Some(media_references) = object.get("media_references") {
+        if !media_references.is_array() {
+            return Err("`media_references` must be an array when provided".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+fn require_string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<(), String> {
+    match object.get(key) {
+        Some(serde_json::Value::String(value)) if !value.trim().is_empty() => Ok(()),
+        Some(serde_json::Value::String(_)) => Err(format!("`{key}` cannot be empty")),
+        Some(_) => Err(format!("`{key}` must be a string")),
+        None => Err(format!("missing required field `{key}`")),
     }
 }
