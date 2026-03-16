@@ -1,0 +1,16 @@
+[package]
+name = "klaw-approval"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+klaw-storage = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

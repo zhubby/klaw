@@ -2738,6 +2738,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "klaw-approval"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "klaw-storage",
+ "sha2",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "klaw-archive"
 version = "0.1.0"
 dependencies = [
@@ -2781,6 +2794,7 @@ dependencies = [
  "async-trait",
  "clap",
  "klaw-agent",
+ "klaw-approval",
  "klaw-archive",
  "klaw-channel",
  "klaw-config",
@@ -2791,6 +2805,7 @@ dependencies = [
  "klaw-heartbeat",
  "klaw-llm",
  "klaw-mcp",
+ "klaw-session",
  "klaw-skill",
  "klaw-storage",
  "klaw-tool",
@@ -2870,10 +2885,12 @@ dependencies = [
  "egui_extras",
  "fontdb",
  "image",
+ "klaw-approval",
  "klaw-archive",
  "klaw-config",
  "klaw-cron",
  "klaw-memory",
+ "klaw-session",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
@@ -2940,6 +2957,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "klaw-session"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "klaw-storage",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "klaw-skill"
 version = "0.1.0"
 dependencies = [
@@ -2975,6 +3002,7 @@ dependencies = [
  "humantime",
  "ipnet",
  "klaw-agent",
+ "klaw-approval",
  "klaw-config",
  "klaw-llm",
  "klaw-memory",

@@ -10,6 +10,7 @@
 - approval request persistence now stores full command text to support post-approval immediate execution flows
 
 ### Changed
+- routed approval lifecycle and shell approval consumption through the new `klaw-approval` manager layer instead of direct storage calls
 - `ShellTool` now supports store injection (`with_store`, `with_config_and_store`) while preserving legacy `shell.approved=true` fallback behavior
 - `sub_agent` 调用链适配新的 `AgentExecutionInput.user_media` 字段，确保子代理执行仍显式使用空媒体上下文
 - `shell` 测试配置同步新增 `tools.shell.enabled` 字段，确保与配置模型一致

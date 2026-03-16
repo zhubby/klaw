@@ -6,6 +6,8 @@
 
 - macOS GUI startup now sets the app icon from `assets/icons/logo.icns`
 - system monitor summary cards now render in a fixed 2x2 equal-width layout instead of content-sized columns
+- session panel now lists indexed sessions in a table via `klaw-session` manager abstractions instead of a placeholder view
+- approval panel now lists approvals in a table and routes approve/reject/consume actions through `klaw-approval`
 
 ## 2026-03-15
 

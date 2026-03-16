@@ -18,7 +18,7 @@
 ## Current Notes
 
 - the `apply_patch` tool is intentionally patch-oriented and only supports batched file mutations
-- the `approval` tool provides persisted approval lifecycle actions (`request`, `get`, `resolve`) keyed by `session_key`
+- the `approval` tool delegates persisted approval lifecycle actions (`request`, `get`, `resolve`) to the `klaw-approval` manager layer
 - multi-action tools use action-specific `oneOf` parameter schemas to keep requests explicit and avoid mixing unrelated fields in a single call
 - `tools.apply_patch.allow_absolute_paths = true` allows any absolute path outside the workspace
 - `tools.apply_patch.allowed_roots = ["/some/path"]` allows specific extra directories while keeping the default workspace boundary elsewhere

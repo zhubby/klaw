@@ -1,0 +1,13 @@
+[package]
+name = "klaw-session"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+klaw-storage = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

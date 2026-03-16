@@ -1,5 +1,5 @@
 use clap::{Args, Subcommand};
-use klaw_storage::{open_default_store, DefaultSessionStore, SessionStorage};
+use klaw_session::{SessionListQuery, SessionManager, SqliteSessionManager};
 
 #[derive(Debug, Args)]
 pub struct SessionCommand {
@@ -34,18 +34,23 @@ pub struct SessionGetCommand {
 
 impl SessionCommand {
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let store = open_default_store().await?;
+        let manager = SqliteSessionManager::open_default().await?;
         match self.command {
-            SessionSubcommands::List(cmd) => cmd.run(&store).await?,
-            SessionSubcommands::Get(cmd) => cmd.run(&store).await?,
+            SessionSubcommands::List(cmd) => cmd.run(&manager).await?,
+            SessionSubcommands::Get(cmd) => cmd.run(&manager).await?,
         }
         Ok(())
     }
 }
 
 impl SessionListCommand {
-    async fn run(self, store: &DefaultSessionStore) -> Result<(), Box<dyn std::error::Error>> {
-        let sessions = store.list_sessions(self.limit, self.offset).await?;
+    async fn run(self, manager: &impl SessionManager) -> Result<(), Box<dyn std::error::Error>> {
+        let sessions = manager
+            .list_sessions(SessionListQuery {
+                limit: self.limit,
+                offset: self.offset,
+            })
+            .await?;
         if sessions.is_empty() {
             println!("No sessions.");
             return Ok(());
@@ -61,8 +66,8 @@ impl SessionListCommand {
 }
 
 impl SessionGetCommand {
-    async fn run(self, store: &DefaultSessionStore) -> Result<(), Box<dyn std::error::Error>> {
-        let s = store.get_session(&self.session_key).await?;
+    async fn run(self, manager: &impl SessionManager) -> Result<(), Box<dyn std::error::Error>> {
+        let s = manager.get_session(&self.session_key).await?;
         println!("session_key={}", s.session_key);
         println!("chat_id={}", s.chat_id);
         println!("channel={}", s.channel);

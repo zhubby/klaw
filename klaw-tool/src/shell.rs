@@ -1,8 +1,7 @@
-use crate::approval::{ApprovalCreateInput, ApprovalStoreService};
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 use async_trait::async_trait;
+use klaw_approval::{ApprovalCreateInput, ApprovalManager, SqliteApprovalManager};
 use klaw_config::{AppConfig, ShellApprovalPolicy};
-use klaw_storage::{DefaultSessionStore, SessionStorage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -23,7 +22,7 @@ const APPROVAL_TTL_MINUTES: i64 = 10;
 /// Shell 工具，执行本地 shell 命令并返回结构化输出。
 pub struct ShellTool {
     config: klaw_config::ShellConfig,
-    store: Option<DefaultSessionStore>,
+    approval_manager: Option<SqliteApprovalManager>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,15 +64,15 @@ impl ShellTool {
     pub fn new(config: &AppConfig) -> Self {
         Self {
             config: config.tools.shell.clone(),
-            store: None,
+            approval_manager: None,
         }
     }
 
     /// 从应用配置读取 shell 规则，并注入会话存储用于审批单持久化。
-    pub fn with_store(config: &AppConfig, store: DefaultSessionStore) -> Self {
+    pub fn with_store(config: &AppConfig, store: klaw_storage::DefaultSessionStore) -> Self {
         Self {
             config: config.tools.shell.clone(),
-            store: Some(store),
+            approval_manager: Some(SqliteApprovalManager::from_store(store)),
         }
     }
 
@@ -81,18 +80,18 @@ impl ShellTool {
     pub fn with_config(config: klaw_config::ShellConfig) -> Self {
         Self {
             config,
-            store: None,
+            approval_manager: None,
         }
     }
 
     /// 自定义模式并注入审批存储。
     pub fn with_config_and_store(
         config: klaw_config::ShellConfig,
-        store: DefaultSessionStore,
+        store: klaw_storage::DefaultSessionStore,
     ) -> Self {
         Self {
             config,
-            store: Some(store),
+            approval_manager: Some(SqliteApprovalManager::from_store(store)),
         }
     }
 
@@ -103,7 +102,7 @@ impl ShellTool {
         config.approval_policy = ShellApprovalPolicy::Never;
         Self {
             config,
-            store: None,
+            approval_manager: None,
         }
     }
 
@@ -195,17 +194,12 @@ impl ShellTool {
         }
 
         let command_hash = Self::command_hash(command);
-        if let (Some(store), Some(approval_id)) = (
-            self.store.as_ref(),
+        if let (Some(manager), Some(approval_id)) = (
+            self.approval_manager.as_ref(),
             metadata.get(META_SHELL_APPROVAL_ID).and_then(Value::as_str),
         ) {
-            let consumed = store
-                .consume_approved_shell_command(
-                    approval_id,
-                    session_key,
-                    &command_hash,
-                    Self::now_ms(),
-                )
+            let consumed = manager
+                .consume_shell_approval(approval_id, session_key, &command_hash, Self::now_ms())
                 .await
                 .map_err(|err| {
                     ToolError::ExecutionFailed(format!(
@@ -217,9 +211,9 @@ impl ShellTool {
             }
         }
 
-        if let Some(store) = self.store.as_ref() {
-            let consumed = store
-                .consume_latest_approved_shell_command(session_key, &command_hash, Self::now_ms())
+        if let Some(manager) = self.approval_manager.as_ref() {
+            let consumed = manager
+                .consume_latest_shell_approval(session_key, &command_hash, Self::now_ms())
                 .await
                 .map_err(|err| {
                     ToolError::ExecutionFailed(format!(
@@ -231,9 +225,9 @@ impl ShellTool {
             }
         }
 
-        if let Some(store) = self.store.as_ref() {
-            let approval = ApprovalStoreService::new(store.clone())
-                .create(ApprovalCreateInput {
+        if let Some(manager) = self.approval_manager.as_ref() {
+            let approval = manager
+                .create_approval(ApprovalCreateInput {
                     session_key: session_key.to_string(),
                     tool_name: "shell".to_string(),
                     command_text: command.trim().to_string(),
@@ -251,7 +245,10 @@ impl ShellTool {
                     justification: None,
                     expires_in_minutes: Some(APPROVAL_TTL_MINUTES),
                 })
-                .await?;
+                .await
+                .map_err(|err| {
+                    ToolError::ExecutionFailed(format!("failed to create approval: {err}"))
+                })?;
             return Err(ToolError::ExecutionFailed(format!(
                 "approval required: approval_id={}; approve it then retry with metadata `shell.approval_id`",
                 approval.id
@@ -524,7 +521,7 @@ impl Tool for ShellTool {
 mod tests {
     use super::*;
     use klaw_config::{ModelProviderConfig, ShellApprovalPolicy, ShellConfig};
-    use klaw_storage::{ApprovalStatus, SessionStorage, StoragePaths};
+    use klaw_storage::{ApprovalStatus, DefaultSessionStore, SessionStorage, StoragePaths};
     use serde_json::json;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::{collections::BTreeMap, fs};

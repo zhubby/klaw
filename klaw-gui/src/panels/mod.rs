@@ -53,8 +53,8 @@ impl Default for PanelRegistry {
     fn default() -> Self {
         Self {
             profile: profile::ProfilePanel,
-            session: session::SessionPanel,
-            approval: approval::ApprovalPanel,
+            session: session::SessionPanel::default(),
+            approval: approval::ApprovalPanel::default(),
             configuration: configuration::ConfigurationPanel::default(),
             provider: provider::ProviderPanel::default(),
             channel: channel::ChannelPanel::default(),

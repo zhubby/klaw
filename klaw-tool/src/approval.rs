@@ -1,174 +1,20 @@
 use async_trait::async_trait;
-use klaw_storage::{
-    ApprovalRecord, ApprovalStatus, DefaultSessionStore, NewApprovalRecord, SessionStorage,
+use klaw_approval::{
+    ApprovalCreateInput, ApprovalManager, ApprovalRecord, ApprovalResolveDecision,
+    SqliteApprovalManager,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use time::OffsetDateTime;
-use uuid::Uuid;
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 
-const DEFAULT_EXPIRES_IN_MINUTES: i64 = 10;
-const MAX_EXPIRES_IN_MINUTES: i64 = 7 * 24 * 60;
-
-#[derive(Debug, Clone)]
-pub struct ApprovalCreateInput {
-    pub session_key: String,
-    pub tool_name: String,
-    pub command_text: String,
-    pub command_preview: Option<String>,
-    pub command_hash: Option<String>,
-    pub risk_level: Option<String>,
-    pub requested_by: Option<String>,
-    pub justification: Option<String>,
-    pub expires_in_minutes: Option<i64>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ApprovalResolveDecision {
-    Approve,
-    Reject,
-}
-
-#[derive(Clone)]
-pub struct ApprovalStoreService {
-    store: DefaultSessionStore,
-}
-
 pub struct ApprovalTool {
-    store: DefaultSessionStore,
-}
-
-impl ApprovalStoreService {
-    pub fn new(store: DefaultSessionStore) -> Self {
-        Self { store }
-    }
-
-    pub async fn create(&self, input: ApprovalCreateInput) -> Result<ApprovalRecord, ToolError> {
-        let tool_name = normalize_non_empty(&input.tool_name, "tool_name")?;
-        let session_key = normalize_non_empty(&input.session_key, "session_key")?;
-        let command_text = normalize_non_empty(&input.command_text, "command_text")?;
-        let command_preview = match input.command_preview {
-            Some(preview) => normalize_non_empty(&preview, "command_preview")?,
-            None => command_preview(&command_text),
-        };
-        let command_hash = match input.command_hash {
-            Some(hash) => normalize_non_empty(&hash, "command_hash")?,
-            None => command_hash(&command_text),
-        };
-        let risk_level = input
-            .risk_level
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("mutating")
-            .to_string();
-        let requested_by = input
-            .requested_by
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("agent")
-            .to_string();
-        let expires_in_minutes = input
-            .expires_in_minutes
-            .unwrap_or(DEFAULT_EXPIRES_IN_MINUTES);
-        if !(1..=MAX_EXPIRES_IN_MINUTES).contains(&expires_in_minutes) {
-            return Err(ToolError::InvalidArgs(format!(
-                "`expires_in_minutes` must be between 1 and {MAX_EXPIRES_IN_MINUTES}"
-            )));
-        }
-
-        let now_ms = now_ms();
-        self.store
-            .create_approval(&NewApprovalRecord {
-                id: Uuid::new_v4().to_string(),
-                session_key,
-                tool_name,
-                command_hash,
-                command_preview,
-                command_text,
-                risk_level,
-                requested_by,
-                justification: input.justification,
-                expires_at_ms: now_ms + expires_in_minutes * 60_000,
-            })
-            .await
-            .map_err(|err| ToolError::ExecutionFailed(format!("failed to create approval: {err}")))
-    }
-
-    pub async fn get_for_session(
-        &self,
-        session_key: &str,
-        approval_id: &str,
-    ) -> Result<ApprovalRecord, ToolError> {
-        let normalized_session = normalize_non_empty(session_key, "session_key")?;
-        let normalized_id = normalize_non_empty(approval_id, "approval_id")?;
-        let approval = self
-            .store
-            .get_approval(&normalized_id)
-            .await
-            .map_err(|err| ToolError::ExecutionFailed(format!("failed to get approval: {err}")))?;
-        if approval.session_key != normalized_session {
-            return Err(ToolError::ExecutionFailed(
-                "approval does not belong to current session".to_string(),
-            ));
-        }
-        Ok(approval)
-    }
-
-    pub async fn resolve_for_session(
-        &self,
-        session_key: &str,
-        approval_id: &str,
-        decision: ApprovalResolveDecision,
-        actor: Option<&str>,
-    ) -> Result<(ApprovalRecord, bool), ToolError> {
-        let approval = self.get_for_session(session_key, approval_id).await?;
-        if approval.status != ApprovalStatus::Pending {
-            return Ok((approval, false));
-        }
-
-        let now = now_ms();
-        if approval.expires_at_ms < now {
-            let updated = self
-                .store
-                .update_approval_status(
-                    &approval.id,
-                    ApprovalStatus::Expired,
-                    Some("approval-tool"),
-                )
-                .await
-                .map_err(|err| {
-                    ToolError::ExecutionFailed(format!("failed to mark approval expired: {err}"))
-                })?;
-            return Ok((updated, true));
-        }
-
-        let actor = actor
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("channel-user");
-        let status = match decision {
-            ApprovalResolveDecision::Approve => ApprovalStatus::Approved,
-            ApprovalResolveDecision::Reject => ApprovalStatus::Rejected,
-        };
-        let updated = self
-            .store
-            .update_approval_status(&approval.id, status, Some(actor))
-            .await
-            .map_err(|err| {
-                ToolError::ExecutionFailed(format!("failed to resolve approval status: {err}"))
-            })?;
-        Ok((updated, true))
-    }
+    manager: SqliteApprovalManager,
 }
 
 impl ApprovalTool {
-    pub fn with_store(store: DefaultSessionStore) -> Self {
-        Self { store }
+    pub fn with_manager(manager: SqliteApprovalManager) -> Self {
+        Self { manager }
     }
 
     fn format_output(response: &ApprovalToolResponse) -> Result<String, ToolError> {
@@ -177,33 +23,16 @@ impl ApprovalTool {
     }
 }
 
-fn now_ms() -> i64 {
-    (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
-}
-
-fn command_hash(command: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(command.trim().as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-fn command_preview(command: &str) -> String {
-    let trimmed = command.trim();
-    let max = 160;
-    if trimmed.chars().count() <= max {
-        return trimmed.to_string();
-    }
-    let mut preview = trimmed.chars().take(max).collect::<String>();
-    preview.push_str("...");
-    preview
-}
-
 fn normalize_non_empty(value: &str, field: &str) -> Result<String, ToolError> {
     let normalized = value.trim();
     if normalized.is_empty() {
         return Err(ToolError::InvalidArgs(format!("`{field}` cannot be empty")));
     }
     Ok(normalized.to_string())
+}
+
+fn shell_now_ms() -> i64 {
+    (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
 }
 
 #[derive(Debug, Deserialize)]
@@ -367,12 +196,12 @@ impl Tool for ApprovalTool {
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let request: ApprovalRequest = serde_json::from_value(args)
             .map_err(|err| ToolError::InvalidArgs(format!("invalid request: {err}")))?;
-        let service = ApprovalStoreService::new(self.store.clone());
 
         let response = match request {
             ApprovalRequest::Request(input) => {
-                let created = service
-                    .create(ApprovalCreateInput {
+                let created = self
+                    .manager
+                    .create_approval(ApprovalCreateInput {
                         session_key: ctx.session_key.clone(),
                         tool_name: input.tool_name,
                         command_text: input.command_text,
@@ -383,7 +212,10 @@ impl Tool for ApprovalTool {
                         justification: input.justification,
                         expires_in_minutes: input.expires_in_minutes,
                     })
-                    .await?;
+                    .await
+                    .map_err(|err| {
+                        ToolError::ExecutionFailed(format!("failed to create approval: {err}"))
+                    })?;
                 ApprovalToolResponse {
                     action: "request",
                     updated: true,
@@ -391,9 +223,19 @@ impl Tool for ApprovalTool {
                 }
             }
             ApprovalRequest::Get(input) => {
-                let approval = service
-                    .get_for_session(&ctx.session_key, &input.approval_id)
-                    .await?;
+                let normalized_session = normalize_non_empty(&ctx.session_key, "session_key")?;
+                let approval = self
+                    .manager
+                    .get_approval(&input.approval_id)
+                    .await
+                    .map_err(|err| {
+                        ToolError::ExecutionFailed(format!("failed to get approval: {err}"))
+                    })?;
+                if approval.session_key != normalized_session {
+                    return Err(ToolError::ExecutionFailed(
+                        "approval does not belong to current session".to_string(),
+                    ));
+                }
                 ApprovalToolResponse {
                     action: "get",
                     updated: false,
@@ -401,22 +243,39 @@ impl Tool for ApprovalTool {
                 }
             }
             ApprovalRequest::Resolve(input) => {
-                let (final_record, updated) = service
-                    .resolve_for_session(
-                        &ctx.session_key,
+                let normalized_session = normalize_non_empty(&ctx.session_key, "session_key")?;
+                let approval = self
+                    .manager
+                    .get_approval(&input.approval_id)
+                    .await
+                    .map_err(|err| {
+                        ToolError::ExecutionFailed(format!("failed to get approval: {err}"))
+                    })?;
+                if approval.session_key != normalized_session {
+                    return Err(ToolError::ExecutionFailed(
+                        "approval does not belong to current session".to_string(),
+                    ));
+                }
+                let outcome = self
+                    .manager
+                    .resolve_approval(
                         &input.approval_id,
                         match input.decision {
                             ApprovalDecision::Approve => ApprovalResolveDecision::Approve,
                             ApprovalDecision::Reject => ApprovalResolveDecision::Reject,
                         },
                         input.actor.as_deref(),
+                        shell_now_ms(),
                     )
-                    .await?;
+                    .await
+                    .map_err(|err| {
+                        ToolError::ExecutionFailed(format!("failed to resolve approval: {err}"))
+                    })?;
 
                 ApprovalToolResponse {
                     action: "resolve",
-                    updated,
-                    approval: final_record,
+                    updated: outcome.updated,
+                    approval: outcome.approval,
                 }
             }
         };
@@ -433,17 +292,22 @@ impl Tool for ApprovalTool {
 mod tests {
     use super::*;
     use crate::ToolContext;
-    use klaw_storage::{SessionStorage, StoragePaths};
+    use klaw_approval::ApprovalStatus;
+    use klaw_storage::{DefaultSessionStore, SessionStorage, StoragePaths};
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     async fn create_store() -> DefaultSessionStore {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let base =
-            std::env::temp_dir().join(format!("klaw-approval-tool-test-{}-{suffix}", now_ms()));
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!("klaw-approval-tool-test-{now_ms}-{suffix}"));
         DefaultSessionStore::open(StoragePaths::from_root(base))
             .await
             .expect("store should open")
@@ -463,7 +327,7 @@ mod tests {
             .touch_session("s1", "chat-1", "stdio")
             .await
             .expect("session should exist");
-        let tool = ApprovalTool::with_store(store.clone());
+        let tool = ApprovalTool::with_manager(SqliteApprovalManager::from_store(store.clone()));
 
         let output = tool
             .execute(
@@ -498,7 +362,7 @@ mod tests {
             .touch_session("s1", "chat-1", "stdio")
             .await
             .expect("session should exist");
-        let tool = ApprovalTool::with_store(store.clone());
+        let tool = ApprovalTool::with_manager(SqliteApprovalManager::from_store(store.clone()));
 
         let created = tool
             .execute(
@@ -552,7 +416,7 @@ mod tests {
             .touch_session("s2", "chat-2", "stdio")
             .await
             .expect("session should exist");
-        let tool = ApprovalTool::with_store(store.clone());
+        let tool = ApprovalTool::with_manager(SqliteApprovalManager::from_store(store.clone()));
 
         let created = tool
             .execute(

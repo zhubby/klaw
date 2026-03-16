@@ -13,9 +13,11 @@ egui_extras = { workspace = true }
 egui-notify = { workspace = true }
 fontdb = { workspace = true }
 klaw-config = { workspace = true }
+klaw-approval = { workspace = true }
 klaw-archive = { workspace = true }
 klaw-cron = { workspace = true }
 klaw-memory = { workspace = true }
+klaw-session = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

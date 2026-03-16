@@ -17,8 +17,6 @@
 - Single-tab-per-menu behavior (click to open or activate)
 - Placeholder panel renderers for:
   - profile
-  - session
-  - approval
   - configuration
   - model provider (config-bound list + add/edit window)
   - channel (config-bound list + add/edit window)
@@ -54,6 +52,12 @@
 - Memory panel features:
   - read memory-layer aggregate stats via `klaw-memory` stats abstraction
   - show total/pinned/embedded/scope/recency/index metrics and top scopes
+- Session panel features:
+  - read indexed sessions via `klaw-session` manager abstraction
+  - render session metadata in a read-only table with limit/offset controls
+- Approval panel features:
+  - read approvals via `klaw-approval` manager abstraction
+  - resolve `approve` / `reject` and trigger `consume` from a table view
 - Cron panel features:
   - read/manage cron jobs and task runs via `klaw-cron` manager abstraction
   - add/edit cron jobs via `egui::Window`

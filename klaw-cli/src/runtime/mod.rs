@@ -1,6 +1,9 @@
 pub mod service_loop;
 
 use klaw_agent::build_provider_from_config;
+use klaw_approval::{
+    ApprovalManager, ApprovalResolveDecision, ApprovalStatus, SqliteApprovalManager,
+};
 use klaw_channel::{ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
 use klaw_config::{AppConfig, ToolEnabled};
 use klaw_core::{
@@ -14,11 +17,9 @@ use klaw_heartbeat::{
     should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
 };
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
+use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
 use klaw_skill::{open_default_skill_store, InstalledSkill, RegistrySource, SkillStore};
-use klaw_storage::{
-    open_default_store, ApprovalStatus, ChatRecord, CronStorage, DefaultSessionStore,
-    SessionStorage,
-};
+use klaw_storage::{open_default_store, CronStorage, DefaultSessionStore};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, CronManagerTool, LocalSearchTool, MemoryTool, ShellTool,
     SkillsRegistryTool, SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry,
@@ -232,8 +233,8 @@ async fn resolve_session_route(
     base_session_key: &str,
     chat_id: &str,
 ) -> Result<SessionRoute, Box<dyn Error>> {
-    let base = runtime
-        .session_store
+    let sessions = session_manager(runtime);
+    let base = sessions
         .get_or_create_session_state(
             base_session_key,
             chat_id,
@@ -251,8 +252,7 @@ async fn resolve_session_route(
         .clone()
         .unwrap_or_else(|| runtime.default_provider_id.clone());
     let model_default = default_model_for_provider(runtime, &provider).to_string();
-    let active = runtime
-        .session_store
+    let active = sessions
         .get_or_create_session_state(
             &active_session_key,
             chat_id,
@@ -323,6 +323,14 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
     lines.join("\n")
 }
 
+fn approval_manager(runtime: &RuntimeBundle) -> SqliteApprovalManager {
+    SqliteApprovalManager::from_store(runtime.session_store.clone())
+}
+
+fn session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {
+    SqliteSessionManager::from_store(runtime.session_store.clone())
+}
+
 async fn handle_im_command(
     runtime: &RuntimeBundle,
     channel: String,
@@ -341,8 +349,8 @@ async fn handle_im_command(
         },
         "new" => {
             let new_session_key = format!("{base_session_key}:{}", Uuid::new_v4().simple());
-            runtime
-                .session_store
+            let sessions = session_manager(runtime);
+            sessions
                 .get_or_create_session_state(
                     &new_session_key,
                     &chat_id,
@@ -351,8 +359,7 @@ async fn handle_im_command(
                     &route.model,
                 )
                 .await?;
-            runtime
-                .session_store
+            sessions
                 .set_active_session(&base_session_key, &chat_id, &channel, &new_session_key)
                 .await?;
             ChannelResponse {
@@ -386,8 +393,8 @@ async fn handle_im_command(
                         reasoning: None,
                     }));
                 };
-                runtime
-                    .session_store
+                let sessions = session_manager(runtime);
+                sessions
                     .set_model_provider(
                         &route.active_session_key,
                         &chat_id,
@@ -396,8 +403,7 @@ async fn handle_im_command(
                         default_model,
                     )
                     .await?;
-                runtime
-                    .session_store
+                sessions
                     .set_model_provider(
                         &base_session_key,
                         &chat_id,
@@ -439,12 +445,11 @@ async fn handle_im_command(
                         reasoning: None,
                     }));
                 }
-                runtime
-                    .session_store
+                let sessions = session_manager(runtime);
+                sessions
                     .set_model(&route.active_session_key, &chat_id, &channel, model)
                     .await?;
-                runtime
-                    .session_store
+                sessions
                     .set_model(&base_session_key, &chat_id, &channel, model)
                     .await?;
                 ChannelResponse {
@@ -471,7 +476,8 @@ async fn handle_im_command(
                     reasoning: None,
                 }));
             };
-            let approval = match runtime.session_store.get_approval(approval_id).await {
+            let manager = approval_manager(runtime);
+            let approval = match manager.get_approval(approval_id).await {
                 Ok(approval) => approval,
                 Err(_) => {
                     return Ok(Some(ChannelResponse {
@@ -502,12 +508,12 @@ async fn handle_im_command(
             match approval.status {
                 ApprovalStatus::Pending => {
                     if approval.expires_at_ms < now_ms() {
-                        let _ = runtime
-                            .session_store
-                            .update_approval_status(
+                        let _ = manager
+                            .resolve_approval(
                                 approval_id,
-                                ApprovalStatus::Expired,
+                                ApprovalResolveDecision::Approve,
                                 Some("channel-user"),
+                                now_ms(),
                             )
                             .await?;
                         return Ok(Some(ChannelResponse {
@@ -515,14 +521,15 @@ async fn handle_im_command(
                             reasoning: None,
                         }));
                     }
-                    let approved = runtime
-                        .session_store
-                        .update_approval_status(
+                    let approved = manager
+                        .resolve_approval(
                             approval_id,
-                            ApprovalStatus::Approved,
+                            ApprovalResolveDecision::Approve,
                             Some("channel-user"),
+                            now_ms(),
                         )
-                        .await?;
+                        .await?
+                        .approval;
                     let execution_result = execute_approved_shell(
                         runtime,
                         &approved.id,
@@ -582,7 +589,8 @@ async fn handle_im_command(
                     reasoning: None,
                 }));
             };
-            let approval = match runtime.session_store.get_approval(approval_id).await {
+            let manager = approval_manager(runtime);
+            let approval = match manager.get_approval(approval_id).await {
                 Ok(approval) => approval,
                 Err(_) => {
                     return Ok(Some(ChannelResponse {
@@ -614,12 +622,12 @@ async fn handle_im_command(
             match approval.status {
                 ApprovalStatus::Pending => {
                     if approval.expires_at_ms < now_ms() {
-                        let _ = runtime
-                            .session_store
-                            .update_approval_status(
+                        let _ = manager
+                            .resolve_approval(
                                 approval_id,
-                                ApprovalStatus::Expired,
+                                ApprovalResolveDecision::Reject,
                                 Some("channel-user"),
+                                now_ms(),
                             )
                             .await?;
                         return Ok(Some(ChannelResponse {
@@ -627,12 +635,12 @@ async fn handle_im_command(
                             reasoning: None,
                         }));
                     }
-                    runtime
-                        .session_store
-                        .update_approval_status(
+                    manager
+                        .resolve_approval(
                             approval_id,
-                            ApprovalStatus::Rejected,
+                            ApprovalResolveDecision::Reject,
                             Some("channel-user"),
+                            now_ms(),
                         )
                         .await?;
                     ChannelResponse {
@@ -712,7 +720,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         tools.register(ShellTool::with_store(config, session_store.clone()));
     }
     if config.tools.approval.enabled() {
-        tools.register(ApprovalTool::with_store(session_store.clone()));
+        tools.register(ApprovalTool::with_manager(
+            SqliteApprovalManager::from_store(session_store.clone()),
+        ));
     }
     if config.tools.local_search.enabled() {
         tools.register(LocalSearchTool::new());
@@ -1006,18 +1016,14 @@ pub async fn submit_and_get_output(
     model: String,
     media_references: Vec<MediaReference>,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
-    let conversation_history = runtime
-        .session_store
-        .read_chat_records(&session_key)
-        .await?;
+    let sessions = session_manager(runtime);
+    let conversation_history = sessions.read_chat_records(&session_key).await?;
     let header = EnvelopeHeader::new(session_key.clone());
     let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
-    runtime
-        .session_store
+    sessions
         .append_chat_record(&session_key, &user_record)
         .await?;
-    runtime
-        .session_store
+    sessions
         .touch_session(&session_key, &chat_id, &channel)
         .await?;
 
@@ -1063,12 +1069,11 @@ pub async fn submit_and_get_output(
     match maybe_outbound {
         Some(msg) => {
             let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
-            runtime
-                .session_store
+            let sessions = session_manager(runtime);
+            sessions
                 .append_chat_record(&msg.header.session_key, &agent_record)
                 .await?;
-            runtime
-                .session_store
+            sessions
                 .complete_turn(
                     &msg.header.session_key,
                     &msg.payload.chat_id,
@@ -1105,12 +1110,11 @@ pub async fn drain_runtime_queue(
             break;
         };
         let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
-        runtime
-            .session_store
+        let sessions = session_manager(runtime);
+        sessions
             .append_chat_record(&msg.header.session_key, &agent_record)
             .await?;
-        runtime
-            .session_store
+        sessions
             .complete_turn(
                 &msg.header.session_key,
                 &msg.payload.chat_id,
