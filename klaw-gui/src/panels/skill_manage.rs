@@ -1,11 +1,13 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use egui_file_dialog::FileDialog;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_skill::{
     open_default_skill_store, FileSystemSkillStore, RegistrySkillSummary, SkillRecord,
     SkillSourceKind, SkillStore, SkillSummary, SkillUninstallResult,
 };
+use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -18,7 +20,6 @@ struct InstallSkillWindow {
     error: Option<String>,
 }
 
-#[derive(Default)]
 pub struct SkillManagePanel {
     config_store: Option<ConfigStore>,
     config_path: Option<PathBuf>,
@@ -31,6 +32,26 @@ pub struct SkillManagePanel {
     detail_record: Option<SkillRecord>,
     detail_window_open: bool,
     install_window: Option<InstallSkillWindow>,
+    local_install_dialog: FileDialog,
+}
+
+impl Default for SkillManagePanel {
+    fn default() -> Self {
+        Self {
+            config_store: None,
+            config_path: None,
+            revision: None,
+            config: AppConfig::default(),
+            skill_root: None,
+            loaded: false,
+            items: Vec::new(),
+            detail_name: None,
+            detail_record: None,
+            detail_window_open: false,
+            install_window: None,
+            local_install_dialog: FileDialog::new(),
+        }
+    }
 }
 
 impl SkillManagePanel {
@@ -141,6 +162,29 @@ impl SkillManagePanel {
             notifications.warning(error.clone());
         }
         self.install_window = Some(window);
+    }
+
+    fn open_local_install_dialog(&mut self) {
+        self.local_install_dialog.pick_file();
+    }
+
+    fn handle_local_install_selection(&mut self, notifications: &mut NotificationCenter) {
+        let Some(selected_path) = self.local_install_dialog.take_picked() else {
+            return;
+        };
+        match install_local_skill_from_markdown_path(&selected_path, &self.items) {
+            Ok(result) => {
+                self.load_items(notifications, false);
+                Self::request_runtime_skills_reload(notifications);
+                notifications.success(format!(
+                    "Installed local skill `{}` from {} to {}",
+                    result.skill_name,
+                    result.source_dir.display(),
+                    result.target_dir.display()
+                ));
+            }
+            Err(err) => notifications.error(format!("Failed to install local skill: {err}")),
+        }
     }
 
     fn reload_install_window_catalog(&self, window: &mut InstallSkillWindow) {
@@ -619,6 +663,8 @@ impl PanelRenderer for SkillManagePanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_loaded(notifications);
+        self.local_install_dialog.update(ui.ctx());
+        self.handle_local_install_selection(notifications);
 
         let mut select_skill = None;
         let mut remove_skill = None;
@@ -644,6 +690,9 @@ impl PanelRenderer for SkillManagePanel {
             }
             if ui.button("Install").clicked() {
                 self.open_install_window(notifications);
+            }
+            if ui.button("Install Local").clicked() {
+                self.open_local_install_dialog();
             }
         });
         ui.separator();
@@ -760,6 +809,155 @@ fn format_uninstall_result(
     )
 }
 
+#[derive(Debug)]
+struct LocalInstallResult {
+    skill_name: String,
+    source_dir: PathBuf,
+    target_dir: PathBuf,
+}
+
+fn install_local_skill_from_markdown_path(
+    selected_markdown_path: &Path,
+    installed_items: &[SkillSummary],
+) -> Result<LocalInstallResult, String> {
+    let file_name = selected_markdown_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Selected path is not a valid file path".to_string())?;
+    if file_name != "SKILL.md" {
+        return Err("Please select a file named SKILL.md".to_string());
+    }
+
+    let source_dir = selected_markdown_path
+        .parent()
+        .ok_or_else(|| "Unable to resolve selected skill directory".to_string())?;
+    let content = fs::read_to_string(selected_markdown_path)
+        .map_err(|err| format!("Unable to read {}: {err}", selected_markdown_path.display()))?;
+    let skill_name = parse_skill_name_from_markdown(&content).ok_or_else(|| {
+        "Invalid SKILL.md format: missing skill name (`# <name>` or `name: <name>`)".to_string()
+    })?;
+    validate_local_skill_name(&skill_name)?;
+
+    if installed_items
+        .iter()
+        .any(|item| item.name == skill_name && item.source_kind == SkillSourceKind::Registry)
+    {
+        return Err(format!(
+            "Skill `{skill_name}` is already managed by a registry; uninstall it first"
+        ));
+    }
+
+    let store = open_default_skill_store()
+        .map_err(|err| format!("failed to open default skill store: {err}"))?;
+    let target_dir = store.skills_dir().join(&skill_name);
+    let source_dir_canonical = source_dir
+        .canonicalize()
+        .map_err(|err| format!("Unable to resolve source directory: {err}"))?;
+    let target_dir_canonical = target_dir.canonicalize().ok();
+    if target_dir_canonical
+        .as_ref()
+        .is_some_and(|target| target == &source_dir_canonical)
+    {
+        return Err("Selected SKILL.md is already inside the target skills directory".to_string());
+    }
+
+    if target_dir.exists() {
+        return Err(format!(
+            "Target directory already exists: {}",
+            target_dir.display()
+        ));
+    }
+
+    copy_directory_recursive(&source_dir_canonical, &target_dir).map_err(|err| {
+        let _ = fs::remove_dir_all(&target_dir);
+        err
+    })?;
+
+    Ok(LocalInstallResult {
+        skill_name,
+        source_dir: source_dir_canonical,
+        target_dir,
+    })
+}
+
+fn validate_local_skill_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Skill name cannot be empty".to_string());
+    }
+    let valid = trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_');
+    if !valid {
+        return Err(format!(
+            "Invalid skill name `{trimmed}`; only [a-zA-Z0-9_-] are allowed"
+        ));
+    }
+    Ok(())
+}
+
+fn parse_skill_name_from_markdown(markdown: &str) -> Option<String> {
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = trimmed.strip_prefix("# ") {
+            let value = name.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+        if let Some(name) = trimmed.strip_prefix("name:") {
+            let value = name.trim().trim_matches('"').trim_matches('\'');
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn copy_directory_recursive(from: &Path, to: &Path) -> Result<(), String> {
+    fs::create_dir_all(to)
+        .map_err(|err| format!("Unable to create target directory {}: {err}", to.display()))?;
+    let entries = fs::read_dir(from)
+        .map_err(|err| format!("Unable to read source directory {}: {err}", from.display()))?;
+
+    for entry_result in entries {
+        let entry = entry_result.map_err(|err| {
+            format!(
+                "Unable to enumerate source directory {}: {err}",
+                from.display()
+            )
+        })?;
+        let source_path = entry.path();
+        let target_path = to.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|err| {
+            format!(
+                "Unable to inspect source entry {}: {err}",
+                source_path.display()
+            )
+        })?;
+        if file_type.is_dir() {
+            copy_directory_recursive(&source_path, &target_path)?;
+            continue;
+        }
+        if file_type.is_file() {
+            fs::copy(&source_path, &target_path).map_err(|err| {
+                format!(
+                    "Unable to copy {} to {}: {err}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+            continue;
+        }
+        return Err(format!(
+            "Unsupported entry type in local skill directory: {}",
+            source_path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn run_skill_task<T, F, Fut>(op: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -788,6 +986,7 @@ where
 mod tests {
     use super::*;
     use klaw_config::SkillRegistryConfig;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn remove_skill_from_config_updates_matching_registry_only() {
@@ -832,5 +1031,40 @@ mod tests {
             next.skills.registries["private"].installed,
             vec!["alpha", "zeta"]
         );
+    }
+
+    #[test]
+    fn parse_skill_name_from_markdown_accepts_heading_and_name_field() {
+        assert_eq!(
+            parse_skill_name_from_markdown("# local_test\n\nbody"),
+            Some("local_test".to_string())
+        );
+        assert_eq!(
+            parse_skill_name_from_markdown("name: helper_skill\n\n# title"),
+            Some("helper_skill".to_string())
+        );
+    }
+
+    #[test]
+    fn copy_directory_recursive_copies_nested_files() {
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos();
+        let source = std::env::temp_dir().join(format!("klaw-gui-local-skill-source-{token}"));
+        let target = std::env::temp_dir().join(format!("klaw-gui-local-skill-target-{token}"));
+        let nested_source = source.join("assets");
+        fs::create_dir_all(&nested_source).expect("create source tree");
+        fs::write(source.join("SKILL.md"), "# local_test").expect("write skill");
+        fs::write(nested_source.join("a.txt"), "abc").expect("write nested");
+
+        copy_directory_recursive(&source, &target).expect("copy should succeed");
+
+        let copied = fs::read_to_string(target.join("assets").join("a.txt"))
+            .expect("copied nested file should exist");
+        assert_eq!(copied, "abc");
+
+        let _ = fs::remove_dir_all(source);
+        let _ = fs::remove_dir_all(target);
     }
 }

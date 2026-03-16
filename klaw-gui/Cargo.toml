@@ -8,6 +8,7 @@ license.workspace = true
 anyhow = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+egui-file-dialog = { workspace = true }
 egui-phosphor = { workspace = true }
 egui_extras = { workspace = true }
 egui-notify = { workspace = true }

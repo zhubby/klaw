@@ -19,7 +19,7 @@
 - channel 只负责把平台消息规范化为 `ChannelRequest`（文本、chat_id、session_key）
 - 统一会话命令（`/new`、`/help`、`/model-provider`、`/model`）由 runtime 处理，不在 channel 层实现业务分支
 - channel 仅消费 `ChannelResponse` 并回发，不持有 provider/model 路由策略
-- `dingtalk` 通道会在 shell 审批场景自动把 `approval_id` 渲染为 ActionCard，并把卡片回调映射为 `/approve` 或 `/reject` 指令回送 runtime
+- `dingtalk` 通道会在响应中检测 `approval_id` 并渲染 ActionCard，把卡片回调映射为 `/approve` 或 `/reject` 指令回送 runtime
 
 ## Stdio Interaction
 

@@ -306,7 +306,7 @@ async fn send_session_webhook_markdown(
 
 ### 审批动作卡片（ActionCard）
 
-当响应中包含 shell 审批 ID 时，发送审批卡片：
+当响应中包含审批 ID 时，发送审批卡片：
 
 ```rust
 async fn send_session_webhook_action_card(

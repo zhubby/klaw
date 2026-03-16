@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-16
+
+### Changed
+
+- `dingtalk` 审批卡片 ID 提取规则新增兼容：支持 `approvalId`（camelCase）与自然语言“批准ID”表述
+
 ## 2026-03-14
 
 ### Changed

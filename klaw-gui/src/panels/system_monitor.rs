@@ -1,4 +1,5 @@
 use crate::panels::{PanelRenderer, RenderCtx};
+use egui_extras::{Size, StripBuilder};
 use klaw_config::ConfigStore;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +11,9 @@ use sysinfo::{
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CARD_MIN_HEIGHT: f32 = 132.0;
-const CARD_ROW_SPACING: f32 = 12.0;
+const CARD_GAP: f32 = 12.0;
+const PROGRESS_BAR_WIDTH_RATIO: f32 = 0.82;
+const SYSTEM_INFO_SECTION_HEIGHT: f32 = 320.0;
 
 pub struct SystemMonitorPanel {
     system: System,
@@ -116,18 +119,6 @@ impl PanelRenderer for SystemMonitorPanel {
 
         let uptime_secs = self.app_started_at.elapsed().as_secs();
 
-        let data_dir_percent = self
-            .data_dir_stats
-            .as_ref()
-            .map(|stats| {
-                if stats.disk_total_bytes == 0 {
-                    0.0
-                } else {
-                    (stats.used_bytes as f32 / stats.disk_total_bytes as f32) * 100.0
-                }
-            })
-            .unwrap_or(0.0);
-
         let system_uptime_secs = System::uptime();
         let load_avg = System::load_average();
 
@@ -135,168 +126,194 @@ impl PanelRenderer for SystemMonitorPanel {
         ui.label("Real-time resource and system information");
         ui.separator();
 
-        render_two_column_card_row(
-            ui,
-            |ui| {
-                resource_card(
-                    ui,
-                    "CPU Usage",
-                    Some(cpu_usage),
-                    format!("{cpu_usage:.1}%"),
-                    format!("{logical_cpus} logical cores / {physical_cores} physical cores"),
-                );
-            },
-            |ui| {
-                resource_card(
-                    ui,
-                    "Memory Usage",
-                    Some(memory_usage),
-                    format!(
-                        "{:.1}% ({}/{})",
-                        memory_usage,
-                        format_bytes(used_memory),
-                        format_bytes(total_memory),
-                    ),
-                    format!("Free: {}", format_bytes(free_memory)),
-                );
-            },
-        );
-        ui.add_space(CARD_ROW_SPACING);
-        render_two_column_card_row(
-            ui,
-            |ui| {
-                if let Some(stats) = self.data_dir_stats.as_ref() {
-                    resource_card(
-                        ui,
-                        "Data Directory Disk Usage",
-                        Some(data_dir_percent),
-                        format!(
-                            "{:.1}% ({}/{})",
-                            data_dir_percent,
-                            format_bytes(stats.used_bytes),
-                            format_bytes(stats.disk_total_bytes),
-                        ),
-                        format!("Path: {}", self.data_dir_path.display()),
-                    );
-                } else {
-                    loading_card(
-                        ui,
-                        "Data Directory Disk Usage",
-                        format!("Path: {}", self.data_dir_path.display()),
-                        "Collecting disk usage once...",
-                    );
-                }
-            },
-            |ui| {
-                resource_card(
-                    ui,
-                    "App Uptime",
-                    None,
-                    format_duration(uptime_secs),
-                    "Running in current process".to_string(),
-                );
-            },
-        );
+        StripBuilder::new(ui)
+            .size(Size::exact(CARD_MIN_HEIGHT))
+            .size(Size::exact(SYSTEM_INFO_SECTION_HEIGHT))
+            .vertical(|mut strip| {
+                strip.cell(|ui| {
+                    ui.scope(|ui| {
+                        ui.spacing_mut().item_spacing.x = CARD_GAP;
+                        StripBuilder::new(ui)
+                            .size(Size::remainder())
+                            .size(Size::remainder())
+                            .size(Size::remainder())
+                            .size(Size::remainder())
+                            .horizontal(|mut row| {
+                                row.cell(|ui| {
+                                    resource_card(
+                                        ui,
+                                        "CPU Usage",
+                                        Some(cpu_usage),
+                                        format!("{cpu_usage:.1}%"),
+                                        format!(
+                                            "{logical_cpus} logical cores / {physical_cores} physical cores"
+                                        ),
+                                    );
+                                });
+                                row.cell(|ui| {
+                                    resource_card(
+                                        ui,
+                                        "Memory Usage",
+                                        Some(memory_usage),
+                                        format!(
+                                            "{:.1}% ({}/{})",
+                                            memory_usage,
+                                            format_bytes(used_memory),
+                                            format_bytes(total_memory),
+                                        ),
+                                        format!("Free: {}", format_bytes(free_memory)),
+                                    );
+                                });
+                                row.cell(|ui| {
+                                    if let Some(stats) = self.data_dir_stats.as_ref() {
+                                        resource_card(
+                                            ui,
+                                            "Data Directory Disk Usage",
+                                            None,
+                                            format_bytes(stats.used_bytes),
+                                            format!("Path: {}", self.data_dir_path.display()),
+                                        );
+                                    } else {
+                                        loading_card(
+                                            ui,
+                                            "Data Directory Disk Usage",
+                                            format!("Path: {}", self.data_dir_path.display()),
+                                            "Collecting disk usage once...",
+                                        );
+                                    }
+                                });
+                                row.cell(|ui| {
+                                    resource_card(
+                                        ui,
+                                        "App Uptime",
+                                        None,
+                                        format_duration(uptime_secs),
+                                        "Running in current process".to_string(),
+                                    );
+                                });
+                            });
+                    });
+                });
 
-        ui.separator();
-        ui.strong("System Information");
-        ui.add_space(6.0);
+                strip.cell(|ui| {
+                    ui.separator();
+                    ui.strong("System Information");
+                    ui.add_space(6.0);
 
-        egui::Grid::new("system-monitor-system-info-grid")
-            .num_columns(2)
-            .spacing([14.0, 6.0])
-            .striped(true)
-            .show(ui, |ui| {
-                info_row(ui, "Host Name", optional_text(System::host_name()));
-                info_row(ui, "OS Name", optional_text(System::name()));
-                info_row(ui, "OS Version", optional_text(System::os_version()));
-                info_row(
-                    ui,
-                    "Long OS Version",
-                    optional_text(System::long_os_version()),
-                );
-                info_row(
-                    ui,
-                    "Kernel Version",
-                    optional_text(System::kernel_version()),
-                );
-                info_row(ui, "CPU Architecture", std::env::consts::ARCH.to_string());
-                info_row(ui, "Logical CPU Count", logical_cpus.to_string());
-                info_row(ui, "Physical Core Count", physical_cores.to_string());
-                info_row(
-                    ui,
-                    "Primary CPU Brand",
-                    self.system
-                        .cpus()
-                        .first()
-                        .map(|cpu| cpu.brand().to_string())
-                        .filter(|value| !value.is_empty())
-                        .unwrap_or_else(|| "N/A".to_string()),
-                );
-                info_row(
-                    ui,
-                    "Primary CPU Frequency",
-                    self.system
-                        .cpus()
-                        .first()
-                        .map(|cpu| format!("{} MHz", cpu.frequency()))
-                        .unwrap_or_else(|| "N/A".to_string()),
-                );
-                info_row(ui, "Total Memory", format_bytes(total_memory));
-                info_row(ui, "Used Memory", format_bytes(used_memory));
-                info_row(ui, "Free Memory", format_bytes(free_memory));
-                info_row(ui, "Total Swap", format_bytes(self.system.total_swap()));
-                info_row(ui, "Used Swap", format_bytes(self.system.used_swap()));
-                info_row(ui, "System Uptime", format_duration(system_uptime_secs));
-                info_row(
-                    ui,
-                    "System Boot Time",
-                    format!("unix: {}", System::boot_time()),
-                );
-                info_row(ui, "Load Average", format_load_avg(load_avg));
-                info_row(
-                    ui,
-                    "Data Directory",
-                    self.data_dir_path.display().to_string(),
-                );
+                    egui::ScrollArea::vertical()
+                        .id_salt("system-monitor-system-info-scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            egui::Grid::new("system-monitor-system-info-grid")
+                                .num_columns(2)
+                                .spacing([14.0, 6.0])
+                                .striped(true)
+                                .show(ui, |ui| {
+                                    info_row(ui, "Host Name", optional_text(System::host_name()));
+                                    info_row(ui, "OS Name", optional_text(System::name()));
+                                    info_row(ui, "OS Version", optional_text(System::os_version()));
+                                    info_row(
+                                        ui,
+                                        "Long OS Version",
+                                        optional_text(System::long_os_version()),
+                                    );
+                                    info_row(
+                                        ui,
+                                        "Kernel Version",
+                                        optional_text(System::kernel_version()),
+                                    );
+                                    info_row(ui, "CPU Architecture", std::env::consts::ARCH.to_string());
+                                    info_row(ui, "Logical CPU Count", logical_cpus.to_string());
+                                    info_row(ui, "Physical Core Count", physical_cores.to_string());
+                                    info_row(
+                                        ui,
+                                        "Primary CPU Brand",
+                                        self.system
+                                            .cpus()
+                                            .first()
+                                            .map(|cpu| cpu.brand().to_string())
+                                            .filter(|value| !value.is_empty())
+                                            .unwrap_or_else(|| "N/A".to_string()),
+                                    );
+                                    info_row(
+                                        ui,
+                                        "Primary CPU Frequency",
+                                        self.system
+                                            .cpus()
+                                            .first()
+                                            .map(|cpu| format!("{} MHz", cpu.frequency()))
+                                            .unwrap_or_else(|| "N/A".to_string()),
+                                    );
+                                    info_row(ui, "Total Memory", format_bytes(total_memory));
+                                    info_row(ui, "Used Memory", format_bytes(used_memory));
+                                    info_row(ui, "Free Memory", format_bytes(free_memory));
+                                    info_row(ui, "Total Swap", format_bytes(self.system.total_swap()));
+                                    info_row(ui, "Used Swap", format_bytes(self.system.used_swap()));
+                                    info_row(ui, "System Uptime", format_duration(system_uptime_secs));
+                                    info_row(
+                                        ui,
+                                        "System Boot Time",
+                                        format!("unix: {}", System::boot_time()),
+                                    );
+                                    info_row(ui, "Load Average", format_load_avg(load_avg));
+                                    info_row(
+                                        ui,
+                                        "Data Directory",
+                                        self.data_dir_path.display().to_string(),
+                                    );
 
-                if let Some(stats) = self.data_dir_stats.as_ref() {
-                    info_row(ui, "Data Directory Size", format_bytes(stats.used_bytes));
-                    info_row(
-                        ui,
-                        "Data Directory File Count",
-                        stats.file_count.to_string(),
-                    );
-                    info_row(
-                        ui,
-                        "Data Directory Mount Point",
-                        stats
-                            .mount_point
-                            .as_ref()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| "N/A".to_string()),
-                    );
-                    info_row(
-                        ui,
-                        "Data Directory Disk Capacity",
-                        format_bytes(stats.disk_total_bytes),
-                    );
-                    info_row(
-                        ui,
-                        "Data Directory Disk Available",
-                        format_bytes(stats.disk_available_bytes),
-                    );
-                } else {
-                    info_row(ui, "Data Directory Size", "Loading...".to_string());
-                    info_row(ui, "Data Directory File Count", "Loading...".to_string());
-                    info_row(ui, "Data Directory Mount Point", "Loading...".to_string());
-                    info_row(ui, "Data Directory Disk Capacity", "Loading...".to_string());
-                    info_row(
-                        ui,
-                        "Data Directory Disk Available",
-                        "Loading...".to_string(),
-                    );
-                }
+                                    if let Some(stats) = self.data_dir_stats.as_ref() {
+                                        info_row(ui, "Data Directory Size", format_bytes(stats.used_bytes));
+                                        info_row(
+                                            ui,
+                                            "Data Directory File Count",
+                                            stats.file_count.to_string(),
+                                        );
+                                        info_row(
+                                            ui,
+                                            "Data Directory Mount Point",
+                                            stats
+                                                .mount_point
+                                                .as_ref()
+                                                .map(|path| path.display().to_string())
+                                                .unwrap_or_else(|| "N/A".to_string()),
+                                        );
+                                        info_row(
+                                            ui,
+                                            "Data Directory Disk Capacity",
+                                            format_bytes(stats.disk_total_bytes),
+                                        );
+                                        info_row(
+                                            ui,
+                                            "Data Directory Disk Available",
+                                            format_bytes(stats.disk_available_bytes),
+                                        );
+                                    } else {
+                                        info_row(ui, "Data Directory Size", "Loading...".to_string());
+                                        info_row(
+                                            ui,
+                                            "Data Directory File Count",
+                                            "Loading...".to_string(),
+                                        );
+                                        info_row(
+                                            ui,
+                                            "Data Directory Mount Point",
+                                            "Loading...".to_string(),
+                                        );
+                                        info_row(
+                                            ui,
+                                            "Data Directory Disk Capacity",
+                                            "Loading...".to_string(),
+                                        );
+                                        info_row(
+                                            ui,
+                                            "Data Directory Disk Available",
+                                            "Loading...".to_string(),
+                                        );
+                                    }
+                                });
+                        });
+                });
             });
     }
 }
@@ -403,22 +420,28 @@ fn resource_card(
     value: String,
     subtitle: String,
 ) {
+    // ui.set_min_width(ui.available_width());
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.set_min_height(CARD_MIN_HEIGHT);
         ui.vertical(|ui| {
             ui.strong(title);
             ui.label(subtitle);
             if let Some(percent) = percent {
-                ui.add_space(6.0);
-                ui.add(egui::ProgressBar::new((percent / 100.0).clamp(0.0, 1.0)).show_percentage());
+                // ui.add_space(6.0);
+                let bar_width = (ui.available_width() * PROGRESS_BAR_WIDTH_RATIO).max(80.0);
+                ui.add_sized(
+                    [bar_width, 20.0],
+                    egui::ProgressBar::new((percent / 100.0).clamp(0.0, 1.0)).show_percentage(),
+                );
             }
-            ui.add_space(6.0);
+            // ui.add_space(6.0);
             ui.monospace(value);
         });
     });
 }
 
 fn loading_card(ui: &mut egui::Ui, title: &str, subtitle: String, loading_text: &str) {
+    ui.set_min_width(ui.available_width());
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.set_min_height(CARD_MIN_HEIGHT);
         ui.vertical(|ui| {
@@ -430,29 +453,6 @@ fn loading_card(ui: &mut egui::Ui, title: &str, subtitle: String, loading_text: 
                 ui.label(loading_text);
             });
         });
-    });
-}
-
-fn render_two_column_card_row(
-    ui: &mut egui::Ui,
-    left: impl FnOnce(&mut egui::Ui),
-    right: impl FnOnce(&mut egui::Ui),
-) {
-    let available_width = ui.available_width().max(CARD_ROW_SPACING);
-    let card_width = ((available_width - CARD_ROW_SPACING) / 2.0).max(0.0);
-
-    ui.horizontal(|ui| {
-        ui.allocate_ui_with_layout(
-            egui::vec2(card_width, CARD_MIN_HEIGHT),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| left(ui),
-        );
-        ui.add_space(CARD_ROW_SPACING);
-        ui.allocate_ui_with_layout(
-            egui::vec2(card_width, CARD_MIN_HEIGHT),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| right(ui),
-        );
     });
 }
 

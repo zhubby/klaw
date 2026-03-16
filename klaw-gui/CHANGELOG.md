@@ -7,13 +7,16 @@
 - cron panel now supports `Run Now` from both the jobs table and the task-runs header, routed through the live GUI runtime so manual execution immediately creates a run record and enqueues the inbound work
 - cron form now validates `payload_json` against the full `InboundMessage` schema before saving, so missing required fields like `channel` are caught in the GUI
 - macOS GUI startup now sets the app icon from `assets/icons/logo.icns`
-- system monitor summary cards now render in a fixed 2x2 equal-width layout instead of content-sized columns
+- system monitor summary cards now render as one row with 4 equal-width cards; CPU/Memory progress bars are width-limited, and data-directory disk usage shows only size (no progress bar)
+- system monitor layout now uses `StripBuilder`: four summary cards scale with panel width at fixed inter-card spacing, and `System Information` is rendered in a fixed-height scrollable section
 - session panel now lists indexed sessions in a table via `klaw-session` manager abstractions instead of a placeholder view
 - approval panel now lists approvals in a table and routes approve/reject/consume actions through `klaw-approval`
 - skill panel now manages installed skills via `klaw-skill`, including list/detail, registry sync, and uninstall flows
 - skill registry sync entry now lives on the `Skill Registry` list actions instead of the installed `Skill` panel
 - skill panel now includes an install window with registry selection and scrollable install/uninstall actions per registry skill
+- skill panel now adds `Install Local` flow: pick local `SKILL.md` via `egui-file-dialog`, validate skill name format, and copy the entire local skill directory into `~/.klaw/skills`
 - GUI skill actions now trigger a runtime skills-prompt reload command so newly changed skills can apply to subsequent requests without restarting the GUI runtime
+- GUI fullscreen persistence now syncs from runtime viewport state each frame, so exiting fullscreen via system window controls is correctly persisted for next launch
 
 ## 2026-03-15
 

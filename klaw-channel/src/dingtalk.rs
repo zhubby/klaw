@@ -1828,6 +1828,22 @@ fn extract_shell_approval_id(content: &str) -> Option<String> {
         {
             return Some(token.to_string());
         }
+        if let Some(token) = value
+            .get("approvalId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            return Some(token.to_string());
+        }
+        if let Some(token) = value
+            .pointer("/approvalId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            return Some(token.to_string());
+        }
     }
     let marker = "approval_id=";
     if let Some(idx) = content.find(marker) {
@@ -1850,7 +1866,9 @@ fn extract_uuid_like_approval_id(content: &str) -> Option<String> {
         || lowered.contains("approval_id")
         || content.contains("审批 ID")
         || content.contains("审批id")
-        || content.contains("审批单");
+        || content.contains("审批单")
+        || lowered.contains("批准id")
+        || content.contains("批准 ID");
     if !hinted {
         return None;
     }
@@ -2232,11 +2250,30 @@ mod tests {
     }
 
     #[test]
+    fn extract_shell_approval_id_from_json_approval_id_camel_case() {
+        let content = serde_json::json!({
+            "action": "request",
+            "approvalId": "approval-json-2"
+        })
+        .to_string();
+        let approval_id = extract_shell_approval_id(&content).expect("approval id");
+        assert_eq!(approval_id, "approval-json-2");
+    }
+
+    #[test]
     fn extract_shell_approval_id_from_natural_language() {
         let content =
             "我已经请求了批准。审批 ID 是 e4d1e3bf-2d00-49da-b091-23e818a83483。请您批准该操作。";
         let approval_id = extract_shell_approval_id(content).expect("approval id");
         assert_eq!(approval_id, "e4d1e3bf-2d00-49da-b091-23e818a83483");
+    }
+
+    #[test]
+    fn extract_shell_approval_id_from_natural_language_approve_wording() {
+        let content =
+            "我已经请求批准来执行浏览器自动化任务。批准ID: 3a24e1d4-9c94-4ee1-ac16-1f750ca78acf";
+        let approval_id = extract_shell_approval_id(content).expect("approval id");
+        assert_eq!(approval_id, "3a24e1d4-9c94-4ee1-ac16-1f750ca78acf");
     }
 
     #[test]

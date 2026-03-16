@@ -304,11 +304,11 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
     ));
     lines.push(format!(
         "{:<24}{}",
-        "/approve <approval_id>", "Approve a pending shell command"
+        "/approve <approval_id>", "Approve a pending tool action"
     ));
     lines.push(format!(
         "{:<24}{}",
-        "/reject <approval_id>", "Reject a pending shell command"
+        "/reject <approval_id>", "Reject a pending tool action"
     ));
     lines.push("```".to_string());
     if runtime.provider_default_models.len() > 1 {
@@ -497,15 +497,6 @@ async fn handle_im_command(
                     reasoning: None,
                 }));
             }
-            if approval.tool_name != "shell" {
-                return Ok(Some(ChannelResponse {
-                    content: format!(
-                        "❌ Approval `{approval_id}` is for unsupported tool `{}`.",
-                        approval.tool_name
-                    ),
-                    reasoning: None,
-                }));
-            }
             match approval.status {
                 ApprovalStatus::Pending => {
                     if approval.expires_at_ms < now_ms() {
@@ -531,6 +522,15 @@ async fn handle_im_command(
                         )
                         .await?
                         .approval;
+                    if approved.tool_name != "shell" {
+                        return Ok(Some(ChannelResponse {
+                            content: format!(
+                                "✅ Approval granted: `{}` (`{}`).\n\n请重试之前触发审批的操作。",
+                                approved.id, approved.tool_name
+                            ),
+                            reasoning: None,
+                        }));
+                    }
                     let execution_result = execute_approved_shell(
                         runtime,
                         &approved.id,
@@ -611,16 +611,6 @@ async fn handle_im_command(
                     reasoning: None,
                 }));
             }
-            if approval.tool_name != "shell" {
-                return Ok(Some(ChannelResponse {
-                    content: format!(
-                        "❌ Approval `{approval_id}` is for unsupported tool `{}`.",
-                        approval.tool_name
-                    ),
-                    reasoning: None,
-                }));
-            }
-
             match approval.status {
                 ApprovalStatus::Pending => {
                     if approval.expires_at_ms < now_ms() {
@@ -646,7 +636,10 @@ async fn handle_im_command(
                         )
                         .await?;
                     ChannelResponse {
-                        content: format!("🛑 Approval rejected: `{approval_id}`"),
+                        content: format!(
+                            "🛑 Approval rejected: `{approval_id}` (`{}`).",
+                            approval.tool_name
+                        ),
                         reasoning: None,
                     }
                 }

@@ -89,6 +89,17 @@ impl KlawGuiApp {
         }
     }
 
+    fn sync_fullscreen_from_viewport(&mut self, ctx: &egui::Context) {
+        let fullscreen = ctx.input(|input| input.viewport().fullscreen);
+        let Some(fullscreen) = fullscreen else {
+            return;
+        };
+        if self.state.fullscreen != fullscreen {
+            self.state.fullscreen = fullscreen;
+            self.mark_state_dirty();
+        }
+    }
+
     fn sync_window_size_from_viewport(&mut self, ctx: &egui::Context) {
         if self.state.fullscreen {
             return;
@@ -109,6 +120,7 @@ impl KlawGuiApp {
 
 impl eframe::App for KlawGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.sync_fullscreen_from_viewport(ctx);
         self.sync_window_size_from_viewport(ctx);
         theme::apply_theme(ctx, self.state.theme_mode);
         let actions = self.shell.render(ctx, &self.state);
