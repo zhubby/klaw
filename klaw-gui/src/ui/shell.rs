@@ -191,7 +191,6 @@ impl ShellUi {
                     if self.provider_ids.is_empty() {
                         ui.label("Model Provider: N/A");
                     } else {
-                        ui.label("Model Provider:");
                         let default_provider = if self.config_default_provider.is_empty() {
                             "unknown"
                         } else {
@@ -222,6 +221,10 @@ impl ShellUi {
                                     }
                                 }
                             });
+
+                        ui.label("Model Provider:");
+
+                        ui.separator();
 
                         let default_model = self
                             .provider_default_models

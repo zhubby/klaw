@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-03-16
+
+### Changed
+
+- macOS GUI startup now sets the app icon from `assets/icons/logo.icns`
+- system monitor summary cards now render in a fixed 2x2 equal-width layout instead of content-sized columns
+
 ## 2026-03-15
 
 ### Added

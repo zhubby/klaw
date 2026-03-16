@@ -10,6 +10,7 @@ use sysinfo::{
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CARD_MIN_HEIGHT: f32 = 132.0;
+const CARD_ROW_SPACING: f32 = 12.0;
 
 pub struct SystemMonitorPanel {
     system: System,
@@ -134,10 +135,9 @@ impl PanelRenderer for SystemMonitorPanel {
         ui.label("Real-time resource and system information");
         ui.separator();
 
-        egui::Grid::new("system-monitor-cards-grid")
-            .num_columns(2)
-            .spacing([12.0, 12.0])
-            .show(ui, |ui| {
+        render_two_column_card_row(
+            ui,
+            |ui| {
                 resource_card(
                     ui,
                     "CPU Usage",
@@ -145,6 +145,8 @@ impl PanelRenderer for SystemMonitorPanel {
                     format!("{cpu_usage:.1}%"),
                     format!("{logical_cpus} logical cores / {physical_cores} physical cores"),
                 );
+            },
+            |ui| {
                 resource_card(
                     ui,
                     "Memory Usage",
@@ -157,8 +159,12 @@ impl PanelRenderer for SystemMonitorPanel {
                     ),
                     format!("Free: {}", format_bytes(free_memory)),
                 );
-                ui.end_row();
-
+            },
+        );
+        ui.add_space(CARD_ROW_SPACING);
+        render_two_column_card_row(
+            ui,
+            |ui| {
                 if let Some(stats) = self.data_dir_stats.as_ref() {
                     resource_card(
                         ui,
@@ -180,7 +186,8 @@ impl PanelRenderer for SystemMonitorPanel {
                         "Collecting disk usage once...",
                     );
                 }
-
+            },
+            |ui| {
                 resource_card(
                     ui,
                     "App Uptime",
@@ -188,8 +195,8 @@ impl PanelRenderer for SystemMonitorPanel {
                     format_duration(uptime_secs),
                     "Running in current process".to_string(),
                 );
-                ui.end_row();
-            });
+            },
+        );
 
         ui.separator();
         ui.strong("System Information");
@@ -423,6 +430,29 @@ fn loading_card(ui: &mut egui::Ui, title: &str, subtitle: String, loading_text: 
                 ui.label(loading_text);
             });
         });
+    });
+}
+
+fn render_two_column_card_row(
+    ui: &mut egui::Ui,
+    left: impl FnOnce(&mut egui::Ui),
+    right: impl FnOnce(&mut egui::Ui),
+) {
+    let available_width = ui.available_width().max(CARD_ROW_SPACING);
+    let card_width = ((available_width - CARD_ROW_SPACING) / 2.0).max(0.0);
+
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(card_width, CARD_MIN_HEIGHT),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| left(ui),
+        );
+        ui.add_space(CARD_ROW_SPACING);
+        ui.allocate_ui_with_layout(
+            egui::vec2(card_width, CARD_MIN_HEIGHT),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| right(ui),
+        );
     });
 }
 

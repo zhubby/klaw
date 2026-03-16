@@ -23,6 +23,7 @@ pub trait Tool: Send + Sync {
 - [Apply Patch](./built-in/apply_patch.md) - 批量文件编辑（添加、更新、删除、移动）
 - [本地搜索](./built-in/local_search.md) - 基于 ripgrep 的代码检索
 - [记忆](./built-in/memory.md) - 长期记忆存储与检索
+- [审批](./built-in/approval.md) - 高风险操作的审批记录管理（请求、查询、决议）
 
 ### Web 工具
 

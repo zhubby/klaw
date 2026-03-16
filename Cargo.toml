@@ -54,6 +54,10 @@ egui_extras = "0.33.3"
 egui-notify = "0.21.0"
 fontdb = "0.16"
 sysinfo = "0.37"
+image = { version = "0.25.10", default-features = false, features = ["tiff"] }
+objc2-app-kit = "0.2.2"
+objc2-foundation = "0.2.2"
+objc2 = "0.5.2"
 
 humantime = "2"
 url = "2"

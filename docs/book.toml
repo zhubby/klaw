@@ -9,6 +9,9 @@ description = "Klaw - Rust-based AI Agent"
 git-repository-url = "https://github.com/zhubby/klaw"
 git-repository-icon = "fa-github"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["./theme/catppuccin.css"]
+default-theme = "latte"
+preferred-dark-theme = "mocha"
 
 [output.html.fold]
 enable = true

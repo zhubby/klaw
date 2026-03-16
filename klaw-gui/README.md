@@ -11,6 +11,7 @@
   - Runtime provider override dropdown on the right (select from `model_providers` without editing config)
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
   - includes tabs/theme/fullscreen and window size
+- macOS app icon is loaded from `assets/icons/logo.icns` at startup
 - System CJK font fallback via `fontdb` to avoid Chinese text missing-glyph rendering
 - Strongly typed menu model for workspace modules
 - Single-tab-per-menu behavior (click to open or activate)
@@ -29,7 +30,7 @@
   - memory
   - archive (db-bound query + detail view)
   - tool
-  - system-monitor (real-time CPU/memory cards with usage percentage and amount)
+- system-monitor (real-time CPU/memory/data-dir/uptime cards in a 2x2 equal-width layout, plus detailed system information)
 - Configuration panel features:
   - load and edit `config.toml` raw text
   - TOML syntax highlighting (section/key/value/comment)

@@ -1,6 +1,6 @@
 # Klaw 文档
 
-本文档目录包含 Klaw 项目的官方文档，使用 [mdbook](https://rust-lang.github.io/mdBook/) 构建。
+本文档目录包含 Klaw 项目的官方文档，使用 [mdbook](https://rust-lang.github.io/mdBook/) 构建，采用 [Catppuccin](https://github.com/catppuccin/mdBook) 主题。
 
 ## 快速开始
 
@@ -22,6 +22,29 @@ cargo install mdbook-katex      # LaTeX 数学公式支持
 - `mdbook` v0.5.x 存在字体渲染问题（Missing font github）
 - `mdbook-admonish` v1.20.0 存在 TOML 解析 bug，暂时无法使用
 - 推荐组合：`mdbook@0.4.40` + `mdbook-mermaid@0.14.0`
+
+### 主题配置
+
+本文档使用 Catppuccin 主题，提供 4 种配色方案：
+
+| 主题 | 类型 | 描述 |
+|------|------|------|
+| Latte | 浅色 | 明亮柔和的浅色调 |
+| Frappé | 深色 | 中等对比度的深色调 |
+| Macchiato | 深色 | 平衡的深色调 |
+| Mocha | 深色 | 高对比度的深色调（默认夜间模式） |
+
+主题文件位于 `theme/` 目录：
+- `theme/catppuccin.css` - Catppuccin 主题样式
+- `theme/index.hbs` - 自定义主题选择器
+
+在 `book.toml` 中配置默认主题：
+```toml
+[output.html]
+default-theme = "latte"          # 默认浅色主题
+preferred-dark-theme = "mocha"   # 默认深色主题
+additional-css = ["./theme/catppuccin.css"]
+```
 
 ### 构建文档
 
