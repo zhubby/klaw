@@ -8,6 +8,7 @@
 - system monitor summary cards now render in a fixed 2x2 equal-width layout instead of content-sized columns
 - session panel now lists indexed sessions in a table via `klaw-session` manager abstractions instead of a placeholder view
 - approval panel now lists approvals in a table and routes approve/reject/consume actions through `klaw-approval`
+- skill panel now manages installed skills via `klaw-skill`, including list/detail, registry sync, and uninstall flows
 
 ## 2026-03-15
 

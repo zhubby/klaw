@@ -18,6 +18,7 @@ klaw-archive = { workspace = true }
 klaw-cron = { workspace = true }
 klaw-memory = { workspace = true }
 klaw-session = { workspace = true }
+klaw-skill = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

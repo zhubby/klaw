@@ -62,7 +62,7 @@ impl Default for PanelRegistry {
             heartbeat: heartbeat::HeartbeatPanel::default(),
             mcp: mcp::McpPanel::default(),
             skill: skill::SkillPanel::default(),
-            skill_manage: skill_manage::SkillManagePanel,
+            skill_manage: skill_manage::SkillManagePanel::default(),
             memory: memory::MemoryPanel::default(),
             archive: archive::ArchivePanel::default(),
             tool: tool::ToolPanel::default(),

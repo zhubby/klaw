@@ -76,42 +76,47 @@ impl PanelRenderer for SessionPanel {
         }
 
         ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            if self.sessions.is_empty() {
-                ui.label("No sessions found.");
-                return;
-            }
+        let table_width = ui.available_width();
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .max_width(table_width)
+            .show(ui, |ui| {
+                ui.set_min_width(table_width);
+                if self.sessions.is_empty() {
+                    ui.label("No sessions found.");
+                    return;
+                }
 
-            egui::Grid::new("session-table-grid")
-                .striped(true)
-                .num_columns(9)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.strong("Session Key");
-                    ui.strong("Chat ID");
-                    ui.strong("Channel");
-                    ui.strong("Active Session");
-                    ui.strong("Provider");
-                    ui.strong("Model");
-                    ui.strong("Turns");
-                    ui.strong("Updated(ms)");
-                    ui.strong("JSONL Path");
-                    ui.end_row();
-
-                    for session in &self.sessions {
-                        ui.label(&session.session_key);
-                        ui.label(&session.chat_id);
-                        ui.label(&session.channel);
-                        ui.label(session.active_session_key.as_deref().unwrap_or(""));
-                        ui.label(session.model_provider.as_deref().unwrap_or(""));
-                        ui.label(session.model.as_deref().unwrap_or(""));
-                        ui.label(session.turn_count.to_string());
-                        ui.label(session.updated_at_ms.to_string());
-                        ui.label(&session.jsonl_path);
+                egui::Grid::new("session-table-grid")
+                    .striped(true)
+                    .num_columns(9)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.strong("Session Key");
+                        ui.strong("Chat ID");
+                        ui.strong("Channel");
+                        ui.strong("Active Session");
+                        ui.strong("Provider");
+                        ui.strong("Model");
+                        ui.strong("Turns");
+                        ui.strong("Updated(ms)");
+                        ui.strong("JSONL Path");
                         ui.end_row();
-                    }
-                });
-        });
+
+                        for session in &self.sessions {
+                            ui.label(&session.session_key);
+                            ui.label(&session.chat_id);
+                            ui.label(&session.channel);
+                            ui.label(session.active_session_key.as_deref().unwrap_or(""));
+                            ui.label(session.model_provider.as_deref().unwrap_or(""));
+                            ui.label(session.model.as_deref().unwrap_or(""));
+                            ui.label(session.turn_count.to_string());
+                            ui.label(session.updated_at_ms.to_string());
+                            ui.label(&session.jsonl_path);
+                            ui.end_row();
+                        }
+                    });
+            });
     }
 }
 

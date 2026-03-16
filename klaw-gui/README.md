@@ -15,7 +15,7 @@
 - System CJK font fallback via `fontdb` to avoid Chinese text missing-glyph rendering
 - Strongly typed menu model for workspace modules
 - Single-tab-per-menu behavior (click to open or activate)
-- Placeholder panel renderers for:
+- Workbench panel renderers for:
   - profile
   - configuration
   - model provider (config-bound list + add/edit window)
@@ -23,7 +23,7 @@
   - cron (db-bound list + add/edit window)
   - heartbeat (config-backed defaults/session management, add/edit/delete)
   - mcp (config-bound list + add/edit window)
-  - skill (installed skill management menu placeholder)
+  - skill (installed skill management with list/detail/remove/sync actions)
   - skill registry (config-bound list + add/edit window)
   - memory
   - archive (db-bound query + detail view)
@@ -49,6 +49,11 @@
 - Skill Registry panel features:
   - read/write `skills.sync_timeout` and registries
   - add/edit registries via `egui::Window`
+- Skill panel features:
+  - read installed skills from `klaw-skill` merged store view
+  - inspect source metadata and `SKILL.md` content
+  - sync managed registry installs from current `config.toml`
+  - uninstall local skills and registry-managed skills
 - Memory panel features:
   - read memory-layer aggregate stats via `klaw-memory` stats abstraction
   - show total/pinned/embedded/scope/recency/index metrics and top scopes
