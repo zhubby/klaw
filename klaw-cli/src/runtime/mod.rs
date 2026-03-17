@@ -7,18 +7,20 @@ use klaw_approval::{
 use klaw_channel::{ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
 use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
 use klaw_core::{
-    load_or_create_system_prompt, AgentLoop, AgentRuntimeError, CircuitBreakerPolicy,
-    DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
-    InMemoryCircuitBreaker, InMemoryIdempotencyStore, InMemoryTransport, InboundMessage,
-    MediaReference, OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
-    Subscription, TransportError,
+    compose_runtime_prompt, ensure_workspace_prompt_templates, AgentLoop, AgentRuntimeError,
+    CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader,
+    ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker, InMemoryIdempotencyStore,
+    InMemoryTransport, InboundMessage, MediaReference, OutboundMessage, QueueStrategy, RunLimits,
+    RuntimePromptInput, SessionSchedulingPolicy, SkillPromptEntry, Subscription, TransportError,
 };
 use klaw_heartbeat::{
     should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
 };
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
-use klaw_skill::{open_default_skill_store, InstalledSkill, RegistrySource, SkillStore};
+use klaw_skill::{
+    open_default_skill_store, InstalledSkill, RegistrySource, SkillSourceKind, SkillStore,
+};
 use klaw_storage::{open_default_store, CronStorage, DefaultSessionStore};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, CronManagerTool, LocalSearchTool, MemoryTool, ShellTool,
@@ -151,6 +153,18 @@ pub struct AssistantOutput {
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 const META_PROVIDER_KEY: &str = "agent.provider_id";
 const META_MODEL_KEY: &str = "agent.model";
+const WORKSPACE_PROMPT_DOC_FILES: [&str; 7] = [
+    "AGENTS.md",
+    "BOOTSTRAP.md",
+    "HEARTBEAT.md",
+    "IDENTITY.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "USER.md",
+];
+
+const RUNTIME_PROMPT_RULES: &str = "Prefer lazy-loading context from files and skills instead of relying on embedded long prompt bodies. Read only what is needed for the current user request.";
+const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "When local workspace docs are relevant, read them from disk on demand before acting. Do not assume their content without reading the files.";
 
 #[derive(Debug, Clone)]
 struct SessionRoute {
@@ -781,10 +795,16 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         None
     };
 
-    let data_dir_system_prompt = load_data_dir_system_prompt().await;
+    ensure_workspace_prompt_templates_if_possible().await;
     let loaded_skills = load_skills_system_prompt(config).await;
     let skill_names = loaded_skills.skill_names.clone();
-    let system_prompt = compose_system_prompt(data_dir_system_prompt, loaded_skills.prompt);
+    let system_prompt = compose_runtime_prompt(RuntimePromptInput {
+        runtime_metadata: None,
+        rules: Some(RUNTIME_PROMPT_RULES.to_string()),
+        local_docs: Some(format_workspace_docs_for_prompt()),
+        additional_instructions: Some(RUNTIME_PROMPT_EXTRA_INSTRUCTIONS.to_string()),
+        skills: loaded_skills.skill_entries,
+    });
 
     let runtime = AgentLoop::new_with_identity(
         RunLimits {
@@ -886,10 +906,16 @@ pub async fn reload_runtime_skills_prompt(
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let store = ConfigStore::open(None)?;
     let snapshot = store.snapshot();
-    let data_dir_system_prompt = load_data_dir_system_prompt().await;
+    ensure_workspace_prompt_templates_if_possible().await;
     let loaded_skills = load_skills_system_prompt(&snapshot.config).await;
     let skill_names = loaded_skills.skill_names.clone();
-    let system_prompt = compose_system_prompt(data_dir_system_prompt, loaded_skills.prompt);
+    let system_prompt = compose_runtime_prompt(RuntimePromptInput {
+        runtime_metadata: None,
+        rules: Some(RUNTIME_PROMPT_RULES.to_string()),
+        local_docs: Some(format_workspace_docs_for_prompt()),
+        additional_instructions: Some(RUNTIME_PROMPT_EXTRA_INSTRUCTIONS.to_string()),
+        skills: loaded_skills.skill_entries,
+    });
     runtime.runtime.set_system_prompt(system_prompt);
     info!(skills = ?skill_names, "reloaded runtime skills prompt");
     Ok(skill_names)
@@ -897,7 +923,7 @@ pub async fn reload_runtime_skills_prompt(
 
 #[derive(Debug, Clone, Default)]
 struct LoadedSkillsPrompt {
-    prompt: Option<String>,
+    skill_entries: Vec<SkillPromptEntry>,
     skill_names: Vec<String>,
 }
 
@@ -956,63 +982,87 @@ async fn load_skills_system_prompt(config: &AppConfig) -> LoadedSkillsPrompt {
         }
     };
 
-    if skills.is_empty() {
-        info!("no local skills found for system prompt");
-        return LoadedSkillsPrompt::default();
-    }
-
     let skill_names: Vec<String> = skills.iter().map(|skill| skill.name.clone()).collect();
     info!(
         count = skill_names.len(),
         names = ?skill_names,
-        "loaded local skills for system prompt"
+        "loaded local skills for runtime prompt shortlist"
     );
 
-    let mut prompt = String::from(
-        "You must follow the following loaded skill instructions when they are relevant to the user's request.\n",
-    );
-    for skill in skills {
-        prompt.push_str("\n---\n");
-        prompt.push_str("Skill: ");
-        prompt.push_str(&skill.name);
-        prompt.push('\n');
-        prompt.push_str(&skill.content);
-        if !prompt.ends_with('\n') {
-            prompt.push('\n');
-        }
-    }
+    let skill_entries = skills
+        .into_iter()
+        .map(|skill| SkillPromptEntry {
+            name: skill.name,
+            path: skill.local_path.display().to_string(),
+            description: extract_skill_short_description(&skill.content),
+            source: format_skill_source(&skill.source_kind, skill.registry.as_deref(), skill.stale),
+        })
+        .collect();
+
     LoadedSkillsPrompt {
-        prompt: Some(prompt),
+        skill_entries,
         skill_names,
     }
 }
 
-async fn load_data_dir_system_prompt() -> Option<String> {
-    match load_or_create_system_prompt().await {
-        Ok(prompt) => Some(prompt),
-        Err(err) => {
-            warn!("failed to load SYSTEM.md from data dir: {err}");
-            None
-        }
+fn extract_skill_short_description(markdown: &str) -> String {
+    let line = markdown
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .unwrap_or_default();
+
+    if line.is_empty() {
+        return "no description".to_string();
+    }
+
+    const MAX_LEN: usize = 180;
+    if line.chars().count() <= MAX_LEN {
+        return line.to_string();
+    }
+
+    let mut trimmed = line.chars().take(MAX_LEN).collect::<String>();
+    trimmed.push_str("...");
+    trimmed
+}
+
+fn format_skill_source(
+    source_kind: &SkillSourceKind,
+    registry: Option<&str>,
+    stale: Option<bool>,
+) -> String {
+    let mut source = match source_kind {
+        SkillSourceKind::Local => "workspace/local".to_string(),
+        SkillSourceKind::Registry => format!(
+            "managed/{}",
+            registry
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("registry")
+        ),
+    };
+    if stale.unwrap_or(false) {
+        source.push_str(" (stale)");
+    }
+    source
+}
+
+async fn ensure_workspace_prompt_templates_if_possible() {
+    if let Err(err) = ensure_workspace_prompt_templates().await {
+        warn!("failed to initialize workspace prompt templates: {err}");
     }
 }
 
-fn compose_system_prompt(
-    data_dir_system_prompt: Option<String>,
-    runtime_system_prompt: Option<String>,
-) -> Option<String> {
-    let base = data_dir_system_prompt
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let runtime = runtime_system_prompt
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    match (base, runtime) {
-        (Some(base), Some(runtime)) => Some(format!("{base}\n\n{runtime}")),
-        (Some(base), None) => Some(base),
-        (None, Some(runtime)) => Some(runtime),
-        (None, None) => None,
-    }
+fn format_workspace_docs_for_prompt() -> String {
+    let base = std::env::var("HOME")
+        .map(|home| format!("{home}/.klaw/workspace"))
+        .unwrap_or_else(|_| "~/.klaw/workspace".to_string());
+    let docs = WORKSPACE_PROMPT_DOC_FILES
+        .iter()
+        .map(|name| format!("- {base}/{name}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("Read these workspace docs on demand when relevant:\n{docs}")
 }
 
 pub async fn submit_and_get_output(

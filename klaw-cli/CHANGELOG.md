@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2026-03-17
+
+### Changed
+
+- runtime system prompt 组装改为使用 `klaw-core::compose_runtime_prompt`，不再把已安装 skills 的 `SKILL.md` 全文拼接进 prompt
+- runtime 启动与 skills prompt 热重载时会调用 `ensure_workspace_prompt_templates`，确保 `~/.klaw/workspace` 下的引导文档模板存在（仅缺失时写入）
+- runtime prompt 现在注入 skills shortlist（name/path/source/description）与 workspace docs 列表，指引模型按需读取文件而不是预加载全文
+
 ## 2026-03-16
 
 ### Changed

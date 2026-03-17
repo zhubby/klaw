@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-17
+
+### Changed
+- `run_agent_execution` now emits a `debug` log before each `provider.chat` call with the outbound request payload shape (`messages`, `tools`, selected model override, and `ChatOptions`) to make model request inspection easier during troubleshooting
+
 ## 2026-03-15
 
 ### Changed

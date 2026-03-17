@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::warn;
+use tracing::{debug, warn};
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 
@@ -172,28 +172,38 @@ pub async fn run_agent_execution(
             break;
         }
         iteration = iteration.saturating_add(1);
+        let chat_options = ChatOptions {
+            temperature: 0.2,
+            max_tokens: None,
+            max_output_tokens: None,
+            previous_response_id: None,
+            instructions: None,
+            metadata: None,
+            include: None,
+            store: None,
+            parallel_tool_calls: None,
+            tool_choice: None,
+            text: None,
+            reasoning: None,
+            truncation: None,
+            user: None,
+            service_tier: None,
+        };
+        debug!(
+            iteration,
+            session_key = %input.session_key,
+            model_override = ?input.model,
+            messages = ?llm_messages,
+            tools = ?tool_defs,
+            options = ?chat_options,
+            "sending chat request to model provider"
+        );
         let llm_response = provider
             .chat(
                 llm_messages.clone(),
                 tool_defs.clone(),
                 input.model.as_deref(),
-                ChatOptions {
-                    temperature: 0.2,
-                    max_tokens: None,
-                    max_output_tokens: None,
-                    previous_response_id: None,
-                    instructions: None,
-                    metadata: None,
-                    include: None,
-                    store: None,
-                    parallel_tool_calls: None,
-                    tool_choice: None,
-                    text: None,
-                    reasoning: None,
-                    truncation: None,
-                    user: None,
-                    service_tier: None,
-                },
+                chat_options,
             )
             .await?;
 
