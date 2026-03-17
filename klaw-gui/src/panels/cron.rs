@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::request_run_cron_now;
+use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
 use klaw_cron::{
     CronError, CronJob, CronListQuery, CronScheduleKind, CronTaskRun, NewCronJob,
     SqliteCronManager, UpdateCronJobPatch,
@@ -404,26 +405,18 @@ impl CronPanel {
                         .show(ui, |ui| {
                             ui.strong("Run ID");
                             ui.strong("Status");
-                            ui.strong("Scheduled(ms)");
-                            ui.strong("Started(ms)");
-                            ui.strong("Finished(ms)");
+                            ui.strong("Scheduled At");
+                            ui.strong("Started At");
+                            ui.strong("Finished At");
                             ui.strong("Error");
                             ui.end_row();
 
                             for run in &self.runs {
                                 ui.label(&run.id);
                                 ui.label(run.status.as_str());
-                                ui.label(run.scheduled_at_ms.to_string());
-                                ui.label(
-                                    run.started_at_ms
-                                        .map(|v: i64| v.to_string())
-                                        .unwrap_or_default(),
-                                );
-                                ui.label(
-                                    run.finished_at_ms
-                                        .map(|v: i64| v.to_string())
-                                        .unwrap_or_default(),
-                                );
+                                ui.label(format_timestamp_millis(run.scheduled_at_ms));
+                                ui.label(format_optional_timestamp_millis(run.started_at_ms));
+                                ui.label(format_optional_timestamp_millis(run.finished_at_ms));
                                 ui.label(run.error_message.clone().unwrap_or_default());
                                 ui.end_row();
                             }
@@ -476,9 +469,9 @@ impl PanelRenderer for CronPanel {
                             ui.strong("Kind");
                             ui.strong("Expr");
                             ui.strong("Enabled");
-                            ui.strong("Next Run(ms)");
-                            ui.strong("Last Run(ms)");
-                            ui.strong("Updated(ms)");
+                            ui.strong("Next Run At");
+                            ui.strong("Last Run At");
+                            ui.strong("Updated At");
                             ui.strong("Actions");
                             ui.end_row();
 
@@ -492,13 +485,9 @@ impl PanelRenderer for CronPanel {
                                 });
                                 ui.label(job.schedule_expr.clone());
                                 ui.label(if job.enabled { "yes" } else { "no" });
-                                ui.label(job.next_run_at_ms.to_string());
-                                ui.label(
-                                    job.last_run_at_ms
-                                        .map(|v| v.to_string())
-                                        .unwrap_or_default(),
-                                );
-                                ui.label(job.updated_at_ms.to_string());
+                                ui.label(format_timestamp_millis(job.next_run_at_ms));
+                                ui.label(format_optional_timestamp_millis(job.last_run_at_ms));
+                                ui.label(format_timestamp_millis(job.updated_at_ms));
 
                                 ui.horizontal(|ui| {
                                     if ui.button("Runs").clicked() {

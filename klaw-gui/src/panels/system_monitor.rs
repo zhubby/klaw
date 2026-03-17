@@ -1,4 +1,5 @@
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::time_format::format_timestamp_seconds;
 use egui_extras::{Size, StripBuilder};
 use klaw_config::ConfigStore;
 use std::fs;
@@ -253,7 +254,7 @@ impl PanelRenderer for SystemMonitorPanel {
                                     info_row(
                                         ui,
                                         "System Boot Time",
-                                        format!("unix: {}", System::boot_time()),
+                                        format_timestamp_seconds(System::boot_time()),
                                     );
                                     info_row(ui, "Load Average", format_load_avg(load_avg));
                                     info_row(

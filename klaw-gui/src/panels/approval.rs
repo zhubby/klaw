@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::time_format::format_timestamp_millis;
 use klaw_approval::{
     ApprovalListQuery, ApprovalManager, ApprovalResolveDecision, ApprovalStatus,
     SqliteApprovalManager,
@@ -165,7 +166,7 @@ impl PanelRenderer for ApprovalPanel {
                         ui.strong("Status");
                         ui.strong("Requested By");
                         ui.strong("Approved By");
-                        ui.strong("Expires(ms)");
+                        ui.strong("Expires At");
                         ui.strong("Preview");
                         ui.strong("Actions");
                         ui.end_row();
@@ -179,7 +180,7 @@ impl PanelRenderer for ApprovalPanel {
                             ui.label(approval.status.as_str());
                             ui.label(&approval.requested_by);
                             ui.label(approval.approved_by.as_deref().unwrap_or(""));
-                            ui.label(approval.expires_at_ms.to_string());
+                            ui.label(format_timestamp_millis(approval.expires_at_ms));
                             ui.label(&approval.command_preview);
                             ui.horizontal(|ui| {
                                 if ui.small_button("Approve").clicked() {

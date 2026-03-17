@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use crate::time_format::format_timestamp_millis;
 use egui_file_dialog::FileDialog;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_skill::{
@@ -498,7 +499,10 @@ impl SkillManagePanel {
                     ));
                 });
                 ui.label(format!("Path: {}", record.local_path.display()));
-                ui.label(format!("Updated (ms): {}", record.updated_at_ms));
+                ui.label(format!(
+                    "Updated: {}",
+                    format_timestamp_millis(record.updated_at_ms)
+                ));
                 ui.separator();
 
                 let mut content = record.content.clone();
@@ -713,7 +717,7 @@ impl PanelRenderer for SkillManagePanel {
                             ui.strong("Source");
                             ui.strong("Registry");
                             ui.strong("State");
-                            ui.strong("Updated (ms)");
+                            ui.strong("Updated");
                             ui.strong("Path");
                             ui.strong("Actions");
                             ui.end_row();
@@ -723,7 +727,7 @@ impl PanelRenderer for SkillManagePanel {
                                 ui.label(Self::source_label(&item));
                                 ui.label(item.registry.as_deref().unwrap_or("-"));
                                 ui.label(Self::stale_label(&item));
-                                ui.monospace(item.updated_at_ms.to_string());
+                                ui.monospace(format_timestamp_millis(item.updated_at_ms));
                                 ui.label(item.local_path.display().to_string());
 
                                 ui.horizontal(|ui| {

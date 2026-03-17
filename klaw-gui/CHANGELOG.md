@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-17
+
+### Changed
+
+- unified GUI timestamp display format to `YYYY/MM/DD HH:MM:SS` across session/approval/archive/cron/skill/memory panels, and formatted system boot time in system monitor with the same style
+
 ## 2026-03-16
 
 ### Changed

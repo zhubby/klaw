@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::time_format::format_timestamp_millis;
 use klaw_session::{
     SessionError, SessionIndex, SessionListQuery, SessionManager, SqliteSessionManager,
 };
@@ -99,7 +100,7 @@ impl PanelRenderer for SessionPanel {
                         ui.strong("Provider");
                         ui.strong("Model");
                         ui.strong("Turns");
-                        ui.strong("Updated(ms)");
+                        ui.strong("Updated At");
                         ui.strong("JSONL Path");
                         ui.end_row();
 
@@ -111,7 +112,7 @@ impl PanelRenderer for SessionPanel {
                             ui.label(session.model_provider.as_deref().unwrap_or(""));
                             ui.label(session.model.as_deref().unwrap_or(""));
                             ui.label(session.turn_count.to_string());
-                            ui.label(session.updated_at_ms.to_string());
+                            ui.label(format_timestamp_millis(session.updated_at_ms));
                             ui.label(&session.jsonl_path);
                             ui.end_row();
                         }

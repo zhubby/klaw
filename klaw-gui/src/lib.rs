@@ -5,6 +5,7 @@ mod panels;
 mod runtime_bridge;
 mod state;
 mod theme;
+mod time_format;
 mod ui;
 mod widgets;
 

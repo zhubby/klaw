@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::time_format::format_timestamp_millis;
 use klaw_archive::{
     open_default_archive_service, ArchiveError, ArchiveMediaKind, ArchiveQuery, ArchiveRecord,
     ArchiveService, ArchiveSourceKind, SqliteArchiveService,
@@ -136,7 +137,7 @@ impl PanelRenderer for ArchivePanel {
                         ui.strong("Filename");
                         ui.strong("MIME");
                         ui.strong("Size");
-                        ui.strong("Created(ms)");
+                        ui.strong("Created At");
                         ui.strong("Actions");
                         ui.end_row();
 
@@ -148,7 +149,7 @@ impl PanelRenderer for ArchivePanel {
                             ui.label(item.original_filename.as_deref().unwrap_or(""));
                             ui.label(item.mime_type.as_deref().unwrap_or(""));
                             ui.label(item.size_bytes.to_string());
-                            ui.label(item.created_at_ms.to_string());
+                            ui.label(format_timestamp_millis(item.created_at_ms));
                             if ui.button("Details").clicked() {
                                 self.selected_id = Some(item.id.clone());
                             }
@@ -184,7 +185,10 @@ impl PanelRenderer for ArchivePanel {
                         "message_id: {}",
                         item.message_id.unwrap_or_default()
                     ));
-                    ui.label(format!("created_at_ms: {}", item.created_at_ms));
+                    ui.label(format!(
+                        "created_at: {}",
+                        format_timestamp_millis(item.created_at_ms)
+                    ));
                     ui.separator();
                     ui.label("metadata_json");
                     let mut metadata_json = item.metadata_json;

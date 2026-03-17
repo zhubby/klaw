@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::time_format::format_timestamp_millis;
 use klaw_memory::{MemoryError, MemoryStats, SqliteMemoryStatsService};
 use std::future::Future;
 use std::thread;
@@ -101,29 +102,29 @@ impl PanelRenderer for MemoryPanel {
                 );
                 ui.end_row();
 
-                ui.label("Created Min (ms)");
+                ui.label("Created Min");
                 ui.monospace(
                     stats
                         .created_min_ms
-                        .map(|v| v.to_string())
+                        .map(format_timestamp_millis)
                         .unwrap_or_else(|| "-".to_string()),
                 );
                 ui.end_row();
 
-                ui.label("Created Max (ms)");
+                ui.label("Created Max");
                 ui.monospace(
                     stats
                         .created_max_ms
-                        .map(|v| v.to_string())
+                        .map(format_timestamp_millis)
                         .unwrap_or_else(|| "-".to_string()),
                 );
                 ui.end_row();
 
-                ui.label("Updated Max (ms)");
+                ui.label("Updated Max");
                 ui.monospace(
                     stats
                         .updated_max_ms
-                        .map(|v| v.to_string())
+                        .map(format_timestamp_millis)
                         .unwrap_or_else(|| "-".to_string()),
                 );
                 ui.end_row();
