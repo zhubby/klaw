@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-03-17
+
+### Added
+- added workspace prompt template bootstrap APIs in `prompt.rs` that initialize `~/.klaw/workspace` with built-in `AGENTS.md`/`BOOTSTRAP.md`/`HEARTBEAT.md`/`IDENTITY.md`/`SOUL.md`/`TOOLS.md`/`USER.md` files (create-only, no overwrite)
+- added runtime prompt composition helpers for OpenClaw-style skills lazy loading:
+  - `format_skills_for_prompt` (shortlist only)
+  - `skills_lazy_load_instructions`
+  - `compose_runtime_prompt`
+
+### Changed
+- changed `load_or_create_system_prompt*` behavior to a compatibility shim that only ensures workspace prompt templates and no longer reads/writes `SYSTEM.md`
+
+### Removed
+- removed `SYSTEM.md` default-prompt constants from `klaw-core` public exports
+
 ## 2026-03-16
 
 ### Changed

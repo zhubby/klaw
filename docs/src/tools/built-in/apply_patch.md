@@ -68,7 +68,7 @@
 ```toml
 [tools.apply_patch]
 enabled = true
-workspace = "/path/to/workspace"  # 可选，默认从 metadata 获取
+workspace = "/path/to/workspace"  # 可选，未设置时按工作空间解析链回退
 allow_absolute_paths = false      # 是否允许绝对路径
 allowed_roots = ["/allowed/root"] # 允许的额外根目录
 ```
@@ -79,7 +79,7 @@ allowed_roots = ["/allowed/root"] # 允许的额外根目录
 
 1. 优先从 `ctx.metadata["workspace"]` 获取工作空间
 2. 否则使用配置中的 `workspace` 字段
-3. 最后回退到用户主目录（`$HOME`）
+3. 最后回退到数据目录下的 `workspace`：`(<storage.root_dir 或 ~/.klaw/data>)/workspace`
 
 ### 路径验证规则
 

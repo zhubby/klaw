@@ -378,6 +378,7 @@ tools.shell.enabled = false
 **必填**: 否
 
 工作目录。
+未显式设置且请求 metadata 也未提供 `workspace` 时，将回退到 `(<storage.root_dir 或 ~/.klaw/data>)/workspace`。
 
 ```toml
 tools.shell.workspace = "/path/to/workspace"
@@ -481,6 +482,7 @@ tools.apply_patch.enabled = false
 **必填**: 否
 
 工作目录。
+未显式设置且请求 metadata 也未提供 `workspace` 时，将回退到 `(<storage.root_dir 或 ~/.klaw/data>)/workspace`。
 
 ```toml
 tools.apply_patch.workspace = "/path/to/project"

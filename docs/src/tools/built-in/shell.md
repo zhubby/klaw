@@ -84,7 +84,7 @@ max_output_bytes = 131072
 
 ## 路径与边界控制
 
-- 基准目录：`metadata["workspace"]`（否则当前目录）
+- 基准目录：`metadata["workspace"]`（否则 `tools.shell.workspace`，再否则 `(<storage.root_dir 或 ~/.klaw/data>)/workspace`）
 - `workdir` 相对路径会基于 workspace 解析并 canonicalize
 - 默认禁止越出 workspace
 - 仅当 `sandbox_permissions=require_escalated` 且审批通过时允许 workspace 外目录

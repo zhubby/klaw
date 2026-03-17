@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-17
+
+### Changed
+- `shell` 与 `apply_patch` 的 workspace 回退链调整为：`metadata.workspace` -> `tools.*.workspace` -> `(<storage.root_dir 或 ~/.klaw/data>)/workspace`
+- `shell` 与 `apply_patch` 在使用数据目录 workspace 作为回退时会自动创建该目录并 canonicalize
+
 ## 2026-03-16
 
 ### Changed

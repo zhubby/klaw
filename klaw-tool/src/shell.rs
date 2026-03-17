@@ -22,6 +22,7 @@ const APPROVAL_TTL_MINUTES: i64 = 10;
 /// Shell 工具，执行本地 shell 命令并返回结构化输出。
 pub struct ShellTool {
     config: klaw_config::ShellConfig,
+    storage_root_dir: Option<String>,
     approval_manager: Option<SqliteApprovalManager>,
 }
 
@@ -64,6 +65,7 @@ impl ShellTool {
     pub fn new(config: &AppConfig) -> Self {
         Self {
             config: config.tools.shell.clone(),
+            storage_root_dir: config.storage.root_dir.clone(),
             approval_manager: None,
         }
     }
@@ -72,6 +74,7 @@ impl ShellTool {
     pub fn with_store(config: &AppConfig, store: klaw_storage::DefaultSessionStore) -> Self {
         Self {
             config: config.tools.shell.clone(),
+            storage_root_dir: config.storage.root_dir.clone(),
             approval_manager: Some(SqliteApprovalManager::from_store(store)),
         }
     }
@@ -80,6 +83,7 @@ impl ShellTool {
     pub fn with_config(config: klaw_config::ShellConfig) -> Self {
         Self {
             config,
+            storage_root_dir: None,
             approval_manager: None,
         }
     }
@@ -91,6 +95,7 @@ impl ShellTool {
     ) -> Self {
         Self {
             config,
+            storage_root_dir: None,
             approval_manager: Some(SqliteApprovalManager::from_store(store)),
         }
     }
@@ -102,6 +107,7 @@ impl ShellTool {
         config.approval_policy = ShellApprovalPolicy::Never;
         Self {
             config,
+            storage_root_dir: None,
             approval_manager: None,
         }
     }
@@ -271,9 +277,31 @@ impl ShellTool {
                 ToolError::ExecutionFailed(format!("invalid shell workspace path: {err}"))
             });
         }
-        std::env::var("HOME")
-            .map(PathBuf::from)
-            .map_err(|err| ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}")))
+        Self::resolve_data_workspace(self.storage_root_dir.as_deref())
+    }
+
+    fn resolve_data_workspace(storage_root: Option<&str>) -> Result<PathBuf, ToolError> {
+        let root = if let Some(root) = storage_root.map(str::trim).filter(|root| !root.is_empty()) {
+            PathBuf::from(root)
+        } else {
+            let home = std::env::var("HOME").map_err(|err| {
+                ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}"))
+            })?;
+            PathBuf::from(home).join(".klaw").join("data")
+        };
+        let workspace = root.join("workspace");
+        std::fs::create_dir_all(&workspace).map_err(|err| {
+            ToolError::ExecutionFailed(format!(
+                "failed to ensure data workspace `{}`: {err}",
+                workspace.display()
+            ))
+        })?;
+        std::fs::canonicalize(&workspace).map_err(|err| {
+            ToolError::ExecutionFailed(format!(
+                "failed to resolve data workspace `{}`: {err}",
+                workspace.display()
+            ))
+        })
     }
 
     fn resolve_cwd(request: &ShellRequest, base: &Path) -> Result<PathBuf, ToolError> {
@@ -524,9 +552,17 @@ mod tests {
     use klaw_storage::{ApprovalStatus, DefaultSessionStore, SessionStorage, StoragePaths};
     use serde_json::json;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::{collections::BTreeMap, fs};
+    use std::{collections::BTreeMap, fs, path::PathBuf};
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn test_storage_root() -> PathBuf {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "klaw-shell-test-root-{}-{suffix}",
+            ShellTool::now_ms()
+        ))
+    }
 
     fn base_config() -> AppConfig {
         let mut providers = BTreeMap::new();
@@ -567,6 +603,7 @@ mod tests {
             max_timeout_ms: 5_000,
             max_output_bytes: 4 * 1024,
         };
+        cfg.storage.root_dir = Some(test_storage_root().to_string_lossy().to_string());
         cfg
     }
 
@@ -589,6 +626,7 @@ mod tests {
             max_timeout_ms: 5_000,
             max_output_bytes: 4 * 1024,
         };
+        cfg.storage.root_dir = Some(test_storage_root().to_string_lossy().to_string());
         cfg
     }
 
@@ -1021,5 +1059,32 @@ mod tests {
         assert_eq!(consumed.status, ApprovalStatus::Consumed);
 
         let _ = fs::remove_file("file.txt");
+    }
+
+    #[tokio::test]
+    async fn test_shell_falls_back_to_storage_root_workspace_when_unset() {
+        let root_dir = std::env::temp_dir().join(format!(
+            "klaw-shell-storage-root-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut cfg = permissive_test_config();
+        cfg.tools.shell.workspace = None;
+        cfg.storage.root_dir = Some(root_dir.to_string_lossy().to_string());
+        let tool = ShellTool::new(&cfg);
+
+        let result = tool
+            .execute(json!({"command": "pwd"}), &base_ctx())
+            .await
+            .unwrap();
+        let expected_workspace = root_dir.join("workspace");
+        assert!(expected_workspace.is_dir());
+        assert!(result
+            .content_for_model
+            .contains(expected_workspace.to_string_lossy().as_ref()));
+
+        let _ = fs::remove_dir_all(root_dir);
     }
 }

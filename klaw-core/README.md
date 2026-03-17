@@ -11,6 +11,8 @@
 - provide the main `AgentLoop` runtime
 - route per-message provider/model selection from inbound metadata (`agent.provider_id`, `agent.model`)
 - support runtime system-prompt hot reload through `AgentLoop::set_system_prompt`
+- bootstrap workspace prompt templates under `~/.klaw/workspace` on demand
+- compose runtime prompt sections with skill shortlists and lazy-load skill instructions
 
 ## Notes
 

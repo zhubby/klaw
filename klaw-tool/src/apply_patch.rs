@@ -14,6 +14,7 @@ const MAX_CONTENT_BYTES: usize = 1_000_000;
 
 pub struct ApplyPatchTool {
     config: ApplyPatchConfig,
+    storage_root_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +50,7 @@ impl ApplyPatchTool {
     pub fn new(config: &AppConfig) -> Self {
         Self {
             config: config.tools.apply_patch.clone(),
+            storage_root_dir: config.storage.root_dir.clone(),
         }
     }
 
@@ -114,9 +116,31 @@ impl ApplyPatchTool {
                 ToolError::ExecutionFailed(format!("invalid apply_patch workspace path: {err}"))
             });
         }
-        std::env::var("HOME")
-            .map(PathBuf::from)
-            .map_err(|err| ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}")))
+        Self::resolve_data_workspace(self.storage_root_dir.as_deref())
+    }
+
+    fn resolve_data_workspace(storage_root: Option<&str>) -> Result<PathBuf, ToolError> {
+        let root = if let Some(root) = storage_root.map(str::trim).filter(|root| !root.is_empty()) {
+            PathBuf::from(root)
+        } else {
+            let home = std::env::var("HOME").map_err(|err| {
+                ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}"))
+            })?;
+            PathBuf::from(home).join(".klaw").join("data")
+        };
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).map_err(|err| {
+            ToolError::ExecutionFailed(format!(
+                "failed to ensure data workspace `{}`: {err}",
+                workspace.display()
+            ))
+        })?;
+        fs::canonicalize(&workspace).map_err(|err| {
+            ToolError::ExecutionFailed(format!(
+                "failed to resolve data workspace `{}`: {err}",
+                workspace.display()
+            ))
+        })
     }
 
     fn resolve_workspace_path(&self, base: &Path, input_path: &str) -> Result<PathBuf, ToolError> {
@@ -377,6 +401,7 @@ impl Default for ApplyPatchTool {
     fn default() -> Self {
         Self {
             config: ApplyPatchConfig::default(),
+            storage_root_dir: None,
         }
     }
 }
@@ -516,6 +541,13 @@ mod tests {
         }
     }
 
+    fn test_ctx_without_workspace() -> ToolContext {
+        ToolContext {
+            session_key: "s1".to_string(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
     fn test_tool() -> ApplyPatchTool {
         ApplyPatchTool::new(&AppConfig::default())
     }
@@ -652,5 +684,28 @@ mod tests {
         .unwrap();
 
         assert_eq!(fs::read_to_string(outside_file).unwrap(), "ok");
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_storage_root_workspace_when_unset() {
+        let root_dir = temp_workspace();
+        let mut config = AppConfig::default();
+        config.tools.apply_patch.workspace = None;
+        config.storage.root_dir = Some(root_dir.to_string_lossy().to_string());
+        let tool = ApplyPatchTool::new(&config);
+
+        tool.execute(
+            json!({
+                "operations": [
+                    {"op": "add_file", "path": "fallback.txt", "content": "ok"}
+                ]
+            }),
+            &test_ctx_without_workspace(),
+        )
+        .await
+        .unwrap();
+
+        let expected = root_dir.join("workspace").join("fallback.txt");
+        assert_eq!(fs::read_to_string(expected).unwrap(), "ok");
     }
 }
