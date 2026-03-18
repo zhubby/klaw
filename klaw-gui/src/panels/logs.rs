@@ -227,7 +227,9 @@ impl PanelRenderer for LogsPanel {
             ui.add(egui::TextEdit::singleline(&mut self.export_path).desired_width(320.0));
             if ui.button("Export").clicked() {
                 match self.export_all() {
-                    Ok(path) => notifications.success(format!("Logs exported to {}", path.display())),
+                    Ok(path) => {
+                        notifications.success(format!("Logs exported to {}", path.display()))
+                    }
                     Err(err) => notifications.error(err),
                 }
             }

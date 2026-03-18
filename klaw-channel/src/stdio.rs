@@ -191,6 +191,7 @@ mod tests {
             &ChannelResponse {
                 content: "done".to_string(),
                 reasoning: Some("step1\nstep2".to_string()),
+                metadata: std::collections::BTreeMap::new(),
             },
             false,
         );
@@ -204,6 +205,7 @@ mod tests {
             &ChannelResponse {
                 content: "done".to_string(),
                 reasoning: Some("step1\nstep2".to_string()),
+                metadata: std::collections::BTreeMap::new(),
             },
             true,
         );

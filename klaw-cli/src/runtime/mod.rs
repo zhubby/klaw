@@ -124,6 +124,7 @@ impl ChannelRuntime for SharedChannelRuntime {
         Ok(maybe_output.map(|output| ChannelResponse {
             content: output.content,
             reasoning: output.reasoning,
+            metadata: output.metadata,
         }))
     }
 
@@ -148,6 +149,7 @@ impl ChannelRuntime for SharedChannelRuntime {
 pub struct AssistantOutput {
     pub content: String,
     pub reasoning: Option<String>,
+    pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
@@ -361,6 +363,7 @@ async fn handle_im_command(
         "help" => ChannelResponse {
             content: render_help_text(runtime),
             reasoning: None,
+            metadata: BTreeMap::new(),
         },
         "new" => {
             let new_session_key = format!("{base_session_key}:{}", Uuid::new_v4().simple());
@@ -383,6 +386,7 @@ async fn handle_im_command(
                     route.model_provider, route.model
                 ),
                 reasoning: None,
+                metadata: BTreeMap::new(),
             }
         }
         "model-provider" => {
@@ -391,6 +395,7 @@ async fn handle_im_command(
                     content: "ℹ️ Only one provider is configured, so switching is not required."
                         .to_string(),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 }));
             }
             if let Some(provider_id) = first_arg_token(arg) {
@@ -406,6 +411,7 @@ async fn handle_im_command(
                             "❌ Unknown provider: `{provider_id}`\n🧩 Available: {all}"
                         ),
                         reasoning: None,
+                        metadata: BTreeMap::new(),
                     }));
                 };
                 let sessions = session_manager(runtime);
@@ -432,6 +438,7 @@ async fn handle_im_command(
                         "✅ **Provider switched**\n\n🧩 Provider: `{provider_id}`\n🤖 Model: `{default_model}`"
                     ),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 }
             } else {
                 let lines = runtime
@@ -449,6 +456,7 @@ async fn handle_im_command(
                 ChannelResponse {
                     content: format!("🧩 **Providers**\n\n{lines}"),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 }
             }
         }
@@ -458,6 +466,7 @@ async fn handle_im_command(
                     return Ok(Some(ChannelResponse {
                         content: "❌ Model name cannot be empty.".to_string(),
                         reasoning: None,
+                        metadata: BTreeMap::new(),
                     }));
                 }
                 let sessions = session_manager(runtime);
@@ -473,6 +482,7 @@ async fn handle_im_command(
                         route.model_provider
                     ),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 }
             } else {
                 ChannelResponse {
@@ -481,6 +491,7 @@ async fn handle_im_command(
                         route.model_provider, route.model
                     ),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 }
             }
         }
@@ -489,6 +500,7 @@ async fn handle_im_command(
                 return Ok(Some(ChannelResponse {
                     content: "❌ Usage: `/approve <approval_id>`".to_string(),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 }));
             };
             let manager = approval_manager(runtime);
@@ -498,6 +510,7 @@ async fn handle_im_command(
                     return Ok(Some(ChannelResponse {
                         content: format!("❌ Approval not found: `{approval_id}`"),
                         reasoning: None,
+                        metadata: BTreeMap::new(),
                     }));
                 }
             };
@@ -509,6 +522,7 @@ async fn handle_im_command(
                         "❌ Approval `{approval_id}` does not belong to current session."
                     ),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 }));
             }
             match approval.status {
@@ -525,6 +539,7 @@ async fn handle_im_command(
                         return Ok(Some(ChannelResponse {
                             content: format!("⌛ Approval expired: `{approval_id}`"),
                             reasoning: None,
+                            metadata: BTreeMap::new(),
                         }));
                     }
                     let approved = manager
@@ -543,6 +558,7 @@ async fn handle_im_command(
                                 approved.id, approved.tool_name
                             ),
                             reasoning: None,
+                            metadata: BTreeMap::new(),
                         }));
                     }
                     let execution_result = execute_approved_shell(
@@ -579,6 +595,7 @@ async fn handle_im_command(
                         Some(output) => ChannelResponse {
                             content: output.content,
                             reasoning: output.reasoning,
+                            metadata: output.metadata,
                         },
                         None => ChannelResponse {
                             content: format!(
@@ -586,6 +603,7 @@ async fn handle_im_command(
                                 execution_result
                             ),
                             reasoning: None,
+                            metadata: BTreeMap::new(),
                         },
                     }
                 }
@@ -595,6 +613,7 @@ async fn handle_im_command(
                         other.as_str()
                     ),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 },
             }
         }
@@ -603,6 +622,7 @@ async fn handle_im_command(
                 return Ok(Some(ChannelResponse {
                     content: "❌ Usage: `/reject <approval_id>`".to_string(),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 }));
             };
             let manager = approval_manager(runtime);
@@ -612,6 +632,7 @@ async fn handle_im_command(
                     return Ok(Some(ChannelResponse {
                         content: format!("❌ Approval not found: `{approval_id}`"),
                         reasoning: None,
+                        metadata: BTreeMap::new(),
                     }));
                 }
             };
@@ -623,6 +644,7 @@ async fn handle_im_command(
                         "❌ Approval `{approval_id}` does not belong to current session."
                     ),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 }));
             }
             match approval.status {
@@ -639,6 +661,7 @@ async fn handle_im_command(
                         return Ok(Some(ChannelResponse {
                             content: format!("⌛ Approval expired: `{approval_id}`"),
                             reasoning: None,
+                            metadata: BTreeMap::new(),
                         }));
                     }
                     manager
@@ -655,6 +678,7 @@ async fn handle_im_command(
                             approval.tool_name
                         ),
                         reasoning: None,
+                        metadata: BTreeMap::new(),
                     }
                 }
                 other => ChannelResponse {
@@ -663,6 +687,7 @@ async fn handle_im_command(
                         other.as_str()
                     ),
                     reasoning: None,
+                    metadata: BTreeMap::new(),
                 },
             }
         }
@@ -671,6 +696,7 @@ async fn handle_im_command(
             ChannelResponse {
                 content: format!("❌ Unknown command: `/{other}`\n\n{help}"),
                 reasoning: None,
+                metadata: BTreeMap::new(),
             }
         }
     };
@@ -1162,6 +1188,7 @@ pub async fn submit_and_get_output(
             Ok(Some(AssistantOutput {
                 content: msg.payload.content.clone(),
                 reasoning,
+                metadata: msg.payload.metadata.clone(),
             }))
         }
         None => {

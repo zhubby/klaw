@@ -382,7 +382,9 @@ mod tests {
             Some(sender),
         );
 
-        let written = writer.write(b"fanout-check").expect("fanout write should succeed");
+        let written = writer
+            .write(b"fanout-check")
+            .expect("fanout write should succeed");
         assert_eq!(written, 12);
         writer.flush().expect("flush should succeed");
         let _ = std::fs::remove_file(path);

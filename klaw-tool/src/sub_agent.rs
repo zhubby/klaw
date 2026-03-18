@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use klaw_agent::{
     build_provider_from_config, run_agent_execution, AgentExecutionError, AgentExecutionInput,
-    AgentExecutionLimits, ToolExecutor,
+    AgentExecutionLimits, ToolExecutor, ToolInvocationResult, ToolInvocationSignal,
 };
 use klaw_config::{AppConfig, SubAgentConfig};
 use klaw_llm::ToolDefinition;
@@ -141,9 +141,15 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
         arguments: Value,
         session_key: &str,
         metadata: &BTreeMap<String, Value>,
-    ) -> String {
+    ) -> ToolInvocationResult {
         let Some(tool) = self.tools.get(name) else {
-            return format!("tool `{}` not found", name);
+            return ToolInvocationResult::error(
+                format!("tool `{name}` not found"),
+                "tool_not_found".to_string(),
+                None,
+                false,
+                Vec::new(),
+            );
         };
         info!(tool = name, arguments = %arguments, "calling tool");
         match tool
@@ -162,16 +168,31 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                     result = %truncate_for_log(&output.content_for_model, TOOL_RESULT_LOG_LIMIT),
                     "tool result"
                 );
-                output.content_for_model
+                ToolInvocationResult::success(output.content_for_model)
             }
             Err(err) => {
-                let message = format!("tool `{}` failed: {}", name, err);
+                let message = format!("tool `{name}` failed: {err}");
+                let signals = err
+                    .signals()
+                    .iter()
+                    .cloned()
+                    .map(|signal| ToolInvocationSignal {
+                        kind: signal.kind,
+                        payload: signal.payload,
+                    })
+                    .collect::<Vec<_>>();
                 debug!(
                     tool = name,
                     result = %truncate_for_log(&message, TOOL_RESULT_LOG_LIMIT),
                     "tool result"
                 );
-                message
+                ToolInvocationResult::error(
+                    message,
+                    err.code().to_string(),
+                    err.details().cloned(),
+                    err.retryable(),
+                    signals,
+                )
             }
         }
     }

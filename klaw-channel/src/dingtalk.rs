@@ -529,7 +529,7 @@ impl DingtalkChannel {
 
         match maybe_output {
             Ok(Some(output)) => {
-                if let Some(approval_id) = extract_shell_approval_id(&output.content) {
+                if let Some(approval_id) = extract_approval_id_for_action_card(&output) {
                     let body = format!(
                         "### 需要审批\n\n{}\n\n---\n审批单: `{}`\n\n点击按钮后将发送审批指令。",
                         escape_markdown_for_action_card(&output.content),
@@ -547,6 +547,7 @@ impl DingtalkChannel {
                     {
                         warn!(
                             chat_id = inbound.chat_id.as_str(),
+                            approval_id = approval_id.as_str(),
                             error = %err,
                             "failed to send dingtalk approval action card; fallback to markdown"
                         );
@@ -1810,6 +1811,30 @@ fn is_sender_allowed(allowlist: &[String], sender_id: &str) -> bool {
         .any(|entry| entry == "*" || entry == sender_id)
 }
 
+fn extract_approval_id_for_action_card(output: &ChannelResponse) -> Option<String> {
+    if let Some(approval_id) = output
+        .metadata
+        .get("approval.id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(approval_id.to_string());
+    }
+    if let Some(approval_id) = output
+        .metadata
+        .get("approval.signal")
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("approval_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(approval_id.to_string());
+    }
+    extract_shell_approval_id(&output.content)
+}
+
 fn extract_shell_approval_id(content: &str) -> Option<String> {
     if let Ok(value) = serde_json::from_str::<Value>(content) {
         if let Some(token) = value
@@ -1963,11 +1988,11 @@ fn render_agent_output(output: &ChannelResponse, show_reasoning: bool) -> String
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_dingtalk_media_references, extract_dingtalk_message_text,
-        extract_shell_approval_id, is_sender_allowed, parse_card_callback_event,
-        parse_inbound_event, parse_stream_data, render_agent_output, resolve_chat_id,
-        resolve_download_code_candidates, ApprovalAction, CardCallbackEvent, DingtalkApiClient,
-        EventDeduper, InboundEvent,
+        extract_approval_id_for_action_card, extract_dingtalk_media_references,
+        extract_dingtalk_message_text, extract_shell_approval_id, is_sender_allowed,
+        parse_card_callback_event, parse_inbound_event, parse_stream_data, render_agent_output,
+        resolve_chat_id, resolve_download_code_candidates, ApprovalAction, CardCallbackEvent,
+        DingtalkApiClient, EventDeduper, InboundEvent,
     };
     use crate::ChannelResponse;
     use std::collections::BTreeMap;
@@ -2153,6 +2178,7 @@ mod tests {
             &ChannelResponse {
                 content: "done".to_string(),
                 reasoning: Some("step1\nstep2".to_string()),
+                metadata: BTreeMap::new(),
             },
             true,
         );
@@ -2274,6 +2300,31 @@ mod tests {
             "我已经请求批准来执行浏览器自动化任务。批准ID: 3a24e1d4-9c94-4ee1-ac16-1f750ca78acf";
         let approval_id = extract_shell_approval_id(content).expect("approval id");
         assert_eq!(approval_id, "3a24e1d4-9c94-4ee1-ac16-1f750ca78acf");
+    }
+
+    #[test]
+    fn extract_approval_id_for_action_card_prefers_structured_metadata() {
+        let output = ChannelResponse {
+            content: "approval required: approval_id=from-content".to_string(),
+            reasoning: None,
+            metadata: BTreeMap::from([(
+                "approval.id".to_string(),
+                serde_json::json!("from-metadata"),
+            )]),
+        };
+        let approval_id = extract_approval_id_for_action_card(&output).expect("approval id");
+        assert_eq!(approval_id, "from-metadata");
+    }
+
+    #[test]
+    fn extract_approval_id_for_action_card_falls_back_to_content() {
+        let output = ChannelResponse {
+            content: "approval required: approval_id=from-content".to_string(),
+            reasoning: None,
+            metadata: BTreeMap::new(),
+        };
+        let approval_id = extract_approval_id_for_action_card(&output).expect("approval id");
+        assert_eq!(approval_id, "from-content");
     }
 
     #[test]

@@ -10,7 +10,7 @@ use crate::{
 use async_trait::async_trait;
 use klaw_agent::{
     run_agent_execution, AgentExecutionError, AgentExecutionInput, AgentExecutionLimits,
-    ConversationMessage, ToolExecutor,
+    ConversationMessage, ToolExecutor, ToolInvocationResult, ToolInvocationSignal,
 };
 use klaw_llm::{LlmError, LlmMedia, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
@@ -132,9 +132,15 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
         arguments: serde_json::Value,
         session_key: &str,
         metadata: &BTreeMap<String, serde_json::Value>,
-    ) -> String {
+    ) -> ToolInvocationResult {
         let Some(tool) = self.tools.get(name) else {
-            return format!("tool `{}` not found", name);
+            return ToolInvocationResult::error(
+                format!("tool `{name}` not found"),
+                "tool_not_found".to_string(),
+                None,
+                false,
+                Vec::new(),
+            );
         };
         info!(tool = name, arguments = %arguments, "calling tool");
 
@@ -154,16 +160,31 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                     result = %truncate_for_log(&output.content_for_model, TOOL_RESULT_LOG_LIMIT),
                     "tool result"
                 );
-                output.content_for_model
+                ToolInvocationResult::success(output.content_for_model)
             }
             Err(err) => {
-                let message = format!("tool `{}` failed: {}", name, err);
+                let message = format!("tool `{name}` failed: {err}");
+                let signals = err
+                    .signals()
+                    .iter()
+                    .cloned()
+                    .map(|signal| ToolInvocationSignal {
+                        kind: signal.kind,
+                        payload: signal.payload,
+                    })
+                    .collect::<Vec<_>>();
                 debug!(
                     tool = name,
                     result = %truncate_for_log(&message, TOOL_RESULT_LOG_LIMIT),
                     "tool result"
                 );
-                message
+                ToolInvocationResult::error(
+                    message,
+                    err.code().to_string(),
+                    err.details().cloned(),
+                    err.retryable(),
+                    signals,
+                )
             }
         }
     }
@@ -377,6 +398,39 @@ impl AgentLoop {
                 state = self.transition(state, StateTransitionEvent::FinalResponseReady);
                 state = self.transition(state, StateTransitionEvent::Published);
                 let mut response_metadata = heartbeat_response_metadata(&msg.payload.metadata);
+                if !output.tool_signals.is_empty() {
+                    response_metadata.insert(
+                        "tool.signals".to_string(),
+                        serde_json::to_value(&output.tool_signals)
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                    if let Some(approval_required) = output
+                        .tool_signals
+                        .iter()
+                        .find(|signal| signal.kind == "approval_required")
+                    {
+                        response_metadata.insert(
+                            "approval.required".to_string(),
+                            serde_json::Value::Bool(true),
+                        );
+                        response_metadata.insert(
+                            "approval.signal".to_string(),
+                            approval_required.payload.clone(),
+                        );
+                        if let Some(approval_id) = approval_required
+                            .payload
+                            .get("approval_id")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                        {
+                            response_metadata.insert(
+                                "approval.id".to_string(),
+                                serde_json::Value::String(approval_id.to_string()),
+                            );
+                        }
+                    }
+                }
                 if let Some(reasoning) = output.reasoning.filter(|value| !value.trim().is_empty()) {
                     response_metadata.insert(
                         "reasoning".to_string(),
@@ -723,7 +777,7 @@ mod tests {
     use crate::{domain::InboundMessage, protocol::EnvelopeHeader};
     use async_trait::async_trait;
     use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
-    use klaw_tool::ToolRegistry;
+    use klaw_tool::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolRegistry};
     use serde_json::json;
     use std::{
         collections::BTreeMap,
@@ -810,6 +864,93 @@ mod tests {
                 reasoning: None,
                 tool_calls: Vec::new(),
             })
+        }
+    }
+
+    #[derive(Default)]
+    struct ToolCallingProvider {
+        call_count: Arc<Mutex<u32>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ToolCallingProvider {
+        fn name(&self) -> &str {
+            "tool-calling"
+        }
+
+        fn default_model(&self) -> &str {
+            "tool-calling-v1"
+        }
+
+        async fn chat(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            let mut call_count = self.call_count.lock().expect("mutex poisoned");
+            *call_count += 1;
+            if *call_count == 1 {
+                return Ok(LlmResponse {
+                    content: String::new(),
+                    reasoning: None,
+                    tool_calls: vec![klaw_llm::ToolCall {
+                        id: Some("call_approval_1".to_string()),
+                        name: "mock_approval".to_string(),
+                        arguments: json!({}),
+                    }],
+                });
+            }
+            Ok(LlmResponse {
+                content: "approval requested".to_string(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+            })
+        }
+    }
+
+    struct MockApprovalTool;
+
+    #[async_trait]
+    impl Tool for MockApprovalTool {
+        fn name(&self) -> &str {
+            "mock_approval"
+        }
+
+        fn description(&self) -> &str {
+            "mock approval tool"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            json!({"type":"object"})
+        }
+
+        fn category(&self) -> ToolCategory {
+            ToolCategory::Messaging
+        }
+
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            Err(ToolError::structured_execution_failed(
+                "approval required",
+                "approval_required",
+                Some(json!({
+                    "approval_id": "approval-core-test",
+                    "tool_name": "mock_approval",
+                    "session_key": ctx.session_key,
+                })),
+                true,
+                vec![klaw_tool::ToolSignal::approval_required(
+                    "approval-core-test",
+                    "mock_approval",
+                    &ctx.session_key,
+                    None,
+                )],
+            ))
         }
     }
 
@@ -935,5 +1076,64 @@ mod tests {
             .lock()
             .expect("capture media mutex poisoned");
         assert_eq!(captured_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn process_message_propagates_approval_signal_to_outbound_metadata() {
+        let provider = Arc::new(ToolCallingProvider::default()) as Arc<dyn LlmProvider>;
+        let mut tools = ToolRegistry::default();
+        tools.register(MockApprovalTool);
+        let agent = AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 2,
+                max_tool_calls: 2,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(1),
+                tool_timeout: Duration::from_secs(1),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 1,
+                lock_ttl: Duration::from_secs(1),
+            },
+            Arc::clone(&provider),
+            "tool-calling".to_string(),
+            "tool-calling-v1".to_string(),
+            tools,
+        )
+        .with_provider_registry(BTreeMap::from([("tool-calling".to_string(), provider)]));
+
+        let inbound = crate::protocol::Envelope {
+            header: EnvelopeHeader::new("im:chat-approval"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "im".to_string(),
+                sender_id: "u1".to_string(),
+                chat_id: "chat-approval".to_string(),
+                session_key: "im:chat-approval".to_string(),
+                content: "run tool".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        };
+        let outcome = agent.process_message(inbound, false).await;
+        let response = outcome.final_response.expect("response should be present");
+        assert_eq!(response.payload.content, "approval requested");
+        assert_eq!(
+            response
+                .payload
+                .metadata
+                .get("approval.required")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            response
+                .payload
+                .metadata
+                .get("approval.id")
+                .and_then(serde_json::Value::as_str),
+            Some("approval-core-test")
+        );
     }
 }

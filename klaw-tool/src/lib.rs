@@ -12,6 +12,7 @@ pub mod web_fetch;
 pub mod web_search;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
@@ -70,6 +71,36 @@ pub struct ToolOutput {
     pub content_for_user: Option<String>,
 }
 
+/// 工具侧发出的结构化信号，可由 runtime/channel 消费。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolSignal {
+    pub kind: String,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
+impl ToolSignal {
+    pub fn approval_required(
+        approval_id: &str,
+        tool_name: &str,
+        session_key: &str,
+        risk_level: Option<&str>,
+    ) -> Self {
+        let mut payload = serde_json::json!({
+            "approval_id": approval_id,
+            "tool_name": tool_name,
+            "session_key": session_key,
+        });
+        if let Some(risk_level) = risk_level.map(str::trim).filter(|value| !value.is_empty()) {
+            payload["risk_level"] = serde_json::Value::String(risk_level.to_string());
+        }
+        Self {
+            kind: "approval_required".to_string(),
+            payload,
+        }
+    }
+}
+
 /// 工具错误定义。
 #[derive(Debug, Error)]
 pub enum ToolError {
@@ -77,6 +108,66 @@ pub enum ToolError {
     InvalidArgs(String),
     #[error("execution failed: {0}")]
     ExecutionFailed(String),
+    #[error("execution failed: {message}")]
+    StructuredExecutionFailed {
+        message: String,
+        code: String,
+        details: Option<serde_json::Value>,
+        retryable: bool,
+        signals: Vec<ToolSignal>,
+    },
+}
+
+impl ToolError {
+    #[must_use]
+    pub fn structured_execution_failed(
+        message: impl Into<String>,
+        code: impl Into<String>,
+        details: Option<serde_json::Value>,
+        retryable: bool,
+        signals: Vec<ToolSignal>,
+    ) -> Self {
+        Self::StructuredExecutionFailed {
+            message: message.into(),
+            code: code.into(),
+            details,
+            retryable,
+            signals,
+        }
+    }
+
+    #[must_use]
+    pub fn code(&self) -> &str {
+        match self {
+            Self::InvalidArgs(_) => "invalid_args",
+            Self::ExecutionFailed(_) => "execution_failed",
+            Self::StructuredExecutionFailed { code, .. } => code.as_str(),
+        }
+    }
+
+    #[must_use]
+    pub fn details(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::StructuredExecutionFailed { details, .. } => details.as_ref(),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn retryable(&self) -> bool {
+        match self {
+            Self::StructuredExecutionFailed { retryable, .. } => *retryable,
+            _ => false,
+        }
+    }
+
+    #[must_use]
+    pub fn signals(&self) -> &[ToolSignal] {
+        match self {
+            Self::StructuredExecutionFailed { signals, .. } => signals.as_slice(),
+            _ => &[],
+        }
+    }
 }
 
 /// 工具统一抽象。

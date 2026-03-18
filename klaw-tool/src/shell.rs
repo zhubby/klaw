@@ -1,4 +1,4 @@
-use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
+use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolSignal};
 use async_trait::async_trait;
 use klaw_approval::{ApprovalCreateInput, ApprovalManager, SqliteApprovalManager};
 use klaw_config::{AppConfig, ShellApprovalPolicy};
@@ -255,10 +255,35 @@ impl ShellTool {
                 .map_err(|err| {
                     ToolError::ExecutionFailed(format!("failed to create approval: {err}"))
                 })?;
-            return Err(ToolError::ExecutionFailed(format!(
-                "approval required: approval_id={}; approve it then retry with metadata `shell.approval_id`",
-                approval.id
-            )));
+            let approval_id = approval.id.clone();
+            let risk_level = match risk {
+                CommandRisk::Safe => "safe",
+                CommandRisk::Mutating => "mutating",
+                CommandRisk::Destructive => "destructive",
+            };
+            return Err(ToolError::structured_execution_failed(
+                format!(
+                    "approval required: approval_id={}; approve it then retry with metadata `shell.approval_id`",
+                    approval_id
+                ),
+                "approval_required",
+                Some(json!({
+                    "approval_id": approval_id,
+                    "tool_name": "shell",
+                    "session_key": session_key,
+                    "risk_level": risk_level,
+                    "command_preview": approval.command_preview,
+                    "command_hash": approval.command_hash,
+                    "expires_at_ms": approval.expires_at_ms,
+                })),
+                true,
+                vec![ToolSignal::approval_required(
+                    &approval.id,
+                    "shell",
+                    session_key,
+                    Some(risk_level),
+                )],
+            ));
         }
 
         Err(ToolError::ExecutionFailed(
@@ -903,8 +928,17 @@ mod tests {
             .execute(json!({"command": "touch file.txt"}), &base_ctx())
             .await;
         assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        let tool_err = result.expect_err("approval should be required");
+        let err = tool_err.to_string();
         assert!(err.contains("approval_id="), "unexpected error: {err}");
+        assert_eq!(tool_err.code(), "approval_required");
+        assert!(
+            tool_err
+                .signals()
+                .iter()
+                .any(|signal| signal.kind == "approval_required"),
+            "approval_required signal should be emitted"
+        );
         let approval_id = err
             .split("approval_id=")
             .nth(1)

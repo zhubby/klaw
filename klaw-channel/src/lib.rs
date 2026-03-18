@@ -23,6 +23,7 @@ pub struct ChannelRequest {
 pub struct ChannelResponse {
     pub content: String,
     pub reasoning: Option<String>,
+    pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
 #[async_trait(?Send)]

@@ -5,7 +5,7 @@ use klaw_llm::{
     OpenAiCompatibleProvider, OpenAiWireApi, ToolDefinition,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
@@ -40,6 +40,76 @@ pub struct AgentExecutionInput {
 pub struct AgentExecutionOutput {
     pub content: String,
     pub reasoning: Option<String>,
+    pub tool_signals: Vec<ToolInvocationSignal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolInvocationSignal {
+    pub kind: String,
+    #[serde(default)]
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolInvocationResult {
+    pub ok: bool,
+    pub content_for_model: String,
+    pub error_code: Option<String>,
+    pub error_details: Option<Value>,
+    pub retryable: Option<bool>,
+    pub signals: Vec<ToolInvocationSignal>,
+}
+
+impl ToolInvocationResult {
+    #[must_use]
+    pub fn success(content_for_model: String) -> Self {
+        Self {
+            ok: true,
+            content_for_model,
+            error_code: None,
+            error_details: None,
+            retryable: None,
+            signals: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn error(
+        content_for_model: String,
+        error_code: String,
+        error_details: Option<Value>,
+        retryable: bool,
+        signals: Vec<ToolInvocationSignal>,
+    ) -> Self {
+        Self {
+            ok: false,
+            content_for_model,
+            error_code: Some(error_code),
+            error_details,
+            retryable: Some(retryable),
+            signals,
+        }
+    }
+
+    #[must_use]
+    pub fn to_tool_message_content(&self, tool_name: &str) -> String {
+        let mut envelope = json!({
+            "ok": self.ok,
+            "tool": tool_name,
+            "content": self.content_for_model,
+        });
+        if let Some(code) = self.error_code.as_ref() {
+            envelope["error"] = json!({
+                "code": code,
+                "details": self.error_details,
+                "retryable": self.retryable,
+            });
+        }
+        if !self.signals.is_empty() {
+            envelope["signals"] = serde_json::to_value(&self.signals).unwrap_or(Value::Null);
+        }
+        serde_json::to_string(&envelope).unwrap_or_else(|_| self.content_for_model.clone())
+    }
 }
 
 #[async_trait]
@@ -52,7 +122,7 @@ pub trait ToolExecutor: Send + Sync {
         arguments: Value,
         session_key: &str,
         metadata: &BTreeMap<String, Value>,
-    ) -> String;
+    ) -> ToolInvocationResult;
 }
 
 #[derive(Debug, Error)]
@@ -165,6 +235,7 @@ pub async fn run_agent_execution(
         tool_call_id: None,
     });
     let mut tool_calls_used = 0u32;
+    let mut tool_signals = Vec::new();
 
     let max_tool_iterations = limits.max_tool_iterations;
     let mut iteration = 0u32;
@@ -212,6 +283,7 @@ pub async fn run_agent_execution(
             return Ok(AgentExecutionOutput {
                 content: llm_response.content,
                 reasoning: llm_response.reasoning,
+                tool_signals,
             });
         }
 
@@ -231,6 +303,7 @@ pub async fn run_agent_execution(
             &input.tool_metadata,
             &mut tool_calls_used,
             limits.max_tool_calls,
+            &mut tool_signals,
         )
         .await?;
     }
@@ -266,6 +339,7 @@ async fn apply_tool_calls(
     tool_metadata: &BTreeMap<String, Value>,
     tool_calls_used: &mut u32,
     max_tool_calls: u32,
+    collected_signals: &mut Vec<ToolInvocationSignal>,
 ) -> Result<(), AgentExecutionError> {
     for call in tool_calls {
         *tool_calls_used += 1;
@@ -276,12 +350,13 @@ async fn apply_tool_calls(
             );
             return Err(AgentExecutionError::ToolLoopExhausted);
         }
-        let content = tools
+        let result = tools
             .execute(&call.name, call.arguments, session_key, tool_metadata)
             .await;
+        collected_signals.extend(result.signals.clone());
         llm_messages.push(LlmMessage {
             role: "tool".to_string(),
-            content,
+            content: result.to_tool_message_content(&call.name),
             media: Vec::new(),
             tool_calls: None,
             tool_call_id: call.id,
@@ -327,8 +402,8 @@ mod tests {
             _arguments: Value,
             _session_key: &str,
             _metadata: &BTreeMap<String, Value>,
-        ) -> String {
-            "tool-result".to_string()
+        ) -> ToolInvocationResult {
+            ToolInvocationResult::success("tool-result".to_string())
         }
     }
 

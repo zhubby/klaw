@@ -4,6 +4,7 @@ mod channel;
 mod configuration;
 mod cron;
 mod heartbeat;
+mod logs;
 mod mcp;
 mod memory;
 mod profile;
@@ -11,7 +12,6 @@ mod provider;
 mod session;
 mod skills_manager;
 mod skills_registry;
-mod logs;
 mod system_monitor;
 mod tool;
 
