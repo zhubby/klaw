@@ -354,6 +354,7 @@ env_key = "OPENAI_API_KEY"
 | `terminal_multiplexers` | ✓ |
 | `cron_manager` | ✓ |
 | `skills_registry` | ✓ |
+| `skills_manager` | ✓ |
 | `memory` | ✓ |
 | `web_fetch` | ✓ |
 | `web_search` | ✓ |

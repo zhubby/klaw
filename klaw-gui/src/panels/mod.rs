@@ -9,8 +9,8 @@ mod memory;
 mod profile;
 mod provider;
 mod session;
-mod skill;
 mod skill_manager;
+mod skills_registry;
 mod system_monitor;
 mod tool;
 
@@ -41,7 +41,7 @@ pub struct PanelRegistry {
     cron: cron::CronPanel,
     heartbeat: heartbeat::HeartbeatPanel,
     mcp: mcp::McpPanel,
-    skill: skill::SkillPanel,
+    skills_registry: skills_registry::SkillsRegistryPanel,
     skill_manager: skill_manager::SkillManagerPanel,
     memory: memory::MemoryPanel,
     archive: archive::ArchivePanel,
@@ -61,7 +61,7 @@ impl Default for PanelRegistry {
             cron: cron::CronPanel::default(),
             heartbeat: heartbeat::HeartbeatPanel::default(),
             mcp: mcp::McpPanel::default(),
-            skill: skill::SkillPanel::default(),
+            skills_registry: skills_registry::SkillsRegistryPanel::default(),
             skill_manager: skill_manager::SkillManagerPanel::default(),
             memory: memory::MemoryPanel::default(),
             archive: archive::ArchivePanel::default(),
@@ -88,7 +88,7 @@ impl PanelRegistry {
             WorkbenchMenu::Cron => self.cron.render(ui, ctx, notifications),
             WorkbenchMenu::Heartbeat => self.heartbeat.render(ui, ctx, notifications),
             WorkbenchMenu::Mcp => self.mcp.render(ui, ctx, notifications),
-            WorkbenchMenu::Skill => self.skill.render(ui, ctx, notifications),
+            WorkbenchMenu::Skill => self.skills_registry.render(ui, ctx, notifications),
             WorkbenchMenu::SkillManager => self.skill_manager.render(ui, ctx, notifications),
             WorkbenchMenu::Memory => self.memory.render(ui, ctx, notifications),
             WorkbenchMenu::Archive => self.archive.render(ui, ctx, notifications),

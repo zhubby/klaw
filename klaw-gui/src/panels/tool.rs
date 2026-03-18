@@ -24,6 +24,7 @@ enum ToolForm {
     TerminalMultiplexers(ToggleForm),
     CronManager(ToggleForm),
     SkillsRegistry(ToggleForm),
+    SkillsManager(ToggleForm),
     Memory(MemoryForm),
     WebFetch(WebFetchForm),
     WebSearch(WebSearchForm),
@@ -347,7 +348,8 @@ impl ToolForm {
             | ToolForm::LocalSearch(form)
             | ToolForm::TerminalMultiplexers(form)
             | ToolForm::CronManager(form)
-            | ToolForm::SkillsRegistry(form) => form.title,
+            | ToolForm::SkillsRegistry(form)
+            | ToolForm::SkillsManager(form) => form.title,
             ToolForm::Memory(_) => "Edit Tool: memory",
             ToolForm::WebFetch(_) => "Edit Tool: web_fetch",
             ToolForm::WebSearch(_) => "Edit Tool: web_search",
@@ -440,7 +442,8 @@ impl ToolPanel {
             "local_search" => ToolForm::LocalSearch(form),
             "terminal_multiplexers" => ToolForm::TerminalMultiplexers(form),
             "cron_manager" => ToolForm::CronManager(form),
-            _ => ToolForm::SkillsRegistry(form),
+            "skills_registry" => ToolForm::SkillsRegistry(form),
+            _ => ToolForm::SkillsManager(form),
         });
     }
 
@@ -504,6 +507,10 @@ impl ToolPanel {
             }
             ToolForm::SkillsRegistry(form) => {
                 next.tools.skills_registry.enabled = form.enabled;
+                Ok(())
+            }
+            ToolForm::SkillsManager(form) => {
+                next.tools.skills_manager.enabled = form.enabled;
                 Ok(())
             }
             ToolForm::Memory(form) => match form.to_config() {
@@ -648,7 +655,8 @@ impl ToolPanel {
                     | ToolForm::LocalSearch(form)
                     | ToolForm::TerminalMultiplexers(form)
                     | ToolForm::CronManager(form)
-                    | ToolForm::SkillsRegistry(form) => {
+                    | ToolForm::SkillsRegistry(form)
+                    | ToolForm::SkillsManager(form) => {
                         ui.horizontal(|ui| {
                             ui.label("enabled");
                             ui.checkbox(&mut form.enabled, "");
@@ -916,7 +924,7 @@ impl PanelRenderer for ToolPanel {
         egui::ScrollArea::vertical()
             .id_salt("tool-card-scroll")
             .show(ui, |ui| {
-                let cards: [(&str, &str, bool, &str); 11] = [
+                let cards: [(&str, &str, bool, &str); 12] = [
                     (
                         "apply_patch",
                         "Patch workspace files with constrained path policy.",
@@ -955,9 +963,15 @@ impl PanelRenderer for ToolPanel {
                     ),
                     (
                         "skills_registry",
-                        "Search/install/list skills from configured registries.",
+                        "Browse and inspect read-only registry catalogs.",
                         self.config.tools.skills_registry.enabled,
                         "skills_registry",
+                    ),
+                    (
+                        "skills_manager",
+                        "Install, uninstall, and load installed skills.",
+                        self.config.tools.skills_manager.enabled,
+                        "skills_manager",
                     ),
                     (
                         "memory",
@@ -1032,6 +1046,11 @@ impl PanelRenderer for ToolPanel {
                 "skills_registry",
                 "Edit Tool: skills_registry",
                 self.config.tools.skills_registry.enabled,
+            ),
+            Some("skills_manager") => self.open_toggle(
+                "skills_manager",
+                "Edit Tool: skills_manager",
+                self.config.tools.skills_manager.enabled,
             ),
             Some("memory") => self.open_memory(),
             Some("web_fetch") => self.open_web_fetch(),

@@ -1,9 +1,11 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
-use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillRegistryConfig};
+use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillsRegistryConfig};
 use klaw_skill::RegistrySyncReport;
-use klaw_skill::{open_default_skill_store, FileSystemSkillStore, InstalledSkill, RegistrySource};
+use klaw_skill::{
+    open_default_skill_manager, FileSystemSkillStore, InstalledSkill, RegistrySource,
+};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -14,14 +16,14 @@ use tokio::runtime::Builder;
 const SYNC_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone)]
-struct SkillRegistryForm {
+struct SkillsRegistryForm {
     original_name: Option<String>,
     name: String,
     address: String,
     installed_text: String,
 }
 
-impl SkillRegistryForm {
+impl SkillsRegistryForm {
     fn new() -> Self {
         Self {
             original_name: None,
@@ -31,7 +33,7 @@ impl SkillRegistryForm {
         }
     }
 
-    fn edit(name: &str, registry: &SkillRegistryConfig) -> Self {
+    fn edit(name: &str, registry: &SkillsRegistryConfig) -> Self {
         Self {
             original_name: Some(name.to_string()),
             name: name.to_string(),
@@ -42,9 +44,9 @@ impl SkillRegistryForm {
 
     fn title(&self) -> &'static str {
         if self.original_name.is_some() {
-            "Edit Skill Registry"
+            "Edit Skills Registry"
         } else {
-            "Add Skill Registry"
+            "Add Skills Registry"
         }
     }
 
@@ -52,8 +54,8 @@ impl SkillRegistryForm {
         self.name.trim().to_string()
     }
 
-    fn to_config(&self) -> SkillRegistryConfig {
-        SkillRegistryConfig {
+    fn to_config(&self) -> SkillsRegistryConfig {
+        SkillsRegistryConfig {
             address: self.address.trim().to_string(),
             installed: self
                 .installed_text
@@ -67,18 +69,18 @@ impl SkillRegistryForm {
 }
 
 #[derive(Default)]
-pub struct SkillPanel {
+pub struct SkillsRegistryPanel {
     store: Option<ConfigStore>,
     config_path: Option<PathBuf>,
     revision: Option<u64>,
     config: AppConfig,
-    form: Option<SkillRegistryForm>,
+    form: Option<SkillsRegistryForm>,
     sync_timeout_text: String,
     syncing_registry: Option<String>,
     sync_result_rx: Option<Receiver<(String, Result<RegistrySyncReport, String>)>>,
 }
 
-impl SkillPanel {
+impl SkillsRegistryPanel {
     fn request_runtime_skills_reload(notifications: &mut NotificationCenter) {
         if let Err(err) = runtime_bridge::request_reload_skills_prompt() {
             notifications.warning(format!("Runtime skills prompt reload not sent: {err}"));
@@ -94,7 +96,7 @@ impl SkillPanel {
                 let snapshot = store.snapshot();
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
-                notifications.success("Skill registry config loaded from disk");
+                notifications.success("Skills registry config loaded from disk");
             }
             Err(err) => notifications.error(format!("Failed to load config: {err}")),
         }
@@ -178,12 +180,12 @@ impl SkillPanel {
 
     fn sync_registry(&mut self, registry_name: &str, notifications: &mut NotificationCenter) {
         if self.syncing_registry.is_some() {
-            notifications.warning("A skill registry sync is already running");
+            notifications.warning("A skills registry sync is already running");
             return;
         }
 
         let Some(registry) = self.config.skills.registries.get(registry_name) else {
-            notifications.error(format!("Skill registry `{registry_name}` not found"));
+            notifications.error(format!("Skills registry `{registry_name}` not found"));
             return;
         };
 
@@ -260,12 +262,12 @@ impl SkillPanel {
     }
 
     fn open_add_registry(&mut self) {
-        self.form = Some(SkillRegistryForm::new());
+        self.form = Some(SkillsRegistryForm::new());
     }
 
     fn open_edit_registry(&mut self, name: &str) {
         if let Some(registry) = self.config.skills.registries.get(name) {
-            self.form = Some(SkillRegistryForm::edit(name, registry));
+            self.form = Some(SkillsRegistryForm::edit(name, registry));
         }
     }
 
@@ -276,29 +278,29 @@ impl SkillPanel {
 
         match Self::apply_form(self.config.clone(), form) {
             Ok(next) => {
-                self.save_config(next, notifications, "Skill registry saved");
+                self.save_config(next, notifications, "Skills registry saved");
                 self.form = None;
             }
             Err(err) => notifications.error(err),
         }
     }
 
-    fn apply_form(mut config: AppConfig, form: &SkillRegistryForm) -> Result<AppConfig, String> {
+    fn apply_form(mut config: AppConfig, form: &SkillsRegistryForm) -> Result<AppConfig, String> {
         let name = form.normalized_name();
         if name.is_empty() {
-            return Err("Skill registry name cannot be empty".to_string());
+            return Err("Skills registry name cannot be empty".to_string());
         }
 
         let registry = form.to_config();
         if registry.address.trim().is_empty() {
-            return Err("Skill registry address cannot be empty".to_string());
+            return Err("Skills registry address cannot be empty".to_string());
         }
 
         if let Some(original_name) = form.original_name.as_ref() {
             if original_name != &name {
                 if config.skills.registries.contains_key(&name) {
                     return Err(format!(
-                        "Skill registry '{}' already exists, choose another name",
+                        "Skills registry '{}' already exists, choose another name",
                         name
                     ));
                 }
@@ -306,7 +308,7 @@ impl SkillPanel {
             }
         } else if config.skills.registries.contains_key(&name) {
             return Err(format!(
-                "Skill registry '{}' already exists, choose another name",
+                "Skills registry '{}' already exists, choose another name",
                 name
             ));
         }
@@ -370,7 +372,7 @@ impl SkillPanel {
     }
 }
 
-impl PanelRenderer for SkillPanel {
+impl PanelRenderer for SkillsRegistryPanel {
     fn render(
         &mut self,
         ui: &mut egui::Ui,
@@ -407,7 +409,7 @@ impl PanelRenderer for SkillPanel {
 
         ui.add_space(8.0);
 
-        if ui.button("Add Skill Registry").clicked() {
+        if ui.button("Add Skills Registry").clicked() {
             self.open_add_registry();
         }
 
@@ -479,12 +481,12 @@ mod tests {
     #[test]
     fn apply_form_adds_registry() {
         let config = AppConfig::default();
-        let mut form = SkillRegistryForm::new();
+        let mut form = SkillsRegistryForm::new();
         form.name = "private".to_string();
         form.address = "https://example.com/skills".to_string();
         form.installed_text = "one\ntwo".to_string();
 
-        let updated = SkillPanel::apply_form(config, &form).expect("should apply");
+        let updated = SkillsRegistryPanel::apply_form(config, &form).expect("should apply");
 
         assert!(updated.skills.registries.contains_key("private"));
         assert_eq!(updated.skills.registries["private"].installed.len(), 2);
@@ -493,11 +495,12 @@ mod tests {
     #[test]
     fn apply_form_rejects_duplicate_name() {
         let config = AppConfig::default();
-        let mut form = SkillRegistryForm::new();
+        let mut form = SkillsRegistryForm::new();
         form.name = "anthropic".to_string();
         form.address = "https://example.com/other".to_string();
 
-        let err = SkillPanel::apply_form(config, &form).expect_err("duplicate should fail");
+        let err =
+            SkillsRegistryPanel::apply_form(config, &form).expect_err("duplicate should fail");
 
         assert!(err.contains("already exists"));
     }
@@ -507,7 +510,7 @@ mod tests {
         let mut config = AppConfig::default();
         config.skills.registries.insert(
             "private".to_string(),
-            SkillRegistryConfig {
+            SkillsRegistryConfig {
                 address: "https://example.com/v1".to_string(),
                 installed: vec!["old".to_string()],
             },
@@ -519,10 +522,10 @@ mod tests {
             .get("private")
             .expect("registry should exist")
             .clone();
-        let mut form = SkillRegistryForm::edit("private", &source);
+        let mut form = SkillsRegistryForm::edit("private", &source);
         form.address = "https://example.com/v2".to_string();
 
-        let updated = SkillPanel::apply_form(config, &form).expect("should apply");
+        let updated = SkillsRegistryPanel::apply_form(config, &form).expect("should apply");
 
         assert_eq!(
             updated.skills.registries["private"].address,
@@ -550,8 +553,8 @@ where
     Fut: Future<Output = Result<T, klaw_skill::SkillError>> + Send + 'static,
 {
     let join = thread::spawn(move || {
-        let store = open_default_skill_store()
-            .map_err(|err| format!("failed to open skill store: {err}"))?;
+        let store = open_default_skill_manager()
+            .map_err(|err| format!("failed to open skill manager: {err}"))?;
         let runtime = Builder::new_current_thread()
             .enable_all()
             .build()

@@ -67,6 +67,15 @@ pub struct RegistrySkillSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistrySkillMatch {
+    pub source: String,
+    pub skill_name: String,
+    pub description: String,
+    pub local_path: PathBuf,
+    pub matched_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillRecord {
     pub name: String,
     pub source: SkillSource,

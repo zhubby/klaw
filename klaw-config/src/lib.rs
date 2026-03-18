@@ -402,6 +402,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub skills_registry: SkillsRegistryToolConfig,
     #[serde(default)]
+    pub skills_manager: SkillsManagerToolConfig,
+    #[serde(default)]
     pub memory: MemoryToolConfig,
     #[serde(default)]
     pub web_fetch: WebFetchConfig,
@@ -573,15 +575,39 @@ fn default_skills_registry_tool_enabled() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsManagerToolConfig {
+    #[serde(default = "default_skills_manager_tool_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for SkillsManagerToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_skills_manager_tool_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for SkillsManagerToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_skills_manager_tool_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillsConfig {
     #[serde(default = "default_skills_sync_timeout")]
     pub sync_timeout: u64,
     #[serde(flatten)]
-    pub registries: BTreeMap<String, SkillRegistryConfig>,
+    pub registries: BTreeMap<String, SkillsRegistryConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillRegistryConfig {
+pub struct SkillsRegistryConfig {
     pub address: String,
     #[serde(default)]
     pub installed: Vec<String>,
@@ -592,7 +618,7 @@ impl Default for SkillsConfig {
         let mut registries = BTreeMap::new();
         registries.insert(
             "anthropic".to_string(),
-            SkillRegistryConfig {
+            SkillsRegistryConfig {
                 address: "https://github.com/anthropics/skills".to_string(),
                 installed: Vec::new(),
             },

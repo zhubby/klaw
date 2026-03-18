@@ -5,8 +5,8 @@ use crate::time_format::format_timestamp_millis;
 use egui_file_dialog::FileDialog;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_skill::{
-    open_default_skill_store, FileSystemSkillStore, RegistrySkillSummary, SkillRecord,
-    SkillSourceKind, SkillStore, SkillSummary, SkillUninstallResult,
+    open_default_skill_manager, FileSystemSkillStore, RegistrySkillSummary, SkillManager,
+    SkillRecord, SkillSourceKind, SkillSummary, SkillUninstallResult,
 };
 use std::fs;
 use std::future::Future;
@@ -108,7 +108,7 @@ impl SkillManagerPanel {
         };
         self.apply_snapshot(snapshot);
 
-        match load_skill_list() {
+        match load_installed_skill_list() {
             Ok((skill_root, items)) => {
                 self.skill_root = Some(skill_root);
                 self.items = items;
@@ -126,7 +126,7 @@ impl SkillManagerPanel {
     }
 
     fn load_detail(&mut self, skill_name: &str, notifications: &mut NotificationCenter) {
-        match load_skill_detail(skill_name.to_string()) {
+        match load_installed_skill_detail(skill_name.to_string()) {
             Ok(record) => {
                 self.detail_name = Some(skill_name.to_string());
                 self.detail_record = Some(record);
@@ -142,7 +142,7 @@ impl SkillManagerPanel {
 
     fn open_install_window(&mut self, notifications: &mut NotificationCenter) {
         if self.config.skills.registries.is_empty() {
-            notifications.warning("No skill registry configured");
+            notifications.warning("No skills registry configured");
             return;
         }
 
@@ -195,7 +195,7 @@ impl SkillManagerPanel {
             return;
         }
 
-        match load_registry_catalog(window.selected_registry.clone()) {
+        match load_source_catalog(window.selected_registry.clone()) {
             Ok(skills) => {
                 window.skills = skills;
                 window.error = None;
@@ -243,7 +243,7 @@ impl SkillManagerPanel {
             }
         }
 
-        match install_registry_skill_in_store(registry_name.to_string(), skill_id.to_string()) {
+        match install_from_registry_in_store(registry_name.to_string(), skill_id.to_string()) {
             Ok((_record, _already_installed)) => {
                 self.load_items(notifications, false);
                 if let Some(mut window) = self.install_window.take() {
@@ -300,7 +300,7 @@ impl SkillManagerPanel {
             }
         }
 
-        match uninstall_registry_skill_from_store(registry_name.to_string(), skill_id.to_string()) {
+        match uninstall_from_registry_in_store(registry_name.to_string(), skill_id.to_string()) {
             Ok(()) => {
                 if self.detail_name.as_deref() == Some(skill_id) {
                     self.detail_name = None;
@@ -364,7 +364,7 @@ impl SkillManagerPanel {
             }
         }
 
-        match uninstall_skill_from_store(skill_name.to_string()) {
+        match uninstall_installed_skill_from_store(skill_name.to_string()) {
             Ok(result) => {
                 if self.detail_name.as_deref() == Some(skill_name) {
                     self.detail_name = None;
@@ -756,44 +756,46 @@ impl PanelRenderer for SkillManagerPanel {
     }
 }
 
-fn load_skill_list() -> Result<(PathBuf, Vec<SkillSummary>), String> {
+fn load_installed_skill_list() -> Result<(PathBuf, Vec<SkillSummary>), String> {
     run_skill_task(|store| async move {
         let root = store.root_dir().to_path_buf();
-        let items = store.list().await?;
+        let items = store.list_installed().await?;
         Ok((root, items))
     })
 }
 
-fn load_skill_detail(skill_name: String) -> Result<SkillRecord, String> {
-    run_skill_task(move |store| async move { store.get(&skill_name).await })
+fn load_installed_skill_detail(skill_name: String) -> Result<SkillRecord, String> {
+    run_skill_task(move |store| async move { store.get_installed(&skill_name).await })
 }
 
-fn load_registry_catalog(registry_name: String) -> Result<Vec<RegistrySkillSummary>, String> {
-    run_skill_task(move |store| async move { store.list_registry_skills(&registry_name).await })
+fn load_source_catalog(registry_name: String) -> Result<Vec<RegistrySkillSummary>, String> {
+    run_skill_task(move |store| async move { store.list_source_skills(&registry_name).await })
 }
 
-fn install_registry_skill_in_store(
+fn install_from_registry_in_store(
     registry_name: String,
     skill_name: String,
 ) -> Result<(SkillRecord, bool), String> {
     run_skill_task(move |store| async move {
         store
-            .install_registry_skill(&registry_name, &skill_name)
+            .install_from_registry(&registry_name, &skill_name)
             .await
     })
 }
 
-fn uninstall_skill_from_store(skill_name: String) -> Result<SkillUninstallResult, String> {
-    run_skill_task(move |store| async move { store.uninstall_skill(&skill_name).await })
+fn uninstall_installed_skill_from_store(
+    skill_name: String,
+) -> Result<SkillUninstallResult, String> {
+    run_skill_task(move |store| async move { store.uninstall(&skill_name).await })
 }
 
-fn uninstall_registry_skill_from_store(
+fn uninstall_from_registry_in_store(
     registry_name: String,
     skill_name: String,
 ) -> Result<(), String> {
     run_skill_task(move |store| async move {
         store
-            .uninstall_registry_skill(&registry_name, &skill_name)
+            .uninstall_from_registry(&registry_name, &skill_name)
             .await
     })
 }
@@ -851,8 +853,8 @@ fn install_local_skill_from_markdown_path(
         ));
     }
 
-    let store = open_default_skill_store()
-        .map_err(|err| format!("failed to open default skill store: {err}"))?;
+    let store = open_default_skill_manager()
+        .map_err(|err| format!("failed to open default skill manager: {err}"))?;
     let target_dir = store.skills_dir().join(&skill_name);
     let source_dir_canonical = source_dir
         .canonicalize()
@@ -969,8 +971,8 @@ where
     Fut: Future<Output = Result<T, klaw_skill::SkillError>> + Send + 'static,
 {
     let join = thread::spawn(move || {
-        let store = open_default_skill_store()
-            .map_err(|err| format!("failed to open skill store: {err}"))?;
+        let store = open_default_skill_manager()
+            .map_err(|err| format!("failed to open skill manager: {err}"))?;
         let runtime = Builder::new_current_thread()
             .enable_all()
             .build()
@@ -989,7 +991,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_config::SkillRegistryConfig;
+    use klaw_config::SkillsRegistryConfig;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -997,14 +999,14 @@ mod tests {
         let mut config = AppConfig::default();
         config.skills.registries.insert(
             "private".to_string(),
-            SkillRegistryConfig {
+            SkillsRegistryConfig {
                 address: "https://example.com/private.git".to_string(),
                 installed: vec!["demo".to_string(), "plan".to_string()],
             },
         );
         config.skills.registries.insert(
             "public".to_string(),
-            SkillRegistryConfig {
+            SkillsRegistryConfig {
                 address: "https://example.com/public.git".to_string(),
                 installed: vec!["demo".to_string()],
             },
@@ -1023,7 +1025,7 @@ mod tests {
         let mut config = AppConfig::default();
         config.skills.registries.insert(
             "private".to_string(),
-            klaw_config::SkillRegistryConfig {
+            klaw_config::SkillsRegistryConfig {
                 address: "https://example.com/private.git".to_string(),
                 installed: vec!["zeta".to_string()],
             },

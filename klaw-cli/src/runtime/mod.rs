@@ -19,13 +19,13 @@ use klaw_heartbeat::{
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
 use klaw_skill::{
-    open_default_skill_store, InstalledSkill, RegistrySource, SkillSourceKind, SkillStore,
+    open_default_skill_manager, InstalledSkill, RegistrySource, SkillManager, SkillSourceKind,
 };
 use klaw_storage::{open_default_store, CronStorage, DefaultSessionStore};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, CronManagerTool, LocalSearchTool, MemoryTool, ShellTool,
-    SkillsRegistryTool, SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry,
-    WebFetchTool, WebSearchTool,
+    SkillsManagerTool, SkillsRegistryTool, SubAgentTool, TerminalMultiplexerTool, ToolContext,
+    ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use serde_json::json;
 use std::{
@@ -759,6 +759,16 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     } else {
         info!("skills registry tool disabled: no configured sources");
     }
+    if config.tools.skills_manager.enabled() {
+        match SkillsManagerTool::open_default(config) {
+            Ok(tool) => tools.register(tool),
+            Err(err) => {
+                warn!("skills manager tool disabled: {err}");
+            }
+        }
+    } else {
+        info!("skills manager tool disabled by config");
+    }
     if config.tools.memory.enabled() {
         tools.register(MemoryTool::open_default(config).await?);
     }
@@ -929,7 +939,7 @@ struct LoadedSkillsPrompt {
 
 async fn load_skills_system_prompt(config: &AppConfig) -> LoadedSkillsPrompt {
     info!("loading local skills for system prompt");
-    let store = match open_default_skill_store() {
+    let store = match open_default_skill_manager() {
         Ok(store) => store,
         Err(err) => {
             warn!("failed to open default skill store: {err}");
@@ -974,7 +984,7 @@ async fn load_skills_system_prompt(config: &AppConfig) -> LoadedSkillsPrompt {
         }
     }
 
-    let skills = match store.load_all_skill_markdowns().await {
+    let skills = match store.load_all_installed_skill_markdowns().await {
         Ok(items) => items,
         Err(err) => {
             warn!("failed to load local skills: {err}");

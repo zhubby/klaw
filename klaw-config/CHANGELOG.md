@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-03-18
+
+### Added
+
+- `tools.skills_manager.enabled` 配置项，支持独立控制已安装 skill 生命周期工具
+
+### Changed
+
+- `tools.skills_registry` 现在仅表示只读 registry 浏览工具，不再混合安装/卸载职责
+
 ## 2026-03-15
 
 ### Added

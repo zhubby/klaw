@@ -204,7 +204,7 @@ pub struct PanelRegistry {
 | Cron | Cron | Scheduled jobs |
 | Heartbeat | Heartbeat | Session heartbeat monitoring |
 | MCP | MCP | Model Context Protocol |
-| Skill | Skill Registry | Skills registry view |
+| Skill | Skills Registry | Skills registry view |
 | SkillManage | Skill | Skill installation/management |
 | Memory | Memory | Memory system (BM25 + Vector) |
 | Archive | Archive | File archive management |

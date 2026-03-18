@@ -35,6 +35,7 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.terminal_multiplexers.enabled);
     assert!(parsed.tools.cron_manager.enabled);
     assert!(parsed.tools.skills_registry.enabled);
+    assert!(parsed.tools.skills_manager.enabled);
     assert!(parsed.tools.shell.workspace.is_none());
     assert!(parsed.tools.apply_patch.enabled);
     assert!(parsed.tools.apply_patch.workspace.is_none());
@@ -818,7 +819,7 @@ fn validate_fails_when_skills_config_invalid() {
     let mut cfg = AppConfig::default();
     cfg.skills.registries.insert(
         String::new(),
-        SkillRegistryConfig {
+        SkillsRegistryConfig {
             address: "https://github.com/anthropics/skills".to_string(),
             installed: vec![],
         },
@@ -829,7 +830,7 @@ fn validate_fails_when_skills_config_invalid() {
     let mut cfg2 = AppConfig::default();
     cfg2.skills.registries.insert(
         "empty-address".to_string(),
-        SkillRegistryConfig {
+        SkillsRegistryConfig {
             address: String::new(),
             installed: vec![],
         },
@@ -840,7 +841,7 @@ fn validate_fails_when_skills_config_invalid() {
     let mut cfg3 = AppConfig::default();
     cfg3.skills.registries.insert(
         "anthropic".to_string(),
-        SkillRegistryConfig {
+        SkillsRegistryConfig {
             address: "https://github.com/anthropics/skills".to_string(),
             installed: vec!["".to_string()],
         },
@@ -851,7 +852,7 @@ fn validate_fails_when_skills_config_invalid() {
     let mut cfg4 = AppConfig::default();
     cfg4.skills.registries.insert(
         "anthropic".to_string(),
-        SkillRegistryConfig {
+        SkillsRegistryConfig {
             address: "https://github.com/anthropics/skills".to_string(),
             installed: vec!["code-review".to_string(), "code-review".to_string()],
         },

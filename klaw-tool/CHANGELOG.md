@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-03-18
+
+### Changed
+- split the old mixed `skills_registry` tool into two tools: read-only `skills_registry` and installed-skill `skills_manager`
+- moved registry install/write actions out of `skills_registry`; `skills_manager` now owns `install_from_registry`, `uninstall`, `list_installed`, `show_installed`, and `load_all`
+- updated tool metadata and schemas so registry browsing and installed-skill lifecycle are no longer mixed in one interface
+
 ## 2026-03-17
 
 ### Changed

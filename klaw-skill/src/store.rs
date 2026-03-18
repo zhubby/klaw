@@ -1,25 +1,42 @@
 use async_trait::async_trait;
 
-use crate::{SkillError, SkillRecord, SkillSummary};
+use crate::{
+    RegistrySkillMatch, RegistrySkillSummary, SkillError, SkillRecord, SkillSummary,
+    SkillUninstallResult,
+};
 
 #[async_trait]
-pub trait SkillStore: Send + Sync {
-    async fn download(&self, skill_name: &str) -> Result<SkillRecord, SkillError>;
-    async fn download_with_source(
+pub trait SkillsRegistry: Send + Sync {
+    async fn list_source_skills(
         &self,
-        skill_name: &str,
         source_name: &str,
-        download_url_template: &str,
-    ) -> Result<SkillRecord, SkillError>;
-    async fn delete(&self, skill_name: &str) -> Result<(), SkillError>;
-    async fn list(&self) -> Result<Vec<SkillSummary>, SkillError>;
-    async fn get(&self, skill_name: &str) -> Result<SkillRecord, SkillError>;
-    async fn update(&self, skill_name: &str) -> Result<SkillRecord, SkillError>;
-    async fn update_with_source(
+    ) -> Result<Vec<RegistrySkillSummary>, SkillError>;
+    async fn get_source_skill(
         &self,
-        skill_name: &str,
         source_name: &str,
-        download_url_template: &str,
+        skill_name: &str,
     ) -> Result<SkillRecord, SkillError>;
-    async fn load_all_skill_markdowns(&self) -> Result<Vec<SkillRecord>, SkillError>;
+    async fn search_source_skills(
+        &self,
+        source_name: &str,
+        query: &str,
+    ) -> Result<Vec<RegistrySkillMatch>, SkillError>;
+}
+
+#[async_trait]
+pub trait SkillManager: Send + Sync {
+    async fn install_from_registry(
+        &self,
+        source_name: &str,
+        skill_name: &str,
+    ) -> Result<(SkillRecord, bool), SkillError>;
+    async fn uninstall_from_registry(
+        &self,
+        source_name: &str,
+        skill_name: &str,
+    ) -> Result<(), SkillError>;
+    async fn uninstall(&self, skill_name: &str) -> Result<SkillUninstallResult, SkillError>;
+    async fn list_installed(&self) -> Result<Vec<SkillSummary>, SkillError>;
+    async fn get_installed(&self, skill_name: &str) -> Result<SkillRecord, SkillError>;
+    async fn load_all_installed_skill_markdowns(&self) -> Result<Vec<SkillRecord>, SkillError>;
 }

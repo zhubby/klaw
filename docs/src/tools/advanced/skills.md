@@ -1,11 +1,13 @@
 # Skills 模块设计与实现
 
-本文档说明 `klaw-skill` 与 `klaw-tool` 中 skills 能力的设计目标、配置模型、registry 同步策略与运行时接入方式。
+本文档说明 `klaw-skill` 与 `klaw-tool` 中 skills 能力的设计目标、配置模型、registry 同步策略，以及 `skills_registry` / `skills_manager` 的职责划分。
 
 ## 目标
 
 - 在本地数据目录统一管理 skills（`~/.klaw/skills`）。
-- 抽象并实现 skills 生命周期能力：查询、删除、加载全部 `SKILL.md`，以及基于 registry 的安装同步。
+- 抽象并拆分两类能力：
+  - registry 目录/镜像的只读浏览与检索
+  - 已安装 skill 的安装、卸载、查看与加载
 - 支持多个可配置 registry 源（Git 仓库），并从配置文件读取。
 - 在程序启动时加载本地 skill 内容，并注入模型 system prompt。
 
@@ -15,11 +17,11 @@
   - `model.rs`：`SkillSource` / `SkillSummary` / `SkillRecord`
   - `error.rs`：`SkillError`
   - `fetcher.rs`：`SkillFetcher` / `ReqwestSkillFetcher`
-  - `store.rs`：`SkillStore` trait
+  - `store.rs`：`SkillsRegistry` / `SkillManager` traits
   - `fs_store.rs`：`FileSystemSkillStore` 默认实现
   - `lib.rs`：模块导出
-- Skills 工具：`klaw-tool/src/skills_registry.rs`
-- 运行时注册：`klaw-cli/src/commands/runtime.rs`
+- Skills 工具：`klaw-tool/src/skills_registry.rs` / `klaw-tool/src/skills_manager.rs`
+- 运行时注册：`klaw-cli/src/runtime/mod.rs`
 - 配置模型：`klaw-config/src/lib.rs`
 
 ## 数据目录约定
@@ -67,51 +69,61 @@ installed = ["brainstorming"]
    - `managed` 记录安装了哪些 `<registry>/<skill>`
    - `registry_commits` 记录每个 registry 当前 `HEAD commit`
    - `stale_registries` 记录同步失败但可用本地缓存的 registry
-3. `install` 只写 manifest 索引，不再复制 skill 到 `~/.klaw/skills`。
-4. `list/get/load_all` 合并两类来源：
+3. `install_from_registry` 只写 manifest 索引，不再复制 skill 到 `~/.klaw/skills`。
+4. `list_installed/get_installed/load_all_installed_skill_markdowns` 合并两类来源：
    - manifest 索引的 registry skills（直接读取 `~/.klaw/skills-registry`）
    - 本地手工 skills（`~/.klaw/skills`）
    - 同名冲突时 registry(managed) 优先，本地同名会被忽略并告警。
 
-## SkillStore 抽象
+## SkillsRegistry / SkillManager 抽象
 
-`SkillStore` 提供统一异步接口：
+`SkillsRegistry` 负责只读 registry 镜像能力：
 
-- `download(skill_name)`
-- `download_with_source(skill_name, source_name, template)`
-- `delete(skill_name)`
-- `list()`
-- `get(skill_name)`
-- `update(skill_name)`
-- `update_with_source(skill_name, source_name, template)`
-- `load_all_skill_markdowns()`
+- `list_source_skills(source_name)`
+- `get_source_skill(source_name, skill_name)`
+- `search_source_skills(source_name, query)`
+
+`SkillManager` 负责已安装 skill 生命周期：
+
+- `install_from_registry(source_name, skill_name)`
+- `uninstall(skill_name)`
+- `uninstall_from_registry(source_name, skill_name)`
+- `list_installed()`
+- `get_installed(skill_name)`
+- `load_all_installed_skill_markdowns()`
 
 `FileSystemSkillStore` 还提供 registry 安装同步接口：
 
 - `sync_registry_installed_skills(sources, installed, sync_timeout_secs)`
 
-其中：
+## Tool 层
 
-- `install` 对已存在 skill 会覆盖写入，可作为“重新安装”使用。
-- `list_installed/show` 用于本地查询。
-
-## SkillsRegistryTool（工具层）
+### `skills_registry`
 
 工具名：`skills_registry`
 
 支持 action：
 
-- `install`（需 `source` + `skill_name`）
+- `list`（需 `source`）
+- `search`（需 `query`，`source` 可选，支持 `limit`）
+- `show`（需 `source` + `skill_name`）
+
+### `skills_manager`
+
+工具名：`skills_manager`
+
+支持 action：
+
+- `install_from_registry`（需 `source` + `skill_name`）
 - `uninstall`（需 `skill_name`）
 - `list_installed`
-- `search`（需 `query`，`source` 可选，支持 `limit`）
-- `show`（需 `skill_name`，`source` 可选，仅用于输出上下文）
+- `show_installed`（需 `skill_name`）
 - `load_all`
 
 典型调用示例：
 
 ```json
-{"action":"install","source":"vercel","skill_name":"find-skills"}
+{"action":"install_from_registry","source":"vercel","skill_name":"find-skills"}
 ```
 
 ## 启动加载与 System Prompt 注入
@@ -143,10 +155,10 @@ installed = ["brainstorming"]
 `klaw-skill` 已覆盖：
 
 - 名称校验与路径安全
-- `list/get` 空目录与有数据场景
-- `delete` 存在/不存在分支
-- `load_all` 聚合行为
-- `download/update` 的可注入 fetcher 路径（不依赖真实网络）
+- `list_installed/get_installed` 空目录与有数据场景
+- `uninstall` 的 manifest/local 联合删除
+- `load_all_installed_skill_markdowns` 聚合行为
+- `install_from_registry` / `uninstall_from_registry` 的 manifest 更新与冲突校验
 
 `klaw-config` 已覆盖：
 

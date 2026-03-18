@@ -11,6 +11,7 @@
 - 校验 provider、工具、MCP、gateway、heartbeat 等配置合法性。
 - 支持按 channel 配置会话命令开关（`channels.disable_session_commands_for`）。
 - 支持 `storage.root_dir` 配置项，用于覆盖默认 `~/.klaw` 数据目录根路径。
+- 支持独立的 `tools.skills_registry` 与 `tools.skills_manager` 开关配置。
 
 ## 模型配置
 

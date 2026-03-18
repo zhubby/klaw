@@ -71,7 +71,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Cron => "Cron",
             WorkbenchMenu::Heartbeat => "Heartbeat",
             WorkbenchMenu::Mcp => "MCP",
-            WorkbenchMenu::Skill => "Skill Registry",
+            WorkbenchMenu::Skill => "Skills Registry",
             WorkbenchMenu::SkillManager => "Skill Manager",
             WorkbenchMenu::Memory => "Memory",
             WorkbenchMenu::Archive => "Archive",

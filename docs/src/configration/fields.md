@@ -578,7 +578,7 @@ tools.cron_manager.enabled = false
 
 ### `tools.skills_registry`
 
-Skills 注册表工具配置。
+只读 Skills 注册表工具配置。
 
 #### `tools.skills_registry.enabled`
 
@@ -586,10 +586,26 @@ Skills 注册表工具配置。
 **默认值**: `true`
 **必填**: 否
 
-是否启用 Skills 注册表工具。
+是否启用只读 Skills 注册表工具。
 
 ```toml
 tools.skills_registry.enabled = false
+```
+
+### `tools.skills_manager`
+
+已安装 Skills 管理工具配置。
+
+#### `tools.skills_manager.enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用已安装 Skills 管理工具。
+
+```toml
+tools.skills_manager.enabled = false
 ```
 
 ### `tools.memory`
@@ -1444,7 +1460,7 @@ sync_timeout = 120
 
 ### `skills.registries.<name>`
 
-**类型**: `map<string, SkillRegistryConfig>`
+**类型**: `map<string, SkillsRegistryConfig>`
 **默认值**: `{"anthropic": {...}}`
 **必填**: 否
 

@@ -5,8 +5,7 @@
 ## Responsibilities
 
 - define tool interfaces through the shared `Tool` trait
-- implement local tools such as `apply_patch`, `shell`, `memory`, `web_fetch`, `web_search`, and `skills_registry`
-- implement local tools such as `apply_patch`, `shell`, `approval`, `memory`, `web_fetch`, `web_search`, and `skills_registry`
+- implement local tools such as `apply_patch`, `shell`, `approval`, `memory`, `web_fetch`, `web_search`, `skills_registry`, and `skills_manager`
 - keep tool metadata LLM-friendly so planners can infer when and how to call each tool
 
 ## Architecture
@@ -23,6 +22,8 @@
 - the `cron_manager` tool also accepts either a JSON object or a JSON string for payloads, and tolerates common boolean strings like `"true"` / `"false"` for `enabled`
 - the `cron_manager` tool supports a high-level `message` shortcut for scheduled prompts in the current conversation, auto-filling channel/chat/session defaults from tool context unless explicitly overridden
 - the `message` shortcut now defaults to an isolated cron session key like `cron:<job_id>` so scheduled runs do not silently accumulate the current chat's conversation history
+- `skills_registry` is now read-only and only browses/searches local registry mirrors
+- `skills_manager` owns installed-skill lifecycle actions, including `install_from_registry`
 - multi-action tools use action-specific `oneOf` parameter schemas to keep requests explicit and avoid mixing unrelated fields in a single call
 - `tools.apply_patch.allow_absolute_paths = true` allows any absolute path outside the workspace
 - `tools.apply_patch.allowed_roots = ["/some/path"]` allows specific extra directories while keeping the default workspace boundary elsewhere

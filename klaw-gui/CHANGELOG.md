@@ -10,7 +10,9 @@
 
 ### Changed
 
-- installed-skill management naming is now consistently `Skill Manager` across the sidebar title, panel file/module names, and Rust type/field names to avoid confusion with `Skill Registry`
+- installed-skill management naming is now consistently `Skill Manager` across the sidebar title, panel file/module names, and Rust type/field names to avoid confusion with `Skills Registry`
+- GUI 工具配置面板现在独立展示 `skills_registry` 与 `skills_manager` 两个开关
+- GUI 技能面板改为通过拆分后的 `SkillsRegistry` / `SkillManager` 接口读取 registry catalog 与 installed skills
 
 ## 2026-03-17
 
@@ -30,7 +32,7 @@
 - session panel now lists indexed sessions in a table via `klaw-session` manager abstractions instead of a placeholder view
 - approval panel now lists approvals in a table and routes approve/reject/consume actions through `klaw-approval`
 - skill panel now manages installed skills via `klaw-skill`, including list/detail, registry sync, and uninstall flows
-- skill registry sync entry now lives on the `Skill Registry` list actions instead of the installed `Skill Manager` panel
+- skills registry sync entry now lives on the `Skills Registry` list actions instead of the installed `Skill Manager` panel
 - skill panel now includes an install window with registry selection and scrollable install/uninstall actions per registry skill
 - skill panel now adds `Install Local` flow: pick local `SKILL.md` via `egui-file-dialog`, validate skill name format, and copy the entire local skill directory into `~/.klaw/skills`
 - GUI skill actions now trigger a runtime skills-prompt reload command so newly changed skills can apply to subsequent requests without restarting the GUI runtime
@@ -61,7 +63,7 @@
 - provider add/edit flow via `egui::Window` form with config persistence and validation feedback
 - channel panel now loads/writes `channels.dingtalk` and `disable_session_commands_for`, with `egui::Window` add/edit form
 - mcp panel now loads/writes global settings and `mcp.servers`, with `egui::Window` add/edit form
-- skill panel upgraded to `Skill Registry`, with config-bound registry list and `egui::Window` add/edit form
+- skill panel upgraded to `Skills Registry`, with config-bound registry list and `egui::Window` add/edit form
 - cron panel now integrates storage DB operations: list jobs/runs, add/edit via window, and enable/disable/delete
 - archive panel now reads `archive.db` through storage DB interface with filters and detail view
 - refactored GUI cron/archive to call `klaw-cron` and `klaw-archive` abstractions instead of direct storage operations

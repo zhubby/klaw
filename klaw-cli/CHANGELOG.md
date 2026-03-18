@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-03-18
+
+### Changed
+
+- runtime 技能工具注册拆分为 `skills_registry`（只读 registry catalog）与 `skills_manager`（已安装 skill 生命周期）
+- runtime 加载已安装 skills 时改为通过新的 `SkillManager` 接口读取合并后的 installed 视图
+
 ## 2026-03-17
 
 ### Changed

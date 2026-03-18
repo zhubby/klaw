@@ -8,15 +8,16 @@
 - Sync configured registry mirrors under `~/.klaw/skills-registry`
 - Recover from stale git lock files during registry sync by removing leftover `*.lock` files and retrying once
 - Index managed registry installations via `~/.klaw/skills-registry-manifest.json`
-- List available skills from a synced registry mirror and support registry-specific managed uninstall
-- Load a merged runtime view of skills (managed registry + local manual)
+- Expose a read-only registry interface for listing, reading, and searching synced registry skills
+- Expose a manager interface for installed-skill install/uninstall/list/show/load-all flows
+- Load a merged runtime view of installed skills (managed registry + local manual)
 - Expose source metadata for each loaded skill (`local` vs `registry`, registry name, stale state)
 
 ## Architecture
 
 - `model.rs`: shared skill models (`SkillSource`, `SkillSummary`, `SkillRecord`)
-- `store.rs`: `SkillStore` trait for async CRUD/load operations
-- `fs_store.rs`: default filesystem implementation, registry sync, manifest indexing
+- `store.rs`: split `SkillsRegistry` / `SkillManager` traits
+- `fs_store.rs`: default filesystem implementation, registry sync, manifest indexing, registry/manager composition
 - `fetcher.rs`: network fetch abstraction (`SkillFetcher`) + reqwest implementation
 - `error.rs`: `SkillError` domain error model
 
