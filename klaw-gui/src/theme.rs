@@ -2,8 +2,16 @@ use crate::state::ThemeMode;
 use std::collections::HashSet;
 use std::path::Path;
 
+const LXGW_WENKAI_REGULAR_TTF: &[u8] =
+    include_bytes!("../assets/fonts/lxgw-wenkai/LXGWWenKai-Regular.ttf");
+const LXGW_WENKAI_MONO_REGULAR_TTF: &[u8] =
+    include_bytes!("../assets/fonts/lxgw-wenkai/LXGWWenKaiMono-Regular.ttf");
+const LXGW_WENKAI_PROPORTIONAL_NAME: &str = "lxgw-wenkai-regular";
+const LXGW_WENKAI_MONOSPACE_NAME: &str = "lxgw-wenkai-mono-regular";
+
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
+    install_embedded_preferred_fonts(&mut fonts);
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     install_system_cjk_fallbacks(&mut fonts);
     ctx.set_fonts(fonts);
@@ -81,6 +89,34 @@ fn install_system_cjk_fallbacks(fonts: &mut egui::FontDefinitions) {
     }
 }
 
+fn install_embedded_preferred_fonts(fonts: &mut egui::FontDefinitions) {
+    fonts.font_data.insert(
+        LXGW_WENKAI_PROPORTIONAL_NAME.to_string(),
+        egui::FontData::from_static(LXGW_WENKAI_REGULAR_TTF).into(),
+    );
+    fonts.font_data.insert(
+        LXGW_WENKAI_MONOSPACE_NAME.to_string(),
+        egui::FontData::from_static(LXGW_WENKAI_MONO_REGULAR_TTF).into(),
+    );
+
+    let proportional = fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default();
+    prepend_font_family(proportional, LXGW_WENKAI_PROPORTIONAL_NAME);
+
+    let monospace = fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default();
+    prepend_font_family(monospace, LXGW_WENKAI_MONOSPACE_NAME);
+}
+
+fn prepend_font_family(family: &mut Vec<String>, font_name: &str) {
+    family.retain(|existing| existing != font_name);
+    family.insert(0, font_name.to_string());
+}
+
 fn face_source_path(source: &fontdb::Source) -> Option<&Path> {
     match source {
         fontdb::Source::File(path) => Some(path.as_path()),
@@ -109,7 +145,10 @@ fn is_preferred_cjk_family(family_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_preferred_cjk_family;
+    use super::{
+        install_embedded_preferred_fonts, is_preferred_cjk_family, LXGW_WENKAI_MONOSPACE_NAME,
+        LXGW_WENKAI_PROPORTIONAL_NAME,
+    };
 
     #[test]
     fn preferred_cjk_family_match_is_case_insensitive() {
@@ -117,5 +156,21 @@ mod tests {
         assert!(is_preferred_cjk_family("Noto Sans CJK SC"));
         assert!(is_preferred_cjk_family("microsoft YaHei"));
         assert!(!is_preferred_cjk_family("Fira Code"));
+    }
+
+    #[test]
+    fn embedded_preferred_fonts_are_prepended() {
+        let mut fonts = egui::FontDefinitions::default();
+
+        install_embedded_preferred_fonts(&mut fonts);
+
+        assert_eq!(
+            fonts.families[&egui::FontFamily::Proportional].first(),
+            Some(&LXGW_WENKAI_PROPORTIONAL_NAME.to_string())
+        );
+        assert_eq!(
+            fonts.families[&egui::FontFamily::Monospace].first(),
+            Some(&LXGW_WENKAI_MONOSPACE_NAME.to_string())
+        );
     }
 }
