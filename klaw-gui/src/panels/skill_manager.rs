@@ -21,7 +21,7 @@ struct InstallSkillWindow {
     error: Option<String>,
 }
 
-pub struct SkillManagePanel {
+pub struct SkillManagerPanel {
     config_store: Option<ConfigStore>,
     config_path: Option<PathBuf>,
     revision: Option<u64>,
@@ -36,7 +36,7 @@ pub struct SkillManagePanel {
     local_install_dialog: FileDialog,
 }
 
-impl Default for SkillManagePanel {
+impl Default for SkillManagerPanel {
     fn default() -> Self {
         Self {
             config_store: None,
@@ -55,7 +55,7 @@ impl Default for SkillManagePanel {
     }
 }
 
-impl SkillManagePanel {
+impl SkillManagerPanel {
     fn request_runtime_skills_reload(notifications: &mut NotificationCenter) {
         if let Err(err) = runtime_bridge::request_reload_skills_prompt() {
             notifications.warning(format!("Runtime skills prompt reload not sent: {err}"));
@@ -659,7 +659,7 @@ impl SkillManagePanel {
     }
 }
 
-impl PanelRenderer for SkillManagePanel {
+impl PanelRenderer for SkillManagerPanel {
     fn render(
         &mut self,
         ui: &mut egui::Ui,
@@ -705,10 +705,10 @@ impl PanelRenderer for SkillManagePanel {
             ui.label("No installed skills found.");
         } else {
             egui::ScrollArea::vertical()
-                .id_salt("skill-manage-list")
+                .id_salt("skill-manager-list")
                 .max_height(260.0)
                 .show(ui, |ui| {
-                    egui::Grid::new("skill-manage-grid")
+                    egui::Grid::new("skill-manager-grid")
                         .striped(true)
                         .num_columns(7)
                         .spacing([12.0, 8.0])
@@ -1010,7 +1010,8 @@ mod tests {
             },
         );
 
-        let (next, changed) = SkillManagePanel::remove_skill_from_config(config, "private", "demo");
+        let (next, changed) =
+            SkillManagerPanel::remove_skill_from_config(config, "private", "demo");
 
         assert!(changed);
         assert_eq!(next.skills.registries["private"].installed, vec!["plan"]);
@@ -1028,7 +1029,7 @@ mod tests {
             },
         );
 
-        let (next, changed) = SkillManagePanel::add_skill_to_config(config, "private", "alpha");
+        let (next, changed) = SkillManagerPanel::add_skill_to_config(config, "private", "alpha");
 
         assert!(changed);
         assert_eq!(

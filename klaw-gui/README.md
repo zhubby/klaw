@@ -9,6 +9,9 @@
   - File menu includes `Force Persist Layout` to immediately flush layout state to disk
 - Bottom status bar with version and theme-mode switcher
   - Runtime provider override dropdown on the right (select from `model_providers` without editing config)
+- System tray / macOS menu bar icon loaded from `assets/icons/logo.iconset`
+  - tray menu includes `Open Klaw`, `Setting`, `About`, and `Quit Klaw`
+  - `Setting` is currently a placeholder action with an in-app notification
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
   - includes tabs/theme/fullscreen and window size
 - macOS app icon is loaded from `assets/icons/logo.icns` at startup
@@ -16,7 +19,7 @@
 - Strongly typed menu model for workspace modules
 - Single-tab-per-menu behavior (click to open or activate)
 - Workbench panel renderers for:
-  - profile
+  - profile (workspace markdown doc cards + editor window)
   - configuration
   - model provider (config-bound list + add/edit window)
   - channel (config-bound list + add/edit window)
@@ -35,6 +38,11 @@
   - `Validate`, `Save` (validate before persist), `Reset`, `Migrate`, `Reload`
   - dirty-state warning before reset/migrate overwrite
   - global toast notifications for operation feedback
+- Profile panel features:
+  - read markdown files directly under `~/.klaw/workspace`
+  - show workspace docs as cards with file summary, modified time, and path
+  - edit a document in a fixed-height markdown-highlighted popup editor
+  - save, cancel, or reset in the editor footer
 - Provider panel features:
   - read providers from `config.toml` (`model_provider` + `model_providers`)
   - set active provider directly
@@ -51,7 +59,7 @@
   - add/edit registries via `egui::Window`
   - sync a registry's installed skills directly from the registry list actions
   - request a runtime skills-prompt reload after registry config/save and sync actions
-- Skill panel features:
+- Skill Manager panel features:
   - read installed skills from `klaw-skill` merged store view
   - inspect source metadata and `SKILL.md` content in a detail window
   - open an install window with registry selection and a scrollable registry skill table
@@ -82,7 +90,7 @@
 - `domain/`: core domain enums (menu identity)
 - `state/`: UI action model + workbench tab state reducer
 - `ui/`: shell/sidebar/workbench composition
-- `panels/`: module-specific placeholder panels
+- `panels/`: module-specific workbench panels
 - `widgets/`: shared reusable UI widgets
 - `theme.rs`: centralized theme setup
   - system-follow default

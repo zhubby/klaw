@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-03-18
+
+### Added
+
+- GUI startup now installs a `tray-icon` status item using `assets/icons/logo.iconset`, so Klaw shows an icon in the system tray / macOS menu bar for the full app lifetime
+- tray status item menu now provides `Open Klaw`, `Setting`, `About`, and `Quit Klaw`; `Setting` currently shows a placeholder notification, while the other actions focus/open the main window, show the existing About dialog, and quit the app
+- profile panel now manages workspace markdown docs from `~/.klaw/workspace` using tool-style cards and a popup editor with fixed-height markdown-highlighted text area plus `Save` / `Cancel` / `Reset`
+
+### Changed
+
+- installed-skill management naming is now consistently `Skill Manager` across the sidebar title, panel file/module names, and Rust type/field names to avoid confusion with `Skill Registry`
+
 ## 2026-03-17
 
 ### Changed
@@ -18,7 +30,7 @@
 - session panel now lists indexed sessions in a table via `klaw-session` manager abstractions instead of a placeholder view
 - approval panel now lists approvals in a table and routes approve/reject/consume actions through `klaw-approval`
 - skill panel now manages installed skills via `klaw-skill`, including list/detail, registry sync, and uninstall flows
-- skill registry sync entry now lives on the `Skill Registry` list actions instead of the installed `Skill` panel
+- skill registry sync entry now lives on the `Skill Registry` list actions instead of the installed `Skill Manager` panel
 - skill panel now includes an install window with registry selection and scrollable install/uninstall actions per registry skill
 - skill panel now adds `Install Local` flow: pick local `SKILL.md` via `egui-file-dialog`, validate skill name format, and copy the entire local skill directory into `~/.klaw/skills`
 - GUI skill actions now trigger a runtime skills-prompt reload command so newly changed skills can apply to subsequent requests without restarting the GUI runtime
@@ -59,6 +71,6 @@
 - system monitor panel now shows real-time CPU and memory cards with usage percent and absolute memory usage
 - top File menu now includes `Force Persist Layout` to flush layout persistence immediately
 - heartbeat panel now supports managing `heartbeat.defaults` and `heartbeat.sessions` (add/edit/delete/reload/save)
-- sidebar now includes `Session`, `Approval`, and `Skill` menus; `Provider` menu title renamed to `Model Provider`
+- sidebar now includes `Session`, `Approval`, and `Skill Manager` menus; `Provider` menu title renamed to `Model Provider`
 - status bar now includes runtime provider override dropdown (from `model_providers`) for dynamic runtime provider switching
 - system monitor now shows four real-time cards (CPU/memory/data-dir disk usage/app uptime) and detailed system information in English

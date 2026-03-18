@@ -27,9 +27,13 @@ toml = { workspace = true }
 sysinfo = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
+tray-icon = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-image = { workspace = true }
+image = { workspace = true, features = ["png"] }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true, features = ["NSApplication", "NSImage"] }
 objc2-foundation = { workspace = true, features = ["NSData", "NSString"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+image = { workspace = true, features = ["png"] }

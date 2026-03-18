@@ -34,6 +34,10 @@ impl Default for ShellUi {
 }
 
 impl ShellUi {
+    pub fn show_info(&mut self, message: impl Into<String>) {
+        self.notifications.info(message);
+    }
+
     fn sync_provider_choices(&mut self) {
         if self.last_provider_sync_at.elapsed() < PROVIDER_SYNC_INTERVAL {
             return;

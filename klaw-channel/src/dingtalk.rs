@@ -15,7 +15,7 @@ use std::time::Instant;
 use tokio::sync::watch;
 use tokio::time::{self, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 const DINGTALK_OPEN_API_BASE: &str = "https://api.dingtalk.com";
 const DINGTALK_OAPI_BASE: &str = "https://oapi.dingtalk.com";
@@ -238,7 +238,7 @@ impl DingtalkChannel {
                                         }
                                     }
                                     Ok(Message::Pong(_)) => {
-                                        debug!("received dingtalk websocket pong");
+                                        trace!("received dingtalk websocket pong");
                                     }
                                     Ok(Message::Close(frame)) => {
                                         info!(close_frame = ?frame, "dingtalk stream connection closed");

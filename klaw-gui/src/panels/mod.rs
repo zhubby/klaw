@@ -10,7 +10,7 @@ mod profile;
 mod provider;
 mod session;
 mod skill;
-mod skill_manage;
+mod skill_manager;
 mod system_monitor;
 mod tool;
 
@@ -42,7 +42,7 @@ pub struct PanelRegistry {
     heartbeat: heartbeat::HeartbeatPanel,
     mcp: mcp::McpPanel,
     skill: skill::SkillPanel,
-    skill_manage: skill_manage::SkillManagePanel,
+    skill_manager: skill_manager::SkillManagerPanel,
     memory: memory::MemoryPanel,
     archive: archive::ArchivePanel,
     tool: tool::ToolPanel,
@@ -52,7 +52,7 @@ pub struct PanelRegistry {
 impl Default for PanelRegistry {
     fn default() -> Self {
         Self {
-            profile: profile::ProfilePanel,
+            profile: profile::ProfilePanel::default(),
             session: session::SessionPanel::default(),
             approval: approval::ApprovalPanel::default(),
             configuration: configuration::ConfigurationPanel::default(),
@@ -62,7 +62,7 @@ impl Default for PanelRegistry {
             heartbeat: heartbeat::HeartbeatPanel::default(),
             mcp: mcp::McpPanel::default(),
             skill: skill::SkillPanel::default(),
-            skill_manage: skill_manage::SkillManagePanel::default(),
+            skill_manager: skill_manager::SkillManagerPanel::default(),
             memory: memory::MemoryPanel::default(),
             archive: archive::ArchivePanel::default(),
             tool: tool::ToolPanel::default(),
@@ -89,7 +89,7 @@ impl PanelRegistry {
             WorkbenchMenu::Heartbeat => self.heartbeat.render(ui, ctx, notifications),
             WorkbenchMenu::Mcp => self.mcp.render(ui, ctx, notifications),
             WorkbenchMenu::Skill => self.skill.render(ui, ctx, notifications),
-            WorkbenchMenu::SkillManage => self.skill_manage.render(ui, ctx, notifications),
+            WorkbenchMenu::SkillManager => self.skill_manager.render(ui, ctx, notifications),
             WorkbenchMenu::Memory => self.memory.render(ui, ctx, notifications),
             WorkbenchMenu::Archive => self.archive.render(ui, ctx, notifications),
             WorkbenchMenu::Tool => self.tool.render(ui, ctx, notifications),
