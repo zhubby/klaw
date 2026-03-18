@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use klaw_config::AppConfig;
 use klaw_skill::{
-    open_default_skill_manager, FileSystemSkillStore, ReqwestSkillFetcher, SkillManager,
+    open_default_skills_manager, FileSystemSkillStore, ReqwestSkillFetcher, SkillsManager,
 };
 use serde_json::{json, Value};
 use tokio::time::{timeout, Duration};
@@ -16,8 +16,8 @@ const INSTALL_TIMEOUT_SECS: u64 = 15;
 
 impl SkillsManagerTool {
     pub fn open_default(_config: &AppConfig) -> Result<Self, ToolError> {
-        let store = open_default_skill_manager().map_err(|err| {
-            ToolError::ExecutionFailed(format!("open skill manager failed: {err}"))
+        let store = open_default_skills_manager().map_err(|err| {
+            ToolError::ExecutionFailed(format!("open skills manager failed: {err}"))
         })?;
         Ok(Self { store })
     }

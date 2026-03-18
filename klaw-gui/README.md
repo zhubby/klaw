@@ -59,12 +59,12 @@
   - add/edit registries via `egui::Window`
   - sync a registry's installed skills directly from the registry list actions
   - request a runtime skills-prompt reload after registry config/save and sync actions
-- Skill Manager panel features:
+- Skills Manager panel features:
   - read installed skills from `klaw-skill` merged store view
   - inspect source metadata and `SKILL.md` content in a detail window
   - open an install window with registry selection and a scrollable registry skill table
   - install local skills by selecting a local `SKILL.md` with `egui-file-dialog`, validating name format, and copying the full source directory to `~/.klaw/skills/<name>`
-  - install/uninstall registry-managed skills through the installed-skill manager flow
+  - install/uninstall registry-managed skills through the installed-skills manager flow
   - uninstall local skills and registry-managed skills
   - request a runtime skills-prompt reload after install/uninstall actions
 - Memory panel features:

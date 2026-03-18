@@ -16,7 +16,7 @@
 ## Architecture
 
 - `model.rs`: shared skill models (`SkillSource`, `SkillSummary`, `SkillRecord`)
-- `store.rs`: split `SkillsRegistry` / `SkillManager` traits
+- `store.rs`: split `SkillsRegistry` / `SkillsManager` traits
 - `fs_store.rs`: default filesystem implementation, registry sync, manifest indexing, registry/manager composition
 - `fetcher.rs`: network fetch abstraction (`SkillFetcher`) + reqwest implementation
 - `error.rs`: `SkillError` domain error model

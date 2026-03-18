@@ -24,7 +24,7 @@ pub trait SkillsRegistry: Send + Sync {
 }
 
 #[async_trait]
-pub trait SkillManager: Send + Sync {
+pub trait SkillsManager: Send + Sync {
     async fn install_from_registry(
         &self,
         source_name: &str,

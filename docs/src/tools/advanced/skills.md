@@ -17,7 +17,7 @@
   - `model.rs`：`SkillSource` / `SkillSummary` / `SkillRecord`
   - `error.rs`：`SkillError`
   - `fetcher.rs`：`SkillFetcher` / `ReqwestSkillFetcher`
-  - `store.rs`：`SkillsRegistry` / `SkillManager` traits
+  - `store.rs`：`SkillsRegistry` / `SkillsManager` traits
   - `fs_store.rs`：`FileSystemSkillStore` 默认实现
   - `lib.rs`：模块导出
 - Skills 工具：`klaw-tool/src/skills_registry.rs` / `klaw-tool/src/skills_manager.rs`
@@ -75,7 +75,7 @@ installed = ["brainstorming"]
    - 本地手工 skills（`~/.klaw/skills`）
    - 同名冲突时 registry(managed) 优先，本地同名会被忽略并告警。
 
-## SkillsRegistry / SkillManager 抽象
+## SkillsRegistry / SkillsManager 抽象
 
 `SkillsRegistry` 负责只读 registry 镜像能力：
 
@@ -83,7 +83,7 @@ installed = ["brainstorming"]
 - `get_source_skill(source_name, skill_name)`
 - `search_source_skills(source_name, query)`
 
-`SkillManager` 负责已安装 skill 生命周期：
+`SkillsManager` 负责已安装 skill 生命周期：
 
 - `install_from_registry(source_name, skill_name)`
 - `uninstall(skill_name)`

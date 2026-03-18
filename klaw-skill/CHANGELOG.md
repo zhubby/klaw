@@ -3,7 +3,7 @@
 ## 2026-03-18
 
 ### Changed
-- split the public skills API into `SkillsRegistry` and `SkillManager` traits instead of one mixed store trait
+- split the public skills API into `SkillsRegistry` and `SkillsManager` traits instead of one mixed store trait
 - renamed filesystem-store installed-skill methods to manager-oriented names such as `install_from_registry`, `list_installed`, `get_installed`, and `load_all_installed_skill_markdowns`
 - moved registry catalog search/list/show responsibilities into the registry-facing API while keeping installed-skill merge/load behavior in the manager-facing API
 

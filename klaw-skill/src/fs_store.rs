@@ -12,7 +12,7 @@ use tracing::{info, warn};
 
 use crate::{
     RegistrySkillMatch, RegistrySkillSummary, ReqwestSkillFetcher, SkillError, SkillFetcher,
-    SkillManager, SkillRecord, SkillSource, SkillSourceKind, SkillSummary, SkillsRegistry,
+    SkillRecord, SkillSource, SkillSourceKind, SkillSummary, SkillsManager, SkillsRegistry,
 };
 
 const DEFAULT_KLAW_DIR: &str = ".klaw";
@@ -851,7 +851,7 @@ where
 }
 
 #[async_trait]
-impl<F> SkillManager for FileSystemSkillStore<F>
+impl<F> SkillsManager for FileSystemSkillStore<F>
 where
     F: SkillFetcher,
 {
@@ -1011,7 +1011,7 @@ where
     }
 }
 
-pub fn open_default_skill_manager() -> Result<FileSystemSkillStore<ReqwestSkillFetcher>, SkillError>
+pub fn open_default_skills_manager() -> Result<FileSystemSkillStore<ReqwestSkillFetcher>, SkillError>
 {
     FileSystemSkillStore::from_home_dir()
 }

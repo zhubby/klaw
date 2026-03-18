@@ -10,9 +10,9 @@
 
 ### Changed
 
-- installed-skill management naming is now consistently `Skill Manager` across the sidebar title, panel file/module names, and Rust type/field names to avoid confusion with `Skills Registry`
+- installed-skill management naming is now consistently `Skills Manager` across the sidebar title, panel file/module names, and Rust type/field names to avoid confusion with `Skills Registry`
 - GUI 工具配置面板现在独立展示 `skills_registry` 与 `skills_manager` 两个开关
-- GUI 技能面板改为通过拆分后的 `SkillsRegistry` / `SkillManager` 接口读取 registry catalog 与 installed skills
+- GUI 技能面板改为通过拆分后的 `SkillsRegistry` / `SkillsManager` 接口读取 registry catalog 与 installed skills
 
 ## 2026-03-17
 
@@ -32,7 +32,7 @@
 - session panel now lists indexed sessions in a table via `klaw-session` manager abstractions instead of a placeholder view
 - approval panel now lists approvals in a table and routes approve/reject/consume actions through `klaw-approval`
 - skill panel now manages installed skills via `klaw-skill`, including list/detail, registry sync, and uninstall flows
-- skills registry sync entry now lives on the `Skills Registry` list actions instead of the installed `Skill Manager` panel
+- skills registry sync entry now lives on the `Skills Registry` list actions instead of the installed `Skills Manager` panel
 - skill panel now includes an install window with registry selection and scrollable install/uninstall actions per registry skill
 - skill panel now adds `Install Local` flow: pick local `SKILL.md` via `egui-file-dialog`, validate skill name format, and copy the entire local skill directory into `~/.klaw/skills`
 - GUI skill actions now trigger a runtime skills-prompt reload command so newly changed skills can apply to subsequent requests without restarting the GUI runtime
@@ -73,6 +73,6 @@
 - system monitor panel now shows real-time CPU and memory cards with usage percent and absolute memory usage
 - top File menu now includes `Force Persist Layout` to flush layout persistence immediately
 - heartbeat panel now supports managing `heartbeat.defaults` and `heartbeat.sessions` (add/edit/delete/reload/save)
-- sidebar now includes `Session`, `Approval`, and `Skill Manager` menus; `Provider` menu title renamed to `Model Provider`
+- sidebar now includes `Session`, `Approval`, and `Skills Manager` menus; `Provider` menu title renamed to `Model Provider`
 - status bar now includes runtime provider override dropdown (from `model_providers`) for dynamic runtime provider switching
 - system monitor now shows four real-time cards (CPU/memory/data-dir disk usage/app uptime) and detailed system information in English

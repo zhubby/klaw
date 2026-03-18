@@ -5,8 +5,8 @@ use crate::time_format::format_timestamp_millis;
 use egui_file_dialog::FileDialog;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_skill::{
-    open_default_skill_manager, FileSystemSkillStore, RegistrySkillSummary, SkillManager,
-    SkillRecord, SkillSourceKind, SkillSummary, SkillUninstallResult,
+    open_default_skills_manager, FileSystemSkillStore, RegistrySkillSummary, SkillRecord,
+    SkillSourceKind, SkillSummary, SkillUninstallResult, SkillsManager,
 };
 use std::fs;
 use std::future::Future;
@@ -21,7 +21,7 @@ struct InstallSkillWindow {
     error: Option<String>,
 }
 
-pub struct SkillManagerPanel {
+pub struct SkillsManagerPanel {
     config_store: Option<ConfigStore>,
     config_path: Option<PathBuf>,
     revision: Option<u64>,
@@ -36,7 +36,7 @@ pub struct SkillManagerPanel {
     local_install_dialog: FileDialog,
 }
 
-impl Default for SkillManagerPanel {
+impl Default for SkillsManagerPanel {
     fn default() -> Self {
         Self {
             config_store: None,
@@ -55,7 +55,7 @@ impl Default for SkillManagerPanel {
     }
 }
 
-impl SkillManagerPanel {
+impl SkillsManagerPanel {
     fn request_runtime_skills_reload(notifications: &mut NotificationCenter) {
         if let Err(err) = runtime_bridge::request_reload_skills_prompt() {
             notifications.warning(format!("Runtime skills prompt reload not sent: {err}"));
@@ -659,7 +659,7 @@ impl SkillManagerPanel {
     }
 }
 
-impl PanelRenderer for SkillManagerPanel {
+impl PanelRenderer for SkillsManagerPanel {
     fn render(
         &mut self,
         ui: &mut egui::Ui,
@@ -853,8 +853,8 @@ fn install_local_skill_from_markdown_path(
         ));
     }
 
-    let store = open_default_skill_manager()
-        .map_err(|err| format!("failed to open default skill manager: {err}"))?;
+    let store = open_default_skills_manager()
+        .map_err(|err| format!("failed to open default skills manager: {err}"))?;
     let target_dir = store.skills_dir().join(&skill_name);
     let source_dir_canonical = source_dir
         .canonicalize()
@@ -971,8 +971,8 @@ where
     Fut: Future<Output = Result<T, klaw_skill::SkillError>> + Send + 'static,
 {
     let join = thread::spawn(move || {
-        let store = open_default_skill_manager()
-            .map_err(|err| format!("failed to open skill manager: {err}"))?;
+        let store = open_default_skills_manager()
+            .map_err(|err| format!("failed to open skills manager: {err}"))?;
         let runtime = Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1013,7 +1013,7 @@ mod tests {
         );
 
         let (next, changed) =
-            SkillManagerPanel::remove_skill_from_config(config, "private", "demo");
+            SkillsManagerPanel::remove_skill_from_config(config, "private", "demo");
 
         assert!(changed);
         assert_eq!(next.skills.registries["private"].installed, vec!["plan"]);
@@ -1031,7 +1031,7 @@ mod tests {
             },
         );
 
-        let (next, changed) = SkillManagerPanel::add_skill_to_config(config, "private", "alpha");
+        let (next, changed) = SkillsManagerPanel::add_skill_to_config(config, "private", "alpha");
 
         assert!(changed);
         assert_eq!(

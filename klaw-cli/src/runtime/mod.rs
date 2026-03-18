@@ -19,7 +19,7 @@ use klaw_heartbeat::{
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
 use klaw_skill::{
-    open_default_skill_manager, InstalledSkill, RegistrySource, SkillManager, SkillSourceKind,
+    open_default_skills_manager, InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager,
 };
 use klaw_storage::{open_default_store, CronStorage, DefaultSessionStore};
 use klaw_tool::{
@@ -939,7 +939,7 @@ struct LoadedSkillsPrompt {
 
 async fn load_skills_system_prompt(config: &AppConfig) -> LoadedSkillsPrompt {
     info!("loading local skills for system prompt");
-    let store = match open_default_skill_manager() {
+    let store = match open_default_skills_manager() {
         Ok(store) => store,
         Err(err) => {
             warn!("failed to open default skill store: {err}");

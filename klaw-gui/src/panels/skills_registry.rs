@@ -4,7 +4,7 @@ use crate::runtime_bridge;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillsRegistryConfig};
 use klaw_skill::RegistrySyncReport;
 use klaw_skill::{
-    open_default_skill_manager, FileSystemSkillStore, InstalledSkill, RegistrySource,
+    open_default_skills_manager, FileSystemSkillStore, InstalledSkill, RegistrySource,
 };
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -553,8 +553,8 @@ where
     Fut: Future<Output = Result<T, klaw_skill::SkillError>> + Send + 'static,
 {
     let join = thread::spawn(move || {
-        let store = open_default_skill_manager()
-            .map_err(|err| format!("failed to open skill manager: {err}"))?;
+        let store = open_default_skills_manager()
+            .map_err(|err| format!("failed to open skills manager: {err}"))?;
         let runtime = Builder::new_current_thread()
             .enable_all()
             .build()
