@@ -407,6 +407,7 @@ mod tests {
                 base_url: "https://api.openai.com/v1".to_string(),
                 wire_api: "chat_completions".to_string(),
                 default_model: "gpt-4o-mini".to_string(),
+                proxy: false,
                 api_key: Some("mock".to_string()),
                 env_key: None,
             },

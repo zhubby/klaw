@@ -11,6 +11,7 @@ struct ProviderForm {
     base_url: String,
     wire_api: String,
     default_model: String,
+    proxy: bool,
     env_key: String,
     api_key: String,
     set_as_active: bool,
@@ -26,6 +27,7 @@ impl ProviderForm {
             base_url: default.base_url,
             wire_api: default.wire_api,
             default_model: default.default_model,
+            proxy: default.proxy,
             env_key: default.env_key.unwrap_or_default(),
             api_key: default.api_key.unwrap_or_default(),
             set_as_active: false,
@@ -40,6 +42,7 @@ impl ProviderForm {
             base_url: provider.base_url.clone(),
             wire_api: provider.wire_api.clone(),
             default_model: provider.default_model.clone(),
+            proxy: provider.proxy,
             env_key: provider.env_key.clone().unwrap_or_default(),
             api_key: provider.api_key.clone().unwrap_or_default(),
             set_as_active: id == active_provider,
@@ -67,6 +70,7 @@ impl ProviderForm {
             base_url: self.base_url.trim().to_string(),
             wire_api: self.wire_api.trim().to_string(),
             default_model: self.default_model.trim().to_string(),
+            proxy: self.proxy,
             env_key: (!env_key.is_empty()).then(|| env_key.to_string()),
             api_key: (!api_key.is_empty()).then(|| api_key.to_string()),
         }
@@ -282,6 +286,10 @@ impl ProviderPanel {
 
                         ui.label("Default Model");
                         ui.text_edit_singleline(&mut form.default_model);
+                        ui.end_row();
+
+                        ui.label("Use System Proxy");
+                        ui.checkbox(&mut form.proxy, "");
                         ui.end_row();
 
                         ui.label("Env Key");

@@ -95,6 +95,22 @@ Provider 的默认模型。
 default_model = "gpt-4o-mini"
 ```
 
+#### `model_providers.<name>.proxy`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否启用系统代理发送大模型请求。
+
+- `false`（默认）：不走代理，强制直连。
+- `true`：按系统代理环境变量（如 `HTTP_PROXY` / `HTTPS_PROXY`）发送请求。
+
+```toml
+[model_providers.openai]
+proxy = true
+```
+
 #### `model_providers.<name>.api_key`
 
 **类型**: `string` (可选)

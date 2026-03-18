@@ -11,6 +11,7 @@ fn parse_default_template_succeeds() {
     assert_eq!(parsed.model_provider, "openai");
     assert!(parsed.model.is_none());
     assert!(parsed.model_providers.contains_key("openai"));
+    assert!(!parsed.model_providers["openai"].proxy);
     assert!(!parsed.memory.embedding.enabled);
     assert_eq!(parsed.memory.embedding.provider, "openai");
     assert_eq!(parsed.memory.embedding.model, "text-embedding-3-small");
@@ -102,6 +103,23 @@ fn parse_default_template_succeeds() {
     assert!(parsed.gateway.tls.cert_path.is_none());
     assert!(parsed.gateway.tls.key_path.is_none());
     validate(&parsed).expect("default template should be valid");
+}
+
+#[test]
+fn parse_model_provider_proxy_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+proxy = true
+env_key = "OPENAI_API_KEY"
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+    assert!(parsed.model_providers["openai"].proxy);
 }
 
 #[test]

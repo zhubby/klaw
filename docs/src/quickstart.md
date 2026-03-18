@@ -21,6 +21,7 @@ model_provider = "openai"
 base_url = "https://api.openai.com/v1"
 wire_api = "chat_completions"
 default_model = "gpt-4o-mini"
+proxy = false
 env_key = "OPENAI_API_KEY"
 ```
 

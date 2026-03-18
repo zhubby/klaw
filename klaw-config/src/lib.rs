@@ -367,6 +367,8 @@ pub struct ModelProviderConfig {
     pub wire_api: String,
     pub default_model: String,
     #[serde(default)]
+    pub proxy: bool,
+    #[serde(default)]
     pub api_key: Option<String>,
     #[serde(default)]
     pub env_key: Option<String>,
@@ -379,6 +381,7 @@ impl Default for ModelProviderConfig {
             base_url: "https://api.openai.com/v1".to_string(),
             wire_api: "chat_completions".to_string(),
             default_model: "gpt-4o-mini".to_string(),
+            proxy: false,
             api_key: None,
             env_key: Some("OPENAI_API_KEY".to_string()),
         }

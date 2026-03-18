@@ -35,6 +35,7 @@ model = "gpt-4o-mini"  # 可选，覆盖 provider 的 default_model
 base_url = "https://api.openai.com/v1"
 wire_api = "chat_completions"
 default_model = "gpt-4o-mini"
+proxy = false
 env_key = "OPENAI_API_KEY"
 
 # 网关配置
@@ -208,6 +209,7 @@ pub fn reset_to_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, C
 | `base_url` | 不能为空 |
 | `default_model` | 不能为空 |
 | `wire_api` | 不能为空 |
+| `proxy` | 默认 `false`，`true` 时走系统代理 |
 
 #### 2. 网关验证
 
@@ -340,6 +342,7 @@ model_provider = "openai"
 base_url = "https://api.openai.com/v1"
 wire_api = "chat_completions"
 default_model = "gpt-4o-mini"
+proxy = false
 env_key = "OPENAI_API_KEY"
 ```
 

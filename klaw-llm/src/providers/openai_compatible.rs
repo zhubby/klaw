@@ -33,6 +33,8 @@ pub struct OpenAiCompatibleConfig {
     pub api_key: String,
     /// 默认模型名。
     pub default_model: String,
+    /// 是否启用系统代理。false 时强制直连（no_proxy）。
+    pub proxy: bool,
     /// 底层 wire API。
     pub wire_api: OpenAiWireApi,
 }
@@ -48,7 +50,7 @@ impl OpenAiCompatibleProvider {
     /// 创建 provider 实例。
     pub fn new(config: OpenAiCompatibleConfig) -> Self {
         Self {
-            client: Client::new(),
+            client: build_http_client(config.proxy),
             config,
         }
     }
@@ -203,6 +205,18 @@ impl OpenAiCompatibleProvider {
 
         let payload: OpenAiResponsesResponse = self.execute_json(&request).await?;
         Ok(parse_responses_payload(payload))
+    }
+}
+
+fn build_http_client(proxy_enabled: bool) -> Client {
+    let builder = if proxy_enabled {
+        Client::builder()
+    } else {
+        Client::builder().no_proxy()
+    };
+    match builder.build() {
+        Ok(client) => client,
+        Err(_) => Client::new(),
     }
 }
 
@@ -891,6 +905,7 @@ mod tests {
             base_url: "https://coding.dashscope.aliyuncs.com/v1/".to_string(),
             api_key: "test-key".to_string(),
             default_model: "test-model".to_string(),
+            proxy: false,
             wire_api: OpenAiWireApi::Responses,
         });
 

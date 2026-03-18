@@ -115,6 +115,7 @@ pub fn build_provider_from_config(
             base_url: provider.base_url.clone(),
             api_key,
             default_model: default_model.clone(),
+            proxy: provider.proxy,
             wire_api: OpenAiWireApi::parse(provider.wire_api.as_str()).ok_or_else(|| {
                 ProviderBuildError::UnsupportedWireApi {
                     provider_id: provider_id.to_string(),
