@@ -6,6 +6,8 @@ pub enum StorageError {
     HomeDirUnavailable,
     #[error("failed to create data directory: {0}")]
     CreateDataDir(#[source] std::io::Error),
+    #[error("failed to create temporary data directory: {0}")]
+    CreateTmpDir(#[source] std::io::Error),
     #[error("failed to create sessions directory: {0}")]
     CreateSessionsDir(#[source] std::io::Error),
     #[error("failed to create archives directory: {0}")]

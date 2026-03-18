@@ -16,6 +16,7 @@
 ├── klaw.db
 ├── memory.db
 ├── archive.db
+├── tmp/
 ├── sessions/
 └── archives/
 ```
@@ -23,6 +24,7 @@
 ## Notes
 
 - `DefaultSessionStore` persists session and cron data
+- `tmp/` is the dedicated temporary data directory under the Klaw data root
 - session records support Base Session -> Active Session routing and per-session provider/model persistence
 - `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`
 - `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`

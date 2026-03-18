@@ -10,8 +10,10 @@ mod memory;
 mod profile;
 mod provider;
 mod session;
+mod setting;
 mod skills_manager;
 mod skills_registry;
+mod system;
 mod system_monitor;
 mod tool;
 
@@ -34,6 +36,8 @@ pub trait PanelRenderer {
 
 pub struct PanelRegistry {
     profile: profile::ProfilePanel,
+    system: system::SystemPanel,
+    setting: setting::SettingPanel,
     session: session::SessionPanel,
     approval: approval::ApprovalPanel,
     configuration: configuration::ConfigurationPanel,
@@ -55,6 +59,8 @@ impl Default for PanelRegistry {
     fn default() -> Self {
         Self {
             profile: profile::ProfilePanel::default(),
+            system: system::SystemPanel::default(),
+            setting: setting::SettingPanel::default(),
             session: session::SessionPanel::default(),
             approval: approval::ApprovalPanel::default(),
             configuration: configuration::ConfigurationPanel::default(),
@@ -83,6 +89,8 @@ impl PanelRegistry {
     ) {
         match ctx.menu {
             WorkbenchMenu::Profile => self.profile.render(ui, ctx, notifications),
+            WorkbenchMenu::System => self.system.render(ui, ctx, notifications),
+            WorkbenchMenu::Setting => self.setting.render(ui, ctx, notifications),
             WorkbenchMenu::Session => self.session.render(ui, ctx, notifications),
             WorkbenchMenu::Approval => self.approval.render(ui, ctx, notifications),
             WorkbenchMenu::Configuration => self.configuration.render(ui, ctx, notifications),

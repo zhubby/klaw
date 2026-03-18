@@ -4,6 +4,8 @@
 
 ### Added
 
+- GUI sidebar now includes `System` and `Setting` menus; `Setting` is a placeholder workbench panel for future settings work
+- GUI `System` panel now shows `~/.klaw/tmp` usage through `klaw-storage::StoragePaths`, with refresh and trash-icon cleanup actions
 - GUI now includes a dedicated `Logs` workbench panel that streams process logs in real time, with level filters (`trace/debug/info/warn/error/unknown`), keyword search, pause/auto-scroll controls, clear, export-to-file, and bounded in-memory retention
 - GUI startup now installs a `tray-icon` status item using `assets/icons/logo.iconset`, so Klaw shows an icon in the system tray / macOS menu bar for the full app lifetime
 - tray status item menu now provides `Open Klaw`, `Setting`, `About`, and `Quit Klaw`; `Setting` currently shows a placeholder notification, while the other actions focus/open the main window, show the existing About dialog, and quit the app

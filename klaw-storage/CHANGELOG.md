@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-18
+
+### Added
+- added `tmp/` to `StoragePaths` as the dedicated temporary data directory under the Klaw data root
+
+### Changed
+- `StoragePaths::ensure_dirs()` now creates the temporary data directory together with the other storage directories
+
 ## 2026-03-15
 
 ### Added

@@ -5,6 +5,7 @@
 ## Capabilities
 
 - Workbench shell with left navigation and center tab workspace
+- Workbench sidebar now includes `System` and `Setting`
 - Top menu bar (File/View/Window/Help)
   - File menu includes `Force Persist Layout` to immediately flush layout state to disk
 - Bottom status bar with version and theme-mode switcher
@@ -31,6 +32,8 @@
   - memory
   - archive (db-bound query + detail view)
   - tool
+  - system (tmp directory usage and cleanup)
+  - setting (placeholder panel)
 - system-monitor (real-time CPU/memory/data-dir/uptime cards in a 2x2 equal-width layout, plus detailed system information)
 - logs panel (live tracing stream in-process with level filters, keyword search, pause stream, auto-scroll, clear, export, and bounded in-memory buffer)
 - Configuration panel features:
@@ -71,6 +74,10 @@
 - Memory panel features:
   - read memory-layer aggregate stats via `klaw-memory` stats abstraction
   - show total/pinned/embedded/scope/recency/index metrics and top scopes
+- System panel features:
+  - resolve `~/.klaw/tmp` through `klaw-storage::StoragePaths`
+  - calculate the temporary directory size on demand
+  - clear all temporary files and folders while keeping the `tmp/` root directory
 - Session panel features:
   - read indexed sessions via `klaw-session` manager abstraction
   - render session metadata in a read-only table with limit/offset controls

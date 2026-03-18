@@ -236,6 +236,7 @@ mod tests {
         let paths = StoragePaths::from_root(base.clone());
         assert_eq!(paths.memory_db_path, base.join("memory.db"));
         assert_eq!(paths.archive_db_path, base.join("archive.db"));
+        assert_eq!(paths.tmp_dir, base.join("tmp"));
         assert_eq!(paths.archives_dir, base.join("archives"));
     }
 

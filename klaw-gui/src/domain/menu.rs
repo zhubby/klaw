@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WorkbenchMenu {
     Profile,
+    System,
+    Setting,
     Session,
     Approval,
     Configuration,
@@ -23,8 +25,10 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 16] = [
+    pub const ALL: [WorkbenchMenu; 18] = [
         WorkbenchMenu::Profile,
+        WorkbenchMenu::System,
+        WorkbenchMenu::Setting,
         WorkbenchMenu::Session,
         WorkbenchMenu::Approval,
         WorkbenchMenu::Configuration,
@@ -45,6 +49,8 @@ impl WorkbenchMenu {
     pub const fn id_key(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => "profile",
+            WorkbenchMenu::System => "system",
+            WorkbenchMenu::Setting => "setting",
             WorkbenchMenu::Session => "session",
             WorkbenchMenu::Approval => "approval",
             WorkbenchMenu::Configuration => "configuration",
@@ -66,6 +72,8 @@ impl WorkbenchMenu {
     pub const fn title(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => "Profile",
+            WorkbenchMenu::System => "System",
+            WorkbenchMenu::Setting => "Setting",
             WorkbenchMenu::Session => "Session",
             WorkbenchMenu::Approval => "Approval",
             WorkbenchMenu::Configuration => "Configuration",
@@ -87,6 +95,8 @@ impl WorkbenchMenu {
     pub const fn icon(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => regular::USER_CIRCLE,
+            WorkbenchMenu::System => regular::DATABASE,
+            WorkbenchMenu::Setting => regular::GEAR,
             WorkbenchMenu::Session => regular::USERS,
             WorkbenchMenu::Approval => regular::SEAL_CHECK,
             WorkbenchMenu::Configuration => regular::TOOLBOX,

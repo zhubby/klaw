@@ -8,6 +8,7 @@ pub struct StoragePaths {
     pub db_path: PathBuf,
     pub memory_db_path: PathBuf,
     pub archive_db_path: PathBuf,
+    pub tmp_dir: PathBuf,
     pub sessions_dir: PathBuf,
     pub archives_dir: PathBuf,
 }
@@ -23,6 +24,7 @@ impl StoragePaths {
             db_path: root_dir.join("klaw.db"),
             memory_db_path: root_dir.join("memory.db"),
             archive_db_path: root_dir.join("archive.db"),
+            tmp_dir: root_dir.join("tmp"),
             sessions_dir: root_dir.join("sessions"),
             archives_dir: root_dir.join("archives"),
             root_dir,
@@ -33,6 +35,9 @@ impl StoragePaths {
         fs::create_dir_all(&self.root_dir)
             .await
             .map_err(StorageError::CreateDataDir)?;
+        fs::create_dir_all(&self.tmp_dir)
+            .await
+            .map_err(StorageError::CreateTmpDir)?;
         fs::create_dir_all(&self.sessions_dir)
             .await
             .map_err(StorageError::CreateSessionsDir)?;
