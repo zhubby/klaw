@@ -4,12 +4,14 @@
 
 ### Added
 
+- GUI now includes a dedicated `Logs` workbench panel that streams process logs in real time, with level filters (`trace/debug/info/warn/error/unknown`), keyword search, pause/auto-scroll controls, clear, export-to-file, and bounded in-memory retention
 - GUI startup now installs a `tray-icon` status item using `assets/icons/logo.iconset`, so Klaw shows an icon in the system tray / macOS menu bar for the full app lifetime
 - tray status item menu now provides `Open Klaw`, `Setting`, `About`, and `Quit Klaw`; `Setting` currently shows a placeholder notification, while the other actions focus/open the main window, show the existing About dialog, and quit the app
 - profile panel now manages workspace markdown docs from `~/.klaw/workspace` using tool-style cards and a popup editor with fixed-height markdown-highlighted text area plus `Save` / `Cancel` / `Reset`
 
 ### Changed
 
+- `klaw gui` tracing initialization now fans out logs to both the primary sink and the GUI log channel using a non-blocking writer path, so dropped GUI log events never block runtime logging
 - installed-skill management naming is now consistently `Skills Manager` across the sidebar title, panel file/module names, and Rust type/field names to avoid confusion with `Skills Registry`
 - GUI 工具配置面板现在独立展示 `skills_registry` 与 `skills_manager` 两个开关
 - GUI 技能面板改为通过拆分后的 `SkillsRegistry` / `SkillsManager` 接口读取 registry catalog 与 installed skills

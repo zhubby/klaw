@@ -11,7 +11,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc, Mutex},
 };
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -79,7 +79,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_level,
         command,
     } = Cli::parse();
-    init_tracing(&command, log_level)?;
+    let gui_log_sender = create_gui_log_sender_for_command(&command);
+    init_tracing(&command, log_level, gui_log_sender)?;
     if is_pre_runtime_command(&command) {
         match command {
             Commands::Config(cmd) => cmd.run(config.as_deref())?,
@@ -119,6 +120,7 @@ fn is_pre_runtime_command(command: &Commands) -> bool {
 fn init_tracing(
     command: &Commands,
     log_level: Option<LogLevel>,
+    gui_log_sender: Option<mpsc::SyncSender<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let env_filter = build_env_filter(log_level);
 
@@ -139,12 +141,24 @@ fn init_tracing(
                 .create(true)
                 .append(true)
                 .open(&log_path)?;
-            let writer = FileTracingWriter::new(log_file);
+            let writer = FanoutTracingWriter::new(
+                PrimaryTracingWriter::File(FileTracingWriter::new(log_file)),
+                gui_log_sender,
+            );
             tracing_subscriber::fmt()
                 .with_env_filter(env_filter)
                 .with_target(false)
                 .compact()
                 .with_ansi(false)
+                .with_writer(move || writer.clone())
+                .init();
+        }
+        Commands::Gui(_) => {
+            let writer = FanoutTracingWriter::new(PrimaryTracingWriter::Stdout, gui_log_sender);
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_target(false)
+                .compact()
                 .with_writer(move || writer.clone())
                 .init();
         }
@@ -158,6 +172,15 @@ fn init_tracing(
     }
 
     Ok(())
+}
+
+fn create_gui_log_sender_for_command(command: &Commands) -> Option<mpsc::SyncSender<String>> {
+    if !matches!(command, Commands::Gui(_)) {
+        return None;
+    }
+    let (sender, receiver) = mpsc::sync_channel(2048);
+    klaw_gui::install_log_receiver(receiver);
+    Some(sender)
 }
 
 fn build_env_filter(log_level: Option<LogLevel>) -> EnvFilter {
@@ -201,10 +224,100 @@ impl Write for FileTracingWriter {
     }
 }
 
+#[derive(Debug, Clone)]
+enum PrimaryTracingWriter {
+    Stdout,
+    File(FileTracingWriter),
+}
+
+impl Write for PrimaryTracingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Stdout => {
+                let mut stdout = io::stdout();
+                stdout.write(buf)
+            }
+            Self::File(file_writer) => file_writer.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Stdout => {
+                let mut stdout = io::stdout();
+                stdout.flush()
+            }
+            Self::File(file_writer) => file_writer.flush(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GuiTracingWriter {
+    sender: mpsc::SyncSender<String>,
+}
+
+impl GuiTracingWriter {
+    fn new(sender: mpsc::SyncSender<String>) -> Self {
+        Self { sender }
+    }
+}
+
+impl Write for GuiTracingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // GUI sink must never block or fail the primary logging path.
+        let payload = String::from_utf8_lossy(buf).to_string();
+        let _ = self.sender.try_send(payload);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FanoutTracingWriter {
+    primary: PrimaryTracingWriter,
+    gui: Option<GuiTracingWriter>,
+}
+
+impl FanoutTracingWriter {
+    fn new(primary: PrimaryTracingWriter, gui_sender: Option<mpsc::SyncSender<String>>) -> Self {
+        Self {
+            primary,
+            gui: gui_sender.map(GuiTracingWriter::new),
+        }
+    }
+}
+
+impl Write for FanoutTracingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let written = self.primary.write(buf)?;
+        if let Some(gui_writer) = self.gui.as_mut() {
+            let _ = gui_writer.write(buf);
+        }
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.primary.flush()?;
+        if let Some(gui_writer) = self.gui.as_mut() {
+            let _ = gui_writer.flush();
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::{
+        fs::OpenOptions,
+        sync::mpsc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn parse_global_log_level_before_subcommand() {
@@ -239,5 +352,39 @@ mod tests {
     fn gui_is_pre_runtime_command() {
         let cli = Cli::parse_from(["klaw", "gui"]);
         assert!(!is_pre_runtime_command(&cli.command));
+    }
+
+    #[test]
+    fn gui_tracing_writer_disconnected_sink_is_non_fatal() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        drop(receiver);
+        let mut writer = GuiTracingWriter::new(sender);
+        let written = writer.write(b"hello").expect("write should not fail");
+        assert_eq!(written, 5);
+    }
+
+    #[test]
+    fn fanout_writer_with_file_primary_survives_gui_sink_drop() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("klaw-fanout-{suffix}.log"));
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("create temp log file");
+        let (sender, receiver) = mpsc::sync_channel(1);
+        drop(receiver);
+        let mut writer = FanoutTracingWriter::new(
+            PrimaryTracingWriter::File(FileTracingWriter::new(file)),
+            Some(sender),
+        );
+
+        let written = writer.write(b"fanout-check").expect("fanout write should succeed");
+        assert_eq!(written, 12);
+        writer.flush().expect("flush should succeed");
+        let _ = std::fs::remove_file(path);
     }
 }

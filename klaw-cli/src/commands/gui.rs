@@ -126,6 +126,7 @@ impl GuiCommand {
         klaw_gui::install_runtime_command_sender(runtime_cmd_tx);
         let gui_result = klaw_gui::run();
         klaw_gui::clear_runtime_command_sender();
+        klaw_gui::clear_log_receiver();
         let _ = shutdown_tx.send(true);
         let worker_result = worker
             .join()

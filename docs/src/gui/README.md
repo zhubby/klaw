@@ -5,6 +5,7 @@ This directory contains documentation for the Klaw desktop GUI application.
 ## Contents
 
 - [Architecture Overview](architecture.md) - Complete GUI architecture, module structure, and design patterns
+- [Live Log Stream](log-stream.md) - Real-time in-process logs in GUI workbench
 
 ## Quick Links
 

@@ -12,9 +12,14 @@ pub enum RuntimeCommand {
 
 static RUNTIME_COMMAND_SENDER: OnceLock<Mutex<Option<UnboundedSender<RuntimeCommand>>>> =
     OnceLock::new();
+static LOG_RECEIVER: OnceLock<Mutex<Option<mpsc::Receiver<String>>>> = OnceLock::new();
 
 fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
     RUNTIME_COMMAND_SENDER.get_or_init(|| Mutex::new(None))
+}
+
+fn log_receiver_slot() -> &'static Mutex<Option<mpsc::Receiver<String>>> {
+    LOG_RECEIVER.get_or_init(|| Mutex::new(None))
 }
 
 pub fn install_runtime_command_sender(sender: UnboundedSender<RuntimeCommand>) {
@@ -29,6 +34,41 @@ pub fn clear_runtime_command_sender() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     *guard = None;
+}
+
+pub fn install_log_receiver(receiver: mpsc::Receiver<String>) {
+    let mut guard = log_receiver_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(receiver);
+}
+
+pub fn clear_log_receiver() {
+    let mut guard = log_receiver_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = None;
+}
+
+pub fn drain_log_chunks(max_batch: usize) -> Vec<String> {
+    if max_batch == 0 {
+        return Vec::new();
+    }
+    let mut guard = log_receiver_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(receiver) = guard.as_mut() else {
+        return Vec::new();
+    };
+
+    let mut chunks = Vec::new();
+    for _ in 0..max_batch {
+        match receiver.try_recv() {
+            Ok(chunk) => chunks.push(chunk),
+            Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+    }
+    chunks
 }
 
 pub fn request_reload_skills_prompt() -> Result<(), String> {

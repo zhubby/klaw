@@ -15,8 +15,7 @@
 
 建议标签：
 
-- `tenant_id`
-- `namespace`
+- `session_key`
 - `provider`
 - `tool_name`
 - `error_code`

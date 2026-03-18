@@ -32,6 +32,7 @@
   - archive (db-bound query + detail view)
   - tool
 - system-monitor (real-time CPU/memory/data-dir/uptime cards in a 2x2 equal-width layout, plus detailed system information)
+- logs panel (live tracing stream in-process with level filters, keyword search, pause stream, auto-scroll, clear, export, and bounded in-memory buffer)
 - Configuration panel features:
   - load and edit `config.toml` raw text
   - TOML syntax highlighting (section/key/value/comment)
@@ -91,6 +92,7 @@
 - `state/`: UI action model + workbench tab state reducer
 - `ui/`: shell/sidebar/workbench composition
 - `panels/`: module-specific workbench panels
+  - includes `logs` panel backed by a non-blocking runtime log chunk bridge
 - `widgets/`: shared reusable UI widgets
 - `theme.rs`: centralized theme setup
   - system-follow default

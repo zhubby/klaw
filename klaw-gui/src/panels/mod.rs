@@ -11,6 +11,7 @@ mod provider;
 mod session;
 mod skills_manager;
 mod skills_registry;
+mod logs;
 mod system_monitor;
 mod tool;
 
@@ -47,6 +48,7 @@ pub struct PanelRegistry {
     archive: archive::ArchivePanel,
     tool: tool::ToolPanel,
     system_monitor: system_monitor::SystemMonitorPanel,
+    logs: logs::LogsPanel,
 }
 
 impl Default for PanelRegistry {
@@ -67,6 +69,7 @@ impl Default for PanelRegistry {
             archive: archive::ArchivePanel::default(),
             tool: tool::ToolPanel::default(),
             system_monitor: system_monitor::SystemMonitorPanel::default(),
+            logs: logs::LogsPanel::default(),
         }
     }
 }
@@ -94,6 +97,7 @@ impl PanelRegistry {
             WorkbenchMenu::Archive => self.archive.render(ui, ctx, notifications),
             WorkbenchMenu::Tool => self.tool.render(ui, ctx, notifications),
             WorkbenchMenu::SystemMonitor => self.system_monitor.render(ui, ctx, notifications),
+            WorkbenchMenu::Logs => self.logs.render(ui, ctx, notifications),
         }
     }
 }

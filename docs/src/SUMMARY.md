@@ -36,3 +36,4 @@
   - [Heartbeat 模块设计](./plans/heartbeat-module-design.md)
 - [GUI](./gui/README.md)
   - [架构设计](./gui/architecture.md)
+  - [实时日志流](./gui/log-stream.md)
