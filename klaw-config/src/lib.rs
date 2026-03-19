@@ -59,21 +59,12 @@ pub struct StorageConfig {
     pub root_dir: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelsConfig {
     #[serde(default)]
     pub dingtalk: Vec<DingtalkConfig>,
     #[serde(default)]
     pub disable_session_commands_for: Vec<String>,
-}
-
-impl Default for ChannelsConfig {
-    fn default() -> Self {
-        Self {
-            dingtalk: Vec::new(),
-            disable_session_commands_for: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,20 +99,11 @@ impl Default for DingtalkConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DingtalkProxyConfig {
     pub enabled: bool,
     pub url: String,
-}
-
-impl Default for DingtalkProxyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            url: String::new(),
-        }
-    }
 }
 
 fn default_channel_enabled() -> bool {
@@ -132,21 +114,12 @@ fn default_dingtalk_bot_title() -> String {
     "Klaw".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HeartbeatConfig {
     #[serde(default)]
     pub defaults: HeartbeatDefaultsConfig,
     #[serde(default)]
     pub sessions: Vec<HeartbeatSessionConfig>,
-}
-
-impl Default for HeartbeatConfig {
-    fn default() -> Self {
-        Self {
-            defaults: HeartbeatDefaultsConfig::default(),
-            sessions: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,7 +206,7 @@ impl Default for GatewayConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GatewayTlsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -241,16 +214,6 @@ pub struct GatewayTlsConfig {
     pub cert_path: Option<String>,
     #[serde(default)]
     pub key_path: Option<String>,
-}
-
-impl Default for GatewayTlsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            cert_path: None,
-            key_path: None,
-        }
-    }
 }
 
 fn default_gateway_listen_ip() -> String {
@@ -320,18 +283,10 @@ fn default_mcp_server_enabled() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryConfig {
     #[serde(default)]
     pub embedding: EmbeddingConfig,
-}
-
-impl Default for MemoryConfig {
-    fn default() -> Self {
-        Self {
-            embedding: EmbeddingConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1269,6 +1224,8 @@ pub enum ConfigError {
         #[source]
         source: toml::de::Error,
     },
+    #[error("failed to serialize config: {0}")]
+    SerializeConfig(String),
     #[error("invalid config: {0}")]
     InvalidConfig(String),
 }

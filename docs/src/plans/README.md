@@ -34,9 +34,25 @@ Memory 模块实施计划（Turso/libSQL 优先）：
 - silent ack 语义：`HEARTBEAT_OK` 回复不产生 outbound
 
 模块放置：
+
 - `klaw-heartbeat` - 独立领域模块
 - `klaw-cron` - 复用为底层调度机制
 - `klaw-storage` - 复用 `CronStorage`（v1 不新增表）
+
+### [Voice 模块设计](./voice-module-design.md)
+
+语音转文字（STT）和文字转语音（TTS）能力设计：
+
+- STT 在 Channel 层直接调用，转文字后提交给 runtime
+- TTS 通过 ToolSignal 机制触发 channel 发送
+- 支持流式 TTS 和 STT
+- 供应商：ElevenLabs/Deepgram/AssemblyAI
+
+模块放置：
+
+- `klaw-voice` - 独立领域模块
+- `klaw-tool` - 新增 TtsTool
+- `klaw-channel` - 集成 STT 调用
 
 ## 已完成计划
 

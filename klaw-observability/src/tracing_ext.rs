@@ -43,7 +43,7 @@ impl Drop for TracingGuard {
 }
 
 pub fn shutdown_tracing() {
-    let _ = global::shutdown_tracer_provider();
+    global::shutdown_tracer_provider();
 }
 
 pub fn record_span_duration(span: &tracing::Span, duration: Duration) {

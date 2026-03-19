@@ -22,10 +22,11 @@ pub enum WorkbenchMenu {
     Tool,
     Monitor,
     Logs,
+    Observability,
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 18] = [
+    pub const ALL: [WorkbenchMenu; 19] = [
         WorkbenchMenu::Profile,
         WorkbenchMenu::System,
         WorkbenchMenu::Setting,
@@ -44,6 +45,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Tool,
         WorkbenchMenu::Monitor,
         WorkbenchMenu::Logs,
+        WorkbenchMenu::Observability,
     ];
 
     pub const fn id_key(self) -> &'static str {
@@ -66,6 +68,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Tool => "tool",
             WorkbenchMenu::Monitor => "monitor",
             WorkbenchMenu::Logs => "logs",
+            WorkbenchMenu::Observability => "observability",
         }
     }
 
@@ -89,6 +92,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Tool => "Tool",
             WorkbenchMenu::Monitor => "Monitor",
             WorkbenchMenu::Logs => "Logs",
+            WorkbenchMenu::Observability => "Observability",
         }
     }
 
@@ -112,6 +116,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Tool => regular::TOOLBOX,
             WorkbenchMenu::Monitor => regular::CHART_LINE,
             WorkbenchMenu::Logs => regular::INFO,
+            WorkbenchMenu::Observability => regular::ACTIVITY,
         }
     }
 

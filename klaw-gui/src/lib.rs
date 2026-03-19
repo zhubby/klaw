@@ -9,7 +9,7 @@ mod theme;
 mod time_format;
 mod tray;
 mod ui;
-mod widgets;
+pub mod widgets;
 
 pub use domain::menu::WorkbenchMenu;
 pub use panels::{PanelRenderer, RenderCtx};

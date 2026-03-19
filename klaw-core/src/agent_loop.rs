@@ -371,7 +371,7 @@ impl AgentLoop {
             .unwrap_or(&self.active_provider_id);
 
         info!(message_id = %msg.header.message_id, "process message");
-        
+
         if let Some(ref telemetry) = self.telemetry {
             telemetry
                 .incr_counter(
@@ -505,12 +505,15 @@ impl AgentLoop {
             Ok(output) => {
                 state = self.transition(state, StateTransitionEvent::FinalResponseReady);
                 state = self.transition(state, StateTransitionEvent::Published);
-                
+
                 if let Some(ref telemetry) = self.telemetry {
                     telemetry
                         .incr_counter(
                             "agent_outbound_published_total",
-                            &[("session_key", session_key), ("provider", &resolved_provider_id)],
+                            &[
+                                ("session_key", session_key),
+                                ("provider", &resolved_provider_id),
+                            ],
                             1,
                         )
                         .await;
@@ -529,7 +532,7 @@ impl AgentLoop {
                         )
                         .await;
                 }
-                
+
                 let mut response_metadata = heartbeat_response_metadata(&msg.payload.metadata);
                 if !output.tool_signals.is_empty() {
                     response_metadata.insert(
@@ -592,7 +595,11 @@ impl AgentLoop {
                     telemetry
                         .incr_counter(
                             "agent_tool_failure_total",
-                            &[("session_key", session_key), ("tool_name", "provider"), ("error_code", "provider_error")],
+                            &[
+                                ("session_key", session_key),
+                                ("tool_name", "provider"),
+                                ("error_code", "provider_error"),
+                            ],
                             1,
                         )
                         .await;
@@ -619,7 +626,11 @@ impl AgentLoop {
                     telemetry
                         .incr_counter(
                             "agent_tool_failure_total",
-                            &[("session_key", session_key), ("tool_name", "tool_loop"), ("error_code", "retry_exhausted")],
+                            &[
+                                ("session_key", session_key),
+                                ("tool_name", "tool_loop"),
+                                ("error_code", "retry_exhausted"),
+                            ],
                             1,
                         )
                         .await;
@@ -858,7 +869,7 @@ impl AgentLoop {
             RetryDecision::SendToDeadLetter => {
                 error!(attempt, "send to dlq");
                 let session_key = inbound_payload.header.session_key.as_str();
-                
+
                 if let Some(ref telemetry) = self.telemetry {
                     telemetry
                         .incr_counter("agent_deadletter_total", &[("session_key", session_key)], 1)
@@ -875,7 +886,7 @@ impl AgentLoop {
                         )
                         .await;
                 }
-                
+
                 let deadletter = Envelope {
                     header: inbound_payload.header.clone(),
                     metadata: BTreeMap::new(),

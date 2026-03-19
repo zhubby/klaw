@@ -10,6 +10,6 @@ pub use audit::{AuditEvent, AuditLogger};
 pub use config::ObservabilityConfig;
 pub use health::{HealthRegistry, HealthStatus};
 pub use metrics::MetricsRecorder;
-pub use telemetry::{init_observability, OtelAgentTelemetry, ObservabilityHandle};
+pub use telemetry::{init_observability, ObservabilityHandle, OtelAgentTelemetry};
 
 pub use klaw_core::observability::AgentTelemetry;

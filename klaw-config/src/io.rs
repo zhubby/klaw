@@ -130,6 +130,28 @@ impl ConfigStore {
         migrate_path_with_defaults(&path)?;
         self.reload()
     }
+
+    pub fn save_observability_config(
+        &self,
+        observability: &crate::ObservabilityConfig,
+    ) -> Result<ConfigSnapshot, ConfigError> {
+        let mut guard = self.inner.write().unwrap_or_else(|err| err.into_inner());
+        let path = guard.path.clone();
+        let mut config = guard.config.clone();
+        config.observability = observability.clone();
+        validate(&config)?;
+        let raw_toml = toml::to_string_pretty(&config)
+            .map_err(|err| ConfigError::SerializeConfig(err.to_string()))?;
+        fs::write(&path, &raw_toml).map_err(ConfigError::WriteConfig)?;
+        let next_revision = guard.revision.saturating_add(1);
+        *guard = ConfigSnapshot {
+            path,
+            config,
+            raw_toml,
+            revision: next_revision,
+        };
+        Ok(guard.clone())
+    }
 }
 
 pub fn load_or_init(config_path: Option<&Path>) -> Result<LoadedConfig, ConfigError> {

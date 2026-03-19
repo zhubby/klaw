@@ -34,6 +34,7 @@
   - [Daemon Management](./plans/daemon-management.md)
   - [Memory Turso Hybrid](./plans/memory-turso-hybrid.md)
   - [Heartbeat 模块设计](./plans/heartbeat-module-design.md)
+  - [Voice 模块设计](./plans/voice-module-design.md)
 - [GUI](./gui/README.md)
   - [架构设计](./gui/architecture.md)
   - [实时日志流](./gui/log-stream.md)

@@ -237,27 +237,28 @@ async fn health_status_handler(State(state): State<Arc<GatewayState>>) -> Respon
 
 async fn metrics_handler(State(state): State<Arc<GatewayState>>) -> Response {
     match &state.prometheus {
-        Some(exporter) => {
-            match exporter.render_metrics() {
-                Ok(body) => Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")
-                    .body(Body::from(body))
-                    .unwrap_or_else(|_| {
-                        Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Body::from("failed to build response"))
-                            .unwrap()
-                    }),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to render prometheus metrics");
+        Some(exporter) => match exporter.render_metrics() {
+            Ok(body) => Response::builder()
+                .status(StatusCode::OK)
+                .header(
+                    header::CONTENT_TYPE,
+                    "text/plain; version=0.0.4; charset=utf-8",
+                )
+                .body(Body::from(body))
+                .unwrap_or_else(|_| {
                     Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Body::from(format!("failed to render metrics: {}", err)))
+                        .body(Body::from("failed to build response"))
                         .unwrap()
-                }
+                }),
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to render prometheus metrics");
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::from(format!("failed to render metrics: {}", err)))
+                    .unwrap()
             }
-        }
+        },
         None => Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Body::from("Prometheus metrics not enabled\n"))

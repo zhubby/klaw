@@ -341,6 +341,7 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "storage.root_dir cannot be empty when configured".to_string(),
         ));
     }
+    validate_observability(config)?;
 
     Ok(())
 }
@@ -443,6 +444,95 @@ fn validate_heartbeat_every(value: &str, field_name: &str) -> Result<(), ConfigE
             "{field_name} must be greater than 0"
         )));
     }
+    Ok(())
+}
+
+fn validate_observability(config: &AppConfig) -> Result<(), ConfigError> {
+    require_non_empty(
+        &config.observability.service_name,
+        "observability.service_name",
+    )?;
+    require_non_empty(
+        &config.observability.service_version,
+        "observability.service_version",
+    )?;
+
+    if config.observability.metrics.enabled
+        && config.observability.metrics.export_interval_seconds == 0
+    {
+        return Err(ConfigError::InvalidConfig(
+            "observability.metrics.export_interval_seconds must be greater than 0".to_string(),
+        ));
+    }
+
+    if config.observability.traces.enabled {
+        let sample_rate = config.observability.traces.sample_rate;
+        if !sample_rate.is_finite() {
+            return Err(ConfigError::InvalidConfig(
+                "observability.traces.sample_rate must be a finite number".to_string(),
+            ));
+        }
+        if !(0.0..=1.0).contains(&sample_rate) {
+            return Err(ConfigError::InvalidConfig(
+                "observability.traces.sample_rate must be in range [0.0, 1.0]".to_string(),
+            ));
+        }
+    }
+
+    if config.observability.otlp.enabled {
+        let endpoint = config.observability.otlp.endpoint.trim();
+        if endpoint.is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "observability.otlp.endpoint cannot be empty when observability.otlp.enabled=true"
+                    .to_string(),
+            ));
+        }
+        let parsed = url::Url::parse(endpoint).map_err(|err| {
+            ConfigError::InvalidConfig(format!(
+                "observability.otlp.endpoint '{}' is invalid: {}",
+                endpoint, err
+            ))
+        })?;
+        let scheme = parsed.scheme();
+        if scheme != "http" && scheme != "https" {
+            return Err(ConfigError::InvalidConfig(
+                "observability.otlp.endpoint scheme must be http or https".to_string(),
+            ));
+        }
+    }
+
+    if config.observability.prometheus.enabled {
+        if config.observability.prometheus.listen_port == 0 {
+            return Err(ConfigError::InvalidConfig(
+                "observability.prometheus.listen_port must be greater than 0".to_string(),
+            ));
+        }
+        let path = config.observability.prometheus.path.trim();
+        if path.is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "observability.prometheus.path cannot be empty when observability.prometheus.enabled=true"
+                    .to_string(),
+            ));
+        }
+        if !path.starts_with('/') {
+            return Err(ConfigError::InvalidConfig(
+                "observability.prometheus.path must start with '/'".to_string(),
+            ));
+        }
+    }
+
+    if config
+        .observability
+        .audit
+        .output_path
+        .as_deref()
+        .is_some_and(|path| path.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "observability.audit.output_path cannot be empty when configured".to_string(),
+        ));
+    }
+
     Ok(())
 }
 

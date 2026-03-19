@@ -133,7 +133,9 @@ impl SystemPanel {
     }
 
     fn refresh_usage(&mut self, kind: DirKind) {
-        let Some(paths) = self.paths.as_ref() else { return };
+        let Some(paths) = self.paths.as_ref() else {
+            return;
+        };
         let path = kind.path(paths);
 
         let (tx, rx) = mpsc::channel();
@@ -148,7 +150,9 @@ impl SystemPanel {
     }
 
     fn clear_dir(&mut self, kind: DirKind) {
-        let Some(paths) = self.paths.as_ref() else { return };
+        let Some(paths) = self.paths.as_ref() else {
+            return;
+        };
         let path = kind.path(paths);
 
         let (tx, rx) = mpsc::channel();
@@ -199,10 +203,8 @@ impl SystemPanel {
                         Err(err) => {
                             dir.usage_bytes = None;
                             dir.usage_error = Some(err.clone());
-                            notifications.error(format!(
-                                "Failed to collect {} usage: {err}",
-                                kind.title()
-                            ));
+                            notifications
+                                .error(format!("Failed to collect {} usage: {err}", kind.title()));
                         }
                     }
                 }

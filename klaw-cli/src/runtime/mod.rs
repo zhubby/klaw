@@ -18,7 +18,9 @@ use klaw_heartbeat::{
     should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
 };
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
-use klaw_observability::{init_observability, OtelAgentTelemetry, ObservabilityConfig, ObservabilityHandle};
+use klaw_observability::{
+    init_observability, ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry,
+};
 use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
 use klaw_skill::{
     open_default_skills_manager, InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager,
@@ -846,9 +848,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     });
 
     let observability = init_observability_from_config(&config.observability);
-    let telemetry: Option<Arc<dyn AgentTelemetry>> = observability
-        .as_ref()
-        .map(|handle| Arc::new(OtelAgentTelemetry::from_handle(handle, "klaw")) as Arc<dyn AgentTelemetry>);
+    let telemetry: Option<Arc<dyn AgentTelemetry>> = observability.as_ref().map(|handle| {
+        Arc::new(OtelAgentTelemetry::from_handle(handle, "klaw")) as Arc<dyn AgentTelemetry>
+    });
 
     let mut runtime = AgentLoop::new_with_identity(
         RunLimits {

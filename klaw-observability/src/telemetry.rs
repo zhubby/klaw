@@ -62,7 +62,9 @@ impl ObservabilityHandle {
     }
 }
 
-pub fn init_observability(config: &ObservabilityConfig) -> Result<ObservabilityHandle, ObservabilityError> {
+pub fn init_observability(
+    config: &ObservabilityConfig,
+) -> Result<ObservabilityHandle, ObservabilityError> {
     if !config.enabled {
         return Err(ObservabilityError::Disabled);
     }
@@ -74,7 +76,10 @@ pub fn init_observability(config: &ObservabilityConfig) -> Result<ObservabilityH
     health.register("transport");
     health.register("store");
 
-    let metrics = Arc::new(MetricsRecorder::new(&config.service_name, Arc::new(registry.clone())));
+    let metrics = Arc::new(MetricsRecorder::new(
+        &config.service_name,
+        Arc::new(registry.clone()),
+    ));
 
     let mut prometheus = None;
     let mut otlp = None;
@@ -164,33 +169,82 @@ impl AgentTelemetry for OtelAgentTelemetry {
     async fn incr_counter(&self, name: &'static str, labels: &[(&str, &str)], _value: u64) {
         match name {
             crate::metrics::METRIC_INBOUND_CONSUMED_TOTAL => {
-                let session_key = labels.iter().find(|(k, _)| *k == "session_key").map(|(_, v)| *v).unwrap_or("");
-                let provider = labels.iter().find(|(k, _)| *k == "provider").map(|(_, v)| *v).unwrap_or("");
+                let session_key = labels
+                    .iter()
+                    .find(|(k, _)| *k == "session_key")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
+                let provider = labels
+                    .iter()
+                    .find(|(k, _)| *k == "provider")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
                 self.metrics.incr_inbound(session_key, provider);
             }
             crate::metrics::METRIC_OUTBOUND_PUBLISHED_TOTAL => {
-                let session_key = labels.iter().find(|(k, _)| *k == "session_key").map(|(_, v)| *v).unwrap_or("");
-                let provider = labels.iter().find(|(k, _)| *k == "provider").map(|(_, v)| *v).unwrap_or("");
+                let session_key = labels
+                    .iter()
+                    .find(|(k, _)| *k == "session_key")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
+                let provider = labels
+                    .iter()
+                    .find(|(k, _)| *k == "provider")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
                 self.metrics.incr_outbound(session_key, provider);
             }
             crate::metrics::METRIC_TOOL_SUCCESS_TOTAL => {
-                let session_key = labels.iter().find(|(k, _)| *k == "session_key").map(|(_, v)| *v).unwrap_or("");
-                let tool_name = labels.iter().find(|(k, _)| *k == "tool_name").map(|(_, v)| *v).unwrap_or("");
+                let session_key = labels
+                    .iter()
+                    .find(|(k, _)| *k == "session_key")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
+                let tool_name = labels
+                    .iter()
+                    .find(|(k, _)| *k == "tool_name")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
                 self.metrics.incr_tool_success(session_key, tool_name);
             }
             crate::metrics::METRIC_TOOL_FAILURE_TOTAL => {
-                let session_key = labels.iter().find(|(k, _)| *k == "session_key").map(|(_, v)| *v).unwrap_or("");
-                let tool_name = labels.iter().find(|(k, _)| *k == "tool_name").map(|(_, v)| *v).unwrap_or("");
-                let error_code = labels.iter().find(|(k, _)| *k == "error_code").map(|(_, v)| *v).unwrap_or("");
-                self.metrics.incr_tool_failure(session_key, tool_name, error_code);
+                let session_key = labels
+                    .iter()
+                    .find(|(k, _)| *k == "session_key")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
+                let tool_name = labels
+                    .iter()
+                    .find(|(k, _)| *k == "tool_name")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
+                let error_code = labels
+                    .iter()
+                    .find(|(k, _)| *k == "error_code")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
+                self.metrics
+                    .incr_tool_failure(session_key, tool_name, error_code);
             }
             crate::metrics::METRIC_RETRY_TOTAL => {
-                let session_key = labels.iter().find(|(k, _)| *k == "session_key").map(|(_, v)| *v).unwrap_or("");
-                let error_code = labels.iter().find(|(k, _)| *k == "error_code").map(|(_, v)| *v).unwrap_or("");
+                let session_key = labels
+                    .iter()
+                    .find(|(k, _)| *k == "session_key")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
+                let error_code = labels
+                    .iter()
+                    .find(|(k, _)| *k == "error_code")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
                 self.metrics.incr_retry(session_key, error_code);
             }
             crate::metrics::METRIC_DEADLETTER_TOTAL => {
-                let session_key = labels.iter().find(|(k, _)| *k == "session_key").map(|(_, v)| *v).unwrap_or("");
+                let session_key = labels
+                    .iter()
+                    .find(|(k, _)| *k == "session_key")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
                 self.metrics.incr_deadletter(session_key);
             }
             _ => {
@@ -199,11 +253,24 @@ impl AgentTelemetry for OtelAgentTelemetry {
         }
     }
 
-    async fn observe_histogram(&self, name: &'static str, labels: &[(&str, &str)], duration: Duration) {
+    async fn observe_histogram(
+        &self,
+        name: &'static str,
+        labels: &[(&str, &str)],
+        duration: Duration,
+    ) {
         match name {
             crate::metrics::METRIC_RUN_DURATION_MS => {
-                let session_key = labels.iter().find(|(k, _)| *k == "session_key").map(|(_, v)| *v).unwrap_or("");
-                let stage = labels.iter().find(|(k, _)| *k == "stage").map(|(_, v)| *v).unwrap_or("");
+                let session_key = labels
+                    .iter()
+                    .find(|(k, _)| *k == "session_key")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
+                let stage = labels
+                    .iter()
+                    .find(|(k, _)| *k == "stage")
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
                 self.metrics.record_duration(session_key, stage, duration);
             }
             _ => {
@@ -212,7 +279,12 @@ impl AgentTelemetry for OtelAgentTelemetry {
         }
     }
 
-    async fn emit_audit_event(&self, event_name: &'static str, trace_id: Uuid, payload: serde_json::Value) {
+    async fn emit_audit_event(
+        &self,
+        event_name: &'static str,
+        trace_id: Uuid,
+        payload: serde_json::Value,
+    ) {
         if let Some(audit) = &self.audit {
             let session_key = payload
                 .get("session_key")
@@ -222,7 +294,7 @@ impl AgentTelemetry for OtelAgentTelemetry {
                 .get("error_code")
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string);
-            
+
             let event = AuditEvent::new(event_name, trace_id, session_key, error_code, payload);
             audit.emit(event);
         }

@@ -7,6 +7,8 @@ mod heartbeat;
 mod logs;
 mod mcp;
 mod memory;
+mod monitor;
+mod observability;
 mod profile;
 mod provider;
 mod session;
@@ -14,7 +16,6 @@ mod setting;
 mod skills_manager;
 mod skills_registry;
 mod system;
-mod monitor;
 mod tool;
 
 use crate::domain::menu::WorkbenchMenu;
@@ -34,6 +35,7 @@ pub trait PanelRenderer {
     );
 }
 
+#[derive(Default)]
 pub struct PanelRegistry {
     profile: profile::ProfilePanel,
     system: system::SystemPanel,
@@ -53,31 +55,7 @@ pub struct PanelRegistry {
     tool: tool::ToolPanel,
     monitor: monitor::MonitorPanel,
     logs: logs::LogsPanel,
-}
-
-impl Default for PanelRegistry {
-    fn default() -> Self {
-        Self {
-            profile: profile::ProfilePanel::default(),
-            system: system::SystemPanel::default(),
-            setting: setting::SettingPanel::default(),
-            session: session::SessionPanel::default(),
-            approval: approval::ApprovalPanel::default(),
-            configuration: configuration::ConfigurationPanel::default(),
-            provider: provider::ProviderPanel::default(),
-            channel: channel::ChannelPanel::default(),
-            cron: cron::CronPanel::default(),
-            heartbeat: heartbeat::HeartbeatPanel::default(),
-            mcp: mcp::McpPanel::default(),
-            skills_registry: skills_registry::SkillsRegistryPanel::default(),
-            skills_manager: skills_manager::SkillsManagerPanel::default(),
-            memory: memory::MemoryPanel::default(),
-            archive: archive::ArchivePanel::default(),
-            tool: tool::ToolPanel::default(),
-            monitor: monitor::MonitorPanel::default(),
-            logs: logs::LogsPanel::default(),
-        }
-    }
+    observability: observability::ObservabilityPanel,
 }
 
 impl PanelRegistry {
@@ -106,6 +84,7 @@ impl PanelRegistry {
             WorkbenchMenu::Tool => self.tool.render(ui, ctx, notifications),
             WorkbenchMenu::Monitor => self.monitor.render(ui, ctx, notifications),
             WorkbenchMenu::Logs => self.logs.render(ui, ctx, notifications),
+            WorkbenchMenu::Observability => self.observability.render(ui, ctx, notifications),
         }
     }
 }

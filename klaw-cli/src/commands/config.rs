@@ -133,6 +133,9 @@ fn format_config_error(err: &ConfigError) -> String {
         ConfigError::WriteConfig(source) => {
             format!("Config Error\n  reason: failed to write config ({source})")
         }
+        ConfigError::SerializeConfig(message) => {
+            format!("Config Error\n  reason: failed to serialize config ({message})")
+        }
         ConfigError::HomeDirUnavailable => {
             "Config Error\n  reason: cannot resolve home directory for default config path"
                 .to_string()

@@ -171,8 +171,10 @@ fn validate_fails_when_active_provider_missing() {
 
 #[test]
 fn validate_fails_when_root_model_is_blank() {
-    let mut cfg = AppConfig::default();
-    cfg.model = Some("   ".to_string());
+    let cfg = AppConfig {
+        model: Some("   ".to_string()),
+        ..Default::default()
+    };
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("model cannot be empty when configured"));
 }
@@ -304,7 +306,7 @@ env_key = "TAVILY_API_KEY"
 
     let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
     assert_eq!(parsed.tools.web_search.provider, "tavily");
-    assert_eq!(parsed.tools.web_search.enabled, false);
+    assert!(!parsed.tools.web_search.enabled);
     assert_eq!(
         parsed.tools.web_search.tavily.base_url.as_deref(),
         Some("https://api.tavily.com")
@@ -828,6 +830,33 @@ fn validate_fails_when_storage_root_dir_is_empty() {
 }
 
 #[test]
+fn validate_fails_when_observability_sample_rate_out_of_range() {
+    let mut cfg = AppConfig::default();
+    cfg.observability.traces.enabled = true;
+    cfg.observability.traces.sample_rate = 1.5;
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("observability.traces.sample_rate"));
+}
+
+#[test]
+fn validate_fails_when_observability_otlp_endpoint_invalid() {
+    let mut cfg = AppConfig::default();
+    cfg.observability.otlp.enabled = true;
+    cfg.observability.otlp.endpoint = "localhost:4317".to_string();
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("observability.otlp.endpoint"));
+}
+
+#[test]
+fn validate_fails_when_observability_prometheus_path_invalid() {
+    let mut cfg = AppConfig::default();
+    cfg.observability.prometheus.enabled = true;
+    cfg.observability.prometheus.path = "metrics".to_string();
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("observability.prometheus.path"));
+}
+
+#[test]
 fn validate_fails_when_skills_config_invalid() {
     let mut cfg = AppConfig::default();
     cfg.skills.sync_timeout = 0;
@@ -1278,6 +1307,57 @@ env_key = "OPENAI_API_KEY"
         disk_raw.contains("gpt-4o-mini"),
         "validate should not write to disk"
     );
+
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn config_store_save_observability_config_persists_changes() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let path = root.join("config.toml");
+    fs::create_dir_all(&root).expect("should create temp root");
+    fs::write(
+        &path,
+        r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+"#,
+    )
+    .expect("should write source config");
+
+    let store = ConfigStore::open(Some(&path)).expect("store should open");
+    let mut observability = store.snapshot().config.observability;
+    observability.enabled = true;
+    observability.service_name = "klaw-gui".to_string();
+    observability.traces.sample_rate = 0.25;
+    observability.prometheus.enabled = true;
+    observability.prometheus.listen_port = 9100;
+    observability.prometheus.path = "/metrics".to_string();
+
+    let saved = store
+        .save_observability_config(&observability)
+        .expect("save should persist observability config");
+    assert_eq!(saved.config.observability.service_name, "klaw-gui");
+    assert!(saved.config.observability.enabled);
+    assert_eq!(saved.config.observability.traces.sample_rate, 0.25);
+    assert!(saved.config.observability.prometheus.enabled);
+    assert_eq!(saved.config.observability.prometheus.listen_port, 9100);
+    assert!(saved.revision >= 2);
+
+    let disk_raw = fs::read_to_string(&path).expect("saved config should be written");
+    assert!(disk_raw.contains("[observability]"));
+    assert!(disk_raw.contains("service_name = \"klaw-gui\""));
+    assert!(disk_raw.contains("sample_rate = 0.25"));
 
     let _ = fs::remove_file(&path);
     let _ = fs::remove_dir_all(&root);

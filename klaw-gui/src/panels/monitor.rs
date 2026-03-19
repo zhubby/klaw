@@ -5,7 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
-use sysinfo::{CpuRefreshKind, DiskRefreshKind, Disks, LoadAvg, MemoryRefreshKind, RefreshKind, System};
+use sysinfo::{
+    CpuRefreshKind, DiskRefreshKind, Disks, LoadAvg, MemoryRefreshKind, RefreshKind, System,
+};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const PROGRESS_BAR_HEIGHT: f32 = 12.0;
@@ -252,21 +254,9 @@ impl PanelRenderer for MonitorPanel {
                             );
                         } else {
                             info_row(ui, "Data Directory Size", "Loading...".to_string());
-                            info_row(
-                                ui,
-                                "Data Directory File Count",
-                                "Loading...".to_string(),
-                            );
-                            info_row(
-                                ui,
-                                "Data Directory Mount Point",
-                                "Loading...".to_string(),
-                            );
-                            info_row(
-                                ui,
-                                "Data Directory Disk Capacity",
-                                "Loading...".to_string(),
-                            );
+                            info_row(ui, "Data Directory File Count", "Loading...".to_string());
+                            info_row(ui, "Data Directory Mount Point", "Loading...".to_string());
+                            info_row(ui, "Data Directory Disk Capacity", "Loading...".to_string());
                             info_row(
                                 ui,
                                 "Data Directory Disk Available",

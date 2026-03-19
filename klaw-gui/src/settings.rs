@@ -276,11 +276,7 @@ mod tests {
     #[test]
     fn sync_settings_serialization() {
         let mut settings = AppSettings::default();
-        settings.sync.backup_items = vec![
-            SyncItem::Session,
-            SyncItem::Skills,
-            SyncItem::Config,
-        ];
+        settings.sync.backup_items = vec![SyncItem::Session, SyncItem::Skills, SyncItem::Config];
 
         let json = serde_json::to_string_pretty(&settings).unwrap();
         let restored: AppSettings = serde_json::from_str(&json).unwrap();

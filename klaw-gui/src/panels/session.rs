@@ -60,7 +60,8 @@ impl SessionPanel {
                     })
                     .collect();
 
-                let mut chat_box = ChatBox::new(format!("Chat: {}", session_key)).with_messages(messages);
+                let mut chat_box =
+                    ChatBox::new(format!("Chat: {}", session_key)).with_messages(messages);
                 chat_box.open();
                 self.chat_box = Some(chat_box);
             }
@@ -105,9 +106,9 @@ impl PanelRenderer for SessionPanel {
         }
 
         ui.separator();
-        
+
         let mut view_session_key: Option<String> = None;
-        
+
         let table_width = ui.available_width();
         egui::ScrollArea::both()
             .auto_shrink([false, false])
@@ -136,36 +137,73 @@ impl PanelRenderer for SessionPanel {
                     .max_scroll_height(available_height)
                     .sense(egui::Sense::click())
                     .header(20.0, |mut header| {
-                        header.col(|ui| { ui.strong("Session Key"); });
-                        header.col(|ui| { ui.strong("Chat ID"); });
-                        header.col(|ui| { ui.strong("Channel"); });
-                        header.col(|ui| { ui.strong("Active Session"); });
-                        header.col(|ui| { ui.strong("Provider"); });
-                        header.col(|ui| { ui.strong("Model"); });
-                        header.col(|ui| { ui.strong("Turns"); });
-                        header.col(|ui| { ui.strong("Updated At"); });
-                        header.col(|ui| { ui.strong("JSONL Path"); });
+                        header.col(|ui| {
+                            ui.strong("Session Key");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Chat ID");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Channel");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Active Session");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Provider");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Model");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Turns");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Updated At");
+                        });
+                        header.col(|ui| {
+                            ui.strong("JSONL Path");
+                        });
                     })
                     .body(|body| {
                         body.rows(20.0, self.sessions.len(), |mut row| {
                             let idx = row.index();
                             let session = &self.sessions[idx];
-                            let is_selected = self.selected_session.as_deref() == Some(&session.session_key);
-                            
+                            let is_selected =
+                                self.selected_session.as_deref() == Some(&session.session_key);
+
                             row.set_selected(is_selected);
-                            
-                            row.col(|ui| { ui.label(&session.session_key); });
-                            row.col(|ui| { ui.label(&session.chat_id); });
-                            row.col(|ui| { ui.label(&session.channel); });
-                            row.col(|ui| { ui.label(session.active_session_key.as_deref().unwrap_or("")); });
-                            row.col(|ui| { ui.label(session.model_provider.as_deref().unwrap_or("")); });
-                            row.col(|ui| { ui.label(session.model.as_deref().unwrap_or("")); });
-                            row.col(|ui| { ui.label(session.turn_count.to_string()); });
-                            row.col(|ui| { ui.label(format_timestamp_millis(session.updated_at_ms)); });
-                            row.col(|ui| { ui.label(&session.jsonl_path); });
-                            
+
+                            row.col(|ui| {
+                                ui.label(&session.session_key);
+                            });
+                            row.col(|ui| {
+                                ui.label(&session.chat_id);
+                            });
+                            row.col(|ui| {
+                                ui.label(&session.channel);
+                            });
+                            row.col(|ui| {
+                                ui.label(session.active_session_key.as_deref().unwrap_or(""));
+                            });
+                            row.col(|ui| {
+                                ui.label(session.model_provider.as_deref().unwrap_or(""));
+                            });
+                            row.col(|ui| {
+                                ui.label(session.model.as_deref().unwrap_or(""));
+                            });
+                            row.col(|ui| {
+                                ui.label(session.turn_count.to_string());
+                            });
+                            row.col(|ui| {
+                                ui.label(format_timestamp_millis(session.updated_at_ms));
+                            });
+                            row.col(|ui| {
+                                ui.label(&session.jsonl_path);
+                            });
+
                             let response = row.response();
-                            
+
                             if response.clicked() {
                                 self.selected_session = if is_selected {
                                     None
@@ -173,7 +211,7 @@ impl PanelRenderer for SessionPanel {
                                     Some(session.session_key.clone())
                                 };
                             }
-                            
+
                             response.context_menu(|ui| {
                                 if ui.button("View Chat").clicked() {
                                     view_session_key = Some(session.session_key.clone());
@@ -181,7 +219,9 @@ impl PanelRenderer for SessionPanel {
                                 }
                                 if ui.button("Copy Session Key").clicked() {
                                     ui.ctx().output_mut(|o| {
-                                        o.commands.push(egui::OutputCommand::CopyText(session.session_key.clone()));
+                                        o.commands.push(egui::OutputCommand::CopyText(
+                                            session.session_key.clone(),
+                                        ));
                                     });
                                     ui.close();
                                 }

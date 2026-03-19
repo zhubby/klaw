@@ -515,8 +515,10 @@ env_key = "OPENAI_API_KEY"
         write_test_config(&path, "gpt-4o-mini");
 
         let store = ConfigStore::open(Some(&path)).expect("store should open");
-        let mut panel = ConfigurationPanel::default();
-        panel.store = Some(store.clone());
+        let mut panel = ConfigurationPanel {
+            store: Some(store.clone()),
+            ..Default::default()
+        };
         panel.apply_snapshot(store.snapshot());
         let mut notifications = NotificationCenter::default();
 
@@ -547,8 +549,10 @@ env_key = "OPENAI_API_KEY"
         write_test_config(&path, "gpt-4.1-mini");
 
         let store = ConfigStore::open(Some(&path)).expect("store should open");
-        let mut panel = ConfigurationPanel::default();
-        panel.store = Some(store.clone());
+        let mut panel = ConfigurationPanel {
+            store: Some(store.clone()),
+            ..Default::default()
+        };
         panel.apply_snapshot(store.snapshot());
         let mut notifications = NotificationCenter::default();
 

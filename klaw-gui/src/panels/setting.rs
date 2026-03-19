@@ -24,11 +24,11 @@ impl SettingsSection {
 
     fn icon(&self) -> &'static str {
         match self {
-            SettingsSection::General => "\u{2699}",        // Gear
-            SettingsSection::Privacy => "\u{1F512}",      // Lock
-            SettingsSection::Security => "\u{1F6E1}",     // Shield
-            SettingsSection::Network => "\u{1F310}",      // Globe
-            SettingsSection::Sync => "\u{1F504}",         // Sync arrows
+            SettingsSection::General => "\u{2699}",   // Gear
+            SettingsSection::Privacy => "\u{1F512}",  // Lock
+            SettingsSection::Security => "\u{1F6E1}", // Shield
+            SettingsSection::Network => "\u{1F310}",  // Globe
+            SettingsSection::Sync => "\u{1F504}",     // Sync arrows
         }
     }
 }
@@ -62,7 +62,10 @@ impl PanelRenderer for SettingPanel {
         ui.separator();
 
         if let Some(err) = &self.save_error {
-            ui.colored_label(ui.style().visuals.error_fg_color, format!("Save error: {}", err));
+            ui.colored_label(
+                ui.style().visuals.error_fg_color,
+                format!("Save error: {}", err),
+            );
         }
 
         // Two-column layout: sidebar on left, content on right
@@ -235,7 +238,12 @@ impl SettingPanel {
 
         let mut changed = false;
         for item in crate::settings::SyncItem::all() {
-            let index = self.settings.sync.backup_items.iter().position(|i| i == item);
+            let index = self
+                .settings
+                .sync
+                .backup_items
+                .iter()
+                .position(|i| i == item);
             let mut is_checked = index.is_some();
             if ui.checkbox(&mut is_checked, item.label()).clicked() {
                 if is_checked && index.is_none() {
