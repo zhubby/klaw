@@ -194,6 +194,7 @@ impl ChatBox {
             .id(egui::Id::new(&self.title))
             .default_size([500.0, 600.0])
             .min_size([300.0, 400.0])
+            .max_size([800.0, 700.0])
             .collapsible(true)
             .resizable(true)
             .open(&mut open)
@@ -316,22 +317,24 @@ impl ChatBox {
     fn render_input(&mut self, ui: &mut egui::Ui, pending_action: &mut Option<ChatAction>) {
         ui.separator();
 
-        ui.horizontal(|ui| {
-            let input_id = egui::Id::new((&self.title, "chat_input"));
+        let input_height = INPUT_AREA_HEIGHT - 10.0;
 
-            let response = ui.add_sized(
-                [ui.available_width() - 60.0, INPUT_AREA_HEIGHT - 10.0],
-                egui::TextEdit::multiline(&mut self.input_text)
-                    .id(input_id)
-                    .hint_text("Type a message..."),
-            );
+        ui.with_layout(
+            egui::Layout::left_to_right(egui::Align::Center).with_cross_align(egui::Align::Center),
+            |ui| {
+                let input_id = egui::Id::new((&self.title, "chat_input"));
 
-            let send_enabled = !self.input_text.trim().is_empty();
+                let response = ui.add_sized(
+                    [ui.available_width() - 60.0, input_height],
+                    egui::TextEdit::multiline(&mut self.input_text)
+                        .id(input_id)
+                        .hint_text("Type a message..."),
+                );
 
-            ui.vertical(|ui| {
+                let send_enabled = !self.input_text.trim().is_empty();
+
                 ui.add_enabled_ui(send_enabled, |ui| {
-                    let button =
-                        ui.add_sized([50.0, INPUT_AREA_HEIGHT - 10.0], egui::Button::new("Send"));
+                    let button = ui.add_sized([50.0, input_height], egui::Button::new("Send"));
                     if button.clicked()
                         || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     {
@@ -340,8 +343,8 @@ impl ChatBox {
                         }
                     }
                 });
-            });
-        });
+            },
+        );
     }
 
     fn message_bg_color(&self, role: ChatRole, is_selected: bool) -> egui::Color32 {
