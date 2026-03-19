@@ -126,9 +126,7 @@ impl ChatMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatAction {
     Send,
-    CopyMessage(String),
     Retry(String),
-    Delete(String),
 }
 
 pub struct ChatBox {
@@ -283,18 +281,16 @@ impl ChatBox {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("📋").on_hover_text("Copy").clicked() {
-                            *pending_action =
-                                Some(ChatAction::CopyMessage(message.content.clone()));
+                            ui.ctx().output_mut(|o| {
+                                o.commands
+                                    .push(egui::OutputCommand::CopyText(message.content.clone()));
+                            });
                         }
 
                         if matches!(message.role, ChatRole::User) {
                             if ui.small_button("🔄").on_hover_text("Retry").clicked() {
                                 *pending_action = Some(ChatAction::Retry(message.id.clone()));
                             }
-                        }
-
-                        if ui.small_button("🗑").on_hover_text("Delete").clicked() {
-                            *pending_action = Some(ChatAction::Delete(message.id.clone()));
                         }
                     });
                 });
@@ -323,25 +319,27 @@ impl ChatBox {
         ui.horizontal(|ui| {
             let input_id = egui::Id::new((&self.title, "chat_input"));
 
-            let response = ui.add(
+            let response = ui.add_sized(
+                [ui.available_width() - 60.0, INPUT_AREA_HEIGHT - 10.0],
                 egui::TextEdit::multiline(&mut self.input_text)
                     .id(input_id)
-                    .desired_rows(1)
-                    .desired_width(ui.available_width() - 60.0)
                     .hint_text("Type a message..."),
             );
 
             let send_enabled = !self.input_text.trim().is_empty();
 
-            ui.add_enabled_ui(send_enabled, |ui| {
-                let button = ui.button("Send");
-                if button.clicked()
-                    || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                {
-                    if !self.input_text.trim().is_empty() {
-                        *pending_action = Some(ChatAction::Send);
+            ui.vertical(|ui| {
+                ui.add_enabled_ui(send_enabled, |ui| {
+                    let button =
+                        ui.add_sized([50.0, INPUT_AREA_HEIGHT - 10.0], egui::Button::new("Send"));
+                    if button.clicked()
+                        || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    {
+                        if !self.input_text.trim().is_empty() {
+                            *pending_action = Some(ChatAction::Send);
+                        }
                     }
-                }
+                });
             });
         });
     }
