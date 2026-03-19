@@ -14,7 +14,7 @@ mod setting;
 mod skills_manager;
 mod skills_registry;
 mod system;
-mod system_monitor;
+mod monitor;
 mod tool;
 
 use crate::domain::menu::WorkbenchMenu;
@@ -51,7 +51,7 @@ pub struct PanelRegistry {
     memory: memory::MemoryPanel,
     archive: archive::ArchivePanel,
     tool: tool::ToolPanel,
-    system_monitor: system_monitor::SystemMonitorPanel,
+    monitor: monitor::MonitorPanel,
     logs: logs::LogsPanel,
 }
 
@@ -74,7 +74,7 @@ impl Default for PanelRegistry {
             memory: memory::MemoryPanel::default(),
             archive: archive::ArchivePanel::default(),
             tool: tool::ToolPanel::default(),
-            system_monitor: system_monitor::SystemMonitorPanel::default(),
+            monitor: monitor::MonitorPanel::default(),
             logs: logs::LogsPanel::default(),
         }
     }
@@ -104,7 +104,7 @@ impl PanelRegistry {
             WorkbenchMenu::Memory => self.memory.render(ui, ctx, notifications),
             WorkbenchMenu::Archive => self.archive.render(ui, ctx, notifications),
             WorkbenchMenu::Tool => self.tool.render(ui, ctx, notifications),
-            WorkbenchMenu::SystemMonitor => self.system_monitor.render(ui, ctx, notifications),
+            WorkbenchMenu::Monitor => self.monitor.render(ui, ctx, notifications),
             WorkbenchMenu::Logs => self.logs.render(ui, ctx, notifications),
         }
     }

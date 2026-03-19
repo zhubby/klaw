@@ -20,7 +20,7 @@ pub enum WorkbenchMenu {
     Memory,
     Archive,
     Tool,
-    SystemMonitor,
+    Monitor,
     Logs,
 }
 
@@ -42,7 +42,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Memory,
         WorkbenchMenu::Archive,
         WorkbenchMenu::Tool,
-        WorkbenchMenu::SystemMonitor,
+        WorkbenchMenu::Monitor,
         WorkbenchMenu::Logs,
     ];
 
@@ -64,7 +64,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Memory => "memory",
             WorkbenchMenu::Archive => "archive",
             WorkbenchMenu::Tool => "tool",
-            WorkbenchMenu::SystemMonitor => "system-monitor",
+            WorkbenchMenu::Monitor => "monitor",
             WorkbenchMenu::Logs => "logs",
         }
     }
@@ -87,7 +87,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Memory => "Memory",
             WorkbenchMenu::Archive => "Archive",
             WorkbenchMenu::Tool => "Tool",
-            WorkbenchMenu::SystemMonitor => "System Monitor",
+            WorkbenchMenu::Monitor => "Monitor",
             WorkbenchMenu::Logs => "Logs",
         }
     }
@@ -110,7 +110,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Memory => regular::MEMORY,
             WorkbenchMenu::Archive => regular::ARCHIVE,
             WorkbenchMenu::Tool => regular::TOOLBOX,
-            WorkbenchMenu::SystemMonitor => regular::CHART_LINE,
+            WorkbenchMenu::Monitor => regular::CHART_LINE,
             WorkbenchMenu::Logs => regular::INFO,
         }
     }
