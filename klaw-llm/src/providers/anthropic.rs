@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolCall, ToolDefinition,
+    estimate::estimate_chat_usage, ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse,
+    LlmUsage, LlmUsageSource, ToolCall, ToolDefinition,
 };
 
 /// Anthropic 配置。
@@ -16,6 +17,8 @@ pub struct AnthropicConfig {
     pub api_key: String,
     /// 默认模型名。
     pub default_model: String,
+    /// 可选的本地 tokenizer.json 路径。
+    pub tokenizer_path: Option<String>,
     /// Anthropic API 版本头。
     pub api_version: String,
 }
@@ -51,6 +54,14 @@ impl LlmProvider for AnthropicProvider {
         &self.config.default_model
     }
 
+    fn wire_api(&self) -> Option<&str> {
+        Some("messages")
+    }
+
+    fn tokenizer_path(&self) -> Option<&str> {
+        self.config.tokenizer_path.as_deref()
+    }
+
     async fn chat(
         &self,
         messages: Vec<LlmMessage>,
@@ -58,6 +69,8 @@ impl LlmProvider for AnthropicProvider {
         model: Option<&str>,
         options: ChatOptions,
     ) -> Result<LlmResponse, LlmError> {
+        let original_messages = messages.clone();
+        let original_tools = tools.clone();
         let mut system_parts = Vec::new();
         let mut anthropic_messages = Vec::new();
 
@@ -155,11 +168,40 @@ impl LlmProvider for AnthropicProvider {
             }
         }
 
-        Ok(LlmResponse {
+        let usage = payload.usage.as_ref().map(|usage| LlmUsage {
+            input_tokens: usage.input_tokens.max(0) as u64,
+            output_tokens: usage.output_tokens.max(0) as u64,
+            total_tokens: (usage.input_tokens.max(0) + usage.output_tokens.max(0)) as u64,
+            cached_input_tokens: usage.cache_creation_input_tokens.map(|value| value as u64),
+            reasoning_tokens: None,
+            provider_request_id: None,
+            provider_response_id: payload.id.clone(),
+        });
+        let mut response = LlmResponse {
             content: text_chunks.join("\n"),
             reasoning: None,
             tool_calls,
-        })
+            usage,
+            usage_source: payload
+                .usage
+                .as_ref()
+                .map(|_| LlmUsageSource::ProviderReported),
+        };
+        if response.usage.is_none() {
+            response.usage = Some(estimate_chat_usage(
+                self.name(),
+                model.unwrap_or(&self.config.default_model),
+                self.wire_api().unwrap_or("messages"),
+                self.config.tokenizer_path.as_deref(),
+                &original_messages,
+                &original_tools,
+                &response.content,
+                None,
+                &response.tool_calls,
+            ));
+            response.usage_source = Some(LlmUsageSource::EstimatedLocal);
+        }
+        Ok(response)
     }
 }
 
@@ -198,7 +240,19 @@ struct AnthropicToolDefinition {
 
 #[derive(Debug, Deserialize)]
 struct AnthropicMessagesResponse {
+    #[serde(default)]
+    id: Option<String>,
     content: Vec<AnthropicResponseContentBlock>,
+    #[serde(default)]
+    usage: Option<AnthropicUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicUsage {
+    input_tokens: i64,
+    output_tokens: i64,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,4 +269,34 @@ enum AnthropicResponseContentBlock {
     },
     #[serde(other)]
     Other,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_response_usage_deserializes() {
+        let payload: AnthropicMessagesResponse = serde_json::from_value(serde_json::json!({
+            "id": "msg_123",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "done"
+                }
+            ],
+            "usage": {
+                "input_tokens": 19,
+                "output_tokens": 6,
+                "cache_creation_input_tokens": 4
+            }
+        }))
+        .expect("anthropic response should deserialize");
+
+        assert_eq!(payload.id.as_deref(), Some("msg_123"));
+        let usage = payload.usage.expect("usage should be present");
+        assert_eq!(usage.input_tokens, 19);
+        assert_eq!(usage.output_tokens, 6);
+        assert_eq!(usage.cache_creation_input_tokens, Some(4));
+    }
 }

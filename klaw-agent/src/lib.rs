@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
 use klaw_llm::{
-    ChatOptions, LlmError, LlmMedia, LlmMessage, LlmProvider, OpenAiCompatibleConfig,
-    OpenAiCompatibleProvider, OpenAiWireApi, ToolDefinition,
+    ChatOptions, LlmError, LlmMedia, LlmMessage, LlmProvider, LlmUsage, LlmUsageSource,
+    OpenAiCompatibleConfig, OpenAiCompatibleProvider, OpenAiWireApi, ToolDefinition,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -18,6 +18,7 @@ const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 pub struct AgentExecutionLimits {
     pub max_tool_iterations: u32,
     pub max_tool_calls: u32,
+    pub token_budget: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +42,14 @@ pub struct AgentExecutionOutput {
     pub content: String,
     pub reasoning: Option<String>,
     pub tool_signals: Vec<ToolInvocationSignal>,
+    pub request_usages: Vec<AgentRequestUsage>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentRequestUsage {
+    pub request_seq: i64,
+    pub usage: LlmUsage,
+    pub source: LlmUsageSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -131,6 +140,11 @@ pub enum AgentExecutionError {
     Provider(#[from] LlmError),
     #[error("tool loop exhausted")]
     ToolLoopExhausted,
+    #[error("token budget exceeded: used {used_tokens} > budget {token_budget}")]
+    BudgetExceeded {
+        used_tokens: u64,
+        token_budget: u64,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -185,6 +199,7 @@ pub fn build_provider_from_config(
             base_url: provider.base_url.clone(),
             api_key,
             default_model: default_model.clone(),
+            tokenizer_path: provider.tokenizer_path.clone(),
             proxy: provider.proxy,
             wire_api: OpenAiWireApi::parse(provider.wire_api.as_str()).ok_or_else(|| {
                 ProviderBuildError::UnsupportedWireApi {
@@ -236,6 +251,8 @@ pub async fn run_agent_execution(
     });
     let mut tool_calls_used = 0u32;
     let mut tool_signals = Vec::new();
+    let mut request_usages = Vec::new();
+    let mut tokens_used = 0u64;
 
     let max_tool_iterations = limits.max_tool_iterations;
     let mut iteration = 0u32;
@@ -278,12 +295,37 @@ pub async fn run_agent_execution(
                 chat_options,
             )
             .await?;
+        let request_seq = i64::from(iteration);
+        if let Some(usage) = llm_response.usage.clone() {
+            tokens_used = tokens_used.saturating_add(usage.total_tokens);
+            request_usages.push(AgentRequestUsage {
+                request_seq,
+                usage,
+                source: llm_response
+                    .usage_source
+                    .unwrap_or(LlmUsageSource::ProviderReported),
+            });
+            if limits.token_budget > 0 && tokens_used > limits.token_budget {
+                warn!(
+                    token_budget = limits.token_budget,
+                    tokens_used,
+                    iteration,
+                    session_key = %input.session_key,
+                    "agent token budget exceeded"
+                );
+                return Err(AgentExecutionError::BudgetExceeded {
+                    used_tokens: tokens_used,
+                    token_budget: limits.token_budget,
+                });
+            }
+        }
 
         if llm_response.tool_calls.is_empty() {
             return Ok(AgentExecutionOutput {
                 content: llm_response.content,
                 reasoning: llm_response.reasoning,
                 tool_signals,
+                request_usages,
             });
         }
 
@@ -380,7 +422,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use klaw_config::AppConfig;
-    use klaw_llm::{LlmResponse, ToolCall};
+    use klaw_llm::{LlmResponse, LlmUsage, ToolCall};
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -441,6 +483,16 @@ mod tests {
                         name: "echo_tool".to_string(),
                         arguments: serde_json::json!({}),
                     }],
+                    usage: Some(LlmUsage {
+                        input_tokens: 10,
+                        output_tokens: 1,
+                        total_tokens: 11,
+                        cached_input_tokens: None,
+                        reasoning_tokens: None,
+                        provider_request_id: None,
+                        provider_response_id: Some("resp-1".to_string()),
+                    }),
+                    usage_source: Some(LlmUsageSource::ProviderReported),
                 });
             }
 
@@ -455,6 +507,16 @@ mod tests {
                 content: "done".to_string(),
                 reasoning: Some("inner chain".to_string()),
                 tool_calls: Vec::new(),
+                usage: Some(LlmUsage {
+                    input_tokens: 15,
+                    output_tokens: 4,
+                    total_tokens: 19,
+                    cached_input_tokens: Some(2),
+                    reasoning_tokens: Some(1),
+                    provider_request_id: None,
+                    provider_response_id: Some("resp-2".to_string()),
+                }),
+                usage_source: Some(LlmUsageSource::ProviderReported),
             })
         }
     }
@@ -477,6 +539,7 @@ mod tests {
             AgentExecutionLimits {
                 max_tool_iterations: 4,
                 max_tool_calls: 4,
+                token_budget: 0,
             },
         )
         .await
@@ -484,6 +547,11 @@ mod tests {
 
         assert_eq!(output.content, "done");
         assert_eq!(output.reasoning.as_deref(), Some("inner chain"));
+        assert_eq!(output.request_usages.len(), 2);
+        assert_eq!(output.request_usages[0].request_seq, 1);
+        assert_eq!(output.request_usages[0].usage.total_tokens, 11);
+        assert_eq!(output.request_usages[1].request_seq, 2);
+        assert_eq!(output.request_usages[1].usage.total_tokens, 19);
     }
 
     #[tokio::test]
@@ -504,6 +572,7 @@ mod tests {
             AgentExecutionLimits {
                 max_tool_iterations: 0,
                 max_tool_calls: 0,
+                token_budget: 0,
             },
         )
         .await
@@ -543,6 +612,8 @@ mod tests {
                 content: "ok".to_string(),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
             })
         }
     }
@@ -570,6 +641,7 @@ mod tests {
             AgentExecutionLimits {
                 max_tool_iterations: 2,
                 max_tool_calls: 2,
+                token_budget: 0,
             },
         )
         .await
@@ -610,6 +682,8 @@ mod tests {
                 content: "ok".to_string(),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
             })
         }
     }
@@ -641,6 +715,7 @@ mod tests {
             AgentExecutionLimits {
                 max_tool_iterations: 1,
                 max_tool_calls: 1,
+                token_budget: 0,
             },
         )
         .await
@@ -659,6 +734,42 @@ mod tests {
                 ("user", "current"),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_stops_when_token_budget_is_exceeded() {
+        let provider = SequencedProvider::default();
+        let tools = MockToolExecutor;
+        let err = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "hello".to_string(),
+                user_media: Vec::new(),
+                conversation_history: Vec::new(),
+                session_key: "s1".to_string(),
+                tool_metadata: BTreeMap::new(),
+                model: None,
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 4,
+                max_tool_calls: 4,
+                token_budget: 20,
+            },
+        )
+        .await
+        .expect_err("token budget should be enforced");
+
+        match err {
+            AgentExecutionError::BudgetExceeded {
+                used_tokens,
+                token_budget,
+            } => {
+                assert_eq!(used_tokens, 30);
+                assert_eq!(token_budget, 20);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 
     #[test]

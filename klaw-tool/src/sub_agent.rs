@@ -286,6 +286,7 @@ impl Tool for SubAgentTool {
             AgentExecutionLimits {
                 max_tool_iterations: self.sub_config.max_iterations.max(1),
                 max_tool_calls: self.sub_config.max_tool_calls.max(1),
+                token_budget: 0,
             },
         )
         .await
@@ -295,6 +296,9 @@ impl Tool for SubAgentTool {
             }
             AgentExecutionError::ToolLoopExhausted => ToolError::ExecutionFailed(
                 "sub-agent exceeded iteration/tool-call limits".to_string(),
+            ),
+            AgentExecutionError::BudgetExceeded { .. } => ToolError::ExecutionFailed(
+                "sub-agent exceeded token budget".to_string(),
             ),
         })?;
 
@@ -319,6 +323,7 @@ mod tests {
                 base_url: "https://api.openai.com/v1".to_string(),
                 wire_api: "chat_completions".to_string(),
                 default_model: "gpt-4o-mini".to_string(),
+                tokenizer_path: None,
                 proxy: false,
                 api_key: Some("test".to_string()),
                 env_key: None,

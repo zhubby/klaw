@@ -4,7 +4,8 @@ use crate::time_format::format_timestamp_millis;
 use crate::widgets::{ChatBox, ChatMessage, ChatRole};
 use egui_extras::{Column, TableBuilder};
 use klaw_session::{
-    SessionError, SessionIndex, SessionListQuery, SessionManager, SqliteSessionManager,
+    LlmUsageSummary, SessionError, SessionIndex, SessionListQuery, SessionManager,
+    SqliteSessionManager,
 };
 use std::future::Future;
 use std::thread;
@@ -13,11 +14,17 @@ use tokio::runtime::Builder;
 #[derive(Default)]
 pub struct SessionPanel {
     loaded: bool,
-    sessions: Vec<SessionIndex>,
+    sessions: Vec<SessionRow>,
     limit_text: String,
     offset_text: String,
     selected_session: Option<String>,
     chat_box: Option<ChatBox>,
+}
+
+#[derive(Debug, Clone)]
+struct SessionRow {
+    session: SessionIndex,
+    usage: LlmUsageSummary,
 }
 
 impl SessionPanel {
@@ -37,7 +44,15 @@ impl SessionPanel {
             offset: self.offset_text.trim().parse::<i64>().unwrap_or(0),
         };
 
-        match run_session_task(move |manager| async move { manager.list_sessions(query).await }) {
+        match run_session_task(move |manager| async move {
+            let sessions = manager.list_sessions(query).await?;
+            let mut rows = Vec::with_capacity(sessions.len());
+            for session in sessions {
+                let usage = manager.sum_llm_usage_by_session(&session.session_key).await?;
+                rows.push(SessionRow { session, usage });
+            }
+            Ok(rows)
+        }) {
             Ok(sessions) => {
                 self.sessions = sessions;
                 self.loaded = true;
@@ -131,6 +146,9 @@ impl PanelRenderer for SessionPanel {
                     .column(Column::auto().at_least(80.0))
                     .column(Column::auto().at_least(80.0))
                     .column(Column::auto().at_least(50.0))
+                    .column(Column::auto().at_least(70.0))
+                    .column(Column::auto().at_least(70.0))
+                    .column(Column::auto().at_least(70.0))
                     .column(Column::auto().at_least(100.0))
                     .column(Column::remainder().at_least(100.0))
                     .min_scrolled_height(0.0)
@@ -159,6 +177,15 @@ impl PanelRenderer for SessionPanel {
                             ui.strong("Turns");
                         });
                         header.col(|ui| {
+                            ui.strong("Input");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Output");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Total");
+                        });
+                        header.col(|ui| {
                             ui.strong("Updated At");
                         });
                         header.col(|ui| {
@@ -168,7 +195,8 @@ impl PanelRenderer for SessionPanel {
                     .body(|body| {
                         body.rows(20.0, self.sessions.len(), |mut row| {
                             let idx = row.index();
-                            let session = &self.sessions[idx];
+                            let session_row = &self.sessions[idx];
+                            let session = &session_row.session;
                             let is_selected =
                                 self.selected_session.as_deref() == Some(&session.session_key);
 
@@ -194,6 +222,15 @@ impl PanelRenderer for SessionPanel {
                             });
                             row.col(|ui| {
                                 ui.label(session.turn_count.to_string());
+                            });
+                            row.col(|ui| {
+                                ui.label(session_row.usage.input_tokens.to_string());
+                            });
+                            row.col(|ui| {
+                                ui.label(session_row.usage.output_tokens.to_string());
+                            });
+                            row.col(|ui| {
+                                ui.label(session_row.usage.total_tokens.to_string());
                             });
                             row.col(|ui| {
                                 ui.label(format_timestamp_millis(session.updated_at_ms));

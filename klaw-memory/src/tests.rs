@@ -180,6 +180,7 @@ fn embedding_provider_build_uses_memory_config() {
             base_url: "https://api.openai.com/v1".to_string(),
             wire_api: "responses".to_string(),
             default_model: "gpt-4o-mini".to_string(),
+            tokenizer_path: None,
             proxy: false,
             api_key: Some("test-key".to_string()),
             env_key: None,

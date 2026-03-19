@@ -171,6 +171,8 @@ impl LlmProvider for CaptureHistoryProvider {
             content: "ok".to_string(),
             reasoning: None,
             tool_calls: Vec::new(),
+            usage: None,
+            usage_source: None,
         })
     }
 }

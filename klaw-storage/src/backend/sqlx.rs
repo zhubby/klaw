@@ -3,7 +3,8 @@ use crate::{
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun, SessionIndex,
+    CronTaskRun, CronTaskStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary,
+    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmUsageRecord, SessionIndex,
     SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
@@ -90,6 +91,37 @@ struct ApprovalRow {
     created_at_ms: i64,
     updated_at_ms: i64,
     consumed_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct LlmUsageRow {
+    id: String,
+    session_key: String,
+    chat_id: String,
+    turn_index: i64,
+    request_seq: i64,
+    provider: String,
+    model: String,
+    wire_api: String,
+    input_tokens: i64,
+    output_tokens: i64,
+    total_tokens: i64,
+    cached_input_tokens: Option<i64>,
+    reasoning_tokens: Option<i64>,
+    source: String,
+    provider_request_id: Option<String>,
+    provider_response_id: Option<String>,
+    created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct LlmUsageSummaryRow {
+    request_count: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    total_tokens: i64,
+    cached_input_tokens: i64,
+    reasoning_tokens: i64,
 }
 
 impl From<SessionIndexRow> for SessionIndex {
@@ -185,6 +217,48 @@ impl TryFrom<ApprovalRow> for ApprovalRecord {
     }
 }
 
+impl TryFrom<LlmUsageRow> for LlmUsageRecord {
+    type Error = StorageError;
+
+    fn try_from(value: LlmUsageRow) -> Result<Self, Self::Error> {
+        let source = LlmUsageSource::parse(&value.source).ok_or_else(|| {
+            StorageError::backend(format!("invalid llm usage source: {}", value.source))
+        })?;
+        Ok(Self {
+            id: value.id,
+            session_key: value.session_key,
+            chat_id: value.chat_id,
+            turn_index: value.turn_index,
+            request_seq: value.request_seq,
+            provider: value.provider,
+            model: value.model,
+            wire_api: value.wire_api,
+            input_tokens: value.input_tokens,
+            output_tokens: value.output_tokens,
+            total_tokens: value.total_tokens,
+            cached_input_tokens: value.cached_input_tokens,
+            reasoning_tokens: value.reasoning_tokens,
+            source,
+            provider_request_id: value.provider_request_id,
+            provider_response_id: value.provider_response_id,
+            created_at_ms: value.created_at_ms,
+        })
+    }
+}
+
+impl From<LlmUsageSummaryRow> for LlmUsageSummary {
+    fn from(value: LlmUsageSummaryRow) -> Self {
+        Self {
+            request_count: value.request_count,
+            input_tokens: value.input_tokens,
+            output_tokens: value.output_tokens,
+            total_tokens: value.total_tokens,
+            cached_input_tokens: value.cached_input_tokens,
+            reasoning_tokens: value.reasoning_tokens,
+        }
+    }
+}
+
 impl SqlxSessionStore {
     pub async fn open(paths: StoragePaths) -> Result<Self, StorageError> {
         paths.ensure_dirs().await?;
@@ -235,6 +309,52 @@ impl SqlxSessionStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at_ms
              ON sessions(updated_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS llm_usage (
+                id TEXT PRIMARY KEY,
+                session_key TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                turn_index INTEGER NOT NULL,
+                request_seq INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                wire_api TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                total_tokens INTEGER NOT NULL,
+                cached_input_tokens INTEGER,
+                reasoning_tokens INTEGER,
+                source TEXT NOT NULL,
+                provider_request_id TEXT,
+                provider_response_id TEXT,
+                created_at_ms INTEGER NOT NULL,
+                FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_llm_usage_session_created
+             ON llm_usage(session_key, created_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_llm_usage_chat_created
+             ON llm_usage(chat_id, created_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_llm_usage_session_turn
+             ON llm_usage(session_key, turn_index, request_seq)",
         )
         .execute(&self.pool)
         .await
@@ -809,6 +929,122 @@ impl SessionStorage for SqlxSessionStore {
         .await
         .map_err(StorageError::backend)?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn append_llm_usage(
+        &self,
+        input: &NewLlmUsageRecord,
+    ) -> Result<LlmUsageRecord, StorageError> {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO llm_usage (
+                id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                input_tokens, output_tokens, total_tokens, cached_input_tokens, reasoning_tokens,
+                source, provider_request_id, provider_response_id, created_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+        )
+        .bind(&input.id)
+        .bind(&input.session_key)
+        .bind(&input.chat_id)
+        .bind(input.turn_index)
+        .bind(input.request_seq)
+        .bind(&input.provider)
+        .bind(&input.model)
+        .bind(&input.wire_api)
+        .bind(input.input_tokens)
+        .bind(input.output_tokens)
+        .bind(input.total_tokens)
+        .bind(input.cached_input_tokens)
+        .bind(input.reasoning_tokens)
+        .bind(input.source.as_str())
+        .bind(&input.provider_request_id)
+        .bind(&input.provider_response_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        let row = sqlx::query_as::<_, LlmUsageRow>(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    input_tokens, output_tokens, total_tokens, cached_input_tokens, reasoning_tokens,
+                    source, provider_request_id, provider_response_id, created_at_ms
+             FROM llm_usage
+             WHERE id = ?1",
+        )
+        .bind(&input.id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        LlmUsageRecord::try_from(row)
+    }
+
+    async fn list_llm_usage(
+        &self,
+        session_key: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<LlmUsageRecord>, StorageError> {
+        let rows = sqlx::query_as::<_, LlmUsageRow>(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    input_tokens, output_tokens, total_tokens, cached_input_tokens, reasoning_tokens,
+                    source, provider_request_id, provider_response_id, created_at_ms
+             FROM llm_usage
+             WHERE session_key = ?1
+             ORDER BY turn_index DESC, request_seq DESC, created_at_ms DESC
+             LIMIT ?2 OFFSET ?3",
+        )
+        .bind(session_key)
+        .bind(limit.max(1))
+        .bind(offset.max(0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        rows.into_iter().map(LlmUsageRecord::try_from).collect()
+    }
+
+    async fn sum_llm_usage_by_session(
+        &self,
+        session_key: &str,
+    ) -> Result<LlmUsageSummary, StorageError> {
+        let row = sqlx::query_as::<_, LlmUsageSummaryRow>(
+            "SELECT
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens,
+                COALESCE(SUM(total_tokens), 0) as total_tokens,
+                COALESCE(SUM(cached_input_tokens), 0) as cached_input_tokens,
+                COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens
+             FROM llm_usage
+             WHERE session_key = ?1",
+        )
+        .bind(session_key)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(row.into())
+    }
+
+    async fn sum_llm_usage_by_turn(
+        &self,
+        session_key: &str,
+        turn_index: i64,
+    ) -> Result<LlmUsageSummary, StorageError> {
+        let row = sqlx::query_as::<_, LlmUsageSummaryRow>(
+            "SELECT
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens,
+                COALESCE(SUM(total_tokens), 0) as total_tokens,
+                COALESCE(SUM(cached_input_tokens), 0) as cached_input_tokens,
+                COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens
+             FROM llm_usage
+             WHERE session_key = ?1 AND turn_index = ?2",
+        )
+        .bind(session_key)
+        .bind(turn_index)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(row.into())
     }
 
     async fn create_approval(

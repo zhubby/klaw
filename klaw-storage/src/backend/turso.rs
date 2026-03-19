@@ -3,7 +3,8 @@ use crate::{
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun, SessionIndex,
+    CronTaskRun, CronTaskStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary,
+    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmUsageRecord, SessionIndex,
     SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
@@ -64,6 +65,32 @@ impl TursoSessionStore {
                 );
                 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at_ms
                 ON sessions(updated_at_ms DESC);
+                CREATE TABLE IF NOT EXISTS llm_usage (
+                    id TEXT PRIMARY KEY,
+                    session_key TEXT NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    turn_index INTEGER NOT NULL,
+                    request_seq INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    wire_api TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    total_tokens INTEGER NOT NULL,
+                    cached_input_tokens INTEGER,
+                    reasoning_tokens INTEGER,
+                    source TEXT NOT NULL,
+                    provider_request_id TEXT,
+                    provider_response_id TEXT,
+                    created_at_ms INTEGER NOT NULL,
+                    FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_llm_usage_session_created
+                ON llm_usage(session_key, created_at_ms DESC);
+                CREATE INDEX IF NOT EXISTS idx_llm_usage_chat_created
+                ON llm_usage(chat_id, created_at_ms DESC);
+                CREATE INDEX IF NOT EXISTS idx_llm_usage_session_turn
+                ON llm_usage(session_key, turn_index, request_seq);
                 CREATE TABLE IF NOT EXISTS cron (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -610,6 +637,151 @@ impl SessionStorage for TursoSessionStore {
         Ok(out)
     }
 
+    async fn append_llm_usage(
+        &self,
+        input: &NewLlmUsageRecord,
+    ) -> Result<LlmUsageRecord, StorageError> {
+        let now = now_ms();
+        let sql = format!(
+            "INSERT INTO llm_usage (
+                id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                input_tokens, output_tokens, total_tokens, cached_input_tokens, reasoning_tokens,
+                source, provider_request_id, provider_response_id, created_at_ms
+            ) VALUES ('{}', '{}', '{}', {}, {}, '{}', '{}', '{}', {}, {}, {}, {}, {}, '{}', {}, {}, {})",
+            escape_sql_text(&input.id),
+            escape_sql_text(&input.session_key),
+            escape_sql_text(&input.chat_id),
+            input.turn_index,
+            input.request_seq,
+            escape_sql_text(&input.provider),
+            escape_sql_text(&input.model),
+            escape_sql_text(&input.wire_api),
+            input.input_tokens,
+            input.output_tokens,
+            input.total_tokens,
+            opt_i64_sql(input.cached_input_tokens),
+            opt_i64_sql(input.reasoning_tokens),
+            input.source.as_str(),
+            opt_string_sql(input.provider_request_id.as_deref()),
+            opt_string_sql(input.provider_response_id.as_deref()),
+            now
+        );
+        self.conn
+            .execute(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        let query_sql = format!(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    input_tokens, output_tokens, total_tokens, cached_input_tokens, reasoning_tokens,
+                    source, provider_request_id, provider_response_id, created_at_ms
+             FROM llm_usage
+             WHERE id = '{}'
+             LIMIT 1",
+            escape_sql_text(&input.id)
+        );
+        let mut rows = self
+            .conn
+            .query(&query_sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(StorageError::backend)?
+            .ok_or_else(|| StorageError::backend("llm usage not found"))?;
+        row_to_llm_usage(&row)
+    }
+
+    async fn list_llm_usage(
+        &self,
+        session_key: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<LlmUsageRecord>, StorageError> {
+        let sql = format!(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    input_tokens, output_tokens, total_tokens, cached_input_tokens, reasoning_tokens,
+                    source, provider_request_id, provider_response_id, created_at_ms
+             FROM llm_usage
+             WHERE session_key = '{}'
+             ORDER BY turn_index DESC, request_seq DESC, created_at_ms DESC
+             LIMIT {} OFFSET {}",
+            escape_sql_text(session_key),
+            limit.max(1),
+            offset.max(0)
+        );
+        let mut rows = self
+            .conn
+            .query(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
+            out.push(row_to_llm_usage(&row)?);
+        }
+        Ok(out)
+    }
+
+    async fn sum_llm_usage_by_session(
+        &self,
+        session_key: &str,
+    ) -> Result<LlmUsageSummary, StorageError> {
+        let sql = format!(
+            "SELECT
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens,
+                COALESCE(SUM(total_tokens), 0) as total_tokens,
+                COALESCE(SUM(cached_input_tokens), 0) as cached_input_tokens,
+                COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens
+             FROM llm_usage
+             WHERE session_key = '{}'",
+            escape_sql_text(session_key)
+        );
+        let mut rows = self
+            .conn
+            .query(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(StorageError::backend)?
+            .ok_or_else(|| StorageError::backend("llm usage summary not found"))?;
+        row_to_llm_usage_summary(&row)
+    }
+
+    async fn sum_llm_usage_by_turn(
+        &self,
+        session_key: &str,
+        turn_index: i64,
+    ) -> Result<LlmUsageSummary, StorageError> {
+        let sql = format!(
+            "SELECT
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens,
+                COALESCE(SUM(total_tokens), 0) as total_tokens,
+                COALESCE(SUM(cached_input_tokens), 0) as cached_input_tokens,
+                COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens
+             FROM llm_usage
+             WHERE session_key = '{}' AND turn_index = {}",
+            escape_sql_text(session_key),
+            turn_index
+        );
+        let mut rows = self
+            .conn
+            .query(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(StorageError::backend)?
+            .ok_or_else(|| StorageError::backend("llm usage summary not found"))?;
+        row_to_llm_usage_summary(&row)
+    }
+
     async fn create_approval(
         &self,
         input: &NewApprovalRecord,
@@ -1095,6 +1267,18 @@ fn escape_sql_text(input: &str) -> String {
     input.replace('\'', "''")
 }
 
+fn opt_string_sql(value: Option<&str>) -> String {
+    value
+        .map(|inner| format!("'{}'", escape_sql_text(inner)))
+        .unwrap_or_else(|| "NULL".to_string())
+}
+
+fn opt_i64_sql(value: Option<i64>) -> String {
+    value
+        .map(|inner| inner.to_string())
+        .unwrap_or_else(|| "NULL".to_string())
+}
+
 fn to_turso_params(values: &[DbValue]) -> Vec<Value> {
     values
         .iter()
@@ -1191,6 +1375,42 @@ fn row_to_approval(row: &Row) -> Result<ApprovalRecord, StorageError> {
         created_at_ms: value_to_i64(row.get_value(12).map_err(StorageError::backend)?)?,
         updated_at_ms: value_to_i64(row.get_value(13).map_err(StorageError::backend)?)?,
         consumed_at_ms: value_to_opt_i64(row.get_value(14).map_err(StorageError::backend)?)?,
+    })
+}
+
+fn row_to_llm_usage(row: &Row) -> Result<LlmUsageRecord, StorageError> {
+    let source_raw = value_to_string(row.get_value(13).map_err(StorageError::backend)?)?;
+    let source = LlmUsageSource::parse(&source_raw)
+        .ok_or_else(|| StorageError::backend(format!("invalid llm usage source: {source_raw}")))?;
+    Ok(LlmUsageRecord {
+        id: value_to_string(row.get_value(0).map_err(StorageError::backend)?)?,
+        session_key: value_to_string(row.get_value(1).map_err(StorageError::backend)?)?,
+        chat_id: value_to_string(row.get_value(2).map_err(StorageError::backend)?)?,
+        turn_index: value_to_i64(row.get_value(3).map_err(StorageError::backend)?)?,
+        request_seq: value_to_i64(row.get_value(4).map_err(StorageError::backend)?)?,
+        provider: value_to_string(row.get_value(5).map_err(StorageError::backend)?)?,
+        model: value_to_string(row.get_value(6).map_err(StorageError::backend)?)?,
+        wire_api: value_to_string(row.get_value(7).map_err(StorageError::backend)?)?,
+        input_tokens: value_to_i64(row.get_value(8).map_err(StorageError::backend)?)?,
+        output_tokens: value_to_i64(row.get_value(9).map_err(StorageError::backend)?)?,
+        total_tokens: value_to_i64(row.get_value(10).map_err(StorageError::backend)?)?,
+        cached_input_tokens: value_to_opt_i64(row.get_value(11).map_err(StorageError::backend)?)?,
+        reasoning_tokens: value_to_opt_i64(row.get_value(12).map_err(StorageError::backend)?)?,
+        source,
+        provider_request_id: value_to_opt_string(row.get_value(14).map_err(StorageError::backend)?),
+        provider_response_id: value_to_opt_string(row.get_value(15).map_err(StorageError::backend)?),
+        created_at_ms: value_to_i64(row.get_value(16).map_err(StorageError::backend)?)?,
+    })
+}
+
+fn row_to_llm_usage_summary(row: &Row) -> Result<LlmUsageSummary, StorageError> {
+    Ok(LlmUsageSummary {
+        request_count: value_to_i64(row.get_value(0).map_err(StorageError::backend)?)?,
+        input_tokens: value_to_i64(row.get_value(1).map_err(StorageError::backend)?)?,
+        output_tokens: value_to_i64(row.get_value(2).map_err(StorageError::backend)?)?,
+        total_tokens: value_to_i64(row.get_value(3).map_err(StorageError::backend)?)?,
+        cached_input_tokens: value_to_i64(row.get_value(4).map_err(StorageError::backend)?)?,
+        reasoning_tokens: value_to_i64(row.get_value(5).map_err(StorageError::backend)?)?,
     })
 }
 

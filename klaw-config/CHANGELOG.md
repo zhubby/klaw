@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-19
+
+### Added
+
+- `model_providers.<id>.tokenizer_path` 配置项，支持为本地 token 估算回退指定 `tokenizer.json` 文件
+
 ## 2026-03-18
 
 ### Added

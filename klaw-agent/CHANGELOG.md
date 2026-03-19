@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-19
+
+### Changed
+- `run_agent_execution` now collects per-request `LlmUsage` records across tool-loop iterations and returns them in `AgentExecutionOutput.request_usages`
+- `run_agent_execution` now enforces `token_budget` against accumulated provider-reported `total_tokens`; `0` still means unlimited
+
 ## 2026-03-17
 
 ### Changed

@@ -1,7 +1,8 @@
 use crate::SessionError;
 use async_trait::async_trait;
 use klaw_storage::{
-    open_default_store, ChatRecord, DefaultSessionStore, SessionIndex, SessionStorage,
+    open_default_store, ChatRecord, DefaultSessionStore, LlmUsageRecord, LlmUsageSummary,
+    NewLlmUsageRecord, SessionIndex, SessionStorage,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -83,6 +84,28 @@ pub trait SessionManager: Send + Sync {
         &self,
         query: SessionListQuery,
     ) -> Result<Vec<SessionIndex>, SessionError>;
+
+    async fn append_llm_usage(
+        &self,
+        input: &NewLlmUsageRecord,
+    ) -> Result<LlmUsageRecord, SessionError>;
+
+    async fn list_llm_usage(
+        &self,
+        session_key: &str,
+        query: SessionListQuery,
+    ) -> Result<Vec<LlmUsageRecord>, SessionError>;
+
+    async fn sum_llm_usage_by_session(
+        &self,
+        session_key: &str,
+    ) -> Result<LlmUsageSummary, SessionError>;
+
+    async fn sum_llm_usage_by_turn(
+        &self,
+        session_key: &str,
+        turn_index: i64,
+    ) -> Result<LlmUsageSummary, SessionError>;
 }
 
 pub struct SqliteSessionManager {
@@ -209,6 +232,41 @@ impl SessionManager for SqliteSessionManager {
         let limit = query.limit.max(1);
         let offset = query.offset.max(0);
         Ok(self.store.list_sessions(limit, offset).await?)
+    }
+
+    async fn append_llm_usage(
+        &self,
+        input: &NewLlmUsageRecord,
+    ) -> Result<LlmUsageRecord, SessionError> {
+        Ok(self.store.append_llm_usage(input).await?)
+    }
+
+    async fn list_llm_usage(
+        &self,
+        session_key: &str,
+        query: SessionListQuery,
+    ) -> Result<Vec<LlmUsageRecord>, SessionError> {
+        let limit = query.limit.max(1);
+        let offset = query.offset.max(0);
+        Ok(self.store.list_llm_usage(session_key, limit, offset).await?)
+    }
+
+    async fn sum_llm_usage_by_session(
+        &self,
+        session_key: &str,
+    ) -> Result<LlmUsageSummary, SessionError> {
+        Ok(self.store.sum_llm_usage_by_session(session_key).await?)
+    }
+
+    async fn sum_llm_usage_by_turn(
+        &self,
+        session_key: &str,
+        turn_index: i64,
+    ) -> Result<LlmUsageSummary, SessionError> {
+        Ok(self
+            .store
+            .sum_llm_usage_by_turn(session_key, turn_index)
+            .await?)
     }
 }
 

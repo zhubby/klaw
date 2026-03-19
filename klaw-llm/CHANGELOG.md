@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-19
+
+### Added
+- added `LlmUsage` and optional `LlmResponse.usage` so providers can return normalized token usage metadata
+- added local token estimation fallback using the `tokenizers` crate; when provider APIs omit `usage`, Klaw now estimates token usage locally and marks it as `estimated_local`
+
+### Changed
+- OpenAI-compatible response parsing now extracts prompt/input, completion/output, cached, and reasoning token counts from both `chat_completions` and `responses`
+- Anthropic message parsing now captures input/output token usage and response id when the API returns them
+- `LlmResponse` now also records `usage_source`, distinguishing `provider_reported` from `estimated_local`
+
 ## 2026-03-15
 
 ### Changed

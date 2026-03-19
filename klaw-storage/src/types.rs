@@ -44,6 +44,83 @@ pub struct SessionIndex {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum LlmUsageSource {
+    ProviderReported,
+    EstimatedLocal,
+}
+
+impl LlmUsageSource {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ProviderReported => "provider_reported",
+            Self::EstimatedLocal => "estimated_local",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "provider_reported" => Some(Self::ProviderReported),
+            "estimated_local" => Some(Self::EstimatedLocal),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmUsageRecord {
+    pub id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub turn_index: i64,
+    pub request_seq: i64,
+    pub provider: String,
+    pub model: String,
+    pub wire_api: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub cached_input_tokens: Option<i64>,
+    pub reasoning_tokens: Option<i64>,
+    pub source: LlmUsageSource,
+    pub provider_request_id: Option<String>,
+    pub provider_response_id: Option<String>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewLlmUsageRecord {
+    pub id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub turn_index: i64,
+    pub request_seq: i64,
+    pub provider: String,
+    pub model: String,
+    pub wire_api: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub cached_input_tokens: Option<i64>,
+    pub reasoning_tokens: Option<i64>,
+    pub source: LlmUsageSource,
+    pub provider_request_id: Option<String>,
+    pub provider_response_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct LlmUsageSummary {
+    pub request_count: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub reasoning_tokens: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalStatus {
     Pending,
     Approved,

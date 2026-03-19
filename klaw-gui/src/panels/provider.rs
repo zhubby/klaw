@@ -11,6 +11,7 @@ struct ProviderForm {
     base_url: String,
     wire_api: String,
     default_model: String,
+    tokenizer_path: String,
     proxy: bool,
     env_key: String,
     api_key: String,
@@ -27,6 +28,7 @@ impl ProviderForm {
             base_url: default.base_url,
             wire_api: default.wire_api,
             default_model: default.default_model,
+            tokenizer_path: default.tokenizer_path.unwrap_or_default(),
             proxy: default.proxy,
             env_key: default.env_key.unwrap_or_default(),
             api_key: default.api_key.unwrap_or_default(),
@@ -42,6 +44,7 @@ impl ProviderForm {
             base_url: provider.base_url.clone(),
             wire_api: provider.wire_api.clone(),
             default_model: provider.default_model.clone(),
+            tokenizer_path: provider.tokenizer_path.clone().unwrap_or_default(),
             proxy: provider.proxy,
             env_key: provider.env_key.clone().unwrap_or_default(),
             api_key: provider.api_key.clone().unwrap_or_default(),
@@ -65,11 +68,13 @@ impl ProviderForm {
         let name = self.name.trim();
         let env_key = self.env_key.trim();
         let api_key = self.api_key.trim();
+        let tokenizer_path = self.tokenizer_path.trim();
         ModelProviderConfig {
             name: (!name.is_empty()).then(|| name.to_string()),
             base_url: self.base_url.trim().to_string(),
             wire_api: self.wire_api.trim().to_string(),
             default_model: self.default_model.trim().to_string(),
+            tokenizer_path: (!tokenizer_path.is_empty()).then(|| tokenizer_path.to_string()),
             proxy: self.proxy,
             env_key: (!env_key.is_empty()).then(|| env_key.to_string()),
             api_key: (!api_key.is_empty()).then(|| api_key.to_string()),
@@ -288,6 +293,10 @@ impl ProviderPanel {
                         ui.text_edit_singleline(&mut form.default_model);
                         ui.end_row();
 
+                        ui.label("Tokenizer Path");
+                        ui.text_edit_singleline(&mut form.tokenizer_path);
+                        ui.end_row();
+
                         ui.label("Use System Proxy");
                         ui.checkbox(&mut form.proxy, "");
                         ui.end_row();
@@ -359,7 +368,7 @@ impl PanelRenderer for ProviderPanel {
         } else {
             egui::Grid::new("provider-list-grid")
                 .striped(true)
-                .num_columns(7)
+                .num_columns(8)
                 .spacing([12.0, 8.0])
                 .show(ui, |ui| {
                     ui.strong("ID");
@@ -367,6 +376,7 @@ impl PanelRenderer for ProviderPanel {
                     ui.strong("Base URL");
                     ui.strong("Wire API");
                     ui.strong("Default Model");
+                    ui.strong("Tokenizer");
                     ui.strong("Auth");
                     ui.strong("Actions");
                     ui.end_row();
@@ -404,6 +414,7 @@ impl PanelRenderer for ProviderPanel {
                         ui.label(&provider.base_url);
                         ui.label(&provider.wire_api);
                         ui.label(&provider.default_model);
+                        ui.label(provider.tokenizer_path.as_deref().unwrap_or("-"));
                         ui.label(auth);
 
                         ui.horizontal(|ui| {

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-19
+
+### Added
+
+- added session-manager wrappers for request-level LLM usage append/list/session-sum/turn-sum operations
+
 ## 2026-03-16
 
 ### Added

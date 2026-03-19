@@ -21,7 +21,9 @@ use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_observability::{
     init_observability, ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry,
 };
-use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
+use klaw_session::{
+    ChatRecord, LlmUsageSource, NewLlmUsageRecord, SessionManager, SqliteSessionManager,
+};
 use klaw_skill::{
     open_default_skills_manager, InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager,
 };
@@ -180,6 +182,26 @@ struct SessionRoute {
     model: String,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct PersistedLlmUsageMetadata {
+    request_seq: i64,
+    provider: String,
+    model: String,
+    wire_api: String,
+    input_tokens: i64,
+    output_tokens: i64,
+    total_tokens: i64,
+    #[serde(default)]
+    cached_input_tokens: Option<i64>,
+    #[serde(default)]
+    reasoning_tokens: Option<i64>,
+    source: String,
+    #[serde(default)]
+    provider_request_id: Option<String>,
+    #[serde(default)]
+    provider_response_id: Option<String>,
+}
+
 fn is_channel_commands_disabled(runtime: &RuntimeBundle, channel: &str) -> bool {
     runtime.disable_session_commands_for.contains(channel)
 }
@@ -213,6 +235,61 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn extract_llm_usage_records(
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> Vec<PersistedLlmUsageMetadata> {
+    metadata
+        .get("llm.usage.records")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
+}
+
+async fn persist_llm_usage_records(
+    runtime: &RuntimeBundle,
+    session_key: &str,
+    chat_id: &str,
+    turn_index: i64,
+    message_id: &uuid::Uuid,
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> Result<(), Box<dyn Error>> {
+    let records = extract_llm_usage_records(metadata);
+    if records.is_empty() {
+        return Ok(());
+    }
+
+    let sessions = session_manager(runtime);
+    for record in records {
+        let source = LlmUsageSource::parse(record.source.as_str()).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid llm usage source: {}", record.source),
+            )
+        })?;
+        sessions
+            .append_llm_usage(&NewLlmUsageRecord {
+                id: format!("{message_id}:{}", record.request_seq),
+                session_key: session_key.to_string(),
+                chat_id: chat_id.to_string(),
+                turn_index,
+                request_seq: record.request_seq,
+                provider: record.provider,
+                model: record.model,
+                wire_api: record.wire_api,
+                input_tokens: record.input_tokens,
+                output_tokens: record.output_tokens,
+                total_tokens: record.total_tokens,
+                cached_input_tokens: record.cached_input_tokens,
+                reasoning_tokens: record.reasoning_tokens,
+                source,
+                provider_request_id: record.provider_request_id,
+                provider_response_id: record.provider_response_id,
+            })
+            .await?;
+    }
+    Ok(())
 }
 
 async fn execute_approved_shell(
@@ -1139,7 +1216,7 @@ pub async fn submit_and_get_output(
     sessions
         .append_chat_record(&session_key, &user_record)
         .await?;
-    sessions
+    let session_state = sessions
         .touch_session(&session_key, &chat_id, &channel)
         .await?;
 
@@ -1188,6 +1265,15 @@ pub async fn submit_and_get_output(
         Some(msg) => {
             let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
             let sessions = session_manager(runtime);
+            persist_llm_usage_records(
+                runtime,
+                &msg.header.session_key,
+                &msg.payload.chat_id,
+                session_state.turn_count,
+                &msg.header.message_id,
+                &msg.payload.metadata,
+            )
+            .await?;
             sessions
                 .append_chat_record(&msg.header.session_key, &agent_record)
                 .await?;
@@ -1230,6 +1316,20 @@ pub async fn drain_runtime_queue(
         };
         let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
         let sessions = session_manager(runtime);
+        let turn_index = sessions
+            .get_session(&msg.header.session_key)
+            .await
+            .map(|session| session.turn_count)
+            .unwrap_or(0);
+        persist_llm_usage_records(
+            runtime,
+            &msg.header.session_key,
+            &msg.payload.chat_id,
+            turn_index,
+            &msg.header.message_id,
+            &msg.payload.metadata,
+        )
+        .await?;
         sessions
             .append_chat_record(&msg.header.session_key, &agent_record)
             .await?;

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-19
+
+### Added
+- added `llm_usage` persistence models (`LlmUsageRecord`, `NewLlmUsageRecord`, `LlmUsageSummary`, `LlmUsageSource`) and `SessionStorage` APIs for append/list/session-sum/turn-sum workflows
+- added `llm_usage` table + indexes in both SQLx and Turso backends for request-level token accounting linked to `session_key`
+
 ## 2026-03-18
 
 ### Added

@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-03-19
+
+### Changed
+
+- session panel now shows aggregated input/output/total token counts per session alongside the indexed session list
+- provider panel now supports editing and displaying optional `tokenizer_path` for local token estimation fallback
+
 ## 2026-03-18
 
 ### Added

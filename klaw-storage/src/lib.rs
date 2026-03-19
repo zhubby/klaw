@@ -14,8 +14,8 @@ pub use paths::StoragePaths;
 pub use traits::{CronStorage, SessionStorage};
 pub use types::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronTaskRun,
-    CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun, SessionIndex,
-    UpdateCronJobPatch,
+    CronTaskStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord,
+    NewCronJob, NewCronTaskRun, NewLlmUsageRecord, SessionIndex, UpdateCronJobPatch,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -227,6 +227,83 @@ mod tests {
             .await
             .expect("model should be updated");
         assert_eq!(updated_model.model.as_deref(), Some("claude-opus-4"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn llm_usage_is_aggregated_by_session_and_turn() {
+        let store = create_store().await;
+        store
+            .touch_session("stdio:usage", "chat-usage", "stdio")
+            .await
+            .expect("session should exist");
+
+        store
+            .append_llm_usage(&NewLlmUsageRecord {
+                id: "usage-1".to_string(),
+                session_key: "stdio:usage".to_string(),
+                chat_id: "chat-usage".to_string(),
+                turn_index: 0,
+                request_seq: 1,
+                provider: "openai".to_string(),
+                model: "gpt-4.1-mini".to_string(),
+                wire_api: "responses".to_string(),
+                input_tokens: 10,
+                output_tokens: 4,
+                total_tokens: 14,
+                cached_input_tokens: Some(2),
+                reasoning_tokens: Some(1),
+                source: LlmUsageSource::ProviderReported,
+                provider_request_id: None,
+                provider_response_id: Some("resp-1".to_string()),
+            })
+            .await
+            .expect("first usage should append");
+        store
+            .append_llm_usage(&NewLlmUsageRecord {
+                id: "usage-2".to_string(),
+                session_key: "stdio:usage".to_string(),
+                chat_id: "chat-usage".to_string(),
+                turn_index: 0,
+                request_seq: 2,
+                provider: "openai".to_string(),
+                model: "gpt-4.1-mini".to_string(),
+                wire_api: "responses".to_string(),
+                input_tokens: 7,
+                output_tokens: 3,
+                total_tokens: 10,
+                cached_input_tokens: None,
+                reasoning_tokens: None,
+                source: LlmUsageSource::ProviderReported,
+                provider_request_id: None,
+                provider_response_id: Some("resp-2".to_string()),
+            })
+            .await
+            .expect("second usage should append");
+
+        let by_session = store
+            .sum_llm_usage_by_session("stdio:usage")
+            .await
+            .expect("session usage should sum");
+        assert_eq!(by_session.request_count, 2);
+        assert_eq!(by_session.input_tokens, 17);
+        assert_eq!(by_session.output_tokens, 7);
+        assert_eq!(by_session.total_tokens, 24);
+        assert_eq!(by_session.cached_input_tokens, 2);
+        assert_eq!(by_session.reasoning_tokens, 1);
+
+        let by_turn = store
+            .sum_llm_usage_by_turn("stdio:usage", 0)
+            .await
+            .expect("turn usage should sum");
+        assert_eq!(by_turn, by_session);
+
+        let records = store
+            .list_llm_usage("stdio:usage", 10, 0)
+            .await
+            .expect("usage history should list");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].request_seq, 2);
+        assert_eq!(records[1].request_seq, 1);
     }
 
     #[tokio::test(flavor = "current_thread")]

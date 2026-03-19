@@ -121,6 +121,8 @@ pub enum ErrorCode {
     TransportUnavailable,
     /// 重试耗尽。
     RetryExhausted,
+    /// token 预算超限。
+    BudgetExceeded,
     /// 已进入死信。
     SentToDeadLetter,
 }

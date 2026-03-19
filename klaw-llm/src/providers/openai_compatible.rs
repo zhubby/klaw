@@ -4,7 +4,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolCall, ToolDefinition,
+    estimate::estimate_chat_usage, ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse,
+    LlmUsage, LlmUsageSource, ToolCall, ToolDefinition,
 };
 
 /// OpenAI wire API 类型。
@@ -33,6 +34,8 @@ pub struct OpenAiCompatibleConfig {
     pub api_key: String,
     /// 默认模型名。
     pub default_model: String,
+    /// 可选的本地 tokenizer.json 路径。
+    pub tokenizer_path: Option<String>,
     /// 是否启用系统代理。false 时强制直连（no_proxy）。
     pub proxy: bool,
     /// 底层 wire API。
@@ -104,6 +107,8 @@ impl OpenAiCompatibleProvider {
         model: Option<&str>,
         options: ChatOptions,
     ) -> Result<LlmResponse, LlmError> {
+        let original_messages = messages.clone();
+        let original_tools = tools.clone();
         let request = OpenAiChatCompletionRequest {
             model: model.unwrap_or(&self.config.default_model).to_string(),
             temperature: options.temperature,
@@ -168,11 +173,32 @@ impl OpenAiCompatibleProvider {
             })
             .collect();
 
-        Ok(LlmResponse {
+        let usage = payload.usage.as_ref().map(|value| map_chat_completion_usage(value.clone()));
+        let mut response = LlmResponse {
             content,
             reasoning,
             tool_calls,
-        })
+            usage,
+            usage_source: payload
+                .usage
+                .as_ref()
+                .map(|_| LlmUsageSource::ProviderReported),
+        };
+        if response.usage.is_none() {
+            response.usage = Some(estimate_chat_usage(
+                self.name(),
+                model.unwrap_or(&self.config.default_model),
+                self.wire_api().unwrap_or("chat_completions"),
+                self.config.tokenizer_path.as_deref(),
+                &original_messages,
+                &original_tools,
+                &response.content,
+                response.reasoning.as_deref(),
+                &response.tool_calls,
+            ));
+            response.usage_source = Some(LlmUsageSource::EstimatedLocal);
+        }
+        Ok(response)
     }
 
     async fn chat_with_responses(
@@ -182,6 +208,8 @@ impl OpenAiCompatibleProvider {
         model: Option<&str>,
         options: ChatOptions,
     ) -> Result<LlmResponse, LlmError> {
+        let original_messages = messages.clone();
+        let original_tools = tools.clone();
         let request = OpenAiResponsesRequest {
             model: model.unwrap_or(&self.config.default_model).to_string(),
             input: build_responses_input(messages),
@@ -204,7 +232,22 @@ impl OpenAiCompatibleProvider {
         };
 
         let payload: OpenAiResponsesResponse = self.execute_json(&request).await?;
-        Ok(parse_responses_payload(payload))
+        let mut response = parse_responses_payload(payload);
+        if response.usage.is_none() {
+            response.usage = Some(estimate_chat_usage(
+                self.name(),
+                model.unwrap_or(&self.config.default_model),
+                self.wire_api().unwrap_or("responses"),
+                self.config.tokenizer_path.as_deref(),
+                &original_messages,
+                &original_tools,
+                &response.content,
+                response.reasoning.as_deref(),
+                &response.tool_calls,
+            ));
+            response.usage_source = Some(LlmUsageSource::EstimatedLocal);
+        }
+        Ok(response)
     }
 }
 
@@ -236,6 +279,17 @@ impl LlmProvider for OpenAiCompatibleProvider {
 
     fn default_model(&self) -> &str {
         &self.config.default_model
+    }
+
+    fn wire_api(&self) -> Option<&str> {
+        Some(match self.config.wire_api {
+            OpenAiWireApi::ChatCompletions => "chat_completions",
+            OpenAiWireApi::Responses => "responses",
+        })
+    }
+
+    fn tokenizer_path(&self) -> Option<&str> {
+        self.config.tokenizer_path.as_deref()
     }
 
     async fn chat(
@@ -433,6 +487,15 @@ fn build_responses_message_content(
 }
 
 fn parse_responses_payload(payload: OpenAiResponsesResponse) -> LlmResponse {
+    let usage = payload
+        .usage
+        .as_ref()
+        .map(|value| map_responses_usage(value, payload.id.clone()));
+    let usage_source = if usage.is_some() {
+        Some(LlmUsageSource::ProviderReported)
+    } else {
+        None
+    };
     let mut content_chunks = Vec::new();
     let mut reasoning_chunks = Vec::new();
     let mut tool_calls = Vec::new();
@@ -510,6 +573,8 @@ fn parse_responses_payload(payload: OpenAiResponsesResponse) -> LlmResponse {
         content: content_chunks.join("\n"),
         reasoning,
         tool_calls,
+        usage,
+        usage_source,
     }
 }
 
@@ -521,6 +586,50 @@ fn decode_responses_arguments(raw: Value) -> Value {
     match raw {
         Value::String(raw_text) => decode_tool_arguments(raw_text),
         value => value,
+    }
+}
+
+fn map_chat_completion_usage(usage: OpenAiChatCompletionUsage) -> LlmUsage {
+    LlmUsage {
+        input_tokens: usage.prompt_tokens.max(0) as u64,
+        output_tokens: usage.completion_tokens.max(0) as u64,
+        total_tokens: usage.total_tokens.max(0) as u64,
+        cached_input_tokens: usage
+            .prompt_tokens_details
+            .and_then(|details| details.cached_tokens)
+            .map(|value| value.max(0) as u64),
+        reasoning_tokens: usage
+            .completion_tokens_details
+            .and_then(|details| details.reasoning_tokens)
+            .map(|value| value.max(0) as u64),
+        provider_request_id: None,
+        provider_response_id: None,
+    }
+}
+
+fn map_responses_usage(usage: &OpenAiResponsesUsage, response_id: Option<String>) -> LlmUsage {
+    let input_tokens = usage.input_tokens.unwrap_or(0).max(0) as u64;
+    let output_tokens = usage.output_tokens.unwrap_or(0).max(0) as u64;
+    let total_tokens = usage
+        .total_tokens
+        .map(|value| value.max(0) as u64)
+        .unwrap_or(input_tokens.saturating_add(output_tokens));
+    LlmUsage {
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        cached_input_tokens: usage
+            .input_tokens_details
+            .as_ref()
+            .and_then(|details| details.cached_tokens)
+            .map(|value| value.max(0) as u64),
+        reasoning_tokens: usage
+            .output_tokens_details
+            .as_ref()
+            .and_then(|details| details.reasoning_tokens)
+            .map(|value| value.max(0) as u64),
+        provider_request_id: None,
+        provider_response_id: response_id,
     }
 }
 
@@ -692,6 +801,8 @@ struct OpenAiResponsesFunctionCallOutputInput {
 #[derive(Debug, Deserialize)]
 struct OpenAiChatCompletionResponse {
     choices: Vec<OpenAiChoice>,
+    #[serde(default)]
+    usage: Option<OpenAiChatCompletionUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -702,9 +813,62 @@ struct OpenAiChoice {
 #[derive(Debug, Deserialize)]
 struct OpenAiResponsesResponse {
     #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
     output: Vec<OpenAiResponsesOutputItem>,
     #[serde(default)]
     output_text: Option<String>,
+    #[serde(default)]
+    usage: Option<OpenAiResponsesUsage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenAiChatCompletionUsage {
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    total_tokens: i64,
+    #[serde(default)]
+    prompt_tokens_details: Option<OpenAiPromptTokensDetails>,
+    #[serde(default)]
+    completion_tokens_details: Option<OpenAiCompletionTokensDetails>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenAiPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenAiCompletionTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiResponsesUsage {
+    #[serde(default)]
+    input_tokens: Option<i64>,
+    #[serde(default)]
+    output_tokens: Option<i64>,
+    #[serde(default)]
+    total_tokens: Option<i64>,
+    #[serde(default)]
+    input_tokens_details: Option<OpenAiResponsesInputTokensDetails>,
+    #[serde(default)]
+    output_tokens_details: Option<OpenAiResponsesOutputTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiResponsesInputTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiResponsesOutputTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -844,8 +1008,10 @@ mod tests {
             ]
         }))
         .unwrap_or(OpenAiResponsesResponse {
+            id: None,
             output: Vec::new(),
             output_text: None,
+            usage: None,
         });
 
         let result = parse_responses_payload(payload);
@@ -853,12 +1019,76 @@ mod tests {
         assert_eq!(result.content, "final answer");
         assert_eq!(result.reasoning.as_deref(), Some("step-a\nstep-b"));
         assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.usage.as_ref().map(|usage| usage.input_tokens), None);
         assert_eq!(result.tool_calls[0].id.as_deref(), Some("call_9"));
         assert_eq!(result.tool_calls[0].name, "web_fetch");
         assert_eq!(
             result.tool_calls[0].arguments,
             serde_json::json!({"url":"https://example.com"})
         );
+    }
+
+    #[test]
+    fn parse_responses_payload_extracts_usage() {
+        let payload: OpenAiResponsesResponse = serde_json::from_value(serde_json::json!({
+            "id": "resp_123",
+            "output": [],
+            "usage": {
+                "input_tokens": 12,
+                "output_tokens": 5,
+                "total_tokens": 17,
+                "input_tokens_details": {
+                    "cached_tokens": 3
+                },
+                "output_tokens_details": {
+                    "reasoning_tokens": 2
+                }
+            }
+        }))
+        .expect("responses payload should deserialize");
+
+        let result = parse_responses_payload(payload);
+        let usage = result.usage.expect("usage should be present");
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(usage.total_tokens, 17);
+        assert_eq!(usage.cached_input_tokens, Some(3));
+        assert_eq!(usage.reasoning_tokens, Some(2));
+        assert_eq!(usage.provider_response_id.as_deref(), Some("resp_123"));
+    }
+
+    #[test]
+    fn chat_completion_usage_mapping_extracts_cached_and_reasoning_tokens() {
+        let payload: OpenAiChatCompletionResponse = serde_json::from_value(serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "done"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 20,
+                "completion_tokens": 7,
+                "total_tokens": 27,
+                "prompt_tokens_details": {
+                    "cached_tokens": 4
+                },
+                "completion_tokens_details": {
+                    "reasoning_tokens": 1
+                }
+            }
+        }))
+        .expect("chat completion payload should deserialize");
+
+        let usage = payload
+            .usage
+            .map(map_chat_completion_usage)
+            .expect("usage should be present");
+        assert_eq!(usage.input_tokens, 20);
+        assert_eq!(usage.output_tokens, 7);
+        assert_eq!(usage.total_tokens, 27);
+        assert_eq!(usage.cached_input_tokens, Some(4));
+        assert_eq!(usage.reasoning_tokens, Some(1));
     }
 
     #[test]
@@ -905,6 +1135,7 @@ mod tests {
             base_url: "https://coding.dashscope.aliyuncs.com/v1/".to_string(),
             api_key: "test-key".to_string(),
             default_model: "test-model".to_string(),
+            tokenizer_path: None,
             proxy: false,
             wire_api: OpenAiWireApi::Responses,
         });

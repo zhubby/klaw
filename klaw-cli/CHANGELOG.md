@@ -2,6 +2,10 @@
 
 ## 2026-03-19
 
+### Added
+
+- runtime now persists request-level LLM token usage from outbound metadata into `klaw.db` and `klaw session list/get` now show aggregated token totals per session
+
 ### Fixed
 
 - `klaw gui` manual `Run Now` cron command no longer blocks the GUI until runtime drain and outbound webhook delivery complete; the follow-up drain is now scheduled asynchronously on the runtime thread

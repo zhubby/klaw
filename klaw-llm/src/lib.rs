@@ -1,6 +1,8 @@
+mod estimate;
 mod providers;
 
 use async_trait::async_trait;
+use estimate::estimate_chat_usage;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -115,6 +117,44 @@ pub struct LlmResponse {
     pub reasoning: Option<String>,
     /// 模型要求执行的工具调用列表。
     pub tool_calls: Vec<ToolCall>,
+    /// provider 返回的 token 用量（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<LlmUsage>,
+    /// token 用量来源（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_source: Option<LlmUsageSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_response_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmUsageSource {
+    ProviderReported,
+    EstimatedLocal,
+}
+
+impl LlmUsageSource {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ProviderReported => "provider_reported",
+            Self::EstimatedLocal => "estimated_local",
+        }
+    }
 }
 
 /// LLM 层错误。
@@ -135,6 +175,14 @@ pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &str;
     /// 默认模型名。
     fn default_model(&self) -> &str;
+    /// provider 使用的底层 wire API。
+    fn wire_api(&self) -> Option<&str> {
+        None
+    }
+    /// 可选的本地 tokenizer 文件路径。
+    fn tokenizer_path(&self) -> Option<&str> {
+        None
+    }
 
     /// 单轮聊天调用接口。
     async fn chat(
@@ -160,6 +208,10 @@ impl LlmProvider for EchoProvider {
         "echo-v1"
     }
 
+    fn wire_api(&self) -> Option<&str> {
+        Some("echo")
+    }
+
     async fn chat(
         &self,
         messages: Vec<LlmMessage>,
@@ -171,11 +223,24 @@ impl LlmProvider for EchoProvider {
             .last()
             .map(|m| format!("EchoProvider: {}", m.content))
             .unwrap_or_else(|| "EchoProvider: <empty>".to_string());
+        let usage = estimate_chat_usage(
+            self.name(),
+            self.default_model(),
+            self.wire_api().unwrap_or("echo"),
+            self.tokenizer_path(),
+            &messages,
+            &[],
+            &content,
+            None,
+            &[],
+        );
 
         Ok(LlmResponse {
             content,
             reasoning: None,
             tool_calls: Vec::new(),
+            usage: Some(usage),
+            usage_source: Some(LlmUsageSource::EstimatedLocal),
         })
     }
 }

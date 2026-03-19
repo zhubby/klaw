@@ -26,6 +26,7 @@ use tracing::{debug, error, info, warn};
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
+const META_LLM_USAGE_RECORDS_KEY: &str = "llm.usage.records";
 const TOOL_RESULT_LOG_LIMIT: usize = 4000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -491,11 +492,12 @@ impl AgentLoop {
                 conversation_history,
                 session_key: msg.payload.session_key.clone(),
                 tool_metadata,
-                model: Some(resolved_model),
+                model: Some(resolved_model.clone()),
             },
             AgentExecutionLimits {
                 max_tool_iterations: self.limits.max_tool_iterations,
                 max_tool_calls: self.limits.max_tool_calls,
+                token_budget: self.limits.token_budget,
             },
         )
         .await;
@@ -573,6 +575,33 @@ impl AgentLoop {
                         serde_json::Value::String(reasoning),
                     );
                 }
+                if !output.request_usages.is_empty() {
+                    response_metadata.insert(
+                        META_LLM_USAGE_RECORDS_KEY.to_string(),
+                        serde_json::Value::Array(
+                            output
+                                .request_usages
+                                .into_iter()
+                                .map(|record| {
+                                    serde_json::json!({
+                                        "request_seq": record.request_seq,
+                                        "provider": resolved_provider_id,
+                                        "model": resolved_model,
+                                        "wire_api": provider.wire_api().unwrap_or(provider.name()),
+                                        "input_tokens": record.usage.input_tokens,
+                                        "output_tokens": record.usage.output_tokens,
+                                        "total_tokens": record.usage.total_tokens,
+                                        "cached_input_tokens": record.usage.cached_input_tokens,
+                                        "reasoning_tokens": record.usage.reasoning_tokens,
+                                        "source": record.source.as_str(),
+                                        "provider_request_id": record.usage.provider_request_id,
+                                        "provider_response_id": record.usage.provider_response_id
+                                    })
+                                })
+                                .collect(),
+                        ),
+                    );
+                }
                 ProcessOutcome {
                     final_response: Some(Envelope {
                         header: msg.header.clone(),
@@ -638,6 +667,30 @@ impl AgentLoop {
                 ProcessOutcome {
                     final_response: None,
                     error_code: Some(ErrorCode::RetryExhausted),
+                    final_state: AgentRunState::Failed,
+                }
+            }
+            Err(AgentExecutionError::BudgetExceeded {
+                used_tokens,
+                token_budget,
+            }) => {
+                warn!(used_tokens, token_budget, "agent token budget exceeded");
+                if let Some(ref telemetry) = self.telemetry {
+                    telemetry
+                        .incr_counter(
+                            "agent_tool_failure_total",
+                            &[
+                                ("session_key", session_key),
+                                ("tool_name", "budget"),
+                                ("error_code", "budget_exceeded"),
+                            ],
+                            1,
+                        )
+                        .await;
+                }
+                ProcessOutcome {
+                    final_response: None,
+                    error_code: Some(ErrorCode::BudgetExceeded),
                     final_state: AgentRunState::Failed,
                 }
             }
@@ -1047,6 +1100,8 @@ mod tests {
                 content: format!("provider={} model={}", self.id, model.unwrap_or("none")),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
             })
         }
     }
@@ -1083,6 +1138,8 @@ mod tests {
                 content: "ok".to_string(),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
             })
         }
     }
@@ -1120,12 +1177,16 @@ mod tests {
                         name: "mock_approval".to_string(),
                         arguments: json!({}),
                     }],
+                    usage: None,
+                    usage_source: None,
                 });
             }
             Ok(LlmResponse {
                 content: "approval requested".to_string(),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
             })
         }
     }
@@ -1232,6 +1293,98 @@ mod tests {
             response.payload.content,
             "provider=anthropic model=claude-opus-4"
         );
+    }
+
+    struct UsageProvider;
+
+    #[async_trait]
+    impl LlmProvider for UsageProvider {
+        fn name(&self) -> &str {
+            "usage-provider"
+        }
+
+        fn default_model(&self) -> &str {
+            "usage-model"
+        }
+
+        fn wire_api(&self) -> Option<&str> {
+            Some("responses")
+        }
+
+        async fn chat(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            Ok(LlmResponse {
+                content: "ok".to_string(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                usage: Some(klaw_llm::LlmUsage {
+                    input_tokens: 11,
+                    output_tokens: 5,
+                    total_tokens: 16,
+                    cached_input_tokens: Some(3),
+                    reasoning_tokens: Some(2),
+                    provider_request_id: None,
+                    provider_response_id: Some("resp-usage".to_string()),
+                }),
+                usage_source: Some(klaw_llm::LlmUsageSource::ProviderReported),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn process_message_propagates_llm_usage_to_outbound_metadata() {
+        let provider = Arc::new(UsageProvider) as Arc<dyn LlmProvider>;
+        let agent = AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 1,
+                max_tool_calls: 1,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(1),
+                tool_timeout: Duration::from_secs(1),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 1,
+                lock_ttl: Duration::from_secs(1),
+            },
+            Arc::clone(&provider),
+            "openai".to_string(),
+            "gpt-4.1-mini".to_string(),
+            ToolRegistry::default(),
+        )
+        .with_provider_registry(BTreeMap::from([("openai".to_string(), provider)]));
+
+        let inbound = crate::protocol::Envelope {
+            header: EnvelopeHeader::new("im:chat-usage"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "im".to_string(),
+                sender_id: "u1".to_string(),
+                chat_id: "chat-usage".to_string(),
+                session_key: "im:chat-usage".to_string(),
+                content: "hello".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        };
+
+        let outcome = agent.process_message(inbound, false).await;
+        let response = outcome.final_response.expect("response should be present");
+        let usage_records = response
+            .payload
+            .metadata
+            .get("llm.usage.records")
+            .and_then(serde_json::Value::as_array)
+            .expect("usage records should be array");
+        assert_eq!(usage_records.len(), 1);
+        assert_eq!(usage_records[0].get("provider"), Some(&json!("openai")));
+        assert_eq!(usage_records[0].get("wire_api"), Some(&json!("responses")));
+        assert_eq!(usage_records[0].get("total_tokens"), Some(&json!(16)));
     }
 
     #[tokio::test]

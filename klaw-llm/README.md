@@ -11,6 +11,9 @@
   - `responses` wire API（含 function call / function_call_output 映射）。
   - 多模态内容映射（`text + image_url` / `input_text + input_image`）。
 - Anthropic provider（Messages API）。
+- 当 provider 未返回 `usage` 时，支持本地 token 估算回退：
+  - 优先读取配置的 `tokenizer.json`（`tokenizers` crate）
+  - 若无可用 tokenizer 文件，则退回启发式估算，保证 token 统计始终可展示
 
 ## 架构
 

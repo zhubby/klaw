@@ -1,6 +1,7 @@
 use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus,
-    NewApprovalRecord, NewCronJob, NewCronTaskRun, SessionIndex, StorageError, UpdateCronJobPatch,
+    LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewLlmUsageRecord, SessionIndex, StorageError, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -70,6 +71,29 @@ pub trait SessionStorage: Send + Sync {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<SessionIndex>, StorageError>;
+
+    async fn append_llm_usage(
+        &self,
+        input: &NewLlmUsageRecord,
+    ) -> Result<LlmUsageRecord, StorageError>;
+
+    async fn list_llm_usage(
+        &self,
+        session_key: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<LlmUsageRecord>, StorageError>;
+
+    async fn sum_llm_usage_by_session(
+        &self,
+        session_key: &str,
+    ) -> Result<LlmUsageSummary, StorageError>;
+
+    async fn sum_llm_usage_by_turn(
+        &self,
+        session_key: &str,
+        turn_index: i64,
+    ) -> Result<LlmUsageSummary, StorageError>;
 
     async fn create_approval(
         &self,
