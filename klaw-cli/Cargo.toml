@@ -26,6 +26,7 @@ klaw-mcp = { workspace = true }
 klaw-gateway = { workspace = true }
 klaw-channel = { workspace = true }
 klaw-gui = { workspace = true }
+klaw-observability = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

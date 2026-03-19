@@ -1,15 +1,17 @@
 use axum::{
+    body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use klaw_config::GatewayConfig;
+use klaw_observability::{exporter::PrometheusExporter, HealthRegistry};
 use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use thiserror::Error;
@@ -28,11 +30,24 @@ pub enum GatewayError {
     Bind(#[source] std::io::Error),
     #[error("gateway server failed: {0}")]
     Serve(#[source] std::io::Error),
+    #[error("failed to create prometheus exporter: {0}")]
+    PrometheusExporter(String),
 }
 
-#[derive(Debug, Default)]
 struct GatewayState {
     rooms: RwLock<HashMap<String, broadcast::Sender<String>>>,
+    health: Arc<HealthRegistry>,
+    prometheus: Option<PrometheusExporter>,
+}
+
+impl GatewayState {
+    fn new(health: Arc<HealthRegistry>, prometheus: Option<PrometheusExporter>) -> Self {
+        Self {
+            rooms: RwLock::new(HashMap::new()),
+            health,
+            prometheus,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,7 +55,28 @@ struct ChatQuery {
     session_key: Option<String>,
 }
 
+pub struct GatewayOptions {
+    pub health: Option<Arc<HealthRegistry>>,
+    pub prometheus: Option<PrometheusExporter>,
+}
+
+impl Default for GatewayOptions {
+    fn default() -> Self {
+        Self {
+            health: None,
+            prometheus: None,
+        }
+    }
+}
+
 pub async fn run_gateway(config: &GatewayConfig) -> Result<(), GatewayError> {
+    run_gateway_with_options(config, GatewayOptions::default()).await
+}
+
+pub async fn run_gateway_with_options(
+    config: &GatewayConfig,
+    options: GatewayOptions,
+) -> Result<(), GatewayError> {
     if config.tls.enabled {
         return Err(GatewayError::TlsNotImplemented);
     }
@@ -51,16 +87,29 @@ pub async fn run_gateway(config: &GatewayConfig) -> Result<(), GatewayError> {
             GatewayError::InvalidListenAddress(config.listen_ip.clone(), config.listen_port, err)
         })?;
 
-    let state = Arc::new(GatewayState::default());
+    let health = options.health.unwrap_or_else(|| {
+        let registry = HealthRegistry::new();
+        registry.register("gateway");
+        Arc::new(registry)
+    });
+
+    let state = Arc::new(GatewayState::new(health, options.prometheus));
+
     let app = Router::new()
         .route("/ws/chat", get(ws_chat_handler))
+        .route("/health/live", get(health_live_handler))
+        .route("/health/ready", get(health_ready_handler))
+        .route("/health/status", get(health_status_handler))
+        .route("/metrics", get(metrics_handler))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(socket_addr)
         .await
         .map_err(GatewayError::Bind)?;
-    info!(listen_addr = %socket_addr, "gateway websocket server started");
-    println!("{:<18} ws://{socket_addr}/ws/chat", "🌐 Gateway");
+    info!(listen_addr = %socket_addr, "gateway server started");
+    println!("{:<18} http://{socket_addr}/ws/chat", "🌐 Gateway");
+    println!("{:<18} http://{socket_addr}/health/status", "💚 Health");
+    println!("{:<18} http://{socket_addr}/metrics", "📊 Metrics");
 
     axum::serve(listener, app)
         .await
@@ -138,5 +187,80 @@ async fn cleanup_room(state: Arc<GatewayState>, session_key: String) {
     };
     if sender.receiver_count() == 0 {
         rooms.remove(&session_key);
+    }
+}
+
+async fn health_live_handler(State(state): State<Arc<GatewayState>>) -> Response {
+    let status = state.health.liveness();
+    let code = if status.is_healthy() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (code, format!("{}\n", status.as_str())).into_response()
+}
+
+async fn health_ready_handler(State(state): State<Arc<GatewayState>>) -> Response {
+    let status = state.health.readiness();
+    let code = if status.is_healthy() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (code, format!("{}\n", status.as_str())).into_response()
+}
+
+async fn health_status_handler(State(state): State<Arc<GatewayState>>) -> Response {
+    let status = state.health.overall_status();
+    let components: Vec<serde_json::Value> = state
+        .health
+        .all_components()
+        .into_iter()
+        .map(|c| {
+            serde_json::json!({
+                "name": c.name,
+                "status": c.status.as_str(),
+                "message": c.message,
+            })
+        })
+        .collect();
+    let body = serde_json::json!({
+        "status": status.as_str(),
+        "components": components,
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_string(&body).unwrap_or_default()))
+        .unwrap()
+}
+
+async fn metrics_handler(State(state): State<Arc<GatewayState>>) -> Response {
+    match &state.prometheus {
+        Some(exporter) => {
+            match exporter.render_metrics() {
+                Ok(body) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")
+                    .body(Body::from(body))
+                    .unwrap_or_else(|_| {
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Body::from("failed to build response"))
+                            .unwrap()
+                    }),
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to render prometheus metrics");
+                    Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::from(format!("failed to render metrics: {}", err)))
+                        .unwrap()
+                }
+            }
+        }
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("Prometheus metrics not enabled\n"))
+            .unwrap(),
     }
 }

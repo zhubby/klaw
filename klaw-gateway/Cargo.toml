@@ -8,7 +8,9 @@ version.workspace = true
 axum = { workspace = true }
 futures-util = { workspace = true }
 klaw-config = { workspace = true }
+klaw-observability = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "sync"] }
 tracing = { workspace = true }

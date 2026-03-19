@@ -8,15 +8,17 @@ use klaw_channel::{ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntim
 use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
 use klaw_core::{
     compose_runtime_prompt, ensure_workspace_prompt_templates, AgentLoop, AgentRuntimeError,
-    CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope, EnvelopeHeader,
-    ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker, InMemoryIdempotencyStore,
-    InMemoryTransport, InboundMessage, MediaReference, OutboundMessage, QueueStrategy, RunLimits,
-    RuntimePromptInput, SessionSchedulingPolicy, SkillPromptEntry, Subscription, TransportError,
+    AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope,
+    EnvelopeHeader, ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker,
+    InMemoryIdempotencyStore, InMemoryTransport, InboundMessage, MediaReference, OutboundMessage,
+    QueueStrategy, RunLimits, RuntimePromptInput, SessionSchedulingPolicy, SkillPromptEntry,
+    Subscription, TransportError,
 };
 use klaw_heartbeat::{
     should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
 };
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
+use klaw_observability::{init_observability, OtelAgentTelemetry, ObservabilityConfig, ObservabilityHandle};
 use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
 use klaw_skill::{
     open_default_skills_manager, InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager,
@@ -63,6 +65,7 @@ pub struct RuntimeBundle {
     pub session_store: DefaultSessionStore,
     pub mcp_bootstrap: Option<Mutex<McpBootstrapHandle>>,
     pub startup_report: StartupReport,
+    pub observability: Option<ObservabilityHandle>,
 }
 
 pub struct SharedChannelRuntime {
@@ -842,7 +845,12 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         skills: loaded_skills.skill_entries,
     });
 
-    let runtime = AgentLoop::new_with_identity(
+    let observability = init_observability_from_config(&config.observability);
+    let telemetry: Option<Arc<dyn AgentTelemetry>> = observability
+        .as_ref()
+        .map(|handle| Arc::new(OtelAgentTelemetry::from_handle(handle, "klaw")) as Arc<dyn AgentTelemetry>);
+
+    let mut runtime = AgentLoop::new_with_identity(
         RunLimits {
             max_tool_iterations: 0,
             max_tool_calls: 0,
@@ -863,8 +871,13 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     .with_provider_registry(provider_registry)
     .with_system_prompt(system_prompt);
 
+    if let Some(ref tel) = telemetry {
+        runtime = runtime.with_telemetry(Arc::clone(tel));
+    }
+
     info!(
         tool_count = runtime.tools.list().len(),
+        observability_enabled = observability.is_some(),
         "runtime bundle ready"
     );
 
@@ -911,29 +924,34 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         },
         session_store,
         mcp_bootstrap,
+        observability,
     })
 }
 
 pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<dyn Error>> {
-    let Some(handle) = &runtime.mcp_bootstrap else {
-        return Ok(());
-    };
-
-    info!("shutting down runtime mcp servers");
-    let mut guard = handle.lock().await;
-    let shutdown_deadline = Duration::from_secs(2);
-    match timeout(shutdown_deadline, guard.shutdown()).await {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => {
-            return Err(config_err(format!("mcp shutdown failed: {err}")));
-        }
-        Err(_) => {
-            warn!(
-                timeout_seconds = shutdown_deadline.as_secs(),
-                "mcp shutdown timed out; continuing process exit"
-            );
+    if let Some(handle) = &runtime.mcp_bootstrap {
+        info!("shutting down runtime mcp servers");
+        let mut guard = handle.lock().await;
+        let shutdown_deadline = Duration::from_secs(2);
+        match timeout(shutdown_deadline, guard.shutdown()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                return Err(config_err(format!("mcp shutdown failed: {err}")));
+            }
+            Err(_) => {
+                warn!(
+                    timeout_seconds = shutdown_deadline.as_secs(),
+                    "mcp shutdown timed out; continuing process exit"
+                );
+            }
         }
     }
+
+    if let Some(handle) = &runtime.observability {
+        info!("shutting down observability");
+        handle.shutdown();
+    }
+
     Ok(())
 }
 
@@ -1267,6 +1285,56 @@ fn is_queue_empty_error(err: &AgentRuntimeError) -> bool {
 
 fn config_err(message: String) -> Box<dyn Error> {
     Box::new(io::Error::other(message))
+}
+
+fn init_observability_from_config(
+    config: &klaw_config::ObservabilityConfig,
+) -> Option<ObservabilityHandle> {
+    if !config.enabled {
+        return None;
+    }
+    let obs_config = ObservabilityConfig {
+        enabled: config.enabled,
+        service_name: config.service_name.clone(),
+        service_version: config.service_version.clone(),
+        metrics: klaw_observability::config::MetricsConfig {
+            enabled: config.metrics.enabled,
+            export_interval_seconds: config.metrics.export_interval_seconds,
+        },
+        traces: klaw_observability::config::TracesConfig {
+            enabled: config.traces.enabled,
+            sample_rate: config.traces.sample_rate,
+        },
+        otlp: klaw_observability::config::OtlpConfig {
+            enabled: config.otlp.enabled,
+            endpoint: config.otlp.endpoint.clone(),
+            headers: config.otlp.headers.clone(),
+        },
+        prometheus: klaw_observability::config::PrometheusConfig {
+            enabled: config.prometheus.enabled,
+            listen_port: config.prometheus.listen_port,
+            path: config.prometheus.path.clone(),
+        },
+        audit: klaw_observability::config::AuditConfig {
+            enabled: config.audit.enabled,
+            output_path: config.audit.output_path.clone(),
+        },
+    };
+    match init_observability(&obs_config) {
+        Ok(handle) => {
+            info!(
+                service_name = %config.service_name,
+                otlp_enabled = config.otlp.enabled,
+                prometheus_enabled = config.prometheus.enabled,
+                "observability initialized"
+            );
+            Some(handle)
+        }
+        Err(err) => {
+            warn!(error = %err, "failed to initialize observability; continuing without telemetry");
+            None
+        }
+    }
 }
 
 pub async fn finalize_startup_report(

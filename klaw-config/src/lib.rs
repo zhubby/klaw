@@ -26,6 +26,8 @@ pub struct AppConfig {
     pub skills: SkillsConfig,
     #[serde(default)]
     pub storage: StorageConfig,
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
 }
 
 impl Default for AppConfig {
@@ -46,6 +48,7 @@ impl Default for AppConfig {
             heartbeat: HeartbeatConfig::default(),
             skills: SkillsConfig::default(),
             storage: StorageConfig::default(),
+            observability: ObservabilityConfig::default(),
         }
     }
 }
@@ -1064,6 +1067,184 @@ impl Default for BraveWebSearchConfig {
 
 fn default_tavily_search_depth() -> String {
     "basic".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityConfig {
+    #[serde(default = "default_observability_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_observability_service_name")]
+    pub service_name: String,
+    #[serde(default = "default_observability_service_version")]
+    pub service_version: String,
+    #[serde(default)]
+    pub metrics: ObservabilityMetricsConfig,
+    #[serde(default)]
+    pub traces: ObservabilityTracesConfig,
+    #[serde(default)]
+    pub otlp: ObservabilityOtlpConfig,
+    #[serde(default)]
+    pub prometheus: ObservabilityPrometheusConfig,
+    #[serde(default)]
+    pub audit: ObservabilityAuditConfig,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_observability_enabled(),
+            service_name: default_observability_service_name(),
+            service_version: default_observability_service_version(),
+            metrics: ObservabilityMetricsConfig::default(),
+            traces: ObservabilityTracesConfig::default(),
+            otlp: ObservabilityOtlpConfig::default(),
+            prometheus: ObservabilityPrometheusConfig::default(),
+            audit: ObservabilityAuditConfig::default(),
+        }
+    }
+}
+
+fn default_observability_enabled() -> bool {
+    false
+}
+
+fn default_observability_service_name() -> String {
+    "klaw".to_string()
+}
+
+fn default_observability_service_version() -> String {
+    "0.1.0".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityMetricsConfig {
+    #[serde(default = "default_observability_metrics_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_observability_export_interval_seconds")]
+    pub export_interval_seconds: u64,
+}
+
+impl Default for ObservabilityMetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_observability_metrics_enabled(),
+            export_interval_seconds: default_observability_export_interval_seconds(),
+        }
+    }
+}
+
+fn default_observability_metrics_enabled() -> bool {
+    true
+}
+
+fn default_observability_export_interval_seconds() -> u64 {
+    30
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityTracesConfig {
+    #[serde(default = "default_observability_traces_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_observability_sample_rate")]
+    pub sample_rate: f64,
+}
+
+impl Default for ObservabilityTracesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_observability_traces_enabled(),
+            sample_rate: default_observability_sample_rate(),
+        }
+    }
+}
+
+fn default_observability_traces_enabled() -> bool {
+    true
+}
+
+fn default_observability_sample_rate() -> f64 {
+    0.1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityOtlpConfig {
+    #[serde(default = "default_observability_otlp_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_observability_otlp_endpoint")]
+    pub endpoint: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+}
+
+impl Default for ObservabilityOtlpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_observability_otlp_enabled(),
+            endpoint: default_observability_otlp_endpoint(),
+            headers: BTreeMap::new(),
+        }
+    }
+}
+
+fn default_observability_otlp_enabled() -> bool {
+    false
+}
+
+fn default_observability_otlp_endpoint() -> String {
+    "http://localhost:4317".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityPrometheusConfig {
+    #[serde(default = "default_observability_prometheus_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_observability_prometheus_listen_port")]
+    pub listen_port: u16,
+    #[serde(default = "default_observability_prometheus_path")]
+    pub path: String,
+}
+
+impl Default for ObservabilityPrometheusConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_observability_prometheus_enabled(),
+            listen_port: default_observability_prometheus_listen_port(),
+            path: default_observability_prometheus_path(),
+        }
+    }
+}
+
+fn default_observability_prometheus_enabled() -> bool {
+    false
+}
+
+fn default_observability_prometheus_listen_port() -> u16 {
+    9090
+}
+
+fn default_observability_prometheus_path() -> String {
+    "/metrics".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityAuditConfig {
+    #[serde(default = "default_observability_audit_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub output_path: Option<String>,
+}
+
+impl Default for ObservabilityAuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_observability_audit_enabled(),
+            output_path: None,
+        }
+    }
+}
+
+fn default_observability_audit_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Error)]

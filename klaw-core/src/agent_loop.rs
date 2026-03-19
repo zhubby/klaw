@@ -1,5 +1,6 @@
 use crate::{
     domain::{DeadLetterMessage, InboundMessage, OutboundMessage},
+    observability::AgentTelemetry,
     protocol::{Envelope, ErrorCode, MessageTopic},
     reliability::{
         idempotency_key, CircuitBreaker, DeadLetterPolicy, IdempotencyStore, RetryDecision,
@@ -16,8 +17,8 @@ use klaw_llm::{LlmError, LlmMedia, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, RwLock},
-    time::Duration,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use tokio::time::sleep;
@@ -104,11 +105,13 @@ pub struct AgentLoop {
     pub active_provider_id: String,
     pub active_model: String,
     pub tools: ToolRegistry,
-    pub system_prompt: RwLock<Option<String>>,
+    pub system_prompt: std::sync::RwLock<Option<String>>,
+    pub telemetry: Option<Arc<dyn AgentTelemetry>>,
 }
 
 struct RegistryToolExecutor<'a> {
     tools: &'a ToolRegistry,
+    telemetry: Option<&'a Arc<dyn AgentTelemetry>>,
 }
 
 #[async_trait]
@@ -144,6 +147,20 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
         };
         info!(tool = name, arguments = %arguments, "calling tool");
 
+        if let Some(telemetry) = self.telemetry {
+            telemetry
+                .emit_audit_event(
+                    "tool_called",
+                    uuid::Uuid::new_v4(),
+                    serde_json::json!({
+                        "tool_name": name,
+                        "session_key": session_key,
+                    }),
+                )
+                .await;
+        }
+
+        let start = Instant::now();
         match tool
             .execute(
                 arguments,
@@ -160,10 +177,27 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                     result = %truncate_for_log(&output.content_for_model, TOOL_RESULT_LOG_LIMIT),
                     "tool result"
                 );
+                if let Some(telemetry) = self.telemetry {
+                    telemetry
+                        .incr_counter(
+                            "agent_tool_success_total",
+                            &[("session_key", session_key), ("tool_name", name)],
+                            1,
+                        )
+                        .await;
+                    telemetry
+                        .observe_histogram(
+                            "agent_run_duration_ms",
+                            &[("session_key", session_key), ("stage", name)],
+                            start.elapsed(),
+                        )
+                        .await;
+                }
                 ToolInvocationResult::success(output.content_for_model)
             }
             Err(err) => {
                 let message = format!("tool `{name}` failed: {err}");
+                let error_code = err.code().to_string();
                 let signals = err
                     .signals()
                     .iter()
@@ -178,9 +212,33 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                     result = %truncate_for_log(&message, TOOL_RESULT_LOG_LIMIT),
                     "tool result"
                 );
+                if let Some(telemetry) = self.telemetry {
+                    telemetry
+                        .incr_counter(
+                            "agent_tool_failure_total",
+                            &[
+                                ("session_key", session_key),
+                                ("tool_name", name),
+                                ("error_code", &error_code),
+                            ],
+                            1,
+                        )
+                        .await;
+                    telemetry
+                        .emit_audit_event(
+                            "tool_failed",
+                            uuid::Uuid::new_v4(),
+                            serde_json::json!({
+                                "tool_name": name,
+                                "session_key": session_key,
+                                "error_code": error_code,
+                            }),
+                        )
+                        .await;
+                }
                 ToolInvocationResult::error(
                     message,
-                    err.code().to_string(),
+                    error_code,
                     err.details().cloned(),
                     err.retryable(),
                     signals,
@@ -214,7 +272,8 @@ impl AgentLoop {
             active_provider_id: "default".to_string(),
             active_model: "default".to_string(),
             tools,
-            system_prompt: RwLock::new(None),
+            system_prompt: std::sync::RwLock::new(None),
+            telemetry: None,
         }
     }
 
@@ -234,7 +293,8 @@ impl AgentLoop {
             active_provider_id,
             active_model,
             tools,
-            system_prompt: RwLock::new(None),
+            system_prompt: std::sync::RwLock::new(None),
+            telemetry: None,
         }
     }
 
@@ -248,6 +308,11 @@ impl AgentLoop {
 
     pub fn with_system_prompt(self, system_prompt: Option<String>) -> Self {
         self.set_system_prompt(system_prompt);
+        self
+    }
+
+    pub fn with_telemetry(mut self, telemetry: Arc<dyn AgentTelemetry>) -> Self {
+        self.telemetry = Some(telemetry);
         self
     }
 
@@ -296,8 +361,48 @@ impl AgentLoop {
         msg: Envelope<InboundMessage>,
         _enable_streaming: bool,
     ) -> ProcessOutcome {
+        let start = Instant::now();
+        let session_key = msg.payload.session_key.as_str();
+        let provider_id = msg
+            .payload
+            .metadata
+            .get("agent.provider_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&self.active_provider_id);
+
         info!(message_id = %msg.header.message_id, "process message");
+        
+        if let Some(ref telemetry) = self.telemetry {
+            telemetry
+                .incr_counter(
+                    "agent_inbound_consumed_total",
+                    &[("session_key", session_key), ("provider", provider_id)],
+                    1,
+                )
+                .await;
+            telemetry
+                .emit_audit_event(
+                    "inbound_received",
+                    msg.header.message_id,
+                    serde_json::json!({"session_key": session_key, "provider": provider_id}),
+                )
+                .await;
+        }
+
         if msg.payload.content.trim().is_empty() {
+            if let Some(ref telemetry) = self.telemetry {
+                telemetry
+                    .emit_audit_event(
+                        "validation_failed",
+                        msg.header.message_id,
+                        serde_json::json!({
+                            "session_key": session_key,
+                            "error_code": "validation_failed",
+                            "reason": "empty_content"
+                        }),
+                    )
+                    .await;
+            }
             return ProcessOutcome {
                 final_response: None,
                 error_code: Some(ErrorCode::ValidationFailed),
@@ -373,7 +478,10 @@ impl AgentLoop {
 
         state = self.transition(state, StateTransitionEvent::ModelCalled);
         state = self.transition(state, StateTransitionEvent::ToolRequested);
-        let executor = RegistryToolExecutor { tools: &self.tools };
+        let executor = RegistryToolExecutor {
+            tools: &self.tools,
+            telemetry: self.telemetry.as_ref(),
+        };
         let result = run_agent_execution(
             provider.as_ref(),
             &executor,
@@ -397,6 +505,31 @@ impl AgentLoop {
             Ok(output) => {
                 state = self.transition(state, StateTransitionEvent::FinalResponseReady);
                 state = self.transition(state, StateTransitionEvent::Published);
+                
+                if let Some(ref telemetry) = self.telemetry {
+                    telemetry
+                        .incr_counter(
+                            "agent_outbound_published_total",
+                            &[("session_key", session_key), ("provider", &resolved_provider_id)],
+                            1,
+                        )
+                        .await;
+                    telemetry
+                        .observe_histogram(
+                            "agent_run_duration_ms",
+                            &[("session_key", session_key), ("stage", "process")],
+                            start.elapsed(),
+                        )
+                        .await;
+                    telemetry
+                        .emit_audit_event(
+                            "final_response_published",
+                            msg.header.message_id,
+                            serde_json::json!({"session_key": session_key, "provider": resolved_provider_id}),
+                        )
+                        .await;
+                }
+                
                 let mut response_metadata = heartbeat_response_metadata(&msg.payload.metadata);
                 if !output.tool_signals.is_empty() {
                     response_metadata.insert(
@@ -455,17 +588,48 @@ impl AgentLoop {
             }
             Err(AgentExecutionError::Provider(err)) => {
                 warn!(error = %err, "provider failed");
+                if let Some(ref telemetry) = self.telemetry {
+                    telemetry
+                        .incr_counter(
+                            "agent_tool_failure_total",
+                            &[("session_key", session_key), ("tool_name", "provider"), ("error_code", "provider_error")],
+                            1,
+                        )
+                        .await;
+                    telemetry
+                        .emit_audit_event(
+                            "tool_failed",
+                            msg.header.message_id,
+                            serde_json::json!({
+                                "session_key": session_key,
+                                "error_code": "provider_error",
+                                "error": err.to_string()
+                            }),
+                        )
+                        .await;
+                }
                 ProcessOutcome {
                     final_response: None,
                     error_code: Some(map_llm_error_to_code(&err)),
                     final_state: AgentRunState::Degraded,
                 }
             }
-            Err(AgentExecutionError::ToolLoopExhausted) => ProcessOutcome {
-                final_response: None,
-                error_code: Some(ErrorCode::RetryExhausted),
-                final_state: AgentRunState::Failed,
-            },
+            Err(AgentExecutionError::ToolLoopExhausted) => {
+                if let Some(ref telemetry) = self.telemetry {
+                    telemetry
+                        .incr_counter(
+                            "agent_tool_failure_total",
+                            &[("session_key", session_key), ("tool_name", "tool_loop"), ("error_code", "retry_exhausted")],
+                            1,
+                        )
+                        .await;
+                }
+                ProcessOutcome {
+                    final_response: None,
+                    error_code: Some(ErrorCode::RetryExhausted),
+                    final_state: AgentRunState::Failed,
+                }
+            }
         }
     }
 
@@ -652,8 +816,34 @@ impl AgentLoop {
         DlqT: MessageTransport<DeadLetterMessage>,
     {
         match decision {
-            RetryDecision::RetryNow => Ok(None),
+            RetryDecision::RetryNow => {
+                if let Some(ref telemetry) = self.telemetry {
+                    telemetry
+                        .incr_counter(
+                            "agent_retry_total",
+                            &[
+                                ("session_key", inbound_payload.header.session_key.as_str()),
+                                ("error_code", "retry_now"),
+                            ],
+                            1,
+                        )
+                        .await;
+                }
+                Ok(None)
+            }
             RetryDecision::RetryAfter(delay) => {
+                if let Some(ref telemetry) = self.telemetry {
+                    telemetry
+                        .incr_counter(
+                            "agent_retry_total",
+                            &[
+                                ("session_key", inbound_payload.header.session_key.as_str()),
+                                ("error_code", "retry_after"),
+                            ],
+                            1,
+                        )
+                        .await;
+                }
                 sleep(delay).await;
                 Ok(None)
             }
@@ -667,6 +857,25 @@ impl AgentLoop {
             }
             RetryDecision::SendToDeadLetter => {
                 error!(attempt, "send to dlq");
+                let session_key = inbound_payload.header.session_key.as_str();
+                
+                if let Some(ref telemetry) = self.telemetry {
+                    telemetry
+                        .incr_counter("agent_deadletter_total", &[("session_key", session_key)], 1)
+                        .await;
+                    telemetry
+                        .emit_audit_event(
+                            "message_sent_dlq",
+                            inbound_payload.header.message_id,
+                            serde_json::json!({
+                                "session_key": session_key,
+                                "attempts": attempt,
+                                "reason": "exhausted_retries"
+                            }),
+                        )
+                        .await;
+                }
+                
                 let deadletter = Envelope {
                     header: inbound_payload.header.clone(),
                     metadata: BTreeMap::new(),

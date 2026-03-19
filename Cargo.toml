@@ -15,8 +15,10 @@ members = [
     "klaw-cron",
     "klaw-session",
     "klaw-storage",
-    "klaw-gateway", "klaw-channel",
+    "klaw-gateway",
+    "klaw-channel",
     "klaw-gui",
+    "klaw-observability",
 ]
 resolver = "2"
 
@@ -69,6 +71,13 @@ chrono = "0.4"
 cron = "0.15"
 ipnet = "2"
 
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["metrics", "trace", "grpc-tonic"] }
+opentelemetry-prometheus = "0.27"
+prometheus = "0.13"
+tracing-opentelemetry = "0.28"
+
 klaw-core = { path = "klaw-core" }
 klaw-approval = { path = "klaw-approval" }
 klaw-archive = { path = "klaw-archive" }
@@ -86,3 +95,4 @@ klaw-mcp = { path = "klaw-mcp" }
 klaw-gateway = { path = "klaw-gateway" }
 klaw-channel = { path = "klaw-channel" }
 klaw-gui = { path = "klaw-gui" }
+klaw-observability = { path = "klaw-observability" }
