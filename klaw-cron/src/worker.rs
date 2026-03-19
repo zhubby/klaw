@@ -1,6 +1,6 @@
 use crate::{time::now_ms, CronError, ScheduleSpec};
 use klaw_core::{Envelope, EnvelopeHeader, InboundMessage, MessageTopic, MessageTransport};
-use klaw_storage::{CronJob, CronStorage, CronTaskStatus, NewCronTaskRun};
+use klaw_storage::{CronJob, CronStorage, CronTaskStatus, NewCronTaskRun, SessionStorage};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use uuid::Uuid;
 
@@ -28,7 +28,7 @@ pub struct CronWorker<S, T> {
 
 impl<S, T> CronWorker<S, T>
 where
-    S: CronStorage + 'static,
+    S: CronStorage + SessionStorage + 'static,
     T: MessageTransport<InboundMessage> + 'static,
 {
     pub fn new(storage: Arc<S>, transport: Arc<T>, config: CronWorkerConfig) -> Self {
@@ -87,13 +87,27 @@ where
 
     async fn publish_inbound(&self, job: &CronJob) -> Result<String, CronError> {
         let mut payload: InboundMessage = serde_json::from_str(&job.payload_json)?;
+        let original_session_key = payload.session_key.clone();
+        let resolved_session_key = self
+            .resolve_active_session_key(&payload)
+            .await?
+            .unwrap_or_else(|| original_session_key.clone());
         payload.metadata.insert(
             "cron_id".to_string(),
             serde_json::Value::String(job.id.clone()),
         );
+        payload.metadata.insert(
+            "cron.original_session_key".to_string(),
+            serde_json::Value::String(original_session_key),
+        );
+        payload.metadata.insert(
+            "cron.resolved_session_key".to_string(),
+            serde_json::Value::String(resolved_session_key.clone()),
+        );
+        payload.session_key = resolved_session_key.clone();
 
         let envelope = Envelope {
-            header: EnvelopeHeader::new(payload.session_key.clone()),
+            header: EnvelopeHeader::new(resolved_session_key),
             metadata: BTreeMap::new(),
             payload,
         };
@@ -148,5 +162,104 @@ where
                 Err(err)
             }
         }
+    }
+
+    async fn resolve_active_session_key(
+        &self,
+        payload: &InboundMessage,
+    ) -> Result<Option<String>, CronError> {
+        let Some(base_session_key) = infer_base_session_key(payload) else {
+            return Ok(None);
+        };
+
+        match self.storage.get_session(&base_session_key).await {
+            Ok(session) => Ok(session
+                .active_session_key
+                .filter(|value| !value.trim().is_empty())),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+fn infer_base_session_key(payload: &InboundMessage) -> Option<String> {
+    if let Some(base_session_key) = payload
+        .metadata
+        .get("cron.base_session_key")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(base_session_key.to_string());
+    }
+
+    match payload.channel.as_str() {
+        "dingtalk" => infer_dingtalk_base_session_key(&payload.session_key, &payload.chat_id),
+        _ => None,
+    }
+}
+
+fn infer_dingtalk_base_session_key(session_key: &str, chat_id: &str) -> Option<String> {
+    let mut parts = session_key.split(':');
+    let channel = parts.next()?.trim();
+    if channel != "dingtalk" {
+        return None;
+    }
+
+    let account_id = parts.next()?.trim();
+    if account_id.is_empty() || chat_id.trim().is_empty() {
+        return None;
+    }
+
+    Some(format!("dingtalk:{account_id}:{chat_id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{infer_base_session_key, infer_dingtalk_base_session_key};
+    use klaw_core::InboundMessage;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn infers_dingtalk_base_session_from_child_session() {
+        assert_eq!(
+            infer_dingtalk_base_session_key("dingtalk:acc:chat-1:child", "chat-1"),
+            Some("dingtalk:acc:chat-1".to_string())
+        );
+    }
+
+    #[test]
+    fn prefers_base_session_key_from_metadata() {
+        let payload = InboundMessage {
+            channel: "dingtalk".to_string(),
+            sender_id: "system".to_string(),
+            chat_id: "chat-1".to_string(),
+            session_key: "cron:job-1".to_string(),
+            content: "hello".to_string(),
+            media_references: Vec::new(),
+            metadata: BTreeMap::from([(
+                "cron.base_session_key".to_string(),
+                serde_json::Value::String("dingtalk:acc:chat-1".to_string()),
+            )]),
+        };
+
+        assert_eq!(
+            infer_base_session_key(&payload),
+            Some("dingtalk:acc:chat-1".to_string())
+        );
+    }
+
+    #[test]
+    fn does_not_infer_base_session_for_stdio() {
+        let payload = InboundMessage {
+            channel: "stdio".to_string(),
+            sender_id: "system".to_string(),
+            chat_id: "chat-1".to_string(),
+            session_key: "stdio:chat-1".to_string(),
+            content: "hello".to_string(),
+            media_references: Vec::new(),
+            metadata: BTreeMap::new(),
+        };
+
+        assert_eq!(infer_base_session_key(&payload), None);
     }
 }

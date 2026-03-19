@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-19
+
+### Fixed
+- fixed `InMemoryTransport::publish` so published messages are also consumable from the in-memory queue, restoring cron/manual runtime flows that publish inbound work before draining the agent loop
+
 ## 2026-03-17
 
 ### Added

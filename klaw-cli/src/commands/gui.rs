@@ -84,7 +84,11 @@ impl GuiCommand {
                                             Some(klaw_gui::RuntimeCommand::RunCronNow { cron_id, response }) => {
                                                 let result = background.run_cron_now(&cron_id).await;
                                                 if result.is_ok() {
-                                                    background.on_runtime_tick(runtime.as_ref()).await;
+                                                    let runtime = Arc::clone(&runtime);
+                                                    let background = Arc::clone(&background);
+                                                    tokio::task::spawn_local(async move {
+                                                        background.on_runtime_tick(runtime.as_ref()).await;
+                                                    });
                                                 }
                                                 let _ = response.send(result);
                                             }

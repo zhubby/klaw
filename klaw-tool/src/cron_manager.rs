@@ -665,6 +665,14 @@ fn build_payload_from_shortcut(
         .filter(|s| !s.is_empty())
         .unwrap_or("system");
     let mut metadata = inherited_channel_metadata(&ctx.metadata);
+    if let Some(base_session_key) =
+        infer_base_session_key_for_cron_shortcut(&ctx.session_key, &channel)
+    {
+        metadata.insert(
+            "cron.base_session_key".to_string(),
+            serde_json::Value::String(base_session_key),
+        );
+    }
     match args.get("metadata") {
         None | Some(Value::Null) => {}
         Some(Value::Object(map)) => metadata.extend(map.clone()),
@@ -705,6 +713,27 @@ fn infer_channel_and_chat_id(session_key: &str) -> Option<(String, String)> {
         return None;
     }
     Some((channel.to_string(), chat_id.to_string()))
+}
+
+fn infer_base_session_key_for_cron_shortcut(session_key: &str, channel: &str) -> Option<String> {
+    match channel {
+        "dingtalk" => {
+            let mut parts = session_key.split(':');
+            let prefix = parts.next()?.trim();
+            if prefix != "dingtalk" {
+                return None;
+            }
+
+            let account_id = parts.next()?.trim();
+            let chat_id = parts.next()?.trim();
+            if account_id.is_empty() || chat_id.is_empty() {
+                return None;
+            }
+
+            Some(format!("dingtalk:{account_id}:{chat_id}"))
+        }
+        _ => None,
+    }
 }
 
 fn inherited_channel_metadata(
@@ -1331,6 +1360,10 @@ mod tests {
             meta.get("channel.dingtalk.bot_title")
                 .and_then(Value::as_str),
             Some("Klaw Bot")
+        );
+        assert_eq!(
+            meta.get("cron.base_session_key").and_then(Value::as_str),
+            Some("dingtalk:account-1:chat-99")
         );
         assert!(meta.get("channel.delivery_mode").is_none());
         assert_eq!(

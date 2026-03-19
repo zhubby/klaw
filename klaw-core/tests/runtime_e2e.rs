@@ -74,6 +74,42 @@ async fn run_once_should_consume_and_publish() {
     assert_eq!(published[0].payload.content, "EchoProvider: hello");
 }
 
+#[tokio::test]
+async fn in_memory_transport_publish_makes_message_consumable() {
+    let transport = InMemoryTransport::new();
+    let subscription = Subscription {
+        topic: "agent.inbound",
+        consumer_group: "test".to_string(),
+        visibility_timeout: Duration::from_secs(10),
+    };
+    let inbound = Envelope {
+        header: EnvelopeHeader::new("mq:published"),
+        metadata: BTreeMap::new(),
+        payload: InboundMessage {
+            channel: "mq".to_string(),
+            sender_id: "user-1".to_string(),
+            chat_id: "published".to_string(),
+            session_key: "mq:published".to_string(),
+            content: "hello publish".to_string(),
+            media_references: Vec::new(),
+            metadata: BTreeMap::new(),
+        },
+    };
+
+    klaw_core::transport::MessageTransport::publish(&transport, "agent.inbound", inbound.clone())
+        .await
+        .expect("publish should succeed");
+
+    let published = transport.published_messages().await;
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].payload.content, "hello publish");
+
+    let consumed = klaw_core::transport::MessageTransport::consume(&transport, &subscription)
+        .await
+        .expect("consume should read published message");
+    assert_eq!(consumed.payload.payload.content, "hello publish");
+}
+
 struct FailingProvider;
 
 #[async_trait]

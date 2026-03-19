@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-19
+
+### Changed
+
+- `CronWorker` now resolves channel cron deliveries against persisted active-session routing when it can infer a base chat session, and annotates published payloads with `cron.original_session_key` / `cron.resolved_session_key`
+
 ## 2026-03-16
 
 ### Added

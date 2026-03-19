@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-19
+
+### Changed
+- `cron_manager` message shortcut now records `cron.base_session_key` for supported channel sessions so runtime cron delivery can resolve the current active session without changing persisted payload compatibility
+
 ## 2026-03-18
 
 ### Changed

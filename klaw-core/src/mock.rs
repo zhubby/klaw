@@ -57,7 +57,8 @@ where
     }
 
     async fn publish(&self, _topic: &'static str, msg: Envelope<T>) -> Result<(), TransportError> {
-        self.published.lock().await.push(msg);
+        self.published.lock().await.push(msg.clone());
+        self.queue.lock().await.push_back(msg);
         Ok(())
     }
 

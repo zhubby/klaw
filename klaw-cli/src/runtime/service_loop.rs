@@ -1,14 +1,21 @@
 use super::{drain_runtime_queue, RuntimeBundle};
 use klaw_channel::dingtalk::{send_session_webhook_markdown_via_proxy, DingtalkProxyConfig};
 use klaw_config::AppConfig;
-use klaw_core::{InboundMessage, OutboundMessage};
+use klaw_core::{Envelope, InboundMessage, OutboundMessage};
 use klaw_cron::{CronWorker, CronWorkerConfig};
 use klaw_storage::DefaultSessionStore;
-use std::{collections::BTreeMap, sync::Mutex, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::{mpsc, Mutex},
+    thread,
+    time::Duration,
+};
+use tokio::time::timeout;
 use tracing::warn;
 
 pub type StdioCronWorker =
     CronWorker<DefaultSessionStore, klaw_core::InMemoryTransport<InboundMessage>>;
+const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct BackgroundServiceConfig {
@@ -69,10 +76,12 @@ pub struct BackgroundServices {
     config: BackgroundServiceConfig,
     runtime_drain_error: Mutex<Option<String>>,
     dispatched_outbound_count: Mutex<usize>,
+    outbound_dispatch_tx: mpsc::Sender<Envelope<OutboundMessage>>,
 }
 
 impl BackgroundServices {
     pub fn new(runtime: &RuntimeBundle, config: BackgroundServiceConfig) -> Self {
+        let outbound_dispatch_tx = spawn_outbound_dispatcher(config.clone());
         let cron_worker = CronWorker::new(
             std::sync::Arc::new(runtime.session_store.clone()),
             std::sync::Arc::new(runtime.inbound_transport.clone()),
@@ -86,6 +95,7 @@ impl BackgroundServices {
             config,
             runtime_drain_error: Mutex::new(None),
             dispatched_outbound_count: Mutex::new(0),
+            outbound_dispatch_tx,
         }
     }
 
@@ -144,7 +154,14 @@ impl BackgroundServices {
         };
 
         for msg in messages.iter().skip(start) {
-            dispatch_outbound_message(msg, &self.config).await?;
+            if let Err(err) = self.outbound_dispatch_tx.send(msg.clone()) {
+                warn!(
+                    session_key = msg.header.session_key.as_str(),
+                    channel = msg.payload.channel.as_str(),
+                    error = %err,
+                    "outbound message enqueue failed; continuing"
+                );
+            }
         }
 
         let mut guard = self
@@ -156,8 +173,41 @@ impl BackgroundServices {
     }
 }
 
+fn spawn_outbound_dispatcher(
+    config: BackgroundServiceConfig,
+) -> mpsc::Sender<Envelope<OutboundMessage>> {
+    let (tx, rx) = mpsc::channel::<Envelope<OutboundMessage>>();
+    thread::Builder::new()
+        .name("klaw-outbound-dispatch".to_string())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(err) => {
+                    warn!(error = %err, "failed to start outbound dispatch runtime");
+                    return;
+                }
+            };
+
+            for msg in rx {
+                if let Err(err) = runtime.block_on(dispatch_outbound_message(&msg, &config)) {
+                    warn!(
+                        session_key = msg.header.session_key.as_str(),
+                        channel = msg.payload.channel.as_str(),
+                        error = %err,
+                        "outbound message dispatch failed"
+                    );
+                }
+            }
+        })
+        .expect("outbound dispatch worker should start");
+    tx
+}
+
 async fn dispatch_outbound_message(
-    msg: &klaw_core::Envelope<OutboundMessage>,
+    msg: &Envelope<OutboundMessage>,
     config: &BackgroundServiceConfig,
 ) -> Result<(), String> {
     if msg.payload.channel != "dingtalk" {
@@ -203,9 +253,18 @@ async fn dispatch_outbound_message(
         .unwrap_or_default();
 
     let body = render_outbound_markdown(&msg.payload);
-    send_session_webhook_markdown_via_proxy(&proxy, session_webhook, &bot_title, &body)
-        .await
-        .map_err(|err| err.to_string())
+    timeout(
+        OUTBOUND_DISPATCH_TIMEOUT,
+        send_session_webhook_markdown_via_proxy(&proxy, session_webhook, &bot_title, &body),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "dingtalk outbound delivery timed out after {}s",
+            OUTBOUND_DISPATCH_TIMEOUT.as_secs()
+        )
+    })?
+    .map_err(|err| err.to_string())
 }
 
 fn infer_account_id(session_key: &str) -> Option<&str> {

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-19
+
+### Fixed
+
+- `dingtalk` HTTP client now applies a request timeout so session webhook delivery failures do not hang indefinitely and block manual cron execution flows
+
 ## 2026-03-16
 
 ### Changed

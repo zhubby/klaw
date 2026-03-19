@@ -30,6 +30,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const WS_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 const EVENT_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const EVENT_DEDUP_MAX_ENTRIES: usize = 20_000;
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const APPROVAL_APPROVE_ACTION: &str = "approve";
 const APPROVAL_REJECT_ACTION: &str = "reject";
 static RUSTLS_PROVIDER_INSTALLED: OnceLock<()> = OnceLock::new();
@@ -806,7 +807,9 @@ struct StreamConnectionTicket {
 
 impl DingtalkApiClient {
     fn new(proxy: &DingtalkProxyConfig) -> ChannelResult<Self> {
-        let mut builder = reqwest::Client::builder().no_proxy();
+        let mut builder = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(HTTP_REQUEST_TIMEOUT);
         if proxy.enabled {
             let proxy_url = proxy.url.trim();
             if proxy_url.is_empty() {
