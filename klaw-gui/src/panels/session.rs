@@ -1,6 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
+use crate::widgets::{ChatBox, ChatMessage, ChatRole};
+use egui_extras::{Column, TableBuilder};
 use klaw_session::{
     SessionError, SessionIndex, SessionListQuery, SessionManager, SqliteSessionManager,
 };
@@ -14,6 +16,8 @@ pub struct SessionPanel {
     sessions: Vec<SessionIndex>,
     limit_text: String,
     offset_text: String,
+    selected_session: Option<String>,
+    chat_box: Option<ChatBox>,
 }
 
 impl SessionPanel {
@@ -39,6 +43,30 @@ impl SessionPanel {
                 self.loaded = true;
             }
             Err(err) => notifications.error(format!("Failed to load sessions: {err}")),
+        }
+    }
+
+    fn load_chat_session(&mut self, session_key: &str, notifications: &mut NotificationCenter) {
+        let session_key_owned = session_key.to_string();
+        match run_session_task(move |manager| async move {
+            manager.read_chat_records(&session_key_owned).await
+        }) {
+            Ok(records) => {
+                let messages: Vec<ChatMessage> = records
+                    .iter()
+                    .map(|r| {
+                        ChatMessage::new(ChatRole::from_str(&r.role), &r.content)
+                            .with_timestamp(r.ts_ms)
+                    })
+                    .collect();
+
+                let mut chat_box = ChatBox::new(format!("Chat: {}", session_key)).with_messages(messages);
+                chat_box.open();
+                self.chat_box = Some(chat_box);
+            }
+            Err(err) => {
+                notifications.error(format!("Failed to load chat records: {err}"));
+            }
         }
     }
 }
@@ -77,6 +105,9 @@ impl PanelRenderer for SessionPanel {
         }
 
         ui.separator();
+        
+        let mut view_session_key: Option<String> = None;
+        
         let table_width = ui.available_width();
         egui::ScrollArea::both()
             .auto_shrink([false, false])
@@ -88,36 +119,84 @@ impl PanelRenderer for SessionPanel {
                     return;
                 }
 
-                egui::Grid::new("session-table-grid")
+                let available_height = ui.available_height();
+                TableBuilder::new(ui)
                     .striped(true)
-                    .num_columns(9)
-                    .spacing([12.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.strong("Session Key");
-                        ui.strong("Chat ID");
-                        ui.strong("Channel");
-                        ui.strong("Active Session");
-                        ui.strong("Provider");
-                        ui.strong("Model");
-                        ui.strong("Turns");
-                        ui.strong("Updated At");
-                        ui.strong("JSONL Path");
-                        ui.end_row();
-
-                        for session in &self.sessions {
-                            ui.label(&session.session_key);
-                            ui.label(&session.chat_id);
-                            ui.label(&session.channel);
-                            ui.label(session.active_session_key.as_deref().unwrap_or(""));
-                            ui.label(session.model_provider.as_deref().unwrap_or(""));
-                            ui.label(session.model.as_deref().unwrap_or(""));
-                            ui.label(session.turn_count.to_string());
-                            ui.label(format_timestamp_millis(session.updated_at_ms));
-                            ui.label(&session.jsonl_path);
-                            ui.end_row();
-                        }
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::auto().at_least(100.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::auto().at_least(60.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::auto().at_least(50.0))
+                    .column(Column::auto().at_least(100.0))
+                    .column(Column::remainder().at_least(100.0))
+                    .min_scrolled_height(0.0)
+                    .max_scroll_height(available_height)
+                    .sense(egui::Sense::click())
+                    .header(20.0, |mut header| {
+                        header.col(|ui| { ui.strong("Session Key"); });
+                        header.col(|ui| { ui.strong("Chat ID"); });
+                        header.col(|ui| { ui.strong("Channel"); });
+                        header.col(|ui| { ui.strong("Active Session"); });
+                        header.col(|ui| { ui.strong("Provider"); });
+                        header.col(|ui| { ui.strong("Model"); });
+                        header.col(|ui| { ui.strong("Turns"); });
+                        header.col(|ui| { ui.strong("Updated At"); });
+                        header.col(|ui| { ui.strong("JSONL Path"); });
+                    })
+                    .body(|body| {
+                        body.rows(20.0, self.sessions.len(), |mut row| {
+                            let idx = row.index();
+                            let session = &self.sessions[idx];
+                            let is_selected = self.selected_session.as_deref() == Some(&session.session_key);
+                            
+                            row.set_selected(is_selected);
+                            
+                            row.col(|ui| { ui.label(&session.session_key); });
+                            row.col(|ui| { ui.label(&session.chat_id); });
+                            row.col(|ui| { ui.label(&session.channel); });
+                            row.col(|ui| { ui.label(session.active_session_key.as_deref().unwrap_or("")); });
+                            row.col(|ui| { ui.label(session.model_provider.as_deref().unwrap_or("")); });
+                            row.col(|ui| { ui.label(session.model.as_deref().unwrap_or("")); });
+                            row.col(|ui| { ui.label(session.turn_count.to_string()); });
+                            row.col(|ui| { ui.label(format_timestamp_millis(session.updated_at_ms)); });
+                            row.col(|ui| { ui.label(&session.jsonl_path); });
+                            
+                            let response = row.response();
+                            
+                            if response.clicked() {
+                                self.selected_session = if is_selected {
+                                    None
+                                } else {
+                                    Some(session.session_key.clone())
+                                };
+                            }
+                            
+                            response.context_menu(|ui| {
+                                if ui.button("View Chat").clicked() {
+                                    view_session_key = Some(session.session_key.clone());
+                                    ui.close();
+                                }
+                                if ui.button("Copy Session Key").clicked() {
+                                    ui.ctx().output_mut(|o| {
+                                        o.commands.push(egui::OutputCommand::CopyText(session.session_key.clone()));
+                                    });
+                                    ui.close();
+                                }
+                            });
+                        });
                     });
             });
+
+        if let Some(session_key) = view_session_key {
+            self.load_chat_session(&session_key, notifications);
+        }
+
+        if let Some(chat_box) = &mut self.chat_box {
+            chat_box.show(ui.ctx());
+        }
     }
 }
 
