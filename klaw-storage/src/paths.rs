@@ -12,6 +12,9 @@ pub struct StoragePaths {
     pub workspace_dir: PathBuf,
     pub sessions_dir: PathBuf,
     pub archives_dir: PathBuf,
+    pub logs_dir: PathBuf,
+    pub skills_dir: PathBuf,
+    pub skills_registry_dir: PathBuf,
 }
 
 impl StoragePaths {
@@ -29,6 +32,9 @@ impl StoragePaths {
             workspace_dir: root_dir.join("workspace"),
             sessions_dir: root_dir.join("sessions"),
             archives_dir: root_dir.join("archives"),
+            logs_dir: root_dir.join("logs"),
+            skills_dir: root_dir.join("skills"),
+            skills_registry_dir: root_dir.join("skills-registry"),
             root_dir,
         }
     }
@@ -49,6 +55,15 @@ impl StoragePaths {
         fs::create_dir_all(&self.archives_dir)
             .await
             .map_err(StorageError::CreateArchivesDir)?;
+        fs::create_dir_all(&self.logs_dir)
+            .await
+            .map_err(StorageError::CreateDataDir)?;
+        fs::create_dir_all(&self.skills_dir)
+            .await
+            .map_err(StorageError::CreateDataDir)?;
+        fs::create_dir_all(&self.skills_registry_dir)
+            .await
+            .map_err(StorageError::CreateDataDir)?;
         Ok(())
     }
 }

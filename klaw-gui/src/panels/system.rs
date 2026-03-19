@@ -11,27 +11,106 @@ use std::time::Duration;
 
 const TASK_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirKind {
+    Tmp,
+    Workspace,
+    Sessions,
+    Archives,
+    Logs,
+    Skills,
+    SkillsRegistry,
+}
+
+impl DirKind {
+    fn title(self) -> &'static str {
+        match self {
+            DirKind::Tmp => "Temporary",
+            DirKind::Workspace => "Workspace",
+            DirKind::Sessions => "Sessions",
+            DirKind::Archives => "Archives",
+            DirKind::Logs => "Logs",
+            DirKind::Skills => "Skills",
+            DirKind::SkillsRegistry => "Skills Registry",
+        }
+    }
+
+    fn dir_name(self) -> &'static str {
+        match self {
+            DirKind::Tmp => "tmp",
+            DirKind::Workspace => "workspace",
+            DirKind::Sessions => "sessions",
+            DirKind::Archives => "archives",
+            DirKind::Logs => "logs",
+            DirKind::Skills => "skills",
+            DirKind::SkillsRegistry => "skills-registry",
+        }
+    }
+
+    fn path(self, paths: &StoragePaths) -> PathBuf {
+        match self {
+            DirKind::Tmp => paths.tmp_dir.clone(),
+            DirKind::Workspace => paths.workspace_dir.clone(),
+            DirKind::Sessions => paths.sessions_dir.clone(),
+            DirKind::Archives => paths.archives_dir.clone(),
+            DirKind::Logs => paths.logs_dir.clone(),
+            DirKind::Skills => paths.skills_dir.clone(),
+            DirKind::SkillsRegistry => paths.skills_registry_dir.clone(),
+        }
+    }
+}
+
+struct DirState {
+    usage_bytes: Option<u64>,
+    usage_error: Option<String>,
+    usage_rx: Option<Receiver<Result<u64, String>>>,
+    clear_rx: Option<Receiver<Result<(), String>>>,
+}
+
+impl Default for DirState {
+    fn default() -> Self {
+        Self {
+            usage_bytes: None,
+            usage_error: None,
+            usage_rx: None,
+            clear_rx: None,
+        }
+    }
+}
+
+impl DirState {
+    fn is_loading(&self) -> bool {
+        self.usage_rx.is_some() || self.clear_rx.is_some()
+    }
+}
+
 #[derive(Default)]
 pub struct SystemPanel {
     paths: Option<StoragePaths>,
-
-    tmp_usage_bytes: Option<u64>,
-    tmp_usage_error: Option<String>,
-    tmp_usage_rx: Option<Receiver<Result<u64, String>>>,
-    tmp_clear_rx: Option<Receiver<Result<(), String>>>,
-
-    workspace_usage_bytes: Option<u64>,
-    workspace_usage_error: Option<String>,
-    workspace_usage_rx: Option<Receiver<Result<u64, String>>>,
-    workspace_clear_rx: Option<Receiver<Result<(), String>>>,
-
-    sessions_usage_bytes: Option<u64>,
-    sessions_usage_error: Option<String>,
-    sessions_usage_rx: Option<Receiver<Result<u64, String>>>,
-    sessions_clear_rx: Option<Receiver<Result<(), String>>>,
+    dirs: [DirState; 7],
 }
 
 impl SystemPanel {
+    fn dir_index(kind: DirKind) -> usize {
+        match kind {
+            DirKind::Tmp => 0,
+            DirKind::Workspace => 1,
+            DirKind::Sessions => 2,
+            DirKind::Archives => 3,
+            DirKind::Logs => 4,
+            DirKind::Skills => 5,
+            DirKind::SkillsRegistry => 6,
+        }
+    }
+
+    fn get_dir(&self, kind: DirKind) -> &DirState {
+        &self.dirs[Self::dir_index(kind)]
+    }
+
+    fn get_dir_mut(&mut self, kind: DirKind) -> &mut DirState {
+        &mut self.dirs[Self::dir_index(kind)]
+    }
+
     fn ensure_paths(&mut self, notifications: &mut NotificationCenter) {
         if self.paths.is_some() {
             return;
@@ -43,28 +122,24 @@ impl SystemPanel {
             }
             Err(err) => {
                 let message = format!("Failed to resolve data directories: {err}");
-                self.tmp_usage_error = Some(message.clone());
+                self.dirs[0].usage_error = Some(message.clone());
                 notifications.error(message);
             }
         }
     }
 
     fn any_loading(&self) -> bool {
-        self.tmp_usage_rx.is_some()
-            || self.tmp_clear_rx.is_some()
-            || self.workspace_usage_rx.is_some()
-            || self.workspace_clear_rx.is_some()
-            || self.sessions_usage_rx.is_some()
-            || self.sessions_clear_rx.is_some()
+        self.dirs.iter().any(|d| d.is_loading())
     }
 
-    fn refresh_tmp_usage(&mut self) {
+    fn refresh_usage(&mut self, kind: DirKind) {
         let Some(paths) = self.paths.as_ref() else { return };
-        let path = paths.tmp_dir.clone();
+        let path = kind.path(paths);
 
         let (tx, rx) = mpsc::channel();
-        self.tmp_usage_rx = Some(rx);
-        self.tmp_usage_error = None;
+        let dir = self.get_dir_mut(kind);
+        dir.usage_rx = Some(rx);
+        dir.usage_error = None;
 
         thread::spawn(move || {
             let result = ensure_dir_exists(&path).and_then(|()| collect_dir_usage(&path));
@@ -72,64 +147,12 @@ impl SystemPanel {
         });
     }
 
-    fn clear_tmp_dir(&mut self) {
+    fn clear_dir(&mut self, kind: DirKind) {
         let Some(paths) = self.paths.as_ref() else { return };
-        let path = paths.tmp_dir.clone();
+        let path = kind.path(paths);
 
         let (tx, rx) = mpsc::channel();
-        self.tmp_clear_rx = Some(rx);
-
-        thread::spawn(move || {
-            let _ = tx.send(clear_directory(&path));
-        });
-    }
-
-    fn refresh_workspace_usage(&mut self) {
-        let Some(paths) = self.paths.as_ref() else { return };
-        let path = paths.workspace_dir.clone();
-
-        let (tx, rx) = mpsc::channel();
-        self.workspace_usage_rx = Some(rx);
-        self.workspace_usage_error = None;
-
-        thread::spawn(move || {
-            let result = ensure_dir_exists(&path).and_then(|()| collect_dir_usage(&path));
-            let _ = tx.send(result);
-        });
-    }
-
-    fn clear_workspace_dir(&mut self) {
-        let Some(paths) = self.paths.as_ref() else { return };
-        let path = paths.workspace_dir.clone();
-
-        let (tx, rx) = mpsc::channel();
-        self.workspace_clear_rx = Some(rx);
-
-        thread::spawn(move || {
-            let _ = tx.send(clear_directory(&path));
-        });
-    }
-
-    fn refresh_sessions_usage(&mut self) {
-        let Some(paths) = self.paths.as_ref() else { return };
-        let path = paths.sessions_dir.clone();
-
-        let (tx, rx) = mpsc::channel();
-        self.sessions_usage_rx = Some(rx);
-        self.sessions_usage_error = None;
-
-        thread::spawn(move || {
-            let result = ensure_dir_exists(&path).and_then(|()| collect_dir_usage(&path));
-            let _ = tx.send(result);
-        });
-    }
-
-    fn clear_sessions_dir(&mut self) {
-        let Some(paths) = self.paths.as_ref() else { return };
-        let path = paths.sessions_dir.clone();
-
-        let (tx, rx) = mpsc::channel();
-        self.sessions_clear_rx = Some(rx);
+        self.get_dir_mut(kind).clear_rx = Some(rx);
 
         thread::spawn(move || {
             let _ = tx.send(clear_directory(&path));
@@ -137,116 +160,130 @@ impl SystemPanel {
     }
 
     fn ensure_initial_usage_loaded(&mut self) {
-        if self.tmp_usage_bytes.is_none() && self.tmp_usage_rx.is_none() {
-            self.refresh_tmp_usage();
-        }
-        if self.workspace_usage_bytes.is_none() && self.workspace_usage_rx.is_none() {
-            self.refresh_workspace_usage();
-        }
-        if self.sessions_usage_bytes.is_none() && self.sessions_usage_rx.is_none() {
-            self.refresh_sessions_usage();
+        for kind in [
+            DirKind::Tmp,
+            DirKind::Workspace,
+            DirKind::Sessions,
+            DirKind::Archives,
+            DirKind::Logs,
+            DirKind::Skills,
+            DirKind::SkillsRegistry,
+        ] {
+            let dir = self.get_dir(kind);
+            if dir.usage_bytes.is_none() && dir.usage_rx.is_none() {
+                self.refresh_usage(kind);
+            }
         }
     }
 
     fn poll_tasks(&mut self, notifications: &mut NotificationCenter) {
-        // Poll tmp
-        if let Some(rx) = self.tmp_usage_rx.as_ref() {
-            if let Ok(result) = rx.try_recv() {
-                self.tmp_usage_rx = None;
-                match result {
-                    Ok(bytes) => {
-                        self.tmp_usage_bytes = Some(bytes);
-                        self.tmp_usage_error = None;
-                    }
-                    Err(err) => {
-                        self.tmp_usage_bytes = None;
-                        self.tmp_usage_error = Some(err.clone());
-                        notifications.error(format!("Failed to collect tmp usage: {err}"));
-                    }
-                }
-            }
-        }
-        if let Some(rx) = self.tmp_clear_rx.as_ref() {
-            if let Ok(result) = rx.try_recv() {
-                self.tmp_clear_rx = None;
-                match result {
-                    Ok(()) => {
-                        self.tmp_usage_bytes = Some(0);
-                        notifications.success("Temporary directory cleared");
-                        self.refresh_tmp_usage();
-                    }
-                    Err(err) => {
-                        notifications.error(format!("Failed to clear tmp directory: {err}"));
-                    }
-                }
-            }
-        }
+        for kind in [
+            DirKind::Tmp,
+            DirKind::Workspace,
+            DirKind::Sessions,
+            DirKind::Archives,
+            DirKind::Logs,
+            DirKind::Skills,
+            DirKind::SkillsRegistry,
+        ] {
+            let dir = self.get_dir_mut(kind);
 
-        // Poll workspace
-        if let Some(rx) = self.workspace_usage_rx.as_ref() {
-            if let Ok(result) = rx.try_recv() {
-                self.workspace_usage_rx = None;
-                match result {
-                    Ok(bytes) => {
-                        self.workspace_usage_bytes = Some(bytes);
-                        self.workspace_usage_error = None;
-                    }
-                    Err(err) => {
-                        self.workspace_usage_bytes = None;
-                        self.workspace_usage_error = Some(err.clone());
-                        notifications.error(format!("Failed to collect workspace usage: {err}"));
-                    }
-                }
-            }
-        }
-        if let Some(rx) = self.workspace_clear_rx.as_ref() {
-            if let Ok(result) = rx.try_recv() {
-                self.workspace_clear_rx = None;
-                match result {
-                    Ok(()) => {
-                        self.workspace_usage_bytes = Some(0);
-                        notifications.success("Workspace directory cleared");
-                        self.refresh_workspace_usage();
-                    }
-                    Err(err) => {
-                        notifications.error(format!("Failed to clear workspace directory: {err}"));
+            if let Some(rx) = dir.usage_rx.as_ref() {
+                if let Ok(result) = rx.try_recv() {
+                    dir.usage_rx = None;
+                    match result {
+                        Ok(bytes) => {
+                            dir.usage_bytes = Some(bytes);
+                            dir.usage_error = None;
+                        }
+                        Err(err) => {
+                            dir.usage_bytes = None;
+                            dir.usage_error = Some(err.clone());
+                            notifications.error(format!(
+                                "Failed to collect {} usage: {err}",
+                                kind.title()
+                            ));
+                        }
                     }
                 }
             }
-        }
 
-        // Poll sessions
-        if let Some(rx) = self.sessions_usage_rx.as_ref() {
-            if let Ok(result) = rx.try_recv() {
-                self.sessions_usage_rx = None;
-                match result {
-                    Ok(bytes) => {
-                        self.sessions_usage_bytes = Some(bytes);
-                        self.sessions_usage_error = None;
-                    }
-                    Err(err) => {
-                        self.sessions_usage_bytes = None;
-                        self.sessions_usage_error = Some(err.clone());
-                        notifications.error(format!("Failed to collect sessions usage: {err}"));
-                    }
-                }
-            }
-        }
-        if let Some(rx) = self.sessions_clear_rx.as_ref() {
-            if let Ok(result) = rx.try_recv() {
-                self.sessions_clear_rx = None;
-                match result {
-                    Ok(()) => {
-                        self.sessions_usage_bytes = Some(0);
-                        notifications.success("Sessions directory cleared");
-                        self.refresh_sessions_usage();
-                    }
-                    Err(err) => {
-                        notifications.error(format!("Failed to clear sessions directory: {err}"));
+            if let Some(rx) = dir.clear_rx.as_ref() {
+                if let Ok(result) = rx.try_recv() {
+                    dir.clear_rx = None;
+                    match result {
+                        Ok(()) => {
+                            dir.usage_bytes = Some(0);
+                            notifications.success(format!("{} directory cleared", kind.title()));
+                            self.refresh_usage(kind);
+                        }
+                        Err(err) => {
+                            notifications.error(format!(
+                                "Failed to clear {} directory: {err}",
+                                kind.title()
+                            ));
+                        }
                     }
                 }
             }
         }
+    }
+
+    fn render_section(&mut self, ui: &mut egui::Ui, kind: DirKind) {
+        ui.strong(kind.title());
+        ui.add_space(4.0);
+
+        let Some(paths) = self.paths.as_ref() else {
+            ui.label("Path unavailable.");
+            return;
+        };
+
+        let path = kind.path(paths);
+        ui.label(format!("Path: {}", path.display()));
+        ui.add_space(6.0);
+
+        let dir = self.get_dir(kind);
+        let usage_loading = dir.usage_rx.is_some();
+        let clear_loading = dir.clear_rx.is_some();
+        let usage_bytes = dir.usage_bytes;
+        let usage_error = dir.usage_error.clone();
+
+        ui.horizontal(|ui| {
+            let usage_text = usage_text(usage_loading, usage_bytes, usage_error.as_deref());
+            ui.label(RichText::new(usage_text).strong());
+
+            if ui
+                .add_enabled(
+                    !usage_loading && !clear_loading,
+                    egui::Button::new(format!("{} Refresh", regular::ARROW_CLOCKWISE)),
+                )
+                .clicked()
+            {
+                self.refresh_usage(kind);
+            }
+
+            if ui
+                .add_enabled(
+                    !clear_loading && !usage_loading,
+                    egui::Button::new(regular::TRASH)
+                        .fill(ui.visuals().warn_fg_color.gamma_multiply(0.12)),
+                )
+                .on_hover_text(format!("Clear {} directory", kind.title()))
+                .clicked()
+            {
+                self.clear_dir(kind);
+            }
+        });
+
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new(format!(
+                "Clearing removes files inside `{}/`; the directory itself is kept.",
+                kind.dir_name()
+            ))
+            .weak()
+            .small(),
+        );
     }
 }
 
@@ -269,166 +306,24 @@ impl PanelRenderer for SystemPanel {
         ui.label("Inspect and clear data under the Klaw data directory.");
         ui.separator();
 
-        self.render_tmp_section(ui);
-        ui.separator();
-        self.render_workspace_section(ui);
-        ui.separator();
-        self.render_sessions_section(ui);
-    }
-}
-
-impl SystemPanel {
-    fn render_tmp_section(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Temporary Directory");
-        ui.add_space(4.0);
-
-        let Some(paths) = self.paths.as_ref() else {
-            ui.label("Path unavailable.");
-            return;
-        };
-
-        ui.label(format!("Path: {}", paths.tmp_dir.display()));
-        ui.add_space(6.0);
-
-        ui.horizontal(|ui| {
-            let usage_text = usage_text(
-                self.tmp_usage_rx.is_some(),
-                self.tmp_usage_bytes,
-                self.tmp_usage_error.as_deref(),
-            );
-            ui.label(RichText::new(usage_text).strong());
-
-            if ui
-                .add_enabled(
-                    !self.tmp_usage_rx.is_some() && !self.tmp_clear_rx.is_some(),
-                    egui::Button::new(format!("{} Refresh", regular::ARROW_CLOCKWISE)),
-                )
-                .clicked()
-            {
-                self.refresh_tmp_usage();
-            }
-
-            if ui
-                .add_enabled(
-                    !self.tmp_clear_rx.is_some() && !self.tmp_usage_rx.is_some(),
-                    egui::Button::new(regular::TRASH)
-                        .fill(ui.visuals().warn_fg_color.gamma_multiply(0.12)),
-                )
-                .on_hover_text("Clear temporary directory")
-                .clicked()
-            {
-                self.clear_tmp_dir();
-            }
-        });
-
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new("Clearing removes files inside `tmp/`; the directory itself is kept.")
-                .weak()
-                .small(),
-        );
-    }
-
-    fn render_workspace_section(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Workspace");
-        ui.add_space(4.0);
-
-        let Some(paths) = self.paths.as_ref() else {
-            ui.label("Path unavailable.");
-            return;
-        };
-
-        ui.label(format!("Path: {}", paths.workspace_dir.display()));
-        ui.add_space(6.0);
-
-        ui.horizontal(|ui| {
-            let usage_text = usage_text(
-                self.workspace_usage_rx.is_some(),
-                self.workspace_usage_bytes,
-                self.workspace_usage_error.as_deref(),
-            );
-            ui.label(RichText::new(usage_text).strong());
-
-            if ui
-                .add_enabled(
-                    !self.workspace_usage_rx.is_some() && !self.workspace_clear_rx.is_some(),
-                    egui::Button::new(format!("{} Refresh", regular::ARROW_CLOCKWISE)),
-                )
-                .clicked()
-            {
-                self.refresh_workspace_usage();
-            }
-
-            if ui
-                .add_enabled(
-                    !self.workspace_clear_rx.is_some() && !self.workspace_usage_rx.is_some(),
-                    egui::Button::new(regular::TRASH)
-                        .fill(ui.visuals().warn_fg_color.gamma_multiply(0.12)),
-                )
-                .on_hover_text("Clear workspace directory")
-                .clicked()
-            {
-                self.clear_workspace_dir();
-            }
-        });
-
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new("Clearing removes files inside `workspace/`; the directory itself is kept.")
-                .weak()
-                .small(),
-        );
-    }
-
-    fn render_sessions_section(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Sessions");
-        ui.add_space(4.0);
-
-        let Some(paths) = self.paths.as_ref() else {
-            ui.label("Path unavailable.");
-            return;
-        };
-
-        ui.label(format!("Path: {}", paths.sessions_dir.display()));
-        ui.add_space(6.0);
-
-        ui.horizontal(|ui| {
-            let usage_text = usage_text(
-                self.sessions_usage_rx.is_some(),
-                self.sessions_usage_bytes,
-                self.sessions_usage_error.as_deref(),
-            );
-            ui.label(RichText::new(usage_text).strong());
-
-            if ui
-                .add_enabled(
-                    !self.sessions_usage_rx.is_some() && !self.sessions_clear_rx.is_some(),
-                    egui::Button::new(format!("{} Refresh", regular::ARROW_CLOCKWISE)),
-                )
-                .clicked()
-            {
-                self.refresh_sessions_usage();
-            }
-
-            if ui
-                .add_enabled(
-                    !self.sessions_clear_rx.is_some() && !self.sessions_usage_rx.is_some(),
-                    egui::Button::new(regular::TRASH)
-                        .fill(ui.visuals().warn_fg_color.gamma_multiply(0.12)),
-                )
-                .on_hover_text("Clear sessions directory")
-                .clicked()
-            {
-                self.clear_sessions_dir();
-            }
-        });
-
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new("Clearing removes files inside `sessions/`; the directory itself is kept.")
-                .weak()
-                .small(),
-        );
+        egui::ScrollArea::vertical()
+            .id_salt("system-panel-scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                self.render_section(ui, DirKind::Tmp);
+                ui.separator();
+                self.render_section(ui, DirKind::Workspace);
+                ui.separator();
+                self.render_section(ui, DirKind::Sessions);
+                ui.separator();
+                self.render_section(ui, DirKind::Archives);
+                ui.separator();
+                self.render_section(ui, DirKind::Logs);
+                ui.separator();
+                self.render_section(ui, DirKind::Skills);
+                ui.separator();
+                self.render_section(ui, DirKind::SkillsRegistry);
+            });
     }
 }
 
