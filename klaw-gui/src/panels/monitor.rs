@@ -9,7 +9,6 @@ use sysinfo::{CpuRefreshKind, DiskRefreshKind, Disks, LoadAvg, MemoryRefreshKind
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const PROGRESS_BAR_HEIGHT: f32 = 12.0;
-const SYSTEM_INFO_SECTION_HEIGHT: f32 = 320.0;
 
 pub struct MonitorPanel {
     system: System,
@@ -164,8 +163,7 @@ impl PanelRenderer for MonitorPanel {
 
         egui::ScrollArea::vertical()
             .id_salt("monitor-system-info-scroll")
-            .auto_shrink([false, false])
-            .max_height(SYSTEM_INFO_SECTION_HEIGHT)
+            .auto_shrink([false, true])
             .show(ui, |ui| {
                 egui::Grid::new("monitor-system-info-grid")
                     .num_columns(2)

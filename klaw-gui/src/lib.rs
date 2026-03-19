@@ -3,6 +3,7 @@ mod domain;
 mod notifications;
 mod panels;
 mod runtime_bridge;
+mod settings;
 mod state;
 mod theme;
 mod time_format;
