@@ -2,6 +2,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use egui_extras::{Column, TableBuilder};
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, ModelProviderConfig};
+use klaw_llm::OpenAiWireApi;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -288,7 +289,17 @@ impl ProviderPanel {
                         ui.end_row();
 
                         ui.label("Wire API");
-                        ui.text_edit_singleline(&mut form.wire_api);
+                        egui::ComboBox::from_id_salt("wire_api")
+                            .selected_text(&form.wire_api)
+                            .show_ui(ui, |ui| {
+                                for option in OpenAiWireApi::VARIANTS {
+                                    ui.selectable_value(
+                                        &mut form.wire_api,
+                                        option.to_string(),
+                                        option,
+                                    );
+                                }
+                            });
                         ui.end_row();
 
                         ui.label("Default Model");

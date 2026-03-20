@@ -15,6 +15,7 @@ egui-notify = { workspace = true }
 fontdb = { workspace = true }
 klaw-config = { workspace = true }
 klaw-core = { workspace = true }
+klaw-llm = { workspace = true }
 klaw-approval = { workspace = true }
 klaw-archive = { workspace = true }
 klaw-cron = { workspace = true }

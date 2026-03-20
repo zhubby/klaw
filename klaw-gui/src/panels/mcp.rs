@@ -1,7 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::widgets::KeyValueInput;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -12,10 +12,10 @@ struct McpServerForm {
     mode: McpServerMode,
     command: String,
     args_text: String,
-    env_text: String,
+    env_input: KeyValueInput,
     cwd: String,
     url: String,
-    headers_text: String,
+    headers_input: KeyValueInput,
 }
 
 impl McpServerForm {
@@ -27,10 +27,10 @@ impl McpServerForm {
             mode: McpServerMode::Stdio,
             command: String::new(),
             args_text: String::new(),
-            env_text: String::new(),
+            env_input: KeyValueInput::new("Env"),
             cwd: String::new(),
             url: String::new(),
-            headers_text: String::new(),
+            headers_input: KeyValueInput::new("Headers"),
         }
     }
 
@@ -42,10 +42,10 @@ impl McpServerForm {
             mode: server.mode.clone(),
             command: server.command.clone().unwrap_or_default(),
             args_text: server.args.join("\n"),
-            env_text: Self::map_to_text(&server.env),
+            env_input: KeyValueInput::from_map("Env", &server.env),
             cwd: server.cwd.clone().unwrap_or_default(),
             url: server.url.clone().unwrap_or_default(),
-            headers_text: Self::map_to_text(&server.headers),
+            headers_input: KeyValueInput::from_map("Headers", &server.headers),
         }
     }
 
@@ -61,13 +61,6 @@ impl McpServerForm {
         self.id.trim().to_string()
     }
 
-    fn map_to_text(map: &BTreeMap<String, String>) -> String {
-        map.iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     fn parse_lines(value: &str) -> Vec<String> {
         value
             .lines()
@@ -75,22 +68,6 @@ impl McpServerForm {
             .filter(|line| !line.is_empty())
             .map(str::to_string)
             .collect()
-    }
-
-    fn parse_kv_map(value: &str) -> Result<BTreeMap<String, String>, String> {
-        let mut result = BTreeMap::new();
-        for line in value.lines().map(str::trim).filter(|line| !line.is_empty()) {
-            let Some((key, val)) = line.split_once('=') else {
-                return Err(format!("Invalid key=value line: '{line}'"));
-            };
-            let key = key.trim();
-            let val = val.trim();
-            if key.is_empty() {
-                return Err(format!("Invalid key=value line: '{line}'"));
-            }
-            result.insert(key.to_string(), val.to_string());
-        }
-        Ok(result)
     }
 
     fn to_config(&self) -> Result<McpServerConfig, String> {
@@ -104,10 +81,10 @@ impl McpServerForm {
             mode: self.mode.clone(),
             command: (!command.is_empty()).then(|| command.to_string()),
             args: Self::parse_lines(&self.args_text),
-            env: Self::parse_kv_map(&self.env_text)?,
+            env: self.env_input.to_map(),
             cwd: (!cwd.is_empty()).then(|| cwd.to_string()),
             url: (!url.is_empty()).then(|| url.to_string()),
-            headers: Self::parse_kv_map(&self.headers_text)?,
+            headers: self.headers_input.to_map(),
         })
     }
 }
@@ -295,41 +272,47 @@ impl McpPanel {
                                 ui.selectable_value(&mut form.mode, McpServerMode::Sse, "sse");
                             });
                         ui.end_row();
-
-                        ui.label("Command");
-                        ui.text_edit_singleline(&mut form.command);
-                        ui.end_row();
-
-                        ui.label("CWD");
-                        ui.text_edit_singleline(&mut form.cwd);
-                        ui.end_row();
-
-                        ui.label("URL");
-                        ui.text_edit_singleline(&mut form.url);
-                        ui.end_row();
                     });
 
                 ui.separator();
-                ui.label("Args (one per line)");
-                ui.add(
-                    egui::TextEdit::multiline(&mut form.args_text)
-                        .desired_rows(4)
-                        .desired_width(f32::INFINITY),
-                );
 
-                ui.label("Env (KEY=VALUE, one per line)");
-                ui.add(
-                    egui::TextEdit::multiline(&mut form.env_text)
-                        .desired_rows(4)
-                        .desired_width(f32::INFINITY),
-                );
+                match form.mode {
+                    McpServerMode::Stdio => {
+                        egui::Grid::new("mcp-stdio-grid")
+                            .num_columns(2)
+                            .spacing([12.0, 8.0])
+                            .show(ui, |ui| {
+                                ui.label("Command");
+                                ui.text_edit_singleline(&mut form.command);
+                                ui.end_row();
 
-                ui.label("Headers (KEY=VALUE, one per line)");
-                ui.add(
-                    egui::TextEdit::multiline(&mut form.headers_text)
-                        .desired_rows(4)
-                        .desired_width(f32::INFINITY),
-                );
+                                ui.label("CWD");
+                                ui.text_edit_singleline(&mut form.cwd);
+                                ui.end_row();
+                            });
+
+                        ui.label("Args (one per line)");
+                        ui.add(
+                            egui::TextEdit::multiline(&mut form.args_text)
+                                .desired_rows(4)
+                                .desired_width(f32::INFINITY),
+                        );
+
+                        form.env_input.show(ui);
+                    }
+                    McpServerMode::Sse => {
+                        egui::Grid::new("mcp-sse-grid")
+                            .num_columns(2)
+                            .spacing([12.0, 8.0])
+                            .show(ui, |ui| {
+                                ui.label("URL");
+                                ui.text_edit_singleline(&mut form.url);
+                                ui.end_row();
+                            });
+
+                        form.headers_input.show(ui);
+                    }
+                }
 
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -457,6 +440,7 @@ impl PanelRenderer for McpPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn apply_form_adds_new_server() {

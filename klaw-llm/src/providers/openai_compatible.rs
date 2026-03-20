@@ -16,11 +16,20 @@ pub enum OpenAiWireApi {
 }
 
 impl OpenAiWireApi {
+    pub const VARIANTS: [&str; 2] = ["chat_completions", "responses"];
+
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "chat_completions" => Some(Self::ChatCompletions),
             "responses" => Some(Self::Responses),
             _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ChatCompletions => "chat_completions",
+            Self::Responses => "responses",
         }
     }
 }

@@ -3500,6 +3500,7 @@ dependencies = [
  "klaw-config",
  "klaw-core",
  "klaw-cron",
+ "klaw-llm",
  "klaw-memory",
  "klaw-session",
  "klaw-skill",

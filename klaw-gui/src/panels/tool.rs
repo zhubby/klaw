@@ -19,6 +19,7 @@ pub struct ToolPanel {
 enum ToolForm {
     ApplyPatch(ApplyPatchForm),
     Shell(ShellForm),
+    Archive(ToggleForm),
     Approval(ToggleForm),
     LocalSearch(ToggleForm),
     TerminalMultiplexers(ToggleForm),
@@ -344,7 +345,8 @@ impl ToolForm {
         match self {
             ToolForm::ApplyPatch(_) => "Edit Tool: apply_patch",
             ToolForm::Shell(_) => "Edit Tool: shell",
-            ToolForm::Approval(form)
+            ToolForm::Archive(form)
+            | ToolForm::Approval(form)
             | ToolForm::LocalSearch(form)
             | ToolForm::TerminalMultiplexers(form)
             | ToolForm::CronManager(form)
@@ -489,6 +491,10 @@ impl ToolPanel {
                 }
                 Err(err) => Err(err),
             },
+            ToolForm::Archive(form) => {
+                next.tools.archive.enabled = form.enabled;
+                Ok(())
+            }
             ToolForm::Approval(form) => {
                 next.tools.approval.enabled = form.enabled;
                 Ok(())
