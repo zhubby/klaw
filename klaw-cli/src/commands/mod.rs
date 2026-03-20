@@ -2,7 +2,6 @@ pub mod agent;
 pub mod archive;
 pub mod config;
 pub mod daemon;
-pub mod dingtalk_runtime;
 pub mod gateway;
 pub mod gui;
 pub mod session;

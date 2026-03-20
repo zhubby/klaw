@@ -1,9 +1,13 @@
+use klaw_channel::ChannelSyncResult;
 use std::sync::{mpsc, Mutex, OnceLock};
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug)]
 pub enum RuntimeCommand {
     ReloadSkillsPrompt,
+    SyncChannels {
+        response: mpsc::Sender<Result<ChannelSyncResult, String>>,
+    },
     RunCronNow {
         cron_id: String,
         response: mpsc::Sender<Result<String, String>>,
@@ -92,6 +96,24 @@ pub fn request_run_cron_now(cron_id: &str) -> Result<String, String> {
     sender
         .send(RuntimeCommand::RunCronNow {
             cron_id: cron_id.to_string(),
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    response_rx
+        .recv()
+        .map_err(|_| "runtime command response channel closed".to_string())?
+}
+
+pub fn request_sync_channels() -> Result<ChannelSyncResult, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::SyncChannels {
             response: response_tx,
         })
         .map_err(|_| "failed to send runtime command".to_string())?;

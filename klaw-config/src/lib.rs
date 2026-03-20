@@ -66,15 +66,17 @@ pub struct StorageConfig {
     pub root_dir: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelsConfig {
     #[serde(default)]
     pub dingtalk: Vec<DingtalkConfig>,
     #[serde(default)]
+    pub telegram: Vec<TelegramConfig>,
+    #[serde(default)]
     pub disable_session_commands_for: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DingtalkConfig {
     pub id: String,
     #[serde(default = "default_channel_enabled")]
@@ -106,7 +108,7 @@ impl Default for DingtalkConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DingtalkProxyConfig {
     pub enabled: bool,
@@ -119,6 +121,40 @@ fn default_channel_enabled() -> bool {
 
 fn default_dingtalk_bot_title() -> String {
     "Klaw".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    pub id: String,
+    #[serde(default = "default_channel_enabled")]
+    pub enabled: bool,
+    pub bot_token: String,
+    #[serde(default)]
+    pub show_reasoning: bool,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    #[serde(default)]
+    pub proxy: TelegramProxyConfig,
+}
+
+impl Default for TelegramConfig {
+    fn default() -> Self {
+        Self {
+            id: "default".to_string(),
+            enabled: default_channel_enabled(),
+            bot_token: String::new(),
+            show_reasoning: false,
+            allowlist: Vec::new(),
+            proxy: TelegramProxyConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TelegramProxyConfig {
+    pub enabled: bool,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

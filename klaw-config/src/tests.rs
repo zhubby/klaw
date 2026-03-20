@@ -92,6 +92,7 @@ fn parse_default_template_succeeds() {
     assert_eq!(parsed.heartbeat.defaults.silent_ack_token, "HEARTBEAT_OK");
     assert!(parsed.heartbeat.sessions.is_empty());
     assert!(parsed.channels.dingtalk.is_empty());
+    assert!(parsed.channels.telegram.is_empty());
     assert_eq!(
         parsed.tools.sub_agent.exclude_tools,
         vec!["sub_agent".to_string()]
@@ -515,6 +516,37 @@ allowlist = ["u123", "u456"]
 }
 
 #[test]
+fn parse_telegram_channel_config_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[[channels.telegram]]
+id = "ops"
+enabled = true
+bot_token = "123456:secret"
+show_reasoning = true
+allowlist = ["u123", "*"]
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("telegram config should parse");
+    assert_eq!(parsed.channels.telegram.len(), 1);
+    let account = &parsed.channels.telegram[0];
+    assert_eq!(account.id, "ops");
+    assert!(account.enabled);
+    assert_eq!(account.bot_token, "123456:secret");
+    assert!(account.show_reasoning);
+    assert_eq!(account.allowlist, vec!["u123".to_string(), "*".to_string()]);
+    assert!(!account.proxy.enabled);
+    assert!(account.proxy.url.is_empty());
+}
+
+#[test]
 fn validate_fails_when_web_fetch_limits_are_invalid() {
     let mut cfg = AppConfig::default();
     cfg.tools.web_fetch.enabled = true;
@@ -674,6 +706,86 @@ fn validate_fails_when_enabled_dingtalk_proxy_has_invalid_scheme() {
         show_reasoning: false,
         allowlist: vec![],
         proxy: DingtalkProxyConfig {
+            enabled: true,
+            url: "socks5://127.0.0.1:1080".to_string(),
+        },
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("proxy url scheme must be http or https"));
+}
+
+#[test]
+fn validate_fails_when_telegram_channel_ids_duplicate() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.telegram = vec![
+        TelegramConfig {
+            id: "ops".to_string(),
+            enabled: true,
+            bot_token: "token-a".to_string(),
+            show_reasoning: false,
+            allowlist: vec![],
+            proxy: TelegramProxyConfig::default(),
+        },
+        TelegramConfig {
+            id: "ops".to_string(),
+            enabled: true,
+            bot_token: "token-b".to_string(),
+            show_reasoning: false,
+            allowlist: vec![],
+            proxy: TelegramProxyConfig::default(),
+        },
+    ];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("channels.telegram contains duplicated id"));
+}
+
+#[test]
+fn validate_fails_when_enabled_telegram_channel_missing_token() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.telegram = vec![TelegramConfig {
+        id: "ops".to_string(),
+        enabled: true,
+        bot_token: String::new(),
+        show_reasoning: false,
+        allowlist: vec![],
+        proxy: TelegramProxyConfig::default(),
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("channels.telegram.bot_token"));
+}
+
+#[test]
+fn validate_fails_when_enabled_telegram_proxy_missing_url() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.telegram = vec![TelegramConfig {
+        id: "ops".to_string(),
+        enabled: true,
+        bot_token: "token-a".to_string(),
+        show_reasoning: false,
+        allowlist: vec![],
+        proxy: TelegramProxyConfig {
+            enabled: true,
+            url: String::new(),
+        },
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("channels.telegram.proxy.url"));
+}
+
+#[test]
+fn validate_fails_when_enabled_telegram_proxy_has_invalid_scheme() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.telegram = vec![TelegramConfig {
+        id: "ops".to_string(),
+        enabled: true,
+        bot_token: "token-a".to_string(),
+        show_reasoning: false,
+        allowlist: vec![],
+        proxy: TelegramProxyConfig {
             enabled: true,
             url: "socks5://127.0.0.1:1080".to_string(),
         },

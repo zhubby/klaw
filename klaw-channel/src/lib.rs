@@ -5,9 +5,17 @@ use std::error::Error;
 use std::time::Duration;
 
 pub mod dingtalk;
+pub mod manager;
 pub mod media;
 pub mod render;
 pub mod stdio;
+pub mod telegram;
+
+pub use manager::{
+    ChannelConfigSnapshot, ChannelDriverFactory, ChannelInstanceConfig, ChannelInstanceKey,
+    ChannelInstanceStatus, ChannelKind, ChannelLifecycleState, ChannelManager, ChannelSyncResult,
+    DefaultChannelDriverFactory, ManagedChannelDriver,
+};
 
 pub type ChannelResult<T> = Result<T, Box<dyn Error>>;
 

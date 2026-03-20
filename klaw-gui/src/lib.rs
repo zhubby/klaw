@@ -15,7 +15,7 @@ pub use domain::menu::WorkbenchMenu;
 pub use panels::{PanelRenderer, RenderCtx};
 pub use runtime_bridge::{
     clear_log_receiver, clear_runtime_command_sender, drain_log_chunks, install_log_receiver,
-    install_runtime_command_sender, request_run_cron_now, RuntimeCommand,
+    install_runtime_command_sender, request_run_cron_now, request_sync_channels, RuntimeCommand,
 };
 pub use state::workbench::{TabId, WorkbenchState, WorkbenchTab};
 pub use state::UiAction;

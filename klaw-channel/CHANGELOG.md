@@ -2,8 +2,15 @@
 
 ## 2026-03-20
 
+### Added
+
+- 新增通用 `ChannelManager`、`ChannelConfigSnapshot`、`ChannelInstanceConfig`、`ManagedChannelDriver` 与 `ChannelDriverFactory`，统一管理多实例 channel 生命周期和配置 diff
+- 新增 `telegram` channel：基于 Bot API `getUpdates` long polling，支持文本、caption、图片和文件消息入站，并复用 archive 媒体归档链路
+
 ### Changed
 
+- `dingtalk` 现在通过通用 managed driver 接口接入 `ChannelManager`，不再依赖 CLI 层专用 pool
+- `ChannelManager` / `ChannelConfigSnapshot` / 默认 driver factory 现在支持 `telegram` 实例
 - `dingtalk` 入站媒体提取范围从图片/语音扩展到视频与通用文件附件；只要消息体带有 `downloadCode` / `pictureDownloadCode`，都会进入统一 archive 归档链路
 - `dingtalk` 入站媒体引用现在会额外提取消息体中的 `mimeType` / `contentType` / `fileType` / `extension`，补充到媒体 metadata 并透传声明 MIME
 - 抽出 `klaw-channel::media` / `klaw-channel::render` 共享模块，沉淀媒体引用构造、archive 回填和输出渲染逻辑，减少 `dingtalk.rs` 与后续 channel 的重复实现

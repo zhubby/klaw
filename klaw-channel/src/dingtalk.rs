@@ -1,4 +1,5 @@
 use crate::{
+    manager::{ChannelKind, ManagedChannelDriver},
     media::{
         attach_declared_media_metadata, build_media_reference, first_object_string_value,
         first_string_value, ingest_media_reference_bytes, resolve_metadata_value_candidates,
@@ -9,6 +10,7 @@ use crate::{
 };
 use futures_util::{SinkExt, StreamExt};
 use klaw_archive::open_default_archive_service;
+use klaw_config::DingtalkConfig;
 use klaw_core::{MediaReference, MediaSourceKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -89,6 +91,21 @@ pub struct DingtalkChannel {
 }
 
 impl DingtalkChannel {
+    pub fn from_app_config(config: DingtalkConfig) -> ChannelResult<Self> {
+        Self::new(DingtalkChannelConfig {
+            account_id: config.id,
+            client_id: config.client_id,
+            client_secret: config.client_secret,
+            bot_title: config.bot_title,
+            show_reasoning: config.show_reasoning,
+            allowlist: config.allowlist,
+            proxy: DingtalkProxyConfig {
+                enabled: config.proxy.enabled,
+                url: config.proxy.url,
+            },
+        })
+    }
+
     pub fn new(config: DingtalkChannelConfig) -> ChannelResult<Self> {
         let client = DingtalkApiClient::new(&config.proxy)?;
         Ok(Self {
@@ -278,6 +295,25 @@ impl DingtalkChannel {
                 }
             }
         }
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl ManagedChannelDriver for DingtalkChannel {
+    fn kind(&self) -> ChannelKind {
+        ChannelKind::Dingtalk
+    }
+
+    fn instance_id(&self) -> &str {
+        &self.config.account_id
+    }
+
+    async fn run_until_shutdown(
+        &mut self,
+        runtime: &dyn ChannelRuntime,
+        shutdown: &mut watch::Receiver<bool>,
+    ) -> ChannelResult<()> {
+        DingtalkChannel::run_until_shutdown(self, runtime, shutdown).await
     }
 }
 

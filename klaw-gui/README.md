@@ -52,9 +52,12 @@
   - set active provider directly
   - add/edit provider via `egui::Window` form and persist back to config
 - Channel panel features:
-  - read/write `channels.dingtalk` list from `config.toml`
-  - add/edit dingtalk channels via `egui::Window`
+  - read/write channel config from `config.toml` for `channels.dingtalk` and `channels.telegram`
+  - add/edit current dingtalk and telegram channels via `egui::Window`
+  - show per-instance `type / id / enabled / status`
+  - delete channel instances from the table
   - edit and save `channels.disable_session_commands_for`
+  - request a live GUI runtime `SyncChannels` after channel saves/reloads so running channel instances update without restarting the app
 - MCP panel features:
   - read/write `mcp.enabled`, `mcp.startup_timeout_seconds`, `mcp.servers`
   - add/edit MCP servers via `egui::Window`

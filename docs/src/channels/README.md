@@ -4,6 +4,7 @@
 
 - [Stdio](./stdio.md) - 基于标准输入输出的终端交互渠道
 - [DingTalk（钉钉）](./dingtalk.md) - 基于 WebSocket 长连接的钉钉机器人渠道
+- [Telegram](./telegram.md) - 基于 Bot API long polling 的 Telegram 机器人渠道
 
 ## 渠道架构
 
@@ -82,6 +83,18 @@ allowlist = ["USER123", "*"]
 [channels.dingtalk.proxy]
 enabled = false
 url = "http://proxy.example.com:8080"
+
+# Telegram 渠道
+[[channels.telegram]]
+id = "default"
+enabled = true
+bot_token = "123456:ABCDEF"
+show_reasoning = false
+allowlist = ["*"]
+
+[channels.telegram.proxy]
+enabled = false
+url = "http://proxy.example.com:8080"
 ```
 
 ## 会话管理
@@ -95,6 +108,8 @@ url = "http://proxy.example.com:8080"
 例如：
 - DingTalk: `dingtalk:default:USER123`
 - DingTalk 群聊：`dingtalk:default:conversation456`
+- Telegram: `telegram:default:123456789`
+- Telegram 群聊：`telegram:default:-1001234567890`
 
 同一 `session_key` 的请求保证串行执行，不同会话可并发处理。
 
@@ -133,11 +148,11 @@ url = "http://proxy.example.com:8080"
 
 ## 渠道对比
 
-| 特性 | Stdio | DingTalk |
-|------|-------|----------|
-| 交互方式 | 终端输入输出 | 钉钉消息 |
-| 媒体支持 | 无 | 图片、语音、文件 |
-| 审批卡片 | 无 | 支持 |
-| 多会话 | 否 | 是 |
-| 回调机制 | 无 | 支持 |
-| 适用场景 | 本地调试、CLI | 企业协作 |
+| 特性 | Stdio | DingTalk | Telegram |
+|------|-------|----------|----------|
+| 交互方式 | 终端输入输出 | 钉钉消息 | Telegram Bot |
+| 媒体支持 | 无 | 图片、语音、文件 | 图片、文件 |
+| 审批卡片 | 无 | 支持 | 首版不支持 |
+| 多会话 | 否 | 是 | 是 |
+| 回调机制 | 无 | 支持 | 首版不支持 |
+| 适用场景 | 本地调试、CLI | 企业协作 | Bot 私聊/群聊 |

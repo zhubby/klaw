@@ -376,6 +376,95 @@ enabled = true
 url = "http://127.0.0.1:8888"
 ```
 
+### `channels.telegram`
+
+**类型**: `array`
+**默认值**: `[]`
+**必填**: 否
+
+Telegram 渠道配置列表。
+
+```toml
+[[channels.telegram]]
+id = "default"
+enabled = true
+bot_token = "123456:ABCDEF"
+show_reasoning = false
+allowlist = ["*"]
+```
+
+#### `channels.telegram[].id`
+
+**类型**: `string`
+**默认值**: `"default"`
+**必填**: 是
+
+渠道账户标识，不能重复。
+
+#### `channels.telegram[].enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用该渠道。
+
+#### `channels.telegram[].bot_token`
+
+**类型**: `string`
+**默认值**: `""`
+**必填**: 是
+
+Telegram Bot Token。
+
+#### `channels.telegram[].show_reasoning`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否在响应中展示推理过程。
+
+#### `channels.telegram[].allowlist`
+
+**类型**: `array<string>`
+**默认值**: `[]`
+**必填**: 否
+
+发送者白名单。`"*"` 表示允许所有用户。
+
+```toml
+channels.telegram.allowlist = ["123456789", "*"]
+```
+
+#### `channels.telegram[].proxy.enabled`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否启用代理。
+
+```toml
+[channels.telegram.proxy]
+enabled = true
+url = "http://proxy.example.com:8080"
+```
+
+#### `channels.telegram[].proxy.url`
+
+**类型**: `string`
+**默认值**: `""`
+**必填**: 条件必填
+
+代理 URL（`proxy.enabled=true` 时必填）。
+
+```toml
+[channels.telegram.proxy]
+enabled = true
+url = "http://127.0.0.1:8888"
+```
+
 ### `channels.disable_session_commands_for`
 
 **类型**: `array<string>`
@@ -385,7 +474,7 @@ url = "http://127.0.0.1:8888"
 禁用会话命令的渠道列表。
 
 ```toml
-channels.disable_session_commands_for = ["dingtalk", "stdio"]
+channels.disable_session_commands_for = ["dingtalk", "telegram", "stdio"]
 ```
 
 ---

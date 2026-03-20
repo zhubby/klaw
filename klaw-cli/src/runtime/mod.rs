@@ -1785,8 +1785,8 @@ mod tests {
         should_trigger_compression, trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
-    use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
     use klaw_config::AppConfig;
+    use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
     use klaw_llm::{ChatOptions, LlmError, LlmProvider};
     use klaw_session::ChatRecord;
     use klaw_storage::ApprovalStatus;

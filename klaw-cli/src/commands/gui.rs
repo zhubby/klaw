@@ -1,9 +1,9 @@
 use clap::Args;
+use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
 use std::{io, sync::Arc};
 use tokio::sync::watch;
 
-use super::dingtalk_runtime::{spawn_enabled_channels, wait_for_channels_shutdown};
 use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
@@ -11,6 +11,7 @@ use crate::runtime::{
     build_runtime_bundle, finalize_startup_report, reload_runtime_skills_prompt,
     shutdown_runtime_bundle, SharedChannelRuntime,
 };
+use klaw_config::ConfigStore;
 use tracing::{info, warn};
 
 #[derive(Debug, Args)]
@@ -22,7 +23,8 @@ impl GuiCommand {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let (runtime_cmd_tx, runtime_cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let config_for_thread = config.as_ref().clone();
-        let dingtalk_configs = config.channels.dingtalk.clone();
+        let channel_snapshot = ChannelConfigSnapshot::from_channels_config(&config.channels)
+            .map_err(io::Error::other)?;
 
         let worker = std::thread::Builder::new()
             .name("klaw-gui-runtime".to_string())
@@ -67,11 +69,8 @@ impl GuiCommand {
                             let mut shutdown_rx = shutdown_rx;
                             let mut runtime_cmd_rx = runtime_cmd_rx;
                             let mut runtime_cmd_open = true;
-                            let mut dingtalk_handles = spawn_enabled_channels(
-                                dingtalk_configs,
-                                Arc::clone(&adapter),
-                                shutdown_rx.clone(),
-                            );
+                            let mut channel_manager = ChannelManager::new(Arc::clone(&adapter));
+                            channel_manager.sync(channel_snapshot).await;
 
                             let shutdown_by_signal = loop {
                                 tokio::select! {
@@ -90,6 +89,19 @@ impl GuiCommand {
                                                 if let Err(err) = reload_runtime_skills_prompt(runtime.as_ref()).await {
                                                     warn!(error = %err, "failed to reload runtime skills prompt");
                                                 }
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::SyncChannels { response }) => {
+                                                let result = match ConfigStore::open(None) {
+                                                    Ok(store) => {
+                                                        let snapshot = store.snapshot();
+                                                        match ChannelConfigSnapshot::from_channels_config(&snapshot.config.channels) {
+                                                            Ok(channel_snapshot) => Ok(channel_manager.sync(channel_snapshot).await),
+                                                            Err(err) => Err(err),
+                                                        }
+                                                    }
+                                                    Err(err) => Err(err.to_string()),
+                                                };
+                                                let _ = response.send(result);
                                             }
                                             Some(klaw_gui::RuntimeCommand::RunCronNow { cron_id, response }) => {
                                                 let result = background.run_cron_now(&cron_id).await;
@@ -113,7 +125,7 @@ impl GuiCommand {
                                 info!("shutdown signal received, stopping gui runtime");
                             }
 
-                            wait_for_channels_shutdown(&mut dingtalk_handles).await;
+                            channel_manager.shutdown_all().await;
                             if let Err(err) = shutdown_runtime_bundle(runtime.as_ref()).await {
                                 warn!(error = %err, "runtime shutdown failed");
                             }

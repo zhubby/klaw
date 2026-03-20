@@ -10,6 +10,7 @@
 - 支持通过 `ConfigStore` 在进程内共享配置快照，并在保存/重载后同步内存状态。
 - 校验 provider、工具、MCP、gateway、heartbeat 等配置合法性。
 - 支持按 channel 配置会话命令开关（`channels.disable_session_commands_for`）。
+- 保持 channel 外部配置为分类型数组（当前 `channels.dingtalk` / `channels.telegram`），供运行时映射为统一的 channel 实例快照。
 - 支持 `storage.root_dir` 配置项，用于覆盖默认 `~/.klaw` 数据目录根路径。
 - 支持独立的 `tools.skills_registry` 与 `tools.skills_manager` 开关配置。
 

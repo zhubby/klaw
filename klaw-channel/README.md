@@ -6,14 +6,19 @@
 
 - `stdio`：本地终端交互通道
 - `dingtalk`：钉钉事件与 websocket 通道
+- `telegram`：Telegram Bot API long polling 通道
+- `manager`：运行中的 channel 实例生命周期管理与配置快照同步
 
 ## Design
 
 - `Channel` trait 定义通道生命周期与运行入口
 - `ChannelRuntime` trait 抽象上层 runtime 提交、定时 tick 和后台服务能力
+- `ChannelManager` 负责按实例键（`{type}:{id}`）统一管理多类型、多实例 channel 的 `keep/start/stop/restart`
+- `ChannelConfigSnapshot` / `ChannelInstanceConfig` 提供运行时统一实例快照层，把分类型配置映射成可 diff 的 channel 集合
+- `ManagedChannelDriver` / `ChannelDriverFactory` 提供具体 channel driver 边界，后续 `telegram` / `feishu` 可复用同一生命周期接口
 - 通道层只负责 I/O、协议适配和交互体验，不承载 agent 业务逻辑
 - crate 内提供共享 `media` / `render` 模块，复用媒体引用构造、归档回填和通道输出渲染逻辑，避免各 channel 重复实现
-- `ChannelRequest` 可携带 `media_references`；`dingtalk` 会在入站阶段解析图片、语音、视频和通用文件附件，下载媒体并写入 archive，再把媒体引用透传给 runtime
+- `ChannelRequest` 可携带 `media_references`；`dingtalk` / `telegram` 会在入站阶段解析媒体附件，下载媒体并写入 archive，再把媒体引用透传给 runtime
 
 ## IM Channel 适配契约
 
@@ -21,6 +26,7 @@
 - 统一会话命令（`/new`、`/help`、`/model-provider`、`/model`）由 runtime 处理，不在 channel 层实现业务分支
 - channel 仅消费 `ChannelResponse` 并回发，不持有 provider/model 路由策略
 - `dingtalk` 通道会在响应中检测 `approval_id` 并渲染 ActionCard，把卡片回调映射为 `/approve` 或 `/reject` 指令回送 runtime
+- `telegram` 通道首版聚焦通用 IM 能力：文本、caption、图片/文件媒体入站和即时 `sendMessage` 回复，不包含审批按钮与异步 outbound dispatcher
 
 ## Stdio Interaction
 

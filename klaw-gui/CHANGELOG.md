@@ -14,6 +14,8 @@
 - workbench tabs now stay on a single row with horizontal scrolling when they overflow, and the tab strip hides its scrollbar
 - activating a workbench tab now moves it to the first position in the tab strip so the selected tab stays leftmost
 - GUI default path resolution for `settings.json`, `gui_state.json`, data root, and workspace markdowns now comes from `klaw-util` instead of duplicating `~/.klaw/...` joins across panels and persistence modules
+- channel panel now displays per-instance type and runtime status, supports deleting channel instances, and sends a generic `SyncChannels` runtime event after save/reload so running channels update without restarting `klaw gui`
+- channel panel now supports both `dingtalk` and `telegram` instances, with separate add/edit forms and shared runtime status rendering
 
 ### Added
 

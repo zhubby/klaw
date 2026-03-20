@@ -28,6 +28,7 @@
 - [渠道](./channels/README.md)
   - [Stdio](./channels/stdio.md)
   - [DingTalk](./channels/dingtalk.md)
+  - [Telegram](./channels/telegram.md)
 - [配置](./configration/README.md)
   - [配置概述](./configration/overview.md)
   - [配置字段详解](./configration/fields.md)

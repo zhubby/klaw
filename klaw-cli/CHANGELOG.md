@@ -10,6 +10,8 @@
 
 - running `klaw` without any subcommand now defaults to the GUI entrypoint, equivalent to `klaw gui`
 - `/approve <approval_id>` now returns a user-facing “already approved and executed” message for consumed shell approvals instead of exposing the internal `consumed` status word
+- `klaw gui` / `klaw gateway` 现在通过 `klaw-channel::ChannelManager` 托管 channel 生命周期，并统一用 `SyncChannels` 配置快照同步代替 dingtalk 专用重载逻辑
+- `klaw gui` / `klaw gateway` 现在也可通过同一 `ChannelManager` 生命周期层启动和同步 `telegram` channel 实例
 
 ## 2026-03-19
 

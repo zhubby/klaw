@@ -2,9 +2,15 @@
 
 ## 2026-03-20
 
+### Added
+
+- 新增 `channels.telegram`、`TelegramConfig` 与 `TelegramProxyConfig`，支持 Telegram channel 的 bot token、allowlist、reasoning 显示和代理配置
+
 ### Changed
 
 - `default_config_path()` now resolves `~/.klaw/config.toml` through the shared `klaw-util` path helpers instead of rebuilding the default path locally
+- `ChannelsConfig`、`DingtalkConfig` 与 `DingtalkProxyConfig` 现在实现 `PartialEq` / `Eq`，供运行时 channel 实例 diff 使用
+- `channels` 配置校验新增 `telegram`：校验重复 id、`bot_token` 非空以及 `proxy.url` 的 `http/https` 约束
 
 ## 2026-03-19
 

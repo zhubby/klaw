@@ -420,6 +420,38 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
             }
         }
     }
+    ids.clear();
+    for account in &channels.telegram {
+        require_non_empty(&account.id, "channels.telegram.id")?;
+        if !ids.insert(account.id.trim().to_string()) {
+            return Err(ConfigError::InvalidConfig(format!(
+                "channels.telegram contains duplicated id '{}'",
+                account.id
+            )));
+        }
+        if !account.enabled {
+            continue;
+        }
+        require_non_empty(&account.bot_token, "channels.telegram.bot_token")?;
+        if account.proxy.enabled {
+            require_non_empty(&account.proxy.url, "channels.telegram.proxy.url")?;
+            let parsed = url::Url::parse(account.proxy.url.trim()).map_err(|err| {
+                ConfigError::InvalidConfig(format!(
+                    "channels.telegram '{}' has invalid proxy url '{}': {}",
+                    account.id,
+                    account.proxy.url.trim(),
+                    err
+                ))
+            })?;
+            let scheme = parsed.scheme();
+            if scheme != "http" && scheme != "https" {
+                return Err(ConfigError::InvalidConfig(format!(
+                    "channels.telegram '{}' proxy url scheme must be http or https",
+                    account.id
+                )));
+            }
+        }
+    }
     for channel in &channels.disable_session_commands_for {
         require_non_empty(channel, "channels.disable_session_commands_for")?;
     }

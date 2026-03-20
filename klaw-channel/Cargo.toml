@@ -19,3 +19,4 @@ urlencoding = { workspace = true }
 uuid = { workspace = true }
 klaw-core = { workspace = true }
 klaw-archive = { workspace = true }
+klaw-config = { workspace = true }
