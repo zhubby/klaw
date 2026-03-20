@@ -2,6 +2,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::request_run_cron_now;
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
+use egui_extras::{Column, TableBuilder};
 use klaw_cron::{
     CronError, CronJob, CronListQuery, CronScheduleKind, CronTaskRun, NewCronJob,
     SqliteCronManager, UpdateCronJobPatch,
@@ -67,6 +68,7 @@ pub struct CronPanel {
     runs: Vec<CronTaskRun>,
     form: Option<CronForm>,
     delete_confirm_id: Option<String>,
+    selected_cron: Option<String>,
 }
 
 impl CronPanel {
@@ -459,58 +461,150 @@ impl PanelRenderer for CronPanel {
                 if self.jobs.is_empty() {
                     ui.label("No cron jobs found in database.");
                 } else {
-                    egui::Grid::new("cron-list-grid")
+                    let available_height = ui.available_height();
+                    let mut edit_cron_id: Option<String> = None;
+                    let mut toggle_cron: Option<(String, bool)> = None;
+                    let mut delete_cron_id: Option<String> = None;
+                    let mut runs_cron_id: Option<String> = None;
+                    let mut run_now_cron_id: Option<String> = None;
+
+                    TableBuilder::new(ui)
                         .striped(true)
-                        .num_columns(9)
-                        .spacing([12.0, 8.0])
-                        .show(ui, |ui| {
-                            ui.strong("ID");
-                            ui.strong("Name");
-                            ui.strong("Kind");
-                            ui.strong("Expr");
-                            ui.strong("Enabled");
-                            ui.strong("Next Run At");
-                            ui.strong("Last Run At");
-                            ui.strong("Updated At");
-                            ui.strong("Actions");
-                            ui.end_row();
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(100.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(120.0))
+                        .column(Column::auto().at_least(120.0))
+                        .column(Column::remainder().at_least(120.0))
+                        .min_scrolled_height(0.0)
+                        .max_scroll_height(available_height)
+                        .sense(egui::Sense::click())
+                        .header(20.0, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("ID");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Name");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Kind");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Expr");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Enabled");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Next Run At");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Last Run At");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Updated At");
+                            });
+                        })
+                        .body(|body| {
+                            body.rows(20.0, self.jobs.len(), |mut row| {
+                                let idx = row.index();
+                                let job = &self.jobs[idx];
+                                let is_selected = self.selected_cron.as_deref() == Some(&job.id);
 
-                            let jobs = self.jobs.clone();
-                            for job in jobs {
-                                ui.label(job.id.clone());
-                                ui.label(job.name.clone());
-                                ui.label(match job.schedule_kind {
-                                    CronScheduleKind::Cron => "cron",
-                                    CronScheduleKind::Every => "every",
+                                row.set_selected(is_selected);
+
+                                row.col(|ui| {
+                                    ui.label(job.id.clone());
                                 });
-                                ui.label(job.schedule_expr.clone());
-                                ui.label(if job.enabled { "yes" } else { "no" });
-                                ui.label(format_timestamp_millis(job.next_run_at_ms));
-                                ui.label(format_optional_timestamp_millis(job.last_run_at_ms));
-                                ui.label(format_timestamp_millis(job.updated_at_ms));
+                                row.col(|ui| {
+                                    ui.label(job.name.clone());
+                                });
+                                row.col(|ui| {
+                                    ui.label(match job.schedule_kind {
+                                        CronScheduleKind::Cron => "cron",
+                                        CronScheduleKind::Every => "every",
+                                    });
+                                });
+                                row.col(|ui| {
+                                    ui.label(job.schedule_expr.clone());
+                                });
+                                row.col(|ui| {
+                                    ui.label(if job.enabled { "yes" } else { "no" });
+                                });
+                                row.col(|ui| {
+                                    ui.label(format_timestamp_millis(job.next_run_at_ms));
+                                });
+                                row.col(|ui| {
+                                    ui.label(format_optional_timestamp_millis(job.last_run_at_ms));
+                                });
+                                row.col(|ui| {
+                                    ui.label(format_timestamp_millis(job.updated_at_ms));
+                                });
 
-                                ui.horizontal(|ui| {
+                                let response = row.response();
+
+                                if response.clicked() {
+                                    self.selected_cron = if is_selected {
+                                        None
+                                    } else {
+                                        Some(job.id.clone())
+                                    };
+                                }
+
+                                response.context_menu(|ui| {
                                     if ui.button("Runs").clicked() {
-                                        self.load_runs(&job.id, notifications);
+                                        runs_cron_id = Some(job.id.clone());
+                                        ui.close();
                                     }
                                     if ui.button("Run Now").clicked() {
-                                        self.run_cron_now(&job.id, notifications);
+                                        run_now_cron_id = Some(job.id.clone());
+                                        ui.close();
                                     }
                                     if ui.button("Edit").clicked() {
-                                        self.open_edit_form(&job.id);
+                                        edit_cron_id = Some(job.id.clone());
+                                        ui.close();
                                     }
                                     let toggle_text =
                                         if job.enabled { "Disable" } else { "Enable" };
                                     if ui.button(toggle_text).clicked() {
-                                        self.set_enabled(&job.id, !job.enabled, notifications);
+                                        toggle_cron = Some((job.id.clone(), !job.enabled));
+                                        ui.close();
                                     }
                                     if ui.button("Delete").clicked() {
-                                        self.delete_confirm_id = Some(job.id.clone());
+                                        delete_cron_id = Some(job.id.clone());
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                    if ui.button("Copy ID").clicked() {
+                                        ui.ctx().output_mut(|o| {
+                                            o.commands.push(egui::OutputCommand::CopyText(
+                                                job.id.clone(),
+                                            ));
+                                        });
+                                        ui.close();
                                     }
                                 });
-                                ui.end_row();
-                            }
+                            });
                         });
+
+                    if let Some(id) = runs_cron_id {
+                        self.load_runs(&id, notifications);
+                    }
+                    if let Some(id) = run_now_cron_id {
+                        self.run_cron_now(&id, notifications);
+                    }
+                    if let Some(id) = edit_cron_id {
+                        self.open_edit_form(&id);
+                    }
+                    if let Some((id, enabled)) = toggle_cron {
+                        self.set_enabled(&id, enabled, notifications);
+                    }
+                    if let Some(id) = delete_cron_id {
+                        self.delete_confirm_id = Some(id);
+                    }
                 }
             });
 

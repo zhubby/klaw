@@ -4,8 +4,8 @@ use crate::{
     util::{now_ms, relative_or_absolute_jsonl},
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
     CronTaskRun, CronTaskStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary,
-    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmUsageRecord, SessionIndex,
-    SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
+    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmUsageRecord, SessionIndex, SessionStorage,
+    StorageError, StoragePaths, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -1398,7 +1398,9 @@ fn row_to_llm_usage(row: &Row) -> Result<LlmUsageRecord, StorageError> {
         reasoning_tokens: value_to_opt_i64(row.get_value(12).map_err(StorageError::backend)?)?,
         source,
         provider_request_id: value_to_opt_string(row.get_value(14).map_err(StorageError::backend)?),
-        provider_response_id: value_to_opt_string(row.get_value(15).map_err(StorageError::backend)?),
+        provider_response_id: value_to_opt_string(
+            row.get_value(15).map_err(StorageError::backend)?,
+        ),
         created_at_ms: value_to_i64(row.get_value(16).map_err(StorageError::backend)?)?,
     })
 }

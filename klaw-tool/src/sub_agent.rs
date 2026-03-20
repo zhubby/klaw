@@ -297,9 +297,9 @@ impl Tool for SubAgentTool {
             AgentExecutionError::ToolLoopExhausted => ToolError::ExecutionFailed(
                 "sub-agent exceeded iteration/tool-call limits".to_string(),
             ),
-            AgentExecutionError::BudgetExceeded { .. } => ToolError::ExecutionFailed(
-                "sub-agent exceeded token budget".to_string(),
-            ),
+            AgentExecutionError::BudgetExceeded { .. } => {
+                ToolError::ExecutionFailed("sub-agent exceeded token budget".to_string())
+            }
         })?;
 
         Ok(ToolOutput {

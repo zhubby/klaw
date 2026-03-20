@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
+use egui_extras::{Column, TableBuilder};
 use klaw_approval::{
     ApprovalListQuery, ApprovalManager, ApprovalResolveDecision, ApprovalStatus,
     SqliteApprovalManager,
@@ -19,6 +20,7 @@ pub struct ApprovalPanel {
     status_filter: String,
     limit_text: String,
     offset_text: String,
+    selected_approval: Option<String>,
 }
 
 impl ApprovalPanel {
@@ -154,56 +156,137 @@ impl PanelRenderer for ApprovalPanel {
                     return;
                 }
 
-                egui::Grid::new("approval-table-grid")
-                    .striped(true)
-                    .num_columns(10)
-                    .spacing([12.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.strong("ID");
-                        ui.strong("Session");
-                        ui.strong("Tool");
-                        ui.strong("Risk");
-                        ui.strong("Status");
-                        ui.strong("Requested By");
-                        ui.strong("Approved By");
-                        ui.strong("Expires At");
-                        ui.strong("Preview");
-                        ui.strong("Actions");
-                        ui.end_row();
+                let available_height = ui.available_height();
+                let mut approve_id: Option<String> = None;
+                let mut reject_id: Option<String> = None;
+                let mut consume_id: Option<String> = None;
 
-                        let approvals = self.approvals.clone();
-                        for approval in approvals {
-                            ui.label(&approval.id);
-                            ui.label(&approval.session_key);
-                            ui.label(&approval.tool_name);
-                            ui.label(&approval.risk_level);
-                            ui.label(approval.status.as_str());
-                            ui.label(&approval.requested_by);
-                            ui.label(approval.approved_by.as_deref().unwrap_or(""));
-                            ui.label(format_timestamp_millis(approval.expires_at_ms));
-                            ui.label(&approval.command_preview);
-                            ui.horizontal(|ui| {
-                                if ui.small_button("Approve").clicked() {
-                                    self.resolve(
-                                        &approval.id,
-                                        ApprovalResolveDecision::Approve,
-                                        notifications,
-                                    );
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::auto().at_least(100.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::auto().at_least(60.0))
+                    .column(Column::auto().at_least(70.0))
+                    .column(Column::auto().at_least(100.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::auto().at_least(120.0))
+                    .column(Column::remainder().at_least(150.0))
+                    .min_scrolled_height(0.0)
+                    .max_scroll_height(available_height)
+                    .sense(egui::Sense::click())
+                    .header(20.0, |mut header| {
+                        header.col(|ui| {
+                            ui.strong("ID");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Session");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Tool");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Risk");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Status");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Requested By");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Approved By");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Expires At");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Preview");
+                        });
+                    })
+                    .body(|body| {
+                        body.rows(20.0, self.approvals.len(), |mut row| {
+                            let idx = row.index();
+                            let approval = &self.approvals[idx];
+                            let is_selected =
+                                self.selected_approval.as_deref() == Some(&approval.id);
+
+                            row.set_selected(is_selected);
+
+                            row.col(|ui| {
+                                ui.label(&approval.id);
+                            });
+                            row.col(|ui| {
+                                ui.label(&approval.session_key);
+                            });
+                            row.col(|ui| {
+                                ui.label(&approval.tool_name);
+                            });
+                            row.col(|ui| {
+                                ui.label(&approval.risk_level);
+                            });
+                            row.col(|ui| {
+                                ui.label(approval.status.as_str());
+                            });
+                            row.col(|ui| {
+                                ui.label(&approval.requested_by);
+                            });
+                            row.col(|ui| {
+                                ui.label(approval.approved_by.as_deref().unwrap_or(""));
+                            });
+                            row.col(|ui| {
+                                ui.label(format_timestamp_millis(approval.expires_at_ms));
+                            });
+                            row.col(|ui| {
+                                ui.label(&approval.command_preview);
+                            });
+
+                            let response = row.response();
+
+                            if response.clicked() {
+                                self.selected_approval = if is_selected {
+                                    None
+                                } else {
+                                    Some(approval.id.clone())
+                                };
+                            }
+
+                            response.context_menu(|ui| {
+                                if ui.button("Approve").clicked() {
+                                    approve_id = Some(approval.id.clone());
+                                    ui.close();
                                 }
-                                if ui.small_button("Reject").clicked() {
-                                    self.resolve(
-                                        &approval.id,
-                                        ApprovalResolveDecision::Reject,
-                                        notifications,
-                                    );
+                                if ui.button("Reject").clicked() {
+                                    reject_id = Some(approval.id.clone());
+                                    ui.close();
                                 }
-                                if ui.small_button("Consume").clicked() {
-                                    self.consume(&approval.id, notifications);
+                                if ui.button("Consume").clicked() {
+                                    consume_id = Some(approval.id.clone());
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui.button("Copy ID").clicked() {
+                                    ui.ctx().output_mut(|o| {
+                                        o.commands.push(egui::OutputCommand::CopyText(
+                                            approval.id.clone(),
+                                        ));
+                                    });
+                                    ui.close();
                                 }
                             });
-                            ui.end_row();
-                        }
+                        });
                     });
+
+                if let Some(id) = approve_id {
+                    self.resolve(&id, ApprovalResolveDecision::Approve, notifications);
+                }
+                if let Some(id) = reject_id {
+                    self.resolve(&id, ApprovalResolveDecision::Reject, notifications);
+                }
+                if let Some(id) = consume_id {
+                    self.consume(&id, notifications);
+                }
             });
     }
 }

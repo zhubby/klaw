@@ -56,7 +56,11 @@ fn resolve_tokenizer(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
-    let candidate = explicit.or_else(|| default_tokenizer_candidates(provider, model).into_iter().find(|path| path.exists()))?;
+    let candidate = explicit.or_else(|| {
+        default_tokenizer_candidates(provider, model)
+            .into_iter()
+            .find(|path| path.exists())
+    })?;
     let cache = TOKENIZER_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(existing) = cache
         .lock()
@@ -128,10 +132,7 @@ fn heuristic_token_count(text: &str) -> u64 {
     }
     let bytes = text.len() as u64;
     let words = text.split_whitespace().count() as u64;
-    let punctuation = text
-        .chars()
-        .filter(|ch| ch.is_ascii_punctuation())
-        .count() as u64;
+    let punctuation = text.chars().filter(|ch| ch.is_ascii_punctuation()).count() as u64;
     let estimate = bytes
         .saturating_add(3)
         .saturating_div(4)

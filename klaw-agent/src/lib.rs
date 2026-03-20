@@ -141,10 +141,7 @@ pub enum AgentExecutionError {
     #[error("tool loop exhausted")]
     ToolLoopExhausted,
     #[error("token budget exceeded: used {used_tokens} > budget {token_budget}")]
-    BudgetExceeded {
-        used_tokens: u64,
-        token_budget: u64,
-    },
+    BudgetExceeded { used_tokens: u64, token_budget: u64 },
 }
 
 #[derive(Debug, Error)]

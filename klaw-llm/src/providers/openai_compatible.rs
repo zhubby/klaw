@@ -173,7 +173,10 @@ impl OpenAiCompatibleProvider {
             })
             .collect();
 
-        let usage = payload.usage.as_ref().map(|value| map_chat_completion_usage(value.clone()));
+        let usage = payload
+            .usage
+            .as_ref()
+            .map(|value| map_chat_completion_usage(value.clone()));
         let mut response = LlmResponse {
             content,
             reasoning,

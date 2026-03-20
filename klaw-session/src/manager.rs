@@ -248,7 +248,10 @@ impl SessionManager for SqliteSessionManager {
     ) -> Result<Vec<LlmUsageRecord>, SessionError> {
         let limit = query.limit.max(1);
         let offset = query.offset.max(0);
-        Ok(self.store.list_llm_usage(session_key, limit, offset).await?)
+        Ok(self
+            .store
+            .list_llm_usage(session_key, limit, offset)
+            .await?)
     }
 
     async fn sum_llm_usage_by_session(

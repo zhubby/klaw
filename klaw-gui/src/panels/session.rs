@@ -48,7 +48,9 @@ impl SessionPanel {
             let sessions = manager.list_sessions(query).await?;
             let mut rows = Vec::with_capacity(sessions.len());
             for session in sessions {
-                let usage = manager.sum_llm_usage_by_session(&session.session_key).await?;
+                let usage = manager
+                    .sum_llm_usage_by_session(&session.session_key)
+                    .await?;
                 rows.push(SessionRow { session, usage });
             }
             Ok(rows)
