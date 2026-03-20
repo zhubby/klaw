@@ -88,6 +88,7 @@ impl DirState {
 pub struct SystemPanel {
     paths: Option<StoragePaths>,
     dirs: [DirState; 7],
+    clear_confirm: Option<DirKind>,
 }
 
 impl SystemPanel {
@@ -231,6 +232,47 @@ impl SystemPanel {
         }
     }
 
+    fn render_clear_confirm_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        _notifications: &mut NotificationCenter,
+    ) {
+        let Some(kind) = self.clear_confirm else {
+            return;
+        };
+
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        egui::Window::new(format!("Clear {} directory", kind.title()))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Are you sure you want to clear the {} directory?",
+                    kind.title()
+                ));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Clear").clicked() {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            self.clear_dir(kind);
+            self.clear_confirm = None;
+        }
+        if cancelled {
+            self.clear_confirm = None;
+        }
+    }
+
     fn render_section(&mut self, ui: &mut egui::Ui, kind: DirKind) {
         ui.strong(kind.title());
         ui.add_space(4.0);
@@ -273,7 +315,7 @@ impl SystemPanel {
                 .on_hover_text(format!("Clear {} directory", kind.title()))
                 .clicked()
             {
-                self.clear_dir(kind);
+                self.clear_confirm = Some(kind);
             }
         });
 
@@ -326,6 +368,8 @@ impl PanelRenderer for SystemPanel {
                 ui.separator();
                 self.render_section(ui, DirKind::SkillsRegistry);
             });
+
+        self.render_clear_confirm_dialog(ui.ctx(), notifications);
     }
 }
 
