@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::widgets::ArrayEditor;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig};
 use std::path::{Path, PathBuf};
 
@@ -12,7 +13,7 @@ struct DingtalkForm {
     client_secret: String,
     bot_title: String,
     show_reasoning: bool,
-    allowlist_text: String,
+    allowlist_input: ArrayEditor,
     proxy_enabled: bool,
     proxy_url: String,
 }
@@ -28,7 +29,7 @@ impl DingtalkForm {
             client_secret: default.client_secret,
             bot_title: default.bot_title,
             show_reasoning: default.show_reasoning,
-            allowlist_text: String::new(),
+            allowlist_input: ArrayEditor::new("Allowlist"),
             proxy_enabled: default.proxy.enabled,
             proxy_url: default.proxy.url,
         }
@@ -43,7 +44,7 @@ impl DingtalkForm {
             client_secret: account.client_secret.clone(),
             bot_title: account.bot_title.clone(),
             show_reasoning: account.show_reasoning,
-            allowlist_text: account.allowlist.join("\n"),
+            allowlist_input: ArrayEditor::from_vec("Allowlist", &account.allowlist),
             proxy_enabled: account.proxy.enabled,
             proxy_url: account.proxy.url.clone(),
         }
@@ -61,15 +62,6 @@ impl DingtalkForm {
         self.id.trim().to_string()
     }
 
-    fn allowlist(&self) -> Vec<String> {
-        self.allowlist_text
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_string)
-            .collect()
-    }
-
     fn to_config(&self) -> DingtalkConfig {
         DingtalkConfig {
             id: self.normalized_id(),
@@ -78,7 +70,7 @@ impl DingtalkForm {
             client_secret: self.client_secret.trim().to_string(),
             bot_title: self.bot_title.trim().to_string(),
             show_reasoning: self.show_reasoning,
-            allowlist: self.allowlist(),
+            allowlist: self.allowlist_input.to_vec(),
             proxy: DingtalkProxyConfig {
                 enabled: self.proxy_enabled,
                 url: self.proxy_url.trim().to_string(),
@@ -94,7 +86,8 @@ pub struct ChannelPanel {
     revision: Option<u64>,
     config: AppConfig,
     form: Option<DingtalkForm>,
-    disable_session_commands_text: String,
+    show_disabled_dialog: bool,
+    disable_session_commands_input: ArrayEditor,
 }
 
 impl ChannelPanel {
@@ -116,11 +109,10 @@ impl ChannelPanel {
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
         self.config_path = Some(snapshot.path);
         self.revision = Some(snapshot.revision);
-        self.disable_session_commands_text = snapshot
-            .config
-            .channels
-            .disable_session_commands_for
-            .join("\n");
+        self.disable_session_commands_input = ArrayEditor::from_vec(
+            "Disable Session Commands For",
+            &snapshot.config.channels.disable_session_commands_for,
+        );
         self.config = snapshot.config;
     }
 
@@ -185,13 +177,7 @@ impl ChannelPanel {
 
     fn save_disable_session_commands(&mut self, notifications: &mut NotificationCenter) {
         let mut next = self.config.clone();
-        next.channels.disable_session_commands_for = self
-            .disable_session_commands_text
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_string)
-            .collect();
+        next.channels.disable_session_commands_for = self.disable_session_commands_input.to_vec();
         self.save_config(next, notifications, "Updated disable_session_commands_for");
     }
 
@@ -295,12 +281,7 @@ impl ChannelPanel {
                     });
 
                 ui.separator();
-                ui.label("Allowlist (one entry per line)");
-                ui.add(
-                    egui::TextEdit::multiline(&mut form.allowlist_text)
-                        .desired_rows(5)
-                        .desired_width(f32::INFINITY),
-                );
+                form.allowlist_input.show(ui);
 
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -318,6 +299,42 @@ impl ChannelPanel {
         }
         if cancel_clicked {
             self.form = None;
+        }
+    }
+
+    fn render_disabled_dialog(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+    ) {
+        let mut save_clicked = false;
+        let mut cancel_clicked = false;
+
+        egui::Window::new("Set Disabled Channels")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(true)
+            .show(ui.ctx(), |ui| {
+                ui.set_min_width(400.0);
+                self.disable_session_commands_input.show(ui);
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        save_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                });
+            });
+
+        if save_clicked {
+            self.save_disable_session_commands(notifications);
+            self.show_disabled_dialog = false;
+        }
+        if cancel_clicked {
+            self.show_disabled_dialog = false;
         }
     }
 }
@@ -343,6 +360,9 @@ impl PanelRenderer for ChannelPanel {
         ui.separator();
 
         ui.horizontal(|ui| {
+            if ui.button("Set Disabled Channels").clicked() {
+                self.show_disabled_dialog = true;
+            }
             if ui.button("Add Dingtalk").clicked() {
                 self.open_add_channel();
             }
@@ -412,18 +432,10 @@ impl PanelRenderer for ChannelPanel {
                 });
         }
 
-        ui.separator();
-        ui.label("disable_session_commands_for (one channel per line)");
-        ui.add(
-            egui::TextEdit::multiline(&mut self.disable_session_commands_text)
-                .desired_rows(4)
-                .desired_width(f32::INFINITY),
-        );
-        if ui.button("Save Disabled Channel List").clicked() {
-            self.save_disable_session_commands(notifications);
-        }
-
         self.render_form_window(ui, notifications);
+        if self.show_disabled_dialog {
+            self.render_disabled_dialog(ui, notifications);
+        }
     }
 }
 

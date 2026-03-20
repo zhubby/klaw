@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ArrayEditor {
     entries: Vec<String>,
     new_value: String,
