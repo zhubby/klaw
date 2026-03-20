@@ -1,7 +1,9 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use egui::RichText;
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillsRegistryConfig};
 use klaw_skill::RegistrySyncReport;
 use klaw_skill::{
@@ -80,6 +82,7 @@ pub struct SkillsRegistryPanel {
     syncing_registry: Option<String>,
     sync_result_rx: Option<Receiver<(String, Result<RegistrySyncReport, String>)>>,
     selected_registry: Option<String>,
+    delete_confirm_id: Option<String>,
 }
 
 impl SkillsRegistryPanel {
@@ -273,6 +276,49 @@ impl SkillsRegistryPanel {
         }
     }
 
+    fn delete_registry(&mut self, name: &str, notifications: &mut NotificationCenter) {
+        let Some(store) = self.store.as_ref() else {
+            notifications.error("Configuration store is not available");
+            return;
+        };
+
+        if !self.config.skills.registries.contains_key(name) {
+            notifications.error(format!("Skills registry `{name}` not found"));
+            return;
+        }
+
+        let mut next = self.config.clone();
+        next.skills.registries.remove(name);
+
+        match toml::to_string_pretty(&next) {
+            Ok(raw) => match store.save_raw_toml(&raw) {
+                Ok(snapshot) => {
+                    self.apply_snapshot(snapshot);
+                    self.selected_registry = None;
+                    notifications.success(format!("Skills registry `{name}` deleted"));
+                    Self::request_runtime_skills_reload(notifications);
+                    self.cleanup_registry_manifest(name, notifications);
+                }
+                Err(err) => notifications.error(format!("Save failed: {err}")),
+            },
+            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+        }
+    }
+
+    fn cleanup_registry_manifest(&mut self, registry_name: &str, notifications: &mut NotificationCenter) {
+        let registry_name = registry_name.to_string();
+        match run_skill_task(move |store| async move {
+            store.cleanup_registry(&registry_name).await
+        }) {
+            Ok(count) => {
+                if count > 0 {
+                    notifications.info(format!("Cleaned {count} installed skills from manifest"));
+                }
+            }
+            Err(err) => notifications.warning(format!("Failed to cleanup registry manifest: {err}")),
+        }
+    }
+
     fn save_form(&mut self, notifications: &mut NotificationCenter) {
         let Some(form) = self.form.as_ref() else {
             return;
@@ -372,6 +418,53 @@ impl SkillsRegistryPanel {
             self.form = None;
         }
     }
+
+    fn render_delete_confirm_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some(registry_name) = self.delete_confirm_id.clone() else {
+            return;
+        };
+
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        egui::Window::new("Delete Skills Registry")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Are you sure you want to delete registry '{}'?",
+                    registry_name
+                ));
+                ui.label("This will remove the registry from configuration and clean up installed skills from the manifest.");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(
+                            RichText::new("Delete").color(ui.visuals().warn_fg_color),
+                        )
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            self.delete_registry(&registry_name, notifications);
+            self.delete_confirm_id = None;
+        }
+        if cancelled {
+            self.delete_confirm_id = None;
+        }
+    }
 }
 
 impl PanelRenderer for SkillsRegistryPanel {
@@ -422,6 +515,7 @@ impl PanelRenderer for SkillsRegistryPanel {
         } else {
             let mut edit_registry_name: Option<String> = None;
             let mut sync_registry_name: Option<String> = None;
+            let mut delete_registry_name: Option<String> = None;
 
             let registry_names = self
                 .config
@@ -498,21 +592,41 @@ impl PanelRenderer for SkillsRegistryPanel {
                         let name_clone = name.clone();
                         response.context_menu(|ui| {
                             if ui
-                                .add_enabled(!is_syncing, egui::Button::new("Sync"))
+                                .add_enabled(
+                                    !is_syncing,
+                                    egui::Button::new(format!("{} Sync", regular::ARROW_CLOCKWISE)),
+                                )
                                 .clicked()
                             {
                                 sync_registry_name = Some(name_clone.clone());
                                 ui.close();
                             }
-                            if ui.button("Edit").clicked() {
-                                edit_registry_name = Some(name_clone);
+                            if ui
+                                .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                .clicked()
+                            {
+                                edit_registry_name = Some(name_clone.clone());
                                 ui.close();
                             }
                             ui.separator();
-                            if ui.button("Copy Name").clicked() {
+                            if ui
+                                .button(format!("{} Copy Name", regular::COPY))
+                                .clicked()
+                            {
                                 ui.ctx().output_mut(|o| {
                                     o.commands.push(egui::OutputCommand::CopyText(name.clone()));
                                 });
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui
+                                .button(
+                                    RichText::new(format!("{} Delete", regular::TRASH))
+                                        .color(ui.visuals().warn_fg_color),
+                                )
+                                .clicked()
+                            {
+                                delete_registry_name = Some(name_clone);
                                 ui.close();
                             }
                         });
@@ -525,9 +639,49 @@ impl PanelRenderer for SkillsRegistryPanel {
             if let Some(name) = sync_registry_name {
                 self.sync_registry(&name, notifications);
             }
+            if let Some(name) = delete_registry_name {
+                self.delete_confirm_id = Some(name);
+            }
         }
 
+        self.render_delete_confirm_dialog(ui.ctx(), notifications);
         self.render_form_window(ui, notifications);
+    }
+}
+
+fn run_skill_sync_task(
+    source: RegistrySource,
+    installed: Vec<InstalledSkill>,
+    timeout: u64,
+) -> Result<klaw_skill::RegistrySyncReport, String> {
+    run_skill_task(move |store| async move {
+        store
+            .sync_registry_installed_skills(&[source], &installed, timeout)
+            .await
+    })
+}
+
+fn run_skill_task<T, F, Fut>(op: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(FileSystemSkillStore) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T, klaw_skill::SkillError>> + Send + 'static,
+{
+    let join = thread::spawn(move || {
+        let store = open_default_skills_manager()
+            .map_err(|err| format!("failed to open skills manager: {err}"))?;
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to build runtime: {err}"))?;
+        runtime
+            .block_on(op(store))
+            .map_err(|err| format!("skill operation failed: {err}"))
+    });
+
+    match join.join() {
+        Ok(result) => result,
+        Err(_) => Err("skill operation thread panicked".to_string()),
     }
 }
 
@@ -588,41 +742,5 @@ mod tests {
             updated.skills.registries["private"].address,
             "https://example.com/v2"
         );
-    }
-}
-
-fn run_skill_sync_task(
-    source: RegistrySource,
-    installed: Vec<InstalledSkill>,
-    timeout: u64,
-) -> Result<klaw_skill::RegistrySyncReport, String> {
-    run_skill_task(move |store| async move {
-        store
-            .sync_registry_installed_skills(&[source], &installed, timeout)
-            .await
-    })
-}
-
-fn run_skill_task<T, F, Fut>(op: F) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: FnOnce(FileSystemSkillStore) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<T, klaw_skill::SkillError>> + Send + 'static,
-{
-    let join = thread::spawn(move || {
-        let store = open_default_skills_manager()
-            .map_err(|err| format!("failed to open skills manager: {err}"))?;
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|err| format!("failed to build runtime: {err}"))?;
-        runtime
-            .block_on(op(store))
-            .map_err(|err| format!("skill operation failed: {err}"))
-    });
-
-    match join.join() {
-        Ok(result) => result,
-        Err(_) => Err("skill operation thread panicked".to_string()),
     }
 }

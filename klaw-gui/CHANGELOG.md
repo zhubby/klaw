@@ -2,6 +2,13 @@
 
 ## 2026-03-20
 
+### Added
+
+- skills registry panel right-click context menu now includes `Delete` option with confirmation dialog
+- skills registry panel context menu items now show icons (Sync, Edit, Copy Name, Delete)
+- delete option in skills registry context menu uses red warning color for visibility
+- `cleanup_registry` API in `klaw-skill` to remove registry-related entries from installed skills manifest
+
 ### Changed
 
 - workbench tabs now stay on a single row with horizontal scrolling when they overflow, and the tab strip hides its scrollbar

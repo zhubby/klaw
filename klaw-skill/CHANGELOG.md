@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-20
+
+### Added
+- added `cleanup_registry` method to `FileSystemSkillStore` to remove all installed skills and registry metadata for a given registry name
+
 ## 2026-03-18
 
 ### Changed

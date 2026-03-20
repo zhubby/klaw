@@ -728,6 +728,26 @@ where
         Ok(())
     }
 
+    pub async fn cleanup_registry(&self, registry: &str) -> Result<usize, SkillError> {
+        let registry_name = registry.trim();
+        if registry_name.is_empty() {
+            return Err(SkillError::InvalidSkillName(
+                "registry name cannot be empty".to_string(),
+            ));
+        }
+
+        let mut manifest = self.load_installed_manifest().await?;
+        let before_len = manifest.managed.len();
+        manifest.managed.retain(|item| item.registry != registry_name);
+        manifest.registry_commits.remove(registry_name);
+        manifest.stale_registries.remove(registry_name);
+        let removed_count = before_len - manifest.managed.len();
+        if removed_count > 0 {
+            self.write_installed_manifest(&manifest).await?;
+        }
+        Ok(removed_count)
+    }
+
     pub async fn uninstall(&self, skill_name: &str) -> Result<SkillUninstallResult, SkillError> {
         let name = Self::validate_skill_name(skill_name)?;
         let mut manifest = self.load_installed_manifest().await?;
