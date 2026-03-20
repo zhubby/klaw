@@ -30,6 +30,7 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.shell.allow_login_shell);
     assert_eq!(parsed.tools.shell.max_timeout_ms, 120_000);
     assert_eq!(parsed.tools.shell.max_output_bytes, 128 * 1024);
+    assert!(parsed.tools.archive.enabled);
     assert!(parsed.tools.shell.enabled);
     assert!(parsed.tools.approval.enabled);
     assert!(parsed.tools.local_search.enabled);

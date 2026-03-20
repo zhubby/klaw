@@ -79,7 +79,7 @@ allowed_roots = ["/allowed/root"] # 允许的额外根目录
 
 1. 优先从 `ctx.metadata["workspace"]` 获取工作空间
 2. 否则使用配置中的 `workspace` 字段
-3. 最后回退到数据目录下的 `workspace`：`(<storage.root_dir 或 ~/.klaw/data>)/workspace`
+3. 最后回退到数据目录下的 `workspace`：`(<storage.root_dir 或 ~/.klaw>)/workspace`
 
 ### 路径验证规则
 

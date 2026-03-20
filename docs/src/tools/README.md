@@ -19,6 +19,7 @@ pub trait Tool: Send + Sync {
 
 基础执行能力，默认启用：
 
+- [Archive](./built-in/archive.md) - 读取当前消息附件的 archive 句柄、只读读取归档文件、复制到 workspace
 - [Shell](./built-in/shell.md) - 可控的 shell 执行，支持审批和风险分级
 - [Apply Patch](./built-in/apply_patch.md) - 批量文件编辑（添加、更新、删除、移动）
 - [本地搜索](./built-in/local_search.md) - 基于 ripgrep 的代码检索
@@ -44,6 +45,9 @@ pub trait Tool: Send + Sync {
 在 `~/.klaw/config.toml` 中配置：
 
 ```toml
+[tools.archive]
+enabled = true
+
 [tools.shell]
 enabled = true
 approval_policy = "on_request"

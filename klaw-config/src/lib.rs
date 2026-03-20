@@ -352,6 +352,8 @@ impl Default for ModelProviderConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolsConfig {
     #[serde(default)]
+    pub archive: ArchiveToolConfig,
+    #[serde(default)]
     pub apply_patch: ApplyPatchConfig,
     #[serde(default)]
     pub shell: ShellConfig,
@@ -379,6 +381,30 @@ pub struct ToolsConfig {
 
 pub trait ToolEnabled {
     fn enabled(&self) -> bool;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchiveToolConfig {
+    #[serde(default = "default_archive_tool_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for ArchiveToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_archive_tool_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for ArchiveToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_archive_tool_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

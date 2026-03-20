@@ -3362,7 +3362,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "hex",
- "klaw-core",
  "klaw-storage",
  "serde",
  "serde_json",
@@ -3642,6 +3641,7 @@ dependencies = [
  "ipnet",
  "klaw-agent",
  "klaw-approval",
+ "klaw-archive",
  "klaw-config",
  "klaw-llm",
  "klaw-memory",

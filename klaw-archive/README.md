@@ -8,6 +8,7 @@
 - Index archived files in `archive.db`
 - Detect common media types from file signatures
 - Expose a backend-agnostic archive service trait for future tools and channel integrations
+- Keep archive domain types independent from `klaw-core`; callers map their own source enums into `ArchiveSourceKind`
 
 ## Storage Layout
 

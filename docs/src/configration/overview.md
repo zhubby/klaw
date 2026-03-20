@@ -61,7 +61,7 @@ provider = "tavily"
 
 # 存储配置
 [storage]
-root_dir = "~/.klaw/data"
+root_dir = "~/.klaw"
 
 # 定时任务配置
 [cron]

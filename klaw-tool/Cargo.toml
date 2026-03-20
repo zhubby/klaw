@@ -15,6 +15,7 @@ klaw-config = { workspace = true }
 klaw-agent = { workspace = true }
 klaw-llm = { workspace = true }
 klaw-approval = { workspace = true }
+klaw-archive = { workspace = true }
 klaw-memory = { workspace = true }
 klaw-storage = { workspace = true }
 klaw-skill = { workspace = true }

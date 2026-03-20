@@ -1,14 +1,21 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
+use egui::{ColorImage, TextureHandle};
 use egui_extras::{Column, TableBuilder};
 use klaw_archive::{
-    open_default_archive_service, ArchiveError, ArchiveMediaKind, ArchiveQuery, ArchiveRecord,
-    ArchiveService, ArchiveSourceKind, SqliteArchiveService,
+    open_default_archive_service, ArchiveBlob, ArchiveError, ArchiveMediaKind, ArchiveQuery,
+    ArchiveRecord, ArchiveService, ArchiveSourceKind, SqliteArchiveService,
 };
+use std::ffi::OsStr;
+use std::fs;
 use std::future::Future;
+use std::path::Path;
 use std::thread;
 use tokio::runtime::Builder;
+use uuid::Uuid;
+
+const MAX_PREVIEW_TEXT_CHARS: usize = 200_000;
 
 #[derive(Default)]
 pub struct ArchivePanel {
@@ -22,6 +29,7 @@ pub struct ArchivePanel {
     media_kind_filter: String,
     limit_text: String,
     offset_text: String,
+    preview: Option<ArchivePreview>,
 }
 
 impl ArchivePanel {
@@ -75,6 +83,29 @@ impl ArchivePanel {
     fn selected_item(&self) -> Option<&ArchiveRecord> {
         let detail_id = self.detail_id.as_deref()?;
         self.items.iter().find(|item| item.id == detail_id)
+    }
+
+    fn open_preview(
+        &mut self,
+        ctx: &egui::Context,
+        item: &ArchiveRecord,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some(capability) = preview_capability_for_record(item) else {
+            return;
+        };
+
+        self.preview = None;
+        let archive_id = item.id.clone();
+        match run_archive_task(
+            move |service| async move { service.open_download(&archive_id).await },
+        ) {
+            Ok(blob) => match build_preview(ctx, blob, capability) {
+                Ok(preview) => self.preview = Some(preview),
+                Err(err) => notifications.error(format!("Failed to preview archive: {err}")),
+            },
+            Err(err) => notifications.error(format!("Failed to open archive for preview: {err}")),
+        }
     }
 }
 
@@ -130,6 +161,7 @@ impl PanelRenderer for ArchivePanel {
             } else {
                 let available_height = ui.available_height();
                 let mut view_detail_id: Option<String> = None;
+                let mut preview_item: Option<ArchiveRecord> = None;
 
                 TableBuilder::new(ui)
                     .striped(true)
@@ -208,12 +240,19 @@ impl PanelRenderer for ArchivePanel {
                             }
 
                             let item_id = item.id.clone();
+                            let can_preview = preview_capability_for_record(item).is_some();
                             response.context_menu(|ui| {
+                                if can_preview && ui.button("Preview").clicked() {
+                                    preview_item = Some(item.clone());
+                                    ui.close();
+                                }
                                 if ui.button("Details").clicked() {
                                     view_detail_id = Some(item_id.clone());
                                     ui.close();
                                 }
-                                ui.separator();
+                                if can_preview {
+                                    ui.separator();
+                                }
                                 if ui.button("Copy ID").clicked() {
                                     ui.ctx().output_mut(|o| {
                                         o.commands
@@ -227,6 +266,9 @@ impl PanelRenderer for ArchivePanel {
 
                 if let Some(id) = view_detail_id {
                     self.detail_id = Some(id);
+                }
+                if let Some(item) = preview_item {
+                    self.open_preview(ui.ctx(), &item, notifications);
                 }
             }
         });
@@ -275,7 +317,380 @@ impl PanelRenderer for ArchivePanel {
                     }
                 });
         }
+
+        if let Some(preview) = &mut self.preview {
+            let mut open = true;
+            egui::Window::new(format!("Preview: {}", preview.title))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .default_width(840.0)
+                .default_height(640.0)
+                .resizable(true)
+                .open(&mut open)
+                .show(ui.ctx(), |ui| {
+                    ui.label(format!("ID: {}", preview.archive_id));
+                    if let Some(mime_type) = &preview.mime_type {
+                        ui.label(format!("MIME: {mime_type}"));
+                    }
+                    ui.label(format!("Path: {}", preview.storage_rel_path));
+                    if let Some(note) = &preview.note {
+                        ui.label(note);
+                    }
+                    ui.separator();
+
+                    match &mut preview.content {
+                        ArchivePreviewContent::Text(text) => {
+                            egui::ScrollArea::both()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::TextEdit::multiline(text)
+                                            .desired_width(f32::INFINITY)
+                                            .desired_rows(30)
+                                            .interactive(false),
+                                    );
+                                });
+                        }
+                        ArchivePreviewContent::Image(texture) => {
+                            let source_size = texture.size_vec2();
+                            egui::ScrollArea::both()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    let available = ui.available_size();
+                                    let width_scale = if source_size.x > 0.0 {
+                                        available.x / source_size.x
+                                    } else {
+                                        1.0
+                                    };
+                                    let scale = width_scale.clamp(0.1, 1.0);
+                                    let desired_size = source_size * scale;
+                                    ui.add(
+                                        egui::Image::from_texture(&*texture)
+                                            .fit_to_exact_size(desired_size),
+                                    );
+                                });
+                        }
+                    }
+                });
+            if !open {
+                self.preview = None;
+            }
+        }
     }
+}
+
+struct ArchivePreview {
+    archive_id: String,
+    title: String,
+    mime_type: Option<String>,
+    storage_rel_path: String,
+    note: Option<String>,
+    content: ArchivePreviewContent,
+}
+
+enum ArchivePreviewContent {
+    Text(String),
+    Image(TextureHandle),
+}
+
+#[derive(Clone, Copy)]
+enum PreviewCapability {
+    Text,
+    Image,
+    QuickLookThumbnail,
+}
+
+fn build_preview(
+    ctx: &egui::Context,
+    blob: ArchiveBlob,
+    capability: PreviewCapability,
+) -> Result<ArchivePreview, String> {
+    let archive_id = blob.record.id.clone();
+    let title = preview_title(&blob.record);
+    let mime_type = blob.record.mime_type.clone();
+    let storage_rel_path = blob.record.storage_rel_path.clone();
+
+    let (content, note) = match capability {
+        PreviewCapability::Text => {
+            let text = String::from_utf8(blob.bytes)
+                .map_err(|_| "archive file is not valid UTF-8 text".to_string())?;
+            let (content, truncated) = truncate_preview_text(&text, MAX_PREVIEW_TEXT_CHARS);
+            let note = truncated
+                .then(|| format!("Text preview truncated to {MAX_PREVIEW_TEXT_CHARS} characters."));
+            (ArchivePreviewContent::Text(content), note)
+        }
+        PreviewCapability::Image => (
+            ArchivePreviewContent::Image(load_texture_from_bytes(
+                ctx,
+                &format!("archive-preview-{archive_id}"),
+                &blob.bytes,
+            )?),
+            None,
+        ),
+        PreviewCapability::QuickLookThumbnail => {
+            let thumbnail = load_quick_look_thumbnail(&blob.absolute_path)?;
+            (
+                ArchivePreviewContent::Image(load_texture_from_bytes(
+                    ctx,
+                    &format!("archive-preview-{archive_id}-quicklook"),
+                    &thumbnail,
+                )?),
+                Some("Preview generated from a system thumbnail.".to_string()),
+            )
+        }
+    };
+
+    Ok(ArchivePreview {
+        archive_id,
+        title,
+        mime_type,
+        storage_rel_path,
+        note,
+        content,
+    })
+}
+
+fn load_texture_from_bytes(
+    ctx: &egui::Context,
+    texture_name: &str,
+    bytes: &[u8],
+) -> Result<TextureHandle, String> {
+    let image = image::load_from_memory(bytes)
+        .map_err(|err| format!("failed to decode preview image: {err}"))?
+        .into_rgba8();
+    let size = [image.width() as usize, image.height() as usize];
+    let color_image = ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+    Ok(ctx.load_texture(
+        texture_name.to_string(),
+        color_image,
+        egui::TextureOptions::LINEAR,
+    ))
+}
+
+fn preview_capability_for_record(record: &ArchiveRecord) -> Option<PreviewCapability> {
+    if is_text_previewable(record) {
+        return Some(PreviewCapability::Text);
+    }
+    if is_image_previewable(record) {
+        return Some(PreviewCapability::Image);
+    }
+    is_quick_look_previewable(record).then_some(PreviewCapability::QuickLookThumbnail)
+}
+
+fn is_text_previewable(record: &ArchiveRecord) -> bool {
+    if record
+        .mime_type
+        .as_deref()
+        .map(|mime| {
+            mime.starts_with("text/")
+                || matches!(
+                    mime,
+                    "application/json"
+                        | "application/ld+json"
+                        | "application/xml"
+                        | "application/x-yaml"
+                        | "application/yaml"
+                        | "application/toml"
+                        | "application/x-toml"
+                        | "application/javascript"
+                )
+        })
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    matches!(
+        record.extension.as_deref().map(normalized_extension),
+        Some(
+            "txt"
+                | "md"
+                | "markdown"
+                | "json"
+                | "yaml"
+                | "yml"
+                | "toml"
+                | "xml"
+                | "csv"
+                | "tsv"
+                | "log"
+                | "ini"
+                | "conf"
+                | "cfg"
+                | "sql"
+                | "html"
+                | "htm"
+                | "css"
+                | "js"
+                | "jsx"
+                | "ts"
+                | "tsx"
+                | "rs"
+                | "py"
+                | "sh"
+                | "bash"
+                | "zsh"
+                | "java"
+                | "kt"
+                | "swift"
+                | "go"
+                | "rb"
+                | "php"
+                | "c"
+                | "h"
+                | "cpp"
+                | "hpp"
+                | "m"
+                | "mm"
+        )
+    )
+}
+
+fn is_image_previewable(record: &ArchiveRecord) -> bool {
+    record.media_kind == ArchiveMediaKind::Image
+        || record
+            .mime_type
+            .as_deref()
+            .map(|mime| mime.starts_with("image/"))
+            .unwrap_or(false)
+        || matches!(
+            record.extension.as_deref().map(normalized_extension),
+            Some(
+                "png"
+                    | "jpg"
+                    | "jpeg"
+                    | "gif"
+                    | "bmp"
+                    | "webp"
+                    | "tif"
+                    | "tiff"
+                    | "ico"
+                    | "heic"
+                    | "heif"
+            )
+        )
+}
+
+#[cfg(target_os = "macos")]
+fn is_quick_look_previewable(record: &ArchiveRecord) -> bool {
+    if matches!(
+        record.media_kind,
+        ArchiveMediaKind::Pdf | ArchiveMediaKind::Video | ArchiveMediaKind::Audio
+    ) {
+        return true;
+    }
+
+    matches!(
+        record.extension.as_deref().map(normalized_extension),
+        Some(
+            "pdf"
+                | "doc"
+                | "docx"
+                | "ppt"
+                | "pptx"
+                | "xls"
+                | "xlsx"
+                | "pages"
+                | "numbers"
+                | "key"
+                | "epub"
+                | "rtf"
+                | "rtfd"
+                | "mov"
+                | "mp4"
+                | "m4v"
+                | "avi"
+                | "mkv"
+                | "webm"
+                | "mp3"
+                | "wav"
+                | "m4a"
+                | "aac"
+                | "flac"
+                | "ogg"
+        )
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_quick_look_previewable(_record: &ArchiveRecord) -> bool {
+    false
+}
+
+fn normalized_extension(extension: &str) -> &str {
+    extension.trim().trim_start_matches('.')
+}
+
+fn preview_title(record: &ArchiveRecord) -> String {
+    record
+        .original_filename
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| record.id.clone())
+}
+
+fn truncate_preview_text(text: &str, max_chars: usize) -> (String, bool) {
+    let mut chars = text.chars();
+    let content: String = chars.by_ref().take(max_chars).collect();
+    (content, chars.next().is_some())
+}
+
+#[cfg(target_os = "macos")]
+fn load_quick_look_thumbnail(path: &Path) -> Result<Vec<u8>, String> {
+    use std::process::Command;
+
+    let output_dir = std::env::temp_dir().join(format!("klaw-archive-preview-{}", Uuid::new_v4()));
+    fs::create_dir_all(&output_dir)
+        .map_err(|err| format!("failed to create preview temp dir: {err}"))?;
+
+    let result = Command::new("qlmanage")
+        .arg("-t")
+        .arg("-s")
+        .arg("1600")
+        .arg("-o")
+        .arg(&output_dir)
+        .arg(path)
+        .output()
+        .map_err(|err| format!("failed to run qlmanage: {err}"));
+
+    let outcome = match result {
+        Ok(output) if output.status.success() => {
+            let preview_path = first_preview_image_path(&output_dir)
+                .ok_or_else(|| "system preview did not produce an image".to_string())?;
+            fs::read(&preview_path)
+                .map_err(|err| format!("failed to read generated preview: {err}"))
+        }
+        Ok(output) => Err(format!(
+            "system preview failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )),
+        Err(err) => Err(err),
+    };
+
+    let _ = fs::remove_dir_all(&output_dir);
+    outcome
+}
+
+#[cfg(not(target_os = "macos"))]
+fn load_quick_look_thumbnail(_path: &Path) -> Result<Vec<u8>, String> {
+    Err("system thumbnail preview is not available on this platform".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn first_preview_image_path(dir: &Path) -> Option<std::path::PathBuf> {
+    fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_file()
+                && matches!(
+                    path.extension()
+                        .and_then(OsStr::to_str)
+                        .map(normalized_extension),
+                    Some("png" | "jpg" | "jpeg")
+                )
+        })
 }
 
 fn run_archive_task<T, F, Fut>(op: F) -> Result<T, String>
@@ -329,4 +744,75 @@ fn parse_media_kind(value: &str) -> Result<Option<ArchiveMediaKind>, String> {
     ArchiveMediaKind::parse(trimmed)
         .map(Some)
         .ok_or_else(|| "media_kind must be one of: pdf, image, video, audio, other".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record_with(
+        media_kind: ArchiveMediaKind,
+        mime_type: Option<&str>,
+        extension: Option<&str>,
+    ) -> ArchiveRecord {
+        ArchiveRecord {
+            id: "arch-1".to_string(),
+            source_kind: ArchiveSourceKind::UserUpload,
+            media_kind,
+            mime_type: mime_type.map(ToOwned::to_owned),
+            extension: extension.map(ToOwned::to_owned),
+            original_filename: Some("sample".to_string()),
+            content_sha256: "sha".to_string(),
+            size_bytes: 128,
+            storage_rel_path: "archives/2026-03-20/arch-1.bin".to_string(),
+            session_key: None,
+            channel: None,
+            chat_id: None,
+            message_id: None,
+            metadata_json: "{}".to_string(),
+            created_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn text_preview_supports_utf8_like_files() {
+        let record = record_with(
+            ArchiveMediaKind::Other,
+            Some("application/json"),
+            Some("json"),
+        );
+        assert!(matches!(
+            preview_capability_for_record(&record),
+            Some(PreviewCapability::Text)
+        ));
+    }
+
+    #[test]
+    fn image_preview_supports_image_records() {
+        let record = record_with(ArchiveMediaKind::Image, Some("image/png"), Some("png"));
+        assert!(matches!(
+            preview_capability_for_record(&record),
+            Some(PreviewCapability::Image)
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn quick_look_preview_supports_pdf() {
+        let record = record_with(ArchiveMediaKind::Pdf, Some("application/pdf"), Some("pdf"));
+        assert!(matches!(
+            preview_capability_for_record(&record),
+            Some(PreviewCapability::QuickLookThumbnail)
+        ));
+    }
+
+    #[test]
+    fn preview_hides_unknown_binary_types() {
+        let record = record_with(
+            ArchiveMediaKind::Other,
+            Some("application/octet-stream"),
+            Some("bin"),
+        );
+        assert!(preview_capability_for_record(&record).is_none());
+    }
 }

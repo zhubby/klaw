@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use klaw_core::MediaSourceKind;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -28,16 +27,6 @@ impl ArchiveSourceKind {
             "channel_inbound" => Some(Self::ChannelInbound),
             "model_generated" => Some(Self::ModelGenerated),
             _ => None,
-        }
-    }
-}
-
-impl From<MediaSourceKind> for ArchiveSourceKind {
-    fn from(value: MediaSourceKind) -> Self {
-        match value {
-            MediaSourceKind::UserUpload => Self::UserUpload,
-            MediaSourceKind::ChannelInbound => Self::ChannelInbound,
-            MediaSourceKind::ModelGenerated => Self::ModelGenerated,
         }
     }
 }

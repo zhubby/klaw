@@ -126,7 +126,7 @@ impl ApplyPatchTool {
             let home = std::env::var("HOME").map_err(|err| {
                 ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}"))
             })?;
-            PathBuf::from(home).join(".klaw").join("data")
+            PathBuf::from(home).join(".klaw")
         };
         let workspace = root.join("workspace");
         fs::create_dir_all(&workspace).map_err(|err| {

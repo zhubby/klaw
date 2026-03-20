@@ -1,9 +1,14 @@
-use crate::{Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
-use futures_util::{SinkExt, StreamExt};
-use klaw_archive::{
-    open_default_archive_service, ArchiveIngestInput, ArchiveService, ArchiveSourceKind,
+use crate::{
+    media::{
+        attach_declared_media_metadata, build_media_reference, first_object_string_value,
+        first_string_value, ingest_media_reference_bytes, resolve_metadata_value_candidates,
+        ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES,
+    },
+    render::{render_agent_output, OutputRenderStyle},
+    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime,
 };
+use futures_util::{SinkExt, StreamExt};
+use klaw_archive::open_default_archive_service;
 use klaw_core::{MediaReference, MediaSourceKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,7 +29,6 @@ const ACCESS_TOKEN_PATH: &str = "/v1.0/oauth2/accessToken";
 const MESSAGE_FILE_DOWNLOAD_PATH: &str = "/v1.0/robot/messageFiles/download";
 const OAPI_MEDIA_UPLOAD_PATH: &str = "/media/upload";
 const OAPI_ASR_TRANSLATE_PATH: &str = "/topapi/asr/voice/translate";
-const INLINE_MEDIA_MAX_BYTES: usize = 20 * 1024 * 1024;
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const WS_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
@@ -449,7 +453,11 @@ impl DingtalkChannel {
             match maybe_output {
                 Ok(Some(output)) => {
                     if let Some(webhook) = card_callback.session_webhook.as_deref() {
-                        let body = render_agent_output(&output, self.config.show_reasoning);
+                        let body = render_agent_output(
+                            &output,
+                            self.config.show_reasoning,
+                            OutputRenderStyle::Markdown,
+                        );
                         if let Err(err) = self
                             .client
                             .send_session_webhook_markdown(webhook, &self.config.bot_title, &body)
@@ -552,7 +560,11 @@ impl DingtalkChannel {
                             error = %err,
                             "failed to send dingtalk approval action card; fallback to markdown"
                         );
-                        let markdown = render_agent_output(&output, self.config.show_reasoning);
+                        let markdown = render_agent_output(
+                            &output,
+                            self.config.show_reasoning,
+                            OutputRenderStyle::Markdown,
+                        );
                         if let Err(err) = self
                             .client
                             .send_session_webhook_markdown(
@@ -570,7 +582,11 @@ impl DingtalkChannel {
                         }
                     }
                 } else {
-                    let body = render_agent_output(&output, self.config.show_reasoning);
+                    let body = render_agent_output(
+                        &output,
+                        self.config.show_reasoning,
+                        OutputRenderStyle::Markdown,
+                    );
                     if let Err(err) = self
                         .client
                         .send_session_webhook_markdown(
@@ -712,20 +728,22 @@ impl DingtalkChannel {
                 }
             }
 
-            let metadata =
-                serde_json::to_value(media.metadata.clone()).unwrap_or_else(|_| Value::Null);
-            let ingest_input = ArchiveIngestInput {
-                source_kind: ArchiveSourceKind::from(media.source_kind),
-                filename: media.filename.clone(),
-                declared_mime_type: media.mime_type.clone(),
-                session_key: Some(session_key.to_string()),
-                channel: Some(self.name().to_string()),
-                chat_id: Some(inbound.chat_id.clone()),
-                message_id: Some(inbound.event_id.clone()),
-                metadata,
-            };
-
-            match archive_service.ingest_bytes(ingest_input, &bytes).await {
+            match ingest_media_reference_bytes(
+                &archive_service,
+                ArchiveMediaIngestContext {
+                    session_key,
+                    channel: self.name(),
+                    chat_id: inbound.chat_id.as_str(),
+                    message_id: inbound.event_id.as_str(),
+                },
+                media,
+                &bytes,
+                DEFAULT_INLINE_MEDIA_MAX_BYTES,
+                "dingtalk.inline_media",
+                "dingtalk.inline_media_skipped_bytes",
+            )
+            .await
+            {
                 Ok(record) => {
                     info!(
                         event_id = inbound.event_id.as_str(),
@@ -736,51 +754,6 @@ impl DingtalkChannel {
                         size_bytes = record.size_bytes,
                         "dingtalk media archived"
                     );
-                    media.message_id = Some(inbound.event_id.clone());
-                    if media.filename.is_none() {
-                        media.filename = record.original_filename.clone();
-                    }
-                    if media.mime_type.is_none() {
-                        media.mime_type = record.mime_type.clone();
-                    }
-                    if bytes.len() <= INLINE_MEDIA_MAX_BYTES {
-                        let mime_for_inline = media
-                            .mime_type
-                            .clone()
-                            .or_else(|| record.mime_type.clone())
-                            .unwrap_or_else(|| "application/octet-stream".to_string());
-                        media.remote_url = Some(format!(
-                            "data:{mime_for_inline};base64,{}",
-                            BASE64_STANDARD.encode(&bytes)
-                        ));
-                        media
-                            .metadata
-                            .insert("dingtalk.inline_media".to_string(), Value::Bool(true));
-                    } else {
-                        media
-                            .metadata
-                            .insert("dingtalk.inline_media".to_string(), Value::Bool(false));
-                        media.metadata.insert(
-                            "dingtalk.inline_media_skipped_bytes".to_string(),
-                            Value::from(bytes.len() as i64),
-                        );
-                    }
-                    media
-                        .metadata
-                        .insert("archive.id".to_string(), Value::String(record.id.clone()));
-                    media.metadata.insert(
-                        "archive.storage_rel_path".to_string(),
-                        Value::String(record.storage_rel_path),
-                    );
-                    media.metadata.insert(
-                        "archive.size_bytes".to_string(),
-                        Value::from(record.size_bytes),
-                    );
-                    if let Some(mime_type) = record.mime_type {
-                        media
-                            .metadata
-                            .insert("archive.mime_type".to_string(), Value::String(mime_type));
-                    }
                 }
                 Err(err) => {
                     warn!(
@@ -1666,6 +1639,17 @@ fn extract_dingtalk_media_references(
                         "dingtalk.richtext_block_type".to_string(),
                         Value::String(block_type),
                     );
+                    let mime_type =
+                        first_object_string_value(block, &["mimeType", "mime_type", "contentType"]);
+                    let file_extension =
+                        first_object_string_value(block, &["fileType", "fileExt", "extension"]);
+                    attach_declared_media_metadata(
+                        &mut item_metadata,
+                        mime_type.as_deref(),
+                        file_extension.as_deref(),
+                        "dingtalk.declared_mime_type",
+                        "dingtalk.file_extension",
+                    );
                     if let Some(download_code) = block
                         .get("downloadCode")
                         .and_then(Value::as_str)
@@ -1688,15 +1672,13 @@ fn extract_dingtalk_media_references(
                             Value::String(picture_download_code.to_string()),
                         );
                     }
-                    Some(MediaReference {
-                        source_kind: MediaSourceKind::ChannelInbound,
+                    Some(build_media_reference(
+                        MediaSourceKind::ChannelInbound,
+                        event_id,
                         filename,
-                        mime_type: None,
-                        remote_url: None,
-                        bytes: None,
-                        message_id: Some(event_id.to_string()),
-                        metadata: item_metadata,
-                    })
+                        mime_type,
+                        item_metadata,
+                    ))
                 })
                 .collect()
         }
@@ -1743,15 +1725,45 @@ fn extract_dingtalk_media_references(
                 .or_else(|| value.pointer("/content/fileName"))
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
-            vec![MediaReference {
-                source_kind: MediaSourceKind::ChannelInbound,
+            let mime_type = first_string_value(
+                value,
+                &[
+                    "/audio/mimeType",
+                    "/audio/contentType",
+                    "/voice/mimeType",
+                    "/voice/contentType",
+                    "/content/mimeType",
+                    "/content/contentType",
+                ],
+            );
+            let file_extension = first_string_value(
+                value,
+                &[
+                    "/audio/fileType",
+                    "/audio/fileExt",
+                    "/audio/extension",
+                    "/voice/fileType",
+                    "/voice/fileExt",
+                    "/voice/extension",
+                    "/content/fileType",
+                    "/content/fileExt",
+                    "/content/extension",
+                ],
+            );
+            attach_declared_media_metadata(
+                &mut metadata,
+                mime_type.as_deref(),
+                file_extension.as_deref(),
+                "dingtalk.declared_mime_type",
+                "dingtalk.file_extension",
+            );
+            vec![build_media_reference(
+                MediaSourceKind::ChannelInbound,
+                event_id,
                 filename,
-                mime_type: None,
-                remote_url: None,
-                bytes: None,
-                message_id: Some(event_id.to_string()),
+                mime_type,
                 metadata,
-            }]
+            )]
         }
         "video" => build_media_references(
             &metadata,
@@ -1776,6 +1788,26 @@ fn extract_dingtalk_media_references(
                     "/content/pictureDownloadCode",
                 ],
             ),
+            first_string_value(
+                value,
+                &[
+                    "/video/mimeType",
+                    "/video/contentType",
+                    "/content/mimeType",
+                    "/content/contentType",
+                ],
+            ),
+            first_string_value(
+                value,
+                &[
+                    "/video/fileType",
+                    "/video/fileExt",
+                    "/video/extension",
+                    "/content/fileType",
+                    "/content/fileExt",
+                    "/content/extension",
+                ],
+            ),
         ),
         "picture" | "image" | "photo" => {
             let filename = value
@@ -1785,6 +1817,36 @@ fn extract_dingtalk_media_references(
                 .or_else(|| value.pointer("/content/fileName"))
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
+            let mime_type = first_string_value(
+                value,
+                &[
+                    "/picture/mimeType",
+                    "/picture/contentType",
+                    "/image/mimeType",
+                    "/image/contentType",
+                    "/photo/mimeType",
+                    "/photo/contentType",
+                    "/content/mimeType",
+                    "/content/contentType",
+                ],
+            );
+            let file_extension = first_string_value(
+                value,
+                &[
+                    "/picture/fileType",
+                    "/picture/fileExt",
+                    "/picture/extension",
+                    "/image/fileType",
+                    "/image/fileExt",
+                    "/image/extension",
+                    "/photo/fileType",
+                    "/photo/fileExt",
+                    "/photo/extension",
+                    "/content/fileType",
+                    "/content/fileExt",
+                    "/content/extension",
+                ],
+            );
             if let Some(download_code) = value
                 .pointer("/picture/downloadCode")
                 .or_else(|| value.pointer("/image/downloadCode"))
@@ -1809,15 +1871,20 @@ fn extract_dingtalk_media_references(
                     Value::String(picture_download_code.to_string()),
                 );
             }
-            vec![MediaReference {
-                source_kind: MediaSourceKind::ChannelInbound,
+            attach_declared_media_metadata(
+                &mut metadata,
+                mime_type.as_deref(),
+                file_extension.as_deref(),
+                "dingtalk.declared_mime_type",
+                "dingtalk.file_extension",
+            );
+            vec![build_media_reference(
+                MediaSourceKind::ChannelInbound,
+                event_id,
                 filename,
-                mime_type: None,
-                remote_url: None,
-                bytes: None,
-                message_id: Some(event_id.to_string()),
+                mime_type,
                 metadata,
-            }]
+            )]
         }
         "file" | "document" | "doc" | "attachment" => build_media_references(
             &metadata,
@@ -1852,6 +1919,41 @@ fn extract_dingtalk_media_references(
                     "/content/pictureDownloadCode",
                 ],
             ),
+            first_string_value(
+                value,
+                &[
+                    "/file/mimeType",
+                    "/file/contentType",
+                    "/document/mimeType",
+                    "/document/contentType",
+                    "/doc/mimeType",
+                    "/doc/contentType",
+                    "/attachment/mimeType",
+                    "/attachment/contentType",
+                    "/content/mimeType",
+                    "/content/contentType",
+                ],
+            ),
+            first_string_value(
+                value,
+                &[
+                    "/file/fileType",
+                    "/file/fileExt",
+                    "/file/extension",
+                    "/document/fileType",
+                    "/document/fileExt",
+                    "/document/extension",
+                    "/doc/fileType",
+                    "/doc/fileExt",
+                    "/doc/extension",
+                    "/attachment/fileType",
+                    "/attachment/fileExt",
+                    "/attachment/extension",
+                    "/content/fileType",
+                    "/content/fileExt",
+                    "/content/extension",
+                ],
+            ),
         ),
         _ => Vec::new(),
     }
@@ -1864,23 +1966,14 @@ fn is_supported_richtext_media_type(block_type: &str) -> bool {
     )
 }
 
-fn first_string_value(value: &Value, pointers: &[&str]) -> Option<String> {
-    pointers.iter().find_map(|pointer| {
-        value
-            .pointer(pointer)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .map(ToOwned::to_owned)
-    })
-}
-
 fn build_media_references(
     metadata: &BTreeMap<String, Value>,
     event_id: &str,
     filename: Option<String>,
     download_code: Option<String>,
     picture_download_code: Option<String>,
+    mime_type: Option<String>,
+    file_extension: Option<String>,
 ) -> Vec<MediaReference> {
     let mut metadata = metadata.clone();
     if let Some(download_code) = download_code {
@@ -1895,15 +1988,20 @@ fn build_media_references(
             Value::String(picture_download_code),
         );
     }
-    vec![MediaReference {
-        source_kind: MediaSourceKind::ChannelInbound,
+    attach_declared_media_metadata(
+        &mut metadata,
+        mime_type.as_deref(),
+        file_extension.as_deref(),
+        "dingtalk.declared_mime_type",
+        "dingtalk.file_extension",
+    );
+    vec![build_media_reference(
+        MediaSourceKind::ChannelInbound,
+        event_id,
         filename,
-        mime_type: None,
-        remote_url: None,
-        bytes: None,
-        message_id: Some(event_id.to_string()),
+        mime_type,
         metadata,
-    }]
+    )]
 }
 
 fn extract_audio_recognition_text(value: &Value) -> Option<String> {
@@ -1920,24 +2018,13 @@ fn extract_audio_recognition_text(value: &Value) -> Option<String> {
 fn resolve_download_code_candidates(
     metadata: &BTreeMap<String, Value>,
 ) -> Vec<(String, &'static str)> {
-    let mut out = Vec::new();
-    if let Some(code) = metadata
-        .get("dingtalk.picture_download_code")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        out.push((code.to_string(), "picture_download_code"));
-    }
-    if let Some(code) = metadata
-        .get("dingtalk.download_code")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        out.push((code.to_string(), "download_code"));
-    }
-    out
+    resolve_metadata_value_candidates(
+        metadata,
+        &[
+            ("dingtalk.picture_download_code", "picture_download_code"),
+            ("dingtalk.download_code", "download_code"),
+        ],
+    )
 }
 
 fn is_sender_allowed(allowlist: &[String], sender_id: &str) -> bool {
@@ -2103,37 +2190,19 @@ fn escape_markdown_for_action_card(input: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn render_agent_output(output: &ChannelResponse, show_reasoning: bool) -> String {
-    let mut content = output.content.trim().to_string();
-    if show_reasoning {
-        if let Some(reasoning) = output.reasoning.as_ref() {
-            let reasoning = reasoning
-                .lines()
-                .map(|line| format!("> {line}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if !reasoning.is_empty() {
-                if !content.is_empty() {
-                    content.push_str("\n\n");
-                }
-                content.push_str("**Reasoning**\n");
-                content.push_str(&reasoning);
-            }
-        }
-    }
-    content
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         extract_approval_id_for_action_card, extract_dingtalk_media_references,
         extract_dingtalk_message_text, extract_shell_approval_id, is_sender_allowed,
-        parse_card_callback_event, parse_inbound_event, parse_stream_data, render_agent_output,
-        resolve_chat_id, resolve_download_code_candidates, ApprovalAction, CardCallbackEvent,
-        DingtalkApiClient, EventDeduper, InboundEvent,
+        parse_card_callback_event, parse_inbound_event, parse_stream_data, resolve_chat_id,
+        resolve_download_code_candidates, ApprovalAction, CardCallbackEvent, DingtalkApiClient,
+        EventDeduper, InboundEvent,
     };
-    use crate::ChannelResponse;
+    use crate::{
+        render::{render_agent_output, OutputRenderStyle},
+        ChannelResponse,
+    };
     use std::collections::BTreeMap;
     use std::thread;
     use std::time::Duration;
@@ -2274,7 +2343,9 @@ mod tests {
             "msgtype": "video",
             "video": {
                 "fileName": "demo.mp4",
-                "downloadCode": "video-code-1"
+                "downloadCode": "video-code-1",
+                "mimeType": "video/mp4",
+                "fileType": "mp4"
             }
         });
 
@@ -2292,6 +2363,17 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("video-code-1")
         );
+        assert_eq!(
+            parsed.media_references[0].mime_type.as_deref(),
+            Some("video/mp4")
+        );
+        assert_eq!(
+            parsed.media_references[0]
+                .metadata
+                .get("dingtalk.file_extension")
+                .and_then(serde_json::Value::as_str),
+            Some("mp4")
+        );
     }
 
     #[test]
@@ -2306,7 +2388,9 @@ mod tests {
             "msgtype": "file",
             "file": {
                 "fileName": "report.xlsx",
-                "downloadCode": "file-code-1"
+                "downloadCode": "file-code-1",
+                "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "extension": "xlsx"
             }
         });
 
@@ -2324,6 +2408,17 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("file-code-1")
         );
+        assert_eq!(
+            parsed.media_references[0].mime_type.as_deref(),
+            Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        );
+        assert_eq!(
+            parsed.media_references[0]
+                .metadata
+                .get("dingtalk.file_extension")
+                .and_then(serde_json::Value::as_str),
+            Some("xlsx")
+        );
     }
 
     #[test]
@@ -2338,8 +2433,19 @@ mod tests {
             "msgtype": "richText",
             "content": {
                 "richText": [
-                    { "type": "file", "fileName": "slides.pdf", "downloadCode": "file-rich-code" },
-                    { "type": "video", "fileName": "walkthrough.mp4", "downloadCode": "video-rich-code" }
+                    {
+                        "type": "file",
+                        "fileName": "slides.pdf",
+                        "downloadCode": "file-rich-code",
+                        "mimeType": "application/pdf",
+                        "fileType": "pdf"
+                    },
+                    {
+                        "type": "video",
+                        "fileName": "walkthrough.mp4",
+                        "downloadCode": "video-rich-code",
+                        "mimeType": "video/mp4"
+                    }
                 ]
             }
         });
@@ -2359,6 +2465,17 @@ mod tests {
                 .get("dingtalk.richtext_block_type")
                 .and_then(serde_json::Value::as_str),
             Some("video")
+        );
+        assert_eq!(
+            parsed.media_references[0].mime_type.as_deref(),
+            Some("application/pdf")
+        );
+        assert_eq!(
+            parsed.media_references[0]
+                .metadata
+                .get("dingtalk.file_extension")
+                .and_then(serde_json::Value::as_str),
+            Some("pdf")
         );
     }
 
@@ -2420,6 +2537,7 @@ mod tests {
                 metadata: BTreeMap::new(),
             },
             true,
+            OutputRenderStyle::Markdown,
         );
         assert!(output.contains("done"));
         assert!(output.contains("**Reasoning**"));

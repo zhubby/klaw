@@ -48,3 +48,4 @@
 - `klaw gui` 现在会在技能安装、卸载和 registry sync 后向 GUI runtime 发送技能 prompt 热重载命令，使后续请求可立即看到最新 skills
 - runtime system prompt 采用“skills shortlist + workspace docs list + lazy-load instructions”模式，不再注入 `SKILL.md` 全文
 - runtime 会分别注册 `skills_registry`（只读 registry catalog）与 `skills_manager`（已安装 skill 生命周期）两个工具
+- runtime 会注册 `archive` 工具，用于列出当前消息附件的 archive 句柄、读取只读 archive 文件，以及复制到 `workspace` 后再进行编辑/转换

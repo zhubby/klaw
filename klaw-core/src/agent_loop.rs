@@ -26,6 +26,7 @@ use tracing::{debug, error, info, warn};
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
+const META_CURRENT_ATTACHMENTS_KEY: &str = "agent.current_attachments";
 const META_LLM_USAGE_RECORDS_KEY: &str = "llm.usage.records";
 const TOOL_RESULT_LOG_LIMIT: usize = 4000;
 
@@ -419,6 +420,11 @@ impl AgentLoop {
 
         let conversation_history = extract_conversation_history(&msg.payload.metadata);
         let user_media = extract_user_media(&msg.payload);
+        let current_attachments = current_attachment_contexts(&msg.payload.media_references);
+        let user_content = augment_user_content_with_attachment_context(
+            &msg.payload.content,
+            &current_attachments,
+        );
         if !msg.payload.media_references.is_empty() {
             info!(
                 message_id = %msg.header.message_id,
@@ -471,6 +477,12 @@ impl AgentLoop {
             "agent.parent_session_key".to_string(),
             serde_json::Value::String(msg.payload.session_key.clone()),
         );
+        if !current_attachments.is_empty() {
+            tool_metadata.insert(
+                META_CURRENT_ATTACHMENTS_KEY.to_string(),
+                serde_json::Value::Array(current_attachments),
+            );
+        }
         if let Some(system_prompt) = self.system_prompt() {
             tool_metadata
                 .entry(META_SYSTEM_PROMPT_KEY.to_string())
@@ -487,7 +499,7 @@ impl AgentLoop {
             provider.as_ref(),
             &executor,
             AgentExecutionInput {
-                user_content: msg.payload.content.clone(),
+                user_content,
                 user_media,
                 conversation_history,
                 session_key: msg.payload.session_key.clone(),
@@ -1042,9 +1054,157 @@ fn extract_user_media(inbound: &InboundMessage) -> Vec<LlmMedia> {
         .collect()
 }
 
+fn current_attachment_contexts(
+    media_references: &[crate::MediaReference],
+) -> Vec<serde_json::Value> {
+    media_references
+        .iter()
+        .filter_map(|media| {
+            let archive_id = media
+                .metadata
+                .get("archive.id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            let mut item = serde_json::Map::new();
+            item.insert(
+                "archive_id".to_string(),
+                serde_json::Value::String(archive_id.to_string()),
+            );
+            item.insert(
+                "access".to_string(),
+                serde_json::Value::String("read_only".to_string()),
+            );
+            item.insert(
+                "recommended_workflow".to_string(),
+                serde_json::Value::String("copy_to_workspace_before_edit".to_string()),
+            );
+            item.insert(
+                "source_kind".to_string(),
+                serde_json::Value::String(format!("{:?}", media.source_kind).to_ascii_lowercase()),
+            );
+            if let Some(filename) = media
+                .filename
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                item.insert(
+                    "filename".to_string(),
+                    serde_json::Value::String(filename.to_string()),
+                );
+            }
+            if let Some(mime_type) = media
+                .mime_type
+                .as_deref()
+                .or_else(|| {
+                    media
+                        .metadata
+                        .get("archive.mime_type")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                item.insert(
+                    "mime_type".to_string(),
+                    serde_json::Value::String(mime_type.to_string()),
+                );
+            }
+            if let Some(storage_rel_path) = media
+                .metadata
+                .get("archive.storage_rel_path")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                item.insert(
+                    "storage_rel_path".to_string(),
+                    serde_json::Value::String(storage_rel_path.to_string()),
+                );
+            }
+            if let Some(size_bytes) = media
+                .metadata
+                .get("archive.size_bytes")
+                .and_then(serde_json::Value::as_i64)
+            {
+                item.insert(
+                    "size_bytes".to_string(),
+                    serde_json::Value::from(size_bytes),
+                );
+            }
+            if let Some(message_id) = media
+                .message_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                item.insert(
+                    "message_id".to_string(),
+                    serde_json::Value::String(message_id.to_string()),
+                );
+            }
+            Some(serde_json::Value::Object(item))
+        })
+        .collect()
+}
+
+fn augment_user_content_with_attachment_context(
+    user_content: &str,
+    attachments: &[serde_json::Value],
+) -> String {
+    if attachments.is_empty() {
+        return user_content.to_string();
+    }
+
+    let mut lines = vec!["Current message attachments:".to_string()];
+    for (idx, attachment) in attachments.iter().enumerate() {
+        let Some(item) = attachment.as_object() else {
+            continue;
+        };
+        let filename = item
+            .get("filename")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unnamed");
+        let archive_id = item
+            .get("archive_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        let storage_rel_path = item
+            .get("storage_rel_path")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        let mime_type = item
+            .get("mime_type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        let size_bytes = item
+            .get("size_bytes")
+            .and_then(serde_json::Value::as_i64)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        lines.push(format!(
+            "{idx}. filename={filename}; archive_id={archive_id}; storage_rel_path={storage_rel_path}; mime_type={mime_type}; size_bytes={size_bytes}; access=read_only archive; if modification is needed, copy the file into workspace first and edit the copied file there.",
+            idx = idx + 1
+        ));
+    }
+
+    if lines.len() == 1 {
+        return user_content.to_string();
+    }
+
+    let trimmed = user_content.trim_end();
+    if trimmed.is_empty() {
+        lines.join("\n")
+    } else {
+        format!("{trimmed}\n\n{}", lines.join("\n"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
+        augment_user_content_with_attachment_context, current_attachment_contexts,
         heartbeat_response_metadata, AgentLoop, QueueStrategy, RunLimits, SessionSchedulingPolicy,
     };
     use crate::{domain::InboundMessage, protocol::EnvelopeHeader};
@@ -1073,6 +1233,51 @@ mod tests {
             Some(&json!("stdio:test"))
         );
         assert!(!metadata.contains_key("reasoning"));
+    }
+
+    #[test]
+    fn current_attachment_contexts_extract_archive_metadata() {
+        let attachments = current_attachment_contexts(&[crate::MediaReference {
+            source_kind: crate::MediaSourceKind::ChannelInbound,
+            filename: Some("report.pdf".to_string()),
+            mime_type: Some("application/pdf".to_string()),
+            remote_url: None,
+            bytes: None,
+            message_id: Some("msg-1".to_string()),
+            metadata: BTreeMap::from([
+                ("archive.id".to_string(), json!("arch-1")),
+                (
+                    "archive.storage_rel_path".to_string(),
+                    json!("archives/2026-03-20/arch-1.pdf"),
+                ),
+                ("archive.size_bytes".to_string(), json!(1234)),
+            ]),
+        }]);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].get("archive_id"), Some(&json!("arch-1")));
+        assert_eq!(
+            attachments[0].get("storage_rel_path"),
+            Some(&json!("archives/2026-03-20/arch-1.pdf"))
+        );
+        assert_eq!(attachments[0].get("access"), Some(&json!("read_only")));
+    }
+
+    #[test]
+    fn augment_user_content_with_attachment_context_appends_read_only_guidance() {
+        let content = augment_user_content_with_attachment_context(
+            "Please summarize this file.",
+            &[json!({
+                "filename": "report.pdf",
+                "archive_id": "arch-1",
+                "storage_rel_path": "archives/2026-03-20/arch-1.pdf",
+                "mime_type": "application/pdf",
+                "size_bytes": 1234
+            })],
+        );
+        assert!(content.contains("Current message attachments:"));
+        assert!(content.contains("archive_id=arch-1"));
+        assert!(content.contains("access=read_only archive"));
+        assert!(content.contains("copy the file into workspace first"));
     }
 
     struct NamedProvider {

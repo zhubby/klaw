@@ -1,5 +1,6 @@
 pub mod apply_patch;
 pub mod approval;
+pub mod archive;
 pub mod cron_manager;
 pub mod local_search;
 pub mod memory;
@@ -19,6 +20,7 @@ use thiserror::Error;
 
 pub use apply_patch::ApplyPatchTool;
 pub use approval::ApprovalTool;
+pub use archive::ArchiveTool;
 pub use cron_manager::CronManagerTool;
 pub use local_search::LocalSearchTool;
 pub use memory::MemoryTool;

@@ -9,6 +9,7 @@
   - [可观测性审计](./agent-core/observability-audit.md)
   - [路线图 M1-M4](./agent-core/roadmap-m1-m4.md)
 - [工具](./tools/README.md)
+  - [Archive](./tools/built-in/archive.md)
   - [Shell](./tools/built-in/shell.md)
   - [Apply Patch](./tools/built-in/apply_patch.md)
   - [本地搜索](./tools/built-in/local_search.md)

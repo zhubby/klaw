@@ -29,9 +29,9 @@ use klaw_skill::{
 };
 use klaw_storage::{open_default_store, CronStorage, DefaultSessionStore};
 use klaw_tool::{
-    ApplyPatchTool, ApprovalTool, CronManagerTool, LocalSearchTool, MemoryTool, ShellTool,
-    SkillsManagerTool, SkillsRegistryTool, SubAgentTool, TerminalMultiplexerTool, ToolContext,
-    ToolRegistry, WebFetchTool, WebSearchTool,
+    ApplyPatchTool, ApprovalTool, ArchiveTool, CronManagerTool, LocalSearchTool, MemoryTool,
+    ShellTool, SkillsManagerTool, SkillsRegistryTool, SubAgentTool, TerminalMultiplexerTool,
+    ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use serde_json::json;
 use std::{
@@ -173,7 +173,7 @@ const WORKSPACE_PROMPT_DOC_FILES: [&str; 7] = [
 ];
 
 const RUNTIME_PROMPT_RULES: &str = "Prefer lazy-loading context from files and skills instead of relying on embedded long prompt bodies. Read only what is needed for the current user request.";
-const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "When local workspace docs are relevant, read them from disk on demand before acting. Do not assume their content without reading the files.";
+const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "When local workspace docs are relevant, read them from disk on demand before acting. Do not assume their content without reading the files.\nFiles under archives/ are read-only source material. Never edit, move, or delete them in place. If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.";
 
 #[derive(Debug, Clone)]
 struct SessionRoute {
@@ -830,6 +830,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         .await
         .map_err(|err| config_err(format!("heartbeat reconcile failed: {err}")))?;
     let mut tools = ToolRegistry::default();
+    if config.tools.archive.enabled() {
+        tools.register(ArchiveTool::open_default(config).await?);
+    }
     if config.tools.apply_patch.enabled() {
         tools.register(ApplyPatchTool::new(config));
     }

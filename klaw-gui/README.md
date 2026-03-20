@@ -91,6 +91,8 @@
 - Archive panel features:
   - query archives via `klaw-archive` service abstraction with filters
   - inspect archive record details and metadata in a detail window
+  - preview supported archived files from the table context menu
+  - render UTF-8 text directly, show images inline, and use macOS Quick Look thumbnails for PDF and other common document/media previews when available
 
 ## Architecture
 

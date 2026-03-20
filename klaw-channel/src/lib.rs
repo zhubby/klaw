@@ -5,6 +5,8 @@ use std::error::Error;
 use std::time::Duration;
 
 pub mod dingtalk;
+pub mod media;
+pub mod render;
 pub mod stdio;
 
 pub type ChannelResult<T> = Result<T, Box<dyn Error>>;

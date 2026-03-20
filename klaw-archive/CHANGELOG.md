@@ -1,5 +1,12 @@
 # Changelog
 
+# Changelog
+
+## 2026-03-20
+
+### Changed
+- removed the `klaw-core` dependency from `klaw-archive`; callers now convert their local media source enums into `ArchiveSourceKind` at the integration boundary
+
 ## 2026-03-13
 
 ### Added

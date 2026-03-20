@@ -1,4 +1,7 @@
-use crate::{Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
+use crate::{
+    render::{render_agent_output, OutputRenderStyle},
+    Channel, ChannelRequest, ChannelResult, ChannelRuntime,
+};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{self, Write};
@@ -108,6 +111,7 @@ impl Channel for StdioChannel {
                                 render_agent_output(
                                     &output,
                                     self.show_reasoning,
+                                    OutputRenderStyle::Terminal,
                                 )
                             )
                         }
@@ -157,27 +161,13 @@ where
     }
 }
 
-fn render_agent_output(output: &ChannelResponse, show_reasoning: bool) -> String {
-    let mut lines = vec![
-        "--------------------".to_string(),
-        "[answer]".to_string(),
-        output.content.trim().to_string(),
-    ];
-    if show_reasoning {
-        if let Some(reasoning_text) = &output.reasoning {
-            lines.push(String::new());
-            lines.push("[reasoning]".to_string());
-            lines.extend(reasoning_text.lines().map(|line| format!("> {line}")));
-        }
-    }
-    lines.push("--------------------".to_string());
-    lines.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{render_agent_output, StdioChannel};
-    use crate::ChannelResponse;
+    use super::StdioChannel;
+    use crate::{
+        render::{render_agent_output, OutputRenderStyle},
+        ChannelResponse,
+    };
 
     #[test]
     fn keeps_explicit_session_key() {
@@ -194,6 +184,7 @@ mod tests {
                 metadata: std::collections::BTreeMap::new(),
             },
             false,
+            OutputRenderStyle::Terminal,
         );
         assert!(view.contains("[answer]"));
         assert!(!view.contains("[reasoning]"));
@@ -208,6 +199,7 @@ mod tests {
                 metadata: std::collections::BTreeMap::new(),
             },
             true,
+            OutputRenderStyle::Terminal,
         );
         assert!(view.contains("[reasoning]"));
         assert!(view.contains("> step1"));

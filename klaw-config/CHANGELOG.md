@@ -5,6 +5,7 @@
 ### Added
 
 - `model_providers.<id>.tokenizer_path` 配置项，支持为本地 token 估算回退指定 `tokenizer.json` 文件
+- `tools.archive.enabled` 配置项，支持启用 archive 浏览/读取与复制到 workspace 的运行时工具
 
 ## 2026-03-18
 

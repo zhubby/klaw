@@ -7,7 +7,6 @@ version.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 hex = { workspace = true }
-klaw-core = { workspace = true }
 klaw-storage = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

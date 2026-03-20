@@ -5,6 +5,7 @@
 ### Added
 - `AgentLoop` now propagates request-level LLM token usage into outbound metadata under `llm.usage.records`, including provider/model/wire_api and token counters for downstream persistence
 - added `ErrorCode::BudgetExceeded` and mapped agent token-budget breaches to an explicit runtime failure path
+- `AgentLoop` now annotates archived inbound attachments into the current user message and tool metadata, exposing `archive_id` / `storage_rel_path` plus read-only/copy-to-workspace guidance to the model
 
 ### Fixed
 - fixed `InMemoryTransport::publish` so published messages are also consumable from the in-memory queue, restoring cron/manual runtime flows that publish inbound work before draining the agent loop

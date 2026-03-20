@@ -371,6 +371,29 @@ channels.disable_session_commands_for = ["dingtalk", "stdio"]
 
 ## 工具配置
 
+### `tools.archive`
+
+Archive 归档工具配置。
+
+#### `tools.archive.enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用 `archive` 工具。
+
+该工具用于：
+
+- 列出当前消息中的归档附件
+- 查询归档记录
+- 只读读取文本类归档文件
+- 将归档文件复制到 `workspace/` 后再编辑
+
+```toml
+tools.archive.enabled = true
+```
+
 ### `tools.shell`
 
 Shell 执行工具配置。
@@ -394,7 +417,7 @@ tools.shell.enabled = false
 **必填**: 否
 
 工作目录。
-未显式设置且请求 metadata 也未提供 `workspace` 时，将回退到 `(<storage.root_dir 或 ~/.klaw/data>)/workspace`。
+未显式设置且请求 metadata 也未提供 `workspace` 时，将回退到 `(<storage.root_dir 或 ~/.klaw>)/workspace`。
 
 ```toml
 tools.shell.workspace = "/path/to/workspace"
@@ -498,7 +521,7 @@ tools.apply_patch.enabled = false
 **必填**: 否
 
 工作目录。
-未显式设置且请求 metadata 也未提供 `workspace` 时，将回退到 `(<storage.root_dir 或 ~/.klaw/data>)/workspace`。
+未显式设置且请求 metadata 也未提供 `workspace` 时，将回退到 `(<storage.root_dir 或 ~/.klaw>)/workspace`。
 
 ```toml
 tools.apply_patch.workspace = "/path/to/project"
@@ -1098,7 +1121,7 @@ tools.sub_agent.exclude_tools = ["sub_agent", "shell"]
 
 ```toml
 [storage]
-root_dir = "~/.klaw/data"
+root_dir = "~/.klaw"
 ```
 
 ---

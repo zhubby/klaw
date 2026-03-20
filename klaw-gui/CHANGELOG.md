@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-20
+
+### Added
+
+- archive panel right-click menu now shows `Preview` for supported records and opens an in-app preview window for UTF-8 text, images, and macOS Quick Look-backed document/media thumbnails such as PDF
+
 ## 2026-03-19
 
 ### Changed

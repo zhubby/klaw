@@ -5,6 +5,11 @@
 ### Added
 
 - runtime now persists request-level LLM token usage from outbound metadata into `klaw.db` and `klaw session list/get` now show aggregated token totals per session
+- runtime now registers an `archive` tool for current-message attachment lookup, archive record inspection, text reads, and copy-to-workspace flows
+
+### Changed
+
+- runtime system prompt now states that files under `archives/` are read-only source material and must be copied into `workspace/` before modification
 
 ### Fixed
 

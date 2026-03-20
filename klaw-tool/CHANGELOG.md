@@ -4,6 +4,7 @@
 
 ### Changed
 - `cron_manager` message shortcut now records `cron.base_session_key` for supported channel sessions so runtime cron delivery can resolve the current active session without changing persisted payload compatibility
+- `shell` 与 `apply_patch` 在未配置 workspace 与 `storage.root_dir` 时，默认回退工作区统一为 `~/.klaw/workspace`，不再使用 `~/.klaw/data/workspace`
 
 ## 2026-03-18
 
@@ -15,7 +16,7 @@
 ## 2026-03-17
 
 ### Changed
-- `shell` 与 `apply_patch` 的 workspace 回退链调整为：`metadata.workspace` -> `tools.*.workspace` -> `(<storage.root_dir 或 ~/.klaw/data>)/workspace`
+- `shell` 与 `apply_patch` 的 workspace 回退链调整为：`metadata.workspace` -> `tools.*.workspace` -> `(<storage.root_dir 或 ~/.klaw>)/workspace`
 - `shell` 与 `apply_patch` 在使用数据目录 workspace 作为回退时会自动创建该目录并 canonicalize
 
 ## 2026-03-16

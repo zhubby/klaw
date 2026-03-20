@@ -18,3 +18,4 @@
 
 - `MediaReference` and `MediaSourceKind` are shared boundary types for channels, tools, and archive-related flows
 - `klaw-core` does not persist media itself; that remains the responsibility of `klaw-archive`
+- `AgentLoop` annotates archived attachments into the current user turn so the model can see archive ids, relative archive paths, and the read-only/copy-to-workspace workflow
