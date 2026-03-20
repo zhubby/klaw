@@ -115,3 +115,14 @@ Use the CLI entrypoint:
 ```bash
 klaw gui
 ```
+
+## macOS Packaging
+
+The repository-level macOS packaging flow wraps the existing GUI-capable `klaw` binary into a native app bundle:
+
+```bash
+make build-macos-app
+make package-macos-dmg
+```
+
+The app bundle uses `assets/icons/logo.icns` as the bundle icon and emits packaged artifacts to `dist/macos/`.

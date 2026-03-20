@@ -19,6 +19,18 @@
 - `klaw config ...`
 - `klaw daemon install|status|uninstall|start|stop|restart`
 
+## macOS Packaging
+
+仓库根目录提供面向 GUI 桌面分发的 macOS 打包流程，最终仍然封装现有 `klaw` 二进制和 `klaw gui` 入口：
+
+- `make build-macos-app`
+- `make package-macos-dmg`
+
+输出目录固定为 `dist/macos/`，包含：
+
+- `Klaw.app`
+- `Klaw-<version>-aarch64-apple-darwin.dmg`
+
 ## Daemon Management
 
 `klaw daemon` 只托管 `klaw gateway`：

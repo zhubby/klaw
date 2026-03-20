@@ -43,6 +43,20 @@ klaw agent --input "prompt"     # One-shot
 klaw gateway                    # WebSocket
 ```
 
+## macOS Packaging
+
+Build a native macOS app bundle and dmg from the existing GUI entrypoint:
+
+```bash
+make build-macos-app
+make package-macos-dmg
+```
+
+Artifacts are written to `dist/macos/`:
+
+- `dist/macos/Klaw.app`
+- `dist/macos/Klaw-<version>-aarch64-apple-darwin.dmg`
+
 See `docs/` for architecture details.
 
 ## License

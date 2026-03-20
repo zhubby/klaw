@@ -4,6 +4,7 @@
 
 ### Added
 
+- documented the native macOS app packaging flow that wraps the existing GUI entrypoint into `Klaw.app` and a distributable `.dmg`
 - archive panel right-click menu now shows `Preview` for supported records and opens an in-app preview window for UTF-8 text, images, and macOS Quick Look-backed document/media thumbnails such as PDF
 
 ## 2026-03-19
