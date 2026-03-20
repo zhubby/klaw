@@ -9,7 +9,7 @@
 - Top menu bar (File/View/Window/Help)
   - File menu includes `Force Persist Layout` to immediately flush layout state to disk
 - Bottom status bar with version and theme-mode switcher
-  - Runtime provider override dropdown on the right (select from `model_providers` without editing config)
+  - Runtime provider override dropdown on the right (select from `model_providers` without editing config; applies immediately to the running runtime's default provider for new routes and `/new`)
 - System tray / macOS menu bar icon loaded from `assets/icons/logo.iconset`
   - tray menu includes `Open Klaw`, `Setting`, `About`, and `Quit Klaw`
   - `Setting` is currently a placeholder action with an in-app notification

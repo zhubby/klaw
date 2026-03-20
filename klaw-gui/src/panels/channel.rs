@@ -2,6 +2,9 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::request_sync_channels;
 use crate::widgets::ArrayEditor;
+use egui::RichText;
+use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_channel::{ChannelInstanceStatus, ChannelKind};
 use klaw_config::{
     AppConfig, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig, TelegramConfig,
@@ -245,6 +248,8 @@ pub struct ChannelPanel {
     show_disabled_dialog: bool,
     disable_session_commands_input: ArrayEditor,
     statuses: BTreeMap<String, ChannelInstanceStatus>,
+    selected_channel: Option<(ChannelKind, String)>,
+    delete_confirm: Option<(ChannelKind, String)>,
 }
 
 impl ChannelPanel {
@@ -432,6 +437,43 @@ impl ChannelPanel {
             ChannelKind::Telegram => {
                 next.channels.telegram.retain(|item| item.id != id);
                 self.save_config(next, notifications, "Telegram channel deleted");
+            }
+            ChannelKind::Feishu => {}
+        }
+    }
+
+    fn toggle_channel(
+        &mut self,
+        kind: ChannelKind,
+        id: &str,
+        enable: bool,
+        notifications: &mut NotificationCenter,
+    ) {
+        let mut next = self.config.clone();
+        match kind {
+            ChannelKind::Dingtalk => {
+                if let Some(channel) = next.channels.dingtalk.iter_mut().find(|item| item.id == id)
+                {
+                    channel.enabled = enable;
+                    let msg = if enable {
+                        "Dingtalk channel enabled"
+                    } else {
+                        "Dingtalk channel disabled"
+                    };
+                    self.save_config(next, notifications, msg);
+                }
+            }
+            ChannelKind::Telegram => {
+                if let Some(channel) = next.channels.telegram.iter_mut().find(|item| item.id == id)
+                {
+                    channel.enabled = enable;
+                    let msg = if enable {
+                        "Telegram channel enabled"
+                    } else {
+                        "Telegram channel disabled"
+                    };
+                    self.save_config(next, notifications, msg);
+                }
             }
             ChannelKind::Feishu => {}
         }
@@ -680,6 +722,58 @@ impl ChannelPanel {
             self.show_disabled_dialog = false;
         }
     }
+
+    fn render_delete_confirm_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some((kind, id)) = self.delete_confirm.clone() else {
+            return;
+        };
+
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        egui::Window::new(format!("Delete {} Channel", kind.as_str()))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(format!("Are you sure you want to delete channel '{}'?", id))
+                        .strong(),
+                );
+                ui.add_space(8.0);
+                ui.label("This action cannot be undone.");
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(egui::Button::new(
+                            RichText::new(format!("{} Delete", regular::TRASH))
+                                .color(ui.visuals().warn_fg_color),
+                        ))
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            self.delete_channel(kind, &id, notifications);
+            self.delete_confirm = None;
+            if self.selected_channel == Some((kind, id)) {
+                self.selected_channel = None;
+            }
+        }
+        if cancelled {
+            self.delete_confirm = None;
+        }
+    }
 }
 
 impl PanelRenderer for ChannelPanel {
@@ -702,16 +796,28 @@ impl PanelRenderer for ChannelPanel {
         ui.separator();
 
         ui.horizontal(|ui| {
-            if ui.button("Set Disabled Channels").clicked() {
+            if ui
+                .button(format!("{} Set Disabled Channels", regular::WRENCH))
+                .clicked()
+            {
                 self.show_disabled_dialog = true;
             }
-            if ui.button("Add Dingtalk").clicked() {
+            if ui
+                .button(format!("{} Add Dingtalk", regular::CHAT_CIRCLE_DOTS))
+                .clicked()
+            {
                 self.open_add_dingtalk_channel();
             }
-            if ui.button("Add Telegram").clicked() {
+            if ui
+                .button(format!("{} Add Telegram", regular::PAPER_PLANE))
+                .clicked()
+            {
                 self.open_add_telegram_channel();
             }
-            if ui.button("Reload").clicked() {
+            if ui
+                .button(format!("{} Reload", regular::ARROW_CLOCKWISE))
+                .clicked()
+            {
                 self.reload(notifications);
             }
         });
@@ -721,61 +827,181 @@ impl PanelRenderer for ChannelPanel {
         if rows.is_empty() {
             ui.label("No channels configured.");
         } else {
-            egui::Grid::new("channel-list-grid")
-                .striped(true)
-                .num_columns(9)
-                .spacing([12.0, 8.0])
+            let table_width = ui.available_width();
+            let mut edit_channel: Option<(ChannelKind, String)> = None;
+            let mut toggle_channel: Option<(ChannelKind, String, bool)> = None;
+
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .max_width(table_width)
                 .show(ui, |ui| {
-                    ui.strong("Type");
-                    ui.strong("ID");
-                    ui.strong("Enabled");
-                    ui.strong("Status");
-                    ui.strong("Title");
-                    ui.strong("Auth");
-                    ui.strong("Reasoning");
-                    ui.strong("Proxy");
-                    ui.strong("Actions");
-                    ui.end_row();
+                    ui.set_min_width(table_width);
+                    let available_height = ui.available_height();
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(100.0))
+                        .column(Column::auto().at_least(70.0))
+                        .column(Column::remainder().at_least(100.0))
+                        .min_scrolled_height(0.0)
+                        .max_scroll_height(available_height)
+                        .sense(egui::Sense::click())
+                        .header(20.0, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("Type");
+                            });
+                            header.col(|ui| {
+                                ui.strong("ID");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Enabled");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Status");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Title");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Auth");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Reasoning");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Proxy");
+                            });
+                        })
+                        .body(|body| {
+                            body.rows(20.0, rows.len(), |mut row| {
+                                let idx = row.index();
+                                let channel_row = &rows[idx];
+                                let kind = channel_row.kind();
+                                let id = channel_row.id().to_string();
+                                let key = Self::instance_key(kind, &id);
+                                let status = self.statuses.get(&key);
+                                let status_label = status
+                                    .map(|s| s.state.as_str().to_string())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                let is_selected =
+                                    self.selected_channel.as_ref() == Some(&(kind, id.clone()));
 
-                    for row in rows {
-                        let kind = row.kind();
-                        let id = row.id().to_string();
-                        let key = Self::instance_key(kind, &id);
-                        let status = self.statuses.get(&key);
-                        let status_label = status
-                            .map(|status| status.state.as_str().to_string())
-                            .unwrap_or_else(|| "unknown".to_string());
+                                row.set_selected(is_selected);
 
-                        ui.label(kind.as_str());
-                        ui.label(&id);
-                        ui.label(if row.enabled() { "yes" } else { "no" });
-                        let status_response = ui.label(&status_label);
-                        if let Some(status) = status {
-                            if let Some(error) = status.last_error.as_deref() {
-                                status_response.on_hover_text(error);
-                            }
-                        }
-                        ui.label(row.title_label());
-                        ui.label(row.auth_label());
-                        ui.label(if row.show_reasoning() { "yes" } else { "no" });
-                        ui.label(row.proxy_label());
-                        ui.horizontal(|ui| {
-                            if ui.button("Edit").clicked() {
-                                self.open_edit_channel(kind, &id);
-                            }
-                            if ui.button("Delete").clicked() {
-                                self.delete_channel(kind, &id, notifications);
-                            }
+                                row.col(|ui| {
+                                    ui.label(kind.as_str());
+                                });
+                                row.col(|ui| {
+                                    ui.label(&id);
+                                });
+                                row.col(|ui| {
+                                    let enabled = channel_row.enabled();
+                                    let icon = if enabled {
+                                        regular::CHECK_CIRCLE
+                                    } else {
+                                        regular::CIRCLE
+                                    };
+                                    let text = if enabled { "yes" } else { "no" };
+                                    ui.label(format!("{} {}", icon, text));
+                                });
+                                row.col(|ui| {
+                                    let status_response = ui.label(&status_label);
+                                    if let Some(s) = status {
+                                        if let Some(error) = s.last_error.as_deref() {
+                                            status_response.on_hover_text(error);
+                                        }
+                                    }
+                                });
+                                row.col(|ui| {
+                                    ui.label(channel_row.title_label());
+                                });
+                                row.col(|ui| {
+                                    ui.label(channel_row.auth_label());
+                                });
+                                row.col(|ui| {
+                                    let show = channel_row.show_reasoning();
+                                    ui.label(if show { "yes" } else { "no" });
+                                });
+                                row.col(|ui| {
+                                    ui.label(channel_row.proxy_label());
+                                });
+
+                                let response = row.response();
+
+                                if response.clicked() {
+                                    self.selected_channel = if is_selected {
+                                        None
+                                    } else {
+                                        Some((kind, id.clone()))
+                                    };
+                                }
+
+                                response.context_menu(|ui| {
+                                    let enabled = channel_row.enabled();
+                                    if ui
+                                        .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                        .clicked()
+                                    {
+                                        edit_channel = Some((kind, id.clone()));
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(format!(
+                                            "{} {}",
+                                            if enabled {
+                                                regular::POWER
+                                            } else {
+                                                regular::POWER
+                                            },
+                                            if enabled { "Disable" } else { "Enable" }
+                                        ))
+                                        .clicked()
+                                    {
+                                        toggle_channel = Some((kind, id.clone(), !enabled));
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                    if ui
+                                        .add(egui::Button::new(
+                                            RichText::new(format!("{} Delete", regular::TRASH))
+                                                .color(ui.visuals().warn_fg_color),
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.delete_confirm = Some((kind, id.clone()));
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                    if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                        ui.ctx().output_mut(|o| {
+                                            o.commands
+                                                .push(egui::OutputCommand::CopyText(id.clone()));
+                                        });
+                                        ui.close();
+                                    }
+                                });
+                            });
                         });
-                        ui.end_row();
-                    }
                 });
+
+            if let Some((kind, id)) = edit_channel {
+                self.open_edit_channel(kind, &id);
+            }
+            if let Some((kind, id, enable)) = toggle_channel {
+                self.toggle_channel(kind, &id, enable, notifications);
+            }
         }
 
         self.render_form_window(ui, notifications);
         if self.show_disabled_dialog {
             self.render_disabled_dialog(ui, notifications);
         }
+        self.render_delete_confirm_dialog(ui.ctx(), notifications);
     }
 }
 

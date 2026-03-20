@@ -1,10 +1,15 @@
 use crate::domain::menu::WorkbenchMenu;
 use crate::state::{UiAction, UiState};
+use egui_phosphor::regular;
 
 pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
     let mut actions = Vec::new();
 
-    ui.label(egui::RichText::new("Klaw").strong().size(20.0));
+    ui.label(
+        egui::RichText::new(format!("{} Klaw", regular::ROBOT))
+            .strong()
+            .size(20.0),
+    );
     ui.separator();
 
     for menu in WorkbenchMenu::ALL {

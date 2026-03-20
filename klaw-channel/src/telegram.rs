@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Instant;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{self, Duration};
 use tracing::{debug, info, warn};
 
@@ -94,7 +94,52 @@ impl TelegramChannel {
             "telegram channel started"
         );
 
-        let mut offset: Option<i64> = None;
+        let (updates_tx, mut updates_rx) = mpsc::unbounded_channel::<TelegramPollResult>();
+        let mut poll_shutdown = shutdown.clone();
+        let client = self.client.clone();
+        let account_id = self.config.account_id.clone();
+        let poll_task = tokio::spawn(async move {
+            let mut offset: Option<i64> = None;
+            loop {
+                if *poll_shutdown.borrow() {
+                    break;
+                }
+
+                match client
+                    .get_updates(offset)
+                    .await
+                    .map_err(|err| err.to_string())
+                {
+                    Ok(updates) => {
+                        if let Some(last_update_id) = updates.last().map(|update| update.update_id)
+                        {
+                            offset = Some(last_update_id + 1);
+                        }
+                        if updates_tx.send(Ok(updates)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        if updates_tx.send(Err(error)).is_err() {
+                            break;
+                        }
+                        tokio::select! {
+                            _ = time::sleep(TELEGRAM_RECONNECT_DELAY) => {}
+                            changed = poll_shutdown.changed() => {
+                                if changed.is_ok() && *poll_shutdown.borrow() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            info!(
+                account_id = account_id.as_str(),
+                "telegram polling task stopped"
+            );
+        });
+
         let mut cron_tick = time::interval(runtime.cron_tick_interval());
         let mut runtime_tick = time::interval(runtime.runtime_tick_interval());
         let mut cron_job: Option<Pin<Box<dyn Future<Output = ()> + '_>>> = None;
@@ -104,6 +149,7 @@ impl TelegramChannel {
             tokio::select! {
                 changed = shutdown.changed() => {
                     if changed.is_ok() && *shutdown.borrow() {
+                        poll_task.abort();
                         info!(account_id = self.config.account_id.as_str(), "telegram shutdown requested");
                         return Ok(());
                     }
@@ -132,11 +178,14 @@ impl TelegramChannel {
                         runtime_job = Some(Box::pin(runtime.on_runtime_tick()));
                     }
                 }
-                updates = self.client.get_updates(offset) => {
+                maybe_updates = updates_rx.recv() => {
+                    let Some(updates) = maybe_updates else {
+                        warn!(account_id = self.config.account_id.as_str(), "telegram polling task channel closed");
+                        return Ok(());
+                    };
                     match updates {
                         Ok(updates) => {
                             for update in updates {
-                                offset = Some(update.update_id + 1);
                                 if !self.update_deduper.insert_if_new(&update.update_id.to_string()) {
                                     debug!(update_id = update.update_id, "ignoring duplicated telegram update");
                                     continue;
@@ -148,15 +197,6 @@ impl TelegramChannel {
                         }
                         Err(err) => {
                             warn!(error = %err, "failed to fetch telegram updates");
-                            tokio::select! {
-                                _ = time::sleep(TELEGRAM_RECONNECT_DELAY) => {}
-                                changed = shutdown.changed() => {
-                                    if changed.is_ok() && *shutdown.borrow() {
-                                        info!(account_id = self.config.account_id.as_str(), "telegram shutdown requested while waiting to reconnect");
-                                        return Ok(());
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -464,6 +504,8 @@ struct TelegramInbound {
     text: String,
     media_references: Vec<MediaReference>,
 }
+
+type TelegramPollResult = Result<Vec<TelegramUpdate>, String>;
 
 impl TelegramInbound {
     fn from_message(update_id: i64, message: TelegramMessage) -> Option<Self> {

@@ -43,7 +43,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     io,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -62,6 +62,7 @@ pub struct RuntimeBundle {
     pub runtime: AgentLoop,
     pub default_provider_id: String,
     pub provider_default_models: BTreeMap<String, String>,
+    pub runtime_provider_override: Arc<RwLock<Option<String>>>,
     pub disable_session_commands_for: BTreeSet<String>,
     pub inbound_transport: InMemoryTransport<InboundMessage>,
     pub outbound_transport: InMemoryTransport<OutboundMessage>,
@@ -372,23 +373,21 @@ async fn resolve_session_route(
     chat_id: &str,
 ) -> Result<SessionRoute, Box<dyn Error>> {
     let sessions = session_manager(runtime);
+    let default_provider_id = runtime_default_provider_id(runtime);
     let base = sessions
         .get_or_create_session_state(
             base_session_key,
             chat_id,
             channel,
-            &runtime.default_provider_id,
-            default_model_for_provider(runtime, &runtime.default_provider_id),
+            &default_provider_id,
+            default_model_for_provider(runtime, &default_provider_id),
         )
         .await?;
     let active_session_key = base
         .active_session_key
         .clone()
         .unwrap_or_else(|| base_session_key.to_string());
-    let provider = base
-        .model_provider
-        .clone()
-        .unwrap_or_else(|| runtime.default_provider_id.clone());
+    let provider = base.model_provider.clone().unwrap_or(default_provider_id);
     let model_default = default_model_for_provider(runtime, &provider).to_string();
     let active = sessions
         .get_or_create_session_state(
@@ -406,6 +405,91 @@ async fn resolve_session_route(
         model_provider,
         model,
     })
+}
+
+fn resolve_new_session_target(runtime: &RuntimeBundle) -> (String, String) {
+    if let Some(provider_id) = runtime_provider_override(runtime) {
+        return (
+            provider_id.clone(),
+            default_model_for_provider(runtime, &provider_id).to_string(),
+        );
+    }
+
+    ConfigStore::open(None)
+        .and_then(|store| store.reload())
+        .map(|snapshot| resolve_new_session_target_from_config(&snapshot.config))
+        .unwrap_or_else(|_| {
+            (
+                runtime.default_provider_id.clone(),
+                default_model_for_provider(runtime, &runtime.default_provider_id).to_string(),
+            )
+        })
+}
+
+fn runtime_provider_override(runtime: &RuntimeBundle) -> Option<String> {
+    runtime
+        .runtime_provider_override
+        .read()
+        .unwrap_or_else(|err| err.into_inner())
+        .clone()
+}
+
+fn runtime_default_provider_id(runtime: &RuntimeBundle) -> String {
+    runtime_provider_override(runtime).unwrap_or_else(|| runtime.default_provider_id.clone())
+}
+
+fn resolve_new_session_target_from_config(config: &AppConfig) -> (String, String) {
+    let provider_id = config.model_provider.clone();
+    let model = configured_default_model(config, &provider_id);
+    (provider_id, model)
+}
+
+pub fn set_runtime_provider_override(
+    runtime: &RuntimeBundle,
+    provider_id: Option<&str>,
+) -> Result<(String, String), Box<dyn Error>> {
+    let (next, active_provider) = normalize_runtime_provider_override(
+        &runtime.provider_default_models,
+        &runtime.default_provider_id,
+        provider_id,
+    )?;
+
+    let mut guard = runtime
+        .runtime_provider_override
+        .write()
+        .unwrap_or_else(|err| err.into_inner());
+    *guard = next;
+    drop(guard);
+
+    let active_model = default_model_for_provider(runtime, &active_provider).to_string();
+    Ok((active_provider, active_model))
+}
+
+fn normalize_runtime_provider_override(
+    provider_default_models: &BTreeMap<String, String>,
+    default_provider_id: &str,
+    provider_id: Option<&str>,
+) -> Result<(Option<String>, String), Box<dyn Error>> {
+    let next = match provider_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(provider_id) => {
+            if !provider_default_models.contains_key(provider_id) {
+                let all = provider_default_models
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(config_err(format!(
+                    "unknown runtime provider '{provider_id}', available: {all}"
+                )));
+            }
+            Some(provider_id.to_string())
+        }
+        None => None,
+    };
+    let active_provider = next
+        .clone()
+        .unwrap_or_else(|| default_provider_id.to_string());
+    Ok((next, active_provider))
 }
 
 fn default_model_for_provider<'a>(runtime: &'a RuntimeBundle, provider_id: &str) -> &'a str {
@@ -488,14 +572,15 @@ async fn handle_im_command(
         },
         "new" => {
             let new_session_key = format!("{base_session_key}:{}", Uuid::new_v4().simple());
+            let (new_session_provider, new_session_model) = resolve_new_session_target(runtime);
             let sessions = session_manager(runtime);
             sessions
                 .get_or_create_session_state(
                     &new_session_key,
                     &chat_id,
                     &channel,
-                    &route.model_provider,
-                    &route.model,
+                    &new_session_provider,
+                    &new_session_model,
                 )
                 .await?;
             sessions
@@ -504,7 +589,7 @@ async fn handle_im_command(
             ChannelResponse {
                 content: format!(
                     "🆕 **New session started**\n\n🧵 Session: `{new_session_key}`\n🧩 Provider: `{}`\n🤖 Model: `{}`",
-                    route.model_provider, route.model
+                    new_session_provider, new_session_model
                 ),
                 reasoning: None,
                 metadata: BTreeMap::new(),
@@ -1013,6 +1098,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     Ok(RuntimeBundle {
         default_provider_id: config.model_provider.clone(),
         provider_default_models,
+        runtime_provider_override: Arc::new(RwLock::new(None)),
         disable_session_commands_for: config
             .channels
             .disable_session_commands_for
@@ -1781,11 +1867,12 @@ mod tests {
     use super::{
         build_history_for_model, build_unavailable_provider, compression_trigger_interval,
         configured_default_model, first_arg_token, format_approve_already_handled_message,
-        format_workspace_docs_for_prompt, parse_im_command, should_emit_outbound,
-        should_trigger_compression, trim_conversation_history,
+        format_workspace_docs_for_prompt, normalize_runtime_provider_override, parse_im_command,
+        resolve_new_session_target_from_config, should_emit_outbound, should_trigger_compression,
+        trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
-    use klaw_config::AppConfig;
+    use klaw_config::{AppConfig, ModelProviderConfig};
     use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
     use klaw_llm::{ChatOptions, LlmError, LlmProvider};
     use klaw_session::ChatRecord;
@@ -1863,6 +1950,71 @@ mod tests {
             Some("qwen-plus")
         );
         assert_eq!(first_arg_token(Some("   ")), None);
+    }
+
+    #[test]
+    fn resolve_new_session_target_uses_global_active_provider_and_model() {
+        let mut config = AppConfig::default();
+        config.model_provider = "anthropic".to_string();
+        config.model = None;
+        config.model_providers.insert(
+            "anthropic".to_string(),
+            ModelProviderConfig {
+                default_model: "claude-sonnet-4-5".to_string(),
+                ..ModelProviderConfig::default()
+            },
+        );
+
+        let (provider_id, model) = resolve_new_session_target_from_config(&config);
+        assert_eq!(provider_id, "anthropic");
+        assert_eq!(model, "claude-sonnet-4-5");
+    }
+
+    #[test]
+    fn resolve_new_session_target_prefers_root_model_override() {
+        let mut config = AppConfig::default();
+        config.model_provider = "anthropic".to_string();
+        config.model = Some("claude-opus-4-1".to_string());
+        config.model_providers.insert(
+            "anthropic".to_string(),
+            ModelProviderConfig {
+                default_model: "claude-sonnet-4-5".to_string(),
+                ..ModelProviderConfig::default()
+            },
+        );
+
+        let (provider_id, model) = resolve_new_session_target_from_config(&config);
+        assert_eq!(provider_id, "anthropic");
+        assert_eq!(model, "claude-opus-4-1");
+    }
+
+    #[test]
+    fn normalize_runtime_provider_override_accepts_known_override_and_reset() {
+        let providers = BTreeMap::from([
+            ("openai".to_string(), "gpt-4.1-mini".to_string()),
+            ("anthropic".to_string(), "claude-sonnet-4-5".to_string()),
+        ]);
+
+        let (override_value, active_provider) =
+            normalize_runtime_provider_override(&providers, "openai", Some("anthropic"))
+                .expect("override should set");
+        assert_eq!(override_value.as_deref(), Some("anthropic"));
+        assert_eq!(active_provider, "anthropic");
+
+        let (override_value, active_provider) =
+            normalize_runtime_provider_override(&providers, "openai", None)
+                .expect("override should reset");
+        assert_eq!(override_value, None);
+        assert_eq!(active_provider, "openai");
+    }
+
+    #[test]
+    fn normalize_runtime_provider_override_rejects_unknown_provider() {
+        let providers = BTreeMap::from([("openai".to_string(), "gpt-4.1-mini".to_string())]);
+
+        let err = normalize_runtime_provider_override(&providers, "openai", Some("missing"))
+            .expect_err("unknown provider should fail");
+        assert!(err.to_string().contains("unknown runtime provider"));
     }
 
     #[test]

@@ -38,6 +38,10 @@ impl ShellUi {
         self.notifications.info(message);
     }
 
+    pub fn show_error(&mut self, message: impl Into<String>) {
+        self.notifications.error(message);
+    }
+
     fn sync_provider_choices(&mut self) {
         if self.last_provider_sync_at.elapsed() < PROVIDER_SYNC_INTERVAL {
             return;

@@ -947,7 +947,7 @@ impl PanelRenderer for ToolPanel {
                     ),
                     (
                         "archive",
-                        "Inspect and copy archived attachments from conversations.",
+                        "Manage archived attachments from conversations.",
                         self.config.tools.archive.enabled,
                         "archive",
                     ),

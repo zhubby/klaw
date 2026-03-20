@@ -16,6 +16,7 @@
 - GUI default path resolution for `settings.json`, `gui_state.json`, data root, and workspace markdowns now comes from `klaw-util` instead of duplicating `~/.klaw/...` joins across panels and persistence modules
 - channel panel now displays per-instance type and runtime status, supports deleting channel instances, and sends a generic `SyncChannels` runtime event after save/reload so running channels update without restarting `klaw gui`
 - channel panel now supports both `dingtalk` and `telegram` instances, with separate add/edit forms and shared runtime status rendering
+- bottom status bar runtime provider dropdown now sends a live runtime command, so new routes and `/new` immediately use the selected provider override without editing `config.toml`
 
 ### Added
 

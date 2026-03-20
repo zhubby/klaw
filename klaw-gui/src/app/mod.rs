@@ -1,3 +1,4 @@
+use crate::runtime_bridge::request_set_provider_override;
 use crate::state::persistence;
 use crate::state::{UiAction, UiState, WindowSize};
 use crate::theme;
@@ -69,8 +70,23 @@ impl KlawGuiApp {
                 theme::apply_theme(ctx, self.state.theme_mode);
                 self.mark_state_dirty();
             }
-            UiAction::SetRuntimeProviderOverride(_)
-            | UiAction::ShowAbout
+            UiAction::SetRuntimeProviderOverride(provider_id) => {
+                match request_set_provider_override(provider_id.clone()) {
+                    Ok((active_provider, active_model)) => {
+                        self.state
+                            .apply(UiAction::SetRuntimeProviderOverride(provider_id));
+                        self.shell.show_info(format!(
+                            "Runtime provider set to '{active_provider}' ({active_model})"
+                        ));
+                        self.mark_state_dirty();
+                    }
+                    Err(err) => {
+                        self.shell
+                            .show_error(format!("Failed to update runtime provider: {err}"));
+                    }
+                }
+            }
+            UiAction::ShowAbout
             | UiAction::HideAbout
             | UiAction::OpenMenu(_)
             | UiAction::ActivateTab(_)

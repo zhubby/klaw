@@ -9,7 +9,7 @@ use crate::commands::signal::shutdown_signal;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
     build_runtime_bundle, finalize_startup_report, reload_runtime_skills_prompt,
-    shutdown_runtime_bundle, SharedChannelRuntime,
+    set_runtime_provider_override, shutdown_runtime_bundle, SharedChannelRuntime,
 };
 use klaw_config::ConfigStore;
 use tracing::{info, warn};
@@ -89,6 +89,14 @@ impl GuiCommand {
                                                 if let Err(err) = reload_runtime_skills_prompt(runtime.as_ref()).await {
                                                     warn!(error = %err, "failed to reload runtime skills prompt");
                                                 }
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::SetProviderOverride { provider_id, response }) => {
+                                                let result = set_runtime_provider_override(
+                                                    runtime.as_ref(),
+                                                    provider_id.as_deref(),
+                                                )
+                                                .map_err(|err| err.to_string());
+                                                let _ = response.send(result);
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncChannels { response }) => {
                                                 let result = match ConfigStore::open(None) {

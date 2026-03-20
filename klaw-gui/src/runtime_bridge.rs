@@ -5,6 +5,10 @@ use tokio::sync::mpsc::UnboundedSender;
 #[derive(Debug)]
 pub enum RuntimeCommand {
     ReloadSkillsPrompt,
+    SetProviderOverride {
+        provider_id: Option<String>,
+        response: mpsc::Sender<Result<(String, String), String>>,
+    },
     SyncChannels {
         response: mpsc::Sender<Result<ChannelSyncResult, String>>,
     },
@@ -84,6 +88,27 @@ pub fn request_reload_skills_prompt() -> Result<(), String> {
     sender
         .send(RuntimeCommand::ReloadSkillsPrompt)
         .map_err(|_| "failed to send runtime command".to_string())
+}
+
+pub fn request_set_provider_override(
+    provider_id: Option<String>,
+) -> Result<(String, String), String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::SetProviderOverride {
+            provider_id,
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    response_rx
+        .recv()
+        .map_err(|_| "runtime command response channel closed".to_string())?
 }
 
 pub fn request_run_cron_now(cron_id: &str) -> Result<String, String> {
