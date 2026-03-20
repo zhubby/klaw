@@ -6,6 +6,7 @@ use klaw_approval::{
     ApprovalListQuery, ApprovalManager, ApprovalResolveDecision, ApprovalStatus,
     SqliteApprovalManager,
 };
+use klaw_storage::ApprovalRecord;
 use std::future::Future;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,13 +15,14 @@ use tokio::runtime::Builder;
 #[derive(Default)]
 pub struct ApprovalPanel {
     loaded: bool,
-    approvals: Vec<klaw_approval::ApprovalRecord>,
+    approvals: Vec<ApprovalRecord>,
     session_key_filter: String,
     tool_name_filter: String,
     status_filter: Option<ApprovalStatus>,
     limit_text: String,
     offset_text: String,
     selected_approval: Option<String>,
+    view_approval: Option<ApprovalRecord>,
 }
 
 impl ApprovalPanel {
@@ -172,6 +174,8 @@ impl PanelRenderer for ApprovalPanel {
                 let mut reject_id: Option<String> = None;
                 let mut consume_id: Option<String> = None;
 
+                let mut view_id: Option<String> = None;
+
                 TableBuilder::new(ui)
                     .striped(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -250,7 +254,8 @@ impl PanelRenderer for ApprovalPanel {
                                 ui.label(format_timestamp_millis(approval.expires_at_ms));
                             });
                             row.col(|ui| {
-                                ui.label(&approval.command_preview);
+                                let preview = truncate_preview(&approval.command_preview);
+                                ui.label(preview);
                             });
 
                             let response = row.response();
@@ -264,6 +269,11 @@ impl PanelRenderer for ApprovalPanel {
                             }
 
                             response.context_menu(|ui| {
+                                if ui.button("View").clicked() {
+                                    view_id = Some(approval.id.clone());
+                                    ui.close();
+                                }
+                                ui.separator();
                                 if ui.button("Approve").clicked() {
                                     approve_id = Some(approval.id.clone());
                                     ui.close();
@@ -298,7 +308,97 @@ impl PanelRenderer for ApprovalPanel {
                 if let Some(id) = consume_id {
                     self.consume(&id, notifications);
                 }
+                if let Some(id) = view_id {
+                    self.view_approval = self.approvals.iter().find(|a| a.id == id).cloned();
+                }
             });
+
+        if let Some(ref approval) = self.view_approval {
+            let mut open = true;
+            egui::Window::new(format!("Approval: {}", approval.id))
+                .open(&mut open)
+                .resizable(true)
+                .default_size([500.0, 400.0])
+                .show(ui.ctx(), |ui| {
+                    egui::Grid::new("approval-detail-grid")
+                        .num_columns(2)
+                        .spacing([10.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("ID:");
+                            ui.label(&approval.id);
+                            ui.end_row();
+
+                            ui.label("Session:");
+                            ui.label(&approval.session_key);
+                            ui.end_row();
+
+                            ui.label("Tool:");
+                            ui.label(&approval.tool_name);
+                            ui.end_row();
+
+                            ui.label("Risk Level:");
+                            ui.label(&approval.risk_level);
+                            ui.end_row();
+
+                            ui.label("Status:");
+                            ui.label(approval.status.as_str());
+                            ui.end_row();
+
+                            ui.label("Requested By:");
+                            ui.label(&approval.requested_by);
+                            ui.end_row();
+
+                            ui.label("Approved By:");
+                            ui.label(approval.approved_by.as_deref().unwrap_or("-"));
+                            ui.end_row();
+
+                            ui.label("Justification:");
+                            ui.label(approval.justification.as_deref().unwrap_or("-"));
+                            ui.end_row();
+
+                            ui.label("Expires At:");
+                            ui.label(format_timestamp_millis(approval.expires_at_ms));
+                            ui.end_row();
+
+                            ui.label("Created At:");
+                            ui.label(format_timestamp_millis(approval.created_at_ms));
+                            ui.end_row();
+
+                            ui.label("Updated At:");
+                            ui.label(format_timestamp_millis(approval.updated_at_ms));
+                            ui.end_row();
+
+                            ui.label("Consumed At:");
+                            ui.label(
+                                approval
+                                    .consumed_at_ms
+                                    .map(format_timestamp_millis)
+                                    .as_deref()
+                                    .unwrap_or("-"),
+                            );
+                            ui.end_row();
+                        });
+
+                    ui.separator();
+                    ui.label("Command Preview:");
+                    egui::ScrollArea::vertical()
+                        .max_height(100.0)
+                        .show(ui, |ui| {
+                            ui.label(&approval.command_preview);
+                        });
+
+                    ui.separator();
+                    ui.label("Command Text:");
+                    egui::ScrollArea::vertical()
+                        .max_height(150.0)
+                        .show(ui, |ui| {
+                            ui.label(&approval.command_text);
+                        });
+                });
+            if !open {
+                self.view_approval = None;
+            }
+        }
     }
 }
 
@@ -342,4 +442,22 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn truncate_preview(text: &str) -> String {
+    let max_len = 50;
+    if let Some(pos) = text.find('\n') {
+        let line = &text[..pos];
+        let chars: String = line.chars().take(max_len).collect();
+        if line.chars().count() > max_len {
+            format!("{}...", chars)
+        } else {
+            chars
+        }
+    } else if text.chars().count() > max_len {
+        let chars: String = text.chars().take(max_len).collect();
+        format!("{}...", chars)
+    } else {
+        text.to_string()
+    }
 }
