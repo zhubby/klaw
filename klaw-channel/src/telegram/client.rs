@@ -66,6 +66,13 @@ impl TelegramApiClient {
         self.post("sendMessage", &request).await
     }
 
+    pub async fn edit_message_text(
+        &self,
+        request: EditMessageTextRequest,
+    ) -> ChannelResult<TelegramMessage> {
+        self.post("editMessageText", &request).await
+    }
+
     pub async fn answer_callback_query(
         &self,
         callback_query_id: &str,
@@ -178,10 +185,38 @@ pub struct SendMessageRequest {
     pub reply_markup: Option<TelegramInlineKeyboardMarkup>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct EditMessageTextRequest {
+    pub chat_id: String,
+    pub message_id: i64,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_markup: Option<TelegramInlineKeyboardMarkup>,
+}
+
 impl SendMessageRequest {
     pub fn html(chat_id: &str, text: &str) -> Self {
         Self {
             chat_id: chat_id.trim().to_string(),
+            text: text.trim().to_string(),
+            parse_mode: Some(TelegramParseMode::Html.as_str().to_string()),
+            reply_markup: None,
+        }
+    }
+
+    pub fn with_reply_markup(mut self, reply_markup: TelegramInlineKeyboardMarkup) -> Self {
+        self.reply_markup = Some(reply_markup);
+        self
+    }
+}
+
+impl EditMessageTextRequest {
+    pub fn html(chat_id: &str, message_id: i64, text: &str) -> Self {
+        Self {
+            chat_id: chat_id.trim().to_string(),
+            message_id,
             text: text.trim().to_string(),
             parse_mode: Some(TelegramParseMode::Html.as_str().to_string()),
             reply_markup: None,

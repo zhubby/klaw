@@ -49,6 +49,7 @@ pub struct DingtalkChannelConfig {
     pub client_secret: String,
     pub bot_title: String,
     pub show_reasoning: bool,
+    pub stream_output: bool,
     pub allowlist: Vec<String>,
     pub proxy: DingtalkProxyConfig,
 }
@@ -61,6 +62,7 @@ impl Default for DingtalkChannelConfig {
             client_secret: String::new(),
             bot_title: "Klaw".to_string(),
             show_reasoning: false,
+            stream_output: false,
             allowlist: Vec::new(),
             proxy: DingtalkProxyConfig::default(),
         }
@@ -98,6 +100,7 @@ impl DingtalkChannel {
             client_secret: config.client_secret,
             bot_title: config.bot_title,
             show_reasoning: config.show_reasoning,
+            stream_output: config.stream_output,
             allowlist: config.allowlist,
             proxy: DingtalkProxyConfig {
                 enabled: config.proxy.enabled,

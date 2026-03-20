@@ -4,6 +4,7 @@
 
 ### Added
 
+- `ChannelRuntime` / channel adapters now support streaming snapshot callbacks; Telegram can render incremental edits when `stream_output=true`, while unsupported channels keep the existing final-message fallback
 - 新增通用 `ChannelManager`、`ChannelConfigSnapshot`、`ChannelInstanceConfig`、`ManagedChannelDriver` 与 `ChannelDriverFactory`，统一管理多实例 channel 生命周期和配置 diff
 - 新增 `telegram` channel：基于 Bot API `getUpdates` long polling，支持文本、caption、图片和文件消息入站，并复用 archive 媒体归档链路
 - `telegram` 通道新增 inline keyboard 审批交互：检测 `approval_id` 时发送 `Approve` / `Reject` 按钮，并支持 `callback_query` 回调转成 `/approve`、`/reject`

@@ -2,6 +2,9 @@
 
 ## 2026-03-20
 
+### Changed
+- `run_agent_execution` now optionally emits live snapshot events while a provider is streaming, and clears intermediate draft output when a tool loop continues into another model turn
+
 ### Fixed
 - `run_agent_execution` now stops the current tool loop immediately after a tool emits `approval_required`, preventing a single user turn from creating multiple approval records before the channel renders the approval prompt
 

@@ -11,7 +11,8 @@ use crate::{
 use async_trait::async_trait;
 use klaw_agent::{
     run_agent_execution, AgentExecutionError, AgentExecutionInput, AgentExecutionLimits,
-    ConversationMessage, ToolExecutor, ToolInvocationResult, ToolInvocationSignal,
+    AgentExecutionStreamEvent, ConversationMessage, ToolExecutor, ToolInvocationResult,
+    ToolInvocationSignal,
 };
 use klaw_llm::{LlmError, LlmMedia, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
@@ -21,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
@@ -363,6 +365,22 @@ impl AgentLoop {
         msg: Envelope<InboundMessage>,
         _enable_streaming: bool,
     ) -> ProcessOutcome {
+        self.process_message_inner(msg, None).await
+    }
+
+    pub async fn process_message_streaming(
+        &self,
+        msg: Envelope<InboundMessage>,
+        stream: UnboundedSender<AgentExecutionStreamEvent>,
+    ) -> ProcessOutcome {
+        self.process_message_inner(msg, Some(stream)).await
+    }
+
+    async fn process_message_inner(
+        &self,
+        msg: Envelope<InboundMessage>,
+        stream: Option<UnboundedSender<AgentExecutionStreamEvent>>,
+    ) -> ProcessOutcome {
         let start = Instant::now();
         let session_key = msg.payload.session_key.as_str();
         let provider_id = msg
@@ -511,6 +529,7 @@ impl AgentLoop {
                 max_tool_calls: self.limits.max_tool_calls,
                 token_budget: self.limits.token_budget,
             },
+            stream,
         )
         .await;
         state = self.transition(state, StateTransitionEvent::ToolLoopFinished);
@@ -991,9 +1010,9 @@ fn classify_error_kind(code: Option<ErrorCode>) -> &'static str {
 
 fn map_llm_error_to_code(err: &LlmError) -> ErrorCode {
     match err {
-        LlmError::ProviderUnavailable(_) | LlmError::RequestFailed(_) => {
-            ErrorCode::ProviderUnavailable
-        }
+        LlmError::ProviderUnavailable(_)
+        | LlmError::RequestFailed(_)
+        | LlmError::StreamFailed(_) => ErrorCode::ProviderUnavailable,
         LlmError::InvalidResponse(_) => ErrorCode::ProviderResponseInvalid,
     }
 }

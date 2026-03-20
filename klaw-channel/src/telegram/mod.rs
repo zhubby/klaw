@@ -2,7 +2,7 @@ mod client;
 mod render;
 mod types;
 
-use self::client::{BotCommand, SendMessageRequest, TelegramApiClient};
+use self::client::{BotCommand, EditMessageTextRequest, SendMessageRequest, TelegramApiClient};
 use self::render::{build_approval_message, extract_approval_id, render_telegram_response};
 use self::types::{
     is_sender_allowed, EventDeduper, TelegramCallbackInbound, TelegramInbound, TelegramUpdate,
@@ -12,7 +12,8 @@ use crate::{
     media::{
         ingest_media_reference_bytes, ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES,
     },
-    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime,
+    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
+    ChannelStreamWriter,
 };
 use klaw_archive::open_default_archive_service;
 use klaw_config::{TelegramConfig, TelegramProxyConfig};
@@ -22,6 +23,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::{mpsc, watch};
+use tokio::time::Instant;
 use tokio::time::{self, Duration};
 use tracing::{debug, info, warn};
 
@@ -43,6 +45,7 @@ pub struct TelegramChannelConfig {
     pub account_id: String,
     pub bot_token: String,
     pub show_reasoning: bool,
+    pub stream_output: bool,
     pub allowlist: Vec<String>,
     pub proxy: TelegramProxyConfig,
 }
@@ -53,6 +56,7 @@ impl Default for TelegramChannelConfig {
             account_id: "default".to_string(),
             bot_token: String::new(),
             show_reasoning: false,
+            stream_output: false,
             allowlist: Vec::new(),
             proxy: TelegramProxyConfig::default(),
         }
@@ -65,6 +69,7 @@ impl TelegramChannel {
             account_id: config.id,
             bot_token: config.bot_token,
             show_reasoning: config.show_reasoning,
+            stream_output: config.stream_output,
             allowlist: config.allowlist,
             proxy: config.proxy,
         })
@@ -92,7 +97,7 @@ impl TelegramChannel {
                 BotCommand::new("start", "Show help and available commands"),
                 BotCommand::new("help", "Show help and available commands"),
                 BotCommand::new("new", "Start a new session context"),
-                BotCommand::new("model-provider", "List or switch model providers"),
+                BotCommand::new("model_provider", "List or switch model providers"),
                 BotCommand::new("model", "Show or update current model"),
                 BotCommand::new("approve", "Approve a pending tool action"),
                 BotCommand::new("reject", "Reject a pending tool action"),
@@ -279,20 +284,26 @@ impl TelegramChannel {
         self.materialize_media_references(&session_key, &mut inbound)
             .await;
 
-        let maybe_output = runtime
-            .submit(ChannelRequest {
-                channel: self.name().to_string(),
-                input: inbound.text.clone(),
-                session_key,
-                chat_id: inbound.chat_id.clone(),
-                media_references: inbound.media_references.clone(),
-                metadata: BTreeMap::new(),
-            })
+        let maybe_output = self
+            .submit_request(
+                runtime,
+                ChannelRequest {
+                    channel: self.name().to_string(),
+                    input: inbound.text.clone(),
+                    session_key,
+                    chat_id: inbound.chat_id.clone(),
+                    media_references: inbound.media_references.clone(),
+                    metadata: BTreeMap::new(),
+                },
+                Some(inbound.chat_id.as_str()),
+            )
             .await;
 
         match maybe_output {
             Ok(Some(output)) => {
-                self.send_output(&inbound.chat_id, &output).await?;
+                if !self.config.stream_output {
+                    self.send_output(&inbound.chat_id, &output).await?;
+                }
             }
             Ok(None) => {}
             Err(err) => return Err(err),
@@ -321,15 +332,19 @@ impl TelegramChannel {
             return Ok(());
         };
         let session_key = format!("telegram:{}:{}", self.config.account_id, inbound.chat_id);
-        let maybe_output = runtime
-            .submit(ChannelRequest {
-                channel: self.name().to_string(),
-                input: inbound.command.clone(),
-                session_key,
-                chat_id: inbound.chat_id.clone(),
-                media_references: Vec::new(),
-                metadata: BTreeMap::new(),
-            })
+        let maybe_output = self
+            .submit_request(
+                runtime,
+                ChannelRequest {
+                    channel: self.name().to_string(),
+                    input: inbound.command.clone(),
+                    session_key,
+                    chat_id: inbound.chat_id.clone(),
+                    media_references: Vec::new(),
+                    metadata: BTreeMap::new(),
+                },
+                Some(inbound.chat_id.as_str()),
+            )
             .await;
 
         match maybe_output {
@@ -337,7 +352,9 @@ impl TelegramChannel {
                 self.client
                     .answer_callback_query(&inbound.callback_id, "Processed")
                     .await?;
-                self.send_output(&inbound.chat_id, &output).await?;
+                if !self.config.stream_output {
+                    self.send_output(&inbound.chat_id, &output).await?;
+                }
             }
             Ok(None) => {
                 self.client
@@ -368,6 +385,29 @@ impl TelegramChannel {
         };
         let _ = self.client.send_message(request).await?;
         Ok(())
+    }
+
+    async fn submit_request(
+        &self,
+        runtime: &dyn ChannelRuntime,
+        request: ChannelRequest,
+        chat_id: Option<&str>,
+    ) -> ChannelResult<Option<ChannelResponse>> {
+        if self.config.stream_output {
+            if let Some(chat_id) = chat_id {
+                let mut writer = TelegramStreamWriter::new(
+                    self.client.clone(),
+                    chat_id.to_string(),
+                    self.config.show_reasoning,
+                );
+                let output = runtime.submit_streaming(request, &mut writer).await?;
+                if let Some(ref output) = output {
+                    writer.finish(output).await?;
+                }
+                return Ok(output);
+            }
+        }
+        runtime.submit(request).await
     }
 
     async fn materialize_media_references(&self, session_key: &str, inbound: &mut TelegramInbound) {
@@ -444,6 +484,130 @@ impl TelegramChannel {
             .await
             {
                 warn!(update_id = inbound.update_id, file_id = file_id.as_str(), error = %err, "failed to ingest telegram media into archive");
+            }
+        }
+    }
+}
+
+const TELEGRAM_STREAM_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
+
+struct TelegramStreamWriter {
+    client: TelegramApiClient,
+    chat_id: String,
+    show_reasoning: bool,
+    message_id: Option<i64>,
+    last_rendered: Option<String>,
+    last_update_at: Option<Instant>,
+}
+
+impl TelegramStreamWriter {
+    fn new(client: TelegramApiClient, chat_id: String, show_reasoning: bool) -> Self {
+        Self {
+            client,
+            chat_id,
+            show_reasoning,
+            message_id: None,
+            last_rendered: None,
+            last_update_at: None,
+        }
+    }
+
+    async fn finish(&mut self, output: &ChannelResponse) -> ChannelResult<()> {
+        let approval_markup = extract_approval_id(output)
+            .map(|approval_id| types::TelegramInlineKeyboardMarkup::approval(&approval_id));
+        let text = if let Some(approval_id) = extract_approval_id(output) {
+            build_approval_message(output, &approval_id)
+        } else {
+            render_telegram_response(output, self.show_reasoning)
+        };
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        self.last_rendered = Some(text.clone());
+        match self.message_id {
+            Some(message_id) => {
+                let mut request = EditMessageTextRequest::html(&self.chat_id, message_id, &text);
+                if let Some(markup) = approval_markup {
+                    request = request.with_reply_markup(markup);
+                }
+                let _ = self.client.edit_message_text(request).await?;
+            }
+            None => {
+                let mut request = SendMessageRequest::html(&self.chat_id, &text);
+                if let Some(markup) = approval_markup {
+                    request = request.with_reply_markup(markup);
+                }
+                let message = self.client.send_message(request).await?;
+                self.message_id = Some(message.message_id);
+            }
+        }
+        self.last_update_at = Some(Instant::now());
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl ChannelStreamWriter for TelegramStreamWriter {
+    async fn write(&mut self, event: ChannelStreamEvent) -> ChannelResult<()> {
+        match event {
+            ChannelStreamEvent::Snapshot(output) => {
+                let approval_markup = extract_approval_id(&output)
+                    .map(|approval_id| types::TelegramInlineKeyboardMarkup::approval(&approval_id));
+                let text = if let Some(approval_id) = extract_approval_id(&output) {
+                    build_approval_message(&output, &approval_id)
+                } else {
+                    render_telegram_response(&output, self.show_reasoning)
+                };
+                if text.trim().is_empty() {
+                    return Ok(());
+                }
+                if self.last_rendered.as_deref() == Some(text.as_str()) {
+                    return Ok(());
+                }
+                self.last_rendered = Some(text.clone());
+                let should_flush = self.message_id.is_none()
+                    || self
+                        .last_update_at
+                        .is_none_or(|instant| instant.elapsed() >= TELEGRAM_STREAM_UPDATE_INTERVAL)
+                    || approval_markup.is_some();
+                if !should_flush {
+                    return Ok(());
+                }
+                match self.message_id {
+                    Some(message_id) => {
+                        let mut request =
+                            EditMessageTextRequest::html(&self.chat_id, message_id, &text);
+                        if let Some(markup) = approval_markup {
+                            request = request.with_reply_markup(markup);
+                        }
+                        let _ = self.client.edit_message_text(request).await?;
+                    }
+                    None => {
+                        let mut request = SendMessageRequest::html(&self.chat_id, &text);
+                        if let Some(markup) = approval_markup {
+                            request = request.with_reply_markup(markup);
+                        }
+                        let message = self.client.send_message(request).await?;
+                        self.message_id = Some(message.message_id);
+                    }
+                }
+                self.last_update_at = Some(Instant::now());
+                Ok(())
+            }
+            ChannelStreamEvent::Clear => {
+                self.last_rendered = None;
+                if let Some(message_id) = self.message_id {
+                    let _ = self
+                        .client
+                        .edit_message_text(EditMessageTextRequest::html(
+                            &self.chat_id,
+                            message_id,
+                            "<i>Processing...</i>",
+                        ))
+                        .await;
+                    self.last_update_at = Some(Instant::now());
+                }
+                Ok(())
             }
         }
     }

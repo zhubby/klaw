@@ -600,6 +600,7 @@ mod tests {
                 default_model: "gpt-4o-mini".to_string(),
                 tokenizer_path: None,
                 proxy: false,
+                stream: false,
                 api_key: None,
                 env_key: Some("OPENAI_API_KEY".to_string()),
             },

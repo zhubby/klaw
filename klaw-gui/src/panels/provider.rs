@@ -15,6 +15,7 @@ struct ProviderForm {
     default_model: String,
     tokenizer_path: String,
     proxy: bool,
+    stream: bool,
     env_key: String,
     api_key: String,
     set_as_active: bool,
@@ -32,6 +33,7 @@ impl ProviderForm {
             default_model: default.default_model,
             tokenizer_path: default.tokenizer_path.unwrap_or_default(),
             proxy: default.proxy,
+            stream: default.stream,
             env_key: default.env_key.unwrap_or_default(),
             api_key: default.api_key.unwrap_or_default(),
             set_as_active: false,
@@ -48,6 +50,7 @@ impl ProviderForm {
             default_model: provider.default_model.clone(),
             tokenizer_path: provider.tokenizer_path.clone().unwrap_or_default(),
             proxy: provider.proxy,
+            stream: provider.stream,
             env_key: provider.env_key.clone().unwrap_or_default(),
             api_key: provider.api_key.clone().unwrap_or_default(),
             set_as_active: id == active_provider,
@@ -78,6 +81,7 @@ impl ProviderForm {
             default_model: self.default_model.trim().to_string(),
             tokenizer_path: (!tokenizer_path.is_empty()).then(|| tokenizer_path.to_string()),
             proxy: self.proxy,
+            stream: self.stream,
             env_key: (!env_key.is_empty()).then(|| env_key.to_string()),
             api_key: (!api_key.is_empty()).then(|| api_key.to_string()),
         }
@@ -314,6 +318,10 @@ impl ProviderPanel {
                         ui.checkbox(&mut form.proxy, "");
                         ui.end_row();
 
+                        ui.label("Enable Streaming");
+                        ui.checkbox(&mut form.stream, "");
+                        ui.end_row();
+
                         ui.label("Env Key");
                         ui.text_edit_singleline(&mut form.env_key);
                         ui.end_row();
@@ -398,6 +406,7 @@ impl PanelRenderer for ProviderPanel {
                 .column(Column::auto().at_least(180.0))
                 .column(Column::auto().at_least(80.0))
                 .column(Column::auto().at_least(140.0))
+                .column(Column::auto().at_least(70.0))
                 .column(Column::auto().at_least(100.0))
                 .column(Column::remainder().at_least(80.0))
                 .min_scrolled_height(0.0)
@@ -418,6 +427,9 @@ impl PanelRenderer for ProviderPanel {
                     });
                     header.col(|ui| {
                         ui.strong("Default Model");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Stream");
                     });
                     header.col(|ui| {
                         ui.strong("Tokenizer");
@@ -467,6 +479,9 @@ impl PanelRenderer for ProviderPanel {
                         });
                         row.col(|ui| {
                             ui.label(&provider.default_model);
+                        });
+                        row.col(|ui| {
+                            ui.label(if provider.stream { "yes" } else { "no" });
                         });
                         row.col(|ui| {
                             ui.label(provider.tokenizer_path.as_deref().unwrap_or("-"));
@@ -568,6 +583,21 @@ mod tests {
         assert_eq!(updated.memory.embedding.provider, "openai-main");
         assert!(updated.model_providers.contains_key("openai-main"));
         assert!(!updated.model_providers.contains_key("openai"));
+    }
+
+    #[test]
+    fn apply_form_preserves_stream_flag() {
+        let config = AppConfig::default();
+        let mut form = ProviderForm::new();
+        form.id = "openai-stream".to_string();
+        form.base_url = "https://api.openai.com/v1".to_string();
+        form.wire_api = "responses".to_string();
+        form.default_model = "gpt-4.1-mini".to_string();
+        form.stream = true;
+
+        let updated = ProviderPanel::apply_form(config, &form).expect("form should apply");
+
+        assert!(updated.model_providers["openai-stream"].stream);
     }
 
     #[test]

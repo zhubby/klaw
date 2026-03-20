@@ -3,6 +3,8 @@
 ## 2026-03-20
 
 ### Changed
+- added provider-side streaming support to `LlmProvider` via `chat_stream`, plus `LlmStreamEvent` deltas for content and reasoning
+- OpenAI-compatible provider now honors `OpenAiCompatibleConfig.stream` and uses native SSE streaming for both `chat_completions` and `responses`
 - moved the default local tokenizer directory resolution (`~/.klaw/tokenizers`) into `klaw-util`
 
 ## 2026-03-19

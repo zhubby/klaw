@@ -4,6 +4,7 @@
 
 ### Added
 
+- provider/channel form serialization now carries the new streaming config fields, currently defaulting them to `false` until dedicated UI controls are added
 - skills registry panel right-click context menu now includes `Delete` option with confirmation dialog
 - skills registry panel context menu items now show icons (Sync, Edit, Copy Name, Delete)
 - delete option in skills registry context menu uses red warning color for visibility

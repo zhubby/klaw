@@ -636,6 +636,7 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             client_secret: "secret-a".to_string(),
             bot_title: "Ops".to_string(),
             show_reasoning: false,
+            stream_output: false,
             allowlist: vec![],
             proxy: DingtalkProxyConfig::default(),
         },
@@ -646,6 +647,7 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             client_secret: "secret-b".to_string(),
             bot_title: "Ops2".to_string(),
             show_reasoning: false,
+            stream_output: false,
             allowlist: vec![],
             proxy: DingtalkProxyConfig::default(),
         },
@@ -665,6 +667,7 @@ fn validate_fails_when_enabled_dingtalk_channel_missing_secret() {
         client_secret: String::new(),
         bot_title: "Ops".to_string(),
         show_reasoning: false,
+        stream_output: false,
         allowlist: vec![],
         proxy: DingtalkProxyConfig::default(),
     }];
@@ -683,6 +686,7 @@ fn validate_fails_when_enabled_dingtalk_proxy_missing_url() {
         client_secret: "secret-a".to_string(),
         bot_title: "Ops".to_string(),
         show_reasoning: false,
+        stream_output: false,
         allowlist: vec![],
         proxy: DingtalkProxyConfig {
             enabled: true,
@@ -704,6 +708,7 @@ fn validate_fails_when_enabled_dingtalk_proxy_has_invalid_scheme() {
         client_secret: "secret-a".to_string(),
         bot_title: "Ops".to_string(),
         show_reasoning: false,
+        stream_output: false,
         allowlist: vec![],
         proxy: DingtalkProxyConfig {
             enabled: true,
@@ -724,6 +729,7 @@ fn validate_fails_when_telegram_channel_ids_duplicate() {
             enabled: true,
             bot_token: "token-a".to_string(),
             show_reasoning: false,
+            stream_output: false,
             allowlist: vec![],
             proxy: TelegramProxyConfig::default(),
         },
@@ -732,6 +738,7 @@ fn validate_fails_when_telegram_channel_ids_duplicate() {
             enabled: true,
             bot_token: "token-b".to_string(),
             show_reasoning: false,
+            stream_output: false,
             allowlist: vec![],
             proxy: TelegramProxyConfig::default(),
         },
@@ -749,6 +756,7 @@ fn validate_fails_when_enabled_telegram_channel_missing_token() {
         enabled: true,
         bot_token: String::new(),
         show_reasoning: false,
+        stream_output: false,
         allowlist: vec![],
         proxy: TelegramProxyConfig::default(),
     }];
@@ -765,6 +773,7 @@ fn validate_fails_when_enabled_telegram_proxy_missing_url() {
         enabled: true,
         bot_token: "token-a".to_string(),
         show_reasoning: false,
+        stream_output: false,
         allowlist: vec![],
         proxy: TelegramProxyConfig {
             enabled: true,
@@ -784,6 +793,7 @@ fn validate_fails_when_enabled_telegram_proxy_has_invalid_scheme() {
         enabled: true,
         bot_token: "token-a".to_string(),
         show_reasoning: false,
+        stream_output: false,
         allowlist: vec![],
         proxy: TelegramProxyConfig {
             enabled: true,
@@ -1492,4 +1502,44 @@ env_key = "OPENAI_API_KEY"
 
     let _ = fs::remove_file(&path);
     let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn parse_stream_flags_from_config() {
+    let parsed: AppConfig = toml::from_str(
+        r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+default_model = "gpt-4.1-mini"
+env_key = "OPENAI_API_KEY"
+stream = true
+
+[[channels.telegram]]
+id = "bot"
+enabled = true
+bot_token = "token"
+stream_output = true
+
+[[channels.dingtalk]]
+id = "robot"
+enabled = true
+client_id = "cid"
+client_secret = "secret"
+stream_output = true
+"#,
+    )
+    .expect("config should parse");
+
+    assert!(
+        parsed
+            .model_providers
+            .get("openai")
+            .expect("provider should exist")
+            .stream
+    );
+    assert!(parsed.channels.telegram[0].stream_output);
+    assert!(parsed.channels.dingtalk[0].stream_output);
 }

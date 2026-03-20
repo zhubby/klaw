@@ -3,6 +3,7 @@
 ## 2026-03-20
 
 ### Changed
+- `AgentLoop` now exposes a streaming processing path that forwards agent snapshot events while preserving the existing final outbound envelope shape
 - moved default `~/.klaw/workspace` path derivation into the new `klaw-util` crate and re-exported `WORKSPACE_DIR_NAME` from there instead of owning the constant in `klaw-core`
 
 ## 2026-03-19

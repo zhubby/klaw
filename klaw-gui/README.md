@@ -48,6 +48,7 @@
   - edit a document in a fixed-height markdown-highlighted popup editor
   - save, cancel, or reset in the editor footer
 - Provider panel features:
+  - provider/channel editors already preserve the new streaming config fields in the config model, though the current GUI still leaves them at their default `false` values
   - read providers from `config.toml` (`model_provider` + `model_providers`)
   - set active provider directly
   - add/edit provider via `egui::Window` form and persist back to config

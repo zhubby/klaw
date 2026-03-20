@@ -6,6 +6,7 @@
 - 配置加载与校验
 - 启动交互式、单次请求、网关、会话和归档管理命令
 - 管理 `klaw gateway` 的用户级守护进程安装与生命周期
+- 将 provider streaming、agent 快照和 channel 输出能力接到同一条 runtime 提交通路
 
 ## Commands
 

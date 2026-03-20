@@ -12,4 +12,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 reqwest = { workspace = true }
 tokenizers = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+futures-util = { workspace = true }
 klaw-util = { workspace = true }

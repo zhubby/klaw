@@ -19,3 +19,5 @@
 - 根级 `model_provider`：选择当前活跃 provider。
 - 根级可选 `model`：覆盖活跃 provider 的 `default_model`。
 - `model_providers.<id>.default_model`：provider 默认模型。
+- `model_providers.<id>.stream`：是否启用 provider 原生 stream API。
+- `channels.telegram[].stream_output` / `channels.dingtalk[].stream_output`：是否允许 channel 侧尝试增量输出。

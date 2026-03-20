@@ -88,6 +88,8 @@ pub struct DingtalkConfig {
     #[serde(default)]
     pub show_reasoning: bool,
     #[serde(default)]
+    pub stream_output: bool,
+    #[serde(default)]
     pub allowlist: Vec<String>,
     #[serde(default)]
     pub proxy: DingtalkProxyConfig,
@@ -102,6 +104,7 @@ impl Default for DingtalkConfig {
             client_secret: String::new(),
             bot_title: default_dingtalk_bot_title(),
             show_reasoning: false,
+            stream_output: false,
             allowlist: Vec::new(),
             proxy: DingtalkProxyConfig::default(),
         }
@@ -132,6 +135,8 @@ pub struct TelegramConfig {
     #[serde(default)]
     pub show_reasoning: bool,
     #[serde(default)]
+    pub stream_output: bool,
+    #[serde(default)]
     pub allowlist: Vec<String>,
     #[serde(default)]
     pub proxy: TelegramProxyConfig,
@@ -144,6 +149,7 @@ impl Default for TelegramConfig {
             enabled: default_channel_enabled(),
             bot_token: String::new(),
             show_reasoning: false,
+            stream_output: false,
             allowlist: Vec::new(),
             proxy: TelegramProxyConfig::default(),
         }
@@ -372,6 +378,8 @@ pub struct ModelProviderConfig {
     #[serde(default)]
     pub proxy: bool,
     #[serde(default)]
+    pub stream: bool,
+    #[serde(default)]
     pub api_key: Option<String>,
     #[serde(default)]
     pub env_key: Option<String>,
@@ -386,6 +394,7 @@ impl Default for ModelProviderConfig {
             default_model: "gpt-4o-mini".to_string(),
             tokenizer_path: None,
             proxy: false,
+            stream: false,
             api_key: None,
             env_key: Some("OPENAI_API_KEY".to_string()),
         }

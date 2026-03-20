@@ -659,6 +659,7 @@ mod tests {
             client_secret: format!("{id}-secret"),
             bot_title: format!("{id}-bot"),
             show_reasoning: false,
+            stream_output: false,
             allowlist: Vec::new(),
             proxy: Default::default(),
         })
@@ -670,6 +671,7 @@ mod tests {
             enabled,
             bot_token: format!("{id}-token"),
             show_reasoning: false,
+            stream_output: false,
             allowlist: Vec::new(),
             proxy: Default::default(),
         })

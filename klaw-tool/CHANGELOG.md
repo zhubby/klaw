@@ -3,6 +3,7 @@
 ## 2026-03-20
 
 ### Changed
+- updated sub-agent execution to match the new optional agent-streaming parameter without changing current tool behavior
 - `shell` and `apply_patch` now resolve the fallback data workspace through `klaw-util`, removing another local copy of the default `~/.klaw/workspace` path logic
 
 ## 2026-03-19

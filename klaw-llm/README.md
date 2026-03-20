@@ -4,12 +4,13 @@
 
 ## 能力
 
-- 统一 `LlmProvider` trait，向上层暴露单轮 `chat` 接口。
+- 统一 `LlmProvider` trait，向上层暴露单轮 `chat` 接口，并支持可选的 `chat_stream` 增量事件输出。
 - `LlmMessage` 支持 `media` 字段（URL/data URL），用于多模态用户输入。
 - OpenAI-compatible provider：
   - `chat_completions` wire API。
   - `responses` wire API（含 function call / function_call_output 映射）。
   - 多模态内容映射（`text + image_url` / `input_text + input_image`）。
+  - 可选 native SSE streaming，向上层发出文本/推理增量事件。
 - Anthropic provider（Messages API）。
 - 当 provider 未返回 `usage` 时，支持本地 token 估算回退：
   - 优先读取配置的 `tokenizer.json`（`tokenizers` crate）

@@ -182,6 +182,7 @@ fn embedding_provider_build_uses_memory_config() {
             default_model: "gpt-4o-mini".to_string(),
             tokenizer_path: None,
             proxy: false,
+            stream: false,
             api_key: Some("test-key".to_string()),
             env_key: None,
         },

@@ -29,7 +29,7 @@ url = "http://127.0.0.1:8888"
 - 会话键格式：`telegram:{account_id}:{chat_id}`
 - `chat_id` 直接使用 Telegram Bot API 的 chat id
 - 私聊和群聊都按 chat 级别建会话
-- `/new`、`/help`、`/model-provider`、`/model` 等通用命令仍由 runtime 统一处理
+- `/new`、`/help`、`/model_provider`、`/model` 等通用命令仍由 runtime 统一处理
 - `/start` 会兼容映射到帮助页，适配 Telegram 机器人默认入口习惯
 
 ## 入站能力

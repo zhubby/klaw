@@ -36,9 +36,33 @@ pub struct ChannelResponse {
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone)]
+pub enum ChannelStreamEvent {
+    Snapshot(ChannelResponse),
+    Clear,
+}
+
+#[async_trait(?Send)]
+pub trait ChannelStreamWriter {
+    async fn write(&mut self, event: ChannelStreamEvent) -> ChannelResult<()>;
+}
+
 #[async_trait(?Send)]
 pub trait ChannelRuntime {
     async fn submit(&self, request: ChannelRequest) -> ChannelResult<Option<ChannelResponse>>;
+
+    async fn submit_streaming(
+        &self,
+        request: ChannelRequest,
+        writer: &mut dyn ChannelStreamWriter,
+    ) -> ChannelResult<Option<ChannelResponse>> {
+        let response = self.submit(request).await?;
+        match response.clone() {
+            Some(output) => writer.write(ChannelStreamEvent::Snapshot(output)).await?,
+            None => writer.write(ChannelStreamEvent::Clear).await?,
+        }
+        Ok(response)
+    }
 
     fn cron_tick_interval(&self) -> Duration;
 

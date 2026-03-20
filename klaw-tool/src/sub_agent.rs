@@ -288,6 +288,7 @@ impl Tool for SubAgentTool {
                 max_tool_calls: self.sub_config.max_tool_calls.max(1),
                 token_budget: 0,
             },
+            None,
         )
         .await
         .map_err(|err| match err {
@@ -325,6 +326,7 @@ mod tests {
                 default_model: "gpt-4o-mini".to_string(),
                 tokenizer_path: None,
                 proxy: false,
+                stream: false,
                 api_key: Some("test".to_string()),
                 env_key: None,
             },

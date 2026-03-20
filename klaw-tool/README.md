@@ -22,6 +22,7 @@
 - the `cron_manager` tool also accepts either a JSON object or a JSON string for payloads, and tolerates common boolean strings like `"true"` / `"false"` for `enabled`
 - the `cron_manager` tool supports a high-level `message` shortcut for scheduled prompts in the current conversation, auto-filling channel/chat/session defaults from tool context unless explicitly overridden
 - the `message` shortcut now defaults to an isolated cron session key like `cron:<job_id>` so scheduled runs do not silently accumulate the current chat's conversation history
+- sub-agent execution currently opts out of live streaming and still consumes the final aggregated agent output
 - `skills_registry` is now read-only and only browses/searches local registry mirrors
 - `skills_manager` owns installed-skill lifecycle actions, including `install_from_registry`
 - multi-action tools use action-specific `oneOf` parameter schemas to keep requests explicit and avoid mixing unrelated fields in a single call

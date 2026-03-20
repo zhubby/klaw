@@ -1,11 +1,13 @@
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::{header::USER_AGENT, Client};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     estimate::estimate_chat_usage, ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse,
-    LlmUsage, LlmUsageSource, ToolCall, ToolDefinition,
+    LlmStreamEvent, LlmUsage, LlmUsageSource, ToolCall, ToolDefinition,
 };
 
 /// OpenAI wire API 类型。
@@ -49,6 +51,8 @@ pub struct OpenAiCompatibleConfig {
     pub proxy: bool,
     /// 底层 wire API。
     pub wire_api: OpenAiWireApi,
+    /// 是否启用 provider 原生 stream API。
+    pub stream: bool,
 }
 
 /// OpenAI Compatible Provider 实现。
@@ -109,6 +113,60 @@ impl OpenAiCompatibleProvider {
             .map_err(|e| LlmError::InvalidResponse(e.to_string()))
     }
 
+    async fn execute_sse<T: Serialize, F>(
+        &self,
+        request: &T,
+        mut on_event: F,
+    ) -> Result<(), LlmError>
+    where
+        F: FnMut(Value) -> Result<(), LlmError> + Send,
+    {
+        let response = self
+            .client
+            .post(self.endpoint())
+            .bearer_auth(&self.config.api_key)
+            .header(USER_AGENT, "openclaw/0.3.0")
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| LlmError::RequestFailed(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable body>".to_string());
+            return Err(LlmError::ProviderUnavailable(format!(
+                "endpoint={}, http_status={status}, body={body}",
+                self.endpoint()
+            )));
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|err| LlmError::StreamFailed(err.to_string()))?;
+            let text = std::str::from_utf8(&chunk)
+                .map_err(|err| LlmError::StreamFailed(err.to_string()))?;
+            buffer.push_str(text);
+            while let Some(event_end) = buffer.find("\n\n") {
+                let raw_event = buffer[..event_end].to_string();
+                buffer.drain(..event_end + 2);
+                if let Some(event) = parse_sse_event(&raw_event)? {
+                    on_event(event)?;
+                }
+            }
+        }
+
+        if !buffer.trim().is_empty() {
+            if let Some(event) = parse_sse_event(&buffer)? {
+                on_event(event)?;
+            }
+        }
+        Ok(())
+    }
+
     async fn chat_with_chat_completions(
         &self,
         messages: Vec<LlmMessage>,
@@ -122,6 +180,7 @@ impl OpenAiCompatibleProvider {
             model: model.unwrap_or(&self.config.default_model).to_string(),
             temperature: options.temperature,
             max_tokens: options.max_tokens,
+            stream: None,
             user: options.user,
             messages: messages
                 .into_iter()
@@ -213,6 +272,70 @@ impl OpenAiCompatibleProvider {
         Ok(response)
     }
 
+    async fn chat_with_chat_completions_stream(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Vec<ToolDefinition>,
+        model: Option<&str>,
+        options: ChatOptions,
+        stream: UnboundedSender<LlmStreamEvent>,
+    ) -> Result<LlmResponse, LlmError> {
+        let original_messages = messages.clone();
+        let original_tools = tools.clone();
+        let request = OpenAiChatCompletionRequest {
+            model: model.unwrap_or(&self.config.default_model).to_string(),
+            temperature: options.temperature,
+            max_tokens: options.max_tokens,
+            stream: Some(true),
+            user: options.user,
+            messages: messages
+                .into_iter()
+                .map(|m| OpenAiMessage {
+                    role: m.role.clone(),
+                    content: map_chat_message_content(&m),
+                    reasoning_content: None,
+                    reasoning: None,
+                    tool_calls: m.tool_calls.map(|calls| {
+                        calls
+                            .into_iter()
+                            .map(|call| OpenAiToolCall {
+                                id: call.id,
+                                r#type: "function".to_string(),
+                                function: OpenAiToolCallFunction {
+                                    name: call.name,
+                                    arguments: call.arguments.to_string(),
+                                },
+                            })
+                            .collect()
+                    }),
+                    tool_call_id: m.tool_call_id,
+                })
+                .collect(),
+            tools: map_chat_completion_tools(tools),
+        };
+        let mut state = OpenAiChatCompletionStreamState::default();
+        self.execute_sse(&request, &mut |event| {
+            apply_chat_completions_stream_event(&mut state, &stream, event)
+        })
+        .await?;
+        let mut response = state.into_response();
+        if response.usage.is_none() {
+            response.usage = Some(estimate_chat_usage(
+                self.name(),
+                model.unwrap_or(&self.config.default_model),
+                self.wire_api().unwrap_or("chat_completions"),
+                self.config.tokenizer_path.as_deref(),
+                &original_messages,
+                &original_tools,
+                &response.content,
+                response.reasoning.as_deref(),
+                &response.tool_calls,
+            ));
+            response.usage_source = Some(LlmUsageSource::EstimatedLocal);
+        }
+        Ok(response)
+    }
+
     async fn chat_with_responses(
         &self,
         messages: Vec<LlmMessage>,
@@ -244,6 +367,64 @@ impl OpenAiCompatibleProvider {
         };
 
         let payload: OpenAiResponsesResponse = self.execute_json(&request).await?;
+        let mut response = parse_responses_payload(payload);
+        if response.usage.is_none() {
+            response.usage = Some(estimate_chat_usage(
+                self.name(),
+                model.unwrap_or(&self.config.default_model),
+                self.wire_api().unwrap_or("responses"),
+                self.config.tokenizer_path.as_deref(),
+                &original_messages,
+                &original_tools,
+                &response.content,
+                response.reasoning.as_deref(),
+                &response.tool_calls,
+            ));
+            response.usage_source = Some(LlmUsageSource::EstimatedLocal);
+        }
+        Ok(response)
+    }
+
+    async fn chat_with_responses_stream(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Vec<ToolDefinition>,
+        model: Option<&str>,
+        options: ChatOptions,
+        stream: UnboundedSender<LlmStreamEvent>,
+    ) -> Result<LlmResponse, LlmError> {
+        let original_messages = messages.clone();
+        let original_tools = tools.clone();
+        let request = OpenAiResponsesRequest {
+            model: model.unwrap_or(&self.config.default_model).to_string(),
+            input: build_responses_input(messages),
+            temperature: Some(options.temperature),
+            max_output_tokens: options.max_output_tokens.or(options.max_tokens),
+            instructions: options.instructions,
+            previous_response_id: options.previous_response_id,
+            store: options.store,
+            metadata: options.metadata,
+            include: options.include,
+            parallel_tool_calls: options.parallel_tool_calls,
+            tool_choice: options.tool_choice,
+            text: options.text,
+            reasoning: options.reasoning,
+            truncation: options.truncation,
+            user: options.user,
+            service_tier: options.service_tier,
+            stream: Some(true),
+            tools: map_responses_tools(tools),
+        };
+        let mut completed: Option<OpenAiResponsesResponse> = None;
+        self.execute_sse(&request, &mut |event| {
+            apply_responses_stream_event(&stream, &mut completed, event)
+        })
+        .await?;
+        let payload = completed.ok_or_else(|| {
+            LlmError::InvalidResponse(
+                "responses stream ended without response.completed".to_string(),
+            )
+        })?;
         let mut response = parse_responses_payload(payload);
         if response.usage.is_none() {
             response.usage = Some(estimate_chat_usage(
@@ -318,6 +499,32 @@ impl LlmProvider for OpenAiCompatibleProvider {
             }
             OpenAiWireApi::Responses => {
                 self.chat_with_responses(messages, tools, model, options)
+                    .await
+            }
+        }
+    }
+
+    async fn chat_stream(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Vec<ToolDefinition>,
+        model: Option<&str>,
+        options: ChatOptions,
+        stream: Option<UnboundedSender<LlmStreamEvent>>,
+    ) -> Result<LlmResponse, LlmError> {
+        let Some(stream) = stream else {
+            return self.chat(messages, tools, model, options).await;
+        };
+        if !self.config.stream {
+            return self.chat(messages, tools, model, options).await;
+        }
+        match self.config.wire_api {
+            OpenAiWireApi::ChatCompletions => {
+                self.chat_with_chat_completions_stream(messages, tools, model, options, stream)
+                    .await
+            }
+            OpenAiWireApi::Responses => {
+                self.chat_with_responses_stream(messages, tools, model, options, stream)
                     .await
             }
         }
@@ -659,6 +866,172 @@ fn extract_chat_message_text(content: OpenAiChatMessageContent) -> String {
     }
 }
 
+fn parse_sse_event(raw_event: &str) -> Result<Option<Value>, LlmError> {
+    let mut data_lines = Vec::new();
+    for line in raw_event.lines() {
+        if let Some(value) = line.strip_prefix("data:") {
+            let trimmed = value.trim();
+            if trimmed == "[DONE]" {
+                return Ok(None);
+            }
+            data_lines.push(trimmed.to_string());
+        }
+    }
+    if data_lines.is_empty() {
+        return Ok(None);
+    }
+    let payload = data_lines.join("\n");
+    serde_json::from_str(&payload)
+        .map(Some)
+        .map_err(|err| LlmError::InvalidResponse(format!("invalid stream event payload: {err}")))
+}
+
+#[derive(Debug, Default)]
+struct OpenAiChatCompletionStreamState {
+    content: String,
+    reasoning: String,
+    tool_calls: Vec<OpenAiToolCallStreamState>,
+    usage: Option<LlmUsage>,
+}
+
+#[derive(Debug, Default)]
+struct OpenAiToolCallStreamState {
+    id: Option<String>,
+    name: String,
+    arguments: String,
+}
+
+impl OpenAiChatCompletionStreamState {
+    fn into_response(self) -> LlmResponse {
+        let usage = self.usage;
+        LlmResponse {
+            content: self.content,
+            reasoning: (!self.reasoning.trim().is_empty()).then_some(self.reasoning),
+            tool_calls: self
+                .tool_calls
+                .into_iter()
+                .filter(|call| !call.name.trim().is_empty())
+                .map(|call| ToolCall {
+                    id: call.id,
+                    name: call.name,
+                    arguments: decode_tool_arguments(call.arguments),
+                })
+                .collect(),
+            usage_source: usage.as_ref().map(|_| LlmUsageSource::ProviderReported),
+            usage,
+        }
+    }
+}
+
+fn apply_chat_completions_stream_event(
+    state: &mut OpenAiChatCompletionStreamState,
+    stream: &UnboundedSender<LlmStreamEvent>,
+    event: Value,
+) -> Result<(), LlmError> {
+    if let Some(usage) = event
+        .get("usage")
+        .cloned()
+        .filter(|value| !value.is_null())
+        .map(serde_json::from_value::<OpenAiChatCompletionUsage>)
+        .transpose()
+        .map_err(|err| LlmError::InvalidResponse(err.to_string()))?
+    {
+        state.usage = Some(map_chat_completion_usage(usage));
+    }
+
+    let Some(choice) = event
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+    else {
+        return Ok(());
+    };
+    let Some(delta) = choice.get("delta") else {
+        return Ok(());
+    };
+
+    if let Some(content) = delta.get("content").and_then(Value::as_str) {
+        state.content.push_str(content);
+        let _ = stream.send(LlmStreamEvent::ContentDelta(content.to_string()));
+    }
+    if let Some(reasoning) = delta
+        .get("reasoning_content")
+        .or_else(|| delta.get("reasoning"))
+        .and_then(Value::as_str)
+    {
+        state.reasoning.push_str(reasoning);
+        let _ = stream.send(LlmStreamEvent::ReasoningDelta(reasoning.to_string()));
+    }
+    if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
+        for tool_call in tool_calls {
+            let index = tool_call
+                .get("index")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or(0);
+            while state.tool_calls.len() <= index {
+                state.tool_calls.push(OpenAiToolCallStreamState::default());
+            }
+            let state_call = &mut state.tool_calls[index];
+            if let Some(id) = tool_call.get("id").and_then(Value::as_str) {
+                state_call.id = Some(id.to_string());
+            }
+            if let Some(function) = tool_call.get("function") {
+                if let Some(name) = function.get("name").and_then(Value::as_str) {
+                    state_call.name.push_str(name);
+                }
+                if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
+                    state_call.arguments.push_str(arguments);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_responses_stream_event(
+    stream: &UnboundedSender<LlmStreamEvent>,
+    completed: &mut Option<OpenAiResponsesResponse>,
+    event: Value,
+) -> Result<(), LlmError> {
+    match event.get("type").and_then(Value::as_str) {
+        Some("response.output_text.delta") => {
+            if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                let _ = stream.send(LlmStreamEvent::ContentDelta(delta.to_string()));
+            }
+        }
+        Some("response.reasoning_summary_text.delta") | Some("response.reasoning_text.delta") => {
+            if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                let _ = stream.send(LlmStreamEvent::ReasoningDelta(delta.to_string()));
+            }
+        }
+        Some("response.completed") => {
+            let response = event
+                .get("response")
+                .cloned()
+                .ok_or_else(|| {
+                    LlmError::InvalidResponse(
+                        "response.completed missing response payload".to_string(),
+                    )
+                })
+                .and_then(|value| {
+                    serde_json::from_value::<OpenAiResponsesResponse>(value)
+                        .map_err(|err| LlmError::InvalidResponse(err.to_string()))
+                })?;
+            *completed = Some(response);
+        }
+        Some("error") => {
+            let message = event
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown stream error");
+            return Err(LlmError::StreamFailed(message.to_string()));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 struct OpenAiChatCompletionRequest {
     model: String,
@@ -666,6 +1039,8 @@ struct OpenAiChatCompletionRequest {
     temperature: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1150,11 +1525,140 @@ mod tests {
             tokenizer_path: None,
             proxy: false,
             wire_api: OpenAiWireApi::Responses,
+            stream: false,
         });
 
         assert_eq!(
             provider.endpoint(),
             "https://coding.dashscope.aliyuncs.com/v1"
         );
+    }
+
+    #[test]
+    fn parse_sse_event_reads_json_payload() {
+        let event = parse_sse_event(
+            "event: message\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+        )
+        .expect("event should parse")
+        .expect("event should not be done");
+        assert_eq!(
+            event.get("type").and_then(Value::as_str),
+            Some("response.output_text.delta")
+        );
+        assert_eq!(event.get("delta").and_then(Value::as_str), Some("hi"));
+    }
+
+    #[test]
+    fn apply_chat_completions_stream_event_accumulates_tool_calls() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut state = OpenAiChatCompletionStreamState::default();
+        apply_chat_completions_stream_event(
+            &mut state,
+            &tx,
+            serde_json::json!({
+                "choices": [{
+                    "delta": {
+                        "content": "hel",
+                        "reasoning_content": "plan ",
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_1",
+                            "function": {
+                                "name": "web_fetch",
+                                "arguments": "{\"url\":\"https://"
+                            }
+                        }]
+                    }
+                }]
+            }),
+        )
+        .expect("stream event should apply");
+        apply_chat_completions_stream_event(
+            &mut state,
+            &tx,
+            serde_json::json!({
+                "choices": [{
+                    "delta": {
+                        "content": "lo",
+                        "reasoning": "done",
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": {
+                                "arguments": "example.com\"}"
+                            }
+                        }]
+                    }
+                }],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 4,
+                    "total_tokens": 14
+                }
+            }),
+        )
+        .expect("stream event should apply");
+
+        let first = rx.try_recv().expect("first delta should be emitted");
+        let second = rx.try_recv().expect("second delta should be emitted");
+        let third = rx.try_recv().expect("third delta should be emitted");
+        let fourth = rx.try_recv().expect("fourth delta should be emitted");
+        assert_eq!(first, LlmStreamEvent::ContentDelta("hel".to_string()));
+        assert_eq!(second, LlmStreamEvent::ReasoningDelta("plan ".to_string()));
+        assert_eq!(third, LlmStreamEvent::ContentDelta("lo".to_string()));
+        assert_eq!(fourth, LlmStreamEvent::ReasoningDelta("done".to_string()));
+
+        let response = state.into_response();
+        assert_eq!(response.content, "hello");
+        assert_eq!(response.reasoning.as_deref(), Some("plan done"));
+        assert_eq!(response.tool_calls.len(), 1);
+        assert_eq!(response.tool_calls[0].name, "web_fetch");
+        assert_eq!(
+            response.tool_calls[0].arguments,
+            serde_json::json!({"url":"https://example.com"})
+        );
+        assert_eq!(response.usage.expect("usage should exist").total_tokens, 14);
+    }
+
+    #[test]
+    fn apply_responses_stream_event_captures_completed_payload() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut completed = None;
+        apply_responses_stream_event(
+            &tx,
+            &mut completed,
+            serde_json::json!({
+                "type": "response.output_text.delta",
+                "delta": "hello"
+            }),
+        )
+        .expect("delta event should apply");
+        apply_responses_stream_event(
+            &tx,
+            &mut completed,
+            serde_json::json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_1",
+                    "output": [{
+                        "type": "message",
+                        "content": [{"type":"output_text","text":"hello"}]
+                    }],
+                    "usage": {
+                        "input_tokens": 3,
+                        "output_tokens": 1,
+                        "total_tokens": 4
+                    }
+                }
+            }),
+        )
+        .expect("completed event should apply");
+
+        assert_eq!(
+            rx.try_recv().expect("delta should be emitted"),
+            LlmStreamEvent::ContentDelta("hello".to_string())
+        );
+        let response = parse_responses_payload(completed.expect("completed payload should exist"));
+        assert_eq!(response.content, "hello");
+        assert_eq!(response.usage.expect("usage should exist").total_tokens, 4);
     }
 }

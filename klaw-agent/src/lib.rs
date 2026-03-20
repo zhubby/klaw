@@ -3,8 +3,9 @@ mod context_compression;
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
 use klaw_llm::{
-    ChatOptions, LlmError, LlmMedia, LlmMessage, LlmProvider, LlmUsage, LlmUsageSource,
-    OpenAiCompatibleConfig, OpenAiCompatibleProvider, OpenAiWireApi, ToolDefinition,
+    ChatOptions, LlmError, LlmMedia, LlmMessage, LlmProvider, LlmStreamEvent, LlmUsage,
+    LlmUsageSource, OpenAiCompatibleConfig, OpenAiCompatibleProvider, OpenAiWireApi,
+    ToolDefinition,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -12,6 +13,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
 use thiserror::Error;
+use tokio::sync::mpsc::{self, UnboundedSender};
 use tracing::{debug, warn};
 
 pub use context_compression::{
@@ -51,6 +53,15 @@ pub struct AgentExecutionOutput {
     pub reasoning: Option<String>,
     pub tool_signals: Vec<ToolInvocationSignal>,
     pub request_usages: Vec<AgentRequestUsage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentExecutionStreamEvent {
+    Snapshot {
+        content: String,
+        reasoning: Option<String>,
+    },
+    Clear,
 }
 
 #[derive(Debug, Clone)]
@@ -212,6 +223,7 @@ pub fn build_provider_from_config(
                     wire_api: provider.wire_api.clone(),
                 }
             })?,
+            stream: provider.stream,
         })),
         default_model,
     })
@@ -222,6 +234,7 @@ pub async fn run_agent_execution(
     tools: &dyn ToolExecutor,
     input: AgentExecutionInput,
     limits: AgentExecutionLimits,
+    stream: Option<UnboundedSender<AgentExecutionStreamEvent>>,
 ) -> Result<AgentExecutionOutput, AgentExecutionError> {
     let tool_defs = tools.definitions();
     let mut llm_messages = Vec::new();
@@ -292,14 +305,38 @@ pub async fn run_agent_execution(
             options = ?chat_options,
             "sending chat request to model provider"
         );
+        let mut stream_forwarder = None;
+        let llm_stream = stream.as_ref().map(|agent_stream| {
+            let (llm_tx, mut llm_rx) = mpsc::unbounded_channel::<LlmStreamEvent>();
+            let agent_stream = agent_stream.clone();
+            stream_forwarder = Some(tokio::spawn(async move {
+                let mut content = String::new();
+                let mut reasoning = String::new();
+                while let Some(event) = llm_rx.recv().await {
+                    match event {
+                        LlmStreamEvent::ContentDelta(delta) => content.push_str(&delta),
+                        LlmStreamEvent::ReasoningDelta(delta) => reasoning.push_str(&delta),
+                    }
+                    let _ = agent_stream.send(AgentExecutionStreamEvent::Snapshot {
+                        content: content.clone(),
+                        reasoning: (!reasoning.trim().is_empty()).then_some(reasoning.clone()),
+                    });
+                }
+            }));
+            llm_tx
+        });
         let llm_response = provider
-            .chat(
+            .chat_stream(
                 llm_messages.clone(),
                 tool_defs.clone(),
                 input.model.as_deref(),
                 chat_options,
+                llm_stream,
             )
             .await?;
+        if let Some(forwarder) = stream_forwarder.take() {
+            let _ = forwarder.await;
+        }
         let request_seq = i64::from(iteration);
         if let Some(usage) = llm_response.usage.clone() {
             tokens_used = tokens_used.saturating_add(usage.total_tokens);
@@ -332,6 +369,9 @@ pub async fn run_agent_execution(
                 tool_signals,
                 request_usages,
             });
+        }
+        if let Some(stream) = &stream {
+            let _ = stream.send(AgentExecutionStreamEvent::Clear);
         }
 
         llm_messages.push(LlmMessage {
@@ -561,6 +601,7 @@ mod tests {
                 max_tool_calls: 4,
                 token_budget: 0,
             },
+            None,
         )
         .await
         .expect("agent execution should succeed");
@@ -594,6 +635,7 @@ mod tests {
                 max_tool_calls: 0,
                 token_budget: 0,
             },
+            None,
         )
         .await
         .expect("agent execution should succeed with unbounded limits");
@@ -663,6 +705,7 @@ mod tests {
                 max_tool_calls: 2,
                 token_budget: 0,
             },
+            None,
         )
         .await
         .expect("agent execution should succeed");
@@ -737,6 +780,7 @@ mod tests {
                 max_tool_calls: 1,
                 token_budget: 0,
             },
+            None,
         )
         .await
         .expect("agent execution should succeed");
@@ -776,6 +820,7 @@ mod tests {
                 max_tool_calls: 4,
                 token_budget: 20,
             },
+            None,
         )
         .await
         .expect_err("token budget should be enforced");
@@ -894,6 +939,7 @@ mod tests {
                 max_tool_calls: 4,
                 token_budget: 0,
             },
+            None,
         )
         .await
         .expect("agent execution should short-circuit successfully");

@@ -24,6 +24,7 @@ struct DingtalkForm {
     client_secret: String,
     bot_title: String,
     show_reasoning: bool,
+    stream_output: bool,
     allowlist_input: ArrayEditor,
     proxy_enabled: bool,
     proxy_url: String,
@@ -40,6 +41,7 @@ impl DingtalkForm {
             client_secret: default.client_secret,
             bot_title: default.bot_title,
             show_reasoning: default.show_reasoning,
+            stream_output: default.stream_output,
             allowlist_input: ArrayEditor::new("Allowlist"),
             proxy_enabled: default.proxy.enabled,
             proxy_url: default.proxy.url,
@@ -55,6 +57,7 @@ impl DingtalkForm {
             client_secret: account.client_secret.clone(),
             bot_title: account.bot_title.clone(),
             show_reasoning: account.show_reasoning,
+            stream_output: account.stream_output,
             allowlist_input: ArrayEditor::from_vec("Allowlist", &account.allowlist),
             proxy_enabled: account.proxy.enabled,
             proxy_url: account.proxy.url.clone(),
@@ -81,6 +84,7 @@ impl DingtalkForm {
             client_secret: self.client_secret.trim().to_string(),
             bot_title: self.bot_title.trim().to_string(),
             show_reasoning: self.show_reasoning,
+            stream_output: self.stream_output,
             allowlist: self.allowlist_input.to_vec(),
             proxy: DingtalkProxyConfig {
                 enabled: self.proxy_enabled,
@@ -97,6 +101,7 @@ struct TelegramForm {
     enabled: bool,
     bot_token: String,
     show_reasoning: bool,
+    stream_output: bool,
     allowlist_input: ArrayEditor,
     proxy_enabled: bool,
     proxy_url: String,
@@ -111,6 +116,7 @@ impl TelegramForm {
             enabled: default.enabled,
             bot_token: default.bot_token,
             show_reasoning: default.show_reasoning,
+            stream_output: default.stream_output,
             allowlist_input: ArrayEditor::new("Allowlist"),
             proxy_enabled: default.proxy.enabled,
             proxy_url: default.proxy.url,
@@ -124,6 +130,7 @@ impl TelegramForm {
             enabled: account.enabled,
             bot_token: account.bot_token.clone(),
             show_reasoning: account.show_reasoning,
+            stream_output: account.stream_output,
             allowlist_input: ArrayEditor::from_vec("Allowlist", &account.allowlist),
             proxy_enabled: account.proxy.enabled,
             proxy_url: account.proxy.url.clone(),
@@ -148,6 +155,7 @@ impl TelegramForm {
             enabled: self.enabled,
             bot_token: self.bot_token.trim().to_string(),
             show_reasoning: self.show_reasoning,
+            stream_output: self.stream_output,
             allowlist: self.allowlist_input.to_vec(),
             proxy: TelegramProxyConfig {
                 enabled: self.proxy_enabled,
@@ -234,6 +242,13 @@ impl ChannelRow {
         match self {
             Self::Dingtalk(config) => config.show_reasoning,
             Self::Telegram(config) => config.show_reasoning,
+        }
+    }
+
+    fn stream_output(&self) -> bool {
+        match self {
+            Self::Dingtalk(config) => config.stream_output,
+            Self::Telegram(config) => config.stream_output,
         }
     }
 }
@@ -621,6 +636,10 @@ impl ChannelPanel {
                                 ui.checkbox(&mut form.show_reasoning, "");
                                 ui.end_row();
 
+                                ui.label("Stream Output");
+                                ui.checkbox(&mut form.stream_output, "");
+                                ui.end_row();
+
                                 ui.label("Proxy Enabled");
                                 ui.checkbox(&mut form.proxy_enabled, "");
                                 ui.end_row();
@@ -652,6 +671,10 @@ impl ChannelPanel {
 
                                 ui.label("Show Reasoning");
                                 ui.checkbox(&mut form.show_reasoning, "");
+                                ui.end_row();
+
+                                ui.label("Stream Output");
+                                ui.checkbox(&mut form.stream_output, "");
                                 ui.end_row();
 
                                 ui.label("Proxy Enabled");
@@ -847,6 +870,7 @@ impl PanelRenderer for ChannelPanel {
                         .column(Column::auto().at_least(80.0))
                         .column(Column::auto().at_least(100.0))
                         .column(Column::auto().at_least(70.0))
+                        .column(Column::auto().at_least(70.0))
                         .column(Column::remainder().at_least(100.0))
                         .min_scrolled_height(0.0)
                         .max_scroll_height(available_height)
@@ -872,6 +896,9 @@ impl PanelRenderer for ChannelPanel {
                             });
                             header.col(|ui| {
                                 ui.strong("Reasoning");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Stream");
                             });
                             header.col(|ui| {
                                 ui.strong("Proxy");
@@ -926,6 +953,10 @@ impl PanelRenderer for ChannelPanel {
                                 row.col(|ui| {
                                     let show = channel_row.show_reasoning();
                                     ui.label(if show { "yes" } else { "no" });
+                                });
+                                row.col(|ui| {
+                                    let stream = channel_row.stream_output();
+                                    ui.label(if stream { "yes" } else { "no" });
                                 });
                                 row.col(|ui| {
                                     ui.label(channel_row.proxy_label());
@@ -1075,6 +1106,20 @@ mod tests {
     }
 
     #[test]
+    fn apply_dingtalk_form_preserves_stream_flag() {
+        let config = AppConfig::default();
+        let mut form = DingtalkForm::new();
+        form.id = "ops".to_string();
+        form.client_id = "cid".to_string();
+        form.client_secret = "secret".to_string();
+        form.stream_output = true;
+
+        let updated = ChannelPanel::apply_dingtalk_form(config, &form).expect("should apply");
+
+        assert!(updated.channels.dingtalk[0].stream_output);
+    }
+
+    #[test]
     fn apply_telegram_form_adds_new_channel() {
         let config = AppConfig::default();
         let mut form = TelegramForm::new();
@@ -1105,5 +1150,18 @@ mod tests {
             ChannelPanel::apply_telegram_form(config, &form).expect_err("duplicate should fail");
 
         assert!(err.contains("already exists"));
+    }
+
+    #[test]
+    fn apply_telegram_form_preserves_stream_flag() {
+        let config = AppConfig::default();
+        let mut form = TelegramForm::new();
+        form.id = "ops-bot".to_string();
+        form.bot_token = "123:secret".to_string();
+        form.stream_output = true;
+
+        let updated = ChannelPanel::apply_telegram_form(config, &form).expect("should apply");
+
+        assert!(updated.channels.telegram[0].stream_output);
     }
 }

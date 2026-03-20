@@ -2,12 +2,16 @@ pub mod service_loop;
 
 use klaw_agent::{
     build_compression_prompt, build_provider_from_config, merge_or_reset_summary,
-    parse_conversation_summary, ConversationMessage, ConversationSummary,
+    parse_conversation_summary, AgentExecutionStreamEvent, ConversationMessage,
+    ConversationSummary,
 };
 use klaw_approval::{
     ApprovalManager, ApprovalResolveDecision, ApprovalStatus, SqliteApprovalManager,
 };
-use klaw_channel::{ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime};
+use klaw_channel::{
+    ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
+    ChannelStreamWriter,
+};
 use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
 use klaw_core::{
     compose_runtime_prompt, ensure_workspace_prompt_templates, AgentLoop, AgentRuntimeError,
@@ -47,6 +51,7 @@ use std::{
     time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::mpsc;
 use tokio::{sync::Mutex, time::timeout};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -165,6 +170,58 @@ impl ChannelRuntime for SharedChannelRuntime {
             route.model,
             request.media_references,
             request.metadata,
+        )
+        .await?;
+
+        Ok(maybe_output.map(|output| ChannelResponse {
+            content: output.content,
+            reasoning: output.reasoning,
+            metadata: output.metadata,
+        }))
+    }
+
+    async fn submit_streaming(
+        &self,
+        request: ChannelRequest,
+        writer: &mut dyn ChannelStreamWriter,
+    ) -> ChannelResult<Option<ChannelResponse>> {
+        if !is_channel_commands_disabled(self.runtime.as_ref(), &request.channel)
+            && request.input.trim_start().starts_with('/')
+        {
+            if let Some(response) = handle_im_command(
+                self.runtime.as_ref(),
+                request.channel.clone(),
+                request.session_key.clone(),
+                request.chat_id.clone(),
+                request.input.clone(),
+            )
+            .await?
+            {
+                writer
+                    .write(ChannelStreamEvent::Snapshot(response.clone()))
+                    .await?;
+                return Ok(Some(response));
+            }
+        }
+
+        let route = resolve_session_route(
+            self.runtime.as_ref(),
+            &request.channel,
+            &request.session_key,
+            &request.chat_id,
+        )
+        .await?;
+        let maybe_output = submit_and_stream_output(
+            self.runtime.as_ref(),
+            request.channel,
+            request.input,
+            route.active_session_key,
+            request.chat_id,
+            route.model_provider,
+            route.model,
+            request.media_references,
+            request.metadata,
+            writer,
         )
         .await?;
 
@@ -511,11 +568,11 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
     if runtime.provider_default_models.len() > 1 {
         lines.push(format!(
             "{:<24}{}",
-            "/model-provider", "List available providers"
+            "/model_provider", "List available providers"
         ));
         lines.push(format!(
             "{:<24}{}",
-            "/model-provider <id>", "Switch provider for current session"
+            "/model_provider <id>", "Switch provider for current session"
         ));
     }
     lines.push(format!("{:<24}{}", "/model", "Show current model"));
@@ -595,7 +652,7 @@ async fn handle_im_command(
                 metadata: BTreeMap::new(),
             }
         }
-        "model-provider" => {
+        "model_provider" => {
             if runtime.provider_default_models.len() <= 1 && arg.is_none() {
                 return Ok(Some(ChannelResponse {
                     content: "ℹ️ Only one provider is configured, so switching is not required."
@@ -1633,6 +1690,161 @@ pub async fn submit_and_get_output(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn submit_and_stream_output(
+    runtime: &RuntimeBundle,
+    channel: String,
+    input: String,
+    session_key: String,
+    chat_id: String,
+    model_provider: String,
+    model: String,
+    media_references: Vec<MediaReference>,
+    request_metadata: BTreeMap<String, serde_json::Value>,
+    writer: &mut dyn ChannelStreamWriter,
+) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
+    let sessions = session_manager(runtime);
+    let full_history = sessions.read_chat_records(&session_key).await?;
+    let summary = maybe_refresh_summary(
+        runtime,
+        &session_key,
+        &model_provider,
+        &model,
+        &full_history,
+    )
+    .await;
+    let conversation_history = build_history_for_model(
+        full_history,
+        runtime.conversation_history_limit,
+        summary.as_ref(),
+    );
+    let header = EnvelopeHeader::new(session_key.clone());
+    let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
+    sessions
+        .append_chat_record(&session_key, &user_record)
+        .await?;
+    let session_state = sessions
+        .touch_session(&session_key, &chat_id, &channel)
+        .await?;
+
+    let inbound_payload = InboundMessage {
+        channel: channel.to_string(),
+        sender_id: "local-user".to_string(),
+        chat_id: chat_id.clone(),
+        session_key,
+        content: input,
+        media_references,
+        metadata: {
+            let mut metadata = request_metadata;
+            metadata.insert(
+                META_CONVERSATION_HISTORY_KEY.to_string(),
+                json!(conversation_history
+                    .into_iter()
+                    .map(|record| {
+                        json!({
+                            "role": record.role,
+                            "content": record.content,
+                        })
+                    })
+                    .collect::<Vec<_>>()),
+            );
+            metadata.insert(
+                META_PROVIDER_KEY.to_string(),
+                serde_json::Value::String(model_provider),
+            );
+            metadata.insert(META_MODEL_KEY.to_string(), serde_json::Value::String(model));
+            metadata
+        },
+    };
+    info!(inbound = ?inbound_payload, "channel inbound normalized (streaming)");
+
+    let envelope = Envelope {
+        header,
+        metadata: BTreeMap::new(),
+        payload: inbound_payload,
+    };
+    let (stream_tx, mut stream_rx) = mpsc::unbounded_channel::<AgentExecutionStreamEvent>();
+    let process = runtime
+        .runtime
+        .process_message_streaming(envelope, stream_tx);
+    tokio::pin!(process);
+    let mut stream_open = true;
+
+    let outcome = loop {
+        tokio::select! {
+            maybe_event = stream_rx.recv(), if stream_open => {
+                let Some(event) = maybe_event else {
+                    stream_open = false;
+                    continue;
+                };
+                match event {
+                    AgentExecutionStreamEvent::Snapshot { content, reasoning } => {
+                        writer.write(ChannelStreamEvent::Snapshot(ChannelResponse {
+                            content,
+                            reasoning,
+                            metadata: BTreeMap::new(),
+                        })).await?;
+                    }
+                    AgentExecutionStreamEvent::Clear => {
+                        writer.write(ChannelStreamEvent::Clear).await?;
+                    }
+                }
+            }
+            outcome = &mut process => break outcome,
+        }
+    };
+
+    match outcome.final_response {
+        Some(msg) if should_emit_outbound(&msg) => {
+            let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
+            let sessions = session_manager(runtime);
+            persist_llm_usage_records(
+                runtime,
+                &msg.header.session_key,
+                &msg.payload.chat_id,
+                session_state.turn_count,
+                &msg.header.message_id,
+                &msg.payload.metadata,
+            )
+            .await?;
+            sessions
+                .append_chat_record(&msg.header.session_key, &agent_record)
+                .await?;
+            sessions
+                .complete_turn(
+                    &msg.header.session_key,
+                    &msg.payload.chat_id,
+                    &msg.payload.channel,
+                )
+                .await?;
+            let reasoning = msg
+                .payload
+                .metadata
+                .get("reasoning")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+                .filter(|value| !value.trim().is_empty());
+            let output = AssistantOutput {
+                content: msg.payload.content.clone(),
+                reasoning,
+                metadata: msg.payload.metadata.clone(),
+            };
+            writer
+                .write(ChannelStreamEvent::Snapshot(ChannelResponse {
+                    content: output.content.clone(),
+                    reasoning: output.reasoning.clone(),
+                    metadata: output.metadata.clone(),
+                }))
+                .await?;
+            Ok(Some(output))
+        }
+        Some(_) | None => {
+            warn!("no outbound response produced");
+            Ok(None)
+        }
+    }
+}
+
 pub async fn drain_runtime_queue(
     runtime: &RuntimeBundle,
     max_iterations: usize,
@@ -1932,8 +2144,8 @@ mod tests {
     fn parse_im_command_supports_name_and_optional_arg() {
         assert_eq!(parse_im_command("/help"), Some(("help", None)));
         assert_eq!(
-            parse_im_command("/model-provider openai"),
-            Some(("model-provider", Some("openai")))
+            parse_im_command("/model_provider openai"),
+            Some(("model_provider", Some("openai")))
         );
         assert_eq!(
             parse_im_command("/model qwen-plus /help"),

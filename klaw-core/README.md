@@ -9,6 +9,7 @@
 - expose protocol envelopes, scheduling, reliability, and transport abstractions
 - host shared cross-crate models such as `MediaReference`
 - provide the main `AgentLoop` runtime
+- expose both final-response and streaming-snapshot execution paths for channel-facing runtimes
 - route per-message provider/model selection from inbound metadata (`agent.provider_id`, `agent.model`)
 - support runtime system-prompt hot reload through `AgentLoop::set_system_prompt`
 - bootstrap workspace prompt templates under `~/.klaw/workspace` on demand

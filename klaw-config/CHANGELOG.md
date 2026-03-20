@@ -4,6 +4,7 @@
 
 ### Added
 
+- 新增 `model_providers.<id>.stream`、`channels.telegram[].stream_output` 与 `channels.dingtalk[].stream_output` 配置项，用于分别控制 provider 侧 stream API 和 channel 侧增量输出
 - 新增 `channels.telegram`、`TelegramConfig` 与 `TelegramProxyConfig`，支持 Telegram channel 的 bot token、allowlist、reasoning 显示和代理配置
 
 ### Changed

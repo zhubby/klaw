@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use estimate::estimate_chat_usage;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::mpsc::UnboundedSender;
 
 pub use providers::{
     anthropic::{AnthropicConfig, AnthropicProvider},
@@ -125,6 +126,12 @@ pub struct LlmResponse {
     pub usage_source: Option<LlmUsageSource>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LlmStreamEvent {
+    ContentDelta(String),
+    ReasoningDelta(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LlmUsage {
     pub input_tokens: u64,
@@ -166,6 +173,8 @@ pub enum LlmError {
     InvalidResponse(String),
     #[error("request failed: {0}")]
     RequestFailed(String),
+    #[error("stream failed: {0}")]
+    StreamFailed(String),
 }
 
 /// LLM Provider 统一抽象。
@@ -192,6 +201,30 @@ pub trait LlmProvider: Send + Sync {
         model: Option<&str>,
         options: ChatOptions,
     ) -> Result<LlmResponse, LlmError>;
+
+    async fn chat_stream(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Vec<ToolDefinition>,
+        model: Option<&str>,
+        options: ChatOptions,
+        stream: Option<UnboundedSender<LlmStreamEvent>>,
+    ) -> Result<LlmResponse, LlmError> {
+        let response = self.chat(messages, tools, model, options).await?;
+        if let Some(stream) = stream {
+            if !response.content.is_empty() {
+                let _ = stream.send(LlmStreamEvent::ContentDelta(response.content.clone()));
+            }
+            if let Some(reasoning) = response
+                .reasoning
+                .as_ref()
+                .filter(|value| !value.is_empty())
+            {
+                let _ = stream.send(LlmStreamEvent::ReasoningDelta(reasoning.clone()));
+            }
+        }
+        Ok(response)
+    }
 }
 
 /// 本地回显 Provider，主要用于联调。
