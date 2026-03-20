@@ -383,6 +383,7 @@ impl PanelRenderer for ApprovalPanel {
                     ui.label("Command Preview:");
                     egui::ScrollArea::vertical()
                         .max_height(100.0)
+                        .id_salt("approval_command_preview")
                         .show(ui, |ui| {
                             ui.label(&approval.command_preview);
                         });
@@ -391,6 +392,7 @@ impl PanelRenderer for ApprovalPanel {
                     ui.label("Command Text:");
                     egui::ScrollArea::vertical()
                         .max_height(150.0)
+                        .id_salt("approval_command_text")
                         .show(ui, |ui| {
                             ui.label(&approval.command_text);
                         });
