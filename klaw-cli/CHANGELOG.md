@@ -24,6 +24,8 @@
 
 ### Fixed
 
+- fresh environments now keep the default `openai` config but still allow `klaw gui` to start when provider credentials are missing; unavailable providers are registered as placeholders and report clear setup guidance when first used
+- `klaw gui` startup now reports runtime initialization failures directly, instead of surfacing a misleading `startup channel closed` error when the worker exits before sending the startup report
 - `klaw gui` manual `Run Now` cron command no longer blocks the GUI until runtime drain and outbound webhook delivery complete; the follow-up drain is now scheduled asynchronously on the runtime thread
 - dingtalk outbound delivery now runs in a dedicated background dispatcher thread with an explicit per-message timeout, so stuck webhook sends no longer block runtime message handling
 

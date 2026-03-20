@@ -20,7 +20,7 @@ use klaw_core::{
 use klaw_heartbeat::{
     should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
 };
-use klaw_llm::{ChatOptions, LlmMessage, LlmProvider};
+use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_observability::{
     init_observability, ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry,
@@ -81,6 +81,39 @@ pub struct RuntimeBundle {
 pub struct SharedChannelRuntime {
     runtime: Arc<RuntimeBundle>,
     background: Arc<service_loop::BackgroundServices>,
+}
+
+#[derive(Debug)]
+struct UnavailableProvider {
+    name: String,
+    default_model: String,
+    wire_api: Option<String>,
+    reason: String,
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for UnavailableProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn default_model(&self) -> &str {
+        &self.default_model
+    }
+
+    fn wire_api(&self) -> Option<&str> {
+        self.wire_api.as_deref()
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<LlmMessage>,
+        _tools: Vec<ToolDefinition>,
+        _model: Option<&str>,
+        _options: ChatOptions,
+    ) -> Result<LlmResponse, LlmError> {
+        Err(LlmError::ProviderUnavailable(self.reason.clone()))
+    }
 }
 
 impl SharedChannelRuntime {
@@ -796,6 +829,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let mut provider_registry = BTreeMap::new();
     let mut provider_default_models = BTreeMap::new();
     for provider_id in config.model_providers.keys() {
+        let default_model = configured_default_model(config, provider_id);
         match build_provider_from_config(config, provider_id) {
             Ok(instance) => {
                 provider_default_models.insert(provider_id.clone(), instance.default_model.clone());
@@ -805,7 +839,17 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
                 warn!(
                     provider_id = provider_id.as_str(),
                     error = %err,
-                    "provider is configured but unavailable at startup; skipping"
+                    "provider is configured but unavailable at startup; using unavailable placeholder"
+                );
+                provider_default_models.insert(provider_id.clone(), default_model.clone());
+                provider_registry.insert(
+                    provider_id.clone(),
+                    Arc::new(build_unavailable_provider(
+                        config,
+                        provider_id,
+                        default_model,
+                        err.to_string(),
+                    )),
                 );
             }
         }
@@ -1600,6 +1644,45 @@ fn config_err(message: String) -> Box<dyn Error> {
     Box::new(io::Error::other(message))
 }
 
+fn configured_default_model(config: &AppConfig, provider_id: &str) -> String {
+    config
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            config
+                .model_providers
+                .get(provider_id)
+                .map(|provider| provider.default_model.clone())
+        })
+        .unwrap_or_else(|| "default".to_string())
+}
+
+fn build_unavailable_provider(
+    config: &AppConfig,
+    provider_id: &str,
+    default_model: String,
+    reason: String,
+) -> UnavailableProvider {
+    let provider = config.model_providers.get(provider_id);
+    let provider_name = provider
+        .and_then(|provider| provider.name.clone())
+        .unwrap_or_else(|| provider_id.to_string());
+    let setup_hint = provider
+        .and_then(|provider| provider.env_key.as_ref())
+        .map(|env_key| format!(" Set `{env_key}` or configure `api_key`."))
+        .unwrap_or_default();
+
+    UnavailableProvider {
+        name: provider_name,
+        default_model,
+        wire_api: provider.map(|provider| provider.wire_api.clone()),
+        reason: format!("provider `{provider_id}` is unavailable: {reason}.{setup_hint}"),
+    }
+}
+
 fn init_observability_from_config(
     config: &klaw_config::ObservabilityConfig,
 ) -> Option<ObservabilityHandle> {
@@ -1696,12 +1779,15 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_history_for_model, compression_trigger_interval, first_arg_token,
-        format_approve_already_handled_message, format_workspace_docs_for_prompt, parse_im_command,
-        should_emit_outbound, should_trigger_compression, trim_conversation_history,
+        build_history_for_model, build_unavailable_provider, compression_trigger_interval,
+        configured_default_model, first_arg_token, format_approve_already_handled_message,
+        format_workspace_docs_for_prompt, parse_im_command, should_emit_outbound,
+        should_trigger_compression, trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
+    use klaw_config::AppConfig;
+    use klaw_llm::{ChatOptions, LlmError, LlmProvider};
     use klaw_session::ChatRecord;
     use klaw_storage::ApprovalStatus;
     use serde_json::json;
@@ -1862,5 +1948,58 @@ mod tests {
             .content
             .contains("Conversation Summary (JSON):"));
         assert_eq!(model_history[1].content, "c");
+    }
+
+    #[test]
+    fn configured_default_model_prefers_global_override() {
+        let mut config = AppConfig::default();
+        config.model = Some("gpt-4.1".to_string());
+
+        assert_eq!(configured_default_model(&config, "openai"), "gpt-4.1");
+    }
+
+    #[tokio::test]
+    async fn unavailable_provider_reports_setup_hint() {
+        let config = AppConfig::default();
+        let provider = build_unavailable_provider(
+            &config,
+            "openai",
+            configured_default_model(&config, "openai"),
+            "provider `openai` requires api_key or env_key".to_string(),
+        );
+
+        let err = provider
+            .chat(
+                Vec::new(),
+                Vec::new(),
+                None,
+                ChatOptions {
+                    temperature: 0.0,
+                    max_tokens: None,
+                    max_output_tokens: None,
+                    previous_response_id: None,
+                    instructions: None,
+                    metadata: None,
+                    include: None,
+                    store: None,
+                    parallel_tool_calls: None,
+                    tool_choice: None,
+                    text: None,
+                    reasoning: None,
+                    truncation: None,
+                    user: None,
+                    service_tier: None,
+                },
+            )
+            .await
+            .expect_err("unavailable provider should fail");
+
+        match err {
+            LlmError::ProviderUnavailable(message) => {
+                assert!(message.contains("provider `openai` is unavailable"));
+                assert!(message.contains("OPENAI_API_KEY"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 }

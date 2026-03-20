@@ -33,12 +33,22 @@ impl GuiCommand {
                     .map_err(|err| err.to_string())?;
 
                 runtime.block_on(async move {
-                    let mut runtime = build_runtime_bundle(&config_for_thread)
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    let startup_report = finalize_startup_report(&mut runtime)
-                        .await
-                        .map_err(|err| err.to_string())?;
+                    let mut runtime = match build_runtime_bundle(&config_for_thread).await {
+                        Ok(runtime) => runtime,
+                        Err(err) => {
+                            let err = err.to_string();
+                            let _ = startup_tx.send(Err(err.clone()));
+                            return Err(err);
+                        }
+                    };
+                    let startup_report = match finalize_startup_report(&mut runtime).await {
+                        Ok(report) => report,
+                        Err(err) => {
+                            let err = err.to_string();
+                            let _ = startup_tx.send(Err(err.clone()));
+                            return Err(err);
+                        }
+                    };
                     let _ = startup_tx.send(Ok(startup_report));
 
                     let runtime = Arc::new(runtime);
