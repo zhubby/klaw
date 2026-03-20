@@ -6,6 +6,10 @@
 
 - added repo-level macOS packaging support for the `klaw gui` desktop entrypoint, including `make build-macos-app`, `make package-macos-dmg`, and a GitHub Actions workflow that builds `Klaw.app` and a versioned `.dmg`
 
+### Changed
+
+- running `klaw` without any subcommand now defaults to the GUI entrypoint, equivalent to `klaw gui`
+
 ## 2026-03-19
 
 ### Added

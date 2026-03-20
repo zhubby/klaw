@@ -28,7 +28,7 @@ struct Cli {
     log_level: Option<LogLevel>,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -79,6 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_level,
         command,
     } = Cli::parse();
+    let command = command.unwrap_or(Commands::Gui(GuiCommand {}));
     let gui_log_sender = create_gui_log_sender_for_command(&command);
     init_tracing(&command, log_level, gui_log_sender)?;
     if is_pre_runtime_command(&command) {

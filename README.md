@@ -38,6 +38,7 @@ cargo build --workspace
 cargo test --workspace
 
 # Run
+klaw                            # Launch GUI
 klaw stdio                      # Interactive
 klaw agent --input "prompt"     # One-shot
 klaw gateway                    # WebSocket
