@@ -2,6 +2,11 @@
 
 ## 2026-03-20
 
+### Changed
+
+- workbench tabs now stay on a single row with horizontal scrolling when they overflow, and the tab strip hides its scrollbar
+- activating a workbench tab now moves it to the first position in the tab strip so the selected tab stays leftmost
+
 ### Added
 
 - documented the native macOS app packaging flow that wraps the existing GUI entrypoint into `Klaw.app` and a distributable `.dmg`

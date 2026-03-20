@@ -17,7 +17,7 @@ pub struct ApprovalPanel {
     approvals: Vec<klaw_approval::ApprovalRecord>,
     session_key_filter: String,
     tool_name_filter: String,
-    status_filter: String,
+    status_filter: Option<ApprovalStatus>,
     limit_text: String,
     offset_text: String,
     selected_approval: Option<String>,
@@ -35,18 +35,10 @@ impl ApprovalPanel {
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
-        let status = match parse_status(&self.status_filter) {
-            Ok(status) => status,
-            Err(err) => {
-                notifications.error(err);
-                return;
-            }
-        };
-
         let query = ApprovalListQuery {
             session_key: optional_trimmed(&self.session_key_filter),
             tool_name: optional_trimmed(&self.tool_name_filter),
-            status,
+            status: self.status_filter,
             limit: self.limit_text.trim().parse::<i64>().unwrap_or(100),
             offset: self.offset_text.trim().parse::<i64>().unwrap_or(0),
         };
@@ -130,7 +122,26 @@ impl PanelRenderer for ApprovalPanel {
                 ui.end_row();
 
                 ui.label("status");
-                ui.text_edit_singleline(&mut self.status_filter);
+                egui::ComboBox::from_id_salt("status_filter")
+                    .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        if ui.selectable_value(&mut self.status_filter, None, "All").changed() {
+                            changed = true;
+                        }
+                        for status in [
+                            ApprovalStatus::Pending,
+                            ApprovalStatus::Approved,
+                            ApprovalStatus::Rejected,
+                            ApprovalStatus::Expired,
+                            ApprovalStatus::Consumed,
+                        ] {
+                            if ui.selectable_value(&mut self.status_filter, Some(status), status.as_str()).changed() {
+                                changed = true;
+                            }
+                        }
+                        changed
+                    });
                 ui.label("limit");
                 ui.text_edit_singleline(&mut self.limit_text);
                 ui.end_row();
@@ -324,17 +335,6 @@ where
 fn optional_trimmed(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-fn parse_status(value: &str) -> Result<Option<ApprovalStatus>, String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-
-    ApprovalStatus::parse(trimmed).map(Some).ok_or_else(|| {
-        "status must be one of: pending, approved, rejected, expired, consumed".to_string()
-    })
 }
 
 fn now_ms() -> i64 {

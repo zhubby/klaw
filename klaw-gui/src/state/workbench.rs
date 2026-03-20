@@ -68,18 +68,25 @@ impl WorkbenchState {
     fn open_or_activate(&mut self, menu: WorkbenchMenu) {
         let target = TabId::from_menu(menu);
         if self.tabs.iter().any(|tab| tab.id == target) {
-            self.active_tab = Some(target);
+            self.activate(target);
             return;
         }
 
         let tab = WorkbenchTab::from_menu(menu);
         self.active_tab = Some(tab.id);
-        self.tabs.push(tab);
+        self.tabs.insert(0, tab);
     }
 
     fn activate(&mut self, tab_id: TabId) {
-        if self.tabs.iter().any(|tab| tab.id == tab_id) {
-            self.active_tab = Some(tab_id);
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return;
+        };
+
+        self.active_tab = Some(tab_id);
+
+        if index > 0 {
+            let tab = self.tabs.remove(index);
+            self.tabs.insert(0, tab);
         }
     }
 
@@ -138,6 +145,22 @@ mod tests {
             state.active_tab,
             Some(TabId::from_menu(WorkbenchMenu::Provider))
         );
+        assert_eq!(state.tabs[0].id, TabId::from_menu(WorkbenchMenu::Provider));
+    }
+
+    #[test]
+    fn activating_tab_moves_it_to_front() {
+        let mut state = WorkbenchState::new_with_default(WorkbenchMenu::Profile);
+
+        state.apply(UiAction::OpenMenu(WorkbenchMenu::Provider));
+        state.apply(UiAction::OpenMenu(WorkbenchMenu::Channel));
+        state.apply(UiAction::ActivateTab(TabId::from_menu(WorkbenchMenu::Profile)));
+
+        assert_eq!(
+            state.active_tab,
+            Some(TabId::from_menu(WorkbenchMenu::Profile))
+        );
+        assert_eq!(state.tabs[0].id, TabId::from_menu(WorkbenchMenu::Profile));
     }
 
     #[test]
