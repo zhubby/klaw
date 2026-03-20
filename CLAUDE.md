@@ -40,7 +40,7 @@ After each modification, ensure the relevant crate/workspace tests pass before c
 
 ## Architecture
 
-**Klaw** is a Rust-based AI agent framework with MQ-style message passing and reliability controls.
+**Klaw** is a Rust-based AI agent.
 
 ## Rust Style and Idioms
 

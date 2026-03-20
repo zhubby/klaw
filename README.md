@@ -1,6 +1,6 @@
 # Klaw
 
-A Rust-based AI agent framework with message-queue style reliability controls.
+A Rust-based AI agent.
 
 ## Core Design
 
