@@ -9,6 +9,7 @@
 ### Changed
 
 - running `klaw` without any subcommand now defaults to the GUI entrypoint, equivalent to `klaw gui`
+- `/approve <approval_id>` now returns a user-facing “already approved and executed” message for consumed shell approvals instead of exposing the internal `consumed` status word
 
 ## 2026-03-19
 

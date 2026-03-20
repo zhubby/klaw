@@ -7,6 +7,7 @@
 - `dingtalk` 入站媒体提取范围从图片/语音扩展到视频与通用文件附件；只要消息体带有 `downloadCode` / `pictureDownloadCode`，都会进入统一 archive 归档链路
 - `dingtalk` 入站媒体引用现在会额外提取消息体中的 `mimeType` / `contentType` / `fileType` / `extension`，补充到媒体 metadata 并透传声明 MIME
 - 抽出 `klaw-channel::media` / `klaw-channel::render` 共享模块，沉淀媒体引用构造、archive 回填和输出渲染逻辑，减少 `dingtalk.rs` 与后续 channel 的重复实现
+- `dingtalk` 审批 ActionCard 现在会优先显示结构化 `command_preview`，明确展示待执行命令而不只显示 approval id
 
 ## 2026-03-19
 

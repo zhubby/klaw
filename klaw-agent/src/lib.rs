@@ -20,6 +20,7 @@ pub use context_compression::{
 };
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
+const APPROVAL_REQUIRED_SIGNAL: &str = "approval_required";
 
 #[derive(Debug, Clone, Copy)]
 pub struct AgentExecutionLimits {
@@ -341,7 +342,7 @@ pub async fn run_agent_execution(
             tool_call_id: None,
         });
 
-        apply_tool_calls(
+        if let Some(short_circuit) = apply_tool_calls(
             tools,
             &mut llm_messages,
             llm_response.tool_calls,
@@ -351,7 +352,15 @@ pub async fn run_agent_execution(
             limits.max_tool_calls,
             &mut tool_signals,
         )
-        .await?;
+        .await?
+        {
+            return Ok(AgentExecutionOutput {
+                content: short_circuit.content_for_model,
+                reasoning: llm_response.reasoning,
+                tool_signals,
+                request_usages,
+            });
+        }
     }
 
     warn!(
@@ -386,7 +395,7 @@ async fn apply_tool_calls(
     tool_calls_used: &mut u32,
     max_tool_calls: u32,
     collected_signals: &mut Vec<ToolInvocationSignal>,
-) -> Result<(), AgentExecutionError> {
+) -> Result<Option<ToolInvocationResult>, AgentExecutionError> {
     for call in tool_calls {
         *tool_calls_used += 1;
         if max_tool_calls > 0 && *tool_calls_used > max_tool_calls {
@@ -399,6 +408,10 @@ async fn apply_tool_calls(
         let result = tools
             .execute(&call.name, call.arguments, session_key, tool_metadata)
             .await;
+        let stop_after_result = result
+            .signals
+            .iter()
+            .any(|signal| signal.kind == APPROVAL_REQUIRED_SIGNAL);
         collected_signals.extend(result.signals.clone());
         llm_messages.push(LlmMessage {
             role: "tool".to_string(),
@@ -407,9 +420,12 @@ async fn apply_tool_calls(
             tool_calls: None,
             tool_call_id: call.id,
         });
+        if stop_after_result {
+            return Ok(Some(result));
+        }
     }
 
-    Ok(())
+    Ok(None)
 }
 
 pub fn resolve_api_key(provider: &ModelProviderConfig) -> Option<String> {
@@ -774,6 +790,126 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[derive(Default)]
+    struct ApprovalShortCircuitProvider {
+        call_count: Arc<Mutex<u32>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ApprovalShortCircuitProvider {
+        fn name(&self) -> &str {
+            "approval-short-circuit"
+        }
+
+        fn default_model(&self) -> &str {
+            "approval-short-circuit-v1"
+        }
+
+        async fn chat(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            let mut count = self.call_count.lock().expect("mutex poisoned");
+            *count += 1;
+            if *count > 1 {
+                panic!("provider should not be called again after approval_required");
+            }
+            Ok(LlmResponse {
+                content: String::new(),
+                reasoning: None,
+                tool_calls: vec![ToolCall {
+                    id: Some("call_approval".to_string()),
+                    name: "approval_tool".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+                usage: None,
+                usage_source: None,
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct ApprovalRequiredToolExecutor {
+        call_count: Arc<Mutex<u32>>,
+    }
+
+    #[async_trait]
+    impl ToolExecutor for ApprovalRequiredToolExecutor {
+        fn definitions(&self) -> Vec<ToolDefinition> {
+            vec![ToolDefinition {
+                name: "approval_tool".to_string(),
+                description: "requires approval".to_string(),
+                parameters: serde_json::json!({"type":"object"}),
+            }]
+        }
+
+        async fn execute(
+            &self,
+            _name: &str,
+            _arguments: Value,
+            _session_key: &str,
+            _metadata: &BTreeMap<String, Value>,
+        ) -> ToolInvocationResult {
+            let mut count = self.call_count.lock().expect("mutex poisoned");
+            *count += 1;
+            ToolInvocationResult::error(
+                "tool `approval_tool` failed: approval required: approval_id=test-approval".to_string(),
+                "approval_required".to_string(),
+                None,
+                true,
+                vec![ToolInvocationSignal {
+                    kind: APPROVAL_REQUIRED_SIGNAL.to_string(),
+                    payload: serde_json::json!({
+                        "approval_id": "test-approval",
+                        "tool_name": "shell"
+                    }),
+                }],
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_stops_after_approval_required_signal() {
+        let provider = ApprovalShortCircuitProvider::default();
+        let tools = ApprovalRequiredToolExecutor::default();
+        let output = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "run something risky".to_string(),
+                user_media: Vec::new(),
+                conversation_history: Vec::new(),
+                session_key: "s1".to_string(),
+                tool_metadata: BTreeMap::new(),
+                model: None,
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 4,
+                max_tool_calls: 4,
+                token_budget: 0,
+            },
+        )
+        .await
+        .expect("agent execution should short-circuit successfully");
+
+        assert!(output.content.contains("approval required"));
+        assert_eq!(output.tool_signals.len(), 1);
+        assert_eq!(output.tool_signals[0].kind, APPROVAL_REQUIRED_SIGNAL);
+        assert_eq!(
+            *provider.call_count.lock().expect("mutex poisoned"),
+            1,
+            "provider should only be called once"
+        );
+        assert_eq!(
+            *tools.call_count.lock().expect("mutex poisoned"),
+            1,
+            "tool should only be called once"
+        );
     }
 
     #[test]

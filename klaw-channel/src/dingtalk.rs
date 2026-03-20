@@ -539,11 +539,7 @@ impl DingtalkChannel {
         match maybe_output {
             Ok(Some(output)) => {
                 if let Some(approval_id) = extract_approval_id_for_action_card(&output) {
-                    let body = format!(
-                        "### 需要审批\n\n{}\n\n---\n审批单: `{}`\n\n点击按钮后将发送审批指令。",
-                        escape_markdown_for_action_card(&output.content),
-                        approval_id
-                    );
+                    let body = build_approval_action_card_body(&output, &approval_id);
                     if let Err(err) = self
                         .client
                         .send_session_webhook_action_card(
@@ -2061,6 +2057,35 @@ fn extract_approval_id_for_action_card(output: &ChannelResponse) -> Option<Strin
     extract_shell_approval_id(&output.content)
 }
 
+fn extract_approval_command_preview(output: &ChannelResponse) -> Option<String> {
+    output
+        .metadata
+        .get("approval.signal")
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("command_preview"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn build_approval_action_card_body(output: &ChannelResponse, approval_id: &str) -> String {
+    let mut sections = vec!["### 需要审批".to_string()];
+    if let Some(command_preview) = extract_approval_command_preview(output) {
+        sections.push(format!(
+            "**待执行命令**\n\n`{}`",
+            escape_markdown_for_action_card(&command_preview)
+        ));
+    }
+    let escaped_content = escape_markdown_for_action_card(&output.content);
+    if !escaped_content.trim().is_empty() {
+        sections.push(escaped_content);
+    }
+    sections.push(format!("审批单: `{approval_id}`"));
+    sections.push("点击按钮后将发送审批指令。".to_string());
+    sections.join("\n\n---\n\n")
+}
+
 fn extract_shell_approval_id(content: &str) -> Option<String> {
     if let Ok(value) = serde_json::from_str::<Value>(content) {
         if let Some(token) = value
@@ -2193,6 +2218,7 @@ fn escape_markdown_for_action_card(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
+        build_approval_action_card_body, extract_approval_command_preview,
         extract_approval_id_for_action_card, extract_dingtalk_media_references,
         extract_dingtalk_message_text, extract_shell_approval_id, is_sender_allowed,
         parse_card_callback_event, parse_inbound_event, parse_stream_data, resolve_chat_id,
@@ -2682,6 +2708,42 @@ mod tests {
         };
         let approval_id = extract_approval_id_for_action_card(&output).expect("approval id");
         assert_eq!(approval_id, "from-content");
+    }
+
+    #[test]
+    fn extract_approval_command_preview_reads_structured_metadata() {
+        let output = ChannelResponse {
+            content: "approval required".to_string(),
+            reasoning: None,
+            metadata: BTreeMap::from([(
+                "approval.signal".to_string(),
+                serde_json::json!({
+                    "approval_id": "approval-1",
+                    "command_preview": "pip3 install pymupdf -q"
+                }),
+            )]),
+        };
+        let preview = extract_approval_command_preview(&output).expect("command preview");
+        assert_eq!(preview, "pip3 install pymupdf -q");
+    }
+
+    #[test]
+    fn build_approval_action_card_body_includes_command_preview() {
+        let output = ChannelResponse {
+            content: "tool shell failed: execution failed: approval required".to_string(),
+            reasoning: None,
+            metadata: BTreeMap::from([(
+                "approval.signal".to_string(),
+                serde_json::json!({
+                    "approval_id": "approval-1",
+                    "command_preview": "python3 -c \"print(1)\""
+                }),
+            )]),
+        };
+        let body = build_approval_action_card_body(&output, "approval-1");
+        assert!(body.contains("待执行命令"));
+        assert!(body.contains("python3 -c \"print(1)\""));
+        assert!(body.contains("审批单: `approval-1`"));
     }
 
     #[test]

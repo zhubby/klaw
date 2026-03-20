@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-20
+
+### Fixed
+- `run_agent_execution` now stops the current tool loop immediately after a tool emits `approval_required`, preventing a single user turn from creating multiple approval records before the channel renders the approval prompt
+
 ## 2026-03-19
 
 ### Changed

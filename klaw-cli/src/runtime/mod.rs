@@ -696,10 +696,7 @@ async fn handle_im_command(
                     }
                 }
                 other => ChannelResponse {
-                    content: format!(
-                        "ℹ️ Approval `{approval_id}` is already `{}`.",
-                        other.as_str()
-                    ),
+                    content: format_approve_already_handled_message(approval_id, other),
                     reasoning: None,
                     metadata: BTreeMap::new(),
                 },
@@ -1577,6 +1574,18 @@ fn is_queue_empty_error(err: &AgentRuntimeError) -> bool {
     }
 }
 
+fn format_approve_already_handled_message(
+    approval_id: &str,
+    status: ApprovalStatus,
+) -> String {
+    match status {
+        ApprovalStatus::Consumed => {
+            format!("ℹ️ Approval `{approval_id}` was already approved and executed.")
+        }
+        other => format!("ℹ️ Approval `{approval_id}` is already `{}`.", other.as_str()),
+    }
+}
+
 fn config_err(message: String) -> Box<dyn Error> {
     Box::new(io::Error::other(message))
 }
@@ -1678,11 +1687,13 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 mod tests {
     use super::{
         build_history_for_model, compression_trigger_interval, first_arg_token,
-        format_workspace_docs_for_prompt, parse_im_command, should_emit_outbound,
-        should_trigger_compression, trim_conversation_history,
+        format_approve_already_handled_message, format_workspace_docs_for_prompt,
+        parse_im_command, should_emit_outbound, should_trigger_compression,
+        trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
+    use klaw_storage::ApprovalStatus;
     use klaw_session::ChatRecord;
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -1725,6 +1736,14 @@ mod tests {
         };
 
         assert!(should_emit_outbound(&msg));
+    }
+
+    #[test]
+    fn approve_already_handled_message_hides_consumed_status_wording() {
+        let content =
+            format_approve_already_handled_message("approval-1", ApprovalStatus::Consumed);
+        assert!(content.contains("already approved and executed"));
+        assert!(!content.contains("consumed"));
     }
 
     #[test]

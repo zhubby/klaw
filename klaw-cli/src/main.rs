@@ -324,14 +324,14 @@ mod tests {
     fn parse_global_log_level_before_subcommand() {
         let cli = Cli::parse_from(["klaw", "--log-level", "debug", "stdio"]);
         assert_eq!(cli.log_level, Some(LogLevel::Debug));
-        assert!(matches!(cli.command, Commands::Stdio(_)));
+        assert!(matches!(cli.command, Some(Commands::Stdio(_))));
     }
 
     #[test]
     fn parse_global_log_level_after_subcommand() {
         let cli = Cli::parse_from(["klaw", "stdio", "--log-level", "trace"]);
         assert_eq!(cli.log_level, Some(LogLevel::Trace));
-        assert!(matches!(cli.command, Commands::Stdio(_)));
+        assert!(matches!(cli.command, Some(Commands::Stdio(_))));
     }
 
     #[test]
@@ -346,13 +346,14 @@ mod tests {
     #[test]
     fn parse_gui_subcommand() {
         let cli = Cli::parse_from(["klaw", "gui"]);
-        assert!(matches!(cli.command, Commands::Gui(_)));
+        assert!(matches!(cli.command, Some(Commands::Gui(_))));
     }
 
     #[test]
     fn gui_is_pre_runtime_command() {
         let cli = Cli::parse_from(["klaw", "gui"]);
-        assert!(!is_pre_runtime_command(&cli.command));
+        let command = cli.command.as_ref().expect("command should be present");
+        assert!(!is_pre_runtime_command(command));
     }
 
     #[test]
