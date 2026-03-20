@@ -3498,6 +3498,7 @@ dependencies = [
  "klaw-approval",
  "klaw-archive",
  "klaw-config",
+ "klaw-core",
  "klaw-cron",
  "klaw-memory",
  "klaw-session",

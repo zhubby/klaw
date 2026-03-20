@@ -141,6 +141,13 @@ pub fn skills_lazy_load_instructions() -> &'static str {
     SKILLS_LAZY_LOAD_INSTRUCTIONS
 }
 
+pub fn get_default_template_content(file_name: &str) -> Option<&'static str> {
+    PROMPT_TEMPLATE_FILES
+        .iter()
+        .find(|(name, _)| *name == file_name)
+        .map(|(_, content)| *content)
+}
+
 pub fn compose_runtime_prompt(input: RuntimePromptInput) -> Option<String> {
     let mut sections = Vec::new();
 

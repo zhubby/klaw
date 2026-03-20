@@ -37,6 +37,7 @@ pub struct ProfilePanel {
     docs: Vec<WorkspaceMarkdownDoc>,
     editor: Option<WorkspaceMarkdownEditor>,
     loaded: bool,
+    pending_default_confirm: Option<String>,
 }
 
 impl ProfilePanel {
@@ -134,8 +135,11 @@ impl ProfilePanel {
         let mut save_clicked = false;
         let mut cancel_clicked = false;
         let mut reset_clicked = false;
+        let mut default_clicked = false;
         let dirty = editor.editor_raw != editor.original_raw;
         let mut saved_file_name = None;
+        let has_default_template =
+            klaw_core::get_default_template_content(&editor.file_name).is_some();
 
         egui::Window::new(format!("Edit {}", editor.file_name))
             .open(&mut editor.open)
@@ -193,6 +197,9 @@ impl ProfilePanel {
                                 if ui.button("Reset").clicked() {
                                     reset_clicked = true;
                                 }
+                                if has_default_template && ui.button("Default").clicked() {
+                                    default_clicked = true;
+                                }
                             });
                         });
                     });
@@ -200,6 +207,10 @@ impl ProfilePanel {
 
         if reset_clicked {
             editor.editor_raw = editor.original_raw.clone();
+        }
+
+        if default_clicked {
+            self.pending_default_confirm = Some(editor.file_name.clone());
         }
 
         if save_clicked {
@@ -221,6 +232,50 @@ impl ProfilePanel {
         }
         if should_close {
             self.editor = None;
+            self.pending_default_confirm = None;
+        }
+    }
+
+    fn render_default_confirm_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some(file_name) = self.pending_default_confirm.clone() else {
+            return;
+        };
+        let mut confirmed = false;
+        let mut cancelled = false;
+        egui::Window::new("Reset to default template")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Reset {} to the built-in default template? This will replace the current editor content.",
+                    file_name
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button("Reset to default").clicked() {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            if let Some(default_content) = klaw_core::get_default_template_content(&file_name) {
+                if let Some(editor) = self.editor.as_mut() {
+                    editor.editor_raw = default_content.to_string();
+                    notifications.success(format!("Reset {} to default template", file_name));
+                }
+            }
+            self.pending_default_confirm = None;
+        }
+        if cancelled {
+            self.pending_default_confirm = None;
         }
     }
 }
@@ -276,6 +331,7 @@ impl PanelRenderer for ProfilePanel {
             self.open_editor(&doc, notifications);
         }
         self.render_editor_window(ui.ctx(), notifications);
+        self.render_default_confirm_dialog(ui.ctx(), notifications);
     }
 }
 

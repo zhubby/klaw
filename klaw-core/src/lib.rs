@@ -32,9 +32,9 @@ pub use observability::{AgentTelemetry, HealthStatus};
 pub use prompt::{
     compose_runtime_prompt, ensure_workspace_prompt_templates,
     ensure_workspace_prompt_templates_in_dir, format_skills_for_prompt,
-    load_or_create_system_prompt, load_or_create_system_prompt_in_dir,
-    skills_lazy_load_instructions, PromptError, PromptTemplateWriteReport, RuntimePromptInput,
-    SkillPromptEntry, WORKSPACE_DIR_NAME,
+    get_default_template_content, load_or_create_system_prompt,
+    load_or_create_system_prompt_in_dir, skills_lazy_load_instructions, PromptError,
+    PromptTemplateWriteReport, RuntimePromptInput, SkillPromptEntry, WORKSPACE_DIR_NAME,
 };
 pub use protocol::{Envelope, EnvelopeHeader, ErrorCode, MessageTopic, SchemaVersion};
 pub use reliability::{
