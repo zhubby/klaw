@@ -35,6 +35,8 @@ Things like:
 
 Skills are shared. Your setup is yours. Keeping them apart means you can update skills without losing your notes, and share skills without leaking your infrastructure.
 
+Memory should not be stored here. Use the `memory` tool for durable memory, and keep this file only for local environment notes.
+
 ---
 
 Add whatever helps you do your job. This is your cheat sheet.
@@ -43,5 +45,5 @@ Add whatever helps you do your job. This is your cheat sheet.
 
 - **API Key:** `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`
 - **Free tier:** 1,000 searches/month
-- **Script:** `~/.openclaw/workspace/skills/tavily-search/scripts/tavily_search.py`
+- **Script:** `~/.klaw/workspace/skills/tavily-search/scripts/tavily_search.py`
 - **Usage:** `python scripts/tavily_search.py "<query>" --depth advanced --results 10`

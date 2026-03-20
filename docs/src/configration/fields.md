@@ -43,6 +43,23 @@ model_provider = "openai"
 model = "gpt-4-turbo"
 ```
 
+### `conversation_history_limit`
+
+**类型**: `usize`
+**默认值**: `40`
+**必填**: 否
+
+控制每次发送给模型的历史消息窗口大小（按条数，保留最近 N 条）。
+
+- `0`：不限制（会把会话历史全部传给模型）
+- `N > 0`：只保留最近 `N` 条历史消息
+
+该限制只影响运行时传给模型的上下文，不会删除会话存储中的历史记录。
+
+```toml
+conversation_history_limit = 40  # 推荐默认值
+```
+
 ### `model_providers.<name>`
 
 **类型**: `BTreeMap<string, ModelProviderConfig>`

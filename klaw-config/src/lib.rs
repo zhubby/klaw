@@ -7,6 +7,8 @@ pub struct AppConfig {
     pub model_provider: String,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default = "default_conversation_history_limit")]
+    pub conversation_history_limit: usize,
     pub model_providers: BTreeMap<String, ModelProviderConfig>,
     #[serde(default)]
     pub gateway: GatewayConfig,
@@ -38,6 +40,7 @@ impl Default for AppConfig {
         Self {
             model_provider,
             model: None,
+            conversation_history_limit: default_conversation_history_limit(),
             model_providers,
             gateway: GatewayConfig::default(),
             channels: ChannelsConfig::default(),
@@ -51,6 +54,10 @@ impl Default for AppConfig {
             observability: ObservabilityConfig::default(),
         }
     }
+}
+
+fn default_conversation_history_limit() -> usize {
+    20
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

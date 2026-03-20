@@ -70,6 +70,7 @@ pub struct RuntimeBundle {
     pub mcp_bootstrap: Option<Mutex<McpBootstrapHandle>>,
     pub startup_report: StartupReport,
     pub observability: Option<ObservabilityHandle>,
+    pub conversation_history_limit: usize,
 }
 
 pub struct SharedChannelRuntime {
@@ -173,7 +174,7 @@ const WORKSPACE_PROMPT_DOC_FILES: [&str; 7] = [
 ];
 
 const RUNTIME_PROMPT_RULES: &str = "Prefer lazy-loading context from files and skills instead of relying on embedded long prompt bodies. Read only what is needed for the current user request.";
-const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "When local workspace docs are relevant, read them from disk on demand before acting. Do not assume their content without reading the files.\nFiles under archives/ are read-only source material. Never edit, move, or delete them in place. If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.";
+const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "When local workspace docs are relevant, read them from disk on demand before acting. Do not assume their content without reading the files.\nWhen a task requires remembering or recalling prior context, use the memory tool. Do not rely on ad-hoc markdown memory files.\nFiles under archives/ are read-only source material. Never edit, move, or delete them in place. If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.";
 
 #[derive(Debug, Clone)]
 struct SessionRoute {
@@ -1007,6 +1008,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         session_store,
         mcp_bootstrap,
         observability,
+        conversation_history_limit: config.conversation_history_limit,
     })
 }
 
@@ -1198,7 +1200,27 @@ fn format_workspace_docs_for_prompt() -> String {
         .map(|name| format!("- {base}/{name}"))
         .collect::<Vec<_>>()
         .join("\n");
-    format!("Read these workspace docs on demand when relevant:\n{docs}")
+    format!(
+        "Read these workspace docs on demand when relevant:\n{docs}\n\
+\n\
+Recommended usage:\n\
+- Start with AGENTS.md and USER.md for baseline behavior and user preferences.\n\
+- Read TOOLS.md before tool-heavy tasks or environment-specific operations.\n\
+- Read HEARTBEAT.md only for heartbeat/autonomous polling turns.\n\
+- Read BOOTSTRAP.md only during first-run initialization or cold-start setup.\n\
+- Use the memory tool for durable memory; do not use markdown files as memory storage."
+    )
+}
+
+fn trim_conversation_history(
+    mut conversation_history: Vec<ChatRecord>,
+    limit: usize,
+) -> Vec<ChatRecord> {
+    if limit == 0 || conversation_history.len() <= limit {
+        return conversation_history;
+    }
+    let keep_from = conversation_history.len() - limit;
+    conversation_history.split_off(keep_from)
 }
 
 pub async fn submit_and_get_output(
@@ -1213,7 +1235,10 @@ pub async fn submit_and_get_output(
     request_metadata: BTreeMap<String, serde_json::Value>,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let sessions = session_manager(runtime);
-    let conversation_history = sessions.read_chat_records(&session_key).await?;
+    let conversation_history = trim_conversation_history(
+        sessions.read_chat_records(&session_key).await?,
+        runtime.conversation_history_limit,
+    );
     let header = EnvelopeHeader::new(session_key.clone());
     let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
     sessions
@@ -1487,8 +1512,12 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{first_arg_token, parse_im_command, should_emit_outbound};
+    use super::{
+        first_arg_token, format_workspace_docs_for_prompt, parse_im_command, should_emit_outbound,
+        trim_conversation_history,
+    };
     use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
+    use klaw_session::ChatRecord;
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -1554,5 +1583,50 @@ mod tests {
             Some("qwen-plus")
         );
         assert_eq!(first_arg_token(Some("   ")), None);
+    }
+
+    #[test]
+    fn workspace_docs_prompt_contains_routing_and_memory_tool_rule() {
+        let docs_prompt = format_workspace_docs_for_prompt();
+
+        assert!(docs_prompt.contains("Read these workspace docs on demand when relevant:"));
+        assert!(docs_prompt.contains("Recommended usage:"));
+        assert!(docs_prompt.contains("AGENTS.md"));
+        assert!(docs_prompt.contains("USER.md"));
+        assert!(docs_prompt.contains("TOOLS.md"));
+        assert!(docs_prompt.contains("Use the memory tool for durable memory"));
+    }
+
+    #[test]
+    fn trim_conversation_history_keeps_recent_items_when_over_limit() {
+        let history = vec![
+            ChatRecord::new("user", "m1", None),
+            ChatRecord::new("assistant", "m2", None),
+            ChatRecord::new("user", "m3", None),
+        ];
+
+        let trimmed = trim_conversation_history(history, 2);
+        let contents: Vec<&str> = trimmed.iter().map(|record| record.content.as_str()).collect();
+        assert_eq!(contents, vec!["m2", "m3"]);
+    }
+
+    #[test]
+    fn trim_conversation_history_returns_full_history_when_limit_is_zero() {
+        let history = vec![
+            ChatRecord::new("user", "m1", None),
+            ChatRecord::new("assistant", "m2", None),
+        ];
+        let trimmed = trim_conversation_history(history, 0);
+        assert_eq!(trimmed.len(), 2);
+    }
+
+    #[test]
+    fn trim_conversation_history_returns_full_history_when_limit_covers_all() {
+        let history = vec![
+            ChatRecord::new("user", "m1", None),
+            ChatRecord::new("assistant", "m2", None),
+        ];
+        let trimmed = trim_conversation_history(history, 5);
+        assert_eq!(trimmed.len(), 2);
     }
 }
