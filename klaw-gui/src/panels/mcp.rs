@@ -1,6 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::widgets::KeyValueInput;
+use crate::widgets::{ArrayEditor, KeyValueEditor};
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode};
 use std::path::{Path, PathBuf};
 
@@ -11,11 +11,11 @@ struct McpServerForm {
     enabled: bool,
     mode: McpServerMode,
     command: String,
-    args_text: String,
-    env_input: KeyValueInput,
+    args_input: ArrayEditor,
+    env_input: KeyValueEditor,
     cwd: String,
     url: String,
-    headers_input: KeyValueInput,
+    headers_input: KeyValueEditor,
 }
 
 impl McpServerForm {
@@ -26,11 +26,11 @@ impl McpServerForm {
             enabled: true,
             mode: McpServerMode::Stdio,
             command: String::new(),
-            args_text: String::new(),
-            env_input: KeyValueInput::new("Env"),
+            args_input: ArrayEditor::new("Args"),
+            env_input: KeyValueEditor::new("Env"),
             cwd: String::new(),
             url: String::new(),
-            headers_input: KeyValueInput::new("Headers"),
+            headers_input: KeyValueEditor::new("Headers"),
         }
     }
 
@@ -41,11 +41,11 @@ impl McpServerForm {
             enabled: server.enabled,
             mode: server.mode.clone(),
             command: server.command.clone().unwrap_or_default(),
-            args_text: server.args.join("\n"),
-            env_input: KeyValueInput::from_map("Env", &server.env),
+            args_input: ArrayEditor::from_vec("Args", &server.args),
+            env_input: KeyValueEditor::from_map("Env", &server.env),
             cwd: server.cwd.clone().unwrap_or_default(),
             url: server.url.clone().unwrap_or_default(),
-            headers_input: KeyValueInput::from_map("Headers", &server.headers),
+            headers_input: KeyValueEditor::from_map("Headers", &server.headers),
         }
     }
 
@@ -61,15 +61,6 @@ impl McpServerForm {
         self.id.trim().to_string()
     }
 
-    fn parse_lines(value: &str) -> Vec<String> {
-        value
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_string)
-            .collect()
-    }
-
     fn to_config(&self) -> Result<McpServerConfig, String> {
         let command = self.command.trim();
         let cwd = self.cwd.trim();
@@ -80,7 +71,7 @@ impl McpServerForm {
             enabled: self.enabled,
             mode: self.mode.clone(),
             command: (!command.is_empty()).then(|| command.to_string()),
-            args: Self::parse_lines(&self.args_text),
+            args: self.args_input.to_vec(),
             env: self.env_input.to_map(),
             cwd: (!cwd.is_empty()).then(|| cwd.to_string()),
             url: (!url.is_empty()).then(|| url.to_string()),
@@ -291,13 +282,7 @@ impl McpPanel {
                                 ui.end_row();
                             });
 
-                        ui.label("Args (one per line)");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut form.args_text)
-                                .desired_rows(4)
-                                .desired_width(f32::INFINITY),
-                        );
-
+                        form.args_input.show(ui);
                         form.env_input.show(ui);
                     }
                     McpServerMode::Sse => {

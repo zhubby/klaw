@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
-pub struct KeyValueInput {
+pub struct KeyValueEditor {
     entries: Vec<(String, String)>,
     new_key: String,
     new_value: String,
     label: String,
 }
 
-impl KeyValueInput {
+impl KeyValueEditor {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             entries: Vec::new(),
@@ -41,10 +41,15 @@ impl KeyValueInput {
         let mut to_remove: Option<usize> = None;
         for (idx, (key, value)) in self.entries.iter().enumerate() {
             ui.horizontal(|ui| {
-                ui.label(format!("{idx}:"));
-                ui.add_enabled(false, egui::TextEdit::singleline(&mut key.clone()));
+                ui.add_enabled(
+                    false,
+                    egui::TextEdit::singleline(&mut key.clone()).desired_width(120.0),
+                );
                 ui.label("=");
-                ui.add_enabled(false, egui::TextEdit::singleline(&mut value.clone()));
+                ui.add_enabled(
+                    false,
+                    egui::TextEdit::singleline(&mut value.clone()).desired_width(200.0),
+                );
                 if ui.small_button("×").clicked() {
                     to_remove = Some(idx);
                 }
@@ -101,22 +106,24 @@ mod tests {
         map.insert("KEY1".to_string(), "value1".to_string());
         map.insert("KEY2".to_string(), "value2".to_string());
 
-        let input = KeyValueInput::from_map("Test", &map);
+        let editor = KeyValueEditor::from_map("Test", &map);
 
-        assert_eq!(input.entries.len(), 2);
-        assert_eq!(input.to_map(), map);
+        assert_eq!(editor.entries.len(), 2);
+        assert_eq!(editor.to_map(), map);
     }
 
     #[test]
     fn to_map_filters_empty_keys() {
-        let mut input = KeyValueInput::new("Test");
-        input
+        let mut editor = KeyValueEditor::new("Test");
+        editor
             .entries
             .push(("key1".to_string(), "value1".to_string()));
-        input.entries.push(("".to_string(), "value2".to_string()));
-        input.entries.push(("  ".to_string(), "value3".to_string()));
+        editor.entries.push(("".to_string(), "value2".to_string()));
+        editor
+            .entries
+            .push(("  ".to_string(), "value3".to_string()));
 
-        let map = input.to_map();
+        let map = editor.to_map();
 
         assert_eq!(map.len(), 1);
         assert_eq!(map.get("key1"), Some(&"value1".to_string()));
@@ -124,12 +131,12 @@ mod tests {
 
     #[test]
     fn to_map_trims_whitespace() {
-        let mut input = KeyValueInput::new("Test");
-        input
+        let mut editor = KeyValueEditor::new("Test");
+        editor
             .entries
             .push(("  key  ".to_string(), "  value  ".to_string()));
 
-        let map = input.to_map();
+        let map = editor.to_map();
 
         assert_eq!(map.get("key"), Some(&"value".to_string()));
     }
