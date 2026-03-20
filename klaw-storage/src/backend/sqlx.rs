@@ -4,8 +4,8 @@ use crate::{
     util::{now_ms, relative_or_absolute_jsonl},
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
     CronTaskRun, CronTaskStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary,
-    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmUsageRecord, SessionIndex, SessionStorage,
-    StorageError, StoragePaths, UpdateCronJobPatch,
+    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmUsageRecord, SessionCompressionState,
+    SessionIndex, SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
 use sqlx::{
@@ -284,6 +284,8 @@ impl SqlxSessionStore {
                 active_session_key TEXT,
                 model_provider TEXT,
                 model TEXT,
+                compression_last_len INTEGER NOT NULL DEFAULT 0,
+                compression_summary_json TEXT,
                 created_at_ms INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL,
                 last_message_at_ms INTEGER NOT NULL,
@@ -306,6 +308,16 @@ impl SqlxSessionStore {
         .await?;
         self.ensure_session_column("model", "ALTER TABLE sessions ADD COLUMN model TEXT")
             .await?;
+        self.ensure_session_column(
+            "compression_last_len",
+            "ALTER TABLE sessions ADD COLUMN compression_last_len INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
+        self.ensure_session_column(
+            "compression_summary_json",
+            "ALTER TABLE sessions ADD COLUMN compression_summary_json TEXT",
+        )
+        .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at_ms
              ON sessions(updated_at_ms DESC)",
@@ -910,6 +922,54 @@ impl SessionStorage for SqlxSessionStore {
             )));
         }
         self.get_session(session_key).await
+    }
+
+    async fn get_session_compression_state(
+        &self,
+        session_key: &str,
+    ) -> Result<Option<SessionCompressionState>, StorageError> {
+        let row = sqlx::query(
+            "SELECT compression_last_len, compression_summary_json
+             FROM sessions
+             WHERE session_key = ?1",
+        )
+        .bind(session_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+
+        Ok(row.map(|value| SessionCompressionState {
+            last_compressed_len: value.get::<i64, _>("compression_last_len"),
+            summary_json: value.get::<Option<String>, _>("compression_summary_json"),
+        }))
+    }
+
+    async fn set_session_compression_state(
+        &self,
+        session_key: &str,
+        state: &SessionCompressionState,
+    ) -> Result<(), StorageError> {
+        let updated = sqlx::query(
+            "UPDATE sessions
+             SET compression_last_len = ?2,
+                 compression_summary_json = ?3,
+                 updated_at_ms = ?4
+             WHERE session_key = ?1",
+        )
+        .bind(session_key)
+        .bind(state.last_compressed_len)
+        .bind(state.summary_json.as_deref())
+        .bind(now_ms())
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting compression state"
+            )));
+        }
+        Ok(())
     }
 
     async fn list_sessions(

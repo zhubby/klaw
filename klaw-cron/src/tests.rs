@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use klaw_core::InMemoryTransport;
 use klaw_storage::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun, SessionIndex,
-    SessionStorage, StorageError, UpdateCronJobPatch,
+    CronTaskRun, CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    SessionCompressionState, SessionIndex, SessionStorage, StorageError, UpdateCronJobPatch,
 };
 use std::{
     path::PathBuf,
@@ -315,6 +315,21 @@ impl SessionStorage for FakeStorage {
             *item = session.clone();
         }
         Ok(session)
+    }
+
+    async fn get_session_compression_state(
+        &self,
+        _session_key: &str,
+    ) -> Result<Option<SessionCompressionState>, StorageError> {
+        Ok(None)
+    }
+
+    async fn set_session_compression_state(
+        &self,
+        _session_key: &str,
+        _state: &SessionCompressionState,
+    ) -> Result<(), StorageError> {
+        Ok(())
     }
 
     async fn list_sessions(

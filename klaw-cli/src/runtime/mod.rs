@@ -1,6 +1,9 @@
 pub mod service_loop;
 
-use klaw_agent::build_provider_from_config;
+use klaw_agent::{
+    build_compression_prompt, build_provider_from_config, merge_or_reset_summary,
+    parse_conversation_summary, ConversationMessage, ConversationSummary,
+};
 use klaw_approval::{
     ApprovalManager, ApprovalResolveDecision, ApprovalStatus, SqliteApprovalManager,
 };
@@ -21,8 +24,10 @@ use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_observability::{
     init_observability, ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry,
 };
+use klaw_llm::{ChatOptions, LlmMessage, LlmProvider};
 use klaw_session::{
-    ChatRecord, LlmUsageSource, NewLlmUsageRecord, SessionManager, SqliteSessionManager,
+    ChatRecord, LlmUsageSource, NewLlmUsageRecord, SessionCompressionState, SessionManager,
+    SqliteSessionManager,
 };
 use klaw_skill::{
     open_default_skills_manager, InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager,
@@ -1223,6 +1228,158 @@ fn trim_conversation_history(
     conversation_history.split_off(keep_from)
 }
 
+fn compression_trigger_interval(limit: usize) -> usize {
+    (limit / 2).max(1)
+}
+
+fn should_trigger_compression(last_compressed_len: usize, history_len: usize, limit: usize) -> bool {
+    if limit == 0 {
+        return false;
+    }
+    history_len.saturating_sub(last_compressed_len) >= compression_trigger_interval(limit)
+}
+
+fn to_conversation_messages(records: &[ChatRecord]) -> Vec<ConversationMessage> {
+    records
+        .iter()
+        .map(|record| ConversationMessage {
+            role: record.role.clone(),
+            content: record.content.clone(),
+        })
+        .collect()
+}
+
+fn build_history_for_model(
+    full_history: Vec<ChatRecord>,
+    limit: usize,
+    summary: Option<&ConversationSummary>,
+) -> Vec<ChatRecord> {
+    let mut trimmed = trim_conversation_history(full_history, limit);
+    let Some(summary) = summary else {
+        return trimmed;
+    };
+
+    if limit > 0 && trimmed.len() >= limit {
+        trimmed = trim_conversation_history(trimmed, limit.saturating_sub(1));
+    }
+
+    let summary_json = serde_json::to_string(summary).unwrap_or_else(|_| "{}".to_string());
+    let mut merged = Vec::with_capacity(trimmed.len() + 1);
+    merged.push(ChatRecord::new(
+        "system",
+        format!("Conversation Summary (JSON): {summary_json}"),
+        None,
+    ));
+    merged.extend(trimmed);
+    merged
+}
+
+async fn run_structured_compression(
+    provider: Arc<dyn LlmProvider>,
+    model: &str,
+    old_summary: Option<&ConversationSummary>,
+    new_messages: &[ConversationMessage],
+) -> Option<String> {
+    let prompt = build_compression_prompt(old_summary, new_messages);
+    let request = vec![LlmMessage {
+        role: "user".to_string(),
+        content: prompt,
+        media: Vec::new(),
+        tool_calls: None,
+        tool_call_id: None,
+    }];
+    let options = ChatOptions {
+        temperature: 0.0,
+        max_tokens: None,
+        max_output_tokens: None,
+        previous_response_id: None,
+        instructions: None,
+        metadata: None,
+        include: None,
+        store: None,
+        parallel_tool_calls: None,
+        tool_choice: None,
+        text: None,
+        reasoning: None,
+        truncation: None,
+        user: None,
+        service_tier: None,
+    };
+    match provider.chat(request, Vec::new(), Some(model), options).await {
+        Ok(response) => Some(response.content),
+        Err(err) => {
+            warn!(error = %err, "structured compression call failed");
+            None
+        }
+    }
+}
+
+async fn maybe_refresh_summary(
+    runtime: &RuntimeBundle,
+    session_key: &str,
+    model_provider: &str,
+    model: &str,
+    full_history: &[ChatRecord],
+) -> Option<ConversationSummary> {
+    if runtime.conversation_history_limit == 0 || full_history.is_empty() {
+        return None;
+    }
+
+    let sessions = session_manager(runtime);
+    let persisted = sessions
+        .get_session_compression_state(session_key)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let last_compressed_len = persisted.last_compressed_len.max(0) as usize;
+    let latest_summary = persisted
+        .summary_json
+        .as_deref()
+        .and_then(parse_conversation_summary);
+
+    if !should_trigger_compression(
+        last_compressed_len,
+        full_history.len(),
+        runtime.conversation_history_limit,
+    ) {
+        return latest_summary;
+    }
+
+    let start = last_compressed_len.min(full_history.len());
+    let new_messages = to_conversation_messages(&full_history[start..]);
+    if new_messages.is_empty() {
+        return latest_summary;
+    }
+
+    let provider = runtime
+        .runtime
+        .provider_registry
+        .get(model_provider)
+        .cloned()
+        .unwrap_or_else(|| Arc::clone(&runtime.runtime.provider));
+    let model_output =
+        run_structured_compression(provider, model, latest_summary.as_ref(), &new_messages).await;
+    let next_summary = model_output
+        .as_deref()
+        .map(|output| merge_or_reset_summary(latest_summary.as_ref(), output))
+        .or(latest_summary);
+
+    let persisted_next = SessionCompressionState {
+        last_compressed_len: full_history.len() as i64,
+        summary_json: next_summary
+            .as_ref()
+            .and_then(|summary| serde_json::to_string(summary).ok()),
+    };
+    if let Err(err) = sessions
+        .set_session_compression_state(session_key, &persisted_next)
+        .await
+    {
+        warn!(error = %err, "failed to persist session compression state");
+    }
+    next_summary
+}
+
 pub async fn submit_and_get_output(
     runtime: &RuntimeBundle,
     channel: String,
@@ -1235,10 +1392,17 @@ pub async fn submit_and_get_output(
     request_metadata: BTreeMap<String, serde_json::Value>,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let sessions = session_manager(runtime);
-    let conversation_history = trim_conversation_history(
-        sessions.read_chat_records(&session_key).await?,
-        runtime.conversation_history_limit,
-    );
+    let full_history = sessions.read_chat_records(&session_key).await?;
+    let summary = maybe_refresh_summary(
+        runtime,
+        &session_key,
+        &model_provider,
+        &model,
+        &full_history,
+    )
+    .await;
+    let conversation_history =
+        build_history_for_model(full_history, runtime.conversation_history_limit, summary.as_ref());
     let header = EnvelopeHeader::new(session_key.clone());
     let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
     sessions
@@ -1513,9 +1677,11 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        first_arg_token, format_workspace_docs_for_prompt, parse_im_command, should_emit_outbound,
-        trim_conversation_history,
+        build_history_for_model, compression_trigger_interval, first_arg_token,
+        format_workspace_docs_for_prompt, parse_im_command, should_emit_outbound,
+        should_trigger_compression, trim_conversation_history,
     };
+    use klaw_agent::ConversationSummary;
     use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
     use klaw_session::ChatRecord;
     use serde_json::json;
@@ -1628,5 +1794,42 @@ mod tests {
         ];
         let trimmed = trim_conversation_history(history, 5);
         assert_eq!(trimmed.len(), 2);
+    }
+
+    #[test]
+    fn compression_trigger_interval_uses_half_limit_with_minimum_one() {
+        assert_eq!(compression_trigger_interval(20), 10);
+        assert_eq!(compression_trigger_interval(1), 1);
+    }
+
+    #[test]
+    fn should_trigger_compression_fires_after_half_window_growth() {
+        assert!(should_trigger_compression(0, 10, 20));
+        assert!(!should_trigger_compression(0, 9, 20));
+        assert!(!should_trigger_compression(0, 100, 0));
+    }
+
+    #[test]
+    fn build_history_for_model_injects_summary_and_keeps_recent_messages() {
+        let full_history = vec![
+            ChatRecord::new("user", "a", None),
+            ChatRecord::new("assistant", "b", None),
+            ChatRecord::new("user", "c", None),
+        ];
+        let summary = ConversationSummary {
+            goal: "g".to_string(),
+            progress: vec![],
+            pending: vec![],
+            decisions: vec![],
+            notes: vec![],
+        };
+
+        let model_history = build_history_for_model(full_history, 2, Some(&summary));
+        assert_eq!(model_history.len(), 2);
+        assert_eq!(model_history[0].role, "system");
+        assert!(model_history[0]
+            .content
+            .contains("Conversation Summary (JSON):"));
+        assert_eq!(model_history[1].content, "c");
     }
 }

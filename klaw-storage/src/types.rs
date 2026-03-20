@@ -42,6 +42,13 @@ pub struct SessionIndex {
     pub jsonl_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct SessionCompressionState {
+    pub last_compressed_len: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary_json: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmUsageSource {

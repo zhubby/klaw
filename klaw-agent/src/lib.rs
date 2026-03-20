@@ -1,3 +1,5 @@
+mod context_compression;
+
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
 use klaw_llm::{
@@ -11,6 +13,11 @@ use std::env;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, warn};
+
+pub use context_compression::{
+    build_compression_prompt, merge_or_reset_summary, parse_conversation_summary,
+    ConversationSummary,
+};
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 

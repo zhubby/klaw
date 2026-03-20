@@ -2,7 +2,7 @@ use crate::SessionError;
 use async_trait::async_trait;
 use klaw_storage::{
     open_default_store, ChatRecord, DefaultSessionStore, LlmUsageRecord, LlmUsageSummary,
-    NewLlmUsageRecord, SessionIndex, SessionStorage,
+    NewLlmUsageRecord, SessionCompressionState, SessionIndex, SessionStorage,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -79,6 +79,17 @@ pub trait SessionManager: Send + Sync {
         channel: &str,
         model: &str,
     ) -> Result<SessionIndex, SessionError>;
+
+    async fn get_session_compression_state(
+        &self,
+        session_key: &str,
+    ) -> Result<Option<SessionCompressionState>, SessionError>;
+
+    async fn set_session_compression_state(
+        &self,
+        session_key: &str,
+        state: &SessionCompressionState,
+    ) -> Result<(), SessionError>;
 
     async fn list_sessions(
         &self,
@@ -222,6 +233,24 @@ impl SessionManager for SqliteSessionManager {
         Ok(self
             .store
             .set_model(session_key, chat_id, channel, model)
+            .await?)
+    }
+
+    async fn get_session_compression_state(
+        &self,
+        session_key: &str,
+    ) -> Result<Option<SessionCompressionState>, SessionError> {
+        Ok(self.store.get_session_compression_state(session_key).await?)
+    }
+
+    async fn set_session_compression_state(
+        &self,
+        session_key: &str,
+        state: &SessionCompressionState,
+    ) -> Result<(), SessionError> {
+        Ok(self
+            .store
+            .set_session_compression_state(session_key, state)
             .await?)
     }
 

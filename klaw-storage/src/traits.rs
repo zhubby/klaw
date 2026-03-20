@@ -1,7 +1,7 @@
 use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus,
-    LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    NewLlmUsageRecord, SessionIndex, StorageError, UpdateCronJobPatch,
+    LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmUsageRecord,
+    SessionCompressionState, SessionIndex, StorageError, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -65,6 +65,17 @@ pub trait SessionStorage: Send + Sync {
         channel: &str,
         model: &str,
     ) -> Result<SessionIndex, StorageError>;
+
+    async fn get_session_compression_state(
+        &self,
+        session_key: &str,
+    ) -> Result<Option<SessionCompressionState>, StorageError>;
+
+    async fn set_session_compression_state(
+        &self,
+        session_key: &str,
+        state: &SessionCompressionState,
+    ) -> Result<(), StorageError>;
 
     async fn list_sessions(
         &self,
