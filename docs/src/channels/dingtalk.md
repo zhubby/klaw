@@ -5,7 +5,7 @@
 ## 目标
 
 - 基于钉钉开放平台 WebSocket 长连接协议，实现双向消息通道
-- 支持文本、图片、语音、富文本等多种消息类型的解析与响应
+- 支持文本、图片、语音、视频、文件、富文本等多种消息类型的解析与响应
 - 集成审批交互卡片，支持 approve/reject 决策回调
 - 支持媒体素材自动下载、归档与语音转写（ASR）
 - 事件去重、发送者白名单、代理支持等安全控制
@@ -168,7 +168,8 @@ WebSocket 层每 10 秒发送 Ping 帧保活。
   "content": {
     "richText": [
       {"type": "text", "text": "Hello"},
-      {"type": "picture", "fileName": "img.png", "downloadCode": "abc123"}
+      {"type": "picture", "fileName": "img.png", "downloadCode": "abc123"},
+      {"type": "file", "fileName": "spec.pdf", "downloadCode": "file123"}
     ]
   }
 }
@@ -195,6 +196,30 @@ WebSocket 层每 10 秒发送 Ping 帧保活。
     "duration": 15,
     "downloadCode": "voice456",
     "recognition": "你好这是语音转写结果"
+  }
+}
+```
+
+#### 视频消息（`video`）
+
+```json
+{
+  "msgtype": "video",
+  "video": {
+    "fileName": "demo.mp4",
+    "downloadCode": "video123"
+  }
+}
+```
+
+#### 文件消息（`file` / `document` / `doc` / `attachment`）
+
+```json
+{
+  "msgtype": "file",
+  "file": {
+    "fileName": "report.xlsx",
+    "downloadCode": "file456"
   }
 }
 ```
@@ -226,6 +251,13 @@ fn is_sender_allowed(allowlist: &[String], sender_id: &str) -> bool {
 2. 调用 `/v1.0/robot/messageFiles/download` 获取下载 URL
 3. 下载媒体文件到内存
 4. 提交归档服务
+
+当前会进入该流程的入站消息包括：
+- 独立图片消息（`picture` / `image` / `photo`）
+- 语音消息（`audio` / `voice`）
+- 视频消息（`video`）
+- 文件消息（`file` / `document` / `doc` / `attachment`）
+- 富文本里的图片、视频、文件附件块
 
 ### 归档流程
 

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-20
+
+### Changed
+
+- `dingtalk` 入站媒体提取范围从图片/语音扩展到视频与通用文件附件；只要消息体带有 `downloadCode` / `pictureDownloadCode`，都会进入统一 archive 归档链路
+
 ## 2026-03-19
 
 ### Fixed

@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
+use egui_extras::{Column, TableBuilder};
 use klaw_archive::{
     open_default_archive_service, ArchiveError, ArchiveMediaKind, ArchiveQuery, ArchiveRecord,
     ArchiveService, ArchiveSourceKind, SqliteArchiveService,
@@ -13,7 +14,8 @@ use tokio::runtime::Builder;
 pub struct ArchivePanel {
     loaded: bool,
     items: Vec<ArchiveRecord>,
-    selected_id: Option<String>,
+    selected_archive: Option<String>,
+    detail_id: Option<String>,
     session_key_filter: String,
     chat_id_filter: String,
     source_kind_filter: String,
@@ -71,8 +73,8 @@ impl ArchivePanel {
     }
 
     fn selected_item(&self) -> Option<&ArchiveRecord> {
-        let selected_id = self.selected_id.as_deref()?;
-        self.items.iter().find(|item| item.id == selected_id)
+        let detail_id = self.detail_id.as_deref()?;
+        self.items.iter().find(|item| item.id == detail_id)
     }
 }
 
@@ -126,36 +128,106 @@ impl PanelRenderer for ArchivePanel {
             if self.items.is_empty() {
                 ui.label("No archive records found.");
             } else {
-                egui::Grid::new("archive-list-grid")
-                    .striped(true)
-                    .num_columns(8)
-                    .spacing([12.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.strong("ID");
-                        ui.strong("Source");
-                        ui.strong("Media");
-                        ui.strong("Filename");
-                        ui.strong("MIME");
-                        ui.strong("Size");
-                        ui.strong("Created At");
-                        ui.strong("Actions");
-                        ui.end_row();
+                let available_height = ui.available_height();
+                let mut view_detail_id: Option<String> = None;
 
-                        let items = self.items.clone();
-                        for item in items {
-                            ui.label(&item.id);
-                            ui.label(item.source_kind.as_str());
-                            ui.label(item.media_kind.as_str());
-                            ui.label(item.original_filename.as_deref().unwrap_or(""));
-                            ui.label(item.mime_type.as_deref().unwrap_or(""));
-                            ui.label(item.size_bytes.to_string());
-                            ui.label(format_timestamp_millis(item.created_at_ms));
-                            if ui.button("Details").clicked() {
-                                self.selected_id = Some(item.id.clone());
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::auto().at_least(70.0))
+                    .column(Column::auto().at_least(60.0))
+                    .column(Column::auto().at_least(120.0))
+                    .column(Column::auto().at_least(100.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::remainder().at_least(120.0))
+                    .min_scrolled_height(0.0)
+                    .max_scroll_height(available_height)
+                    .sense(egui::Sense::click())
+                    .header(20.0, |mut header| {
+                        header.col(|ui| {
+                            ui.strong("ID");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Source");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Media");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Filename");
+                        });
+                        header.col(|ui| {
+                            ui.strong("MIME");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Size");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Created At");
+                        });
+                    })
+                    .body(|body| {
+                        body.rows(20.0, self.items.len(), |mut row| {
+                            let idx = row.index();
+                            let item = &self.items[idx];
+                            let is_selected = self.selected_archive.as_deref() == Some(&item.id);
+
+                            row.set_selected(is_selected);
+
+                            row.col(|ui| {
+                                ui.label(&item.id);
+                            });
+                            row.col(|ui| {
+                                ui.label(item.source_kind.as_str());
+                            });
+                            row.col(|ui| {
+                                ui.label(item.media_kind.as_str());
+                            });
+                            row.col(|ui| {
+                                ui.label(item.original_filename.as_deref().unwrap_or(""));
+                            });
+                            row.col(|ui| {
+                                ui.label(item.mime_type.as_deref().unwrap_or(""));
+                            });
+                            row.col(|ui| {
+                                ui.label(item.size_bytes.to_string());
+                            });
+                            row.col(|ui| {
+                                ui.label(format_timestamp_millis(item.created_at_ms));
+                            });
+
+                            let response = row.response();
+
+                            if response.clicked() {
+                                self.selected_archive = if is_selected {
+                                    None
+                                } else {
+                                    Some(item.id.clone())
+                                };
                             }
-                            ui.end_row();
-                        }
+
+                            let item_id = item.id.clone();
+                            response.context_menu(|ui| {
+                                if ui.button("Details").clicked() {
+                                    view_detail_id = Some(item_id.clone());
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui.button("Copy ID").clicked() {
+                                    ui.ctx().output_mut(|o| {
+                                        o.commands
+                                            .push(egui::OutputCommand::CopyText(item.id.clone()));
+                                    });
+                                    ui.close();
+                                }
+                            });
+                        });
                     });
+
+                if let Some(id) = view_detail_id {
+                    self.detail_id = Some(id);
+                }
             }
         });
 
@@ -199,7 +271,7 @@ impl PanelRenderer for ArchivePanel {
                             .interactive(false),
                     );
                     if ui.button("Close").clicked() {
-                        self.selected_id = None;
+                        self.detail_id = None;
                     }
                 });
         }

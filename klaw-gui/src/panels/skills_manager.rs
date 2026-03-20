@@ -2,6 +2,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
 use crate::time_format::format_timestamp_millis;
+use egui_extras::{Column, TableBuilder};
 use egui_file_dialog::FileDialog;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_skill::{
@@ -29,6 +30,7 @@ pub struct SkillsManagerPanel {
     skill_root: Option<PathBuf>,
     loaded: bool,
     items: Vec<SkillSummary>,
+    selected_skill: Option<String>,
     detail_name: Option<String>,
     detail_record: Option<SkillRecord>,
     detail_window_open: bool,
@@ -46,6 +48,7 @@ impl Default for SkillsManagerPanel {
             skill_root: None,
             loaded: false,
             items: Vec::new(),
+            selected_skill: None,
             detail_name: None,
             detail_record: None,
             detail_window_open: false,
@@ -670,9 +673,6 @@ impl PanelRenderer for SkillsManagerPanel {
         self.local_install_dialog.update(ui.ctx());
         self.handle_local_install_selection(notifications);
 
-        let mut select_skill = None;
-        let mut remove_skill = None;
-
         ui.heading(ctx.tab_title);
         ui.label(Self::status_label(self.config_path.as_deref()));
         ui.horizontal(|ui| {
@@ -704,52 +704,108 @@ impl PanelRenderer for SkillsManagerPanel {
         if self.items.is_empty() {
             ui.label("No installed skills found.");
         } else {
-            egui::ScrollArea::vertical()
-                .id_salt("skill-manager-list")
-                .max_height(260.0)
-                .show(ui, |ui| {
-                    egui::Grid::new("skill-manager-grid")
-                        .striped(true)
-                        .num_columns(7)
-                        .spacing([12.0, 8.0])
-                        .show(ui, |ui| {
-                            ui.strong("Name");
-                            ui.strong("Source");
-                            ui.strong("Registry");
-                            ui.strong("State");
-                            ui.strong("Updated");
-                            ui.strong("Path");
-                            ui.strong("Actions");
-                            ui.end_row();
+            let mut view_skill: Option<String> = None;
+            let mut remove_skill: Option<(String, Option<String>)> = None;
 
-                            for item in &self.items {
-                                ui.label(&item.name);
-                                ui.label(Self::source_label(&item));
-                                ui.label(item.registry.as_deref().unwrap_or("-"));
-                                ui.label(Self::stale_label(&item));
-                                ui.monospace(format_timestamp_millis(item.updated_at_ms));
-                                ui.label(item.local_path.display().to_string());
+            let available_height = ui.available_height();
+            TableBuilder::new(ui)
+                .striped(true)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::auto().at_least(100.0))
+                .column(Column::auto().at_least(60.0))
+                .column(Column::auto().at_least(80.0))
+                .column(Column::auto().at_least(60.0))
+                .column(Column::auto().at_least(120.0))
+                .column(Column::remainder().at_least(150.0))
+                .min_scrolled_height(0.0)
+                .max_scroll_height(available_height)
+                .sense(egui::Sense::click())
+                .header(20.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("Name");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Source");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Registry");
+                    });
+                    header.col(|ui| {
+                        ui.strong("State");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Updated");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Path");
+                    });
+                })
+                .body(|body| {
+                    body.rows(20.0, self.items.len(), |mut row| {
+                        let idx = row.index();
+                        let item = &self.items[idx];
+                        let is_selected = self.selected_skill.as_deref() == Some(&item.name);
 
-                                ui.horizontal(|ui| {
-                                    if ui.button("View").clicked() {
-                                        select_skill = Some(item.name.clone());
-                                    }
-                                    if ui.button("Remove").clicked() {
-                                        remove_skill =
-                                            Some((item.name.clone(), item.registry.clone()));
-                                    }
+                        row.set_selected(is_selected);
+
+                        row.col(|ui| {
+                            ui.label(&item.name);
+                        });
+                        row.col(|ui| {
+                            ui.label(Self::source_label(item));
+                        });
+                        row.col(|ui| {
+                            ui.label(item.registry.as_deref().unwrap_or("-"));
+                        });
+                        row.col(|ui| {
+                            ui.label(Self::stale_label(item));
+                        });
+                        row.col(|ui| {
+                            ui.monospace(format_timestamp_millis(item.updated_at_ms));
+                        });
+                        row.col(|ui| {
+                            ui.label(item.local_path.display().to_string());
+                        });
+
+                        let response = row.response();
+
+                        if response.clicked() {
+                            self.selected_skill = if is_selected {
+                                None
+                            } else {
+                                Some(item.name.clone())
+                            };
+                        }
+
+                        let skill_name = item.name.clone();
+                        let skill_registry = item.registry.clone();
+                        response.context_menu(|ui| {
+                            if ui.button("View").clicked() {
+                                view_skill = Some(skill_name.clone());
+                                ui.close();
+                            }
+                            if ui.button("Remove").clicked() {
+                                remove_skill = Some((skill_name, skill_registry));
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Copy Name").clicked() {
+                                ui.ctx().output_mut(|o| {
+                                    o.commands
+                                        .push(egui::OutputCommand::CopyText(item.name.clone()));
                                 });
-                                ui.end_row();
+                                ui.close();
                             }
                         });
+                    });
                 });
-        }
 
-        if let Some(skill_name) = select_skill {
-            self.load_detail(&skill_name, notifications);
-        }
-        if let Some((skill_name, registry)) = remove_skill {
-            self.uninstall_skill(&skill_name, registry.as_deref(), notifications);
+            if let Some(skill_name) = view_skill {
+                self.load_detail(&skill_name, notifications);
+            }
+            if let Some((skill_name, registry)) = remove_skill {
+                self.uninstall_skill(&skill_name, registry.as_deref(), notifications);
+            }
         }
         self.render_detail_window(ui.ctx());
         self.render_install_window(ui.ctx(), notifications);

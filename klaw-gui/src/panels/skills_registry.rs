@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use egui_extras::{Column, TableBuilder};
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillsRegistryConfig};
 use klaw_skill::RegistrySyncReport;
 use klaw_skill::{
@@ -78,6 +79,7 @@ pub struct SkillsRegistryPanel {
     sync_timeout_text: String,
     syncing_registry: Option<String>,
     sync_result_rx: Option<Receiver<(String, Result<RegistrySyncReport, String>)>>,
+    selected_registry: Option<String>,
 }
 
 impl SkillsRegistryPanel {
@@ -418,56 +420,111 @@ impl PanelRenderer for SkillsRegistryPanel {
         if self.config.skills.registries.is_empty() {
             ui.label("No skill registries configured.");
         } else {
-            egui::Grid::new("skill-registry-list-grid")
+            let mut edit_registry_name: Option<String> = None;
+            let mut sync_registry_name: Option<String> = None;
+
+            let registry_names = self
+                .config
+                .skills
+                .registries
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let available_height = ui.available_height();
+            TableBuilder::new(ui)
                 .striped(true)
-                .num_columns(5)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.strong("Name");
-                    ui.strong("Address");
-                    ui.strong("Installed Count");
-                    ui.strong("Installed");
-                    ui.strong("Actions");
-                    ui.end_row();
-
-                    let names = self
-                        .config
-                        .skills
-                        .registries
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<_>>();
-
-                    for name in names {
-                        let Some(registry) = self.config.skills.registries.get(&name) else {
-                            continue;
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::auto().at_least(100.0))
+                .column(Column::auto().at_least(240.0))
+                .column(Column::auto().at_least(100.0))
+                .column(Column::remainder().at_least(150.0))
+                .min_scrolled_height(0.0)
+                .max_scroll_height(available_height)
+                .sense(egui::Sense::click())
+                .header(20.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("Name");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Address");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Installed Count");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Installed");
+                    });
+                })
+                .body(|body| {
+                    body.rows(20.0, registry_names.len(), |mut row| {
+                        let idx = row.index();
+                        let name = &registry_names[idx];
+                        let Some(registry) = self.config.skills.registries.get(name) else {
+                            return;
                         };
 
-                        ui.label(&name);
-                        ui.label(&registry.address);
-                        ui.label(registry.installed.len().to_string());
-                        ui.label(registry.installed.join(", "));
-                        ui.horizontal(|ui| {
-                            let is_syncing =
-                                self.syncing_registry.as_deref() == Some(name.as_str());
+                        let is_selected = self.selected_registry.as_deref() == Some(name);
+                        row.set_selected(is_selected);
+
+                        let is_syncing = self.syncing_registry.as_deref() == Some(name.as_str());
+
+                        row.col(|ui| {
                             if is_syncing {
                                 ui.add(egui::Spinner::new().size(14.0));
-                            } else if ui
-                                .add_enabled(
-                                    self.syncing_registry.is_none(),
-                                    egui::Button::new("Sync"),
-                                )
+                            }
+                            ui.label(name);
+                        });
+                        row.col(|ui| {
+                            ui.label(&registry.address);
+                        });
+                        row.col(|ui| {
+                            ui.label(registry.installed.len().to_string());
+                        });
+                        row.col(|ui| {
+                            ui.label(registry.installed.join(", "));
+                        });
+
+                        let response = row.response();
+
+                        if response.clicked() {
+                            self.selected_registry = if is_selected {
+                                None
+                            } else {
+                                Some(name.clone())
+                            };
+                        }
+
+                        let name_clone = name.clone();
+                        response.context_menu(|ui| {
+                            if ui
+                                .add_enabled(!is_syncing, egui::Button::new("Sync"))
                                 .clicked()
                             {
-                                self.sync_registry(&name, notifications);
+                                sync_registry_name = Some(name_clone.clone());
+                                ui.close();
                             }
                             if ui.button("Edit").clicked() {
-                                self.open_edit_registry(&name);
+                                edit_registry_name = Some(name_clone);
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Copy Name").clicked() {
+                                ui.ctx().output_mut(|o| {
+                                    o.commands.push(egui::OutputCommand::CopyText(name.clone()));
+                                });
+                                ui.close();
                             }
                         });
-                        ui.end_row();
-                    }
+                    });
                 });
+
+            if let Some(name) = edit_registry_name {
+                self.open_edit_registry(&name);
+            }
+            if let Some(name) = sync_registry_name {
+                self.sync_registry(&name, notifications);
+            }
         }
 
         self.render_form_window(ui, notifications);

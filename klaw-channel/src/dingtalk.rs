@@ -1581,6 +1581,7 @@ fn extract_dingtalk_message_text(
             let title = value
                 .pointer("/picture/fileName")
                 .or_else(|| value.pointer("/image/fileName"))
+                .or_else(|| value.pointer("/photo/fileName"))
                 .or_else(|| value.pointer("/content/fileName"))
                 .and_then(Value::as_str)
                 .map(str::trim)
@@ -1590,6 +1591,30 @@ fn extract_dingtalk_message_text(
             format!(
                 "[DingTalk图片消息{title}]\n用户发送了一张图片。"
             )
+        }
+        "video" => {
+            let title = first_string_value(
+                value,
+                &["/video/fileName", "/video/videoName", "/content/fileName"],
+            )
+            .map(|name| format!("（{name}）"))
+            .unwrap_or_default();
+            format!("[DingTalk视频消息{title}]\n用户发送了一个视频。")
+        }
+        "file" | "document" | "doc" | "attachment" => {
+            let title = first_string_value(
+                value,
+                &[
+                    "/file/fileName",
+                    "/document/fileName",
+                    "/doc/fileName",
+                    "/attachment/fileName",
+                    "/content/fileName",
+                ],
+            )
+            .map(|name| format!("（{name}）"))
+            .unwrap_or_default();
+            format!("[DingTalk文件消息{title}]\n用户发送了一个文件。")
         }
         other => format!(
             "[DingTalk非文本消息]\n用户发送了类型为 `{other}` 的消息。当前通道仅保证文本可直接处理，请引导用户补充文字内容。"
@@ -1627,7 +1652,7 @@ fn extract_dingtalk_media_references(
                         .map(str::trim)
                         .map(|ty| ty.to_ascii_lowercase())
                         .unwrap_or_default();
-                    if block_type != "picture" && block_type != "image" {
+                    if !is_supported_richtext_media_type(&block_type) {
                         return None;
                     }
 
@@ -1637,6 +1662,10 @@ fn extract_dingtalk_media_references(
                         .map(ToOwned::to_owned);
                     let mut item_metadata = metadata.clone();
                     item_metadata.insert("dingtalk.richtext_index".to_string(), Value::from(index));
+                    item_metadata.insert(
+                        "dingtalk.richtext_block_type".to_string(),
+                        Value::String(block_type),
+                    );
                     if let Some(download_code) = block
                         .get("downloadCode")
                         .and_then(Value::as_str)
@@ -1724,6 +1753,30 @@ fn extract_dingtalk_media_references(
                 metadata,
             }]
         }
+        "video" => build_media_references(
+            &metadata,
+            event_id,
+            first_string_value(
+                value,
+                &["/video/fileName", "/video/videoName", "/content/fileName"],
+            ),
+            first_string_value(
+                value,
+                &[
+                    "/video/downloadCode",
+                    "/video/videoDownloadCode",
+                    "/content/downloadCode",
+                ],
+            ),
+            first_string_value(
+                value,
+                &[
+                    "/video/pictureDownloadCode",
+                    "/video/coverDownloadCode",
+                    "/content/pictureDownloadCode",
+                ],
+            ),
+        ),
         "picture" | "image" | "photo" => {
             let filename = value
                 .pointer("/picture/fileName")
@@ -1766,8 +1819,91 @@ fn extract_dingtalk_media_references(
                 metadata,
             }]
         }
+        "file" | "document" | "doc" | "attachment" => build_media_references(
+            &metadata,
+            event_id,
+            first_string_value(
+                value,
+                &[
+                    "/file/fileName",
+                    "/document/fileName",
+                    "/doc/fileName",
+                    "/attachment/fileName",
+                    "/content/fileName",
+                ],
+            ),
+            first_string_value(
+                value,
+                &[
+                    "/file/downloadCode",
+                    "/document/downloadCode",
+                    "/doc/downloadCode",
+                    "/attachment/downloadCode",
+                    "/content/downloadCode",
+                ],
+            ),
+            first_string_value(
+                value,
+                &[
+                    "/file/pictureDownloadCode",
+                    "/document/pictureDownloadCode",
+                    "/doc/pictureDownloadCode",
+                    "/attachment/pictureDownloadCode",
+                    "/content/pictureDownloadCode",
+                ],
+            ),
+        ),
         _ => Vec::new(),
     }
+}
+
+fn is_supported_richtext_media_type(block_type: &str) -> bool {
+    matches!(
+        block_type,
+        "picture" | "image" | "video" | "file" | "document" | "doc" | "attachment"
+    )
+}
+
+fn first_string_value(value: &Value, pointers: &[&str]) -> Option<String> {
+    pointers.iter().find_map(|pointer| {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn build_media_references(
+    metadata: &BTreeMap<String, Value>,
+    event_id: &str,
+    filename: Option<String>,
+    download_code: Option<String>,
+    picture_download_code: Option<String>,
+) -> Vec<MediaReference> {
+    let mut metadata = metadata.clone();
+    if let Some(download_code) = download_code {
+        metadata.insert(
+            "dingtalk.download_code".to_string(),
+            Value::String(download_code),
+        );
+    }
+    if let Some(picture_download_code) = picture_download_code {
+        metadata.insert(
+            "dingtalk.picture_download_code".to_string(),
+            Value::String(picture_download_code),
+        );
+    }
+    vec![MediaReference {
+        source_kind: MediaSourceKind::ChannelInbound,
+        filename,
+        mime_type: None,
+        remote_url: None,
+        bytes: None,
+        message_id: Some(event_id.to_string()),
+        metadata,
+    }]
 }
 
 fn extract_audio_recognition_text(value: &Value) -> Option<String> {
@@ -2123,6 +2259,106 @@ mod tests {
                 .get("dingtalk.picture_download_code")
                 .and_then(serde_json::Value::as_str),
             Some("pcode-2")
+        );
+    }
+
+    #[test]
+    fn parse_inbound_video_event_extracts_media_reference() {
+        let payload = serde_json::json!({
+            "conversationType": 2,
+            "conversationId": "cid_video",
+            "sessionWebhook": "https://example/session-video",
+            "msgId": "mid_video",
+            "robotCode": "robot_video",
+            "senderStaffId": "staff_video",
+            "msgtype": "video",
+            "video": {
+                "fileName": "demo.mp4",
+                "downloadCode": "video-code-1"
+            }
+        });
+
+        let parsed = parse_inbound_event(&payload).expect("should parse video");
+        assert!(parsed.text.contains("视频消息"));
+        assert_eq!(parsed.media_references.len(), 1);
+        assert_eq!(
+            parsed.media_references[0].filename.as_deref(),
+            Some("demo.mp4")
+        );
+        assert_eq!(
+            parsed.media_references[0]
+                .metadata
+                .get("dingtalk.download_code")
+                .and_then(serde_json::Value::as_str),
+            Some("video-code-1")
+        );
+    }
+
+    #[test]
+    fn parse_inbound_file_event_extracts_media_reference() {
+        let payload = serde_json::json!({
+            "conversationType": 2,
+            "conversationId": "cid_file",
+            "sessionWebhook": "https://example/session-file",
+            "msgId": "mid_file",
+            "robotCode": "robot_file",
+            "senderStaffId": "staff_file",
+            "msgtype": "file",
+            "file": {
+                "fileName": "report.xlsx",
+                "downloadCode": "file-code-1"
+            }
+        });
+
+        let parsed = parse_inbound_event(&payload).expect("should parse file");
+        assert!(parsed.text.contains("文件消息"));
+        assert_eq!(parsed.media_references.len(), 1);
+        assert_eq!(
+            parsed.media_references[0].filename.as_deref(),
+            Some("report.xlsx")
+        );
+        assert_eq!(
+            parsed.media_references[0]
+                .metadata
+                .get("dingtalk.download_code")
+                .and_then(serde_json::Value::as_str),
+            Some("file-code-1")
+        );
+    }
+
+    #[test]
+    fn parse_inbound_richtext_event_extracts_non_image_attachments() {
+        let payload = serde_json::json!({
+            "conversationType": 2,
+            "conversationId": "cid_rich_file",
+            "sessionWebhook": "https://example/session-rich-file",
+            "msgId": "mid_rich_file",
+            "robotCode": "robot_rich_file",
+            "senderStaffId": "staff_rich_file",
+            "msgtype": "richText",
+            "content": {
+                "richText": [
+                    { "type": "file", "fileName": "slides.pdf", "downloadCode": "file-rich-code" },
+                    { "type": "video", "fileName": "walkthrough.mp4", "downloadCode": "video-rich-code" }
+                ]
+            }
+        });
+
+        let parsed = parse_inbound_event(&payload).expect("should parse richText file/video");
+        assert_eq!(parsed.media_references.len(), 2);
+        assert_eq!(
+            parsed.media_references[0]
+                .metadata
+                .get("dingtalk.richtext_block_type")
+                .and_then(serde_json::Value::as_str),
+            Some("file")
+        );
+        assert_eq!(
+            parsed.media_references[1]
+                .metadata
+                .get("dingtalk.richtext_block_type")
+                .and_then(serde_json::Value::as_str),
+            Some("video")
         );
     }
 

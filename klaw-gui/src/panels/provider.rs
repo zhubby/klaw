@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use egui_extras::{Column, TableBuilder};
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, ModelProviderConfig};
 use std::path::{Path, PathBuf};
 
@@ -89,6 +90,7 @@ pub struct ProviderPanel {
     revision: Option<u64>,
     config: AppConfig,
     form: Option<ProviderForm>,
+    selected_provider: Option<String>,
 }
 
 impl ProviderPanel {
@@ -366,35 +368,66 @@ impl PanelRenderer for ProviderPanel {
         if self.config.model_providers.is_empty() {
             ui.label("No providers configured.");
         } else {
-            egui::Grid::new("provider-list-grid")
+            let mut edit_provider_id: Option<String> = None;
+            let mut set_active_provider_id: Option<String> = None;
+
+            let provider_ids = self
+                .config
+                .model_providers
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let available_height = ui.available_height();
+            TableBuilder::new(ui)
                 .striped(true)
-                .num_columns(8)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.strong("ID");
-                    ui.strong("Name");
-                    ui.strong("Base URL");
-                    ui.strong("Wire API");
-                    ui.strong("Default Model");
-                    ui.strong("Tokenizer");
-                    ui.strong("Auth");
-                    ui.strong("Actions");
-                    ui.end_row();
-
-                    let ids = self
-                        .config
-                        .model_providers
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<String>>();
-
-                    for provider_id in ids {
-                        let Some(provider) = self.config.model_providers.get(&provider_id) else {
-                            continue;
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::auto().at_least(100.0))
+                .column(Column::auto().at_least(80.0))
+                .column(Column::auto().at_least(180.0))
+                .column(Column::auto().at_least(80.0))
+                .column(Column::auto().at_least(140.0))
+                .column(Column::auto().at_least(100.0))
+                .column(Column::remainder().at_least(80.0))
+                .min_scrolled_height(0.0)
+                .max_scroll_height(available_height)
+                .sense(egui::Sense::click())
+                .header(20.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("ID");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Name");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Base URL");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Wire API");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Default Model");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Tokenizer");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Auth");
+                    });
+                })
+                .body(|body| {
+                    body.rows(20.0, provider_ids.len(), |mut row| {
+                        let idx = row.index();
+                        let provider_id = &provider_ids[idx];
+                        let Some(provider) = self.config.model_providers.get(provider_id) else {
+                            return;
                         };
 
+                        let is_selected = self.selected_provider.as_deref() == Some(provider_id);
+                        row.set_selected(is_selected);
+
                         let mut id_label = provider_id.clone();
-                        if provider_id == self.config.model_provider {
+                        if provider_id == &self.config.model_provider {
                             id_label.push_str(" (active)");
                         }
 
@@ -409,31 +442,70 @@ impl PanelRenderer for ProviderPanel {
                                 .unwrap_or_else(|| "none".to_string())
                         };
 
-                        ui.label(id_label);
-                        ui.label(provider.name.as_deref().unwrap_or("-"));
-                        ui.label(&provider.base_url);
-                        ui.label(&provider.wire_api);
-                        ui.label(&provider.default_model);
-                        ui.label(provider.tokenizer_path.as_deref().unwrap_or("-"));
-                        ui.label(auth);
+                        row.col(|ui| {
+                            ui.label(&id_label);
+                        });
+                        row.col(|ui| {
+                            ui.label(provider.name.as_deref().unwrap_or("-"));
+                        });
+                        row.col(|ui| {
+                            ui.label(&provider.base_url);
+                        });
+                        row.col(|ui| {
+                            ui.label(&provider.wire_api);
+                        });
+                        row.col(|ui| {
+                            ui.label(&provider.default_model);
+                        });
+                        row.col(|ui| {
+                            ui.label(provider.tokenizer_path.as_deref().unwrap_or("-"));
+                        });
+                        row.col(|ui| {
+                            ui.label(auth);
+                        });
 
-                        ui.horizontal(|ui| {
+                        let response = row.response();
+
+                        if response.clicked() {
+                            self.selected_provider = if is_selected {
+                                None
+                            } else {
+                                Some(provider_id.clone())
+                            };
+                        }
+
+                        let provider_id_clone = provider_id.clone();
+                        let is_current_active = provider_id == &self.config.model_provider;
+                        response.context_menu(|ui| {
                             if ui.button("Edit").clicked() {
-                                self.open_edit_provider(&provider_id);
+                                edit_provider_id = Some(provider_id_clone.clone());
+                                ui.close();
                             }
                             if ui
-                                .add_enabled(
-                                    provider_id != self.config.model_provider,
-                                    egui::Button::new("Set Active"),
-                                )
+                                .add_enabled(!is_current_active, egui::Button::new("Set Active"))
                                 .clicked()
                             {
-                                self.set_active_provider(&provider_id, notifications);
+                                set_active_provider_id = Some(provider_id_clone);
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Copy ID").clicked() {
+                                ui.ctx().output_mut(|o| {
+                                    o.commands
+                                        .push(egui::OutputCommand::CopyText(provider_id.clone()));
+                                });
+                                ui.close();
                             }
                         });
-                        ui.end_row();
-                    }
+                    });
                 });
+
+            if let Some(id) = edit_provider_id {
+                self.open_edit_provider(&id);
+            }
+            if let Some(id) = set_active_provider_id {
+                self.set_active_provider(&id, notifications);
+            }
         }
 
         self.render_form_window(ui, notifications);
