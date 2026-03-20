@@ -440,6 +440,7 @@ impl ToolPanel {
     fn open_toggle(&mut self, key: &str, title: &'static str, enabled: bool) {
         let form = ToggleForm { title, enabled };
         self.form = Some(match key {
+            "archive" => ToolForm::Archive(form),
             "approval" => ToolForm::Approval(form),
             "local_search" => ToolForm::LocalSearch(form),
             "terminal_multiplexers" => ToolForm::TerminalMultiplexers(form),
@@ -657,7 +658,8 @@ impl ToolPanel {
                                 .desired_width(f32::INFINITY),
                         );
                     }
-                    ToolForm::Approval(form)
+                    ToolForm::Archive(form)
+                    | ToolForm::Approval(form)
                     | ToolForm::LocalSearch(form)
                     | ToolForm::TerminalMultiplexers(form)
                     | ToolForm::CronManager(form)
@@ -930,7 +932,7 @@ impl PanelRenderer for ToolPanel {
         egui::ScrollArea::vertical()
             .id_salt("tool-card-scroll")
             .show(ui, |ui| {
-                let cards: [(&str, &str, bool, &str); 12] = [
+                let cards: [(&str, &str, bool, &str); 13] = [
                     (
                         "apply_patch",
                         "Patch workspace files with constrained path policy.",
@@ -942,6 +944,12 @@ impl PanelRenderer for ToolPanel {
                         "Execute local shell commands with approval policy.",
                         self.config.tools.shell.enabled,
                         "shell",
+                    ),
+                    (
+                        "archive",
+                        "Inspect and copy archived attachments from conversations.",
+                        self.config.tools.archive.enabled,
+                        "archive",
                     ),
                     (
                         "approval",
@@ -1028,6 +1036,11 @@ impl PanelRenderer for ToolPanel {
         match edit_key {
             Some("apply_patch") => self.open_apply_patch(),
             Some("shell") => self.open_shell(),
+            Some("archive") => self.open_toggle(
+                "archive",
+                "Edit Tool: archive",
+                self.config.tools.archive.enabled,
+            ),
             Some("approval") => self.open_toggle(
                 "approval",
                 "Edit Tool: approval",
