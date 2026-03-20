@@ -565,7 +565,7 @@ async fn handle_im_command(
     };
     let route = resolve_session_route(runtime, &channel, &base_session_key, &chat_id).await?;
     let response = match command {
-        "help" => ChannelResponse {
+        "help" | "start" => ChannelResponse {
             content: render_help_text(runtime),
             reasoning: None,
             metadata: BTreeMap::new(),

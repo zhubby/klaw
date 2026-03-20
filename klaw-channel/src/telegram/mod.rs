@@ -1,31 +1,34 @@
+mod client;
+mod render;
+mod types;
+
+use self::client::{BotCommand, SendMessageRequest, TelegramApiClient};
+use self::render::{build_approval_message, extract_approval_id, render_telegram_response};
+use self::types::{
+    is_sender_allowed, EventDeduper, TelegramCallbackInbound, TelegramInbound, TelegramUpdate,
+};
 use crate::{
     manager::{ChannelKind, ManagedChannelDriver},
     media::{
-        attach_declared_media_metadata, build_media_reference, ingest_media_reference_bytes,
-        ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES,
+        ingest_media_reference_bytes, ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES,
     },
-    render::{render_agent_output, OutputRenderStyle},
-    Channel, ChannelRequest, ChannelResult, ChannelRuntime,
+    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime,
 };
 use klaw_archive::open_default_archive_service;
 use klaw_config::{TelegramConfig, TelegramProxyConfig};
-use klaw_core::{MediaReference, MediaSourceKind};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{self, Duration};
 use tracing::{debug, info, warn};
 
-const TELEGRAM_API_BASE: &str = "https://api.telegram.org";
-const TELEGRAM_LONG_POLL_TIMEOUT_SECS: u64 = 20;
-const TELEGRAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const TELEGRAM_RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const UPDATE_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const UPDATE_DEDUP_MAX_ENTRIES: usize = 20_000;
+type TelegramPollResult = Result<Vec<TelegramUpdate>, String>;
 
 #[derive(Debug, Clone)]
 pub struct TelegramChannel {
@@ -83,6 +86,20 @@ impl TelegramChannel {
         Ok(())
     }
 
+    async fn register_bot_commands(&self) -> ChannelResult<()> {
+        self.client
+            .set_my_commands(vec![
+                BotCommand::new("start", "Show help and available commands"),
+                BotCommand::new("help", "Show help and available commands"),
+                BotCommand::new("new", "Start a new session context"),
+                BotCommand::new("model-provider", "List or switch model providers"),
+                BotCommand::new("model", "Show or update current model"),
+                BotCommand::new("approve", "Approve a pending tool action"),
+                BotCommand::new("reject", "Reject a pending tool action"),
+            ])
+            .await
+    }
+
     pub async fn run_until_shutdown(
         &mut self,
         runtime: &dyn ChannelRuntime,
@@ -93,6 +110,18 @@ impl TelegramChannel {
             account_id = self.config.account_id.as_str(),
             "telegram channel started"
         );
+        if let Err(err) = self.register_bot_commands().await {
+            warn!(
+                account_id = self.config.account_id.as_str(),
+                error = %err,
+                "failed to register telegram bot commands"
+            );
+        } else {
+            info!(
+                account_id = self.config.account_id.as_str(),
+                "telegram bot commands registered"
+            );
+        }
 
         let (updates_tx, mut updates_rx) = mpsc::unbounded_channel::<TelegramPollResult>();
         let mut poll_shutdown = shutdown.clone();
@@ -195,9 +224,7 @@ impl TelegramChannel {
                                 }
                             }
                         }
-                        Err(err) => {
-                            warn!(error = %err, "failed to fetch telegram updates");
-                        }
+                        Err(err) => warn!(error = %err, "failed to fetch telegram updates"),
                     }
                 }
             }
@@ -209,6 +236,10 @@ impl TelegramChannel {
         runtime: &dyn ChannelRuntime,
         update: TelegramUpdate,
     ) -> ChannelResult<()> {
+        if let Some(callback_query) = update.callback_query {
+            return self.handle_callback_query(runtime, callback_query).await;
+        }
+
         let Some(message) = update.message else {
             debug!(
                 update_id = update.update_id,
@@ -216,7 +247,6 @@ impl TelegramChannel {
             );
             return Ok(());
         };
-
         let Some(from) = message.from.as_ref() else {
             debug!(
                 update_id = update.update_id,
@@ -262,17 +292,81 @@ impl TelegramChannel {
 
         match maybe_output {
             Ok(Some(output)) => {
-                let text = render_agent_output(
-                    &output,
-                    self.config.show_reasoning,
-                    OutputRenderStyle::Markdown,
-                );
-                self.client.send_message(&inbound.chat_id, &text).await?;
+                self.send_output(&inbound.chat_id, &output).await?;
             }
             Ok(None) => {}
             Err(err) => return Err(err),
         }
 
+        Ok(())
+    }
+
+    async fn handle_callback_query(
+        &self,
+        runtime: &dyn ChannelRuntime,
+        query: types::TelegramCallbackQuery,
+    ) -> ChannelResult<()> {
+        if query.from.is_bot {
+            return Ok(());
+        }
+        let sender_id = query.from.id.to_string();
+        if !is_sender_allowed(&self.config.allowlist, &sender_id) {
+            warn!(
+                sender = sender_id.as_str(),
+                "telegram callback sender blocked by allowlist"
+            );
+            return Ok(());
+        }
+        let Some(inbound) = TelegramCallbackInbound::from_callback(query) else {
+            return Ok(());
+        };
+        let session_key = format!("telegram:{}:{}", self.config.account_id, inbound.chat_id);
+        let maybe_output = runtime
+            .submit(ChannelRequest {
+                channel: self.name().to_string(),
+                input: inbound.command.clone(),
+                session_key,
+                chat_id: inbound.chat_id.clone(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::new(),
+            })
+            .await;
+
+        match maybe_output {
+            Ok(Some(output)) => {
+                self.client
+                    .answer_callback_query(&inbound.callback_id, "Processed")
+                    .await?;
+                self.send_output(&inbound.chat_id, &output).await?;
+            }
+            Ok(None) => {
+                self.client
+                    .answer_callback_query(&inbound.callback_id, "No response")
+                    .await?;
+            }
+            Err(err) => {
+                let _ = self
+                    .client
+                    .answer_callback_query(&inbound.callback_id, "Failed")
+                    .await;
+                return Err(err);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_output(&self, chat_id: &str, output: &ChannelResponse) -> ChannelResult<()> {
+        let request = if let Some(approval_id) = extract_approval_id(output) {
+            SendMessageRequest::html(chat_id, &build_approval_message(output, &approval_id))
+                .with_reply_markup(types::TelegramInlineKeyboardMarkup::approval(&approval_id))
+        } else {
+            SendMessageRequest::html(
+                chat_id,
+                &render_telegram_response(output, self.config.show_reasoning),
+            )
+        };
+        let _ = self.client.send_message(request).await?;
         Ok(())
     }
 
@@ -284,11 +378,7 @@ impl TelegramChannel {
         let archive_service = match open_default_archive_service().await {
             Ok(service) => service,
             Err(err) => {
-                warn!(
-                    update_id = inbound.update_id,
-                    error = %err,
-                    "failed to open archive service for telegram media ingestion"
-                );
+                warn!(update_id = inbound.update_id, error = %err, "failed to open archive service for telegram media ingestion");
                 return;
             }
         };
@@ -312,21 +402,17 @@ impl TelegramChannel {
                     continue;
                 }
             };
-
-            let file_path = match file
+            let Some(file_path) = file
                 .file_path
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-            {
-                Some(path) => path,
-                None => {
-                    warn!(
-                        update_id = inbound.update_id,
-                        file_id, "telegram file path missing"
-                    );
-                    continue;
-                }
+            else {
+                warn!(
+                    update_id = inbound.update_id,
+                    file_id, "telegram file path missing"
+                );
+                continue;
             };
 
             let bytes = match self.client.download_file(file_path).await {
@@ -336,13 +422,12 @@ impl TelegramChannel {
                     continue;
                 }
             };
-
             media.metadata.insert(
                 "telegram.file_path".to_string(),
                 Value::String(file_path.to_string()),
             );
 
-            match ingest_media_reference_bytes(
+            if let Err(err) = ingest_media_reference_bytes(
                 &archive_service,
                 ArchiveMediaIngestContext {
                     session_key,
@@ -358,17 +443,7 @@ impl TelegramChannel {
             )
             .await
             {
-                Ok(record) => {
-                    info!(
-                        update_id = inbound.update_id,
-                        archive_id = record.id.as_str(),
-                        storage_rel_path = record.storage_rel_path.as_str(),
-                        "telegram media archived"
-                    );
-                }
-                Err(err) => {
-                    warn!(update_id = inbound.update_id, file_id = file_id.as_str(), error = %err, "failed to ingest telegram media into archive");
-                }
+                warn!(update_id = inbound.update_id, file_id = file_id.as_str(), error = %err, "failed to ingest telegram media into archive");
             }
         }
     }
@@ -405,388 +480,17 @@ impl Channel for TelegramChannel {
     }
 }
 
-#[derive(Debug, Clone)]
-struct TelegramApiClient {
-    http: reqwest::Client,
-    api_base: String,
-    file_base: String,
-}
-
-impl TelegramApiClient {
-    fn new(bot_token: &str, proxy: &TelegramProxyConfig) -> ChannelResult<Self> {
-        let mut builder = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(TELEGRAM_REQUEST_TIMEOUT);
-        if proxy.enabled {
-            let proxy_url = proxy.url.trim();
-            if proxy_url.is_empty() {
-                return Err("telegram proxy.url is required when proxy.enabled=true".into());
-            }
-            builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
-        }
-        let http = builder.build()?;
-        let api_base = format!("{TELEGRAM_API_BASE}/bot{}", bot_token.trim());
-        let file_base = format!("{TELEGRAM_API_BASE}/file/bot{}", bot_token.trim());
-        Ok(Self {
-            http,
-            api_base,
-            file_base,
-        })
-    }
-
-    async fn get_updates(&self, offset: Option<i64>) -> ChannelResult<Vec<TelegramUpdate>> {
-        let payload = GetUpdatesRequest {
-            offset,
-            timeout: TELEGRAM_LONG_POLL_TIMEOUT_SECS,
-            allowed_updates: vec!["message".to_string()],
-        };
-        self.post("getUpdates", &payload).await
-    }
-
-    async fn get_file(&self, file_id: &str) -> ChannelResult<TelegramFile> {
-        self.post("getFile", &GetFileRequest { file_id }).await
-    }
-
-    async fn send_message(&self, chat_id: &str, text: &str) -> ChannelResult<()> {
-        let _: TelegramMessage = self
-            .post("sendMessage", &build_send_message_request(chat_id, text))
-            .await?;
-        Ok(())
-    }
-
-    async fn download_file(&self, file_path: &str) -> ChannelResult<Vec<u8>> {
-        let url = format!("{}/{}", self.file_base, file_path.trim_start_matches('/'));
-        let response = self.http.get(url).send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(format!(
-                "telegram download file failed: HTTP {} body={}",
-                status, body
-            )
-            .into());
-        }
-        Ok(response.bytes().await?.to_vec())
-    }
-
-    async fn post<T: DeserializeOwned, B: Serialize>(
-        &self,
-        method: &str,
-        body: &B,
-    ) -> ChannelResult<T> {
-        let url = format!("{}/{}", self.api_base, method);
-        let response = self.http.post(url).json(body).send().await?;
-        let status = response.status();
-        let envelope: TelegramApiEnvelope<T> = response.json().await?;
-        if !status.is_success() || !envelope.ok {
-            return Err(format!(
-                "telegram {} failed: HTTP {} description={}",
-                method,
-                status,
-                envelope
-                    .description
-                    .as_deref()
-                    .unwrap_or("unknown telegram api error")
-            )
-            .into());
-        }
-        envelope
-            .result
-            .ok_or_else(|| format!("telegram {} missing result", method).into())
-    }
-}
-
-#[derive(Debug, Clone)]
-struct TelegramInbound {
-    update_id: i64,
-    message_id: String,
-    chat_id: String,
-    text: String,
-    media_references: Vec<MediaReference>,
-}
-
-type TelegramPollResult = Result<Vec<TelegramUpdate>, String>;
-
-impl TelegramInbound {
-    fn from_message(update_id: i64, message: TelegramMessage) -> Option<Self> {
-        let text = message_text(&message)?;
-        Some(Self {
-            update_id,
-            message_id: message.message_id.to_string(),
-            chat_id: message.chat.id.to_string(),
-            text,
-            media_references: extract_media_references(&message),
-        })
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(bound(deserialize = "T: Deserialize<'de>"))]
-struct TelegramApiEnvelope<T> {
-    ok: bool,
-    #[serde(default)]
-    result: Option<T>,
-    #[serde(default)]
-    description: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct GetUpdatesRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    offset: Option<i64>,
-    timeout: u64,
-    allowed_updates: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct GetFileRequest<'a> {
-    file_id: &'a str,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-struct SendMessageRequest {
-    chat_id: String,
-    text: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TelegramUpdate {
-    update_id: i64,
-    #[serde(default)]
-    message: Option<TelegramMessage>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TelegramMessage {
-    message_id: i64,
-    chat: TelegramChat,
-    #[serde(default)]
-    from: Option<TelegramUser>,
-    #[serde(default)]
-    text: Option<String>,
-    #[serde(default)]
-    caption: Option<String>,
-    #[serde(default)]
-    photo: Vec<TelegramPhotoSize>,
-    #[serde(default)]
-    document: Option<TelegramDocument>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TelegramChat {
-    id: i64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TelegramUser {
-    id: i64,
-    #[serde(default)]
-    is_bot: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TelegramPhotoSize {
-    file_id: String,
-    #[serde(default)]
-    file_unique_id: String,
-    #[serde(default)]
-    width: i64,
-    #[serde(default)]
-    height: i64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TelegramDocument {
-    file_id: String,
-    #[serde(default)]
-    file_unique_id: String,
-    #[serde(default)]
-    file_name: Option<String>,
-    #[serde(default)]
-    mime_type: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TelegramFile {
-    #[serde(default)]
-    file_path: Option<String>,
-}
-
-fn build_send_message_request(chat_id: &str, text: &str) -> SendMessageRequest {
-    SendMessageRequest {
-        chat_id: chat_id.trim().to_string(),
-        text: text.trim().to_string(),
-    }
-}
-
-fn message_text(message: &TelegramMessage) -> Option<String> {
-    if let Some(text) = message
-        .text
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Some(text.to_string());
-    }
-    if let Some(caption) = message
-        .caption
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Some(caption.to_string());
-    }
-    if !message.photo.is_empty() {
-        return Some("Received photo attachment.".to_string());
-    }
-    if message.document.is_some() {
-        return Some("Received document attachment.".to_string());
-    }
-    None
-}
-
-fn extract_media_references(message: &TelegramMessage) -> Vec<MediaReference> {
-    let mut out = Vec::new();
-
-    if let Some(photo) = message
-        .photo
-        .iter()
-        .max_by_key(|photo| (photo.width, photo.height))
-    {
-        let mut metadata = BTreeMap::new();
-        metadata.insert(
-            "telegram.file_id".to_string(),
-            Value::String(photo.file_id.clone()),
-        );
-        if !photo.file_unique_id.trim().is_empty() {
-            metadata.insert(
-                "telegram.file_unique_id".to_string(),
-                Value::String(photo.file_unique_id.clone()),
-            );
-        }
-        attach_declared_media_metadata(
-            &mut metadata,
-            Some("image/jpeg"),
-            Some("jpg"),
-            "telegram.declared_mime_type",
-            "telegram.declared_file_extension",
-        );
-        out.push(build_media_reference(
-            MediaSourceKind::ChannelInbound,
-            &message.message_id.to_string(),
-            Some(format!("telegram-photo-{}.jpg", message.message_id)),
-            Some("image/jpeg".to_string()),
-            metadata,
-        ));
-    }
-
-    if let Some(document) = message.document.as_ref() {
-        let mut metadata = BTreeMap::new();
-        metadata.insert(
-            "telegram.file_id".to_string(),
-            Value::String(document.file_id.clone()),
-        );
-        if !document.file_unique_id.trim().is_empty() {
-            metadata.insert(
-                "telegram.file_unique_id".to_string(),
-                Value::String(document.file_unique_id.clone()),
-            );
-        }
-        attach_declared_media_metadata(
-            &mut metadata,
-            document.mime_type.as_deref(),
-            document
-                .file_name
-                .as_deref()
-                .and_then(file_extension_from_name),
-            "telegram.declared_mime_type",
-            "telegram.declared_file_extension",
-        );
-        out.push(build_media_reference(
-            MediaSourceKind::ChannelInbound,
-            &message.message_id.to_string(),
-            document.file_name.clone(),
-            document.mime_type.clone(),
-            metadata,
-        ));
-    }
-
-    out
-}
-
-fn file_extension_from_name(name: &str) -> Option<&str> {
-    let (_, ext) = name.rsplit_once('.')?;
-    let ext = ext.trim();
-    if ext.is_empty() {
-        None
-    } else {
-        Some(ext)
-    }
-}
-
-fn is_sender_allowed(allowlist: &[String], sender_id: &str) -> bool {
-    if allowlist.is_empty() {
-        return true;
-    }
-    allowlist.iter().any(|allowed| {
-        let allowed = allowed.trim();
-        allowed == "*" || allowed == sender_id
-    })
-}
-
-#[derive(Debug, Clone)]
-struct EventDeduper {
-    ttl: Duration,
-    max_entries: usize,
-    timestamps: HashMap<String, Instant>,
-    order: VecDeque<String>,
-}
-
-impl EventDeduper {
-    fn new(ttl: Duration, max_entries: usize) -> Self {
-        Self {
-            ttl,
-            max_entries,
-            timestamps: HashMap::new(),
-            order: VecDeque::new(),
-        }
-    }
-
-    fn insert_if_new(&mut self, key: &str) -> bool {
-        let now = Instant::now();
-        self.evict_expired(now);
-        if self.timestamps.contains_key(key) {
-            return false;
-        }
-        let key = key.to_string();
-        self.timestamps.insert(key.clone(), now);
-        self.order.push_back(key);
-        while self.order.len() > self.max_entries {
-            if let Some(front) = self.order.pop_front() {
-                self.timestamps.remove(&front);
-            }
-        }
-        true
-    }
-
-    fn evict_expired(&mut self, now: Instant) {
-        while let Some(front) = self.order.front().cloned() {
-            let Some(timestamp) = self.timestamps.get(&front).copied() else {
-                self.order.pop_front();
-                continue;
-            };
-            if now.duration_since(timestamp) < self.ttl {
-                break;
-            }
-            self.order.pop_front();
-            self.timestamps.remove(&front);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::render::{build_approval_message, render_telegram_response};
+    use super::types::{
+        extract_media_references, is_sender_allowed, message_text, TelegramAudio,
+        TelegramCallbackInbound, TelegramCallbackQuery, TelegramChat, TelegramDocument,
+        TelegramInlineKeyboardMarkup, TelegramMessage, TelegramPhotoSize, TelegramUser,
+    };
+    use crate::ChannelResponse;
+    use serde_json::Value;
+    use std::collections::BTreeMap;
 
     #[test]
     fn message_text_prefers_text_over_caption() {
@@ -801,8 +505,10 @@ mod tests {
             caption: Some("caption".to_string()),
             photo: Vec::new(),
             document: None,
+            audio: None,
+            voice: None,
+            video: None,
         };
-
         assert_eq!(message_text(&message).as_deref(), Some("hello"));
     }
 
@@ -821,29 +527,35 @@ mod tests {
                 height: 10,
             }],
             document: None,
+            audio: None,
+            voice: None,
+            video: None,
         };
         assert_eq!(
             message_text(&caption_message).as_deref(),
             Some("photo caption")
         );
 
-        let photo_only_message = TelegramMessage {
+        let audio_only = TelegramMessage {
             message_id: 2,
             chat: TelegramChat { id: 10 },
             from: None,
             text: None,
             caption: None,
-            photo: vec![TelegramPhotoSize {
-                file_id: "f2".to_string(),
-                file_unique_id: "u2".to_string(),
-                width: 10,
-                height: 10,
-            }],
+            photo: Vec::new(),
             document: None,
+            audio: Some(TelegramAudio {
+                file_id: "a1".to_string(),
+                file_unique_id: "u2".to_string(),
+                file_name: Some("clip.mp3".to_string()),
+                mime_type: Some("audio/mpeg".to_string()),
+            }),
+            voice: None,
+            video: None,
         };
         assert_eq!(
-            message_text(&photo_only_message).as_deref(),
-            Some("Received photo attachment.")
+            message_text(&audio_only).as_deref(),
+            Some("Received audio attachment.")
         );
     }
 
@@ -867,6 +579,9 @@ mod tests {
                 file_name: Some("report.pdf".to_string()),
                 mime_type: Some("application/pdf".to_string()),
             }),
+            audio: None,
+            voice: None,
+            video: None,
         };
 
         let media = extract_media_references(&message);
@@ -888,24 +603,31 @@ mod tests {
     }
 
     #[test]
-    fn telegram_inbound_uses_chat_scoped_session_fields() {
-        let message = TelegramMessage {
-            message_id: 33,
-            chat: TelegramChat { id: -42 },
-            from: Some(TelegramUser {
-                id: 7,
+    fn callback_query_maps_to_command() {
+        let inbound = TelegramCallbackInbound::from_callback(TelegramCallbackQuery {
+            id: "cb-1".to_string(),
+            from: TelegramUser {
+                id: 1,
                 is_bot: false,
+            },
+            data: Some("approve:approval-1".to_string()),
+            message: Some(TelegramMessage {
+                message_id: 1,
+                chat: TelegramChat { id: 10 },
+                from: None,
+                text: None,
+                caption: None,
+                photo: Vec::new(),
+                document: None,
+                audio: None,
+                voice: None,
+                video: None,
             }),
-            text: Some("/help".to_string()),
-            caption: None,
-            photo: Vec::new(),
-            document: None,
-        };
+        })
+        .expect("callback inbound");
 
-        let inbound = TelegramInbound::from_message(9001, message).expect("inbound");
-        assert_eq!(inbound.chat_id, "-42");
-        assert_eq!(inbound.message_id, "33");
-        assert_eq!(inbound.text, "/help");
+        assert_eq!(inbound.chat_id, "10");
+        assert_eq!(inbound.command, "/approve approval-1");
     }
 
     #[test]
@@ -917,14 +639,33 @@ mod tests {
     }
 
     #[test]
-    fn build_send_message_request_trims_fields() {
-        let request = build_send_message_request(" 42 ", " hello ");
+    fn telegram_render_uses_html_and_approval_markup() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "approval.id".to_string(),
+            Value::String("approval-1".to_string()),
+        );
+        metadata.insert(
+            "approval.signal".to_string(),
+            serde_json::json!({"command_preview": "python3 -c \"print(1)\""}),
+        );
+        let output = ChannelResponse {
+            content: "**Title**\n\n```text\n/help\n```".to_string(),
+            reasoning: Some("line 1".to_string()),
+            metadata,
+        };
+
+        let rendered = render_telegram_response(&output, true);
+        assert!(rendered.contains("<b>Title</b>"));
+        assert!(rendered.contains("<pre>/help</pre>"));
+
+        let approval = build_approval_message(&output, "approval-1");
+        assert!(approval.contains("Approval Required"));
+
+        let keyboard = TelegramInlineKeyboardMarkup::approval("approval-1");
         assert_eq!(
-            request,
-            SendMessageRequest {
-                chat_id: "42".to_string(),
-                text: "hello".to_string(),
-            }
+            keyboard.inline_keyboard[0][0].callback_data,
+            "approve:approval-1"
         );
     }
 }

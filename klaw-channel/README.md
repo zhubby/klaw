@@ -26,7 +26,7 @@
 - 统一会话命令（`/new`、`/help`、`/model-provider`、`/model`）由 runtime 处理，不在 channel 层实现业务分支
 - channel 仅消费 `ChannelResponse` 并回发，不持有 provider/model 路由策略
 - `dingtalk` 通道会在响应中检测 `approval_id` 并渲染 ActionCard，把卡片回调映射为 `/approve` 或 `/reject` 指令回送 runtime
-- `telegram` 通道首版聚焦通用 IM 能力：文本、caption、图片/文件媒体入站和即时 `sendMessage` 回复，不包含审批按钮与异步 outbound dispatcher
+- `telegram` 通道现在使用目录模块拆分（`telegram/`），并提供 Telegram 专用 HTML 渲染、`/start` 兼容、图片/文件/音视频媒体入站、以及基于 inline keyboard 的审批回调
 
 ## Stdio Interaction
 

@@ -12,6 +12,7 @@
 - `/approve <approval_id>` now returns a user-facing “already approved and executed” message for consumed shell approvals instead of exposing the internal `consumed` status word
 - `klaw gui` / `klaw gateway` 现在通过 `klaw-channel::ChannelManager` 托管 channel 生命周期，并统一用 `SyncChannels` 配置快照同步代替 dingtalk 专用重载逻辑
 - `klaw gui` / `klaw gateway` 现在也可通过同一 `ChannelManager` 生命周期层启动和同步 `telegram` channel 实例
+- IM 命令路由现在兼容 `/start`，会返回与 `/help` 相同的帮助内容，适配 Telegram 机器人默认入口
 - `/new` 现在显式读取当前全局 active provider 及其默认模型创建新会话，不再继承当前会话里已持久化的 provider/model
 
 ## 2026-03-19

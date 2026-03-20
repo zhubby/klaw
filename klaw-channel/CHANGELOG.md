@@ -6,11 +6,15 @@
 
 - 新增通用 `ChannelManager`、`ChannelConfigSnapshot`、`ChannelInstanceConfig`、`ManagedChannelDriver` 与 `ChannelDriverFactory`，统一管理多实例 channel 生命周期和配置 diff
 - 新增 `telegram` channel：基于 Bot API `getUpdates` long polling，支持文本、caption、图片和文件消息入站，并复用 archive 媒体归档链路
+- `telegram` 通道新增 inline keyboard 审批交互：检测 `approval_id` 时发送 `Approve` / `Reject` 按钮，并支持 `callback_query` 回调转成 `/approve`、`/reject`
 
 ### Changed
 
 - `dingtalk` 现在通过通用 managed driver 接口接入 `ChannelManager`，不再依赖 CLI 层专用 pool
 - `ChannelManager` / `ChannelConfigSnapshot` / 默认 driver factory 现在支持 `telegram` 实例
+- `telegram` 实现已拆分为 `klaw-channel/src/telegram/` 模块目录，并新增 Telegram 专用 HTML 渲染层，修复直接发送普通 Markdown 导致的格式错乱
+- `telegram` 轮询主循环改为后台 long polling 任务 + 主循环消费结果，避免被 runtime tick 取消后高频重建连接
+- `telegram` 入站媒体范围从图片/文件扩展到 `audio` / `voice` / `video`
 - `dingtalk` 入站媒体提取范围从图片/语音扩展到视频与通用文件附件；只要消息体带有 `downloadCode` / `pictureDownloadCode`，都会进入统一 archive 归档链路
 - `dingtalk` 入站媒体引用现在会额外提取消息体中的 `mimeType` / `contentType` / `fileType` / `extension`，补充到媒体 metadata 并透传声明 MIME
 - 抽出 `klaw-channel::media` / `klaw-channel::render` 共享模块，沉淀媒体引用构造、archive 回填和输出渲染逻辑，减少 `dingtalk.rs` 与后续 channel 的重复实现
