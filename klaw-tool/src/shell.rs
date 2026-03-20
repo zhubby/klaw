@@ -2,6 +2,7 @@ use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolSignal};
 use async_trait::async_trait;
 use klaw_approval::{ApprovalCreateInput, ApprovalManager, SqliteApprovalManager};
 use klaw_config::{AppConfig, ShellApprovalPolicy};
+use klaw_util::{default_data_dir, workspace_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -309,12 +310,11 @@ impl ShellTool {
         let root = if let Some(root) = storage_root.map(str::trim).filter(|root| !root.is_empty()) {
             PathBuf::from(root)
         } else {
-            let home = std::env::var("HOME").map_err(|err| {
-                ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}"))
-            })?;
-            PathBuf::from(home).join(".klaw")
+            default_data_dir().ok_or_else(|| {
+                ToolError::ExecutionFailed("failed to resolve home dir".to_string())
+            })?
         };
-        let workspace = root.join("workspace");
+        let workspace = workspace_dir(&root);
         std::fs::create_dir_all(&workspace).map_err(|err| {
             ToolError::ExecutionFailed(format!(
                 "failed to ensure data workspace `{}`: {err}",

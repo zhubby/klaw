@@ -858,7 +858,8 @@ mod tests {
             let mut count = self.call_count.lock().expect("mutex poisoned");
             *count += 1;
             ToolInvocationResult::error(
-                "tool `approval_tool` failed: approval required: approval_id=test-approval".to_string(),
+                "tool `approval_tool` failed: approval required: approval_id=test-approval"
+                    .to_string(),
                 "approval_required".to_string(),
                 None,
                 true,

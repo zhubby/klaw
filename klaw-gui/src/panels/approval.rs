@@ -128,7 +128,10 @@ impl PanelRenderer for ApprovalPanel {
                     .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
                     .show_ui(ui, |ui| {
                         let mut changed = false;
-                        if ui.selectable_value(&mut self.status_filter, None, "All").changed() {
+                        if ui
+                            .selectable_value(&mut self.status_filter, None, "All")
+                            .changed()
+                        {
                             changed = true;
                         }
                         for status in [
@@ -138,7 +141,14 @@ impl PanelRenderer for ApprovalPanel {
                             ApprovalStatus::Expired,
                             ApprovalStatus::Consumed,
                         ] {
-                            if ui.selectable_value(&mut self.status_filter, Some(status), status.as_str()).changed() {
+                            if ui
+                                .selectable_value(
+                                    &mut self.status_filter,
+                                    Some(status),
+                                    status.as_str(),
+                                )
+                                .changed()
+                            {
                                 changed = true;
                             }
                         }

@@ -15,6 +15,7 @@ tracing = { workspace = true }
 klaw-llm = { workspace = true }
 klaw-tool = { workspace = true }
 klaw-agent = { workspace = true }
+klaw-util = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

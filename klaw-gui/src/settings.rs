@@ -1,9 +1,9 @@
+use klaw_util::{default_data_dir, settings_path as default_settings_path};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-const SETTINGS_FILENAME: &str = "settings.json";
 const SETTINGS_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -220,13 +220,7 @@ fn save_settings_to_path(path: &Path, settings: &AppSettings) -> io::Result<()> 
 }
 
 fn settings_path() -> Option<PathBuf> {
-    home_dir().map(|home| home.join(".klaw").join(SETTINGS_FILENAME))
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|raw| !raw.is_empty())
-        .map(PathBuf::from)
+    default_data_dir().map(default_settings_path)
 }
 
 #[cfg(test)]

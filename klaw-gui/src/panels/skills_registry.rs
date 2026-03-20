@@ -305,17 +305,23 @@ impl SkillsRegistryPanel {
         }
     }
 
-    fn cleanup_registry_manifest(&mut self, registry_name: &str, notifications: &mut NotificationCenter) {
+    fn cleanup_registry_manifest(
+        &mut self,
+        registry_name: &str,
+        notifications: &mut NotificationCenter,
+    ) {
         let registry_name = registry_name.to_string();
-        match run_skill_task(move |store| async move {
-            store.cleanup_registry(&registry_name).await
-        }) {
+        match run_skill_task(
+            move |store| async move { store.cleanup_registry(&registry_name).await },
+        ) {
             Ok(count) => {
                 if count > 0 {
                     notifications.info(format!("Cleaned {count} installed skills from manifest"));
                 }
             }
-            Err(err) => notifications.warning(format!("Failed to cleanup registry manifest: {err}")),
+            Err(err) => {
+                notifications.warning(format!("Failed to cleanup registry manifest: {err}"))
+            }
         }
     }
 
@@ -609,10 +615,7 @@ impl PanelRenderer for SkillsRegistryPanel {
                                 ui.close();
                             }
                             ui.separator();
-                            if ui
-                                .button(format!("{} Copy Name", regular::COPY))
-                                .clicked()
-                            {
+                            if ui.button(format!("{} Copy Name", regular::COPY)).clicked() {
                                 ui.ctx().output_mut(|o| {
                                     o.commands.push(egui::OutputCommand::CopyText(name.clone()));
                                 });

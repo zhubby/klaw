@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-20
+
+### Changed
+- moved the default local tokenizer directory resolution (`~/.klaw/tokenizers`) into `klaw-util`
+
 ## 2026-03-19
 
 ### Added

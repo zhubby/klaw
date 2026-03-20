@@ -23,6 +23,7 @@ klaw-memory = { workspace = true }
 klaw-session = { workspace = true }
 klaw-skill = { workspace = true }
 klaw-storage = { workspace = true }
+klaw-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

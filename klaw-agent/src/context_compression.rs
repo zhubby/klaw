@@ -153,8 +153,7 @@ mod tests {
         let fenced = format!("```json\n{plain}\n```");
 
         let parsed_plain = parse_conversation_summary(plain).expect("plain json should parse");
-        let parsed_fenced =
-            parse_conversation_summary(&fenced).expect("fenced json should parse");
+        let parsed_fenced = parse_conversation_summary(&fenced).expect("fenced json should parse");
 
         assert_eq!(parsed_plain.goal, "g");
         assert_eq!(parsed_fenced.goal, "g");

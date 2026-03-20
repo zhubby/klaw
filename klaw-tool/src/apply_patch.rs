@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ApplyPatchConfig};
+use klaw_util::{default_data_dir, workspace_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -123,12 +124,11 @@ impl ApplyPatchTool {
         let root = if let Some(root) = storage_root.map(str::trim).filter(|root| !root.is_empty()) {
             PathBuf::from(root)
         } else {
-            let home = std::env::var("HOME").map_err(|err| {
-                ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}"))
-            })?;
-            PathBuf::from(home).join(".klaw")
+            default_data_dir().ok_or_else(|| {
+                ToolError::ExecutionFailed("failed to resolve home dir".to_string())
+            })?
         };
-        let workspace = root.join("workspace");
+        let workspace = workspace_dir(&root);
         fs::create_dir_all(&workspace).map_err(|err| {
             ToolError::ExecutionFailed(format!(
                 "failed to ensure data workspace `{}`: {err}",

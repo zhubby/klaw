@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-20
+
+### Changed
+- moved shared data-root file and directory names into `klaw-util`, and updated `StoragePaths` to build its default layout from the centralized helpers
+
 ## 2026-03-19
 
 ### Added

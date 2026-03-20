@@ -1,6 +1,7 @@
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_seconds;
 use klaw_config::ConfigStore;
+use klaw_util::{default_data_dir, KLAW_DIR_NAME};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -357,10 +358,7 @@ fn resolve_data_dir_path() -> PathBuf {
         }
     }
 
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".klaw"))
-        .unwrap_or_else(|| PathBuf::from(".klaw"))
+    default_data_dir().unwrap_or_else(|| PathBuf::from(KLAW_DIR_NAME))
 }
 
 fn info_row(ui: &mut egui::Ui, key: &str, value: String) {

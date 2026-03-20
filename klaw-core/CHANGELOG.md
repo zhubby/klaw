@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-20
+
+### Changed
+- moved default `~/.klaw/workspace` path derivation into the new `klaw-util` crate and re-exported `WORKSPACE_DIR_NAME` from there instead of owning the constant in `klaw-core`
+
 ## 2026-03-19
 
 ### Added

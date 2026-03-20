@@ -1,9 +1,9 @@
 use crate::state::UiState;
+use klaw_util::{default_data_dir, gui_state_path};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-const UI_STATE_FILENAME: &str = "gui_state.json";
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -71,13 +71,7 @@ fn save_ui_state_to_path(path: &Path, state: &UiState) -> io::Result<()> {
 }
 
 fn default_state_path() -> Option<PathBuf> {
-    home_dir().map(|home| home.join(".klaw").join(UI_STATE_FILENAME))
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|raw| !raw.is_empty())
-        .map(PathBuf::from)
+    default_data_dir().map(gui_state_path)
 }
 
 #[cfg(test)]

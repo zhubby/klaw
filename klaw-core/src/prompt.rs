@@ -1,12 +1,11 @@
 use std::{
-    env, io,
+    io,
     path::{Path, PathBuf},
 };
 
+use klaw_util::{default_data_dir, workspace_dir};
 use thiserror::Error;
 use tokio::fs;
-
-pub const WORKSPACE_DIR_NAME: &str = "workspace";
 
 const SKILLS_LAZY_LOAD_INSTRUCTIONS: &str = "When a task may require a skill, consult the available skills list first.\nBefore using a skill, read the SKILL.md file at the listed path.\nOnly load skill files when needed.";
 
@@ -65,7 +64,7 @@ pub enum PromptError {
 }
 
 pub async fn ensure_workspace_prompt_templates() -> Result<PromptTemplateWriteReport, PromptError> {
-    let data_dir = default_data_dir()?;
+    let data_dir = resolve_default_data_dir()?;
     ensure_workspace_prompt_templates_in_dir(data_dir).await
 }
 
@@ -79,7 +78,7 @@ pub async fn ensure_workspace_prompt_templates_in_dir(
             source,
         })?;
 
-    let workspace_dir = data_dir.join(WORKSPACE_DIR_NAME);
+    let workspace_dir = workspace_dir(&data_dir);
     fs::create_dir_all(&workspace_dir)
         .await
         .map_err(|source| PromptError::CreateDir {
@@ -196,13 +195,12 @@ async fn path_exists(path: &Path) -> Result<bool, PromptError> {
         })
 }
 
-fn default_data_dir() -> Result<PathBuf, PromptError> {
-    let home = env::var_os("HOME").ok_or(PromptError::HomeDirUnavailable)?;
-    Ok(PathBuf::from(home).join(".klaw"))
+fn resolve_default_data_dir() -> Result<PathBuf, PromptError> {
+    default_data_dir().ok_or(PromptError::HomeDirUnavailable)
 }
 
 pub async fn load_or_create_system_prompt() -> Result<String, PromptError> {
-    let data_dir = default_data_dir()?;
+    let data_dir = resolve_default_data_dir()?;
     load_or_create_system_prompt_in_dir(data_dir).await
 }
 
@@ -231,7 +229,7 @@ mod tests {
         assert!(report.skipped_files.is_empty());
 
         for (file_name, _) in PROMPT_TEMPLATE_FILES {
-            let content = fs::read_to_string(data_dir.join(WORKSPACE_DIR_NAME).join(file_name))
+            let content = fs::read_to_string(workspace_dir(&data_dir).join(file_name))
                 .await
                 .expect("template file should exist");
             assert!(!content.trim().is_empty());
@@ -241,7 +239,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn ensure_templates_does_not_overwrite_existing_files() {
         let data_dir = std::env::temp_dir().join(format!("klaw-prompt-test-{}", Uuid::new_v4()));
-        let workspace = data_dir.join(WORKSPACE_DIR_NAME);
+        let workspace = workspace_dir(&data_dir);
         fs::create_dir_all(&workspace)
             .await
             .expect("workspace dir should be created");

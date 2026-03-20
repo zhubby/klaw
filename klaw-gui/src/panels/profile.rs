@@ -2,12 +2,11 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use egui::{text::LayoutJob, Color32, FontId, TextFormat};
 use egui_extras::{Size, StripBuilder};
-use std::env;
+use klaw_util::default_workspace_dir;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-const WORKSPACE_DIR_NAME: &str = "workspace";
 const MIN_EDITOR_HEIGHT: f32 = 320.0;
 const FOOTER_HEIGHT: f32 = 48.0;
 const CARD_MIN_WIDTH: f32 = 320.0;
@@ -390,8 +389,7 @@ fn load_workspace_markdown_docs() -> Result<(PathBuf, Vec<WorkspaceMarkdownDoc>)
 }
 
 fn resolve_workspace_dir() -> Result<PathBuf, String> {
-    let home = env::var_os("HOME").ok_or_else(|| "HOME is unavailable".to_string())?;
-    Ok(PathBuf::from(home).join(".klaw").join(WORKSPACE_DIR_NAME))
+    default_workspace_dir().ok_or_else(|| "HOME is unavailable".to_string())
 }
 
 fn is_markdown_path(path: &Path) -> bool {

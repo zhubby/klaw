@@ -13,6 +13,7 @@
 
 - workbench tabs now stay on a single row with horizontal scrolling when they overflow, and the tab strip hides its scrollbar
 - activating a workbench tab now moves it to the first position in the tab strip so the selected tab stays leftmost
+- GUI default path resolution for `settings.json`, `gui_state.json`, data root, and workspace markdowns now comes from `klaw-util` instead of duplicating `~/.klaw/...` joins across panels and persistence modules
 
 ### Added
 

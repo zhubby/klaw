@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use klaw_archive::{open_default_archive_service, ArchiveRecord, ArchiveService};
 use klaw_config::AppConfig;
+use klaw_util::{default_data_dir, workspace_dir};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Component, Path, PathBuf};
@@ -137,12 +138,11 @@ impl ArchiveTool {
         {
             PathBuf::from(root)
         } else {
-            let home = std::env::var("HOME").map_err(|err| {
-                ToolError::ExecutionFailed(format!("failed to resolve home dir: {err}"))
-            })?;
-            PathBuf::from(home).join(".klaw")
+            default_data_dir().ok_or_else(|| {
+                ToolError::ExecutionFailed("failed to resolve home dir".to_string())
+            })?
         };
-        let workspace = root.join("workspace");
+        let workspace = workspace_dir(&root);
         std::fs::create_dir_all(&workspace).map_err(|err| {
             ToolError::ExecutionFailed(format!(
                 "failed to ensure workspace `{}`: {err}",

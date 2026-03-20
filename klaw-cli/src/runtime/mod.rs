@@ -20,11 +20,11 @@ use klaw_core::{
 use klaw_heartbeat::{
     should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
 };
+use klaw_llm::{ChatOptions, LlmMessage, LlmProvider};
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_observability::{
     init_observability, ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry,
 };
-use klaw_llm::{ChatOptions, LlmMessage, LlmProvider};
 use klaw_session::{
     ChatRecord, LlmUsageSource, NewLlmUsageRecord, SessionCompressionState, SessionManager,
     SqliteSessionManager,
@@ -1229,7 +1229,11 @@ fn compression_trigger_interval(limit: usize) -> usize {
     (limit / 2).max(1)
 }
 
-fn should_trigger_compression(last_compressed_len: usize, history_len: usize, limit: usize) -> bool {
+fn should_trigger_compression(
+    last_compressed_len: usize,
+    history_len: usize,
+    limit: usize,
+) -> bool {
     if limit == 0 {
         return false;
     }
@@ -1302,7 +1306,10 @@ async fn run_structured_compression(
         user: None,
         service_tier: None,
     };
-    match provider.chat(request, Vec::new(), Some(model), options).await {
+    match provider
+        .chat(request, Vec::new(), Some(model), options)
+        .await
+    {
         Ok(response) => Some(response.content),
         Err(err) => {
             warn!(error = %err, "structured compression call failed");
@@ -1398,8 +1405,11 @@ pub async fn submit_and_get_output(
         &full_history,
     )
     .await;
-    let conversation_history =
-        build_history_for_model(full_history, runtime.conversation_history_limit, summary.as_ref());
+    let conversation_history = build_history_for_model(
+        full_history,
+        runtime.conversation_history_limit,
+        summary.as_ref(),
+    );
     let header = EnvelopeHeader::new(session_key.clone());
     let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
     sessions
@@ -1574,15 +1584,15 @@ fn is_queue_empty_error(err: &AgentRuntimeError) -> bool {
     }
 }
 
-fn format_approve_already_handled_message(
-    approval_id: &str,
-    status: ApprovalStatus,
-) -> String {
+fn format_approve_already_handled_message(approval_id: &str, status: ApprovalStatus) -> String {
     match status {
         ApprovalStatus::Consumed => {
             format!("ℹ️ Approval `{approval_id}` was already approved and executed.")
         }
-        other => format!("ℹ️ Approval `{approval_id}` is already `{}`.", other.as_str()),
+        other => format!(
+            "ℹ️ Approval `{approval_id}` is already `{}`.",
+            other.as_str()
+        ),
     }
 }
 
@@ -1687,14 +1697,13 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 mod tests {
     use super::{
         build_history_for_model, compression_trigger_interval, first_arg_token,
-        format_approve_already_handled_message, format_workspace_docs_for_prompt,
-        parse_im_command, should_emit_outbound, should_trigger_compression,
-        trim_conversation_history,
+        format_approve_already_handled_message, format_workspace_docs_for_prompt, parse_im_command,
+        should_emit_outbound, should_trigger_compression, trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
-    use klaw_storage::ApprovalStatus;
     use klaw_session::ChatRecord;
+    use klaw_storage::ApprovalStatus;
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -1791,7 +1800,10 @@ mod tests {
         ];
 
         let trimmed = trim_conversation_history(history, 2);
-        let contents: Vec<&str> = trimmed.iter().map(|record| record.content.as_str()).collect();
+        let contents: Vec<&str> = trimmed
+            .iter()
+            .map(|record| record.content.as_str())
+            .collect();
         assert_eq!(contents, vec!["m2", "m3"]);
     }
 

@@ -4,6 +4,7 @@ members = [
     "klaw-approval",
     "klaw-archive",
     "klaw-core",
+    "klaw-util",
     "klaw-llm",
     "klaw-tool",
     "klaw-heartbeat",
@@ -82,6 +83,7 @@ tracing-opentelemetry = "0.28"
 klaw-core = { path = "klaw-core" }
 klaw-approval = { path = "klaw-approval" }
 klaw-archive = { path = "klaw-archive" }
+klaw-util = { path = "klaw-util" }
 klaw-llm = { path = "klaw-llm" }
 klaw-tool = { path = "klaw-tool" }
 klaw-heartbeat = { path = "klaw-heartbeat" }

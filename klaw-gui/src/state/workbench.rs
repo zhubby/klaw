@@ -154,7 +154,9 @@ mod tests {
 
         state.apply(UiAction::OpenMenu(WorkbenchMenu::Provider));
         state.apply(UiAction::OpenMenu(WorkbenchMenu::Channel));
-        state.apply(UiAction::ActivateTab(TabId::from_menu(WorkbenchMenu::Profile)));
+        state.apply(UiAction::ActivateTab(TabId::from_menu(
+            WorkbenchMenu::Profile,
+        )));
 
         assert_eq!(
             state.active_tab,

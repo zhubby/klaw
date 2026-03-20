@@ -1,8 +1,8 @@
 use crate::{LlmMessage, LlmUsage, ToolCall, ToolDefinition};
+use klaw_util::{default_data_dir, tokenizer_dir};
 use serde_json::json;
 use std::{
     collections::HashMap,
-    env,
     path::PathBuf,
     sync::{Arc, Mutex, OnceLock},
 };
@@ -92,13 +92,11 @@ fn default_tokenizer_candidates(provider: &str, model: &str) -> Vec<PathBuf> {
 }
 
 fn default_tokenizer_dir() -> Option<PathBuf> {
-    if let Some(explicit) = env::var_os("KLAW_TOKENIZER_DIR").filter(|value| !value.is_empty()) {
+    if let Some(explicit) = std::env::var_os("KLAW_TOKENIZER_DIR").filter(|value| !value.is_empty())
+    {
         return Some(PathBuf::from(explicit));
     }
-    env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .map(|home| home.join(".klaw").join("tokenizers"))
+    default_data_dir().map(tokenizer_dir)
 }
 
 fn sanitize_path_segment(value: &str) -> String {

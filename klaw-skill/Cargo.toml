@@ -12,3 +12,4 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 reqwest = { workspace = true }
 tracing = { workspace = true }
+klaw-util = { workspace = true }

@@ -1,6 +1,7 @@
 use crate::{validate, AppConfig, ConfigError};
+use klaw_util::{config_path, default_data_dir};
 use std::{
-    env, fs,
+    fs,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
@@ -177,8 +178,8 @@ pub fn validate_config_file(config_path: Option<&Path>) -> Result<PathBuf, Confi
 }
 
 pub fn default_config_path() -> Result<PathBuf, ConfigError> {
-    let home = env::var_os("HOME").ok_or(ConfigError::HomeDirUnavailable)?;
-    Ok(PathBuf::from(home).join(".klaw").join("config.toml"))
+    let root_dir = default_data_dir().ok_or(ConfigError::HomeDirUnavailable)?;
+    Ok(config_path(root_dir))
 }
 
 pub fn default_config_template() -> String {

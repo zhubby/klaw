@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-20
+
+### Changed
+- `shell` and `apply_patch` now resolve the fallback data workspace through `klaw-util`, removing another local copy of the default `~/.klaw/workspace` path logic
+
 ## 2026-03-19
 
 ### Changed

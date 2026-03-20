@@ -1,4 +1,8 @@
 use async_trait::async_trait;
+use klaw_util::{
+    default_data_dir, skills_dir, skills_registry_dir, skills_registry_manifest_path,
+    SKILLS_REGISTRY_MANIFEST_FILE_NAME,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -15,11 +19,10 @@ use crate::{
     SkillRecord, SkillSource, SkillSourceKind, SkillSummary, SkillsManager, SkillsRegistry,
 };
 
-const DEFAULT_KLAW_DIR: &str = ".klaw";
-const SKILLS_DIR_NAME: &str = "skills";
-const SKILLS_REGISTRY_DIR_NAME: &str = "skills-registry";
+#[cfg(test)]
+use klaw_util::{SKILLS_DIR_NAME, SKILLS_REGISTRY_DIR_NAME};
+
 const SKILL_MARKDOWN_FILE: &str = "SKILL.md";
-const INSTALLED_SKILLS_MANIFEST_FILE: &str = "skills-registry-manifest.json";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegistrySource {
@@ -65,8 +68,7 @@ pub struct FileSystemSkillStore<F = ReqwestSkillFetcher> {
 
 impl FileSystemSkillStore<ReqwestSkillFetcher> {
     pub fn from_home_dir() -> Result<Self, SkillError> {
-        let home = std::env::var_os("HOME").ok_or(SkillError::HomeDirUnavailable)?;
-        let root = PathBuf::from(home).join(DEFAULT_KLAW_DIR);
+        let root = default_data_dir().ok_or(SkillError::HomeDirUnavailable)?;
         Ok(Self::from_root_dir(root))
     }
 
@@ -80,7 +82,7 @@ where
     F: SkillFetcher,
 {
     pub fn with_fetcher(root_dir: PathBuf, fetcher: F) -> Self {
-        let skills_dir = root_dir.join(SKILLS_DIR_NAME);
+        let skills_dir = skills_dir(&root_dir);
         Self {
             root_dir,
             skills_dir,
@@ -97,11 +99,11 @@ where
     }
 
     pub fn skills_registry_dir(&self) -> PathBuf {
-        self.root_dir.join(SKILLS_REGISTRY_DIR_NAME)
+        skills_registry_dir(&self.root_dir)
     }
 
     fn installed_manifest_path(&self) -> PathBuf {
-        self.root_dir.join(INSTALLED_SKILLS_MANIFEST_FILE)
+        skills_registry_manifest_path(&self.root_dir)
     }
 
     pub(crate) fn validate_skill_name(input: &str) -> Result<String, SkillError> {
@@ -181,7 +183,7 @@ where
         let path = self.installed_manifest_path();
         let temp = self.root_dir.join(format!(
             "{}.tmp-{}",
-            INSTALLED_SKILLS_MANIFEST_FILE,
+            SKILLS_REGISTRY_MANIFEST_FILE_NAME,
             now_ms()
         ));
         let payload =
@@ -738,7 +740,9 @@ where
 
         let mut manifest = self.load_installed_manifest().await?;
         let before_len = manifest.managed.len();
-        manifest.managed.retain(|item| item.registry != registry_name);
+        manifest
+            .managed
+            .retain(|item| item.registry != registry_name);
         manifest.registry_commits.remove(registry_name);
         manifest.stale_registries.remove(registry_name);
         let removed_count = before_len - manifest.managed.len();

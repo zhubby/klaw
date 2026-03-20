@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-20
+
+### Changed
+
+- `default_config_path()` now resolves `~/.klaw/config.toml` through the shared `klaw-util` path helpers instead of rebuilding the default path locally
+
 ## 2026-03-19
 
 ### Added

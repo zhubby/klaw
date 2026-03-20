@@ -1,5 +1,9 @@
 use crate::StorageError;
-use std::{env, path::PathBuf};
+use klaw_util::{
+    archive_db_path, archives_dir, db_path, default_data_dir, logs_dir, memory_db_path,
+    sessions_dir, skills_dir, skills_registry_dir, tmp_dir, workspace_dir,
+};
+use std::path::PathBuf;
 use tokio::fs;
 
 #[derive(Debug, Clone)]
@@ -19,22 +23,22 @@ pub struct StoragePaths {
 
 impl StoragePaths {
     pub fn from_home_dir() -> Result<Self, StorageError> {
-        let home = env::var_os("HOME").ok_or(StorageError::HomeDirUnavailable)?;
-        Ok(Self::from_root(PathBuf::from(home).join(".klaw")))
+        let root_dir = default_data_dir().ok_or(StorageError::HomeDirUnavailable)?;
+        Ok(Self::from_root(root_dir))
     }
 
     pub fn from_root(root_dir: PathBuf) -> Self {
         Self {
-            db_path: root_dir.join("klaw.db"),
-            memory_db_path: root_dir.join("memory.db"),
-            archive_db_path: root_dir.join("archive.db"),
-            tmp_dir: root_dir.join("tmp"),
-            workspace_dir: root_dir.join("workspace"),
-            sessions_dir: root_dir.join("sessions"),
-            archives_dir: root_dir.join("archives"),
-            logs_dir: root_dir.join("logs"),
-            skills_dir: root_dir.join("skills"),
-            skills_registry_dir: root_dir.join("skills-registry"),
+            db_path: db_path(&root_dir),
+            memory_db_path: memory_db_path(&root_dir),
+            archive_db_path: archive_db_path(&root_dir),
+            tmp_dir: tmp_dir(&root_dir),
+            workspace_dir: workspace_dir(&root_dir),
+            sessions_dir: sessions_dir(&root_dir),
+            archives_dir: archives_dir(&root_dir),
+            logs_dir: logs_dir(&root_dir),
+            skills_dir: skills_dir(&root_dir),
+            skills_registry_dir: skills_registry_dir(&root_dir),
             root_dir,
         }
     }

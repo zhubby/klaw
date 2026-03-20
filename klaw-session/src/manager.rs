@@ -240,7 +240,10 @@ impl SessionManager for SqliteSessionManager {
         &self,
         session_key: &str,
     ) -> Result<Option<SessionCompressionState>, SessionError> {
-        Ok(self.store.get_session_compression_state(session_key).await?)
+        Ok(self
+            .store
+            .get_session_compression_state(session_key)
+            .await?)
     }
 
     async fn set_session_compression_state(
