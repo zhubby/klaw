@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-21
+
+### Added
+- `AgentTelemetry` 新增 `record_tool_outcome` 接口，并引入 `ToolOutcomeStatus`，用于把工具成功/失败、耗时和错误码写入本地分析存储
+
+### Changed
+- `AgentLoop` 在工具成功和失败路径都会上报结构化工具结果，供 GUI 分析面板统计成功率、失败分布和趋势
+
 ## 2026-03-20
 
 ### Changed

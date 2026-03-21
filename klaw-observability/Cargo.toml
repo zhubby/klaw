@@ -13,6 +13,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite", "runtime-tokio-rustls"] }
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
@@ -22,3 +23,4 @@ tracing-opentelemetry = { workspace = true }
 time = { workspace = true }
 axum = { workspace = true }
 klaw-core = { workspace = true }
+klaw-util = { workspace = true }

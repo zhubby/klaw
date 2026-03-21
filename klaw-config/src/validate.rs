@@ -565,6 +565,20 @@ fn validate_observability(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
 
+    if config.observability.local_store.enabled {
+        if config.observability.local_store.retention_days == 0 {
+            return Err(ConfigError::InvalidConfig(
+                "observability.local_store.retention_days must be greater than 0".to_string(),
+            ));
+        }
+        if config.observability.local_store.flush_interval_seconds == 0 {
+            return Err(ConfigError::InvalidConfig(
+                "observability.local_store.flush_interval_seconds must be greater than 0"
+                    .to_string(),
+            ));
+        }
+    }
+
     Ok(())
 }
 

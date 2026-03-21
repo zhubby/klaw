@@ -18,6 +18,8 @@ pub struct ObservabilityPanel {
     audit_output_path_buffer: String,
     sample_rate_buffer: String,
     export_interval_buffer: String,
+    local_store_retention_days_buffer: String,
+    local_store_flush_interval_buffer: String,
 }
 
 impl ObservabilityPanel {
@@ -49,6 +51,10 @@ impl ObservabilityPanel {
         self.audit_output_path_buffer = self.config.audit.output_path.clone().unwrap_or_default();
         self.sample_rate_buffer = format!("{:.2}", self.config.traces.sample_rate);
         self.export_interval_buffer = self.config.metrics.export_interval_seconds.to_string();
+        self.local_store_retention_days_buffer =
+            self.config.local_store.retention_days.to_string();
+        self.local_store_flush_interval_buffer =
+            self.config.local_store.flush_interval_seconds.to_string();
     }
 
     fn parse_config_from_buffers(&self) -> Result<ObservabilityConfig, String> {
@@ -92,6 +98,26 @@ impl ObservabilityPanel {
             return Err("Metrics export interval must be greater than 0".to_string());
         }
         next.metrics.export_interval_seconds = export_interval_seconds;
+
+        let retention_days = self
+            .local_store_retention_days_buffer
+            .trim()
+            .parse::<u16>()
+            .map_err(|_| "Local store retention days must be a valid integer".to_string())?;
+        if retention_days == 0 {
+            return Err("Local store retention days must be greater than 0".to_string());
+        }
+        next.local_store.retention_days = retention_days;
+
+        let flush_interval_seconds = self
+            .local_store_flush_interval_buffer
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| "Local store flush interval must be a valid integer".to_string())?;
+        if flush_interval_seconds == 0 {
+            return Err("Local store flush interval must be greater than 0".to_string());
+        }
+        next.local_store.flush_interval_seconds = flush_interval_seconds;
 
         Ok(next)
     }
@@ -340,6 +366,42 @@ impl PanelRenderer for ObservabilityPanel {
                                         if ui
                                             .text_edit_singleline(
                                                 &mut this.audit_output_path_buffer,
+                                            )
+                                            .changed()
+                                        {
+                                            this.mark_dirty();
+                                        }
+                                    });
+                                });
+
+                                ui.separator();
+
+                                ui.collapsing("Local Analysis Store", |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Enabled:");
+                                        if ui
+                                            .checkbox(&mut this.config.local_store.enabled, "")
+                                            .changed()
+                                        {
+                                            this.mark_dirty();
+                                        }
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Retention Days:");
+                                        if ui
+                                            .text_edit_singleline(
+                                                &mut this.local_store_retention_days_buffer,
+                                            )
+                                            .changed()
+                                        {
+                                            this.mark_dirty();
+                                        }
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Flush Interval (seconds):");
+                                        if ui
+                                            .text_edit_singleline(
+                                                &mut this.local_store_flush_interval_buffer,
                                             )
                                             .changed()
                                         {

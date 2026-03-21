@@ -22,11 +22,12 @@ pub enum WorkbenchMenu {
     Tool,
     Monitor,
     Logs,
+    AnalyzeDashboard,
     Observability,
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 19] = [
+    pub const ALL: [WorkbenchMenu; 20] = [
         WorkbenchMenu::Profile,
         WorkbenchMenu::System,
         WorkbenchMenu::Setting,
@@ -45,6 +46,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Tool,
         WorkbenchMenu::Monitor,
         WorkbenchMenu::Logs,
+        WorkbenchMenu::AnalyzeDashboard,
         WorkbenchMenu::Observability,
     ];
 
@@ -68,6 +70,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Tool => "tool",
             WorkbenchMenu::Monitor => "monitor",
             WorkbenchMenu::Logs => "logs",
+            WorkbenchMenu::AnalyzeDashboard => "analyze-dashboard",
             WorkbenchMenu::Observability => "observability",
         }
     }
@@ -92,6 +95,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Tool => "Tool",
             WorkbenchMenu::Monitor => "Monitor",
             WorkbenchMenu::Logs => "Logs",
+            WorkbenchMenu::AnalyzeDashboard => "Analyze Dashboard",
             WorkbenchMenu::Observability => "Observability",
         }
     }
@@ -116,6 +120,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Tool => regular::TOOLBOX,
             WorkbenchMenu::Monitor => regular::CHART_LINE,
             WorkbenchMenu::Logs => regular::INFO,
+            WorkbenchMenu::AnalyzeDashboard => regular::CHART_LINE,
             WorkbenchMenu::Observability => regular::ACTIVITY,
         }
     }

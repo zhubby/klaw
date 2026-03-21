@@ -1,6 +1,6 @@
 # klaw-observability
 
-提供可观测性基础设施,包括指标、追踪、审计和健康检查。
+提供可观测性基础设施,包括指标、追踪、审计、健康检查和本地分析存储。
 
 ## 功能
 
@@ -8,6 +8,7 @@
 - **Tracing**: 基于 OpenTelemetry 的分布式追踪,支持概率采样
 - **Audit**: 结构化审计事件记录
 - **Health**: 组件健康状态管理
+- **Local Analysis Store**: 本地 SQLite 工具调用统计,供 GUI `Analyze Dashboard` 直接查询
 
 ## 使用
 
@@ -20,7 +21,7 @@ let config = ObservabilityConfig {
     ..Default::default()
 };
 
-let handle = init_observability(&config)?;
+let handle = init_observability(&config, None).await?;
 let telemetry = OtelAgentTelemetry::from_handle(&handle, "klaw");
 
 // 使用 telemetry 进行埋点
@@ -55,6 +56,11 @@ path = "/metrics"
 [observability.audit]
 enabled = true
 output_path = "/var/log/klaw/audit.log"
+
+[observability.local_store]
+enabled = true
+retention_days = 7
+flush_interval_seconds = 5
 ```
 
 ## 指标

@@ -7,6 +7,7 @@ pub const GUI_STATE_FILE_NAME: &str = "gui_state.json";
 pub const DB_FILE_NAME: &str = "klaw.db";
 pub const MEMORY_DB_FILE_NAME: &str = "memory.db";
 pub const ARCHIVE_DB_FILE_NAME: &str = "archive.db";
+pub const OBSERVABILITY_DB_FILE_NAME: &str = "observability.db";
 pub const TMP_DIR_NAME: &str = "tmp";
 pub const WORKSPACE_DIR_NAME: &str = "workspace";
 pub const SESSIONS_DIR_NAME: &str = "sessions";
@@ -79,6 +80,10 @@ pub fn archive_db_path(root_dir: impl AsRef<Path>) -> PathBuf {
     root_dir.as_ref().join(ARCHIVE_DB_FILE_NAME)
 }
 
+pub fn observability_db_path(root_dir: impl AsRef<Path>) -> PathBuf {
+    root_dir.as_ref().join(OBSERVABILITY_DB_FILE_NAME)
+}
+
 pub fn tmp_dir(root_dir: impl AsRef<Path>) -> PathBuf {
     root_dir.as_ref().join(TMP_DIR_NAME)
 }
@@ -109,6 +114,10 @@ mod tests {
         assert_eq!(
             skills_registry_manifest_path(root),
             PathBuf::from("/tmp/demo/skills-registry-manifest.json")
+        );
+        assert_eq!(
+            observability_db_path(root),
+            PathBuf::from("/tmp/demo/observability.db")
         );
     }
 }

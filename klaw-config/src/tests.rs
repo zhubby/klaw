@@ -998,6 +998,24 @@ fn validate_fails_when_observability_prometheus_path_invalid() {
 }
 
 #[test]
+fn validate_fails_when_observability_local_store_retention_is_zero() {
+    let mut cfg = AppConfig::default();
+    cfg.observability.local_store.enabled = true;
+    cfg.observability.local_store.retention_days = 0;
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("observability.local_store.retention_days"));
+}
+
+#[test]
+fn validate_fails_when_observability_local_store_flush_interval_is_zero() {
+    let mut cfg = AppConfig::default();
+    cfg.observability.local_store.enabled = true;
+    cfg.observability.local_store.flush_interval_seconds = 0;
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("observability.local_store.flush_interval_seconds"));
+}
+
+#[test]
 fn validate_fails_when_skills_config_invalid() {
     let mut cfg = AppConfig::default();
     cfg.skills.sync_timeout = 0;
@@ -1484,6 +1502,9 @@ env_key = "OPENAI_API_KEY"
     observability.prometheus.enabled = true;
     observability.prometheus.listen_port = 9100;
     observability.prometheus.path = "/metrics".to_string();
+    observability.local_store.enabled = true;
+    observability.local_store.retention_days = 14;
+    observability.local_store.flush_interval_seconds = 9;
 
     let saved = store
         .save_observability_config(&observability)
@@ -1493,12 +1514,19 @@ env_key = "OPENAI_API_KEY"
     assert_eq!(saved.config.observability.traces.sample_rate, 0.25);
     assert!(saved.config.observability.prometheus.enabled);
     assert_eq!(saved.config.observability.prometheus.listen_port, 9100);
+    assert_eq!(saved.config.observability.local_store.retention_days, 14);
+    assert_eq!(
+        saved.config.observability.local_store.flush_interval_seconds,
+        9
+    );
     assert!(saved.revision >= 2);
 
     let disk_raw = fs::read_to_string(&path).expect("saved config should be written");
     assert!(disk_raw.contains("[observability]"));
     assert!(disk_raw.contains("service_name = \"klaw-gui\""));
     assert!(disk_raw.contains("sample_rate = 0.25"));
+    assert!(disk_raw.contains("[observability.local_store]"));
+    assert!(disk_raw.contains("retention_days = 14"));
 
     let _ = fs::remove_file(&path);
     let _ = fs::remove_dir_all(&root);

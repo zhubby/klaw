@@ -1,6 +1,6 @@
 use crate::{
     domain::{DeadLetterMessage, InboundMessage, OutboundMessage},
-    observability::AgentTelemetry,
+    observability::{AgentTelemetry, ToolOutcomeStatus},
     protocol::{Envelope, ErrorCode, MessageTopic},
     reliability::{
         idempotency_key, CircuitBreaker, DeadLetterPolicy, IdempotencyStore, RetryDecision,
@@ -183,6 +183,15 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                 );
                 if let Some(telemetry) = self.telemetry {
                     telemetry
+                        .record_tool_outcome(
+                            session_key,
+                            name,
+                            ToolOutcomeStatus::Success,
+                            None,
+                            start.elapsed(),
+                        )
+                        .await;
+                    telemetry
                         .incr_counter(
                             "agent_tool_success_total",
                             &[("session_key", session_key), ("tool_name", name)],
@@ -217,6 +226,15 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                     "tool result"
                 );
                 if let Some(telemetry) = self.telemetry {
+                    telemetry
+                        .record_tool_outcome(
+                            session_key,
+                            name,
+                            ToolOutcomeStatus::Failure,
+                            Some(&error_code),
+                            start.elapsed(),
+                        )
+                        .await;
                     telemetry
                         .incr_counter(
                             "agent_tool_failure_total",

@@ -1,3 +1,4 @@
+mod analyze_dashboard;
 mod approval;
 mod archive;
 mod channel;
@@ -55,6 +56,7 @@ pub struct PanelRegistry {
     tool: tool::ToolPanel,
     monitor: monitor::MonitorPanel,
     logs: logs::LogsPanel,
+    analyze_dashboard: analyze_dashboard::AnalyzeDashboardPanel,
     observability: observability::ObservabilityPanel,
 }
 
@@ -84,6 +86,9 @@ impl PanelRegistry {
             WorkbenchMenu::Tool => self.tool.render(ui, ctx, notifications),
             WorkbenchMenu::Monitor => self.monitor.render(ui, ctx, notifications),
             WorkbenchMenu::Logs => self.logs.render(ui, ctx, notifications),
+            WorkbenchMenu::AnalyzeDashboard => {
+                self.analyze_dashboard.render(ui, ctx, notifications)
+            }
             WorkbenchMenu::Observability => self.observability.render(ui, ctx, notifications),
         }
     }

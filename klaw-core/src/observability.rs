@@ -45,6 +45,12 @@ impl MetricName {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolOutcomeStatus {
+    Success,
+    Failure,
+}
+
 /// 审计事件负载。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
@@ -63,6 +69,15 @@ pub struct AuditEvent {
 /// 可观测性上报抽象。
 #[async_trait]
 pub trait AgentTelemetry: Send + Sync {
+    /// 记录工具调用结果。
+    async fn record_tool_outcome(
+        &self,
+        session_key: &str,
+        tool_name: &str,
+        status: ToolOutcomeStatus,
+        error_code: Option<&str>,
+        duration: Duration,
+    );
     /// 增加计数器。
     async fn incr_counter(&self, name: &'static str, labels: &[(&str, &str)], value: u64);
     /// 上报直方图时延。

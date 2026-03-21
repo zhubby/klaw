@@ -1123,6 +1123,8 @@ pub struct ObservabilityConfig {
     pub prometheus: ObservabilityPrometheusConfig,
     #[serde(default)]
     pub audit: ObservabilityAuditConfig,
+    #[serde(default)]
+    pub local_store: ObservabilityLocalStoreConfig,
 }
 
 impl Default for ObservabilityConfig {
@@ -1136,6 +1138,7 @@ impl Default for ObservabilityConfig {
             otlp: ObservabilityOtlpConfig::default(),
             prometheus: ObservabilityPrometheusConfig::default(),
             audit: ObservabilityAuditConfig::default(),
+            local_store: ObservabilityLocalStoreConfig::default(),
         }
     }
 }
@@ -1281,6 +1284,38 @@ impl Default for ObservabilityAuditConfig {
 
 fn default_observability_audit_enabled() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityLocalStoreConfig {
+    #[serde(default = "default_observability_local_store_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_observability_local_store_retention_days")]
+    pub retention_days: u16,
+    #[serde(default = "default_observability_local_store_flush_interval_seconds")]
+    pub flush_interval_seconds: u64,
+}
+
+impl Default for ObservabilityLocalStoreConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_observability_local_store_enabled(),
+            retention_days: default_observability_local_store_retention_days(),
+            flush_interval_seconds: default_observability_local_store_flush_interval_seconds(),
+        }
+    }
+}
+
+fn default_observability_local_store_enabled() -> bool {
+    true
+}
+
+fn default_observability_local_store_retention_days() -> u16 {
+    7
+}
+
+fn default_observability_local_store_flush_interval_seconds() -> u64 {
+    5
 }
 
 #[derive(Debug, Error)]

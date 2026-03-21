@@ -47,6 +47,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     io,
+    path::PathBuf,
     sync::{Arc, RwLock},
     time::Duration,
     time::{SystemTime, UNIX_EPOCH},
@@ -1116,7 +1117,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         skills: loaded_skills.skill_entries,
     });
 
-    let observability = init_observability_from_config(&config.observability);
+    let observability = init_observability_from_config(config).await;
     let telemetry: Option<Arc<dyn AgentTelemetry>> = observability.as_ref().map(|handle| {
         Arc::new(OtelAgentTelemetry::from_handle(handle, "klaw")) as Arc<dyn AgentTelemetry>
     });
@@ -1222,7 +1223,7 @@ pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<
 
     if let Some(handle) = &runtime.observability {
         info!("shutting down observability");
-        handle.shutdown();
+        handle.shutdown().await;
     }
 
     Ok(())
@@ -1981,45 +1982,51 @@ fn build_unavailable_provider(
     }
 }
 
-fn init_observability_from_config(
-    config: &klaw_config::ObservabilityConfig,
-) -> Option<ObservabilityHandle> {
-    if !config.enabled {
+async fn init_observability_from_config(config: &AppConfig) -> Option<ObservabilityHandle> {
+    if !config.observability.enabled {
         return None;
     }
+    let obs = &config.observability;
     let obs_config = ObservabilityConfig {
-        enabled: config.enabled,
-        service_name: config.service_name.clone(),
-        service_version: config.service_version.clone(),
+        enabled: obs.enabled,
+        service_name: obs.service_name.clone(),
+        service_version: obs.service_version.clone(),
         metrics: klaw_observability::config::MetricsConfig {
-            enabled: config.metrics.enabled,
-            export_interval_seconds: config.metrics.export_interval_seconds,
+            enabled: obs.metrics.enabled,
+            export_interval_seconds: obs.metrics.export_interval_seconds,
         },
         traces: klaw_observability::config::TracesConfig {
-            enabled: config.traces.enabled,
-            sample_rate: config.traces.sample_rate,
+            enabled: obs.traces.enabled,
+            sample_rate: obs.traces.sample_rate,
         },
         otlp: klaw_observability::config::OtlpConfig {
-            enabled: config.otlp.enabled,
-            endpoint: config.otlp.endpoint.clone(),
-            headers: config.otlp.headers.clone(),
+            enabled: obs.otlp.enabled,
+            endpoint: obs.otlp.endpoint.clone(),
+            headers: obs.otlp.headers.clone(),
         },
         prometheus: klaw_observability::config::PrometheusConfig {
-            enabled: config.prometheus.enabled,
-            listen_port: config.prometheus.listen_port,
-            path: config.prometheus.path.clone(),
+            enabled: obs.prometheus.enabled,
+            listen_port: obs.prometheus.listen_port,
+            path: obs.prometheus.path.clone(),
         },
         audit: klaw_observability::config::AuditConfig {
-            enabled: config.audit.enabled,
-            output_path: config.audit.output_path.clone(),
+            enabled: obs.audit.enabled,
+            output_path: obs.audit.output_path.clone(),
+        },
+        local_store: klaw_observability::config::LocalStoreConfig {
+            enabled: obs.local_store.enabled,
+            retention_days: obs.local_store.retention_days,
+            flush_interval_seconds: obs.local_store.flush_interval_seconds,
         },
     };
-    match init_observability(&obs_config) {
+    let data_root = config.storage.root_dir.as_ref().map(PathBuf::from);
+    match init_observability(&obs_config, data_root).await {
         Ok(handle) => {
             info!(
-                service_name = %config.service_name,
-                otlp_enabled = config.otlp.enabled,
-                prometheus_enabled = config.prometheus.enabled,
+                service_name = %obs.service_name,
+                otlp_enabled = obs.otlp.enabled,
+                prometheus_enabled = obs.prometheus.enabled,
+                local_store_enabled = obs.local_store.enabled,
                 "observability initialized"
             );
             Some(handle)

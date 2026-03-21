@@ -2,15 +2,18 @@ use crate::audit::{AuditEvent, AuditLogger};
 use crate::config::ObservabilityConfig;
 use crate::exporter::{OtlpExporter, PrometheusExporter};
 use crate::health::{HealthRegistry, HealthStatus};
+use crate::local_store::{LocalMetricsStore, LocalMetricsStoreError, SqliteLocalMetricsStore, ToolMetricEvent};
 use crate::metrics::MetricsRecorder;
 use crate::tracing_ext;
 use async_trait::async_trait;
-use klaw_core::observability::AgentTelemetry;
+use klaw_core::observability::{AgentTelemetry, ToolOutcomeStatus};
+use klaw_util::observability_db_path;
 use prometheus::Registry;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
+use time::OffsetDateTime;
 use tracing::Span;
 use uuid::Uuid;
 
@@ -20,6 +23,8 @@ pub enum ObservabilityError {
     OtlpExporter(#[from] crate::exporter::otlp::OtlpExporterError),
     #[error("failed to create Prometheus exporter: {0}")]
     PrometheusExporter(#[from] crate::exporter::prometheus::PrometheusExporterError),
+    #[error("failed to initialize local metrics store: {0}")]
+    LocalStore(#[from] LocalMetricsStoreError),
     #[error("observability is disabled")]
     Disabled,
 }
@@ -30,6 +35,7 @@ pub struct ObservabilityHandle {
     pub audit: Option<Arc<AuditLogger>>,
     pub prometheus: Option<PrometheusExporter>,
     pub otlp: Option<OtlpExporter>,
+    pub local_store: Option<Arc<SqliteLocalMetricsStore>>,
     pub registry: Registry,
 }
 
@@ -50,11 +56,15 @@ impl ObservabilityHandle {
         self.prometheus.as_ref()
     }
 
+    pub fn local_store(&self) -> Option<Arc<SqliteLocalMetricsStore>> {
+        self.local_store.clone()
+    }
+
     pub fn registry(&self) -> &Registry {
         &self.registry
     }
 
-    pub fn shutdown(&self) {
+    pub async fn shutdown(&self) {
         if let Some(otlp) = &self.otlp {
             otlp.shutdown();
         }
@@ -62,8 +72,9 @@ impl ObservabilityHandle {
     }
 }
 
-pub fn init_observability(
+pub async fn init_observability(
     config: &ObservabilityConfig,
+    data_root: Option<PathBuf>,
 ) -> Result<ObservabilityHandle, ObservabilityError> {
     if !config.enabled {
         return Err(ObservabilityError::Disabled);
@@ -106,6 +117,17 @@ pub fn init_observability(
     } else {
         None
     };
+    let local_store = if config.local_store.enabled {
+        let root_dir = data_root
+            .or_else(klaw_util::default_data_dir)
+            .ok_or(ObservabilityError::Disabled)?;
+        let db_path = observability_db_path(root_dir);
+        Some(Arc::new(
+            SqliteLocalMetricsStore::open(db_path, &config.local_store).await?,
+        ))
+    } else {
+        None
+    };
 
     tracing_ext::init_tracing();
 
@@ -115,6 +137,7 @@ pub fn init_observability(
         audit,
         prometheus,
         otlp,
+        local_store,
         registry,
     })
 }
@@ -123,6 +146,7 @@ pub struct OtelAgentTelemetry {
     metrics: Arc<MetricsRecorder>,
     health: Arc<HealthRegistry>,
     audit: Option<Arc<AuditLogger>>,
+    local_store: Option<Arc<SqliteLocalMetricsStore>>,
     service_name: String,
 }
 
@@ -131,12 +155,14 @@ impl OtelAgentTelemetry {
         metrics: Arc<MetricsRecorder>,
         health: Arc<HealthRegistry>,
         audit: Option<Arc<AuditLogger>>,
+        local_store: Option<Arc<SqliteLocalMetricsStore>>,
         service_name: impl Into<String>,
     ) -> Self {
         Self {
             metrics,
             health,
             audit,
+            local_store,
             service_name: service_name.into(),
         }
     }
@@ -146,6 +172,7 @@ impl OtelAgentTelemetry {
             handle.metrics(),
             handle.health(),
             handle.audit(),
+            handle.local_store(),
             service_name,
         )
     }
@@ -166,6 +193,33 @@ fn map_health_status(status: klaw_core::HealthStatus) -> HealthStatus {
 
 #[async_trait]
 impl AgentTelemetry for OtelAgentTelemetry {
+    async fn record_tool_outcome(
+        &self,
+        session_key: &str,
+        tool_name: &str,
+        status: ToolOutcomeStatus,
+        error_code: Option<&str>,
+        duration: Duration,
+    ) {
+        let Some(store) = &self.local_store else {
+            return;
+        };
+        if let Err(err) = store
+            .record_tool_outcome(ToolMetricEvent {
+                occurred_at_unix_ms: OffsetDateTime::now_utc().unix_timestamp_nanos() as i64
+                    / 1_000_000,
+                session_key: session_key.to_string(),
+                tool_name: tool_name.to_string(),
+                status,
+                error_code: error_code.map(ToString::to_string),
+                duration_ms: duration.as_millis() as u64,
+            })
+            .await
+        {
+            tracing::warn!(error = %err, "failed to record local tool outcome");
+        }
+    }
+
     async fn incr_counter(&self, name: &'static str, labels: &[(&str, &str)], _value: u64) {
         match name {
             crate::metrics::METRIC_INBOUND_CONSUMED_TOTAL => {

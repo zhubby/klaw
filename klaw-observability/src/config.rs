@@ -19,6 +19,8 @@ pub struct ObservabilityConfig {
     pub prometheus: PrometheusConfig,
     #[serde(default)]
     pub audit: AuditConfig,
+    #[serde(default)]
+    pub local_store: LocalStoreConfig,
 }
 
 impl Default for ObservabilityConfig {
@@ -32,6 +34,7 @@ impl Default for ObservabilityConfig {
             otlp: OtlpConfig::default(),
             prometheus: PrometheusConfig::default(),
             audit: AuditConfig::default(),
+            local_store: LocalStoreConfig::default(),
         }
     }
 }
@@ -177,4 +180,36 @@ impl Default for AuditConfig {
 
 fn default_audit_enabled() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalStoreConfig {
+    #[serde(default = "default_local_store_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_local_store_retention_days")]
+    pub retention_days: u16,
+    #[serde(default = "default_local_store_flush_interval_seconds")]
+    pub flush_interval_seconds: u64,
+}
+
+impl Default for LocalStoreConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_local_store_enabled(),
+            retention_days: default_local_store_retention_days(),
+            flush_interval_seconds: default_local_store_flush_interval_seconds(),
+        }
+    }
+}
+
+fn default_local_store_enabled() -> bool {
+    true
+}
+
+fn default_local_store_retention_days() -> u16 {
+    7
+}
+
+fn default_local_store_flush_interval_seconds() -> u64 {
+    5
 }

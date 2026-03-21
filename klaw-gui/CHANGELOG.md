@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-03-21
+
+### Added
+
+- GUI 新增 `Analyze Dashboard` 一级 workbench 面板，用于展示本地工具调用分析数据，包括成功率、失败分布、Top 工具和时间窗趋势
+
+### Changed
+
+- `Observability` 面板继续作为纯配置页，并新增本地分析存储的开关、保留天数和刷新间隔配置
+
 ## 2026-03-20
 
 ### Added

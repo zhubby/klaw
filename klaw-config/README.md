@@ -13,6 +13,7 @@
 - 保持 channel 外部配置为分类型数组（当前 `channels.dingtalk` / `channels.telegram`），供运行时映射为统一的 channel 实例快照。
 - 支持 `storage.root_dir` 配置项，用于覆盖默认 `~/.klaw` 数据目录根路径。
 - 支持独立的 `tools.skills_registry` 与 `tools.skills_manager` 开关配置。
+- 支持 `observability.local_store` 配置项,用于控制本地分析存储是否启用、保留时长与刷新间隔。
 
 ## 模型配置
 
