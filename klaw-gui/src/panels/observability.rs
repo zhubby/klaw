@@ -51,8 +51,7 @@ impl ObservabilityPanel {
         self.audit_output_path_buffer = self.config.audit.output_path.clone().unwrap_or_default();
         self.sample_rate_buffer = format!("{:.2}", self.config.traces.sample_rate);
         self.export_interval_buffer = self.config.metrics.export_interval_seconds.to_string();
-        self.local_store_retention_days_buffer =
-            self.config.local_store.retention_days.to_string();
+        self.local_store_retention_days_buffer = self.config.local_store.retention_days.to_string();
         self.local_store_flush_interval_buffer =
             self.config.local_store.flush_interval_seconds.to_string();
     }

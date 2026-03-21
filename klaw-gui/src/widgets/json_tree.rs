@@ -28,7 +28,12 @@ fn show_json_value(ui: &mut egui::Ui, label: &str, value: &serde_json::Value, pa
                         ui.monospace("[]");
                     }
                     for (index, child) in items.iter().enumerate() {
-                        show_json_value(ui, &format!("[{index}]"), child, &format!("{path}[{index}]"));
+                        show_json_value(
+                            ui,
+                            &format!("[{index}]"),
+                            child,
+                            &format!("{path}[{index}]"),
+                        );
                     }
                 });
         }

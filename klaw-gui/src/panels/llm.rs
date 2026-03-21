@@ -17,6 +17,13 @@ use tokio::runtime::Builder;
 const FILTER_INPUT_WIDTH: f32 = 220.0;
 const PAGING_INPUT_WIDTH: f32 = 110.0;
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum DetailTab {
+    #[default]
+    Request,
+    Response,
+}
+
 #[derive(Default)]
 pub struct LlmPanel {
     loaded: bool,
@@ -30,6 +37,7 @@ pub struct LlmPanel {
     sort_order: LlmAuditSortOrder,
     selected_id: Option<String>,
     detail_record: Option<LlmAuditRecord>,
+    detail_tab: DetailTab,
 }
 
 impl LlmPanel {
@@ -244,11 +252,17 @@ impl PanelRenderer for LlmPanel {
                                 };
                             }
                             response.context_menu(|ui| {
-                                if ui.button(format!("{} View Details", regular::EYE)).clicked() {
+                                if ui
+                                    .button(format!("{} View Details", regular::EYE))
+                                    .clicked()
+                                {
                                     open_detail = Some(item.clone());
                                     ui.close();
                                 }
-                                if ui.button(format!("{} Copy Session Key", regular::KEY)).clicked() {
+                                if ui
+                                    .button(format!("{} Copy Session Key", regular::KEY))
+                                    .clicked()
+                                {
                                     ui.ctx().output_mut(|o| {
                                         o.commands.push(egui::OutputCommand::CopyText(
                                             item.session_key.clone(),
@@ -256,7 +270,10 @@ impl PanelRenderer for LlmPanel {
                                     });
                                     ui.close();
                                 }
-                                if ui.button(format!("{} Copy Request ID", regular::FINGERPRINT)).clicked() {
+                                if ui
+                                    .button(format!("{} Copy Request ID", regular::FINGERPRINT))
+                                    .clicked()
+                                {
                                     ui.ctx().output_mut(|o| {
                                         o.commands.push(egui::OutputCommand::CopyText(
                                             item.provider_request_id.clone().unwrap_or_default(),
@@ -279,43 +296,43 @@ impl PanelRenderer for LlmPanel {
                 .open(&mut open)
                 .resizable(true)
                 .default_width(860.0)
-                .default_height(640.0)
-                .max_height(640.0)
+                .default_height(500.0)
                 .show(ui.ctx(), |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("llm-audit-detail-scroll")
-                        .auto_shrink([false, false])
-                        .max_height(560.0)
-                        .show(ui, |ui| {
-                            ui.label(format!("Session: {}", record.session_key));
-                            ui.label(format!(
-                                "Time: {}",
-                                format_timestamp_millis(record.requested_at_ms)
-                            ));
-                            ui.label(format!("Provider: {}", record.provider));
-                            ui.label(format!("Model: {}", record.model));
-                            ui.label(format!("Wire API: {}", record.wire_api));
-                            ui.label(format!("Status: {}", record.status.as_str()));
-                            if let Some(error_code) = &record.error_code {
-                                ui.label(format!("Error Code: {error_code}"));
-                            }
-                            if let Some(error_message) = &record.error_message {
-                                ui.label(format!("Error Message: {error_message}"));
-                            }
-                            ui.separator();
+                    ui.label(format!("Session: {}", record.session_key));
+                    ui.label(format!(
+                        "Time: {}",
+                        format_timestamp_millis(record.requested_at_ms)
+                    ));
+                    ui.label(format!("Provider: {}", record.provider));
+                    ui.label(format!("Model: {}", record.model));
+                    ui.label(format!("Wire API: {}", record.wire_api));
+                    ui.label(format!("Status: {}", record.status.as_str()));
+                    if let Some(error_code) = &record.error_code {
+                        ui.label(format!("Error Code: {error_code}"));
+                    }
+                    if let Some(error_message) = &record.error_message {
+                        ui.label(format!("Error Message: {error_message}"));
+                    }
+                    ui.separator();
 
-                            ui.collapsing("Request Body", |ui| {
-                                render_json_payload(ui, &record.request_body_json);
-                            });
-                            ui.separator();
-                            ui.collapsing("Response Body", |ui| {
-                                if let Some(body) = &record.response_body_json {
-                                    render_json_payload(ui, body);
-                                } else {
-                                    ui.monospace("<empty>");
-                                }
-                            });
-                        });
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.detail_tab, DetailTab::Request, "Request");
+                        ui.selectable_value(&mut self.detail_tab, DetailTab::Response, "Response");
+                    });
+                    ui.separator();
+
+                    match self.detail_tab {
+                        DetailTab::Request => {
+                            render_json_payload(ui, &record.request_body_json);
+                        }
+                        DetailTab::Response => {
+                            if let Some(body) = &record.response_body_json {
+                                render_json_payload(ui, body);
+                            } else {
+                                ui.monospace("<empty>");
+                            }
+                        }
+                    }
                 });
             if !open {
                 self.detail_record = None;
@@ -325,20 +342,21 @@ impl PanelRenderer for LlmPanel {
 }
 
 fn render_json_payload(ui: &mut egui::Ui, raw: &str) {
-    egui::ScrollArea::vertical()
+    egui::ScrollArea::both()
         .id_salt(("llm-audit-json-scroll", raw.len()))
-        .auto_shrink([false, false])
-        .max_height(260.0)
-        .show(ui, |ui| match serde_json::from_str::<serde_json::Value>(raw) {
-            Ok(value) => show_json_tree(ui, &value),
-            Err(_) => {
-                let mut text = raw.to_string();
-                ui.add(
-                    egui::TextEdit::multiline(&mut text)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(20)
-                        .interactive(false),
-                );
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            match serde_json::from_str::<serde_json::Value>(raw) {
+                Ok(value) => show_json_tree(ui, &value),
+                Err(_) => {
+                    let mut text = raw.to_string();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut text)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(25)
+                            .interactive(false),
+                    );
+                }
             }
         });
 }

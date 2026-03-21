@@ -257,10 +257,7 @@ impl SystemPanel {
             if let Some(project_url) = &check.project_url {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new("Project:").small().weak());
-                    ui.hyperlink_to(
-                        RichText::new(project_url).small(),
-                        project_url,
-                    );
+                    ui.hyperlink_to(RichText::new(project_url).small(), project_url);
                 });
             }
             ui.add_space(4.0);

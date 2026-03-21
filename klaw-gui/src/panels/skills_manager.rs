@@ -836,7 +836,10 @@ impl PanelRenderer for SkillsManagerPanel {
                                 ui.close();
                             }
                             if ui
-                                .button(RichText::new(format!("{} Remove", regular::TRASH)).color(ui.visuals().warn_fg_color))
+                                .button(
+                                    RichText::new(format!("{} Remove", regular::TRASH))
+                                        .color(ui.visuals().warn_fg_color),
+                                )
                                 .clicked()
                             {
                                 self.delete_confirm_skill = Some((skill_name, skill_registry));

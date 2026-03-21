@@ -301,9 +301,11 @@ impl AnalyzeDashboardPanel {
                 ui.horizontal(|ui| {
                     ui.monospace(&row.error_code);
                     ui.add(
-                        egui::ProgressBar::new((row.failures as f32 / max_failures(snapshot) as f32).clamp(0.0, 1.0))
-                            .show_percentage()
-                            .text(row.failures.to_string()),
+                        egui::ProgressBar::new(
+                            (row.failures as f32 / max_failures(snapshot) as f32).clamp(0.0, 1.0),
+                        )
+                        .show_percentage()
+                        .text(row.failures.to_string()),
                     );
                 });
             }
@@ -331,14 +333,13 @@ impl AnalyzeDashboardPanel {
             for point in snapshot.timeseries.iter().skip(start_index) {
                 ui.horizontal(|ui| {
                     ui.monospace(format_bucket_label(point.bucket_start_unix_ms));
-                    ui.label(format!(
-                        "{} / {}",
-                        point.successes, point.calls
-                    ));
+                    ui.label(format!("{} / {}", point.successes, point.calls));
                     ui.add(
-                        egui::ProgressBar::new((point.calls as f32 / max_calls as f32).clamp(0.0, 1.0))
-                            .desired_width(120.0)
-                            .text(format_percent(point.success_rate)),
+                        egui::ProgressBar::new(
+                            (point.calls as f32 / max_calls as f32).clamp(0.0, 1.0),
+                        )
+                        .desired_width(120.0)
+                        .text(format_percent(point.success_rate)),
                     );
                 });
             }

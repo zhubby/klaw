@@ -285,7 +285,10 @@ impl PanelRenderer for ApprovalPanel {
                                     ui.close();
                                 }
                                 ui.separator();
-                                if ui.button(format!("{} Approve", regular::CHECK_CIRCLE)).clicked() {
+                                if ui
+                                    .button(format!("{} Approve", regular::CHECK_CIRCLE))
+                                    .clicked()
+                                {
                                     approve_id = Some(approval.id.clone());
                                     ui.close();
                                 }
@@ -293,7 +296,10 @@ impl PanelRenderer for ApprovalPanel {
                                     reject_id = Some(approval.id.clone());
                                     ui.close();
                                 }
-                                if ui.button(format!("{} Consume", regular::LIGHTNING)).clicked() {
+                                if ui
+                                    .button(format!("{} Consume", regular::LIGHTNING))
+                                    .clicked()
+                                {
                                     consume_id = Some(approval.id.clone());
                                     ui.close();
                                 }

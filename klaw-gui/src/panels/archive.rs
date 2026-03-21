@@ -243,11 +243,16 @@ impl PanelRenderer for ArchivePanel {
                             let item_id = item.id.clone();
                             let can_preview = preview_capability_for_record(item).is_some();
                             response.context_menu(|ui| {
-                                if can_preview && ui.button(format!("{} Preview", regular::EYE)).clicked() {
+                                if can_preview
+                                    && ui.button(format!("{} Preview", regular::EYE)).clicked()
+                                {
                                     preview_item = Some(item.clone());
                                     ui.close();
                                 }
-                                if ui.button(format!("{} Details", regular::FILE_TEXT)).clicked() {
+                                if ui
+                                    .button(format!("{} Details", regular::FILE_TEXT))
+                                    .clicked()
+                                {
                                     view_detail_id = Some(item_id.clone());
                                     ui.close();
                                 }

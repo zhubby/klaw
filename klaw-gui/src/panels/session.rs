@@ -253,11 +253,17 @@ impl PanelRenderer for SessionPanel {
                             }
 
                             response.context_menu(|ui| {
-                                if ui.button(format!("{} View Chat", regular::CHATS_CIRCLE)).clicked() {
+                                if ui
+                                    .button(format!("{} View Chat", regular::CHATS_CIRCLE))
+                                    .clicked()
+                                {
                                     view_session_key = Some(session.session_key.clone());
                                     ui.close();
                                 }
-                                if ui.button(format!("{} Copy Session Key", regular::KEY)).clicked() {
+                                if ui
+                                    .button(format!("{} Copy Session Key", regular::KEY))
+                                    .clicked()
+                                {
                                     ui.ctx().output_mut(|o| {
                                         o.commands.push(egui::OutputCommand::CopyText(
                                             session.session_key.clone(),
