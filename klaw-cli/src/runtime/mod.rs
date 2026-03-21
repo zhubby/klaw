@@ -396,6 +396,54 @@ async fn persist_llm_usage_records(
     Ok(())
 }
 
+async fn persist_assistant_response_state(
+    runtime: &RuntimeBundle,
+    session_key: &str,
+    chat_id: &str,
+    channel: &str,
+    turn_index: i64,
+    message_id: &uuid::Uuid,
+    metadata: &BTreeMap<String, serde_json::Value>,
+    agent_record: &ChatRecord,
+) {
+    if let Err(err) = persist_llm_usage_records(
+        runtime,
+        session_key,
+        chat_id,
+        turn_index,
+        message_id,
+        metadata,
+    )
+    .await
+    {
+        warn!(
+            error = %err,
+            session_key,
+            message_id = %message_id,
+            "failed to persist llm usage records after response; continuing"
+        );
+    }
+
+    let sessions = session_manager(runtime);
+    if let Err(err) = sessions.append_chat_record(session_key, agent_record).await {
+        warn!(
+            error = %err,
+            session_key,
+            message_id = %message_id,
+            "failed to append assistant chat record after response; continuing"
+        );
+    }
+
+    if let Err(err) = sessions.complete_turn(session_key, chat_id, channel).await {
+        warn!(
+            error = %err,
+            session_key,
+            message_id = %message_id,
+            "failed to complete session turn after response; continuing"
+        );
+    }
+}
+
 fn enqueue_llm_audit_records_from_outcome(
     runtime: &RuntimeBundle,
     turn_index: i64,
@@ -1736,26 +1784,17 @@ pub async fn submit_and_get_output(
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
             let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
-            let sessions = session_manager(runtime);
-            persist_llm_usage_records(
+            persist_assistant_response_state(
                 runtime,
                 &msg.header.session_key,
                 &msg.payload.chat_id,
+                &msg.payload.channel,
                 session_state.turn_count,
                 &msg.header.message_id,
                 &msg.payload.metadata,
+                &agent_record,
             )
-            .await?;
-            sessions
-                .append_chat_record(&msg.header.session_key, &agent_record)
-                .await?;
-            sessions
-                .complete_turn(
-                    &msg.header.session_key,
-                    &msg.payload.chat_id,
-                    &msg.payload.channel,
-                )
-                .await?;
+            .await;
             let reasoning = msg
                 .payload
                 .metadata
@@ -1884,26 +1923,17 @@ pub async fn submit_and_stream_output(
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
             let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
-            let sessions = session_manager(runtime);
-            persist_llm_usage_records(
+            persist_assistant_response_state(
                 runtime,
                 &msg.header.session_key,
                 &msg.payload.chat_id,
+                &msg.payload.channel,
                 session_state.turn_count,
                 &msg.header.message_id,
                 &msg.payload.metadata,
+                &agent_record,
             )
-            .await?;
-            sessions
-                .append_chat_record(&msg.header.session_key, &agent_record)
-                .await?;
-            sessions
-                .complete_turn(
-                    &msg.header.session_key,
-                    &msg.payload.chat_id,
-                    &msg.payload.channel,
-                )
-                .await?;
+            .await;
             let reasoning = msg
                 .payload
                 .metadata
@@ -1961,25 +1991,17 @@ pub async fn drain_runtime_queue(
             .map(|session| session.turn_count)
             .unwrap_or(0);
         enqueue_llm_audit_records_from_outcome(runtime, turn_index, &outcome);
-        persist_llm_usage_records(
+        persist_assistant_response_state(
             runtime,
             &msg.header.session_key,
             &msg.payload.chat_id,
+            &msg.payload.channel,
             turn_index,
             &msg.header.message_id,
             &msg.payload.metadata,
+            &agent_record,
         )
-        .await?;
-        sessions
-            .append_chat_record(&msg.header.session_key, &agent_record)
-            .await?;
-        sessions
-            .complete_turn(
-                &msg.header.session_key,
-                &msg.payload.chat_id,
-                &msg.payload.channel,
-            )
-            .await?;
+        .await;
         drained += 1;
     }
     Ok(drained)
