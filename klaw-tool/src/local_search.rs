@@ -1,10 +1,15 @@
 use async_trait::async_trait;
+use globset::{Glob, GlobMatcher};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::ffi::OsString;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::{process::Command, time::timeout};
+use walkdir::WalkDir;
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 
@@ -12,6 +17,7 @@ const DEFAULT_LIMIT: usize = 20;
 const MAX_LIMIT: usize = 200;
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
+const GREP_BATCH_SIZE: usize = 200;
 
 pub struct LocalSearchTool;
 
@@ -115,6 +121,232 @@ impl LocalSearchTool {
         }
         out
     }
+
+    fn workspace_root(ctx: &ToolContext) -> Option<&Path> {
+        ctx.metadata
+            .get("workspace")
+            .and_then(Value::as_str)
+            .map(Path::new)
+    }
+
+    fn resolve_paths<'a>(search_path: &'a str, workspace_root: Option<&'a Path>) -> SearchPaths {
+        match workspace_root {
+            Some(root) if Path::new(search_path).is_relative() => SearchPaths {
+                command_cwd: Some(root.to_path_buf()),
+                display_base: root.to_path_buf(),
+                search_root: root.join(search_path),
+            },
+            _ => {
+                let path = PathBuf::from(search_path);
+                SearchPaths {
+                    command_cwd: None,
+                    display_base: PathBuf::new(),
+                    search_root: path,
+                }
+            }
+        }
+    }
+
+    fn build_rg_command(request: &LocalSearchRequest, search_path: &str, ctx: &ToolContext) -> Command {
+        let mut command = Command::new("rg");
+        command.args([
+            "--files-with-matches",
+            "--hidden",
+            "--no-messages",
+            "--glob",
+            "!.git",
+            "--glob",
+            "!node_modules",
+        ]);
+        if let Some(pattern) = request.include_pattern.as_deref() {
+            command.arg("--glob").arg(pattern);
+        }
+        command.arg(&request.query).arg(search_path);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        if let Some(workspace) = Self::workspace_root(ctx) {
+            if Path::new(search_path).is_relative() {
+                command.current_dir(workspace);
+            }
+        }
+
+        command
+    }
+
+    async fn execute_rg(
+        request: &LocalSearchRequest,
+        search_path: &str,
+        ctx: &ToolContext,
+    ) -> Result<Result<Vec<String>, std::io::Error>, ToolError> {
+        let output = timeout(
+            Duration::from_millis(request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)),
+            Self::build_rg_command(request, search_path, ctx).output(),
+        )
+        .await
+        .map_err(|_| {
+            ToolError::ExecutionFailed(format!(
+                "local_search timed out after {}ms",
+                request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)
+            ))
+        })?;
+
+        let output = match output {
+            Ok(output) => output,
+            Err(err) => return Ok(Err(err)),
+        };
+
+        let exit_code = output.status.code().unwrap_or(-1);
+        if exit_code != 0 && exit_code != 1 {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(ToolError::ExecutionFailed(format!(
+                "local_search failed with exit code {exit_code}: {stderr}"
+            )));
+        }
+
+        Ok(Ok(Self::collect_output_files(&output.stdout)))
+    }
+
+    fn build_include_matcher(
+        include_pattern: Option<&str>,
+    ) -> Result<Option<GlobMatcher>, ToolError> {
+        include_pattern
+            .map(|pattern| {
+                Glob::new(pattern)
+                    .map_err(|err| {
+                        ToolError::InvalidArgs(format!(
+                            "invalid `include_pattern` glob `{pattern}`: {err}"
+                        ))
+                    })
+                    .map(|glob| glob.compile_matcher())
+            })
+            .transpose()
+    }
+
+    fn collect_fallback_candidates(
+        search_paths: &SearchPaths,
+        include_pattern: Option<&str>,
+    ) -> Result<Vec<PathBuf>, ToolError> {
+        let include_matcher = Self::build_include_matcher(include_pattern)?;
+        let mut files = Vec::new();
+
+        for entry in WalkDir::new(&search_paths.search_root)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(Self::keep_walk_entry)
+        {
+            let entry = entry.map_err(|err| {
+                ToolError::ExecutionFailed(format!("failed to walk search path: {err}"))
+            })?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            let path = entry.path();
+            let relative = path.strip_prefix(&search_paths.search_root).unwrap_or(path);
+            if let Some(matcher) = include_matcher.as_ref() {
+                let candidate = normalize_path_for_glob(relative);
+                if !matcher.is_match(&candidate) {
+                    continue;
+                }
+            }
+
+            files.push(path.to_path_buf());
+        }
+
+        Ok(files)
+    }
+
+    fn keep_walk_entry(entry: &walkdir::DirEntry) -> bool {
+        let Some(name) = entry.file_name().to_str() else {
+            return true;
+        };
+        name != ".git" && name != "node_modules"
+    }
+
+    async fn execute_grep(
+        request: &LocalSearchRequest,
+        search_paths: &SearchPaths,
+    ) -> Result<Vec<String>, ToolError> {
+        let candidates = Self::collect_fallback_candidates(
+            search_paths,
+            request.include_pattern.as_deref(),
+        )?;
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut matches = BTreeSet::new();
+        for chunk in candidates.chunks(GREP_BATCH_SIZE) {
+            let mut command = Command::new("grep");
+            command.args(["-R", "-l", "-E", &request.query]);
+            command.args(chunk.iter().map(|path| path.as_os_str()));
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
+            if let Some(cwd) = &search_paths.command_cwd {
+                command.current_dir(cwd);
+            }
+
+            let output = command.output().await.map_err(|err| {
+                if err.kind() == ErrorKind::NotFound {
+                    ToolError::ExecutionFailed(
+                        "both ripgrep (`rg`) and grep are not available in PATH".to_string(),
+                    )
+                } else {
+                    ToolError::ExecutionFailed(format!("failed to execute local_search: {err}"))
+                }
+            })?;
+
+            let exit_code = output.status.code().unwrap_or(-1);
+            if exit_code != 0 && exit_code != 1 {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return Err(ToolError::ExecutionFailed(format!(
+                    "local_search failed with exit code {exit_code}: {stderr}"
+                )));
+            }
+
+            matches.extend(
+                Self::collect_output_files(&output.stdout)
+                    .into_iter()
+                    .map(|path| Self::normalize_result_path(&path, search_paths)),
+            );
+        }
+
+        Ok(matches.into_iter().collect())
+    }
+
+    fn normalize_result_path(path: &str, search_paths: &SearchPaths) -> String {
+        let path = Path::new(path);
+        if search_paths.command_cwd.is_some() {
+            return path
+                .strip_prefix(&search_paths.display_base)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .to_string();
+        }
+
+        path.to_string_lossy().to_string()
+    }
+
+    fn collect_output_files(stdout: &[u8]) -> Vec<String> {
+        String::from_utf8_lossy(stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect()
+    }
+}
+
+struct SearchPaths {
+    command_cwd: Option<PathBuf>,
+    display_base: PathBuf,
+    search_root: PathBuf,
+}
+
+fn normalize_path_for_glob(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 #[async_trait]
@@ -130,7 +362,7 @@ impl Tool for LocalSearchTool {
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Arguments for local file-content search powered by ripgrep.",
+            "description": "Arguments for local file-content search using ripgrep first, with grep fallback when ripgrep is unavailable.",
             "properties": {
                 "query": {
                     "type": "string",
@@ -146,7 +378,7 @@ impl Tool for LocalSearchTool {
                 },
                 "include_pattern": {
                     "type": "string",
-                    "description": "Optional glob include filter passed to ripgrep via --glob. Example: '**/*.rs'.",
+                    "description": "Optional glob include filter for matching file paths before content search. Example: '**/*.rs'.",
                     "examples": ["**/*.rs", "docs/**/*.md"]
                 },
                 "limit": {
@@ -178,59 +410,27 @@ impl Tool for LocalSearchTool {
         let limit = request.limit.unwrap_or(DEFAULT_LIMIT);
         let timeout_ms = request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
         let search_path = request.path.as_deref().unwrap_or(".");
-
-        let mut command = Command::new("rg");
-        command.args([
-            "--files-with-matches",
-            "--hidden",
-            "--no-messages",
-            "--glob",
-            "!.git",
-            "--glob",
-            "!node_modules",
-        ]);
-        if let Some(pattern) = request.include_pattern.as_deref() {
-            command.arg("--glob").arg(pattern);
-        }
-        command.arg(&request.query).arg(search_path);
-        command.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-        if let Some(workspace) = ctx.metadata.get("workspace").and_then(Value::as_str) {
-            if Path::new(search_path).is_relative() {
-                command.current_dir(Path::new(workspace));
+        let search_paths = Self::resolve_paths(search_path, Self::workspace_root(ctx));
+        let all_files = match Self::execute_rg(&request, search_path, ctx).await? {
+            Ok(files) => files,
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                timeout(
+                    Duration::from_millis(timeout_ms),
+                    Self::execute_grep(&request, &search_paths),
+                )
+                .await
+                .map_err(|_| {
+                    ToolError::ExecutionFailed(format!(
+                        "local_search timed out after {timeout_ms}ms"
+                    ))
+                })??
             }
-        }
-
-        let output = timeout(Duration::from_millis(timeout_ms), command.output())
-            .await
-            .map_err(|_| {
-                ToolError::ExecutionFailed(format!("local_search timed out after {timeout_ms}ms"))
-            })?
-            .map_err(|err| {
-                if err.kind() == std::io::ErrorKind::NotFound {
-                    ToolError::ExecutionFailed(
-                        "ripgrep (`rg`) not found in PATH; install ripgrep to use local_search"
-                            .to_string(),
-                    )
-                } else {
-                    ToolError::ExecutionFailed(format!("failed to execute local_search: {err}"))
-                }
-            })?;
-
-        let exit_code = output.status.code().unwrap_or(-1);
-        if exit_code != 0 && exit_code != 1 {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(ToolError::ExecutionFailed(format!(
-                "local_search failed with exit code {exit_code}: {stderr}"
-            )));
-        }
-
-        let all_files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(ToString::to_string)
-            .collect();
+            Err(err) => {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "failed to execute local_search: {err}"
+                )));
+            }
+        };
         let files: Vec<String> = all_files.iter().take(limit).cloned().collect();
 
         let content =
@@ -254,6 +454,25 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::fs;
+    use std::process::Output;
+
+    fn output(status: i32, stdout: &str, stderr: &str) -> Output {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            Output {
+                status: std::process::ExitStatus::from_raw(status << 8),
+                stdout: stdout.as_bytes().to_vec(),
+                stderr: stderr.as_bytes().to_vec(),
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            panic!("tests require unix exit status support");
+        }
+    }
 
     fn test_context(workspace: &std::path::Path) -> ToolContext {
         let mut metadata = BTreeMap::new();
@@ -277,6 +496,103 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn test_collect_fallback_candidates_respects_include_pattern() {
+        let dir = temp_workspace();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/a.rs"), "search_me").unwrap();
+        fs::write(dir.join("notes.md"), "search_me").unwrap();
+
+        let search_paths = SearchPaths {
+            command_cwd: Some(dir.clone()),
+            display_base: dir.clone(),
+            search_root: dir.clone(),
+        };
+
+        let files =
+            LocalSearchTool::collect_fallback_candidates(&search_paths, Some("**/*.rs")).unwrap();
+        let normalized: Vec<String> = files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+
+        assert_eq!(normalized, vec!["src/a.rs"]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_collect_fallback_candidates_skips_default_excluded_dirs() {
+        let dir = temp_workspace();
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::create_dir_all(dir.join("node_modules")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join(".git/ignored.txt"), "needle").unwrap();
+        fs::write(dir.join("node_modules/pkg.js"), "needle").unwrap();
+        fs::write(dir.join("src/ok.rs"), "needle").unwrap();
+
+        let search_paths = SearchPaths {
+            command_cwd: Some(dir.clone()),
+            display_base: dir.clone(),
+            search_root: dir.clone(),
+        };
+
+        let files = LocalSearchTool::collect_fallback_candidates(&search_paths, None).unwrap();
+        let normalized: Vec<String> = files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+
+        assert_eq!(normalized, vec!["src/ok.rs"]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_normalize_result_path_matches_rg_relative_output() {
+        let dir = temp_workspace();
+        let search_paths = SearchPaths {
+            command_cwd: Some(dir.clone()),
+            display_base: dir.clone(),
+            search_root: dir.clone(),
+        };
+
+        let file = dir.join("src/a.rs");
+        assert_eq!(
+            LocalSearchTool::normalize_result_path(&file.to_string_lossy(), &search_paths),
+            "src/a.rs"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_collect_output_files_parses_stdout() {
+        let files = LocalSearchTool::collect_output_files(b"src/a.rs\n\nREADME.md\n");
+        assert_eq!(files, vec!["src/a.rs", "README.md"]);
+    }
+
+    #[test]
+    fn test_rg_missing_should_trigger_grep_fallback_branch() {
+        let err = std::io::Error::new(ErrorKind::NotFound, "rg not found");
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_grep_exit_code_one_means_no_matches() {
+        let grep_output = output(1, "", "");
+        let exit_code = grep_output.status.code().unwrap_or(-1);
+        assert_eq!(exit_code, 1);
+        assert!(LocalSearchTool::collect_output_files(&grep_output.stdout).is_empty());
     }
 
     #[tokio::test]

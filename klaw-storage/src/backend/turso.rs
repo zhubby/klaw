@@ -44,11 +44,7 @@ impl TursoSessionStore {
             _db: db,
             conn,
         };
-        store
-            .conn
-            .execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;")
-            .await
-            .map_err(StorageError::backend)?;
+        apply_sqlite_connection_pragmas(&store.conn).await?;
         store.init().await?;
         Ok(store)
     }
@@ -256,6 +252,7 @@ impl TursoMemoryDb {
             .await
             .map_err(StorageError::backend)?;
         let conn = db.connect().map_err(StorageError::backend)?;
+        apply_sqlite_connection_pragmas(&conn).await?;
         Ok(Self { _db: db, conn })
     }
 }
@@ -268,8 +265,21 @@ impl TursoArchiveDb {
             .await
             .map_err(StorageError::backend)?;
         let conn = db.connect().map_err(StorageError::backend)?;
+        apply_sqlite_connection_pragmas(&conn).await?;
         Ok(Self { _db: db, conn })
     }
+}
+
+async fn apply_sqlite_connection_pragmas(conn: &Connection) -> Result<(), StorageError> {
+    let mut rows = conn
+        .query("PRAGMA journal_mode = WAL", ())
+        .await
+        .map_err(StorageError::backend)?;
+    while rows.next().await.map_err(StorageError::backend)?.is_some() {}
+    conn.execute("PRAGMA busy_timeout = 5000", ())
+        .await
+        .map_err(StorageError::backend)?;
+    Ok(())
 }
 
 #[async_trait]

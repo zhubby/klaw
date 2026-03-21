@@ -25,6 +25,7 @@
 - sub-agent execution currently opts out of live streaming and still consumes the final aggregated agent output
 - `skills_registry` is now read-only and only browses/searches local registry mirrors
 - `skills_manager` owns installed-skill lifecycle actions, including `install_from_registry`
+- `local_search` uses `rg` first and falls back to BSD-compatible `grep` when ripgrep is not installed, while still honoring `include_pattern` and the default `.git` / `node_modules` exclusions
 - multi-action tools use action-specific `oneOf` parameter schemas to keep requests explicit and avoid mixing unrelated fields in a single call
 - `tools.apply_patch.allow_absolute_paths = true` allows any absolute path outside the workspace
 - `tools.apply_patch.allowed_roots = ["/some/path"]` allows specific extra directories while keeping the default workspace boundary elsewhere

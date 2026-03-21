@@ -658,7 +658,7 @@ impl SqlxArchiveDb {
 #[async_trait]
 impl MemoryDb for SqlxSessionStore {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
-        sqlx::query(sql)
+        sqlx::raw_sql(sql)
             .execute(&self.pool)
             .await
             .map(|_| ())
@@ -701,7 +701,7 @@ impl MemoryDb for SqlxSessionStore {
 #[async_trait]
 impl MemoryDb for SqlxMemoryDb {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
-        sqlx::query(sql)
+        sqlx::raw_sql(sql)
             .execute(&self.pool)
             .await
             .map(|_| ())
@@ -744,7 +744,7 @@ impl MemoryDb for SqlxMemoryDb {
 #[async_trait]
 impl MemoryDb for SqlxArchiveDb {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
-        sqlx::query(sql)
+        sqlx::raw_sql(sql)
             .execute(&self.pool)
             .await
             .map(|_| ())

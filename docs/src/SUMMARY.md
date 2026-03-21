@@ -32,6 +32,7 @@
 - [配置](./configration/README.md)
   - [配置概述](./configration/overview.md)
   - [配置字段详解](./configration/fields.md)
+  - [环境依赖检查](./configration/environment-check.md)
 - [设计计划](./plans/README.md)
   - [Daemon Management](./plans/daemon-management.md)
   - [Memory Turso Hybrid](./plans/memory-turso-hybrid.md)
