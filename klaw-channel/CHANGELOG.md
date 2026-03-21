@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-21
+
+### Added
+
+- 新增 Telegram 后台出站发送入口，供 runtime/cron 后台分发器直接通过 Bot API 把非交互式结果推送回原聊天
+
 ## 2026-03-20
 
 ### Added

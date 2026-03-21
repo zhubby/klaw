@@ -7,6 +7,7 @@
 
 ### Fixed
 - `cron_manager` 现在支持注入共享 `session_store`，避免 runtime 内对同一个 `klaw.db` 重新打开独立连接并触发 SQLite `database is locked`
+- `cron_manager` message shortcut 现在能从 Telegram 子会话推断正确的 `chat_id` 与 `cron.base_session_key`，避免定时任务绑定到错误会话
 
 ## 2026-03-20
 

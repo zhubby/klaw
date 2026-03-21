@@ -3,12 +3,12 @@ use crate::{
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder,
-    LlmAuditStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord,
-    NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
-    SessionCompressionState, SessionIndex, SessionStorage, StorageError, StoragePaths,
-    UpdateCronJobPatch, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
-    WebhookEventSortOrder, WebhookEventStatus,
+    CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
+    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord, SessionCompressionState,
+    SessionIndex, SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
+    UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
+    WebhookEventStatus,
 };
 use async_trait::async_trait;
 use sqlx::{
@@ -309,8 +309,9 @@ impl TryFrom<LlmAuditRow> for LlmAuditRecord {
     type Error = StorageError;
 
     fn try_from(value: LlmAuditRow) -> Result<Self, Self::Error> {
-        let status = LlmAuditStatus::parse(&value.status)
-            .ok_or_else(|| StorageError::backend(format!("invalid llm audit status: {}", value.status)))?;
+        let status = LlmAuditStatus::parse(&value.status).ok_or_else(|| {
+            StorageError::backend(format!("invalid llm audit status: {}", value.status))
+        })?;
         Ok(Self {
             id: value.id,
             session_key: value.session_key,

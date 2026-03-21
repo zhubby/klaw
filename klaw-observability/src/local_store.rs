@@ -146,7 +146,10 @@ pub enum LocalMetricsStoreError {
 
 #[async_trait]
 pub trait LocalMetricsStore: Send + Sync {
-    async fn record_tool_outcome(&self, event: ToolMetricEvent) -> Result<(), LocalMetricsStoreError>;
+    async fn record_tool_outcome(
+        &self,
+        event: ToolMetricEvent,
+    ) -> Result<(), LocalMetricsStoreError>;
     async fn query_tool_summary(
         &self,
         query: &ToolStatsQuery,
@@ -270,21 +273,18 @@ impl SqliteLocalMetricsStore {
             return Ok(());
         }
 
-        let cutoff_unix_ms =
-            now_unix_ms - (self.retention_days as i64) * 24 * 60 * 60 * 1000;
+        let cutoff_unix_ms = now_unix_ms - (self.retention_days as i64) * 24 * 60 * 60 * 1000;
         let cutoff_bucket_unix_ms = floor_bucket_minute(cutoff_unix_ms);
         sqlx::query("DELETE FROM tool_metric_events WHERE occurred_at_unix_ms < ?1")
             .bind(cutoff_unix_ms)
             .execute(&self.pool)
             .await
             .map_err(LocalMetricsStoreError::Query)?;
-        sqlx::query(
-            "DELETE FROM tool_metric_minute_rollups WHERE bucket_minute_unix_ms < ?1",
-        )
-        .bind(cutoff_bucket_unix_ms)
-        .execute(&self.pool)
-        .await
-        .map_err(LocalMetricsStoreError::Query)?;
+        sqlx::query("DELETE FROM tool_metric_minute_rollups WHERE bucket_minute_unix_ms < ?1")
+            .bind(cutoff_bucket_unix_ms)
+            .execute(&self.pool)
+            .await
+            .map_err(LocalMetricsStoreError::Query)?;
         Ok(())
     }
 }
@@ -567,7 +567,8 @@ impl LocalMetricsStore for SqliteLocalMetricsStore {
         });
         top_by_failure_rate.truncate(query.limit);
         let timeseries = self.query_tool_timeseries(query).await?;
-        let breakdown_tool_name = tool_name.or_else(|| top_by_calls.first().map(|row| row.tool_name.as_str()));
+        let breakdown_tool_name =
+            tool_name.or_else(|| top_by_calls.first().map(|row| row.tool_name.as_str()));
         let error_breakdown = self
             .query_tool_error_breakdown(query, breakdown_tool_name)
             .await?;

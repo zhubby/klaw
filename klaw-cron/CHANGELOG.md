@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-21
+
+### Changed
+
+- `CronWorker` 现在也会为 `telegram` cron payload 解析 base session 并跟随持久化的 `active_session_key` 路由到当前激活会话
+
 ## 2026-03-19
 
 ### Changed

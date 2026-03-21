@@ -181,7 +181,8 @@ impl GatewayHandle {
         let Some(task) = self.task.take() else {
             return Ok(());
         };
-        task.await.map_err(|err| GatewayError::Join(err.to_string()))?
+        task.await
+            .map_err(|err| GatewayError::Join(err.to_string()))?
     }
 
     pub async fn shutdown(mut self) -> Result<(), GatewayError> {
@@ -551,8 +552,14 @@ fn normalize_webhook_request(
         .unwrap_or_default()
         .as_millis() as i64;
     let mut metadata = payload.metadata.unwrap_or_default();
-    metadata.insert("trigger.kind".to_string(), Value::String("webhook".to_string()));
-    metadata.insert("webhook.source".to_string(), Value::String(source.to_string()));
+    metadata.insert(
+        "trigger.kind".to_string(),
+        Value::String("webhook".to_string()),
+    );
+    metadata.insert(
+        "webhook.source".to_string(),
+        Value::String(source.to_string()),
+    );
     metadata.insert(
         "webhook.event_type".to_string(),
         Value::String(event_type.to_string()),
@@ -597,7 +604,10 @@ mod tests {
 
         let handle = spawn_gateway(&config).await.expect("gateway should start");
         assert!(handle.info().actual_port > 0);
-        assert!(handle.info().ws_url.contains(&handle.info().actual_port.to_string()));
+        assert!(handle
+            .info()
+            .ws_url
+            .contains(&handle.info().actual_port.to_string()));
 
         handle.shutdown().await.expect("gateway should stop");
     }

@@ -57,9 +57,9 @@ impl WebhookPanel {
             offset: self.offset_text.trim().parse::<i64>().unwrap_or(0),
             sort_order: self.sort_order,
         };
-        match run_session_task(move |manager| async move {
-            manager.list_webhook_events(&query).await
-        }) {
+        match run_session_task(
+            move |manager| async move { manager.list_webhook_events(&query).await },
+        ) {
             Ok(rows) => {
                 self.rows = rows;
                 self.loaded = true;
@@ -254,7 +254,10 @@ impl PanelRenderer for WebhookPanel {
                 .default_height(520.0)
                 .show(ui.ctx(), |ui| {
                     ui.label(format!("ID: {}", record.id));
-                    ui.label(format!("Time: {}", format_timestamp_millis(record.received_at_ms)));
+                    ui.label(format!(
+                        "Time: {}",
+                        format_timestamp_millis(record.received_at_ms)
+                    ));
                     ui.label(format!("Source: {}", record.source));
                     ui.label(format!("Event Type: {}", record.event_type));
                     ui.label(format!("Session: {}", record.session_key));
@@ -297,16 +300,18 @@ fn render_json_payload(ui: &mut egui::Ui, raw: &str) {
     egui::ScrollArea::both()
         .id_salt(("webhook-json-scroll", raw.len()))
         .auto_shrink([false, true])
-        .show(ui, |ui| match serde_json::from_str::<serde_json::Value>(raw) {
-            Ok(value) => show_json_tree(ui, &value),
-            Err(_) => {
-                let mut text = raw.to_string();
-                ui.add(
-                    egui::TextEdit::multiline(&mut text)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(18)
-                        .interactive(false),
-                );
+        .show(ui, |ui| {
+            match serde_json::from_str::<serde_json::Value>(raw) {
+                Ok(value) => show_json_tree(ui, &value),
+                Err(_) => {
+                    let mut text = raw.to_string();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut text)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(18)
+                            .interactive(false),
+                    );
+                }
             }
         });
 }

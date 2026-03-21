@@ -17,6 +17,7 @@ use crate::{
 };
 use klaw_archive::open_default_archive_service;
 use klaw_config::{TelegramConfig, TelegramProxyConfig};
+use klaw_core::OutboundMessage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -487,6 +488,37 @@ impl TelegramChannel {
             }
         }
     }
+}
+
+pub async fn dispatch_background_outbound(
+    config: &TelegramConfig,
+    output: &OutboundMessage,
+) -> ChannelResult<()> {
+    let client = TelegramApiClient::new(&config.bot_token, &config.proxy)?;
+    let response = ChannelResponse {
+        content: output.content.clone(),
+        reasoning: output
+            .metadata
+            .get("reasoning")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string)
+            .filter(|value| !value.trim().is_empty()),
+        metadata: output.metadata.clone(),
+    };
+    let request = if let Some(approval_id) = extract_approval_id(&response) {
+        SendMessageRequest::html(
+            &output.chat_id,
+            &build_approval_message(&response, &approval_id),
+        )
+        .with_reply_markup(types::TelegramInlineKeyboardMarkup::approval(&approval_id))
+    } else {
+        SendMessageRequest::html(
+            &output.chat_id,
+            &render_telegram_response(&response, config.show_reasoning),
+        )
+    };
+    let _ = client.send_message(request).await?;
+    Ok(())
 }
 
 const TELEGRAM_STREAM_UPDATE_INTERVAL: Duration = Duration::from_millis(150);

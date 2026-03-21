@@ -194,6 +194,7 @@ fn infer_base_session_key(payload: &InboundMessage) -> Option<String> {
 
     match payload.channel.as_str() {
         "dingtalk" => infer_dingtalk_base_session_key(&payload.session_key, &payload.chat_id),
+        "telegram" => infer_telegram_base_session_key(&payload.session_key, &payload.chat_id),
         _ => None,
     }
 }
@@ -213,9 +214,26 @@ fn infer_dingtalk_base_session_key(session_key: &str, chat_id: &str) -> Option<S
     Some(format!("dingtalk:{account_id}:{chat_id}"))
 }
 
+fn infer_telegram_base_session_key(session_key: &str, chat_id: &str) -> Option<String> {
+    let mut parts = session_key.split(':');
+    let channel = parts.next()?.trim();
+    if channel != "telegram" {
+        return None;
+    }
+
+    let account_id = parts.next()?.trim();
+    if account_id.is_empty() || chat_id.trim().is_empty() {
+        return None;
+    }
+
+    Some(format!("telegram:{account_id}:{chat_id}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{infer_base_session_key, infer_dingtalk_base_session_key};
+    use super::{
+        infer_base_session_key, infer_dingtalk_base_session_key, infer_telegram_base_session_key,
+    };
     use klaw_core::InboundMessage;
     use std::collections::BTreeMap;
 
@@ -224,6 +242,14 @@ mod tests {
         assert_eq!(
             infer_dingtalk_base_session_key("dingtalk:acc:chat-1:child", "chat-1"),
             Some("dingtalk:acc:chat-1".to_string())
+        );
+    }
+
+    #[test]
+    fn infers_telegram_base_session_from_child_session() {
+        assert_eq!(
+            infer_telegram_base_session_key("telegram:acc:chat-1:child", "chat-1"),
+            Some("telegram:acc:chat-1".to_string())
         );
     }
 

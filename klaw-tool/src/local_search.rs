@@ -146,7 +146,11 @@ impl LocalSearchTool {
         }
     }
 
-    fn build_rg_command(request: &LocalSearchRequest, search_path: &str, ctx: &ToolContext) -> Command {
+    fn build_rg_command(
+        request: &LocalSearchRequest,
+        search_path: &str,
+        ctx: &ToolContext,
+    ) -> Command {
         let mut command = Command::new("rg");
         command.args([
             "--files-with-matches",
@@ -266,10 +270,8 @@ impl LocalSearchTool {
         request: &LocalSearchRequest,
         search_paths: &SearchPaths,
     ) -> Result<Vec<String>, ToolError> {
-        let candidates = Self::collect_fallback_candidates(
-            search_paths,
-            request.include_pattern.as_deref(),
-        )?;
+        let candidates =
+            Self::collect_fallback_candidates(search_paths, request.include_pattern.as_deref())?;
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
@@ -412,18 +414,14 @@ impl Tool for LocalSearchTool {
         let search_paths = Self::resolve_paths(search_path, Self::workspace_root(ctx));
         let all_files = match Self::execute_rg(&request, search_path, ctx).await? {
             Ok(files) => files,
-            Err(err) if err.kind() == ErrorKind::NotFound => {
-                timeout(
-                    Duration::from_millis(timeout_ms),
-                    Self::execute_grep(&request, &search_paths),
-                )
-                .await
-                .map_err(|_| {
-                    ToolError::ExecutionFailed(format!(
-                        "local_search timed out after {timeout_ms}ms"
-                    ))
-                })??
-            }
+            Err(err) if err.kind() == ErrorKind::NotFound => timeout(
+                Duration::from_millis(timeout_ms),
+                Self::execute_grep(&request, &search_paths),
+            )
+            .await
+            .map_err(|_| {
+                ToolError::ExecutionFailed(format!("local_search timed out after {timeout_ms}ms"))
+            })??,
             Err(err) => {
                 return Err(ToolError::ExecutionFailed(format!(
                     "failed to execute local_search: {err}"

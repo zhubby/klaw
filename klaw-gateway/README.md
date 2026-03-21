@@ -15,3 +15,12 @@
 - 当前仅支持非 TLS 监听
 - 启动成功后会输出实际监听地址对应的 `http://<listen_addr>/ws/chat`
 - webhook 路由是否注册由 `gateway.webhook.enabled` 决定，Bearer token 来自 `gateway.webhook.token` 或 `gateway.webhook.env_key`
+
+## Examples
+
+- `examples/webhook_request.rs`: 使用 Rust 和 `reqwest` 向 gateway 的 webhook 端点发送一条测试事件
+
+```bash
+cargo run -p klaw-gateway --example webhook_request
+WEBHOOK_TOKEN=replace-me BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gateway --example webhook_request
+```

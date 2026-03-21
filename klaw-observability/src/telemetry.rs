@@ -2,7 +2,9 @@ use crate::audit::{AuditEvent, AuditLogger};
 use crate::config::ObservabilityConfig;
 use crate::exporter::{OtlpExporter, PrometheusExporter};
 use crate::health::{HealthRegistry, HealthStatus};
-use crate::local_store::{LocalMetricsStore, LocalMetricsStoreError, SqliteLocalMetricsStore, ToolMetricEvent};
+use crate::local_store::{
+    LocalMetricsStore, LocalMetricsStoreError, SqliteLocalMetricsStore, ToolMetricEvent,
+};
 use crate::metrics::MetricsRecorder;
 use crate::tracing_ext;
 use async_trait::async_trait;

@@ -1,5 +1,6 @@
 use super::{drain_runtime_queue, RuntimeBundle};
 use klaw_channel::dingtalk::{send_session_webhook_markdown_via_proxy, DingtalkProxyConfig};
+use klaw_channel::telegram::dispatch_background_outbound as dispatch_telegram_background_outbound;
 use klaw_config::AppConfig;
 use klaw_core::{Envelope, InboundMessage, OutboundMessage};
 use klaw_cron::{CronWorker, CronWorkerConfig};
@@ -25,6 +26,7 @@ pub struct BackgroundServiceConfig {
     pub cron_batch_limit: i64,
     pub dingtalk_titles: BTreeMap<String, String>,
     pub dingtalk_proxies: BTreeMap<String, DingtalkProxyConfig>,
+    pub telegram_configs: BTreeMap<String, klaw_config::TelegramConfig>,
 }
 
 impl BackgroundServiceConfig {
@@ -54,6 +56,12 @@ impl BackgroundServiceConfig {
                     )
                 })
                 .collect(),
+            telegram_configs: config
+                .channels
+                .telegram
+                .iter()
+                .map(|cfg| (cfg.id.clone(), cfg.clone()))
+                .collect(),
         }
     }
 }
@@ -67,6 +75,7 @@ impl Default for BackgroundServiceConfig {
             cron_batch_limit: 64,
             dingtalk_titles: BTreeMap::new(),
             dingtalk_proxies: BTreeMap::new(),
+            telegram_configs: BTreeMap::new(),
         }
     }
 }
@@ -210,9 +219,17 @@ async fn dispatch_outbound_message(
     msg: &Envelope<OutboundMessage>,
     config: &BackgroundServiceConfig,
 ) -> Result<(), String> {
-    if msg.payload.channel != "dingtalk" {
-        return Ok(());
+    match msg.payload.channel.as_str() {
+        "dingtalk" => dispatch_dingtalk_outbound_message(msg, config).await,
+        "telegram" => dispatch_telegram_outbound_message(msg, config).await,
+        _ => Ok(()),
     }
+}
+
+async fn dispatch_dingtalk_outbound_message(
+    msg: &Envelope<OutboundMessage>,
+    config: &BackgroundServiceConfig,
+) -> Result<(), String> {
     if msg
         .payload
         .metadata
@@ -242,12 +259,12 @@ async fn dispatch_outbound_message(
         .filter(|value| !value.trim().is_empty())
         .map(ToString::to_string)
         .or_else(|| {
-            infer_account_id(&msg.header.session_key)
+            infer_account_id(&msg.header.session_key, "dingtalk")
                 .and_then(|account_id| config.dingtalk_titles.get(account_id).cloned())
         })
         .unwrap_or_else(|| "Klaw".to_string());
 
-    let proxy = infer_account_id(&msg.header.session_key)
+    let proxy = infer_account_id(&msg.header.session_key, "dingtalk")
         .and_then(|account_id| config.dingtalk_proxies.get(account_id))
         .cloned()
         .unwrap_or_default();
@@ -267,10 +284,34 @@ async fn dispatch_outbound_message(
     .map_err(|err| err.to_string())
 }
 
-fn infer_account_id(session_key: &str) -> Option<&str> {
+async fn dispatch_telegram_outbound_message(
+    msg: &Envelope<OutboundMessage>,
+    config: &BackgroundServiceConfig,
+) -> Result<(), String> {
+    let Some(account_id) = infer_account_id(&msg.header.session_key, "telegram") else {
+        return Ok(());
+    };
+    let Some(telegram_config) = config.telegram_configs.get(account_id) else {
+        return Ok(());
+    };
+    timeout(
+        OUTBOUND_DISPATCH_TIMEOUT,
+        dispatch_telegram_background_outbound(telegram_config, &msg.payload),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "telegram outbound delivery timed out after {}s",
+            OUTBOUND_DISPATCH_TIMEOUT.as_secs()
+        )
+    })?
+    .map_err(|err| err.to_string())
+}
+
+fn infer_account_id<'a>(session_key: &'a str, expected_channel: &str) -> Option<&'a str> {
     let mut parts = session_key.split(':');
     let channel = parts.next()?;
-    if channel != "dingtalk" {
+    if channel != expected_channel {
         return None;
     }
     parts.next()

@@ -16,3 +16,8 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "sync"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

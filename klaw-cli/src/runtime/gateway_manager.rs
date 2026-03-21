@@ -44,8 +44,11 @@ impl GatewayManager {
         }
 
         self.transitioning = true;
-        let start_result =
-            spawn_gateway_with_options(&config.gateway, webhook::gateway_options(Arc::clone(&self.runtime))).await;
+        let start_result = spawn_gateway_with_options(
+            &config.gateway,
+            webhook::gateway_options(Arc::clone(&self.runtime)),
+        )
+        .await;
         self.transitioning = false;
 
         match start_result {
@@ -109,10 +112,7 @@ impl GatewayManager {
         self.start_from_config(&config).await
     }
 
-    pub async fn set_enabled(
-        &mut self,
-        enabled: bool,
-    ) -> Result<GatewayStatusSnapshot, String> {
+    pub async fn set_enabled(&mut self, enabled: bool) -> Result<GatewayStatusSnapshot, String> {
         if enabled {
             let config = save_gateway_enabled(true)?;
             self.start_from_config(&config).await

@@ -3,12 +3,12 @@ use crate::{
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder,
-    LlmAuditStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord,
-    NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
-    SessionCompressionState, SessionIndex, SessionStorage, StorageError, StoragePaths,
-    UpdateCronJobPatch, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
-    WebhookEventSortOrder, WebhookEventStatus,
+    CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
+    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord, SessionCompressionState,
+    SessionIndex, SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
+    UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
+    WebhookEventStatus,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -1065,7 +1065,10 @@ impl SessionStorage for TursoSessionStore {
             opt_sql_text(input.remote_addr.as_deref()),
             now
         );
-        self.conn.execute(&sql, ()).await.map_err(StorageError::backend)?;
+        self.conn
+            .execute(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
 
         let mut rows = self
             .conn
@@ -1106,7 +1109,10 @@ impl SessionStorage for TursoSessionStore {
             opt_sql_i64(update.processed_at_ms),
             escape_sql_text(event_id)
         );
-        self.conn.execute(&sql, ()).await.map_err(StorageError::backend)?;
+        self.conn
+            .execute(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
 
         let mut rows = self
             .conn
@@ -1141,7 +1147,12 @@ impl SessionStorage for TursoSessionStore {
             WebhookEventSortOrder::ReceivedAtDesc => "received_at_ms DESC, created_at_ms DESC",
         };
         let mut conditions = Vec::new();
-        if let Some(source) = query.source.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        if let Some(source) = query
+            .source
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
             conditions.push(format!("source = '{}'", escape_sql_text(source)));
         }
         if let Some(event_type) = query
@@ -1848,7 +1859,9 @@ fn row_to_llm_audit(row: &Row) -> Result<LlmAuditRecord, StorageError> {
         error_code: value_to_opt_string(row.get_value(9).map_err(StorageError::backend)?),
         error_message: value_to_opt_string(row.get_value(10).map_err(StorageError::backend)?),
         provider_request_id: value_to_opt_string(row.get_value(11).map_err(StorageError::backend)?),
-        provider_response_id: value_to_opt_string(row.get_value(12).map_err(StorageError::backend)?),
+        provider_response_id: value_to_opt_string(
+            row.get_value(12).map_err(StorageError::backend)?,
+        ),
         request_body_json: value_to_string(row.get_value(13).map_err(StorageError::backend)?)?,
         response_body_json: value_to_opt_string(row.get_value(14).map_err(StorageError::backend)?),
         requested_at_ms: value_to_i64(row.get_value(15).map_err(StorageError::backend)?)?,

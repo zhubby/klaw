@@ -12,8 +12,8 @@ pub use config::{LocalStoreConfig, ObservabilityConfig};
 pub use health::{HealthRegistry, HealthStatus};
 pub use local_store::{
     LocalMetricsStore, LocalMetricsStoreError, SqliteLocalMetricsStore, ToolDashboardSnapshot,
-    ToolErrorBreakdownRow, ToolMetricEvent, ToolSampleBucket, ToolStatsQuery,
-    ToolStatsRow, ToolSummaryRow, ToolTimeRange, ToolTimeseriesPoint,
+    ToolErrorBreakdownRow, ToolMetricEvent, ToolSampleBucket, ToolStatsQuery, ToolStatsRow,
+    ToolSummaryRow, ToolTimeRange, ToolTimeseriesPoint,
 };
 pub use metrics::MetricsRecorder;
 pub use telemetry::{init_observability, ObservabilityHandle, OtelAgentTelemetry};

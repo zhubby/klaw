@@ -16,7 +16,6 @@ use klaw_channel::{
     ChannelStreamWriter,
 };
 use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
-use klaw_gateway::GatewayWebhookRequest;
 use klaw_core::{
     compose_runtime_prompt, ensure_workspace_prompt_templates, AgentLoop, AgentRuntimeError,
     AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope,
@@ -25,6 +24,7 @@ use klaw_core::{
     QueueStrategy, RunLimits, RuntimePromptInput, SessionSchedulingPolicy, SkillPromptEntry,
     Subscription, TransportError,
 };
+use klaw_gateway::GatewayWebhookRequest;
 use klaw_heartbeat::{
     should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
 };
@@ -1825,14 +1825,9 @@ pub async fn submit_webhook_event(
     runtime: &RuntimeBundle,
     request: &GatewayWebhookRequest,
 ) -> Result<Option<AssistantOutput>, String> {
-    let route = resolve_session_route(
-        runtime,
-        "webhook",
-        &request.session_key,
-        &request.chat_id,
-    )
-    .await
-    .map_err(|err| err.to_string())?;
+    let route = resolve_session_route(runtime, "webhook", &request.session_key, &request.chat_id)
+        .await
+        .map_err(|err| err.to_string())?;
     submit_and_get_output(
         runtime,
         "webhook".to_string(),

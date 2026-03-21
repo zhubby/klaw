@@ -88,8 +88,7 @@ pub fn check_environment() -> EnvironmentCheckReport {
     } else if all_required {
         warn!(
             available = available_count,
-            total,
-            "Environment check completed: some preferred dependencies missing"
+            total, "Environment check completed: some preferred dependencies missing"
         );
     } else {
         warn!(

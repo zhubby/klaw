@@ -3,8 +3,10 @@ use async_trait::async_trait;
 use klaw_core::InMemoryTransport;
 use klaw_storage::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, CronTaskStatus, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    SessionCompressionState, SessionIndex, SessionStorage, StorageError, UpdateCronJobPatch,
+    CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary,
+    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage, StorageError,
+    UpdateCronJobPatch, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
 };
 use std::{
     path::PathBuf,
@@ -340,6 +342,144 @@ impl SessionStorage for FakeStorage {
         Ok(self.sessions.lock().expect("lock").clone())
     }
 
+    async fn append_llm_usage(
+        &self,
+        input: &NewLlmUsageRecord,
+    ) -> Result<LlmUsageRecord, StorageError> {
+        Ok(LlmUsageRecord {
+            id: input.id.clone(),
+            session_key: input.session_key.clone(),
+            chat_id: input.chat_id.clone(),
+            turn_index: input.turn_index,
+            request_seq: input.request_seq,
+            provider: input.provider.clone(),
+            model: input.model.clone(),
+            wire_api: input.wire_api.clone(),
+            input_tokens: input.input_tokens,
+            output_tokens: input.output_tokens,
+            total_tokens: input.total_tokens,
+            cached_input_tokens: input.cached_input_tokens,
+            reasoning_tokens: input.reasoning_tokens,
+            source: input.source,
+            provider_request_id: input.provider_request_id.clone(),
+            provider_response_id: input.provider_response_id.clone(),
+            created_at_ms: now_ms(),
+        })
+    }
+
+    async fn list_llm_usage(
+        &self,
+        _session_key: &str,
+        _limit: i64,
+        _offset: i64,
+    ) -> Result<Vec<LlmUsageRecord>, StorageError> {
+        Ok(Vec::new())
+    }
+
+    async fn sum_llm_usage_by_session(
+        &self,
+        _session_key: &str,
+    ) -> Result<LlmUsageSummary, StorageError> {
+        Ok(LlmUsageSummary::default())
+    }
+
+    async fn sum_llm_usage_by_turn(
+        &self,
+        _session_key: &str,
+        _turn_index: i64,
+    ) -> Result<LlmUsageSummary, StorageError> {
+        Ok(LlmUsageSummary::default())
+    }
+
+    async fn append_llm_audit(
+        &self,
+        input: &NewLlmAuditRecord,
+    ) -> Result<LlmAuditRecord, StorageError> {
+        Ok(LlmAuditRecord {
+            id: input.id.clone(),
+            session_key: input.session_key.clone(),
+            chat_id: input.chat_id.clone(),
+            turn_index: input.turn_index,
+            request_seq: input.request_seq,
+            provider: input.provider.clone(),
+            model: input.model.clone(),
+            wire_api: input.wire_api.clone(),
+            status: input.status,
+            error_code: input.error_code.clone(),
+            error_message: input.error_message.clone(),
+            provider_request_id: input.provider_request_id.clone(),
+            provider_response_id: input.provider_response_id.clone(),
+            request_body_json: input.request_body_json.clone(),
+            response_body_json: input.response_body_json.clone(),
+            requested_at_ms: input.requested_at_ms,
+            responded_at_ms: input.responded_at_ms,
+            created_at_ms: now_ms(),
+        })
+    }
+
+    async fn list_llm_audit(
+        &self,
+        _query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditRecord>, StorageError> {
+        Ok(Vec::new())
+    }
+
+    async fn append_webhook_event(
+        &self,
+        input: &NewWebhookEventRecord,
+    ) -> Result<WebhookEventRecord, StorageError> {
+        Ok(WebhookEventRecord {
+            id: input.id.clone(),
+            source: input.source.clone(),
+            event_type: input.event_type.clone(),
+            session_key: input.session_key.clone(),
+            chat_id: input.chat_id.clone(),
+            sender_id: input.sender_id.clone(),
+            content: input.content.clone(),
+            payload_json: input.payload_json.clone(),
+            metadata_json: input.metadata_json.clone(),
+            status: input.status,
+            error_message: input.error_message.clone(),
+            response_summary: input.response_summary.clone(),
+            received_at_ms: input.received_at_ms,
+            processed_at_ms: input.processed_at_ms,
+            remote_addr: input.remote_addr.clone(),
+            created_at_ms: now_ms(),
+        })
+    }
+
+    async fn update_webhook_event_status(
+        &self,
+        event_id: &str,
+        update: &UpdateWebhookEventResult,
+    ) -> Result<WebhookEventRecord, StorageError> {
+        Ok(WebhookEventRecord {
+            id: event_id.to_string(),
+            source: String::new(),
+            event_type: String::new(),
+            session_key: String::new(),
+            chat_id: String::new(),
+            sender_id: String::new(),
+            content: String::new(),
+            payload_json: None,
+            metadata_json: None,
+            status: update.status,
+            error_message: update.error_message.clone(),
+            response_summary: update.response_summary.clone(),
+            received_at_ms: now_ms(),
+            processed_at_ms: update.processed_at_ms,
+            remote_addr: None,
+            created_at_ms: now_ms(),
+        })
+    }
+
+    async fn list_webhook_events(
+        &self,
+        _query: &WebhookEventQuery,
+    ) -> Result<Vec<WebhookEventRecord>, StorageError> {
+        Ok(Vec::new())
+    }
+
     async fn create_approval(
         &self,
         _input: &NewApprovalRecord,
@@ -497,6 +637,63 @@ async fn run_tick_resolves_dingtalk_active_session_from_metadata() {
             .get("cron.resolved_session_key")
             .and_then(|value| value.as_str()),
         Some("dingtalk:acc:chat1:child")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_tick_resolves_telegram_active_session_from_metadata() {
+    let storage = Arc::new(FakeStorage::default());
+    let transport = Arc::new(InMemoryTransport::new());
+    let now = now_ms();
+    storage
+        .set_active_session(
+            "telegram:acc:chat1",
+            "chat1",
+            "telegram",
+            "telegram:acc:chat1:child",
+        )
+        .await
+        .expect("session route should exist");
+    storage
+        .create_cron(&NewCronJob {
+            id: "job-telegram".to_string(),
+            name: "job".to_string(),
+            schedule_kind: CronScheduleKind::Every,
+            schedule_expr: "5s".to_string(),
+            payload_json: "{\"channel\":\"telegram\",\"sender_id\":\"system\",\"chat_id\":\"chat1\",\"session_key\":\"cron:job-telegram\",\"content\":\"hello\",\"metadata\":{\"cron.base_session_key\":\"telegram:acc:chat1\"}}".to_string(),
+            enabled: true,
+            timezone: "UTC".to_string(),
+            next_run_at_ms: now.saturating_sub(1_000),
+        })
+        .await
+        .expect("create job");
+
+    let worker = CronWorker::new(
+        storage.clone(),
+        transport.clone(),
+        CronWorkerConfig::default(),
+    );
+    worker.run_tick().await.expect("tick");
+
+    let messages = transport.published_messages().await;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].header.session_key, "telegram:acc:chat1:child");
+    assert_eq!(messages[0].payload.session_key, "telegram:acc:chat1:child");
+    assert_eq!(
+        messages[0]
+            .payload
+            .metadata
+            .get("cron.original_session_key")
+            .and_then(|value| value.as_str()),
+        Some("cron:job-telegram")
+    );
+    assert_eq!(
+        messages[0]
+            .payload
+            .metadata
+            .get("cron.resolved_session_key")
+            .and_then(|value| value.as_str()),
+        Some("telegram:acc:chat1:child")
     );
 }
 

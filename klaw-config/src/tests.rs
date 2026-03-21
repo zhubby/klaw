@@ -1570,7 +1570,11 @@ env_key = "OPENAI_API_KEY"
     assert_eq!(saved.config.observability.prometheus.listen_port, 9100);
     assert_eq!(saved.config.observability.local_store.retention_days, 14);
     assert_eq!(
-        saved.config.observability.local_store.flush_interval_seconds,
+        saved
+            .config
+            .observability
+            .local_store
+            .flush_interval_seconds,
         9
     );
     assert!(saved.revision >= 2);

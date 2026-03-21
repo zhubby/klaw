@@ -131,19 +131,16 @@ impl OpenAiCompatibleProvider {
             )));
         }
 
-        let payload_value = response
-            .json::<Value>()
-            .await
-            .map_err(|e| {
-                LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
-                    request_json.clone(),
-                    requested_at_ms,
-                    Some(now_ms()),
-                    request_model.clone(),
-                    "invalid_response",
-                    e.to_string(),
-                ))
-            })?;
+        let payload_value = response.json::<Value>().await.map_err(|e| {
+            LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
+                request_json.clone(),
+                requested_at_ms,
+                Some(now_ms()),
+                request_model.clone(),
+                "invalid_response",
+                e.to_string(),
+            ))
+        })?;
         let typed = serde_json::from_value(payload_value.clone()).map_err(|e| {
             LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
                 request_json,
@@ -320,7 +317,7 @@ impl OpenAiCompatibleProvider {
                             .collect()
                     }),
                     tool_call_id: m.tool_call_id,
-            })
+                })
                 .collect(),
             tools: map_chat_completion_tools(tools),
         };
@@ -390,24 +387,26 @@ impl OpenAiCompatibleProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
-        response.audit = Some(self.build_audit(
-            model.unwrap_or(&self.config.default_model),
-            LlmAuditStatus::Success,
-            request_json,
-            Some(payload_json),
-            requested_at_ms,
-            Some(now_ms()),
-            None,
-            None,
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_request_id.clone()),
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_response_id.clone()),
-        ));
+        response.audit = Some(
+            self.build_audit(
+                model.unwrap_or(&self.config.default_model),
+                LlmAuditStatus::Success,
+                request_json,
+                Some(payload_json),
+                requested_at_ms,
+                Some(now_ms()),
+                None,
+                None,
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_request_id.clone()),
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_response_id.clone()),
+            ),
+        );
         Ok(response)
     }
 
@@ -475,26 +474,28 @@ impl OpenAiCompatibleProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
-        let response_json =
-            serde_json::to_value(&response).map_err(|err| LlmError::invalid_response(err.to_string()))?;
-        response.audit = Some(self.build_audit(
-            model.unwrap_or(&self.config.default_model),
-            LlmAuditStatus::Success,
-            request_json,
-            Some(response_json),
-            requested_at_ms,
-            Some(now_ms()),
-            None,
-            None,
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_request_id.clone()),
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_response_id.clone()),
-        ));
+        let response_json = serde_json::to_value(&response)
+            .map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        response.audit = Some(
+            self.build_audit(
+                model.unwrap_or(&self.config.default_model),
+                LlmAuditStatus::Success,
+                request_json,
+                Some(response_json),
+                requested_at_ms,
+                Some(now_ms()),
+                None,
+                None,
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_request_id.clone()),
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_response_id.clone()),
+            ),
+        );
         Ok(response)
     }
 
@@ -548,24 +549,26 @@ impl OpenAiCompatibleProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
-        response.audit = Some(self.build_audit(
-            model.unwrap_or(&self.config.default_model),
-            LlmAuditStatus::Success,
-            request_json,
-            Some(payload_json),
-            requested_at_ms,
-            Some(now_ms()),
-            None,
-            None,
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_request_id.clone()),
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_response_id.clone()),
-        ));
+        response.audit = Some(
+            self.build_audit(
+                model.unwrap_or(&self.config.default_model),
+                LlmAuditStatus::Success,
+                request_json,
+                Some(payload_json),
+                requested_at_ms,
+                Some(now_ms()),
+                None,
+                None,
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_request_id.clone()),
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_response_id.clone()),
+            ),
+        );
         Ok(response)
     }
 
@@ -625,26 +628,28 @@ impl OpenAiCompatibleProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
-        let response_json =
-            serde_json::to_value(&response).map_err(|err| LlmError::invalid_response(err.to_string()))?;
-        response.audit = Some(self.build_audit(
-            model.unwrap_or(&self.config.default_model),
-            LlmAuditStatus::Success,
-            request_json,
-            Some(response_json),
-            requested_at_ms,
-            Some(now_ms()),
-            None,
-            None,
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_request_id.clone()),
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_response_id.clone()),
-        ));
+        let response_json = serde_json::to_value(&response)
+            .map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        response.audit = Some(
+            self.build_audit(
+                model.unwrap_or(&self.config.default_model),
+                LlmAuditStatus::Success,
+                request_json,
+                Some(response_json),
+                requested_at_ms,
+                Some(now_ms()),
+                None,
+                None,
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_request_id.clone()),
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_response_id.clone()),
+            ),
+        );
         Ok(response)
     }
 }

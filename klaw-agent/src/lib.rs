@@ -370,7 +370,10 @@ pub async fn run_agent_execution(
             }
         }
         if let Some(audit) = llm_response.audit.clone() {
-            request_audits.push(AgentRequestAudit { request_seq, payload: audit });
+            request_audits.push(AgentRequestAudit {
+                request_seq,
+                payload: audit,
+            });
         }
 
         if llm_response.tool_calls.is_empty() {

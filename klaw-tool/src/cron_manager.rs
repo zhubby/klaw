@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use klaw_storage::{
-    open_default_store, CronJob, CronScheduleKind, CronStorage, CronTaskRun,
-    DefaultSessionStore, NewCronJob, StorageError, UpdateCronJobPatch,
+    open_default_store, CronJob, CronScheduleKind, CronStorage, CronTaskRun, DefaultSessionStore,
+    NewCronJob, StorageError, UpdateCronJobPatch,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -706,25 +706,54 @@ fn build_payload_from_shortcut(
 }
 
 fn infer_channel_and_chat_id(session_key: &str) -> Option<(String, String)> {
-    let (channel, rest) = session_key.split_once(':')?;
+    let (channel, _) = session_key.split_once(':')?;
     let channel = channel.trim();
-    let chat_id = rest
-        .rsplit_once(':')
-        .map(|(_, value)| value)
-        .unwrap_or(rest)
-        .trim();
-    if channel.is_empty() || chat_id.is_empty() {
+    if channel.is_empty() {
         return None;
     }
-    Some((channel.to_string(), chat_id.to_string()))
+
+    match channel {
+        "dingtalk" | "telegram" => {
+            let mut parts = session_key.split(':');
+            let prefix = parts.next()?.trim();
+            if prefix != channel {
+                return None;
+            }
+
+            let second = parts.next()?.trim();
+            if second.is_empty() {
+                return None;
+            }
+
+            let chat_id = match parts.next().map(str::trim) {
+                Some(value) if !value.is_empty() => value,
+                Some(_) => return None,
+                None => second,
+            };
+
+            Some((channel.to_string(), chat_id.to_string()))
+        }
+        _ => {
+            let (_, rest) = session_key.split_once(':')?;
+            let chat_id = rest
+                .rsplit_once(':')
+                .map(|(_, value)| value)
+                .unwrap_or(rest)
+                .trim();
+            if chat_id.is_empty() {
+                return None;
+            }
+            Some((channel.to_string(), chat_id.to_string()))
+        }
+    }
 }
 
 fn infer_base_session_key_for_cron_shortcut(session_key: &str, channel: &str) -> Option<String> {
     match channel {
-        "dingtalk" => {
+        "dingtalk" | "telegram" => {
             let mut parts = session_key.split(':');
             let prefix = parts.next()?.trim();
-            if prefix != "dingtalk" {
+            if prefix != channel {
                 return None;
             }
 
@@ -734,7 +763,7 @@ fn infer_base_session_key_for_cron_shortcut(session_key: &str, channel: &str) ->
                 return None;
             }
 
-            Some(format!("dingtalk:{account_id}:{chat_id}"))
+            Some(format!("{channel}:{account_id}:{chat_id}"))
         }
         _ => None,
     }
@@ -1377,6 +1406,50 @@ mod tests {
         assert_eq!(
             payload.get("session_key").and_then(Value::as_str),
             Some("cron:job-dingtalk-shortcut")
+        );
+    }
+
+    #[tokio::test]
+    async fn create_message_shortcut_records_telegram_base_session() {
+        let storage = Arc::new(MockCronStorage::default());
+        let tool = CronManagerTool::from_storage(storage.clone());
+
+        tool.execute(
+            json!({
+                "action": "create",
+                "id": "job-telegram-shortcut",
+                "name": "telegram shortcut",
+                "schedule_expr": "24h",
+                "message": "请汇报状态"
+            }),
+            &ToolContext {
+                session_key: "telegram:bot-1:chat-99:child-1".to_string(),
+                metadata: BTreeMap::new(),
+            },
+        )
+        .await
+        .expect("create should succeed");
+
+        let job = storage
+            .get_cron("job-telegram-shortcut")
+            .await
+            .expect("job should exist");
+        let payload: Value = serde_json::from_str(&job.payload_json).expect("payload json");
+        let meta = payload
+            .get("metadata")
+            .and_then(Value::as_object)
+            .expect("metadata object");
+        assert_eq!(
+            meta.get("cron.base_session_key").and_then(Value::as_str),
+            Some("telegram:bot-1:chat-99")
+        );
+        assert_eq!(
+            payload.get("chat_id").and_then(Value::as_str),
+            Some("chat-99")
+        );
+        assert_eq!(
+            payload.get("session_key").and_then(Value::as_str),
+            Some("cron:job-telegram-shortcut")
         );
     }
 }

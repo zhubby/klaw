@@ -164,21 +164,18 @@ impl LlmProvider for AnthropicProvider {
             )));
         }
 
-        let payload_json = response
-            .json::<Value>()
-            .await
+        let payload_json = response.json::<Value>().await.map_err(|e| {
+            LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
+                request_json.clone(),
+                requested_at_ms,
+                Some(now_ms()),
+                request.model.clone(),
+                "invalid_response",
+                e.to_string(),
+            ))
+        })?;
+        let payload: AnthropicMessagesResponse = serde_json::from_value(payload_json.clone())
             .map_err(|e| {
-                LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
-                    request_json.clone(),
-                    requested_at_ms,
-                    Some(now_ms()),
-                    request.model.clone(),
-                    "invalid_response",
-                    e.to_string(),
-                ))
-            })?;
-        let payload: AnthropicMessagesResponse =
-            serde_json::from_value(payload_json.clone()).map_err(|e| {
                 LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
                     request_json.clone(),
                     requested_at_ms,
@@ -244,22 +241,24 @@ impl LlmProvider for AnthropicProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
-        response.audit = Some(self.build_audit(
-            request.model.clone(),
-            LlmAuditStatus::Success,
-            request_json,
-            Some(payload_json),
-            requested_at_ms,
-            Some(now_ms()),
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_request_id.clone()),
-            response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.provider_response_id.clone()),
-        ));
+        response.audit = Some(
+            self.build_audit(
+                request.model.clone(),
+                LlmAuditStatus::Success,
+                request_json,
+                Some(payload_json),
+                requested_at_ms,
+                Some(now_ms()),
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_request_id.clone()),
+                response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.provider_response_id.clone()),
+            ),
+        );
         Ok(response)
     }
 }
