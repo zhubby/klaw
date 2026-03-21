@@ -209,6 +209,7 @@ impl SystemPanel {
         };
 
         let all_required_ok = report.all_required_available();
+        let preferred_ok = report.all_preferred_available();
         let tm_ok = report.terminal_multiplexer_available();
         let success_color = egui::Color32::from_rgb(0x22, 0xC5, 0x5E);
         let warn_color = ui.visuals().warn_fg_color;
@@ -225,6 +226,8 @@ impl SystemPanel {
                     success_color
                 } else if check.required {
                     error_color
+                } else if matches!(check.category, DependencyCategory::Preferred) {
+                    warn_color
                 } else {
                     warn_color
                 };
@@ -240,6 +243,7 @@ impl SystemPanel {
 
                 let label = match check.category {
                     DependencyCategory::Required => "Required",
+                    DependencyCategory::Preferred => "Preferred",
                     DependencyCategory::OptionalWithFallback => "Optional",
                 };
                 ui.label(
@@ -250,15 +254,28 @@ impl SystemPanel {
             });
 
             ui.label(RichText::new(&check.description).small().weak().italics());
+            if let Some(project_url) = &check.project_url {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Project:").small().weak());
+                    ui.hyperlink_to(
+                        RichText::new(project_url).small(),
+                        project_url,
+                    );
+                });
+            }
             ui.add_space(4.0);
         }
 
-        if all_required_ok && tm_ok {
+        if all_required_ok && preferred_ok && tm_ok {
             ui.label(RichText::new("All dependencies available").color(success_color));
-        } else if all_required_ok {
+        } else if all_required_ok && preferred_ok {
             ui.label(
                 RichText::new("Note: Terminal multiplexer (zellij/tmux) not available")
                     .color(warn_color),
+            );
+        } else if all_required_ok {
+            ui.label(
+                RichText::new("Note: Some preferred dependencies are missing").color(warn_color),
             );
         } else {
             ui.label(

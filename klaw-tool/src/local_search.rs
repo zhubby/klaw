@@ -3,7 +3,6 @@ use globset::{Glob, GlobMatcher};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use std::ffi::OsString;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;

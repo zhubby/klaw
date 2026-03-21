@@ -111,6 +111,7 @@ pub struct EnvironmentCheckReport {
 pub struct DependencyStatus {
     pub name: String,
     pub description: String,
+    pub project_url: Option<String>,
     pub available: bool,
     pub version: Option<String>,
     pub required: bool,
@@ -120,6 +121,7 @@ pub struct DependencyStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DependencyCategory {
     Required,
+    Preferred,
     OptionalWithFallback,
 }
 
@@ -136,6 +138,13 @@ impl EnvironmentCheckReport {
             .iter()
             .filter(|c| c.name == "zellij" || c.name == "tmux")
             .any(|c| c.available)
+    }
+
+    pub fn all_preferred_available(&self) -> bool {
+        self.checks
+            .iter()
+            .filter(|c| matches!(c.category, DependencyCategory::Preferred))
+            .all(|c| c.available)
     }
 }
 

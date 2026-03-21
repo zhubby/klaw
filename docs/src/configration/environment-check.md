@@ -7,7 +7,7 @@ Klaw 在启动时会自动检查外部二进制依赖的可用性，并在日志
 | 依赖 | 描述 | 必需性 | 用途 |
 |------|------|--------|------|
 | `git` | Skills registry 同步 | 必需 | 用于从远程仓库同步 Skills |
-| `rg` (ripgrep) | 本地文件内容搜索 | 必需 | `local_search` 工具的后端 |
+| `rg` (ripgrep) | 本地文件内容搜索（首选后端） | 必需 | `local_search` 的首选后端；缺失时会降级到 `grep` fallback |
 | `zellij` | 终端复用器 (首选) | 可选 | `terminal_multiplexer` 工具的首选后端 |
 | `tmux` | 终端复用器 (备选) | 可选 | `terminal_multiplexer` 工具的备选后端 |
 
@@ -188,6 +188,8 @@ git --version
 ```
 WARN klaw::env_check: rg: NOT FOUND (required)
 ```
+
+`local_search` 仍可使用系统 `grep` 继续工作，但会失去 `rg` 的首选执行路径，环境检查也会继续提示缺少首选依赖。
 
 **解决**: 安装 ripgrep:
 ```bash

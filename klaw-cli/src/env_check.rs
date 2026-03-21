@@ -5,6 +5,7 @@ use tracing::{info, warn};
 struct BinaryDependency {
     name: &'static str,
     description: &'static str,
+    project_url: Option<&'static str>,
     version_args: &'static [&'static str],
     required: bool,
     category: DependencyCategory,
@@ -15,6 +16,7 @@ const DEPENDENCIES: &[BinaryDependency] = &[
     BinaryDependency {
         name: "git",
         description: "Skills registry synchronization",
+        project_url: None,
         version_args: &["--version"],
         required: true,
         category: DependencyCategory::Required,
@@ -23,14 +25,16 @@ const DEPENDENCIES: &[BinaryDependency] = &[
     BinaryDependency {
         name: "rg",
         description: "Local file content search (ripgrep)",
+        project_url: Some("https://github.com/BurntSushi/ripgrep"),
         version_args: &["--version"],
-        required: true,
-        category: DependencyCategory::Required,
+        required: false,
+        category: DependencyCategory::Preferred,
         version_parser: parse_rg_version,
     },
     BinaryDependency {
         name: "zellij",
         description: "Terminal multiplexer (preferred)",
+        project_url: Some("https://github.com/zellij-org/zellij"),
         version_args: &["--version"],
         required: false,
         category: DependencyCategory::OptionalWithFallback,
@@ -39,6 +43,7 @@ const DEPENDENCIES: &[BinaryDependency] = &[
     BinaryDependency {
         name: "tmux",
         description: "Terminal multiplexer (fallback)",
+        project_url: Some("https://github.com/tmux/tmux"),
         version_args: &["-V"],
         required: false,
         category: DependencyCategory::OptionalWithFallback,
@@ -61,20 +66,30 @@ pub fn check_environment() -> EnvironmentCheckReport {
     let available_count = checks.iter().filter(|c| c.available).count();
     let total = checks.len();
     let all_required = checks.iter().filter(|c| c.required).all(|c| c.available);
+    let all_preferred = checks
+        .iter()
+        .filter(|c| matches!(c.category, DependencyCategory::Preferred))
+        .all(|c| c.available);
     let tm_available = checks
         .iter()
         .filter(|c| c.name == "zellij" || c.name == "tmux")
         .any(|c| c.available);
 
-    if all_required && tm_available {
+    if all_required && all_preferred && tm_available {
         info!(
             available = available_count,
             total, "Environment check completed: all dependencies available"
         );
-    } else if all_required {
+    } else if all_required && all_preferred {
         warn!(
             available = available_count,
             total, "Environment check completed: terminal multiplexer not available"
+        );
+    } else if all_required {
+        warn!(
+            available = available_count,
+            total,
+            "Environment check completed: some preferred dependencies missing"
         );
     } else {
         warn!(
@@ -102,6 +117,7 @@ fn check_dependency(dep: &BinaryDependency) -> DependencyStatus {
             DependencyStatus {
                 name: dep.name.to_string(),
                 description: dep.description.to_string(),
+                project_url: dep.project_url.map(ToString::to_string),
                 available: true,
                 version,
                 required: dep.required,
@@ -111,6 +127,7 @@ fn check_dependency(dep: &BinaryDependency) -> DependencyStatus {
         Ok(_) => DependencyStatus {
             name: dep.name.to_string(),
             description: dep.description.to_string(),
+            project_url: dep.project_url.map(ToString::to_string),
             available: false,
             version: None,
             required: dep.required,
@@ -119,6 +136,7 @@ fn check_dependency(dep: &BinaryDependency) -> DependencyStatus {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => DependencyStatus {
             name: dep.name.to_string(),
             description: dep.description.to_string(),
+            project_url: dep.project_url.map(ToString::to_string),
             available: false,
             version: None,
             required: dep.required,
@@ -133,6 +151,7 @@ fn check_dependency(dep: &BinaryDependency) -> DependencyStatus {
             DependencyStatus {
                 name: dep.name.to_string(),
                 description: dep.description.to_string(),
+                project_url: dep.project_url.map(ToString::to_string),
                 available: false,
                 version: None,
                 required: dep.required,
@@ -163,6 +182,14 @@ fn log_dependency_status(status: &DependencyStatus) {
             available = false,
             required = true,
             "{}: NOT FOUND (required)",
+            status.name
+        );
+    } else if matches!(status.category, DependencyCategory::Preferred) {
+        warn!(
+            dependency = status.name.as_str(),
+            available = false,
+            required = false,
+            "{}: not found (preferred)",
             status.name
         );
     } else {
@@ -234,5 +261,20 @@ mod tests {
     fn parse_tmux_version_extracts_version() {
         let output = "tmux 3.4\n";
         assert_eq!(parse_tmux_version(output), Some("3.4".to_string()));
+    }
+
+    #[test]
+    fn rg_is_preferred_not_required() {
+        let rg = DEPENDENCIES
+            .iter()
+            .find(|dep| dep.name == "rg")
+            .expect("rg dependency should exist");
+
+        assert!(!rg.required);
+        assert!(matches!(rg.category, DependencyCategory::Preferred));
+        assert_eq!(
+            rg.project_url,
+            Some("https://github.com/BurntSushi/ripgrep")
+        );
     }
 }
