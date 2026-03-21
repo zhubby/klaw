@@ -1,14 +1,17 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::runtime_bridge::request_gateway_status;
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::show_json_tree;
 use chrono::{Datelike, Local, NaiveDate};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
+use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, GatewayWebhookConfig};
 use klaw_session::{
     SessionError, SessionManager, SqliteSessionManager, WebhookEventQuery, WebhookEventRecord,
     WebhookEventSortOrder, WebhookEventStatus,
 };
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::thread;
 use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
@@ -16,8 +19,55 @@ use tokio::runtime::Builder;
 const FILTER_INPUT_WIDTH: f32 = 220.0;
 const PAGING_INPUT_WIDTH: f32 = 110.0;
 
+#[derive(Debug, Clone, Default)]
+struct WebhookConfigForm {
+    enabled: bool,
+    path: String,
+    token: String,
+    env_key: String,
+    max_body_bytes: String,
+}
+
+impl WebhookConfigForm {
+    fn from_config(config: &GatewayWebhookConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            path: config.path.clone(),
+            token: config.token.clone().unwrap_or_default(),
+            env_key: config.env_key.clone().unwrap_or_default(),
+            max_body_bytes: config.max_body_bytes.to_string(),
+        }
+    }
+
+    fn apply_to_config(&self, config: &mut AppConfig) -> Result<(), String> {
+        let path = self.path.trim();
+        if path.is_empty() {
+            return Err("webhook path cannot be empty".to_string());
+        }
+
+        let max_body_bytes = self
+            .max_body_bytes
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| "max_body_bytes must be a valid integer".to_string())?;
+
+        config.gateway.webhook.enabled = self.enabled;
+        config.gateway.webhook.path = path.to_string();
+        config.gateway.webhook.token = optional_trimmed(&self.token);
+        config.gateway.webhook.env_key = optional_trimmed(&self.env_key);
+        config.gateway.webhook.max_body_bytes = max_body_bytes;
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 pub struct WebhookPanel {
+    store: Option<ConfigStore>,
+    config_path: Option<PathBuf>,
+    revision: Option<u64>,
+    config: AppConfig,
+    config_form: WebhookConfigForm,
+    config_window_open: bool,
     loaded: bool,
     rows: Vec<WebhookEventRecord>,
     source_filter: String,
@@ -35,6 +85,7 @@ pub struct WebhookPanel {
 
 impl WebhookPanel {
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
+        self.ensure_store_loaded(notifications);
         if self.loaded {
             return;
         }
@@ -43,6 +94,27 @@ impl WebhookPanel {
         }
         self.sort_order = WebhookEventSortOrder::ReceivedAtDesc;
         self.refresh(notifications);
+    }
+
+    fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
+        if self.store.is_some() {
+            return;
+        }
+        match ConfigStore::open(None) {
+            Ok(store) => {
+                let snapshot = store.snapshot();
+                self.store = Some(store);
+                self.apply_snapshot(snapshot);
+            }
+            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+        }
+    }
+
+    fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
+        self.config_path = Some(snapshot.path);
+        self.revision = Some(snapshot.revision);
+        self.config = snapshot.config;
+        self.config_form = WebhookConfigForm::from_config(&self.config.gateway.webhook);
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
@@ -81,6 +153,54 @@ impl WebhookPanel {
             WebhookEventSortOrder::ReceivedAtDesc => "Time ↓",
         }
     }
+
+    fn save_webhook_config(&mut self, notifications: &mut NotificationCenter) {
+        let Some(store) = self.store.as_ref() else {
+            notifications.error("Configuration store is not available");
+            return;
+        };
+
+        let mut next = self.config.clone();
+        if let Err(err) = self.config_form.apply_to_config(&mut next) {
+            notifications.error(err);
+            return;
+        }
+
+        match toml::to_string_pretty(&next) {
+            Ok(raw) => match store.save_raw_toml(&raw) {
+                Ok(snapshot) => {
+                    self.apply_snapshot(snapshot);
+                    self.config_window_open = false;
+                    let running = request_gateway_status()
+                        .map(|status| status.running)
+                        .unwrap_or(false);
+                    if running {
+                        notifications.success(
+                            "Webhook config saved. Restart gateway to apply runtime changes.",
+                        );
+                    } else {
+                        notifications.success("Webhook config saved");
+                    }
+                }
+                Err(err) => notifications.error(format!("Save failed: {err}")),
+            },
+            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+        }
+    }
+
+    fn reload_config(&mut self, notifications: &mut NotificationCenter) {
+        let Some(store) = self.store.as_ref() else {
+            notifications.error("Configuration store is not available");
+            return;
+        };
+        match store.reload() {
+            Ok(snapshot) => {
+                self.apply_snapshot(snapshot);
+                notifications.success("Webhook config reloaded from disk");
+            }
+            Err(err) => notifications.error(format!("Reload failed: {err}")),
+        }
+    }
 }
 
 impl PanelRenderer for WebhookPanel {
@@ -97,9 +217,15 @@ impl PanelRenderer for WebhookPanel {
             if ui.button("Refresh").clicked() {
                 self.refresh(notifications);
             }
+            if ui.button("Config").clicked() {
+                self.config_form = WebhookConfigForm::from_config(&self.config.gateway.webhook);
+                self.config_window_open = true;
+            }
             ui.label(format!("Rows: {}", self.rows.len()));
         });
 
+        ui.separator();
+        render_webhook_config_summary(ui, &self.config, self.config_path.as_deref());
         ui.separator();
         egui::Grid::new("webhook-filter-grid")
             .num_columns(4)
@@ -293,7 +419,112 @@ impl PanelRenderer for WebhookPanel {
                 self.detail_record = None;
             }
         }
+
+        if self.config_window_open {
+            let mut open = self.config_window_open;
+            egui::Window::new("Webhook Config")
+                .id(egui::Id::new("webhook-config-window"))
+                .open(&mut open)
+                .resizable(true)
+                .default_width(520.0)
+                .show(ui.ctx(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Enabled");
+                        ui.checkbox(&mut self.config_form.enabled, "");
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Path");
+                        ui.add_sized(
+                            [320.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.path),
+                        );
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Token");
+                        ui.add_sized(
+                            [320.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.token).password(true),
+                        );
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Env Key");
+                        ui.add_sized(
+                            [320.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.env_key),
+                        );
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Max Body Bytes");
+                        ui.add_sized(
+                            [160.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.max_body_bytes),
+                        );
+                    });
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Reload").clicked() {
+                            self.reload_config(notifications);
+                        }
+                        if ui.button("Save").clicked() {
+                            self.save_webhook_config(notifications);
+                        }
+                    });
+                });
+            self.config_window_open = open;
+        }
     }
+}
+
+fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig, path: Option<&Path>) {
+    let webhook = &config.gateway.webhook;
+    let runtime_url = request_gateway_status()
+        .ok()
+        .and_then(|status| status.info.map(|info| gateway_base_url(&info.ws_url)))
+        .map(|base| format!("{base}{}", webhook.path));
+
+    egui::Grid::new("webhook-config-summary-grid")
+        .num_columns(2)
+        .spacing([16.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("Webhook Enabled");
+            ui.label(if webhook.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            });
+            ui.end_row();
+
+            ui.label("Webhook Path");
+            ui.label(&webhook.path);
+            ui.end_row();
+
+            ui.label("Runtime URL");
+            if let Some(url) = runtime_url {
+                ui.hyperlink(url);
+            } else {
+                ui.label("Gateway not running");
+            }
+            ui.end_row();
+
+            ui.label("Auth Source");
+            ui.label(webhook_auth_label(webhook));
+            ui.end_row();
+
+            ui.label("Max Body Bytes");
+            ui.label(webhook.max_body_bytes.to_string());
+            ui.end_row();
+
+            if let Some(path) = path {
+                ui.label("Config Path");
+                ui.label(path.display().to_string());
+                ui.end_row();
+            }
+        });
 }
 
 fn render_json_payload(ui: &mut egui::Ui, raw: &str) {
@@ -319,6 +550,28 @@ fn render_json_payload(ui: &mut egui::Ui, raw: &str) {
 fn normalize_filter(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn optional_trimmed(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn webhook_auth_label(config: &GatewayWebhookConfig) -> &'static str {
+    if config.token.is_some() {
+        "token"
+    } else if config.env_key.is_some() {
+        "env_key"
+    } else {
+        "none"
+    }
+}
+
+fn gateway_base_url(ws_url: &str) -> String {
+    ws_url
+        .strip_suffix("/ws/chat")
+        .unwrap_or(ws_url)
+        .to_string()
 }
 
 fn parse_status_filter(raw: &str) -> Option<WebhookEventStatus> {

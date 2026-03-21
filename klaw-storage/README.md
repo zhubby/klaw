@@ -24,6 +24,7 @@
 ## Notes
 
 - `DefaultSessionStore` persists session and cron data
+- the default Turso-backed session store serializes access through one shared connection to avoid driver-level concurrent-use failures
 - `tmp/` is the dedicated temporary data directory under the Klaw data root
 - session records support Base Session -> Active Session routing and per-session provider/model persistence
 - `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`

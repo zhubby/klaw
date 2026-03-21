@@ -12,13 +12,15 @@ use crate::{
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use turso::{value::Value, Builder, Connection, Database, Row};
 
 #[derive(Debug, Clone)]
 pub struct TursoSessionStore {
     paths: StoragePaths,
     _db: Database,
-    conn: Connection,
+    conn: Arc<Mutex<Connection>>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,20 +43,25 @@ impl TursoSessionStore {
             .await
             .map_err(StorageError::backend)?;
         let conn = db.connect().map_err(StorageError::backend)?;
+        apply_sqlite_journal_mode(&conn).await?;
+        apply_sqlite_connection_pragmas(&conn).await?;
         let store = Self {
             paths,
             _db: db,
-            conn,
+            conn: Arc::new(Mutex::new(conn)),
         };
-        apply_sqlite_connection_pragmas(&store.conn).await?;
         store.init().await?;
         Ok(store)
     }
 
+    async fn connection(&self) -> Result<tokio::sync::MutexGuard<'_, Connection>, StorageError> {
+        Ok(self.conn.lock().await)
+    }
+
     async fn init(&self) -> Result<(), StorageError> {
-        self.conn
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS sessions (
+        let conn = self.connection().await?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sessions (
                     session_key TEXT PRIMARY KEY,
                     chat_id TEXT NOT NULL,
                     channel TEXT NOT NULL,
@@ -207,9 +214,9 @@ impl TursoSessionStore {
                 ON approvals(session_key, status, created_at_ms DESC);
                 CREATE INDEX IF NOT EXISTS idx_approvals_expiry
                 ON approvals(status, expires_at_ms);",
-            )
-            .await
-            .map_err(StorageError::backend)?;
+        )
+        .await
+        .map_err(StorageError::backend)?;
         self.ensure_session_column("active_session_key", "TEXT")
             .await?;
         self.ensure_session_column("model_provider", "TEXT").await?;
@@ -229,7 +236,8 @@ impl TursoSessionStore {
         column_type: &str,
     ) -> Result<(), StorageError> {
         let sql = format!("ALTER TABLE sessions ADD COLUMN {column} {column_type}");
-        let result = self.conn.execute(&sql, ()).await;
+        let conn = self.connection().await?;
+        let result = conn.execute(&sql, ()).await;
         match result {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -253,7 +261,8 @@ impl TursoSessionStore {
         column_type: &str,
     ) -> Result<(), StorageError> {
         let sql = format!("ALTER TABLE approvals ADD COLUMN {column} {column_type}");
-        let result = self.conn.execute(&sql, ()).await;
+        let conn = self.connection().await?;
+        let result = conn.execute(&sql, ()).await;
         match result {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -281,6 +290,7 @@ impl TursoMemoryDb {
             .await
             .map_err(StorageError::backend)?;
         let conn = db.connect().map_err(StorageError::backend)?;
+        apply_sqlite_journal_mode(&conn).await?;
         apply_sqlite_connection_pragmas(&conn).await?;
         Ok(Self { _db: db, conn })
     }
@@ -294,17 +304,22 @@ impl TursoArchiveDb {
             .await
             .map_err(StorageError::backend)?;
         let conn = db.connect().map_err(StorageError::backend)?;
+        apply_sqlite_journal_mode(&conn).await?;
         apply_sqlite_connection_pragmas(&conn).await?;
         Ok(Self { _db: db, conn })
     }
 }
 
-async fn apply_sqlite_connection_pragmas(conn: &Connection) -> Result<(), StorageError> {
+async fn apply_sqlite_journal_mode(conn: &Connection) -> Result<(), StorageError> {
     let mut rows = conn
         .query("PRAGMA journal_mode = WAL", ())
         .await
         .map_err(StorageError::backend)?;
     while rows.next().await.map_err(StorageError::backend)?.is_some() {}
+    Ok(())
+}
+
+async fn apply_sqlite_connection_pragmas(conn: &Connection) -> Result<(), StorageError> {
     conn.execute("PRAGMA busy_timeout = 5000", ())
         .await
         .map_err(StorageError::backend)?;
@@ -314,24 +329,22 @@ async fn apply_sqlite_connection_pragmas(conn: &Connection) -> Result<(), Storag
 #[async_trait]
 impl MemoryDb for TursoSessionStore {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
-        self.conn
-            .execute_batch(sql)
-            .await
-            .map_err(StorageError::backend)
+        let conn = self.connection().await?;
+        conn.execute_batch(sql).await.map_err(StorageError::backend)
     }
 
     async fn execute(&self, sql: &str, params: &[DbValue]) -> Result<u64, StorageError> {
         let turso_params = to_turso_params(params);
-        self.conn
-            .execute(sql, turso_params)
+        let conn = self.connection().await?;
+        conn.execute(sql, turso_params)
             .await
             .map_err(StorageError::backend)
     }
 
     async fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, StorageError> {
         let turso_params = to_turso_params(params);
-        let mut rows = self
-            .conn
+        let conn = self.connection().await?;
+        let mut rows = conn
             .query(sql, turso_params)
             .await
             .map_err(StorageError::backend)?;
@@ -457,8 +470,8 @@ impl SessionStorage for TursoSessionStore {
             now,
             escape_sql_text(&jsonl_path_str)
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         self.get_session(session_key).await
@@ -490,8 +503,8 @@ impl SessionStorage for TursoSessionStore {
             escape_sql_text(&jsonl_path_str),
             escape_sql_text(session_key)
         );
-        let affected = self
-            .conn
+        let conn = self.connection().await?;
+        let affected = conn
             .execute(&update_sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -508,8 +521,7 @@ impl SessionStorage for TursoSessionStore {
                 now,
                 escape_sql_text(&jsonl_path_str)
             );
-            self.conn
-                .execute(&insert_sql, ())
+            conn.execute(&insert_sql, ())
                 .await
                 .map_err(StorageError::backend)?;
         }
@@ -536,11 +548,8 @@ impl SessionStorage for TursoSessionStore {
              LIMIT 1",
             escape_sql_text(session_key)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let row = rows
             .next()
             .await
@@ -583,8 +592,8 @@ impl SessionStorage for TursoSessionStore {
             now,
             escape_sql_text(&jsonl_path_str)
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         self.get_session(session_key).await
@@ -610,8 +619,8 @@ impl SessionStorage for TursoSessionStore {
             escape_sql_text(active_session_key),
             escape_sql_text(session_key)
         );
-        let affected = self
-            .conn
+        let conn = self.connection().await?;
+        let affected = conn
             .execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -646,8 +655,8 @@ impl SessionStorage for TursoSessionStore {
             escape_sql_text(model),
             escape_sql_text(session_key)
         );
-        let affected = self
-            .conn
+        let conn = self.connection().await?;
+        let affected = conn
             .execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -679,8 +688,8 @@ impl SessionStorage for TursoSessionStore {
             escape_sql_text(model),
             escape_sql_text(session_key)
         );
-        let affected = self
-            .conn
+        let conn = self.connection().await?;
+        let affected = conn
             .execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -702,11 +711,8 @@ impl SessionStorage for TursoSessionStore {
              WHERE session_key = '{}'",
             escape_sql_text(session_key)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let Some(row) = rows.next().await.map_err(StorageError::backend)? else {
             return Ok(None);
         };
@@ -736,8 +742,8 @@ impl SessionStorage for TursoSessionStore {
             now_ms(),
             escape_sql_text(session_key)
         );
-        let affected = self
-            .conn
+        let conn = self.connection().await?;
+        let affected = conn
             .execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -762,11 +768,8 @@ impl SessionStorage for TursoSessionStore {
             limit.max(1),
             offset.max(0)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
             out.push(row_to_session_index(&row)?);
@@ -803,8 +806,8 @@ impl SessionStorage for TursoSessionStore {
             opt_string_sql(input.provider_response_id.as_deref()),
             now
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         let query_sql = format!(
@@ -816,8 +819,7 @@ impl SessionStorage for TursoSessionStore {
              LIMIT 1",
             escape_sql_text(&input.id)
         );
-        let mut rows = self
-            .conn
+        let mut rows = conn
             .query(&query_sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -847,11 +849,8 @@ impl SessionStorage for TursoSessionStore {
             limit.max(1),
             offset.max(0)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
             out.push(row_to_llm_usage(&row)?);
@@ -875,11 +874,8 @@ impl SessionStorage for TursoSessionStore {
              WHERE session_key = '{}'",
             escape_sql_text(session_key)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let row = rows
             .next()
             .await
@@ -906,11 +902,8 @@ impl SessionStorage for TursoSessionStore {
             escape_sql_text(session_key),
             turn_index
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let row = rows
             .next()
             .await
@@ -949,8 +942,8 @@ impl SessionStorage for TursoSessionStore {
             opt_i64_sql(input.responded_at_ms),
             now
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         let query_sql = format!(
@@ -962,8 +955,7 @@ impl SessionStorage for TursoSessionStore {
              LIMIT 1",
             escape_sql_text(&input.id)
         );
-        let mut rows = self
-            .conn
+        let mut rows = conn
             .query(&query_sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -1022,11 +1014,8 @@ impl SessionStorage for TursoSessionStore {
             query.limit.max(1),
             query.offset.max(0)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
             out.push(row_to_llm_audit(&row)?);
@@ -1065,13 +1054,12 @@ impl SessionStorage for TursoSessionStore {
             opt_sql_text(input.remote_addr.as_deref()),
             now
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
 
-        let mut rows = self
-            .conn
+        let mut rows = conn
             .query(
                 &format!(
                     "SELECT id, source, event_type, session_key, chat_id, sender_id, content,
@@ -1109,13 +1097,12 @@ impl SessionStorage for TursoSessionStore {
             opt_sql_i64(update.processed_at_ms),
             escape_sql_text(event_id)
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
 
-        let mut rows = self
-            .conn
+        let mut rows = conn
             .query(
                 &format!(
                     "SELECT id, source, event_type, session_key, chat_id, sender_id, content,
@@ -1196,11 +1183,8 @@ impl SessionStorage for TursoSessionStore {
             query.limit.max(1),
             query.offset.max(0)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
             out.push(row_to_webhook_event(&row)?);
@@ -1235,8 +1219,8 @@ impl SessionStorage for TursoSessionStore {
             now,
             now
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         self.get_approval(&input.id).await
@@ -1251,11 +1235,8 @@ impl SessionStorage for TursoSessionStore {
              LIMIT 1",
             escape_sql_text(approval_id)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let row = rows
             .next()
             .await
@@ -1283,8 +1264,8 @@ impl SessionStorage for TursoSessionStore {
             now_ms(),
             escape_sql_text(approval_id)
         );
-        let affected = self
-            .conn
+        let conn = self.connection().await?;
+        let affected = conn
             .execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -1324,8 +1305,8 @@ impl SessionStorage for TursoSessionStore {
             ApprovalStatus::Approved.as_str(),
             now_ms
         );
-        let affected = self
-            .conn
+        let conn = self.connection().await?;
+        let affected = conn
             .execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -1354,11 +1335,8 @@ impl SessionStorage for TursoSessionStore {
             ApprovalStatus::Approved.as_str(),
             now_ms
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let Some(row) = rows.next().await.map_err(StorageError::backend)? else {
             return Ok(false);
         };
@@ -1392,8 +1370,8 @@ impl CronStorage for TursoSessionStore {
             now,
             now
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         self.get_cron(&input.id).await
@@ -1438,8 +1416,8 @@ impl CronStorage for TursoSessionStore {
             now_ms(),
             escape_sql_text(cron_id)
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         self.get_cron(cron_id).await
@@ -1454,8 +1432,8 @@ impl CronStorage for TursoSessionStore {
             now_ms(),
             escape_sql_text(cron_id)
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         Ok(())
@@ -1463,8 +1441,8 @@ impl CronStorage for TursoSessionStore {
 
     async fn delete_cron(&self, cron_id: &str) -> Result<(), StorageError> {
         let sql = format!("DELETE FROM cron WHERE id = '{}'", escape_sql_text(cron_id));
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         Ok(())
@@ -1479,11 +1457,8 @@ impl CronStorage for TursoSessionStore {
              LIMIT 1",
             escape_sql_text(cron_id)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let row = rows
             .next()
             .await
@@ -1503,11 +1478,8 @@ impl CronStorage for TursoSessionStore {
             limit.max(1),
             offset.max(0)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
             out.push(row_to_cron_job(&row)?);
@@ -1526,11 +1498,8 @@ impl CronStorage for TursoSessionStore {
             now_ms,
             limit.max(1)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
             out.push(row_to_cron_job(&row)?);
@@ -1557,8 +1526,8 @@ impl CronStorage for TursoSessionStore {
             escape_sql_text(cron_id),
             expected_next_run_at_ms
         );
-        let affected = self
-            .conn
+        let conn = self.connection().await?;
+        let affected = conn
             .execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
@@ -1578,12 +1547,11 @@ impl CronStorage for TursoSessionStore {
             input.attempt,
             input.created_at_ms
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
-        let mut rows = self
-            .conn
+        let mut rows = conn
             .query(
                 &format!(
                     "SELECT id, cron_id, scheduled_at_ms, started_at_ms, finished_at_ms, status,
@@ -1618,8 +1586,8 @@ impl CronStorage for TursoSessionStore {
             started_at_ms,
             escape_sql_text(run_id)
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         Ok(())
@@ -1652,8 +1620,8 @@ impl CronStorage for TursoSessionStore {
             publish_sql,
             escape_sql_text(run_id)
         );
-        self.conn
-            .execute(&sql, ())
+        let conn = self.connection().await?;
+        conn.execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
         Ok(())
@@ -1676,11 +1644,8 @@ impl CronStorage for TursoSessionStore {
             limit.max(1),
             offset.max(0)
         );
-        let mut rows = self
-            .conn
-            .query(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
             out.push(row_to_cron_task_run(&row)?);

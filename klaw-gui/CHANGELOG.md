@@ -12,6 +12,7 @@
 ### Changed
 
 - `klaw gui` 现在会根据 `gateway.enabled` 在启动时自动拉起内置 gateway，并把运行态信息暴露给 GUI 面板
+- `Gateway` 面板现在只显示单个完整服务地址，不再单独列出 WebSocket / Health / Metrics 链接；`Webhook` 面板新增 `gateway.webhook` 配置摘要与弹窗编辑入口
 - `LLM` 审计详情窗口现在以内置可交互 JSON tree 渲染 request/response body，并在 JSON 解析失败时回退到只读原始文本
 - `Observability` 面板继续作为纯配置页，并新增本地分析存储的开关、保留天数和刷新间隔配置
 - `Session` 聊天弹窗现在会根据当前主题切换消息卡片与角色标题配色，浅色模式下用户消息为淡粉背景、助手消息为淡蓝背景，深色模式标题色也调整为更协调的粉蓝系

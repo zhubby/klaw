@@ -2,6 +2,9 @@
 
 ## 2026-03-21
 
+### Fixed
+- changed the Turso session store to serialize all access through one shared connection so concurrent runtime writers no longer fail with `concurrent use forbidden`
+
 ### Added
 - added `llm_audit` persistence models (`LlmAuditRecord`, `NewLlmAuditRecord`, `LlmAuditQuery`, `LlmAuditStatus`, `LlmAuditSortOrder`) and `SessionStorage` APIs for append/list workflows
 - added `llm_audit` table + indexes in both SQLx and Turso backends for request/response payload auditing with session/provider/date filtering

@@ -11,6 +11,7 @@
 ### Changed
 
 - gateway 现在允许 `listen_port = 0` 由系统分配随机端口，并在日志/stdout 中输出实际监听地址
+- `klaw-gateway/src/lib.rs` 已按职责拆分为 `runtime/state/websocket/webhook/handlers/error` 模块，`lib.rs` 仅保留 API re-export，便于后续扩展 TLS、更多 HTTP 入口和单元测试
 
 ## 2026-03-13
 

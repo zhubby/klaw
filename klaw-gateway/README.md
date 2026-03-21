@@ -10,6 +10,16 @@
 - 在启动成功后打印实际可连接的 WebSocket 地址
 - 提供可管理的 `GatewayHandle` / `GatewayRuntimeInfo`，以及可注入业务逻辑的 `GatewayWebhookHandler`
 
+## Module Layout
+
+- `lib.rs`: 仅保留模块声明与公开 API re-export
+- `runtime.rs`: gateway 启动、监听、路由装配与生命周期入口
+- `state.rs`: 运行态共享状态、`GatewayHandle` 与 `GatewayRuntimeInfo`
+- `websocket.rs`: `/ws/chat` WebSocket 连接与房间广播逻辑
+- `webhook.rs`: webhook 鉴权、payload 归一化与 handler 集成
+- `handlers.rs`: health / metrics HTTP handlers
+- `error.rs`: `GatewayError`
+
 ## Runtime Notes
 
 - 当前仅支持非 TLS 监听

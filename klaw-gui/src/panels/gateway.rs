@@ -160,16 +160,8 @@ impl PanelRenderer for GatewayPanel {
                     ui.label(info.actual_port.to_string());
                     ui.end_row();
 
-                    ui.label("WebSocket");
-                    ui.hyperlink(&info.ws_url);
-                    ui.end_row();
-
-                    ui.label("Health");
-                    ui.hyperlink(&info.health_url);
-                    ui.end_row();
-
-                    ui.label("Metrics");
-                    ui.hyperlink(&info.metrics_url);
+                    ui.label("Address");
+                    ui.hyperlink(gateway_base_url(&info.ws_url));
                     ui.end_row();
 
                     ui.label("Started At");
@@ -184,4 +176,11 @@ impl PanelRenderer for GatewayPanel {
                 }
             });
     }
+}
+
+fn gateway_base_url(ws_url: &str) -> String {
+    ws_url
+        .strip_suffix("/ws/chat")
+        .unwrap_or(ws_url)
+        .to_string()
 }
