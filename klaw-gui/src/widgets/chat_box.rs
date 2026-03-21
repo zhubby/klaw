@@ -258,9 +258,10 @@ impl ChatBox {
         pending_action: &mut Option<ChatAction>,
     ) {
         let is_selected = self.selected_message_id.as_deref() == Some(&message.id);
+        let dark_mode = ui.visuals().dark_mode;
 
         egui::Frame::group(ui.style())
-            .fill(self.message_bg_color(message.role, is_selected))
+            .fill(self.message_bg_color(message.role, is_selected, dark_mode))
             .inner_margin(8.0)
             .outer_margin(2.0)
             .corner_radius(4.0)
@@ -269,7 +270,7 @@ impl ChatBox {
                     ui.label(
                         egui::RichText::new(message.role.display_name())
                             .strong()
-                            .color(self.role_color(message.role)),
+                            .color(self.role_color(message.role, dark_mode)),
                     );
 
                     if let Some(tool_name) = &message.tool_name {
@@ -347,25 +348,52 @@ impl ChatBox {
         );
     }
 
-    fn message_bg_color(&self, role: ChatRole, is_selected: bool) -> egui::Color32 {
+    fn message_bg_color(
+        &self,
+        role: ChatRole,
+        is_selected: bool,
+        dark_mode: bool,
+    ) -> egui::Color32 {
         if is_selected {
-            return egui::Color32::from_rgb(60, 60, 80);
+            return if dark_mode {
+                egui::Color32::from_rgb(60, 60, 80)
+            } else {
+                egui::Color32::from_rgb(225, 232, 245)
+            };
         }
 
-        match role {
-            ChatRole::User => egui::Color32::from_rgb(45, 55, 72),
-            ChatRole::Assistant => egui::Color32::from_rgb(35, 45, 55),
-            ChatRole::System => egui::Color32::from_rgb(55, 45, 35),
-            ChatRole::Tool => egui::Color32::from_rgb(40, 50, 45),
+        if dark_mode {
+            match role {
+                ChatRole::User => egui::Color32::from_rgb(45, 55, 72),
+                ChatRole::Assistant => egui::Color32::from_rgb(35, 45, 55),
+                ChatRole::System => egui::Color32::from_rgb(55, 45, 35),
+                ChatRole::Tool => egui::Color32::from_rgb(40, 50, 45),
+            }
+        } else {
+            match role {
+                ChatRole::User => egui::Color32::from_rgb(255, 239, 246),
+                ChatRole::Assistant => egui::Color32::from_rgb(236, 245, 255),
+                ChatRole::System => egui::Color32::from_rgb(255, 247, 232),
+                ChatRole::Tool => egui::Color32::from_rgb(239, 248, 241),
+            }
         }
     }
 
-    fn role_color(&self, role: ChatRole) -> egui::Color32 {
-        match role {
-            ChatRole::User => egui::Color32::from_rgb(100, 180, 255),
-            ChatRole::Assistant => egui::Color32::from_rgb(130, 200, 130),
-            ChatRole::System => egui::Color32::from_rgb(255, 200, 100),
-            ChatRole::Tool => egui::Color32::from_rgb(200, 150, 255),
+    fn role_color(&self, role: ChatRole, dark_mode: bool) -> egui::Color32 {
+        if dark_mode {
+            match role {
+                ChatRole::User => egui::Color32::from_rgb(255, 176, 209),
+                ChatRole::Assistant => egui::Color32::from_rgb(145, 198, 255),
+                ChatRole::System => egui::Color32::from_rgb(255, 205, 120),
+                ChatRole::Tool => egui::Color32::from_rgb(154, 212, 167),
+            }
+        } else {
+            match role {
+                ChatRole::User => egui::Color32::from_rgb(210, 104, 146),
+                ChatRole::Assistant => egui::Color32::from_rgb(82, 142, 222),
+                ChatRole::System => egui::Color32::from_rgb(186, 130, 42),
+                ChatRole::Tool => egui::Color32::from_rgb(86, 153, 103),
+            }
         }
     }
 
