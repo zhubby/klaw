@@ -23,6 +23,7 @@ use crate::{
 use klaw_util::{SKILLS_DIR_NAME, SKILLS_REGISTRY_DIR_NAME};
 
 const SKILL_MARKDOWN_FILE: &str = "SKILL.md";
+const SKILL_MARKDOWN_FILE_LOWER: &str = "skill.md";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegistrySource {
@@ -51,6 +52,15 @@ struct InstalledSkillsManifest {
     registry_commits: BTreeMap<String, String>,
     #[serde(default)]
     stale_registries: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RegistrySkillEntry {
+    id: String,
+    name: String,
+    description: String,
+    skill_dir: PathBuf,
+    markdown_path: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -575,7 +585,7 @@ where
         registry: &str,
         skill_name: &str,
     ) -> Result<(SkillRecord, bool), SkillError> {
-        let requested_name = Self::validate_skill_name(skill_name)?;
+        let requested_name = validate_registry_skill_selector(skill_name)?;
         let registry_name = registry.trim();
         if registry_name.is_empty() {
             return Err(SkillError::InvalidSkillName(
@@ -629,75 +639,27 @@ where
         }
 
         let repo_dir = self.skills_registry_dir().join(registry_name);
-        let skills_root = repo_dir.join("skills");
-        let exists = fs::try_exists(&skills_root)
+        let exists = fs::try_exists(&repo_dir)
             .await
             .map_err(|source| SkillError::Io {
                 op: "try_exists",
-                path: skills_root.clone(),
+                path: repo_dir.clone(),
                 source,
             })?;
         if !exists {
             return Err(SkillError::RegistryUnavailable {
                 registry: registry_name.to_string(),
-                path: skills_root,
+                path: repo_dir,
             });
         }
 
-        let mut entries = fs::read_dir(&skills_root)
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "read_dir",
-                path: skills_root.clone(),
-                source,
-            })?;
+        let mut entries = discover_registry_skills(&repo_dir).await?;
         let mut items = Vec::new();
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "next_entry",
-                path: skills_root.clone(),
-                source,
-            })?
-        {
-            let skill_dir = entry.path();
-            if !is_directory(&skill_dir, &entry).await? {
-                continue;
-            }
-            let Some(folder_name) = skill_dir
-                .file_name()
-                .and_then(OsStr::to_str)
-                .map(ToString::to_string)
-            else {
-                continue;
-            };
-            let path = skill_dir.join(SKILL_MARKDOWN_FILE);
-            let md_exists = fs::try_exists(&path)
-                .await
-                .map_err(|source| SkillError::Io {
-                    op: "try_exists",
-                    path: path.clone(),
-                    source,
-                })?;
-            if !md_exists {
-                continue;
-            }
-            let content = fs::read_to_string(&path)
-                .await
-                .map_err(|source| SkillError::Io {
-                    op: "read_to_string",
-                    path: path.clone(),
-                    source,
-                })?;
-            let name = parse_skill_name_from_markdown(&content).or(Some(folder_name.clone()));
-            let Some(name) = name else {
-                continue;
-            };
+        for entry in entries.drain(..) {
             items.push(RegistrySkillSummary {
-                id: folder_name,
-                name,
-                local_path: path,
+                id: entry.id,
+                name: entry.name,
+                local_path: entry.markdown_path,
             });
         }
         items.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
@@ -801,71 +763,31 @@ where
             return Ok(Vec::new());
         }
 
-        let skills_dir = self.skills_registry_dir().join(source_name).join("skills");
-        let exists = fs::try_exists(&skills_dir)
+        let repo_dir = self.skills_registry_dir().join(source_name);
+        let exists = fs::try_exists(&repo_dir)
             .await
             .map_err(|source| SkillError::Io {
                 op: "try_exists",
-                path: skills_dir.clone(),
+                path: repo_dir.clone(),
                 source,
             })?;
         if !exists {
             return Ok(Vec::new());
         }
 
-        let mut entries = fs::read_dir(&skills_dir)
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "read_dir",
-                path: skills_dir.clone(),
-                source,
-            })?;
+        let entries = discover_registry_skills(&repo_dir).await?;
         let mut matches = Vec::new();
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "next_entry",
-                path: skills_dir.clone(),
-                source,
-            })?
-        {
-            let skill_dir = entry.path();
-            if !is_directory(&skill_dir, &entry).await? {
-                continue;
-            }
-            let Some(skill_name) = skill_dir.file_name().and_then(OsStr::to_str) else {
-                continue;
-            };
-            let path = skill_dir.join(SKILL_MARKDOWN_FILE);
-            let has_skill_md = fs::try_exists(&path)
-                .await
-                .map_err(|source| SkillError::Io {
-                    op: "try_exists",
-                    path: path.clone(),
-                    source,
-                })?;
-            if !has_skill_md {
-                continue;
-            }
-            let content = fs::read_to_string(&path)
-                .await
-                .map_err(|source| SkillError::Io {
-                    op: "read_to_string",
-                    path: path.clone(),
-                    source,
-                })?;
-            let description = extract_skill_description(&content);
+        for entry in entries {
             let Some((_score, matched_fields)) =
-                score_registry_match(&query_terms, skill_name, &description)
+                score_registry_match(&query_terms, &entry.name, &entry.description)
             else {
                 continue;
             };
             matches.push(RegistrySkillMatch {
                 source: source_name.to_string(),
-                skill_name: skill_name.to_string(),
-                description,
-                local_path: path,
+                skill_name: entry.name,
+                description: entry.description,
+                local_path: entry.markdown_path,
                 matched_fields,
             });
         }
@@ -1157,102 +1079,123 @@ async fn resolve_registry_skill_dir(
     requested_name: &str,
     registry_name: &str,
 ) -> Result<(PathBuf, String), SkillError> {
-    let direct_dir = registry_repo_dir.join("skills").join(requested_name);
-    let direct_md = direct_dir.join(SKILL_MARKDOWN_FILE);
-    let direct_exists = fs::try_exists(&direct_md)
-        .await
-        .map_err(|source| SkillError::Io {
-            op: "try_exists",
-            path: direct_md.clone(),
-            source,
-        })?;
-    if direct_exists {
-        return Ok((direct_dir, requested_name.to_string()));
-    }
-
-    let skills_root = registry_repo_dir.join("skills");
-    let skills_root_exists =
-        fs::try_exists(&skills_root)
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "try_exists",
-                path: skills_root.clone(),
-                source,
-            })?;
-    if !skills_root_exists {
-        return Err(SkillError::RegistrySkillNotFound {
-            registry: registry_name.to_string(),
-            skill_name: requested_name.to_string(),
-            path: direct_md,
-        });
-    }
-
-    let mut entries = fs::read_dir(&skills_root)
-        .await
-        .map_err(|source| SkillError::Io {
-            op: "read_dir",
-            path: skills_root.clone(),
-            source,
-        })?;
+    let entries = discover_registry_skills(registry_repo_dir).await?;
     let mut matched: Option<(PathBuf, String)> = None;
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .map_err(|source| SkillError::Io {
-            op: "next_entry",
-            path: skills_root.clone(),
-            source,
-        })?
-    {
-        let candidate_dir = entry.path();
-        if !is_directory(&candidate_dir, &entry).await? {
+    for entry in entries {
+        if entry.id != requested_name && entry.name != requested_name {
             continue;
         }
-        let candidate_md = candidate_dir.join(SKILL_MARKDOWN_FILE);
-        let candidate_exists =
-            fs::try_exists(&candidate_md)
-                .await
-                .map_err(|source| SkillError::Io {
-                    op: "try_exists",
-                    path: candidate_md.clone(),
-                    source,
-                })?;
-        if !candidate_exists {
-            continue;
-        }
-        let content = fs::read_to_string(&candidate_md)
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "read_to_string",
-                path: candidate_md.clone(),
-                source,
-            })?;
-        let Some(parsed_name) = parse_skill_name_from_markdown(&content) else {
-            continue;
-        };
-        if parsed_name != requested_name {
-            continue;
-        }
-        let Some(folder_name) = candidate_dir
-            .file_name()
-            .and_then(OsStr::to_str)
-            .map(ToString::to_string)
-        else {
-            continue;
-        };
         if matched.is_some() {
             return Err(SkillError::InvalidSkillName(format!(
-                "skill name `{requested_name}` in registry `{registry_name}` is ambiguous"
+                "skill `{requested_name}` in registry `{registry_name}` is ambiguous"
             )));
         }
-        matched = Some((candidate_dir, folder_name));
+        matched = Some((entry.skill_dir, entry.name));
     }
 
     matched.ok_or_else(|| SkillError::RegistrySkillNotFound {
         registry: registry_name.to_string(),
         skill_name: requested_name.to_string(),
-        path: direct_md,
+        path: registry_repo_dir
+            .join(requested_name)
+            .join(SKILL_MARKDOWN_FILE),
     })
+}
+
+async fn discover_registry_skills(
+    registry_repo_dir: &Path,
+) -> Result<Vec<RegistrySkillEntry>, SkillError> {
+    let mut pending = vec![registry_repo_dir.to_path_buf()];
+    let mut items = Vec::new();
+
+    while let Some(dir) = pending.pop() {
+        let mut entries = fs::read_dir(&dir).await.map_err(|source| SkillError::Io {
+            op: "read_dir",
+            path: dir.clone(),
+            source,
+        })?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "next_entry",
+                path: dir.clone(),
+                source,
+            })?
+        {
+            let path = entry.path();
+            let file_type = entry.file_type().await.map_err(|source| SkillError::Io {
+                op: "file_type",
+                path: path.clone(),
+                source,
+            })?;
+
+            if file_type.is_dir() {
+                if path.file_name().and_then(OsStr::to_str) == Some(".git") {
+                    continue;
+                }
+                pending.push(path);
+                continue;
+            }
+
+            if !file_type.is_file() || !is_skill_markdown_path(&path) {
+                continue;
+            }
+
+            let skill_dir = path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| registry_repo_dir.to_path_buf());
+            let content = fs::read_to_string(&path)
+                .await
+                .map_err(|source| SkillError::Io {
+                    op: "read_to_string",
+                    path: path.clone(),
+                    source,
+                })?;
+            let fallback_name = skill_dir
+                .file_name()
+                .and_then(OsStr::to_str)
+                .unwrap_or_default()
+                .to_string();
+            let name = parse_skill_name_from_markdown(&content)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(fallback_name);
+            if name.is_empty() {
+                continue;
+            }
+            let relative_dir = skill_dir
+                .strip_prefix(registry_repo_dir)
+                .ok()
+                .unwrap_or(skill_dir.as_path());
+            let relative_dir_text = relative_dir.to_string_lossy().replace('\\', "/");
+            let id = relative_dir_text
+                .strip_prefix("skills/")
+                .unwrap_or(&relative_dir_text)
+                .to_string();
+            items.push(RegistrySkillEntry {
+                id,
+                name,
+                description: extract_skill_description(&content),
+                skill_dir,
+                markdown_path: path,
+            });
+        }
+    }
+
+    items.sort_by(|a, b| a.id.cmp(&b.id).then_with(|| a.name.cmp(&b.name)));
+    items.dedup_by(|a, b| a.id == b.id);
+    Ok(items)
+}
+
+fn is_skill_markdown_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case(SKILL_MARKDOWN_FILE)
+                || name.eq_ignore_ascii_case(SKILL_MARKDOWN_FILE_LOWER)
+        })
 }
 
 fn parse_skill_name_from_markdown(markdown: &str) -> Option<String> {
@@ -1272,6 +1215,37 @@ fn parse_skill_name_from_markdown(markdown: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn validate_registry_skill_selector(input: &str) -> Result<String, SkillError> {
+    let value = input.trim();
+    if value.is_empty() {
+        return Err(SkillError::InvalidSkillName(input.to_string()));
+    }
+    if !value.contains('/') {
+        return FileSystemSkillStore::<ReqwestSkillFetcher>::validate_skill_name(value);
+    }
+
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return Err(SkillError::InvalidSkillName(value.to_string()));
+    }
+
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => {
+                let Some(part) = part.to_str() else {
+                    return Err(SkillError::InvalidSkillName(value.to_string()));
+                };
+                if part.is_empty() {
+                    return Err(SkillError::InvalidSkillName(value.to_string()));
+                }
+            }
+            _ => return Err(SkillError::InvalidSkillName(value.to_string())),
+        }
+    }
+
+    Ok(value.to_string())
 }
 
 fn extract_skill_description(markdown: &str) -> String {
@@ -1507,6 +1481,27 @@ mod tests {
         path
     }
 
+    async fn write_registry_skill_at(
+        root: &Path,
+        registry: &str,
+        relative_dir: &str,
+        file_name: &str,
+        content: &str,
+    ) -> PathBuf {
+        let dir = root
+            .join(SKILLS_REGISTRY_DIR_NAME)
+            .join(registry)
+            .join(relative_dir);
+        fs::create_dir_all(&dir)
+            .await
+            .expect("create registry nested skill dir");
+        let path = dir.join(file_name);
+        fs::write(&path, content)
+            .await
+            .expect("write registry nested skill markdown");
+        path
+    }
+
     fn init_local_git_registry_repo(root: &Path, registry: &str, skill_name: &str) -> PathBuf {
         let repo_dir = root.join(format!("repo-{registry}"));
         std::fs::create_dir_all(repo_dir.join("skills").join(skill_name))
@@ -1626,7 +1621,7 @@ mod tests {
         let root = test_root();
         let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
         let registry_path =
-            write_registry_skill(&root, "vercel-labs", "find-skills", "# find").await;
+            write_registry_skill(&root, "vercel-labs", "find-skills", "# find-skills").await;
 
         let (record, already_installed) = store
             .install_from_registry("vercel-labs", "find-skills")
@@ -1659,7 +1654,7 @@ mod tests {
     async fn list_and_load_all_merge_registry_and_local_and_registry_wins_on_conflict() {
         let root = test_root();
         let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
-        write_registry_skill(&root, "vercel-labs", "demo", "# managed").await;
+        write_registry_skill(&root, "vercel-labs", "demo", "# demo").await;
         let local_demo = root.join(SKILLS_DIR_NAME).join("demo");
         let local_only = root.join(SKILLS_DIR_NAME).join("local-only");
         fs::create_dir_all(&local_demo)
@@ -1687,7 +1682,7 @@ mod tests {
         assert_eq!(list[1].source_kind, SkillSourceKind::Local);
 
         let demo = store.get_installed("demo").await.expect("get managed demo");
-        assert_eq!(demo.content, "# managed");
+        assert_eq!(demo.content, "# demo");
         assert_eq!(demo.source_kind, SkillSourceKind::Registry);
 
         let all = store
@@ -1699,7 +1694,7 @@ mod tests {
             .iter()
             .find(|item| item.name == "demo")
             .expect("managed present");
-        assert_eq!(managed.content, "# managed");
+        assert_eq!(managed.content, "# demo");
         let local = all
             .iter()
             .find(|item| item.name == "local-only")
@@ -1711,7 +1706,7 @@ mod tests {
     async fn stale_registry_skills_are_marked_stale_in_records() {
         let root = test_root();
         let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
-        write_registry_skill(&root, "vercel-labs", "demo", "# managed").await;
+        write_registry_skill(&root, "vercel-labs", "demo", "# demo").await;
         let mut manifest = InstalledSkillsManifest::default();
         manifest.managed.push(InstalledSkill {
             registry: "vercel-labs".to_string(),
@@ -1735,7 +1730,7 @@ mod tests {
     async fn uninstall_removes_both_managed_index_and_local_directory() {
         let root = test_root();
         let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
-        write_registry_skill(&root, "vercel-labs", "demo", "# managed").await;
+        write_registry_skill(&root, "vercel-labs", "demo", "# demo").await;
         store
             .install_from_registry("vercel-labs", "demo")
             .await
@@ -1781,6 +1776,74 @@ mod tests {
         assert_eq!(skills[0].name, "alpha");
         assert_eq!(skills[1].id, "folder-two");
         assert_eq!(skills[1].name, "beta");
+    }
+
+    #[tokio::test]
+    async fn list_source_skills_recursively_discovers_skill_markdown_anywhere_in_repo() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        let _ = write_registry_skill_at(
+            &root,
+            "vercel-labs",
+            "packages/alpha",
+            "SKILL.md",
+            "# alpha\nAlpha description",
+        )
+        .await;
+        let _ = write_registry_skill_at(
+            &root,
+            "vercel-labs",
+            "tools/beta",
+            "skill.md",
+            "name: beta\nBeta description",
+        )
+        .await;
+
+        let skills = store
+            .list_source_skills("vercel-labs")
+            .await
+            .expect("list registry skills recursively");
+
+        assert_eq!(skills.len(), 2);
+        assert_eq!(skills[0].id, "packages/alpha");
+        assert_eq!(skills[0].name, "alpha");
+        assert_eq!(skills[1].id, "tools/beta");
+        assert_eq!(skills[1].name, "beta");
+    }
+
+    #[tokio::test]
+    async fn install_and_search_registry_skills_support_nested_paths_and_descriptions() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        write_registry_skill_at(
+            &root,
+            "vercel-labs",
+            "agents/finders",
+            "SKILL.md",
+            "# find-skills\nFind useful skills in repositories",
+        )
+        .await;
+
+        let (record, already_installed) = store
+            .install_from_registry("vercel-labs", "agents/finders")
+            .await
+            .expect("install nested registry skill by id");
+        assert!(!already_installed);
+        assert_eq!(record.name, "find-skills");
+
+        let record_by_name = store
+            .get_source_skill("vercel-labs", "find-skills")
+            .await
+            .expect("get nested registry skill by parsed name");
+        assert_eq!(record_by_name.name, "find-skills");
+
+        let matches = store
+            .search_source_skills("vercel-labs", "useful")
+            .await
+            .expect("search nested registry skills");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].skill_name, "find-skills");
+        assert_eq!(matches[0].description, "Find useful skills in repositories");
     }
 
     #[tokio::test]
@@ -1892,8 +1955,8 @@ mod tests {
     async fn install_from_registry_rejects_same_name_from_different_registry() {
         let root = test_root();
         let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
-        write_registry_skill(&root, "vercel-labs", "demo", "# managed-a").await;
-        write_registry_skill(&root, "openai", "demo", "# managed-b").await;
+        write_registry_skill(&root, "vercel-labs", "demo", "# demo").await;
+        write_registry_skill(&root, "openai", "demo", "# demo").await;
 
         store
             .install_from_registry("vercel-labs", "demo")

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-21
+
+### Changed
+- changed registry skill discovery to recursively scan the whole synced git repository for `SKILL.md` / `skill.md` instead of only reading `<repo>/skills/<name>/SKILL.md`
+- changed registry lookup so skills can be resolved by discovered relative path id or parsed skill name from markdown metadata
+
+### Added
+- added recursive registry discovery coverage for nested skill paths, lowercase `skill.md`, and description-backed search/install flows
 ## 2026-03-20
 
 ### Added

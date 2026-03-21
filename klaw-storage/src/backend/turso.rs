@@ -59,9 +59,10 @@ impl TursoSessionStore {
     }
 
     async fn init(&self) -> Result<(), StorageError> {
-        let conn = self.connection().await?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS sessions (
+        {
+            let conn = self.connection().await?;
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS sessions (
                     session_key TEXT PRIMARY KEY,
                     chat_id TEXT NOT NULL,
                     channel TEXT NOT NULL,
@@ -214,9 +215,10 @@ impl TursoSessionStore {
                 ON approvals(session_key, status, created_at_ms DESC);
                 CREATE INDEX IF NOT EXISTS idx_approvals_expiry
                 ON approvals(status, expires_at_ms);",
-        )
-        .await
-        .map_err(StorageError::backend)?;
+            )
+            .await
+            .map_err(StorageError::backend)?;
+        }
         self.ensure_session_column("active_session_key", "TEXT")
             .await?;
         self.ensure_session_column("model_provider", "TEXT").await?;
@@ -470,10 +472,12 @@ impl SessionStorage for TursoSessionStore {
             now,
             escape_sql_text(&jsonl_path_str)
         );
-        let conn = self.connection().await?;
-        conn.execute(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        {
+            let conn = self.connection().await?;
+            conn.execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+        }
         self.get_session(session_key).await
     }
 
@@ -503,27 +507,29 @@ impl SessionStorage for TursoSessionStore {
             escape_sql_text(&jsonl_path_str),
             escape_sql_text(session_key)
         );
-        let conn = self.connection().await?;
-        let affected = conn
-            .execute(&update_sql, ())
-            .await
-            .map_err(StorageError::backend)?;
-        if affected == 0 {
-            let insert_sql = format!(
-                "INSERT INTO sessions (
-                    session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-                ) VALUES ('{}', '{}', '{}', NULL, NULL, NULL, {}, {}, {}, 1, '{}')",
-                escape_sql_text(session_key),
-                escape_sql_text(chat_id),
-                escape_sql_text(channel),
-                now,
-                now,
-                now,
-                escape_sql_text(&jsonl_path_str)
-            );
-            conn.execute(&insert_sql, ())
+        {
+            let conn = self.connection().await?;
+            let affected = conn
+                .execute(&update_sql, ())
                 .await
                 .map_err(StorageError::backend)?;
+            if affected == 0 {
+                let insert_sql = format!(
+                    "INSERT INTO sessions (
+                        session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+                    ) VALUES ('{}', '{}', '{}', NULL, NULL, NULL, {}, {}, {}, 1, '{}')",
+                    escape_sql_text(session_key),
+                    escape_sql_text(chat_id),
+                    escape_sql_text(channel),
+                    now,
+                    now,
+                    now,
+                    escape_sql_text(&jsonl_path_str)
+                );
+                conn.execute(&insert_sql, ())
+                    .await
+                    .map_err(StorageError::backend)?;
+            }
         }
         self.get_session(session_key).await
     }
@@ -592,10 +598,12 @@ impl SessionStorage for TursoSessionStore {
             now,
             escape_sql_text(&jsonl_path_str)
         );
-        let conn = self.connection().await?;
-        conn.execute(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        {
+            let conn = self.connection().await?;
+            conn.execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+        }
         self.get_session(session_key).await
     }
 
@@ -619,15 +627,17 @@ impl SessionStorage for TursoSessionStore {
             escape_sql_text(active_session_key),
             escape_sql_text(session_key)
         );
-        let conn = self.connection().await?;
-        let affected = conn
-            .execute(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
-        if affected == 0 {
-            return Err(StorageError::backend(format!(
-                "session '{session_key}' not found when setting active_session_key"
-            )));
+        {
+            let conn = self.connection().await?;
+            let affected = conn
+                .execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+            if affected == 0 {
+                return Err(StorageError::backend(format!(
+                    "session '{session_key}' not found when setting active_session_key"
+                )));
+            }
         }
         self.get_session(session_key).await
     }
@@ -655,15 +665,17 @@ impl SessionStorage for TursoSessionStore {
             escape_sql_text(model),
             escape_sql_text(session_key)
         );
-        let conn = self.connection().await?;
-        let affected = conn
-            .execute(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
-        if affected == 0 {
-            return Err(StorageError::backend(format!(
-                "session '{session_key}' not found when setting model_provider"
-            )));
+        {
+            let conn = self.connection().await?;
+            let affected = conn
+                .execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+            if affected == 0 {
+                return Err(StorageError::backend(format!(
+                    "session '{session_key}' not found when setting model_provider"
+                )));
+            }
         }
         self.get_session(session_key).await
     }
@@ -688,15 +700,17 @@ impl SessionStorage for TursoSessionStore {
             escape_sql_text(model),
             escape_sql_text(session_key)
         );
-        let conn = self.connection().await?;
-        let affected = conn
-            .execute(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
-        if affected == 0 {
-            return Err(StorageError::backend(format!(
-                "session '{session_key}' not found when setting model"
-            )));
+        {
+            let conn = self.connection().await?;
+            let affected = conn
+                .execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+            if affected == 0 {
+                return Err(StorageError::backend(format!(
+                    "session '{session_key}' not found when setting model"
+                )));
+            }
         }
         self.get_session(session_key).await
     }
@@ -1219,10 +1233,12 @@ impl SessionStorage for TursoSessionStore {
             now,
             now
         );
-        let conn = self.connection().await?;
-        conn.execute(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        {
+            let conn = self.connection().await?;
+            conn.execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+        }
         self.get_approval(&input.id).await
     }
 
@@ -1264,15 +1280,17 @@ impl SessionStorage for TursoSessionStore {
             now_ms(),
             escape_sql_text(approval_id)
         );
-        let conn = self.connection().await?;
-        let affected = conn
-            .execute(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
-        if affected == 0 {
-            return Err(StorageError::backend(format!(
-                "approval '{approval_id}' not found when setting status"
-            )));
+        {
+            let conn = self.connection().await?;
+            let affected = conn
+                .execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+            if affected == 0 {
+                return Err(StorageError::backend(format!(
+                    "approval '{approval_id}' not found when setting status"
+                )));
+            }
         }
         self.get_approval(approval_id).await
     }
@@ -1335,12 +1353,14 @@ impl SessionStorage for TursoSessionStore {
             ApprovalStatus::Approved.as_str(),
             now_ms
         );
-        let conn = self.connection().await?;
-        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
-        let Some(row) = rows.next().await.map_err(StorageError::backend)? else {
-            return Ok(false);
+        let approval_id = {
+            let conn = self.connection().await?;
+            let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
+            let Some(row) = rows.next().await.map_err(StorageError::backend)? else {
+                return Ok(false);
+            };
+            value_to_string(row.get_value(0).map_err(StorageError::backend)?)?
         };
-        let approval_id = value_to_string(row.get_value(0).map_err(StorageError::backend)?)?;
         self.consume_approved_shell_command(&approval_id, session_key, command_hash, now_ms)
             .await
     }
@@ -1370,10 +1390,12 @@ impl CronStorage for TursoSessionStore {
             now,
             now
         );
-        let conn = self.connection().await?;
-        conn.execute(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        {
+            let conn = self.connection().await?;
+            conn.execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+        }
         self.get_cron(&input.id).await
     }
 
@@ -1416,10 +1438,12 @@ impl CronStorage for TursoSessionStore {
             now_ms(),
             escape_sql_text(cron_id)
         );
-        let conn = self.connection().await?;
-        conn.execute(&sql, ())
-            .await
-            .map_err(StorageError::backend)?;
+        {
+            let conn = self.connection().await?;
+            conn.execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+        }
         self.get_cron(cron_id).await
     }
 
