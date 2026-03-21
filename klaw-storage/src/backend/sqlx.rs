@@ -14,6 +14,7 @@ use sqlx::{
     Column, FromRow, Row, SqlitePool, TypeInfo,
 };
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct SqlxSessionStore {
@@ -316,13 +317,17 @@ impl SqlxSessionStore {
         paths.ensure_dirs().await?;
         let connect_options = SqliteConnectOptions::new()
             .filename(&paths.db_path)
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .busy_timeout(Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(connect_options)
             .await
             .map_err(StorageError::backend)?;
         let store = Self { paths, pool };
+        store
+            .execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;")
+            .await?;
         store.init().await?;
         Ok(store)
     }

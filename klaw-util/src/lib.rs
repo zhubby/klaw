@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub const KLAW_DIR_NAME: &str = ".klaw";
@@ -98,6 +99,44 @@ pub fn archives_dir(root_dir: impl AsRef<Path>) -> PathBuf {
 
 pub fn logs_dir(root_dir: impl AsRef<Path>) -> PathBuf {
     root_dir.as_ref().join(LOGS_DIR_NAME)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnvironmentCheckReport {
+    pub checks: Vec<DependencyStatus>,
+    pub checked_at: time::OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DependencyStatus {
+    pub name: String,
+    pub description: String,
+    pub available: bool,
+    pub version: Option<String>,
+    pub required: bool,
+    pub category: DependencyCategory,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DependencyCategory {
+    Required,
+    OptionalWithFallback,
+}
+
+impl EnvironmentCheckReport {
+    pub fn all_required_available(&self) -> bool {
+        self.checks
+            .iter()
+            .filter(|c| c.required)
+            .all(|c| c.available)
+    }
+
+    pub fn terminal_multiplexer_available(&self) -> bool {
+        self.checks
+            .iter()
+            .filter(|c| c.name == "zellij" || c.name == "tmux")
+            .any(|c| c.available)
+    }
 }
 
 #[cfg(test)]

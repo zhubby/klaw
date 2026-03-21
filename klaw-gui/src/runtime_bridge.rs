@@ -1,4 +1,5 @@
 use klaw_channel::ChannelSyncResult;
+use klaw_util::EnvironmentCheckReport;
 use std::sync::{mpsc, Mutex, OnceLock};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -15,6 +16,9 @@ pub enum RuntimeCommand {
     RunCronNow {
         cron_id: String,
         response: mpsc::Sender<Result<String, String>>,
+    },
+    GetEnvCheck {
+        response: mpsc::Sender<EnvironmentCheckReport>,
     },
 }
 
@@ -146,4 +150,22 @@ pub fn request_sync_channels() -> Result<ChannelSyncResult, String> {
     response_rx
         .recv()
         .map_err(|_| "runtime command response channel closed".to_string())?
+}
+
+pub fn request_env_check() -> Result<EnvironmentCheckReport, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::GetEnvCheck {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    response_rx
+        .recv()
+        .map_err(|_| "runtime command response channel closed".to_string())
 }

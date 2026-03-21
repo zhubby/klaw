@@ -44,6 +44,7 @@ For docs: `mdbook build docs` (or `mdbook serve docs` for local preview).
 - Prefer guard clauses (early returns) over nested `if` blocks.
 - Prefer iterators/combinators over manual loops. Use `Cow<'_, str>` when allocation is conditional.
 - Keep public API surfaces small. Use `#[must_use]` where return values matter.
+- For a single SQLite database file, reuse the same store/connection pool across the process. Do not open a second independent connection/manager to the same DB for background writers or sidecar tasks; share the existing store instead.
 
 ## Workspace Dependency Management
 

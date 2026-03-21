@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-21
+
+### Fixed
+- `cron_manager` 现在支持注入共享 `session_store`，避免 runtime 内对同一个 `klaw.db` 重新打开独立连接并触发 SQLite `database is locked`
+
 ## 2026-03-20
 
 ### Changed

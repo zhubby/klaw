@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use klaw_storage::{
-    open_default_store, CronJob, CronScheduleKind, CronStorage, CronTaskRun, NewCronJob,
-    StorageError, UpdateCronJobPatch,
+    open_default_store, CronJob, CronScheduleKind, CronStorage, CronTaskRun,
+    DefaultSessionStore, NewCronJob, StorageError, UpdateCronJobPatch,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -24,9 +24,13 @@ impl CronManagerTool {
         let store = open_default_store()
             .await
             .map_err(|err| ToolError::ExecutionFailed(format!("open storage failed: {err}")))?;
-        Ok(Self {
+        Ok(Self::with_store(store))
+    }
+
+    pub fn with_store(store: DefaultSessionStore) -> Self {
+        Self {
             storage: Arc::new(store),
-        })
+        }
     }
 
     #[cfg(test)]

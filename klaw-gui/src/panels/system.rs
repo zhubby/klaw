@@ -3,6 +3,7 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use egui::RichText;
 use egui_phosphor::regular;
 use klaw_storage::StoragePaths;
+use klaw_util::{DependencyCategory, EnvironmentCheckReport};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
@@ -89,6 +90,8 @@ pub struct SystemPanel {
     paths: Option<StoragePaths>,
     dirs: [DirState; 7],
     clear_confirm: Option<DirKind>,
+    env_check: Option<EnvironmentCheckReport>,
+    env_check_loaded: bool,
 }
 
 impl SystemPanel {
@@ -178,6 +181,89 @@ impl SystemPanel {
             if dir.usage_bytes.is_none() && dir.usage_rx.is_none() {
                 self.refresh_usage(kind);
             }
+        }
+    }
+
+    fn load_env_check(&mut self) {
+        if self.env_check_loaded {
+            return;
+        }
+        self.env_check_loaded = true;
+        match crate::request_env_check() {
+            Ok(report) => {
+                self.env_check = Some(report);
+            }
+            Err(err) => {
+                tracing::warn!("Failed to get environment check: {err}");
+            }
+        }
+    }
+
+    fn render_env_check_section(&mut self, ui: &mut egui::Ui) {
+        ui.strong("Environment Dependencies");
+        ui.add_space(4.0);
+
+        let Some(report) = &self.env_check else {
+            ui.label("Loading...");
+            return;
+        };
+
+        let all_required_ok = report.all_required_available();
+        let tm_ok = report.terminal_multiplexer_available();
+        let success_color = egui::Color32::from_rgb(0x22, 0xC5, 0x5E);
+        let warn_color = ui.visuals().warn_fg_color;
+        let error_color = ui.visuals().error_fg_color;
+
+        for check in &report.checks {
+            ui.horizontal(|ui| {
+                let icon = if check.available {
+                    regular::CHECK_CIRCLE
+                } else {
+                    regular::X_CIRCLE
+                };
+                let color = if check.available {
+                    success_color
+                } else if check.required {
+                    error_color
+                } else {
+                    warn_color
+                };
+                ui.label(RichText::new(icon).color(color).size(16.0));
+
+                ui.label(RichText::new(&check.name).strong());
+
+                if let Some(version) = &check.version {
+                    ui.label(RichText::new(version).weak());
+                } else {
+                    ui.label(RichText::new("not found").weak());
+                }
+
+                let label = match check.category {
+                    DependencyCategory::Required => "Required",
+                    DependencyCategory::OptionalWithFallback => "Optional",
+                };
+                ui.label(
+                    RichText::new(label)
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+            });
+
+            ui.label(RichText::new(&check.description).small().weak().italics());
+            ui.add_space(4.0);
+        }
+
+        if all_required_ok && tm_ok {
+            ui.label(RichText::new("All dependencies available").color(success_color));
+        } else if all_required_ok {
+            ui.label(
+                RichText::new("Note: Terminal multiplexer (zellij/tmux) not available")
+                    .color(warn_color),
+            );
+        } else {
+            ui.label(
+                RichText::new("Warning: Some required dependencies are missing").color(error_color),
+            );
         }
     }
 
@@ -340,6 +426,7 @@ impl PanelRenderer for SystemPanel {
     ) {
         self.ensure_paths(notifications);
         self.ensure_initial_usage_loaded();
+        self.load_env_check();
         self.poll_tasks(notifications);
 
         if self.any_loading() {
@@ -354,6 +441,8 @@ impl PanelRenderer for SystemPanel {
             .id_salt("system-panel-scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                self.render_env_check_section(ui);
+                ui.separator();
                 self.render_section(ui, DirKind::Tmp);
                 ui.separator();
                 self.render_section(ui, DirKind::Workspace);

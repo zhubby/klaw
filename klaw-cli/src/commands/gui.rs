@@ -122,6 +122,10 @@ impl GuiCommand {
                                                 }
                                                 let _ = response.send(result);
                                             }
+                                            Some(klaw_gui::RuntimeCommand::GetEnvCheck { response }) => {
+                                                let env_check = runtime.env_check.clone();
+                                                let _ = response.send(env_check);
+                                            }
                                             None => {
                                                 runtime_cmd_open = false;
                                             }

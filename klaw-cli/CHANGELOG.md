@@ -6,6 +6,10 @@
 
 - runtime now writes provider request/response audit records to `llm_audit` via a bounded asynchronous background writer so LLM auditing does not block the main request path
 
+### Fixed
+
+- runtime `cron_manager` tool registration now reuses the shared `session_store` instead of reopening `klaw.db`, preventing Telegram/runtime request paths from introducing a second SQLite writer connection
+
 ## 2026-03-20
 
 ### Added

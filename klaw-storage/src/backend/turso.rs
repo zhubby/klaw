@@ -44,6 +44,11 @@ impl TursoSessionStore {
             _db: db,
             conn,
         };
+        store
+            .conn
+            .execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;")
+            .await
+            .map_err(StorageError::backend)?;
         store.init().await?;
         Ok(store)
     }

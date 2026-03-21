@@ -1,5 +1,6 @@
 pub mod service_loop;
 
+use crate::env_check;
 use klaw_agent::{
     build_compression_prompt, build_provider_from_config, merge_or_reset_summary,
     parse_conversation_summary, AgentExecutionStreamEvent, ConversationMessage,
@@ -42,6 +43,7 @@ use klaw_tool::{
     ShellTool, SkillsManagerTool, SkillsRegistryTool, SubAgentTool, TerminalMultiplexerTool,
     ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
 };
+use klaw_util::EnvironmentCheckReport;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -86,6 +88,7 @@ pub struct RuntimeBundle {
     pub observability: Option<ObservabilityHandle>,
     pub conversation_history_limit: usize,
     pub llm_audit_tx: std::sync::mpsc::SyncSender<NewLlmAuditRecord>,
+    pub env_check: EnvironmentCheckReport,
 }
 
 pub struct SharedChannelRuntime {
@@ -1089,7 +1092,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         tools.register(TerminalMultiplexerTool::new());
     }
     if config.tools.cron_manager.enabled() {
-        tools.register(CronManagerTool::open_default().await?);
+        tools.register(CronManagerTool::with_store(session_store.clone()));
     }
     if config.tools.skills_registry.enabled() && !config.skills.registries.is_empty() {
         info!(
@@ -1166,7 +1169,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     });
 
     let observability = init_observability_from_config(config).await;
-    let llm_audit_tx = spawn_llm_audit_writer();
+    let llm_audit_tx = spawn_llm_audit_writer(session_store.clone());
     let telemetry: Option<Arc<dyn AgentTelemetry>> = observability.as_ref().map(|handle| {
         Arc::new(OtelAgentTelemetry::from_handle(handle, "klaw")) as Arc<dyn AgentTelemetry>
     });
@@ -1195,6 +1198,8 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     if let Some(ref tel) = telemetry {
         runtime = runtime.with_telemetry(Arc::clone(tel));
     }
+
+    let env_check = env_check::check_environment();
 
     info!(
         tool_count = runtime.tools.list().len(),
@@ -1249,10 +1254,13 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         observability,
         conversation_history_limit: config.conversation_history_limit,
         llm_audit_tx,
+        env_check,
     })
 }
 
-fn spawn_llm_audit_writer() -> std::sync::mpsc::SyncSender<NewLlmAuditRecord> {
+fn spawn_llm_audit_writer(
+    session_store: DefaultSessionStore,
+) -> std::sync::mpsc::SyncSender<NewLlmAuditRecord> {
     let (tx, rx) = std::sync::mpsc::sync_channel::<NewLlmAuditRecord>(LLM_AUDIT_QUEUE_CAPACITY);
     std::thread::Builder::new()
         .name("klaw-llm-audit-writer".to_string())
@@ -1267,13 +1275,7 @@ fn spawn_llm_audit_writer() -> std::sync::mpsc::SyncSender<NewLlmAuditRecord> {
                     return;
                 }
             };
-            let manager = match runtime.block_on(SqliteSessionManager::open_default()) {
-                Ok(manager) => manager,
-                Err(err) => {
-                    warn!(error = %err, "failed to open llm audit session manager");
-                    return;
-                }
-            };
+            let manager = SqliteSessionManager::from_store(session_store);
             for record in rx {
                 if let Err(err) = runtime.block_on(manager.append_llm_audit(&record)) {
                     warn!(error = %err, audit_id = record.id.as_str(), "failed to persist llm audit record");
