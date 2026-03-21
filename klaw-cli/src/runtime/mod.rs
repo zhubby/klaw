@@ -1,3 +1,4 @@
+pub mod gateway_manager;
 pub mod service_loop;
 
 use crate::env_check;

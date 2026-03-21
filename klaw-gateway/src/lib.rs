@@ -13,9 +13,17 @@ use futures_util::{sink::SinkExt, stream::StreamExt};
 use klaw_config::GatewayConfig;
 use klaw_observability::{exporter::PrometheusExporter, HealthRegistry};
 use serde::Deserialize;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use thiserror::Error;
-use tokio::sync::{broadcast, RwLock};
+use tokio::{
+    sync::{broadcast, oneshot, RwLock},
+    task::JoinHandle,
+};
 use tracing::info;
 
 const ROOM_BUFFER_SIZE: usize = 256;
@@ -30,6 +38,8 @@ pub enum GatewayError {
     Bind(#[source] std::io::Error),
     #[error("gateway server failed: {0}")]
     Serve(#[source] std::io::Error),
+    #[error("gateway server task failed: {0}")]
+    Join(String),
     #[error("failed to create prometheus exporter: {0}")]
     PrometheusExporter(String),
 }
@@ -60,6 +70,71 @@ pub struct GatewayOptions {
     pub prometheus: Option<PrometheusExporter>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayRuntimeInfo {
+    pub listen_ip: String,
+    pub configured_port: u16,
+    pub actual_port: u16,
+    pub ws_url: String,
+    pub health_url: String,
+    pub metrics_url: String,
+    pub started_at_unix_seconds: u64,
+}
+
+impl GatewayRuntimeInfo {
+    fn from_socket_addr(config: &GatewayConfig, socket_addr: SocketAddr) -> Self {
+        let base = format!("http://{socket_addr}");
+        let started_at_unix_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Self {
+            listen_ip: config.listen_ip.clone(),
+            configured_port: config.listen_port,
+            actual_port: socket_addr.port(),
+            ws_url: format!("{base}/ws/chat"),
+            health_url: format!("{base}/health/status"),
+            metrics_url: format!("{base}/metrics"),
+            started_at_unix_seconds,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct GatewayHandle {
+    info: GatewayRuntimeInfo,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    task: Option<JoinHandle<Result<(), GatewayError>>>,
+}
+
+impl GatewayHandle {
+    pub fn info(&self) -> &GatewayRuntimeInfo {
+        &self.info
+    }
+
+    pub async fn wait(mut self) -> Result<(), GatewayError> {
+        let Some(task) = self.task.take() else {
+            return Ok(());
+        };
+        task.await.map_err(|err| GatewayError::Join(err.to_string()))?
+    }
+
+    pub async fn shutdown(mut self) -> Result<(), GatewayError> {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        self.wait().await
+    }
+}
+
+impl Drop for GatewayHandle {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
 impl Default for GatewayOptions {
     fn default() -> Self {
         Self {
@@ -73,10 +148,22 @@ pub async fn run_gateway(config: &GatewayConfig) -> Result<(), GatewayError> {
     run_gateway_with_options(config, GatewayOptions::default()).await
 }
 
+pub async fn spawn_gateway(config: &GatewayConfig) -> Result<GatewayHandle, GatewayError> {
+    spawn_gateway_with_options(config, GatewayOptions::default()).await
+}
+
 pub async fn run_gateway_with_options(
     config: &GatewayConfig,
     options: GatewayOptions,
 ) -> Result<(), GatewayError> {
+    let handle = spawn_gateway_with_options(config, options).await?;
+    handle.wait().await
+}
+
+pub async fn spawn_gateway_with_options(
+    config: &GatewayConfig,
+    options: GatewayOptions,
+) -> Result<GatewayHandle, GatewayError> {
     if config.tls.enabled {
         return Err(GatewayError::TlsNotImplemented);
     }
@@ -106,14 +193,33 @@ pub async fn run_gateway_with_options(
     let listener = tokio::net::TcpListener::bind(socket_addr)
         .await
         .map_err(GatewayError::Bind)?;
-    info!(listen_addr = %socket_addr, "gateway server started");
-    println!("{:<18} http://{socket_addr}/ws/chat", "🌐 Gateway");
-    println!("{:<18} http://{socket_addr}/health/status", "💚 Health");
-    println!("{:<18} http://{socket_addr}/metrics", "📊 Metrics");
+    let actual_addr = listener.local_addr().map_err(GatewayError::Bind)?;
+    let info = GatewayRuntimeInfo::from_socket_addr(config, actual_addr);
+    info!(
+        listen_addr = %actual_addr,
+        configured_port = config.listen_port,
+        actual_port = info.actual_port,
+        "gateway server started"
+    );
+    println!("{:<18} {}", "🌐 Gateway", info.ws_url);
+    println!("{:<18} {}", "💚 Health", info.health_url);
+    println!("{:<18} {}", "📊 Metrics", info.metrics_url);
 
-    axum::serve(listener, app)
-        .await
-        .map_err(GatewayError::Serve)
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .map_err(GatewayError::Serve)
+    });
+
+    Ok(GatewayHandle {
+        info,
+        shutdown_tx: Some(shutdown_tx),
+        task: Some(task),
+    })
 }
 
 async fn ws_chat_handler(
@@ -263,5 +369,26 @@ async fn metrics_handler(State(state): State<Arc<GatewayState>>) -> Response {
             .status(StatusCode::NOT_FOUND)
             .body(Body::from("Prometheus metrics not enabled\n"))
             .unwrap(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{spawn_gateway, GatewayConfig};
+
+    #[tokio::test]
+    async fn spawn_gateway_uses_actual_random_port() {
+        let config = GatewayConfig {
+            enabled: true,
+            listen_ip: "127.0.0.1".to_string(),
+            listen_port: 0,
+            tls: Default::default(),
+        };
+
+        let handle = spawn_gateway(&config).await.expect("gateway should start");
+        assert!(handle.info().actual_port > 0);
+        assert!(handle.info().ws_url.contains(&handle.info().actual_port.to_string()));
+
+        handle.shutdown().await.expect("gateway should stop");
     }
 }

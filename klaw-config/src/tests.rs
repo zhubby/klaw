@@ -100,8 +100,9 @@ fn parse_default_template_succeeds() {
     assert!(parsed.mcp.enabled);
     assert_eq!(parsed.mcp.startup_timeout_seconds, 60);
     assert!(parsed.mcp.servers.is_empty());
+    assert!(!parsed.gateway.enabled);
     assert_eq!(parsed.gateway.listen_ip, "127.0.0.1");
-    assert_eq!(parsed.gateway.listen_port, 8080);
+    assert_eq!(parsed.gateway.listen_port, 0);
     assert!(!parsed.gateway.tls.enabled);
     assert!(parsed.gateway.tls.cert_path.is_none());
     assert!(parsed.gateway.tls.key_path.is_none());
@@ -431,6 +432,7 @@ default_model = "gpt-4o-mini"
 env_key = "OPENAI_API_KEY"
 
 [gateway]
+enabled = true
 listen_ip = "0.0.0.0"
 listen_port = 18080
 
@@ -439,6 +441,7 @@ enabled = false
 "#;
 
     let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
+    assert!(parsed.gateway.enabled);
     assert_eq!(parsed.gateway.listen_ip, "0.0.0.0");
     assert_eq!(parsed.gateway.listen_port, 18_080);
     assert!(!parsed.gateway.tls.enabled);
@@ -613,6 +616,13 @@ fn validate_fails_when_gateway_ip_is_invalid() {
     cfg.gateway.listen_ip = "invalid-ip".to_string();
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("gateway.listen_ip"));
+}
+
+#[test]
+fn validate_accepts_gateway_random_port() {
+    let mut cfg = AppConfig::default();
+    cfg.gateway.listen_port = 0;
+    validate(&cfg).expect("random port should be valid");
 }
 
 #[test]

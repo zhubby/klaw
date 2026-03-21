@@ -40,8 +40,9 @@ env_key = "OPENAI_API_KEY"
 
 # 网关配置
 [gateway]
+enabled = false
 listen_ip = "127.0.0.1"
-listen_port = 8080
+listen_port = 0
 
 # 渠道配置
 [[channels.dingtalk]]

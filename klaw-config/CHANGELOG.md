@@ -4,10 +4,12 @@
 
 ### Added
 
+- 新增 `gateway.enabled` 配置项，用于控制 GUI/runtime 是否自动启动 gateway
 - 新增 `observability.local_store.enabled`、`observability.local_store.retention_days` 与 `observability.local_store.flush_interval_seconds` 配置项，用于控制本地分析存储
 
 ### Changed
 
+- `gateway.listen_port` 默认值改为 `0`，允许启动时由系统分配随机端口
 - 观测配置校验新增 `local_store` 保留天数和刷新间隔的正整数约束
 
 ## 2026-03-20

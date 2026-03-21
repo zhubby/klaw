@@ -14,8 +14,9 @@
 
 ```toml
 [gateway]
+enabled = false
 listen_ip = "127.0.0.1"
-listen_port = 8080
+listen_port = 0
 
 [gateway.tls]
 enabled = false
@@ -23,10 +24,15 @@ cert_path = "/path/to/fullchain.pem"
 key_path = "/path/to/privkey.pem"
 ```
 
+### 配置说明
+
+- `enabled = true` 时，`klaw gui` 启动会自动拉起内置 gateway
+- `listen_port = 0` 时由系统分配随机可用端口，实际端口会输出到日志并展示在 GUI Gateway 面板
+
 ### 配置校验
 
 - `listen_ip` 必须能解析为合法 IP
-- `listen_port` 必须大于 0
+- `listen_port` 允许为 `0`（随机端口）或任意合法 `u16` 端口
 - `tls.enabled=true` 时，`cert_path` 和 `key_path` 不能为空
 
 ## 启动
@@ -37,8 +43,10 @@ klaw gateway
 
 连接示例：
 
-```
-ws://127.0.0.1:8080/ws/chat?session_key=demo-room
+如果配置了随机端口，请使用启动日志或 GUI `Gateway` 面板显示的实际地址进行连接，例如：
+
+```text
+ws://127.0.0.1:18080/ws/chat?session_key=demo-room
 ```
 
 ## 房间模型

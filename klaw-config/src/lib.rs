@@ -237,6 +237,8 @@ fn default_heartbeat_timezone() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
+    #[serde(default)]
+    pub enabled: bool,
     #[serde(default = "default_gateway_listen_ip")]
     pub listen_ip: String,
     #[serde(default = "default_gateway_listen_port")]
@@ -248,6 +250,7 @@ pub struct GatewayConfig {
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             listen_ip: default_gateway_listen_ip(),
             listen_port: default_gateway_listen_port(),
             tls: GatewayTlsConfig::default(),
@@ -270,7 +273,7 @@ fn default_gateway_listen_ip() -> String {
 }
 
 fn default_gateway_listen_port() -> u16 {
-    8080
+    0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

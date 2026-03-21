@@ -6,6 +6,7 @@ use tokio::sync::watch;
 
 use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
+use crate::runtime::gateway_manager::GatewayManager;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
     build_runtime_bundle, finalize_startup_report, reload_runtime_skills_prompt,
@@ -58,6 +59,10 @@ impl GuiCommand {
                         runtime.as_ref(),
                         BackgroundServiceConfig::from_app_config(&config_for_thread),
                     ));
+                    let mut gateway_manager = GatewayManager::new(&config_for_thread);
+                    if let Err(err) = gateway_manager.start_if_enabled(&config_for_thread).await {
+                        warn!(error = %err, "failed to start gateway for gui runtime");
+                    }
                     let adapter = Arc::new(SharedChannelRuntime::new(
                         runtime.clone(),
                         Arc::clone(&background),
@@ -126,6 +131,17 @@ impl GuiCommand {
                                                 let env_check = runtime.env_check.clone();
                                                 let _ = response.send(env_check);
                                             }
+                                            Some(klaw_gui::RuntimeCommand::GetGatewayStatus { response }) => {
+                                                let _ = response.send(gateway_manager.snapshot());
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::SetGatewayEnabled { enabled, response }) => {
+                                                let result = gateway_manager.set_enabled(enabled).await;
+                                                let _ = response.send(result);
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::RestartGateway { response }) => {
+                                                let result = gateway_manager.restart_from_store().await;
+                                                let _ = response.send(result);
+                                            }
                                             None => {
                                                 runtime_cmd_open = false;
                                             }
@@ -137,6 +153,9 @@ impl GuiCommand {
                                 info!("shutdown signal received, stopping gui runtime");
                             }
 
+                            if let Err(err) = gateway_manager.stop().await {
+                                warn!(error = %err, "failed to stop gateway during gui shutdown");
+                            }
                             channel_manager.shutdown_all().await;
                             if let Err(err) = shutdown_runtime_bundle(runtime.as_ref()).await {
                                 warn!(error = %err, "runtime shutdown failed");

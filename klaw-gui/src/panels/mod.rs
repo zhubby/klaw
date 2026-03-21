@@ -4,6 +4,7 @@ mod archive;
 mod channel;
 mod configuration;
 mod cron;
+mod gateway;
 mod heartbeat;
 mod llm;
 mod logs;
@@ -49,6 +50,7 @@ pub struct PanelRegistry {
     channel: channel::ChannelPanel,
     cron: cron::CronPanel,
     heartbeat: heartbeat::HeartbeatPanel,
+    gateway: gateway::GatewayPanel,
     mcp: mcp::McpPanel,
     skills_registry: skills_registry::SkillsRegistryPanel,
     skills_manager: skills_manager::SkillsManagerPanel,
@@ -81,6 +83,7 @@ impl PanelRegistry {
             WorkbenchMenu::Channel => self.channel.render(ui, ctx, notifications),
             WorkbenchMenu::Cron => self.cron.render(ui, ctx, notifications),
             WorkbenchMenu::Heartbeat => self.heartbeat.render(ui, ctx, notifications),
+            WorkbenchMenu::Gateway => self.gateway.render(ui, ctx, notifications),
             WorkbenchMenu::Mcp => self.mcp.render(ui, ctx, notifications),
             WorkbenchMenu::Skill => self.skills_registry.render(ui, ctx, notifications),
             WorkbenchMenu::SkillsManager => self.skills_manager.render(ui, ctx, notifications),

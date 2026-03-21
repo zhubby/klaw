@@ -55,11 +55,6 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             config.gateway.listen_ip, err
         ))
     })?;
-    if config.gateway.listen_port == 0 {
-        return Err(ConfigError::InvalidConfig(
-            "gateway.listen_port must be greater than 0".to_string(),
-        ));
-    }
     if config.gateway.tls.enabled {
         let cert_path = config
             .gateway

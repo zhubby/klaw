@@ -165,6 +165,19 @@ export OPENAI_API_KEY="sk-xxx"
 
 ## 网关配置
 
+### `gateway.enabled`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否启用 gateway。`klaw gui` 启动时会根据此字段决定是否自动拉起内置 gateway。
+
+```toml
+[gateway]
+enabled = true
+```
+
 ### `gateway.listen_ip`
 
 **类型**: `string`
@@ -182,14 +195,14 @@ listen_ip = "127.0.0.1"  # 仅本地访问
 ### `gateway.listen_port`
 
 **类型**: `u16`
-**默认值**: `8080`
+**默认值**: `0`
 **必填**: 是
 
-WebSocket 网关监听端口。
+WebSocket 网关监听端口。设置为 `0` 时，由系统分配随机可用端口。
 
 ```toml
 [gateway]
-listen_port = 8080
+listen_port = 0
 ```
 
 ### `gateway.tls.enabled`

@@ -14,6 +14,7 @@ pub enum WorkbenchMenu {
     Channel,
     Cron,
     Heartbeat,
+    Gateway,
     Mcp,
     Skill,
     #[serde(alias = "SkillManage")]
@@ -28,7 +29,7 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 21] = [
+    pub const ALL: [WorkbenchMenu; 22] = [
         WorkbenchMenu::Profile,
         WorkbenchMenu::System,
         WorkbenchMenu::Setting,
@@ -40,6 +41,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Channel,
         WorkbenchMenu::Cron,
         WorkbenchMenu::Heartbeat,
+        WorkbenchMenu::Gateway,
         WorkbenchMenu::Mcp,
         WorkbenchMenu::Skill,
         WorkbenchMenu::SkillsManager,
@@ -65,6 +67,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Channel => "channel",
             WorkbenchMenu::Cron => "cron",
             WorkbenchMenu::Heartbeat => "heartbeat",
+            WorkbenchMenu::Gateway => "gateway",
             WorkbenchMenu::Mcp => "mcp",
             WorkbenchMenu::Skill => "skill-registry",
             WorkbenchMenu::SkillsManager => "skills-manager",
@@ -91,6 +94,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Channel => "Channel",
             WorkbenchMenu::Cron => "Cron",
             WorkbenchMenu::Heartbeat => "Heartbeat",
+            WorkbenchMenu::Gateway => "Gateway",
             WorkbenchMenu::Mcp => "MCP",
             WorkbenchMenu::Skill => "Skills Registry",
             WorkbenchMenu::SkillsManager => "Skills Manager",
@@ -117,6 +121,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Channel => regular::USERS,
             WorkbenchMenu::Cron => regular::CLOCK,
             WorkbenchMenu::Heartbeat => regular::HEARTBEAT,
+            WorkbenchMenu::Gateway => regular::PLUG,
             WorkbenchMenu::Mcp => regular::PLUG,
             WorkbenchMenu::Skill => regular::PUZZLE_PIECE,
             WorkbenchMenu::SkillsManager => regular::PUZZLE_PIECE,
@@ -163,5 +168,11 @@ mod tests {
     fn configuration_menu_is_registered() {
         assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Configuration));
         assert_eq!(WorkbenchMenu::Configuration.id_key(), "configuration");
+    }
+
+    #[test]
+    fn gateway_menu_is_registered() {
+        assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Gateway));
+        assert_eq!(WorkbenchMenu::Gateway.id_key(), "gateway");
     }
 }
