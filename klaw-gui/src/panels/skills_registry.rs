@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use crate::widgets::ArrayEditor;
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
@@ -23,7 +24,7 @@ struct SkillsRegistryForm {
     original_name: Option<String>,
     name: String,
     address: String,
-    installed_text: String,
+    installed_skills: ArrayEditor,
 }
 
 impl SkillsRegistryForm {
@@ -32,7 +33,7 @@ impl SkillsRegistryForm {
             original_name: None,
             name: String::new(),
             address: String::new(),
-            installed_text: String::new(),
+            installed_skills: ArrayEditor::new("Installed skills"),
         }
     }
 
@@ -41,7 +42,7 @@ impl SkillsRegistryForm {
             original_name: Some(name.to_string()),
             name: name.to_string(),
             address: registry.address.clone(),
-            installed_text: registry.installed.join("\n"),
+            installed_skills: ArrayEditor::from_vec("Installed skills", &registry.installed),
         }
     }
 
@@ -60,13 +61,7 @@ impl SkillsRegistryForm {
     fn to_config(&self) -> SkillsRegistryConfig {
         SkillsRegistryConfig {
             address: self.address.trim().to_string(),
-            installed: self
-                .installed_text
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(str::to_string)
-                .collect(),
+            installed: self.installed_skills.to_vec(),
         }
     }
 }
@@ -419,12 +414,7 @@ impl SkillsRegistryPanel {
                     });
 
                 ui.separator();
-                ui.label("Installed skills (one per line)");
-                ui.add(
-                    egui::TextEdit::multiline(&mut form.installed_text)
-                        .desired_rows(6)
-                        .desired_width(f32::INFINITY),
-                );
+                form.installed_skills.show(ui);
 
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -763,7 +753,7 @@ mod tests {
         let mut form = SkillsRegistryForm::new();
         form.name = "private".to_string();
         form.address = "https://example.com/skills".to_string();
-        form.installed_text = "one\ntwo".to_string();
+        form.installed_skills = ArrayEditor::from_vec("Installed skills", &["one".to_string(), "two".to_string()]);
 
         let updated = SkillsRegistryPanel::apply_form(config, &form).expect("should apply");
 

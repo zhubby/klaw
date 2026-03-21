@@ -2,8 +2,9 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::request_run_cron_now;
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
-use egui::Color32;
+use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_cron::{
     CronError, CronJob, CronListQuery, CronScheduleKind, CronTaskRun, NewCronJob,
     SqliteCronManager, UpdateCronJobPatch,
@@ -558,30 +559,39 @@ impl PanelRenderer for CronPanel {
                                 }
 
                                 response.context_menu(|ui| {
-                                    if ui.button("Runs").clicked() {
+                                    if ui.button(format!("{} Runs", regular::LIST)).clicked() {
                                         runs_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    if ui.button("Run Now").clicked() {
+                                    if ui.button(format!("{} Run Now", regular::PLAY)).clicked() {
                                         run_now_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    if ui.button("Edit").clicked() {
+                                    if ui.button(format!("{} Edit", regular::PENCIL_SIMPLE)).clicked() {
                                         edit_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    let toggle_text =
-                                        if job.enabled { "Disable" } else { "Enable" };
+                                    let toggle_text = if job.enabled {
+                                        format!("{} Disable", regular::POWER)
+                                    } else {
+                                        format!("{} Enable", regular::POWER)
+                                    };
                                     if ui.button(toggle_text).clicked() {
                                         toggle_cron = Some((job.id.clone(), !job.enabled));
                                         ui.close();
                                     }
-                                    if ui.button("Delete").clicked() {
+                                    if ui
+                                        .button(
+                                            RichText::new(format!("{} Delete", regular::TRASH))
+                                                .color(ui.visuals().warn_fg_color),
+                                        )
+                                        .clicked()
+                                    {
                                         delete_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }
                                     ui.separator();
-                                    if ui.button("Copy ID").clicked() {
+                                    if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
                                         ui.ctx().output_mut(|o| {
                                             o.commands.push(egui::OutputCommand::CopyText(
                                                 job.id.clone(),

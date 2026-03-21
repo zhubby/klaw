@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
+use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_approval::{
@@ -253,7 +254,12 @@ impl PanelRenderer for ApprovalPanel {
                                 ui.label(&approval.risk_level);
                             });
                             row.col(|ui| {
-                                ui.label(approval.status.as_str());
+                                let (icon, color, text) = approval_status_display(approval.status);
+                                ui.label(
+                                    RichText::new(format!("{icon} {text}"))
+                                        .color(color)
+                                        .strong(),
+                                );
                             });
                             row.col(|ui| {
                                 ui.label(&approval.requested_by);
@@ -358,7 +364,8 @@ impl PanelRenderer for ApprovalPanel {
                             ui.end_row();
 
                             ui.label("Status:");
-                            ui.label(approval.status.as_str());
+                            let (icon, color, text) = approval_status_display(approval.status);
+                            ui.label(RichText::new(format!("{icon} {text}")).color(color).strong());
                             ui.end_row();
 
                             ui.label("Requested By:");
@@ -478,5 +485,15 @@ fn truncate_preview(text: &str) -> String {
         format!("{}...", chars)
     } else {
         text.to_string()
+    }
+}
+
+fn approval_status_display(status: ApprovalStatus) -> (&'static str, Color32, &'static str) {
+    match status {
+        ApprovalStatus::Pending => (regular::HOURGLASS_MEDIUM, Color32::from_rgb(200, 150, 50), "pending"),
+        ApprovalStatus::Approved => (regular::CHECK_CIRCLE, Color32::from_rgb(50, 180, 80), "approved"),
+        ApprovalStatus::Rejected => (regular::X_CIRCLE, Color32::from_rgb(220, 60, 60), "rejected"),
+        ApprovalStatus::Expired => (regular::CLOCK, Color32::from_rgb(140, 140, 140), "expired"),
+        ApprovalStatus::Consumed => (regular::LIGHTNING, Color32::from_rgb(70, 130, 200), "consumed"),
     }
 }

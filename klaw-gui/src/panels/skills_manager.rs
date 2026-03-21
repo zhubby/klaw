@@ -2,7 +2,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
 use crate::time_format::format_timestamp_millis;
-use egui::RichText;
+use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use egui_file_dialog::FileDialog;
 use egui_phosphor::regular;
@@ -440,11 +440,11 @@ impl SkillsManagerPanel {
         }
     }
 
-    fn stale_label(summary: &SkillSummary) -> &'static str {
+    fn stale_display(summary: &SkillSummary) -> (&'static str, Color32, &'static str) {
         match summary.stale {
-            Some(true) => "stale",
-            Some(false) => "fresh",
-            None => "-",
+            Some(true) => (regular::WARNING, Color32::from_rgb(200, 150, 50), "stale"),
+            Some(false) => (regular::CHECK_CIRCLE, Color32::from_rgb(50, 180, 80), "fresh"),
+            None => (regular::MINUS, Color32::from_rgb(140, 140, 140), "-"),
         }
     }
 
@@ -496,14 +496,12 @@ impl SkillsManagerPanel {
                         "Registry: {}",
                         record.registry.as_deref().unwrap_or("-")
                     ));
-                    ui.label(format!(
-                        "State: {}",
-                        match record.stale {
-                            Some(true) => "stale",
-                            Some(false) => "fresh",
-                            None => "-",
-                        }
-                    ));
+                    let (icon, color, text) = skill_stale_display(record.stale);
+                    ui.label(
+                        RichText::new(format!("State: {icon} {text}"))
+                            .color(color)
+                            .strong(),
+                    );
                 });
                 ui.label(format!("Path: {}", record.local_path.display()));
                 ui.label(format!(
@@ -809,7 +807,8 @@ impl PanelRenderer for SkillsManagerPanel {
                             ui.label(item.registry.as_deref().unwrap_or("-"));
                         });
                         row.col(|ui| {
-                            ui.label(Self::stale_label(item));
+                            let (icon, color, text) = Self::stale_display(item);
+                            ui.label(RichText::new(format!("{icon} {text}")).color(color).strong());
                         });
                         row.col(|ui| {
                             ui.monospace(format_timestamp_millis(item.updated_at_ms));
@@ -1073,6 +1072,14 @@ fn copy_directory_recursive(from: &Path, to: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn skill_stale_display(stale: Option<bool>) -> (&'static str, Color32, &'static str) {
+    match stale {
+        Some(true) => (regular::WARNING, Color32::from_rgb(200, 150, 50), "stale"),
+        Some(false) => (regular::CHECK_CIRCLE, Color32::from_rgb(50, 180, 80), "fresh"),
+        None => (regular::MINUS, Color32::from_rgb(140, 140, 140), "-"),
+    }
 }
 
 fn run_skill_task<T, F, Fut>(op: F) -> Result<T, String>

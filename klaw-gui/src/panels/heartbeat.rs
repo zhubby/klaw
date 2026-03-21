@@ -2,12 +2,16 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::request_run_heartbeat_now;
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
-use egui::Color32;
+use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_heartbeat::{
     HeartbeatInput, HeartbeatManager, DEFAULT_SILENT_ACK_TOKEN, DEFAULT_TIMEZONE,
 };
-use klaw_storage::{open_default_store, DefaultSessionStore, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus};
+use klaw_storage::{
+    open_default_store, DefaultSessionStore, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus,
+    SessionIndex, SessionStorage,
+};
 use std::future::Future;
 use std::sync::Arc;
 use std::thread;
@@ -37,10 +41,10 @@ impl HeartbeatForm {
             channel: String::new(),
             chat_id: String::new(),
             enabled: defaults.enabled,
-            every: defaults.every.clone(),
-            prompt: defaults.prompt.clone(),
-            silent_ack_token: defaults.silent_ack_token.clone(),
-            timezone: defaults.timezone.clone(),
+            every: "30m".to_string(),
+            prompt: "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.".to_string(),
+            silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+            timezone: DEFAULT_TIMEZONE.to_string(),
         }
     }
 
@@ -85,27 +89,18 @@ impl HeartbeatForm {
 #[derive(Debug, Clone)]
 struct HeartbeatDefaults {
     enabled: bool,
-    every: String,
-    prompt: String,
-    silent_ack_token: String,
-    timezone: String,
 }
 
 impl Default for HeartbeatDefaults {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            every: "30m".to_string(),
-            prompt: "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.".to_string(),
-            silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
-            timezone: DEFAULT_TIMEZONE.to_string(),
-        }
+        Self { enabled: true }
     }
 }
 
 pub struct HeartbeatPanel {
     loaded: bool,
     defaults: HeartbeatDefaults,
+    sessions: Vec<SessionIndex>,
     jobs: Vec<HeartbeatJob>,
     runs_heartbeat_id: Option<String>,
     runs: Vec<HeartbeatTaskRun>,
@@ -119,6 +114,7 @@ impl Default for HeartbeatPanel {
         Self {
             loaded: false,
             defaults: HeartbeatDefaults::default(),
+            sessions: Vec::new(),
             jobs: Vec::new(),
             runs_heartbeat_id: None,
             runs: Vec::new(),
@@ -134,7 +130,17 @@ impl HeartbeatPanel {
         if self.loaded {
             return;
         }
+        self.refresh_sessions(notifications);
         self.refresh_jobs(notifications);
+    }
+
+    fn refresh_sessions(&mut self, notifications: &mut NotificationCenter) {
+        match run_session_query(500, 0) {
+            Ok(sessions) => {
+                self.sessions = sessions;
+            }
+            Err(err) => notifications.error(format!("Failed to list sessions: {err}")),
+        }
     }
 
     fn refresh_jobs(&mut self, notifications: &mut NotificationCenter) {
@@ -166,11 +172,27 @@ impl HeartbeatPanel {
 
     fn open_add_form(&mut self) {
         self.form = Some(HeartbeatForm::new(&self.defaults));
+        self.sync_form_session_selection();
     }
 
     fn open_edit_form(&mut self, heartbeat_id: &str) {
         if let Some(item) = self.jobs.iter().find(|job| job.id == heartbeat_id) {
             self.form = Some(HeartbeatForm::edit(item));
+            self.sync_form_session_selection();
+        }
+    }
+
+    fn sync_form_session_selection(&mut self) {
+        let Some(form) = self.form.as_mut() else {
+            return;
+        };
+        if let Some(session) = self
+            .sessions
+            .iter()
+            .find(|session| session.session_key == form.session_key)
+        {
+            form.channel = session.channel.clone();
+            form.chat_id = session.chat_id.clone();
         }
     }
 
@@ -294,7 +316,7 @@ impl HeartbeatPanel {
     fn render_defaults(&mut self, ui: &mut egui::Ui) {
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.strong("Form Defaults");
-            ui.small("These defaults are local to the GUI form and are not written back to config.");
+            ui.small("Only the default enabled state is kept locally in the GUI. Other heartbeat fields use built-in defaults.");
             ui.add_space(6.0);
             egui::Grid::new("heartbeat-defaults-grid")
                 .num_columns(2)
@@ -303,27 +325,7 @@ impl HeartbeatPanel {
                     ui.label("Enabled");
                     ui.checkbox(&mut self.defaults.enabled, "");
                     ui.end_row();
-
-                    ui.label("Every");
-                    ui.text_edit_singleline(&mut self.defaults.every);
-                    ui.end_row();
-
-                    ui.label("Timezone");
-                    ui.text_edit_singleline(&mut self.defaults.timezone);
-                    ui.end_row();
-
-                    ui.label("Silent Ack Token");
-                    ui.text_edit_singleline(&mut self.defaults.silent_ack_token);
-                    ui.end_row();
                 });
-
-            ui.add_space(6.0);
-            ui.label("Prompt");
-            ui.add(
-                egui::TextEdit::multiline(&mut self.defaults.prompt)
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY),
-            );
         });
     }
 
@@ -340,6 +342,19 @@ impl HeartbeatPanel {
             .resizable(true)
             .show(ui.ctx(), |ui| {
                 ui.set_min_width(620.0);
+                let session_items = self
+                    .sessions
+                    .iter()
+                    .map(|session| {
+                        (
+                            session.session_key.clone(),
+                            format!(
+                                "{}  [{} / {}]",
+                                session.session_key, session.channel, session.chat_id
+                            ),
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 egui::Grid::new("heartbeat-form-grid")
                     .num_columns(2)
                     .spacing([12.0, 8.0])
@@ -353,15 +368,29 @@ impl HeartbeatPanel {
                         ui.end_row();
 
                         ui.label("Session Key");
-                        ui.text_edit_singleline(&mut form.session_key);
+                        egui::ComboBox::from_id_salt("heartbeat-session-key")
+                            .selected_text(if form.session_key.trim().is_empty() {
+                                "Select a session"
+                            } else {
+                                form.session_key.as_str()
+                            })
+                            .width(420.0)
+                            .show_ui(ui, |ui| {
+                                for (session_key, label) in &session_items {
+                                    let selected = form.session_key == *session_key;
+                                    if ui.selectable_label(selected, label).clicked() {
+                                        form.session_key = session_key.clone();
+                                    }
+                                }
+                            });
                         ui.end_row();
 
                         ui.label("Channel");
-                        ui.text_edit_singleline(&mut form.channel);
+                        ui.add_enabled(false, egui::TextEdit::singleline(&mut form.channel));
                         ui.end_row();
 
                         ui.label("Chat ID");
-                        ui.text_edit_singleline(&mut form.chat_id);
+                        ui.add_enabled(false, egui::TextEdit::singleline(&mut form.chat_id));
                         ui.end_row();
 
                         ui.label("Enabled");
@@ -381,6 +410,14 @@ impl HeartbeatPanel {
                         ui.end_row();
                     });
 
+                if self.sessions.is_empty() {
+                    ui.add_space(8.0);
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "No indexed sessions found. Heartbeat must target an existing session.",
+                    );
+                }
+
                 ui.separator();
                 ui.label("Prompt");
                 ui.add(
@@ -399,6 +436,8 @@ impl HeartbeatPanel {
                     }
                 });
             });
+
+        self.sync_form_session_selection();
 
         if save_clicked {
             self.save_form(notifications);
@@ -484,6 +523,7 @@ impl PanelRenderer for HeartbeatPanel {
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
+                self.refresh_sessions(notifications);
                 self.refresh_jobs(notifications);
             }
             if ui.button("Add Heartbeat Job").clicked() {
@@ -593,29 +633,39 @@ impl PanelRenderer for HeartbeatPanel {
                                 }
 
                                 response.context_menu(|ui| {
-                                    if ui.button("Runs").clicked() {
+                                    if ui.button(format!("{} Runs", regular::LIST)).clicked() {
                                         runs_heartbeat_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    if ui.button("Run Now").clicked() {
+                                    if ui.button(format!("{} Run Now", regular::PLAY)).clicked() {
                                         run_now_heartbeat_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    if ui.button("Edit").clicked() {
+                                    if ui.button(format!("{} Edit", regular::PENCIL_SIMPLE)).clicked() {
                                         edit_heartbeat_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    let toggle_text = if job.enabled { "Disable" } else { "Enable" };
+                                    let toggle_text = if job.enabled {
+                                        format!("{} Disable", regular::POWER)
+                                    } else {
+                                        format!("{} Enable", regular::POWER)
+                                    };
                                     if ui.button(toggle_text).clicked() {
                                         toggle_heartbeat = Some((job.id.clone(), !job.enabled));
                                         ui.close();
                                     }
-                                    if ui.button("Delete").clicked() {
+                                    if ui
+                                        .button(
+                                            RichText::new(format!("{} Delete", regular::TRASH))
+                                                .color(ui.visuals().warn_fg_color),
+                                        )
+                                        .clicked()
+                                    {
                                         delete_heartbeat_id = Some(job.id.clone());
                                         ui.close();
                                     }
                                     ui.separator();
-                                    if ui.button("Copy ID").clicked() {
+                                    if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
                                         ui.ctx().output_mut(|o| {
                                             o.commands.push(egui::OutputCommand::CopyText(
                                                 job.id.clone(),
@@ -704,5 +754,29 @@ where
     match join.join() {
         Ok(result) => result,
         Err(_) => Err("heartbeat operation thread panicked".to_string()),
+    }
+}
+
+fn run_session_query(limit: i64, offset: i64) -> Result<Vec<SessionIndex>, String> {
+    let join = thread::spawn(move || {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to build runtime: {err}"))?;
+
+        runtime.block_on(async move {
+            let store = open_default_store()
+                .await
+                .map_err(|err| format!("failed to open session store: {err}"))?;
+            store
+                .list_sessions(limit, offset)
+                .await
+                .map_err(|err| format!("session query failed: {err}"))
+        })
+    });
+
+    match join.join() {
+        Ok(result) => result,
+        Err(_) => Err("session query thread panicked".to_string()),
     }
 }
