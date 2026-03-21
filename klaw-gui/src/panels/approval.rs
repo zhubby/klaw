@@ -2,6 +2,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_approval::{
     ApprovalListQuery, ApprovalManager, ApprovalResolveDecision, ApprovalStatus,
     SqliteApprovalManager,
@@ -279,25 +280,25 @@ impl PanelRenderer for ApprovalPanel {
                             }
 
                             response.context_menu(|ui| {
-                                if ui.button("View").clicked() {
+                                if ui.button(format!("{} View", regular::EYE)).clicked() {
                                     view_id = Some(approval.id.clone());
                                     ui.close();
                                 }
                                 ui.separator();
-                                if ui.button("Approve").clicked() {
+                                if ui.button(format!("{} Approve", regular::CHECK_CIRCLE)).clicked() {
                                     approve_id = Some(approval.id.clone());
                                     ui.close();
                                 }
-                                if ui.button("Reject").clicked() {
+                                if ui.button(format!("{} Reject", regular::X_CIRCLE)).clicked() {
                                     reject_id = Some(approval.id.clone());
                                     ui.close();
                                 }
-                                if ui.button("Consume").clicked() {
+                                if ui.button(format!("{} Consume", regular::LIGHTNING)).clicked() {
                                     consume_id = Some(approval.id.clone());
                                     ui.close();
                                 }
                                 ui.separator();
-                                if ui.button("Copy ID").clicked() {
+                                if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
                                     ui.ctx().output_mut(|o| {
                                         o.commands.push(egui::OutputCommand::CopyText(
                                             approval.id.clone(),

@@ -2,8 +2,10 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
 use crate::time_format::format_timestamp_millis;
+use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_file_dialog::FileDialog;
+use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_skill::{
     open_default_skills_manager, FileSystemSkillStore, RegistrySkillSummary, SkillRecord,
@@ -36,6 +38,7 @@ pub struct SkillsManagerPanel {
     detail_window_open: bool,
     install_window: Option<InstallSkillWindow>,
     local_install_dialog: FileDialog,
+    delete_confirm_skill: Option<(String, Option<String>)>,
 }
 
 impl Default for SkillsManagerPanel {
@@ -54,6 +57,7 @@ impl Default for SkillsManagerPanel {
             detail_window_open: false,
             install_window: None,
             local_install_dialog: FileDialog::new(),
+            delete_confirm_skill: None,
         }
     }
 }
@@ -660,6 +664,54 @@ impl SkillsManagerPanel {
             }
         }
     }
+
+    fn render_delete_confirm_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some((skill_name, registry)) = self.delete_confirm_skill.clone() else {
+            return;
+        };
+
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        egui::Window::new("Confirm Remove")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Are you sure you want to remove skill `{}`?",
+                    skill_name
+                ));
+                if let Some(reg) = registry.as_ref() {
+                    ui.label(format!("Registry: {}", reg));
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(RichText::new("Remove").color(ui.visuals().warn_fg_color))
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            self.delete_confirm_skill = None;
+            self.uninstall_skill(&skill_name, registry.as_deref(), notifications);
+        }
+        if cancelled {
+            self.delete_confirm_skill = None;
+        }
+    }
 }
 
 impl PanelRenderer for SkillsManagerPanel {
@@ -705,7 +757,6 @@ impl PanelRenderer for SkillsManagerPanel {
             ui.label("No installed skills found.");
         } else {
             let mut view_skill: Option<String> = None;
-            let mut remove_skill: Option<(String, Option<String>)> = None;
 
             let available_height = ui.available_height();
             TableBuilder::new(ui)
@@ -780,16 +831,19 @@ impl PanelRenderer for SkillsManagerPanel {
                         let skill_name = item.name.clone();
                         let skill_registry = item.registry.clone();
                         response.context_menu(|ui| {
-                            if ui.button("View").clicked() {
+                            if ui.button(format!("{} View", regular::EYE)).clicked() {
                                 view_skill = Some(skill_name.clone());
                                 ui.close();
                             }
-                            if ui.button("Remove").clicked() {
-                                remove_skill = Some((skill_name, skill_registry));
+                            if ui
+                                .button(RichText::new(format!("{} Remove", regular::TRASH)).color(ui.visuals().warn_fg_color))
+                                .clicked()
+                            {
+                                self.delete_confirm_skill = Some((skill_name, skill_registry));
                                 ui.close();
                             }
                             ui.separator();
-                            if ui.button("Copy Name").clicked() {
+                            if ui.button(format!("{} Copy Name", regular::COPY)).clicked() {
                                 ui.ctx().output_mut(|o| {
                                     o.commands
                                         .push(egui::OutputCommand::CopyText(item.name.clone()));
@@ -803,10 +857,8 @@ impl PanelRenderer for SkillsManagerPanel {
             if let Some(skill_name) = view_skill {
                 self.load_detail(&skill_name, notifications);
             }
-            if let Some((skill_name, registry)) = remove_skill {
-                self.uninstall_skill(&skill_name, registry.as_deref(), notifications);
-            }
         }
+        self.render_delete_confirm_dialog(ui.ctx(), notifications);
         self.render_detail_window(ui.ctx());
         self.render_install_window(ui.ctx(), notifications);
     }

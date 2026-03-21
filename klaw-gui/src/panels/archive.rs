@@ -3,6 +3,7 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
 use egui::{ColorImage, TextureHandle};
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_archive::{
     open_default_archive_service, ArchiveBlob, ArchiveError, ArchiveMediaKind, ArchiveQuery,
     ArchiveRecord, ArchiveService, ArchiveSourceKind, SqliteArchiveService,
@@ -242,18 +243,18 @@ impl PanelRenderer for ArchivePanel {
                             let item_id = item.id.clone();
                             let can_preview = preview_capability_for_record(item).is_some();
                             response.context_menu(|ui| {
-                                if can_preview && ui.button("Preview").clicked() {
+                                if can_preview && ui.button(format!("{} Preview", regular::EYE)).clicked() {
                                     preview_item = Some(item.clone());
                                     ui.close();
                                 }
-                                if ui.button("Details").clicked() {
+                                if ui.button(format!("{} Details", regular::FILE_TEXT)).clicked() {
                                     view_detail_id = Some(item_id.clone());
                                     ui.close();
                                 }
                                 if can_preview {
                                     ui.separator();
                                 }
-                                if ui.button("Copy ID").clicked() {
+                                if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
                                     ui.ctx().output_mut(|o| {
                                         o.commands
                                             .push(egui::OutputCommand::CopyText(item.id.clone()));

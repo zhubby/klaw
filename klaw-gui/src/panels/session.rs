@@ -3,6 +3,7 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::{ChatBox, ChatMessage, ChatRole};
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_session::{
     LlmUsageSummary, SessionError, SessionIndex, SessionListQuery, SessionManager,
     SqliteSessionManager,
@@ -252,11 +253,11 @@ impl PanelRenderer for SessionPanel {
                             }
 
                             response.context_menu(|ui| {
-                                if ui.button("View Chat").clicked() {
+                                if ui.button(format!("{} View Chat", regular::CHATS_CIRCLE)).clicked() {
                                     view_session_key = Some(session.session_key.clone());
                                     ui.close();
                                 }
-                                if ui.button("Copy Session Key").clicked() {
+                                if ui.button(format!("{} Copy Session Key", regular::KEY)).clicked() {
                                     ui.ctx().output_mut(|o| {
                                         o.commands.push(egui::OutputCommand::CopyText(
                                             session.session_key.clone(),

@@ -4,6 +4,7 @@ use crate::time_format::format_timestamp_millis;
 use crate::widgets::show_json_tree;
 use chrono::{Datelike, Local, NaiveDate};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
+use egui_phosphor::regular;
 use klaw_session::{
     LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, SessionError, SessionManager,
     SqliteSessionManager,
@@ -243,11 +244,11 @@ impl PanelRenderer for LlmPanel {
                                 };
                             }
                             response.context_menu(|ui| {
-                                if ui.button("View Details").clicked() {
+                                if ui.button(format!("{} View Details", regular::EYE)).clicked() {
                                     open_detail = Some(item.clone());
                                     ui.close();
                                 }
-                                if ui.button("Copy Session Key").clicked() {
+                                if ui.button(format!("{} Copy Session Key", regular::KEY)).clicked() {
                                     ui.ctx().output_mut(|o| {
                                         o.commands.push(egui::OutputCommand::CopyText(
                                             item.session_key.clone(),
@@ -255,7 +256,7 @@ impl PanelRenderer for LlmPanel {
                                     });
                                     ui.close();
                                 }
-                                if ui.button("Copy Request ID").clicked() {
+                                if ui.button(format!("{} Copy Request ID", regular::FINGERPRINT)).clicked() {
                                     ui.ctx().output_mut(|o| {
                                         o.commands.push(egui::OutputCommand::CopyText(
                                             item.provider_request_id.clone().unwrap_or_default(),
