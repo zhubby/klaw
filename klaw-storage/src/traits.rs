@@ -1,7 +1,8 @@
 use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus,
-    LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    NewLlmUsageRecord, SessionCompressionState, SessionIndex, StorageError, UpdateCronJobPatch,
+    LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord,
+    NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, SessionCompressionState,
+    SessionIndex, StorageError, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -105,6 +106,16 @@ pub trait SessionStorage: Send + Sync {
         session_key: &str,
         turn_index: i64,
     ) -> Result<LlmUsageSummary, StorageError>;
+
+    async fn append_llm_audit(
+        &self,
+        input: &NewLlmAuditRecord,
+    ) -> Result<LlmAuditRecord, StorageError>;
+
+    async fn list_llm_audit(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditRecord>, StorageError>;
 
     async fn create_approval(
         &self,

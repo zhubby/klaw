@@ -6,6 +6,7 @@ mod configuration;
 mod cron;
 mod heartbeat;
 mod logs;
+mod llm;
 mod mcp;
 mod memory;
 mod monitor;
@@ -56,6 +57,7 @@ pub struct PanelRegistry {
     tool: tool::ToolPanel,
     monitor: monitor::MonitorPanel,
     logs: logs::LogsPanel,
+    llm: llm::LlmPanel,
     analyze_dashboard: analyze_dashboard::AnalyzeDashboardPanel,
     observability: observability::ObservabilityPanel,
 }
@@ -75,6 +77,7 @@ impl PanelRegistry {
             WorkbenchMenu::Approval => self.approval.render(ui, ctx, notifications),
             WorkbenchMenu::Configuration => self.configuration.render(ui, ctx, notifications),
             WorkbenchMenu::Provider => self.provider.render(ui, ctx, notifications),
+            WorkbenchMenu::Llm => self.llm.render(ui, ctx, notifications),
             WorkbenchMenu::Channel => self.channel.render(ui, ctx, notifications),
             WorkbenchMenu::Cron => self.cron.render(ui, ctx, notifications),
             WorkbenchMenu::Heartbeat => self.heartbeat.render(ui, ctx, notifications),

@@ -129,9 +129,7 @@ impl LlmProvider for FailingProvider {
         _model: Option<&str>,
         _options: ChatOptions,
     ) -> Result<LlmResponse, LlmError> {
-        Err(LlmError::ProviderUnavailable(
-            "simulated failure".to_string(),
-        ))
+        Err(LlmError::provider_unavailable("simulated failure"))
     }
 }
 
@@ -173,6 +171,7 @@ impl LlmProvider for CaptureHistoryProvider {
             tool_calls: Vec::new(),
             usage: None,
             usage_source: None,
+            audit: None,
         })
     }
 }

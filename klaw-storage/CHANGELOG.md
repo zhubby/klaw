@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-03-21
+
+### Added
+- added `llm_audit` persistence models (`LlmAuditRecord`, `NewLlmAuditRecord`, `LlmAuditQuery`, `LlmAuditStatus`, `LlmAuditSortOrder`) and `SessionStorage` APIs for append/list workflows
+- added `llm_audit` table + indexes in both SQLx and Turso backends for request/response payload auditing with session/provider/date filtering
+
+### Changed
+- storage tests now cover `llm_audit` filtering and requested-time sorting behavior
+
 ## 2026-03-20
 
 ### Changed

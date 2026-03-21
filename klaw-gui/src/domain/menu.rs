@@ -10,6 +10,7 @@ pub enum WorkbenchMenu {
     Approval,
     Configuration,
     Provider,
+    Llm,
     Channel,
     Cron,
     Heartbeat,
@@ -27,7 +28,7 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 20] = [
+    pub const ALL: [WorkbenchMenu; 21] = [
         WorkbenchMenu::Profile,
         WorkbenchMenu::System,
         WorkbenchMenu::Setting,
@@ -35,6 +36,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Approval,
         WorkbenchMenu::Configuration,
         WorkbenchMenu::Provider,
+        WorkbenchMenu::Llm,
         WorkbenchMenu::Channel,
         WorkbenchMenu::Cron,
         WorkbenchMenu::Heartbeat,
@@ -59,6 +61,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Approval => "approval",
             WorkbenchMenu::Configuration => "configuration",
             WorkbenchMenu::Provider => "provider",
+            WorkbenchMenu::Llm => "llm",
             WorkbenchMenu::Channel => "channel",
             WorkbenchMenu::Cron => "cron",
             WorkbenchMenu::Heartbeat => "heartbeat",
@@ -84,6 +87,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Approval => "Approval",
             WorkbenchMenu::Configuration => "Configuration",
             WorkbenchMenu::Provider => "Model Provider",
+            WorkbenchMenu::Llm => "LLM",
             WorkbenchMenu::Channel => "Channel",
             WorkbenchMenu::Cron => "Cron",
             WorkbenchMenu::Heartbeat => "Heartbeat",
@@ -109,6 +113,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Approval => regular::SEAL_CHECK,
             WorkbenchMenu::Configuration => regular::TOOLBOX,
             WorkbenchMenu::Provider => regular::BRAIN,
+            WorkbenchMenu::Llm => regular::CHATS_CIRCLE,
             WorkbenchMenu::Channel => regular::USERS,
             WorkbenchMenu::Cron => regular::CLOCK,
             WorkbenchMenu::Heartbeat => regular::HEARTBEAT,

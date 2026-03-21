@@ -3,6 +3,7 @@
 ## 2026-03-21
 
 ### Added
+- `AgentLoop` now propagates provider request/response audit payloads into runtime outcomes and outbound metadata under `llm.audit.records` for downstream persistence/UI inspection
 - `AgentTelemetry` 新增 `record_tool_outcome` 接口，并引入 `ToolOutcomeStatus`，用于把工具成功/失败、耗时和错误码写入本地分析存储
 
 ### Changed

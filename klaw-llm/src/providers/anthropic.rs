@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    estimate::estimate_chat_usage, ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse,
-    LlmUsage, LlmUsageSource, ToolCall, ToolDefinition,
+    estimate::estimate_chat_usage, ChatOptions, LlmAuditPayload, LlmAuditStatus, LlmError,
+    LlmMessage, LlmProvider, LlmResponse, LlmUsage, LlmUsageSource, ToolCall, ToolDefinition,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Anthropic 配置。
 #[derive(Debug, Clone)]
@@ -119,6 +120,9 @@ impl LlmProvider for AnthropicProvider {
                 )
             },
         };
+        let request_json = serde_json::to_value(&request)
+            .map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        let requested_at_ms = now_ms();
 
         let response = self
             .client
@@ -129,23 +133,61 @@ impl LlmProvider for AnthropicProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| LlmError::RequestFailed(e.to_string()))?;
+            .map_err(|e| {
+                LlmError::request_failed(e.to_string()).with_audit(self.build_failed_audit(
+                    request_json.clone(),
+                    requested_at_ms,
+                    None,
+                    request.model.clone(),
+                    "request_failed",
+                    e.to_string(),
+                ))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
+            let responded_at_ms = now_ms();
             let body = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "<unreadable body>".to_string());
-            return Err(LlmError::ProviderUnavailable(format!(
+            return Err(LlmError::provider_unavailable(format!(
                 "http_status={status}, body={body}"
+            ))
+            .with_audit(self.build_failed_audit(
+                request_json,
+                requested_at_ms,
+                Some(responded_at_ms),
+                request.model.clone(),
+                "provider_unavailable",
+                format!("http_status={status}, body={body}"),
             )));
         }
 
-        let payload: AnthropicMessagesResponse = response
-            .json()
+        let payload_json = response
+            .json::<Value>()
             .await
-            .map_err(|e| LlmError::InvalidResponse(e.to_string()))?;
+            .map_err(|e| {
+                LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
+                    request_json.clone(),
+                    requested_at_ms,
+                    Some(now_ms()),
+                    request.model.clone(),
+                    "invalid_response",
+                    e.to_string(),
+                ))
+            })?;
+        let payload: AnthropicMessagesResponse =
+            serde_json::from_value(payload_json.clone()).map_err(|e| {
+                LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
+                    request_json.clone(),
+                    requested_at_ms,
+                    Some(now_ms()),
+                    request.model.clone(),
+                    "invalid_response",
+                    e.to_string(),
+                ))
+            })?;
 
         let mut text_chunks = Vec::new();
         let mut tool_calls = Vec::new();
@@ -186,6 +228,7 @@ impl LlmProvider for AnthropicProvider {
                 .usage
                 .as_ref()
                 .map(|_| LlmUsageSource::ProviderReported),
+            audit: None,
         };
         if response.usage.is_none() {
             response.usage = Some(estimate_chat_usage(
@@ -201,8 +244,84 @@ impl LlmProvider for AnthropicProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
+        response.audit = Some(self.build_audit(
+            request.model.clone(),
+            LlmAuditStatus::Success,
+            request_json,
+            Some(payload_json),
+            requested_at_ms,
+            Some(now_ms()),
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_request_id.clone()),
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_response_id.clone()),
+        ));
         Ok(response)
     }
+}
+
+impl AnthropicProvider {
+    fn build_audit(
+        &self,
+        model: String,
+        status: LlmAuditStatus,
+        request_body: Value,
+        response_body: Option<Value>,
+        requested_at_ms: i64,
+        responded_at_ms: Option<i64>,
+        provider_request_id: Option<String>,
+        provider_response_id: Option<String>,
+    ) -> LlmAuditPayload {
+        LlmAuditPayload {
+            provider: self.name().to_string(),
+            model,
+            wire_api: self.wire_api().unwrap_or("messages").to_string(),
+            status,
+            error_code: None,
+            error_message: None,
+            provider_request_id,
+            provider_response_id,
+            request_body,
+            response_body,
+            requested_at_ms,
+            responded_at_ms,
+        }
+    }
+
+    fn build_failed_audit(
+        &self,
+        request_body: Value,
+        requested_at_ms: i64,
+        responded_at_ms: Option<i64>,
+        model: String,
+        error_code: &str,
+        error_message: String,
+    ) -> LlmAuditPayload {
+        let mut payload = self.build_audit(
+            model,
+            LlmAuditStatus::Failed,
+            request_body,
+            None,
+            requested_at_ms,
+            responded_at_ms,
+            None,
+            None,
+        );
+        payload.error_code = Some(error_code.to_string());
+        payload.error_message = Some(error_message);
+        payload
+    }
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[derive(Debug, Serialize)]

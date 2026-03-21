@@ -1,8 +1,9 @@
 use crate::SessionError;
 use async_trait::async_trait;
 use klaw_storage::{
-    open_default_store, ChatRecord, DefaultSessionStore, LlmUsageRecord, LlmUsageSummary,
-    NewLlmUsageRecord, SessionCompressionState, SessionIndex, SessionStorage,
+    open_default_store, ChatRecord, DefaultSessionStore, LlmAuditQuery, LlmAuditRecord,
+    LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord, NewLlmUsageRecord,
+    SessionCompressionState, SessionIndex, SessionStorage,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -117,6 +118,16 @@ pub trait SessionManager: Send + Sync {
         session_key: &str,
         turn_index: i64,
     ) -> Result<LlmUsageSummary, SessionError>;
+
+    async fn append_llm_audit(
+        &self,
+        input: &NewLlmAuditRecord,
+    ) -> Result<LlmAuditRecord, SessionError>;
+
+    async fn list_llm_audit(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditRecord>, SessionError>;
 }
 
 pub struct SqliteSessionManager {
@@ -302,6 +313,20 @@ impl SessionManager for SqliteSessionManager {
             .store
             .sum_llm_usage_by_turn(session_key, turn_index)
             .await?)
+    }
+
+    async fn append_llm_audit(
+        &self,
+        input: &NewLlmAuditRecord,
+    ) -> Result<LlmAuditRecord, SessionError> {
+        Ok(self.store.append_llm_audit(input).await?)
+    }
+
+    async fn list_llm_audit(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditRecord>, SessionError> {
+        Ok(self.store.list_llm_audit(query).await?)
     }
 }
 

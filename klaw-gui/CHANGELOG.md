@@ -4,10 +4,12 @@
 
 ### Added
 
+- GUI 新增 `LLM` 一级 workbench 面板，支持按 session/provider/日期范围过滤请求响应审计记录、按时间列升降序排序，并通过右键菜单打开详情
 - GUI 新增 `Analyze Dashboard` 一级 workbench 面板，用于展示本地工具调用分析数据，包括成功率、失败分布、Top 工具和时间窗趋势
 
 ### Changed
 
+- `LLM` 审计详情窗口现在以内置可交互 JSON tree 渲染 request/response body，并在 JSON 解析失败时回退到只读原始文本
 - `Observability` 面板继续作为纯配置页，并新增本地分析存储的开关、保留天数和刷新间隔配置
 - `Session` 聊天弹窗现在会根据当前主题切换消息卡片与角色标题配色，浅色模式下用户消息为淡粉背景、助手消息为淡蓝背景，深色模式标题色也调整为更协调的粉蓝系
 

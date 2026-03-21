@@ -14,8 +14,10 @@ pub use paths::StoragePaths;
 pub use traits::{CronStorage, SessionStorage};
 pub use types::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronTaskRun,
-    CronTaskStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob,
-    NewCronTaskRun, NewLlmUsageRecord, SessionCompressionState, SessionIndex, UpdateCronJobPatch,
+    CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
+    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob,
+    NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, SessionCompressionState, SessionIndex,
+    UpdateCronJobPatch,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -304,6 +306,92 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].request_seq, 2);
         assert_eq!(records[1].request_seq, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn llm_audit_supports_filtering_and_sorting() {
+        let store = create_store().await;
+        store
+            .touch_session("stdio:audit", "chat-audit", "stdio")
+            .await
+            .expect("session should exist");
+
+        store
+            .append_llm_audit(&NewLlmAuditRecord {
+                id: "audit-1".to_string(),
+                session_key: "stdio:audit".to_string(),
+                chat_id: "chat-audit".to_string(),
+                turn_index: 0,
+                request_seq: 1,
+                provider: "openai".to_string(),
+                model: "gpt-4.1-mini".to_string(),
+                wire_api: "responses".to_string(),
+                status: LlmAuditStatus::Success,
+                error_code: None,
+                error_message: None,
+                provider_request_id: Some("req-1".to_string()),
+                provider_response_id: Some("resp-1".to_string()),
+                request_body_json: "{\"input\":\"hello\"}".to_string(),
+                response_body_json: Some("{\"output\":\"world\"}".to_string()),
+                requested_at_ms: 1_000,
+                responded_at_ms: Some(1_100),
+            })
+            .await
+            .expect("first audit should append");
+        store
+            .append_llm_audit(&NewLlmAuditRecord {
+                id: "audit-2".to_string(),
+                session_key: "stdio:audit".to_string(),
+                chat_id: "chat-audit".to_string(),
+                turn_index: 1,
+                request_seq: 2,
+                provider: "anthropic".to_string(),
+                model: "claude-opus-4".to_string(),
+                wire_api: "messages".to_string(),
+                status: LlmAuditStatus::Failed,
+                error_code: Some("provider_unavailable".to_string()),
+                error_message: Some("http_status=503".to_string()),
+                provider_request_id: None,
+                provider_response_id: None,
+                request_body_json: "{\"input\":\"retry\"}".to_string(),
+                response_body_json: None,
+                requested_at_ms: 2_000,
+                responded_at_ms: Some(2_050),
+            })
+            .await
+            .expect("second audit should append");
+
+        let filtered = store
+            .list_llm_audit(&LlmAuditQuery {
+                session_key: Some("stdio:audit".to_string()),
+                provider: Some("anthropic".to_string()),
+                requested_from_ms: Some(1_500),
+                requested_to_ms: Some(2_500),
+                limit: 10,
+                offset: 0,
+                sort_order: LlmAuditSortOrder::RequestedAtAsc,
+            })
+            .await
+            .expect("audit rows should load");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "audit-2");
+        assert_eq!(filtered[0].status, LlmAuditStatus::Failed);
+
+        let descending = store
+            .list_llm_audit(&LlmAuditQuery {
+                session_key: Some("stdio:audit".to_string()),
+                provider: None,
+                requested_from_ms: None,
+                requested_to_ms: None,
+                limit: 10,
+                offset: 0,
+                sort_order: LlmAuditSortOrder::RequestedAtDesc,
+            })
+            .await
+            .expect("audit rows should sort");
+        assert_eq!(descending.len(), 2);
+        assert_eq!(descending[0].id, "audit-2");
+        assert_eq!(descending[1].id, "audit-1");
     }
 
     #[tokio::test(flavor = "current_thread")]

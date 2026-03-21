@@ -3,8 +3,8 @@ mod context_compression;
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
 use klaw_llm::{
-    ChatOptions, LlmError, LlmMedia, LlmMessage, LlmProvider, LlmStreamEvent, LlmUsage,
-    LlmUsageSource, OpenAiCompatibleConfig, OpenAiCompatibleProvider, OpenAiWireApi,
+    ChatOptions, LlmAuditPayload, LlmError, LlmMedia, LlmMessage, LlmProvider, LlmStreamEvent,
+    LlmUsage, LlmUsageSource, OpenAiCompatibleConfig, OpenAiCompatibleProvider, OpenAiWireApi,
     ToolDefinition,
 };
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,7 @@ pub struct AgentExecutionOutput {
     pub reasoning: Option<String>,
     pub tool_signals: Vec<ToolInvocationSignal>,
     pub request_usages: Vec<AgentRequestUsage>,
+    pub request_audits: Vec<AgentRequestAudit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +70,12 @@ pub struct AgentRequestUsage {
     pub request_seq: i64,
     pub usage: LlmUsage,
     pub source: LlmUsageSource,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentRequestAudit {
+    pub request_seq: i64,
+    pub payload: LlmAuditPayload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -270,6 +277,7 @@ pub async fn run_agent_execution(
     let mut tool_calls_used = 0u32;
     let mut tool_signals = Vec::new();
     let mut request_usages = Vec::new();
+    let mut request_audits = Vec::new();
     let mut tokens_used = 0u64;
 
     let max_tool_iterations = limits.max_tool_iterations;
@@ -361,6 +369,9 @@ pub async fn run_agent_execution(
                 });
             }
         }
+        if let Some(audit) = llm_response.audit.clone() {
+            request_audits.push(AgentRequestAudit { request_seq, payload: audit });
+        }
 
         if llm_response.tool_calls.is_empty() {
             return Ok(AgentExecutionOutput {
@@ -368,6 +379,7 @@ pub async fn run_agent_execution(
                 reasoning: llm_response.reasoning,
                 tool_signals,
                 request_usages,
+                request_audits,
             });
         }
         if let Some(stream) = &stream {
@@ -399,6 +411,7 @@ pub async fn run_agent_execution(
                 reasoning: llm_response.reasoning,
                 tool_signals,
                 request_usages,
+                request_audits,
             });
         }
     }
@@ -553,6 +566,7 @@ mod tests {
                         provider_response_id: Some("resp-1".to_string()),
                     }),
                     usage_source: Some(LlmUsageSource::ProviderReported),
+                    audit: None,
                 });
             }
 
@@ -577,6 +591,7 @@ mod tests {
                     provider_response_id: Some("resp-2".to_string()),
                 }),
                 usage_source: Some(LlmUsageSource::ProviderReported),
+                audit: None,
             })
         }
     }
@@ -676,6 +691,7 @@ mod tests {
                 tool_calls: Vec::new(),
                 usage: None,
                 usage_source: None,
+                audit: None,
             })
         }
     }
@@ -747,6 +763,7 @@ mod tests {
                 tool_calls: Vec::new(),
                 usage: None,
                 usage_source: None,
+                audit: None,
             })
         }
     }
@@ -874,6 +891,7 @@ mod tests {
                 }],
                 usage: None,
                 usage_source: None,
+                audit: None,
             })
         }
     }

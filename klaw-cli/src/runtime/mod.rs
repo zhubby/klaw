@@ -30,8 +30,8 @@ use klaw_observability::{
     init_observability, ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry,
 };
 use klaw_session::{
-    ChatRecord, LlmUsageSource, NewLlmUsageRecord, SessionCompressionState, SessionManager,
-    SqliteSessionManager,
+    ChatRecord, LlmAuditStatus, LlmUsageSource, NewLlmAuditRecord, NewLlmUsageRecord,
+    SessionCompressionState, SessionManager, SqliteSessionManager,
 };
 use klaw_skill::{
     open_default_skills_manager, InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager,
@@ -56,6 +56,8 @@ use tokio::sync::mpsc;
 use tokio::{sync::Mutex, time::timeout};
 use tracing::{info, warn};
 use uuid::Uuid;
+
+const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
@@ -83,6 +85,7 @@ pub struct RuntimeBundle {
     pub startup_report: StartupReport,
     pub observability: Option<ObservabilityHandle>,
     pub conversation_history_limit: usize,
+    pub llm_audit_tx: std::sync::mpsc::SyncSender<NewLlmAuditRecord>,
 }
 
 pub struct SharedChannelRuntime {
@@ -119,7 +122,7 @@ impl LlmProvider for UnavailableProvider {
         _model: Option<&str>,
         _options: ChatOptions,
     ) -> Result<LlmResponse, LlmError> {
-        Err(LlmError::ProviderUnavailable(self.reason.clone()))
+        Err(LlmError::provider_unavailable(self.reason.clone()))
     }
 }
 
@@ -388,6 +391,51 @@ async fn persist_llm_usage_records(
             .await?;
     }
     Ok(())
+}
+
+fn enqueue_llm_audit_records_from_outcome(
+    runtime: &RuntimeBundle,
+    turn_index: i64,
+    outcome: &klaw_core::ProcessOutcome,
+) {
+    let (Some(message_id), Some(session_key), Some(chat_id)) = (
+        outcome.audit_message_id,
+        outcome.audit_session_key.as_deref(),
+        outcome.audit_chat_id.as_deref(),
+    ) else {
+        return;
+    };
+    for (index, record) in outcome.llm_audits.iter().enumerate() {
+        let payload = NewLlmAuditRecord {
+            id: format!("{message_id}:audit:{}", index + 1),
+            session_key: session_key.to_string(),
+            chat_id: chat_id.to_string(),
+            turn_index,
+            request_seq: (index as i64) + 1,
+            provider: record.provider.clone(),
+            model: record.model.clone(),
+            wire_api: record.wire_api.clone(),
+            status: match record.status {
+                klaw_llm::LlmAuditStatus::Success => LlmAuditStatus::Success,
+                klaw_llm::LlmAuditStatus::Failed => LlmAuditStatus::Failed,
+            },
+            error_code: record.error_code.clone(),
+            error_message: record.error_message.clone(),
+            provider_request_id: record.provider_request_id.clone(),
+            provider_response_id: record.provider_response_id.clone(),
+            request_body_json: serialize_json_string(&record.request_body),
+            response_body_json: record.response_body.as_ref().map(serialize_json_string),
+            requested_at_ms: record.requested_at_ms,
+            responded_at_ms: record.responded_at_ms,
+        };
+        if let Err(err) = runtime.llm_audit_tx.try_send(payload) {
+            warn!(error = %err, session_key, "llm audit queue full or disconnected; dropping record");
+        }
+    }
+}
+
+fn serialize_json_string(value: &serde_json::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
 }
 
 async fn execute_approved_shell(
@@ -1118,6 +1166,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     });
 
     let observability = init_observability_from_config(config).await;
+    let llm_audit_tx = spawn_llm_audit_writer();
     let telemetry: Option<Arc<dyn AgentTelemetry>> = observability.as_ref().map(|handle| {
         Arc::new(OtelAgentTelemetry::from_handle(handle, "klaw")) as Arc<dyn AgentTelemetry>
     });
@@ -1199,7 +1248,40 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         mcp_bootstrap,
         observability,
         conversation_history_limit: config.conversation_history_limit,
+        llm_audit_tx,
     })
+}
+
+fn spawn_llm_audit_writer() -> std::sync::mpsc::SyncSender<NewLlmAuditRecord> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<NewLlmAuditRecord>(LLM_AUDIT_QUEUE_CAPACITY);
+    std::thread::Builder::new()
+        .name("klaw-llm-audit-writer".to_string())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(err) => {
+                    warn!(error = %err, "failed to start llm audit writer runtime");
+                    return;
+                }
+            };
+            let manager = match runtime.block_on(SqliteSessionManager::open_default()) {
+                Ok(manager) => manager,
+                Err(err) => {
+                    warn!(error = %err, "failed to open llm audit session manager");
+                    return;
+                }
+            };
+            for record in rx {
+                if let Err(err) = runtime.block_on(manager.append_llm_audit(&record)) {
+                    warn!(error = %err, audit_id = record.id.as_str(), "failed to persist llm audit record");
+                }
+            }
+        })
+        .expect("llm audit writer should start");
+    tx
 }
 
 pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<dyn Error>> {
@@ -1647,9 +1729,10 @@ pub async fn submit_and_get_output(
         })
         .await;
 
-    let maybe_outbound = run_runtime_once(runtime).await?;
-    match maybe_outbound {
-        Some(msg) => {
+    let outcome = run_runtime_once(runtime).await?;
+    enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
+    match outcome.final_response {
+        Some(msg) if should_emit_outbound(&msg) => {
             let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
             let sessions = session_manager(runtime);
             persist_llm_usage_records(
@@ -1684,7 +1767,7 @@ pub async fn submit_and_get_output(
                 metadata: msg.payload.metadata.clone(),
             }))
         }
-        None => {
+        Some(_) | None => {
             warn!("no outbound response produced");
             Ok(None)
         }
@@ -1794,6 +1877,7 @@ pub async fn submit_and_stream_output(
             outcome = &mut process => break outcome,
         }
     };
+    enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
 
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
@@ -1840,6 +1924,7 @@ pub async fn submit_and_stream_output(
             Ok(Some(output))
         }
         Some(_) | None => {
+            enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
             warn!("no outbound response produced");
             Ok(None)
         }
@@ -1852,8 +1937,18 @@ pub async fn drain_runtime_queue(
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let mut drained = 0usize;
     for _ in 0..max_iterations.max(1) {
-        let maybe_outbound = run_runtime_once(runtime).await?;
-        let Some(msg) = maybe_outbound else {
+        let outcome = run_runtime_once(runtime).await?;
+        let Some(ref msg) = outcome.final_response else {
+            let turn_index = if let Some(session_key) = outcome.audit_session_key.as_deref() {
+                session_manager(runtime)
+                    .get_session(session_key)
+                    .await
+                    .map(|session| session.turn_count)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            enqueue_llm_audit_records_from_outcome(runtime, turn_index, &outcome);
             break;
         };
         let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
@@ -1863,6 +1958,7 @@ pub async fn drain_runtime_queue(
             .await
             .map(|session| session.turn_count)
             .unwrap_or(0);
+        enqueue_llm_audit_records_from_outcome(runtime, turn_index, &outcome);
         persist_llm_usage_records(
             runtime,
             &msg.header.session_key,
@@ -1889,8 +1985,7 @@ pub async fn drain_runtime_queue(
 
 async fn run_runtime_once(
     runtime: &RuntimeBundle,
-) -> Result<Option<Envelope<OutboundMessage>>, Box<dyn std::error::Error>> {
-    let before_len = runtime.outbound_transport.published_messages().await.len();
+) -> Result<klaw_core::ProcessOutcome, Box<dyn std::error::Error>> {
     let result = runtime
         .runtime
         .run_once_reliable(
@@ -1906,14 +2001,16 @@ async fn run_runtime_once(
         .await;
 
     match result {
-        Ok(_) => {
-            let published = runtime.outbound_transport.published_messages().await;
-            Ok(published
-                .get(before_len)
-                .cloned()
-                .filter(should_emit_outbound))
-        }
-        Err(err) if is_queue_empty_error(&err) => Ok(None),
+        Ok(outcome) => Ok(outcome),
+        Err(err) if is_queue_empty_error(&err) => Ok(klaw_core::ProcessOutcome {
+            final_response: None,
+            error_code: None,
+            final_state: klaw_core::AgentRunState::Completed,
+            llm_audits: Vec::new(),
+            audit_message_id: None,
+            audit_session_key: None,
+            audit_chat_id: None,
+        }),
         Err(err) => Err(Box::new(err)),
     }
 }
@@ -2366,7 +2463,7 @@ mod tests {
             .expect_err("unavailable provider should fail");
 
         match err {
-            LlmError::ProviderUnavailable(message) => {
+            LlmError::ProviderUnavailable { message, .. } => {
                 assert!(message.contains("provider `openai` is unavailable"));
                 assert!(message.contains("OPENAI_API_KEY"));
             }

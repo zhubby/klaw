@@ -3,8 +3,9 @@ use crate::{
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, CronTaskStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary,
-    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmUsageRecord, SessionCompressionState,
+    CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder,
+    LlmAuditStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord,
+    NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, SessionCompressionState,
     SessionIndex, SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
@@ -122,6 +123,28 @@ struct LlmUsageSummaryRow {
     total_tokens: i64,
     cached_input_tokens: i64,
     reasoning_tokens: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct LlmAuditRow {
+    id: String,
+    session_key: String,
+    chat_id: String,
+    turn_index: i64,
+    request_seq: i64,
+    provider: String,
+    model: String,
+    wire_api: String,
+    status: String,
+    error_code: Option<String>,
+    error_message: Option<String>,
+    provider_request_id: Option<String>,
+    provider_response_id: Option<String>,
+    request_body_json: String,
+    response_body_json: Option<String>,
+    requested_at_ms: i64,
+    responded_at_ms: Option<i64>,
+    created_at_ms: i64,
 }
 
 impl From<SessionIndexRow> for SessionIndex {
@@ -259,6 +282,35 @@ impl From<LlmUsageSummaryRow> for LlmUsageSummary {
     }
 }
 
+impl TryFrom<LlmAuditRow> for LlmAuditRecord {
+    type Error = StorageError;
+
+    fn try_from(value: LlmAuditRow) -> Result<Self, Self::Error> {
+        let status = LlmAuditStatus::parse(&value.status)
+            .ok_or_else(|| StorageError::backend(format!("invalid llm audit status: {}", value.status)))?;
+        Ok(Self {
+            id: value.id,
+            session_key: value.session_key,
+            chat_id: value.chat_id,
+            turn_index: value.turn_index,
+            request_seq: value.request_seq,
+            provider: value.provider,
+            model: value.model,
+            wire_api: value.wire_api,
+            status,
+            error_code: value.error_code,
+            error_message: value.error_message,
+            provider_request_id: value.provider_request_id,
+            provider_response_id: value.provider_response_id,
+            request_body_json: value.request_body_json,
+            response_body_json: value.response_body_json,
+            requested_at_ms: value.requested_at_ms,
+            responded_at_ms: value.responded_at_ms,
+            created_at_ms: value.created_at_ms,
+        })
+    }
+}
+
 impl SqlxSessionStore {
     pub async fn open(paths: StoragePaths) -> Result<Self, StorageError> {
         paths.ensure_dirs().await?;
@@ -367,6 +419,60 @@ impl SqlxSessionStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_llm_usage_session_turn
              ON llm_usage(session_key, turn_index, request_seq)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS llm_audit (
+                id TEXT PRIMARY KEY,
+                session_key TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                turn_index INTEGER NOT NULL,
+                request_seq INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                wire_api TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error_code TEXT,
+                error_message TEXT,
+                provider_request_id TEXT,
+                provider_response_id TEXT,
+                request_body_json TEXT NOT NULL,
+                response_body_json TEXT,
+                requested_at_ms INTEGER NOT NULL,
+                responded_at_ms INTEGER,
+                created_at_ms INTEGER NOT NULL,
+                FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_llm_audit_session_requested
+             ON llm_audit(session_key, requested_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_llm_audit_provider_requested
+             ON llm_audit(provider, requested_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_llm_audit_requested
+             ON llm_audit(requested_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_llm_audit_session_turn
+             ON llm_audit(session_key, turn_index, request_seq)",
         )
         .execute(&self.pool)
         .await
@@ -1105,6 +1211,85 @@ impl SessionStorage for SqlxSessionStore {
         .await
         .map_err(StorageError::backend)?;
         Ok(row.into())
+    }
+
+    async fn append_llm_audit(
+        &self,
+        input: &NewLlmAuditRecord,
+    ) -> Result<LlmAuditRecord, StorageError> {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO llm_audit (
+                id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                status, error_code, error_message, provider_request_id, provider_response_id,
+                request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+        )
+        .bind(&input.id)
+        .bind(&input.session_key)
+        .bind(&input.chat_id)
+        .bind(input.turn_index)
+        .bind(input.request_seq)
+        .bind(&input.provider)
+        .bind(&input.model)
+        .bind(&input.wire_api)
+        .bind(input.status.as_str())
+        .bind(&input.error_code)
+        .bind(&input.error_message)
+        .bind(&input.provider_request_id)
+        .bind(&input.provider_response_id)
+        .bind(&input.request_body_json)
+        .bind(&input.response_body_json)
+        .bind(input.requested_at_ms)
+        .bind(input.responded_at_ms)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        let row = sqlx::query_as::<_, LlmAuditRow>(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    status, error_code, error_message, provider_request_id, provider_response_id,
+                    request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+             FROM llm_audit
+             WHERE id = ?1",
+        )
+        .bind(&input.id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        LlmAuditRecord::try_from(row)
+    }
+
+    async fn list_llm_audit(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditRecord>, StorageError> {
+        let sort_order = match query.sort_order {
+            LlmAuditSortOrder::RequestedAtAsc => "requested_at_ms ASC, created_at_ms ASC",
+            LlmAuditSortOrder::RequestedAtDesc => "requested_at_ms DESC, created_at_ms DESC",
+        };
+        let rows = sqlx::query_as::<_, LlmAuditRow>(&format!(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    status, error_code, error_message, provider_request_id, provider_response_id,
+                    request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+             FROM llm_audit
+             WHERE (?1 IS NULL OR session_key = ?1)
+               AND (?2 IS NULL OR provider = ?2)
+               AND (?3 IS NULL OR requested_at_ms >= ?3)
+               AND (?4 IS NULL OR requested_at_ms <= ?4)
+             ORDER BY {sort_order}
+             LIMIT ?5 OFFSET ?6"
+        ))
+        .bind(query.session_key.as_deref())
+        .bind(query.provider.as_deref())
+        .bind(query.requested_from_ms)
+        .bind(query.requested_to_ms)
+        .bind(query.limit.max(1))
+        .bind(query.offset.max(0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        rows.into_iter().map(LlmAuditRecord::try_from).collect()
     }
 
     async fn create_approval(

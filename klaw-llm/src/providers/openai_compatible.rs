@@ -6,9 +6,11 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    estimate::estimate_chat_usage, ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse,
-    LlmStreamEvent, LlmUsage, LlmUsageSource, ToolCall, ToolDefinition,
+    estimate::estimate_chat_usage, ChatOptions, LlmAuditPayload, LlmAuditStatus, LlmError,
+    LlmMessage, LlmProvider, LlmResponse, LlmStreamEvent, LlmUsage, LlmUsageSource, ToolCall,
+    ToolDefinition,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// OpenAI wire API 类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +86,11 @@ impl OpenAiCompatibleProvider {
     async fn execute_json<T: Serialize, R: DeserializeOwned>(
         &self,
         request: &T,
-    ) -> Result<R, LlmError> {
+    ) -> Result<(R, Value), LlmError> {
+        let request_json = serde_json::to_value(request)
+            .map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        let request_model = model_from_request_json(&request_json);
+        let requested_at_ms = now_ms();
         let response = self
             .client
             .post(self.endpoint())
@@ -93,24 +99,62 @@ impl OpenAiCompatibleProvider {
             .json(request)
             .send()
             .await
-            .map_err(|e| LlmError::RequestFailed(e.to_string()))?;
+            .map_err(|e| {
+                LlmError::request_failed(e.to_string()).with_audit(self.build_failed_audit(
+                    request_json.clone(),
+                    requested_at_ms,
+                    None,
+                    request_model.clone(),
+                    "request_failed",
+                    e.to_string(),
+                ))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
+            let responded_at_ms = now_ms();
             let body = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "<unreadable body>".to_string());
-            return Err(LlmError::ProviderUnavailable(format!(
+            return Err(LlmError::provider_unavailable(format!(
                 "endpoint={}, http_status={status}, body={body}",
                 self.endpoint()
+            ))
+            .with_audit(self.build_failed_audit(
+                request_json,
+                requested_at_ms,
+                Some(responded_at_ms),
+                request_model.clone(),
+                "provider_unavailable",
+                format!("http_status={status}, body={body}"),
             )));
         }
 
-        response
-            .json()
+        let payload_value = response
+            .json::<Value>()
             .await
-            .map_err(|e| LlmError::InvalidResponse(e.to_string()))
+            .map_err(|e| {
+                LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
+                    request_json.clone(),
+                    requested_at_ms,
+                    Some(now_ms()),
+                    request_model.clone(),
+                    "invalid_response",
+                    e.to_string(),
+                ))
+            })?;
+        let typed = serde_json::from_value(payload_value.clone()).map_err(|e| {
+            LlmError::invalid_response(e.to_string()).with_audit(self.build_failed_audit(
+                request_json,
+                requested_at_ms,
+                Some(now_ms()),
+                request_model,
+                "invalid_response",
+                e.to_string(),
+            ))
+        })?;
+        Ok((typed, payload_value))
     }
 
     async fn execute_sse<T: Serialize, F>(
@@ -121,6 +165,9 @@ impl OpenAiCompatibleProvider {
     where
         F: FnMut(Value) -> Result<(), LlmError> + Send,
     {
+        let request_json = serde_json::to_value(request)
+            .map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        let requested_at_ms = now_ms();
         let response = self
             .client
             .post(self.endpoint())
@@ -129,26 +176,44 @@ impl OpenAiCompatibleProvider {
             .json(request)
             .send()
             .await
-            .map_err(|e| LlmError::RequestFailed(e.to_string()))?;
+            .map_err(|e| {
+                LlmError::request_failed(e.to_string()).with_audit(self.build_failed_audit(
+                    request_json.clone(),
+                    requested_at_ms,
+                    None,
+                    model_from_request_json(&request_json),
+                    "request_failed",
+                    e.to_string(),
+                ))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
+            let responded_at_ms = now_ms();
             let body = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "<unreadable body>".to_string());
-            return Err(LlmError::ProviderUnavailable(format!(
+            return Err(LlmError::provider_unavailable(format!(
                 "endpoint={}, http_status={status}, body={body}",
                 self.endpoint()
+            ))
+            .with_audit(self.build_failed_audit(
+                request_json,
+                requested_at_ms,
+                Some(responded_at_ms),
+                model_from_request_json(&serde_json::to_value(request).unwrap_or(Value::Null)),
+                "provider_unavailable",
+                format!("http_status={status}, body={body}"),
             )));
         }
 
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|err| LlmError::StreamFailed(err.to_string()))?;
+            let chunk = chunk.map_err(|err| LlmError::stream_failed(err.to_string()))?;
             let text = std::str::from_utf8(&chunk)
-                .map_err(|err| LlmError::StreamFailed(err.to_string()))?;
+                .map_err(|err| LlmError::stream_failed(err.to_string()))?;
             buffer.push_str(text);
             while let Some(event_end) = buffer.find("\n\n") {
                 let raw_event = buffer[..event_end].to_string();
@@ -165,6 +230,58 @@ impl OpenAiCompatibleProvider {
             }
         }
         Ok(())
+    }
+
+    fn build_audit(
+        &self,
+        model: &str,
+        status: LlmAuditStatus,
+        request_body: Value,
+        response_body: Option<Value>,
+        requested_at_ms: i64,
+        responded_at_ms: Option<i64>,
+        error_code: Option<&str>,
+        error_message: Option<String>,
+        provider_request_id: Option<String>,
+        provider_response_id: Option<String>,
+    ) -> LlmAuditPayload {
+        LlmAuditPayload {
+            provider: self.name().to_string(),
+            model: model.to_string(),
+            wire_api: self.wire_api().unwrap_or(self.name()).to_string(),
+            status,
+            error_code: error_code.map(ToString::to_string),
+            error_message,
+            provider_request_id,
+            provider_response_id,
+            request_body,
+            response_body,
+            requested_at_ms,
+            responded_at_ms,
+        }
+    }
+
+    fn build_failed_audit(
+        &self,
+        request_body: Value,
+        requested_at_ms: i64,
+        responded_at_ms: Option<i64>,
+        model: String,
+        error_code: &str,
+        error_message: String,
+    ) -> LlmAuditPayload {
+        self.build_audit(
+            &model,
+            LlmAuditStatus::Failed,
+            request_body,
+            None,
+            requested_at_ms,
+            responded_at_ms,
+            Some(error_code),
+            Some(error_message),
+            None,
+            None,
+        )
     }
 
     async fn chat_with_chat_completions(
@@ -203,18 +320,21 @@ impl OpenAiCompatibleProvider {
                             .collect()
                     }),
                     tool_call_id: m.tool_call_id,
-                })
+            })
                 .collect(),
             tools: map_chat_completion_tools(tools),
         };
-
-        let payload: OpenAiChatCompletionResponse = self.execute_json(&request).await?;
+        let request_json = serde_json::to_value(&request)
+            .map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        let requested_at_ms = now_ms();
+        let (payload, payload_json): (OpenAiChatCompletionResponse, Value) =
+            self.execute_json(&request).await?;
 
         let first = payload
             .choices
             .into_iter()
             .next()
-            .ok_or_else(|| LlmError::InvalidResponse("no choices in response".to_string()))?;
+            .ok_or_else(|| LlmError::invalid_response("no choices in response".to_string()))?;
 
         let content = first
             .message
@@ -254,6 +374,7 @@ impl OpenAiCompatibleProvider {
                 .usage
                 .as_ref()
                 .map(|_| LlmUsageSource::ProviderReported),
+            audit: None,
         };
         if response.usage.is_none() {
             response.usage = Some(estimate_chat_usage(
@@ -269,6 +390,24 @@ impl OpenAiCompatibleProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
+        response.audit = Some(self.build_audit(
+            model.unwrap_or(&self.config.default_model),
+            LlmAuditStatus::Success,
+            request_json,
+            Some(payload_json),
+            requested_at_ms,
+            Some(now_ms()),
+            None,
+            None,
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_request_id.clone()),
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_response_id.clone()),
+        ));
         Ok(response)
     }
 
@@ -314,6 +453,9 @@ impl OpenAiCompatibleProvider {
             tools: map_chat_completion_tools(tools),
         };
         let mut state = OpenAiChatCompletionStreamState::default();
+        let request_json = serde_json::to_value(&request)
+            .map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        let requested_at_ms = now_ms();
         self.execute_sse(&request, &mut |event| {
             apply_chat_completions_stream_event(&mut state, &stream, event)
         })
@@ -333,6 +475,26 @@ impl OpenAiCompatibleProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
+        let response_json =
+            serde_json::to_value(&response).map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        response.audit = Some(self.build_audit(
+            model.unwrap_or(&self.config.default_model),
+            LlmAuditStatus::Success,
+            request_json,
+            Some(response_json),
+            requested_at_ms,
+            Some(now_ms()),
+            None,
+            None,
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_request_id.clone()),
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_response_id.clone()),
+        ));
         Ok(response)
     }
 
@@ -366,7 +528,11 @@ impl OpenAiCompatibleProvider {
             tools: map_responses_tools(tools),
         };
 
-        let payload: OpenAiResponsesResponse = self.execute_json(&request).await?;
+        let request_json = serde_json::to_value(&request)
+            .map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        let requested_at_ms = now_ms();
+        let (payload, payload_json): (OpenAiResponsesResponse, Value) =
+            self.execute_json(&request).await?;
         let mut response = parse_responses_payload(payload);
         if response.usage.is_none() {
             response.usage = Some(estimate_chat_usage(
@@ -382,6 +548,24 @@ impl OpenAiCompatibleProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
+        response.audit = Some(self.build_audit(
+            model.unwrap_or(&self.config.default_model),
+            LlmAuditStatus::Success,
+            request_json,
+            Some(payload_json),
+            requested_at_ms,
+            Some(now_ms()),
+            None,
+            None,
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_request_id.clone()),
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_response_id.clone()),
+        ));
         Ok(response)
     }
 
@@ -416,14 +600,15 @@ impl OpenAiCompatibleProvider {
             tools: map_responses_tools(tools),
         };
         let mut completed: Option<OpenAiResponsesResponse> = None;
+        let request_json = serde_json::to_value(&request)
+            .map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        let requested_at_ms = now_ms();
         self.execute_sse(&request, &mut |event| {
             apply_responses_stream_event(&stream, &mut completed, event)
         })
         .await?;
         let payload = completed.ok_or_else(|| {
-            LlmError::InvalidResponse(
-                "responses stream ended without response.completed".to_string(),
-            )
+            LlmError::invalid_response("responses stream ended without response.completed")
         })?;
         let mut response = parse_responses_payload(payload);
         if response.usage.is_none() {
@@ -440,6 +625,26 @@ impl OpenAiCompatibleProvider {
             ));
             response.usage_source = Some(LlmUsageSource::EstimatedLocal);
         }
+        let response_json =
+            serde_json::to_value(&response).map_err(|err| LlmError::invalid_response(err.to_string()))?;
+        response.audit = Some(self.build_audit(
+            model.unwrap_or(&self.config.default_model),
+            LlmAuditStatus::Success,
+            request_json,
+            Some(response_json),
+            requested_at_ms,
+            Some(now_ms()),
+            None,
+            None,
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_request_id.clone()),
+            response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.provider_response_id.clone()),
+        ));
         Ok(response)
     }
 }
@@ -462,6 +667,23 @@ fn normalize_openai_base_url(base_url: &str) -> String {
         return format!("{trimmed}/v1");
     }
     trimmed
+}
+
+fn model_from_request_json(request_json: &Value) -> String {
+    request_json
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[async_trait]
@@ -794,6 +1016,7 @@ fn parse_responses_payload(payload: OpenAiResponsesResponse) -> LlmResponse {
         tool_calls,
         usage,
         usage_source,
+        audit: None,
     }
 }
 
@@ -883,7 +1106,7 @@ fn parse_sse_event(raw_event: &str) -> Result<Option<Value>, LlmError> {
     let payload = data_lines.join("\n");
     serde_json::from_str(&payload)
         .map(Some)
-        .map_err(|err| LlmError::InvalidResponse(format!("invalid stream event payload: {err}")))
+        .map_err(|err| LlmError::invalid_response(format!("invalid stream event payload: {err}")))
 }
 
 #[derive(Debug, Default)]
@@ -919,6 +1142,7 @@ impl OpenAiChatCompletionStreamState {
                 .collect(),
             usage_source: usage.as_ref().map(|_| LlmUsageSource::ProviderReported),
             usage,
+            audit: None,
         }
     }
 }
@@ -934,7 +1158,7 @@ fn apply_chat_completions_stream_event(
         .filter(|value| !value.is_null())
         .map(serde_json::from_value::<OpenAiChatCompletionUsage>)
         .transpose()
-        .map_err(|err| LlmError::InvalidResponse(err.to_string()))?
+        .map_err(|err| LlmError::invalid_response(err.to_string()))?
     {
         state.usage = Some(map_chat_completion_usage(usage));
     }
@@ -1010,13 +1234,11 @@ fn apply_responses_stream_event(
                 .get("response")
                 .cloned()
                 .ok_or_else(|| {
-                    LlmError::InvalidResponse(
-                        "response.completed missing response payload".to_string(),
-                    )
+                    LlmError::invalid_response("response.completed missing response payload")
                 })
                 .and_then(|value| {
                     serde_json::from_value::<OpenAiResponsesResponse>(value)
-                        .map_err(|err| LlmError::InvalidResponse(err.to_string()))
+                        .map_err(|err| LlmError::invalid_response(err.to_string()))
                 })?;
             *completed = Some(response);
         }
@@ -1025,7 +1247,7 @@ fn apply_responses_stream_event(
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown stream error");
-            return Err(LlmError::StreamFailed(message.to_string()));
+            return Err(LlmError::stream_failed(message.to_string()));
         }
         _ => {}
     }

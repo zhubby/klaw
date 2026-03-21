@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-21
+
+### Added
+
+- runtime now writes provider request/response audit records to `llm_audit` via a bounded asynchronous background writer so LLM auditing does not block the main request path
+
 ## 2026-03-20
 
 ### Added

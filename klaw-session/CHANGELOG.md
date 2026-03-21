@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-21
+
+### Added
+
+- added session-manager wrappers for `llm_audit` append/list operations so GUI/runtime callers can query audited provider requests through `klaw-session`
+
 ## 2026-03-19
 
 ### Added

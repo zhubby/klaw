@@ -124,6 +124,9 @@ pub struct LlmResponse {
     /// token 用量来源（可选）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_source: Option<LlmUsageSource>,
+    /// provider 边界采集的请求/响应审计信息（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit: Option<LlmAuditPayload>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +157,45 @@ pub enum LlmUsageSource {
     EstimatedLocal,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmAuditStatus {
+    Success,
+    Failed,
+}
+
+impl LlmAuditStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmAuditPayload {
+    pub provider: String,
+    pub model: String,
+    pub wire_api: String,
+    pub status: LlmAuditStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_response_id: Option<String>,
+    pub request_body: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_body: Option<serde_json::Value>,
+    pub requested_at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub responded_at_ms: Option<i64>,
+}
+
 impl LlmUsageSource {
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -167,14 +209,92 @@ impl LlmUsageSource {
 /// LLM 层错误。
 #[derive(Debug, Error)]
 pub enum LlmError {
-    #[error("provider unavailable: {0}")]
-    ProviderUnavailable(String),
-    #[error("invalid response: {0}")]
-    InvalidResponse(String),
-    #[error("request failed: {0}")]
-    RequestFailed(String),
-    #[error("stream failed: {0}")]
-    StreamFailed(String),
+    #[error("provider unavailable: {message}")]
+    ProviderUnavailable {
+        message: String,
+        audit: Option<Box<LlmAuditPayload>>,
+    },
+    #[error("invalid response: {message}")]
+    InvalidResponse {
+        message: String,
+        audit: Option<Box<LlmAuditPayload>>,
+    },
+    #[error("request failed: {message}")]
+    RequestFailed {
+        message: String,
+        audit: Option<Box<LlmAuditPayload>>,
+    },
+    #[error("stream failed: {message}")]
+    StreamFailed {
+        message: String,
+        audit: Option<Box<LlmAuditPayload>>,
+    },
+}
+
+impl LlmError {
+    #[must_use]
+    pub fn provider_unavailable(message: impl Into<String>) -> Self {
+        Self::ProviderUnavailable {
+            message: message.into(),
+            audit: None,
+        }
+    }
+
+    #[must_use]
+    pub fn invalid_response(message: impl Into<String>) -> Self {
+        Self::InvalidResponse {
+            message: message.into(),
+            audit: None,
+        }
+    }
+
+    #[must_use]
+    pub fn request_failed(message: impl Into<String>) -> Self {
+        Self::RequestFailed {
+            message: message.into(),
+            audit: None,
+        }
+    }
+
+    #[must_use]
+    pub fn stream_failed(message: impl Into<String>) -> Self {
+        Self::StreamFailed {
+            message: message.into(),
+            audit: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_audit(self, audit_payload: LlmAuditPayload) -> Self {
+        match self {
+            Self::ProviderUnavailable { message, .. } => Self::ProviderUnavailable {
+                message,
+                audit: Some(Box::new(audit_payload)),
+            },
+            Self::InvalidResponse { message, .. } => Self::InvalidResponse {
+                message,
+                audit: Some(Box::new(audit_payload)),
+            },
+            Self::RequestFailed { message, .. } => Self::RequestFailed {
+                message,
+                audit: Some(Box::new(audit_payload)),
+            },
+            Self::StreamFailed { message, .. } => Self::StreamFailed {
+                message,
+                audit: Some(Box::new(audit_payload)),
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn audit(&self) -> Option<&LlmAuditPayload> {
+        match self {
+            Self::ProviderUnavailable { audit, .. }
+            | Self::InvalidResponse { audit, .. }
+            | Self::RequestFailed { audit, .. }
+            | Self::StreamFailed { audit, .. } => audit.as_deref(),
+        }
+    }
 }
 
 /// LLM Provider 统一抽象。
@@ -274,6 +394,7 @@ impl LlmProvider for EchoProvider {
             tool_calls: Vec::new(),
             usage: Some(usage),
             usage_source: Some(LlmUsageSource::EstimatedLocal),
+            audit: None,
         })
     }
 }

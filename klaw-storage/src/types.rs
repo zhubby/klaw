@@ -128,6 +128,109 @@ pub struct LlmUsageSummary {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum LlmAuditStatus {
+    Success,
+    Failed,
+}
+
+impl LlmAuditStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "success" => Some(Self::Success),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmAuditSortOrder {
+    RequestedAtAsc,
+    RequestedAtDesc,
+}
+
+impl Default for LlmAuditSortOrder {
+    fn default() -> Self {
+        Self::RequestedAtDesc
+    }
+}
+
+impl LlmAuditSortOrder {
+    #[must_use]
+    pub fn sql_order_by(self) -> &'static str {
+        match self {
+            Self::RequestedAtAsc => "requested_at_ms ASC, created_at_ms ASC",
+            Self::RequestedAtDesc => "requested_at_ms DESC, created_at_ms DESC",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmAuditRecord {
+    pub id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub turn_index: i64,
+    pub request_seq: i64,
+    pub provider: String,
+    pub model: String,
+    pub wire_api: String,
+    pub status: LlmAuditStatus,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub provider_request_id: Option<String>,
+    pub provider_response_id: Option<String>,
+    pub request_body_json: String,
+    pub response_body_json: Option<String>,
+    pub requested_at_ms: i64,
+    pub responded_at_ms: Option<i64>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewLlmAuditRecord {
+    pub id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub turn_index: i64,
+    pub request_seq: i64,
+    pub provider: String,
+    pub model: String,
+    pub wire_api: String,
+    pub status: LlmAuditStatus,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub provider_request_id: Option<String>,
+    pub provider_response_id: Option<String>,
+    pub request_body_json: String,
+    pub response_body_json: Option<String>,
+    pub requested_at_ms: i64,
+    pub responded_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct LlmAuditQuery {
+    pub session_key: Option<String>,
+    pub provider: Option<String>,
+    pub requested_from_ms: Option<i64>,
+    pub requested_to_ms: Option<i64>,
+    pub limit: i64,
+    pub offset: i64,
+    pub sort_order: LlmAuditSortOrder,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalStatus {
     Pending,
     Approved,

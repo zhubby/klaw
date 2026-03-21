@@ -10,7 +10,7 @@ eframe = { workspace = true }
 egui = { workspace = true }
 egui-file-dialog = { workspace = true }
 egui-phosphor = { workspace = true }
-egui_extras = { workspace = true }
+egui_extras = { workspace = true, features = ["chrono"] }
 egui-notify = { workspace = true }
 fontdb = { workspace = true }
 klaw-config = { workspace = true }
@@ -33,6 +33,7 @@ toml = { workspace = true }
 sysinfo = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
+chrono = { workspace = true }
 tray-icon = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

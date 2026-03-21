@@ -3,8 +3,9 @@ use crate::{
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, CronTaskStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary,
-    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmUsageRecord, SessionCompressionState,
+    CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder,
+    LlmAuditStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord,
+    NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, SessionCompressionState,
     SessionIndex, SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
 };
 use async_trait::async_trait;
@@ -93,6 +94,35 @@ impl TursoSessionStore {
                 ON llm_usage(chat_id, created_at_ms DESC);
                 CREATE INDEX IF NOT EXISTS idx_llm_usage_session_turn
                 ON llm_usage(session_key, turn_index, request_seq);
+                CREATE TABLE IF NOT EXISTS llm_audit (
+                    id TEXT PRIMARY KEY,
+                    session_key TEXT NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    turn_index INTEGER NOT NULL,
+                    request_seq INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    wire_api TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error_code TEXT,
+                    error_message TEXT,
+                    provider_request_id TEXT,
+                    provider_response_id TEXT,
+                    request_body_json TEXT NOT NULL,
+                    response_body_json TEXT,
+                    requested_at_ms INTEGER NOT NULL,
+                    responded_at_ms INTEGER,
+                    created_at_ms INTEGER NOT NULL,
+                    FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_llm_audit_session_requested
+                ON llm_audit(session_key, requested_at_ms DESC);
+                CREATE INDEX IF NOT EXISTS idx_llm_audit_provider_requested
+                ON llm_audit(provider, requested_at_ms DESC);
+                CREATE INDEX IF NOT EXISTS idx_llm_audit_requested
+                ON llm_audit(requested_at_ms DESC);
+                CREATE INDEX IF NOT EXISTS idx_llm_audit_session_turn
+                ON llm_audit(session_key, turn_index, request_seq);
                 CREATE TABLE IF NOT EXISTS cron (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -845,6 +875,121 @@ impl SessionStorage for TursoSessionStore {
         row_to_llm_usage_summary(&row)
     }
 
+    async fn append_llm_audit(
+        &self,
+        input: &NewLlmAuditRecord,
+    ) -> Result<LlmAuditRecord, StorageError> {
+        let now = now_ms();
+        let sql = format!(
+            "INSERT INTO llm_audit (
+                id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                status, error_code, error_message, provider_request_id, provider_response_id,
+                request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+            ) VALUES ('{}', '{}', '{}', {}, {}, '{}', '{}', '{}', '{}', {}, {}, {}, {}, '{}', {}, {}, {}, {})",
+            escape_sql_text(&input.id),
+            escape_sql_text(&input.session_key),
+            escape_sql_text(&input.chat_id),
+            input.turn_index,
+            input.request_seq,
+            escape_sql_text(&input.provider),
+            escape_sql_text(&input.model),
+            escape_sql_text(&input.wire_api),
+            input.status.as_str(),
+            opt_string_sql(input.error_code.as_deref()),
+            opt_string_sql(input.error_message.as_deref()),
+            opt_string_sql(input.provider_request_id.as_deref()),
+            opt_string_sql(input.provider_response_id.as_deref()),
+            escape_sql_text(&input.request_body_json),
+            opt_string_sql(input.response_body_json.as_deref()),
+            input.requested_at_ms,
+            opt_i64_sql(input.responded_at_ms),
+            now
+        );
+        self.conn
+            .execute(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        let query_sql = format!(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    status, error_code, error_message, provider_request_id, provider_response_id,
+                    request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+             FROM llm_audit
+             WHERE id = '{}'
+             LIMIT 1",
+            escape_sql_text(&input.id)
+        );
+        let mut rows = self
+            .conn
+            .query(&query_sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(StorageError::backend)?
+            .ok_or_else(|| StorageError::backend("llm audit not found"))?;
+        row_to_llm_audit(&row)
+    }
+
+    async fn list_llm_audit(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditRecord>, StorageError> {
+        let sort_order = match query.sort_order {
+            LlmAuditSortOrder::RequestedAtAsc => "requested_at_ms ASC, created_at_ms ASC",
+            LlmAuditSortOrder::RequestedAtDesc => "requested_at_ms DESC, created_at_ms DESC",
+        };
+        let mut conditions = Vec::new();
+        if let Some(session_key) = query
+            .session_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push(format!("session_key = '{}'", escape_sql_text(session_key)));
+        }
+        if let Some(provider) = query
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push(format!("provider = '{}'", escape_sql_text(provider)));
+        }
+        if let Some(from_ms) = query.requested_from_ms {
+            conditions.push(format!("requested_at_ms >= {from_ms}"));
+        }
+        if let Some(to_ms) = query.requested_to_ms {
+            conditions.push(format!("requested_at_ms <= {to_ms}"));
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    status, error_code, error_message, provider_request_id, provider_response_id,
+                    request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+             FROM llm_audit
+             {where_clause}
+             ORDER BY {sort_order}
+             LIMIT {} OFFSET {}",
+            query.limit.max(1),
+            query.offset.max(0)
+        );
+        let mut rows = self
+            .conn
+            .query(&sql, ())
+            .await
+            .map_err(StorageError::backend)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
+            out.push(row_to_llm_audit(&row)?);
+        }
+        Ok(out)
+    }
+
     async fn create_approval(
         &self,
         input: &NewApprovalRecord,
@@ -1476,6 +1621,32 @@ fn row_to_llm_usage_summary(row: &Row) -> Result<LlmUsageSummary, StorageError> 
         total_tokens: value_to_i64(row.get_value(3).map_err(StorageError::backend)?)?,
         cached_input_tokens: value_to_i64(row.get_value(4).map_err(StorageError::backend)?)?,
         reasoning_tokens: value_to_i64(row.get_value(5).map_err(StorageError::backend)?)?,
+    })
+}
+
+fn row_to_llm_audit(row: &Row) -> Result<LlmAuditRecord, StorageError> {
+    let status_raw = value_to_string(row.get_value(8).map_err(StorageError::backend)?)?;
+    let status = LlmAuditStatus::parse(&status_raw)
+        .ok_or_else(|| StorageError::backend(format!("invalid llm audit status: {status_raw}")))?;
+    Ok(LlmAuditRecord {
+        id: value_to_string(row.get_value(0).map_err(StorageError::backend)?)?,
+        session_key: value_to_string(row.get_value(1).map_err(StorageError::backend)?)?,
+        chat_id: value_to_string(row.get_value(2).map_err(StorageError::backend)?)?,
+        turn_index: value_to_i64(row.get_value(3).map_err(StorageError::backend)?)?,
+        request_seq: value_to_i64(row.get_value(4).map_err(StorageError::backend)?)?,
+        provider: value_to_string(row.get_value(5).map_err(StorageError::backend)?)?,
+        model: value_to_string(row.get_value(6).map_err(StorageError::backend)?)?,
+        wire_api: value_to_string(row.get_value(7).map_err(StorageError::backend)?)?,
+        status,
+        error_code: value_to_opt_string(row.get_value(9).map_err(StorageError::backend)?),
+        error_message: value_to_opt_string(row.get_value(10).map_err(StorageError::backend)?),
+        provider_request_id: value_to_opt_string(row.get_value(11).map_err(StorageError::backend)?),
+        provider_response_id: value_to_opt_string(row.get_value(12).map_err(StorageError::backend)?),
+        request_body_json: value_to_string(row.get_value(13).map_err(StorageError::backend)?)?,
+        response_body_json: value_to_opt_string(row.get_value(14).map_err(StorageError::backend)?),
+        requested_at_ms: value_to_i64(row.get_value(15).map_err(StorageError::backend)?)?,
+        responded_at_ms: value_to_opt_i64(row.get_value(16).map_err(StorageError::backend)?)?,
+        created_at_ms: value_to_i64(row.get_value(17).map_err(StorageError::backend)?)?,
     })
 }
 

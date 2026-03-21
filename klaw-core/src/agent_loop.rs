@@ -14,7 +14,7 @@ use klaw_agent::{
     AgentExecutionStreamEvent, ConversationMessage, ToolExecutor, ToolInvocationResult,
     ToolInvocationSignal,
 };
-use klaw_llm::{LlmError, LlmMedia, LlmProvider, ToolDefinition};
+use klaw_llm::{LlmAuditPayload, LlmError, LlmMedia, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
 use std::{
     collections::BTreeMap,
@@ -30,6 +30,7 @@ const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 const META_CURRENT_ATTACHMENTS_KEY: &str = "agent.current_attachments";
 const META_LLM_USAGE_RECORDS_KEY: &str = "llm.usage.records";
+const META_LLM_AUDIT_RECORDS_KEY: &str = "llm.audit.records";
 const TOOL_RESULT_LOG_LIMIT: usize = 4000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +94,10 @@ pub struct ProcessOutcome {
     pub final_response: Option<Envelope<OutboundMessage>>,
     pub error_code: Option<ErrorCode>,
     pub final_state: AgentRunState,
+    pub llm_audits: Vec<LlmAuditPayload>,
+    pub audit_message_id: Option<uuid::Uuid>,
+    pub audit_session_key: Option<String>,
+    pub audit_chat_id: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -445,6 +450,10 @@ impl AgentLoop {
                 final_response: None,
                 error_code: Some(ErrorCode::ValidationFailed),
                 final_state: AgentRunState::Failed,
+                llm_audits: Vec::new(),
+                audit_message_id: Some(msg.header.message_id),
+                audit_session_key: Some(msg.payload.session_key.clone()),
+                audit_chat_id: Some(msg.payload.chat_id.clone()),
             };
         }
 
@@ -651,6 +660,34 @@ impl AgentLoop {
                         ),
                     );
                 }
+                if !output.request_audits.is_empty() {
+                    response_metadata.insert(
+                        META_LLM_AUDIT_RECORDS_KEY.to_string(),
+                        serde_json::Value::Array(
+                            output
+                                .request_audits
+                                .iter()
+                                .map(|record| {
+                                    serde_json::json!({
+                                        "request_seq": record.request_seq,
+                                        "provider": record.payload.provider,
+                                        "model": record.payload.model,
+                                        "wire_api": record.payload.wire_api,
+                                        "status": record.payload.status.as_str(),
+                                        "error_code": record.payload.error_code,
+                                        "error_message": record.payload.error_message,
+                                        "provider_request_id": record.payload.provider_request_id,
+                                        "provider_response_id": record.payload.provider_response_id,
+                                        "request_body": record.payload.request_body,
+                                        "response_body": record.payload.response_body,
+                                        "requested_at_ms": record.payload.requested_at_ms,
+                                        "responded_at_ms": record.payload.responded_at_ms
+                                    })
+                                })
+                                .collect(),
+                        ),
+                    );
+                }
                 ProcessOutcome {
                     final_response: Some(Envelope {
                         header: msg.header.clone(),
@@ -665,6 +702,14 @@ impl AgentLoop {
                     }),
                     error_code: None,
                     final_state: state,
+                    llm_audits: output
+                        .request_audits
+                        .into_iter()
+                        .map(|record| record.payload)
+                        .collect(),
+                    audit_message_id: Some(msg.header.message_id),
+                    audit_session_key: Some(msg.payload.session_key.clone()),
+                    audit_chat_id: Some(msg.payload.chat_id.clone()),
                 }
             }
             Err(AgentExecutionError::Provider(err)) => {
@@ -697,6 +742,10 @@ impl AgentLoop {
                     final_response: None,
                     error_code: Some(map_llm_error_to_code(&err)),
                     final_state: AgentRunState::Degraded,
+                    llm_audits: err.audit().cloned().into_iter().collect(),
+                    audit_message_id: Some(msg.header.message_id),
+                    audit_session_key: Some(msg.payload.session_key.clone()),
+                    audit_chat_id: Some(msg.payload.chat_id.clone()),
                 }
             }
             Err(AgentExecutionError::ToolLoopExhausted) => {
@@ -717,6 +766,10 @@ impl AgentLoop {
                     final_response: None,
                     error_code: Some(ErrorCode::RetryExhausted),
                     final_state: AgentRunState::Failed,
+                    llm_audits: Vec::new(),
+                    audit_message_id: Some(msg.header.message_id),
+                    audit_session_key: Some(msg.payload.session_key.clone()),
+                    audit_chat_id: Some(msg.payload.chat_id.clone()),
                 }
             }
             Err(AgentExecutionError::BudgetExceeded {
@@ -741,6 +794,10 @@ impl AgentLoop {
                     final_response: None,
                     error_code: Some(ErrorCode::BudgetExceeded),
                     final_state: AgentRunState::Failed,
+                    llm_audits: Vec::new(),
+                    audit_message_id: Some(msg.header.message_id),
+                    audit_session_key: Some(msg.payload.session_key.clone()),
+                    audit_chat_id: Some(msg.payload.chat_id.clone()),
                 }
             }
         }
@@ -770,6 +827,10 @@ impl AgentLoop {
                 final_response: None,
                 error_code: Some(ErrorCode::DuplicateMessage),
                 final_state: AgentRunState::Completed,
+                llm_audits: Vec::new(),
+                audit_message_id: Some(inbound.payload.header.message_id),
+                audit_session_key: Some(inbound.payload.header.session_key.clone()),
+                audit_chat_id: Some(inbound.payload.payload.chat_id.clone()),
             });
         }
 
@@ -821,6 +882,10 @@ impl AgentLoop {
                 final_response: None,
                 error_code: Some(ErrorCode::DuplicateMessage),
                 final_state: AgentRunState::Completed,
+                llm_audits: Vec::new(),
+                audit_message_id: Some(inbound.payload.header.message_id),
+                audit_session_key: Some(inbound.payload.header.session_key.clone()),
+                audit_chat_id: Some(inbound.payload.payload.chat_id.clone()),
             });
         }
 
@@ -966,6 +1031,10 @@ impl AgentLoop {
                     final_response: None,
                     error_code: Some(ErrorCode::RetryExhausted),
                     final_state: AgentRunState::Failed,
+                    llm_audits: Vec::new(),
+                    audit_message_id: Some(inbound_payload.header.message_id),
+                    audit_session_key: Some(inbound_payload.header.session_key.clone()),
+                    audit_chat_id: Some(inbound_payload.payload.chat_id.clone()),
                 }))
             }
             RetryDecision::SendToDeadLetter => {
@@ -1009,6 +1078,10 @@ impl AgentLoop {
                     final_response: None,
                     error_code: Some(ErrorCode::SentToDeadLetter),
                     final_state: AgentRunState::Failed,
+                    llm_audits: Vec::new(),
+                    audit_message_id: Some(inbound_payload.header.message_id),
+                    audit_session_key: Some(inbound_payload.header.session_key.clone()),
+                    audit_chat_id: Some(inbound_payload.payload.chat_id.clone()),
                 }))
             }
         }
@@ -1028,10 +1101,10 @@ fn classify_error_kind(code: Option<ErrorCode>) -> &'static str {
 
 fn map_llm_error_to_code(err: &LlmError) -> ErrorCode {
     match err {
-        LlmError::ProviderUnavailable(_)
-        | LlmError::RequestFailed(_)
-        | LlmError::StreamFailed(_) => ErrorCode::ProviderUnavailable,
-        LlmError::InvalidResponse(_) => ErrorCode::ProviderResponseInvalid,
+        LlmError::ProviderUnavailable { .. }
+        | LlmError::RequestFailed { .. }
+        | LlmError::StreamFailed { .. } => ErrorCode::ProviderUnavailable,
+        LlmError::InvalidResponse { .. } => ErrorCode::ProviderResponseInvalid,
     }
 }
 
@@ -1344,6 +1417,7 @@ mod tests {
                 tool_calls: Vec::new(),
                 usage: None,
                 usage_source: None,
+                audit: None,
             })
         }
     }
@@ -1382,6 +1456,7 @@ mod tests {
                 tool_calls: Vec::new(),
                 usage: None,
                 usage_source: None,
+                audit: None,
             })
         }
     }
@@ -1421,6 +1496,7 @@ mod tests {
                     }],
                     usage: None,
                     usage_source: None,
+                    audit: None,
                 });
             }
             Ok(LlmResponse {
@@ -1429,6 +1505,7 @@ mod tests {
                 tool_calls: Vec::new(),
                 usage: None,
                 usage_source: None,
+                audit: None,
             })
         }
     }
@@ -1574,6 +1651,7 @@ mod tests {
                     provider_response_id: Some("resp-usage".to_string()),
                 }),
                 usage_source: Some(klaw_llm::LlmUsageSource::ProviderReported),
+                audit: None,
             })
         }
     }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-21
+
+### Changed
+- `run_agent_execution` now carries provider-generated request/response audit payloads alongside per-request usage records so callers can persist audited LLM traffic by tool-loop iteration
+
 ## 2026-03-20
 
 ### Changed

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-21
+
+### Added
+- provider responses and failures now carry structured audit payloads with serialized request/response bodies and provider ids for downstream persistence
+
+### Changed
+- OpenAI-compatible and Anthropic providers now capture request/response audit metadata at the provider boundary without serializing auth headers
+
 ## 2026-03-20
 
 ### Changed

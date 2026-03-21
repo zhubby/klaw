@@ -1742,6 +1742,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d01d34e845f01c62e3fded726961092e70417d66570c499b9817ab24674ca4ed"
 dependencies = [
  "ahash",
+ "chrono",
  "egui",
  "enum-map",
  "log",
@@ -3490,6 +3491,7 @@ name = "klaw-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "eframe",
  "egui",
  "egui-file-dialog",
