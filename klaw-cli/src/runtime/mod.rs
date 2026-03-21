@@ -523,6 +523,7 @@ async fn execute_approved_shell(
         Ok(output) => Ok(output
             .content_for_user
             .unwrap_or_else(|| output.content_for_model)),
+        Err(err) if err.code() == "approval_required" => Ok(err.message().to_string()),
         Err(err) => Ok(format!("tool `shell` failed: {err}")),
     }
 }

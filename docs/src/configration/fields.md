@@ -616,41 +616,28 @@ tools.shell.workspace = "/path/to/workspace"
 #### `tools.shell.blocked_patterns`
 
 **类型**: `array<string>`
-**默认值**: `["rm -rf /", "rm -rf ~", ":(){ :|:& };:", "mkfs", "shutdown", "reboot"]`
+**默认值**: `[":(){ :|:& };:"]`
 **必填**: 否
 
-危险命令模式列表。
+直接拒绝执行的命令模式列表。
 
 ```toml
-tools.shell.blocked_patterns = ["rm -rf", "dd if=", "mkfs"]
+tools.shell.blocked_patterns = [":(){ :|:& };:"]
 ```
 
-#### `tools.shell.safe_commands`
+#### `tools.shell.unsafe_patterns`
 
 **类型**: `array<string>`
-**默认值**: `["ls", "pwd", "cat", "echo", "head", "tail", "grep", "rg", "find", ...]`
+**默认值**: `["rm -rf /", "rm -rf ~", "mkfs", "shutdown", "reboot"]`
 **必填**: 否
 
-安全命令列表（无需审批）。
+需要审批的危险命令模式列表。
 
 ```toml
-tools.shell.safe_commands = ["ls", "cat", "echo", "git status"]
+tools.shell.unsafe_patterns = ["rm -rf", "dd if=", "mkfs"]
 ```
 
-#### `tools.shell.approval_policy`
-
-**类型**: `enum`
-**默认值**: `"on_request"`
-**必填**: 否
-
-审批策略。
-
-- `never`: 从不要求审批
-- `on_request`: 按需请求审批
-
-```toml
-tools.shell.approval_policy = "never"
-```
+`tools.shell` 现在按顺序应用规则：先匹配 `blocked_patterns` 并直接拒绝，再匹配 `unsafe_patterns` 请求审批，未命中任一模式的命令默认允许执行。
 
 #### `tools.shell.allow_login_shell`
 

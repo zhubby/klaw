@@ -1,7 +1,7 @@
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolSignal};
 use async_trait::async_trait;
 use klaw_approval::{ApprovalCreateInput, ApprovalManager, SqliteApprovalManager};
-use klaw_config::{AppConfig, ShellApprovalPolicy};
+use klaw_config::AppConfig;
 use klaw_util::{default_data_dir, workspace_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -39,9 +39,9 @@ struct ShellRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandRisk {
+    Blocked,
     Safe,
-    Mutating,
-    Destructive,
+    Unsafe,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,7 +71,7 @@ impl ShellTool {
         }
     }
 
-    /// 从应用配置读取 shell 规则，并注入会话存储用于审批单持久化。
+    /// 从应用配置读取 shell 规则，并保留与 runtime 现有注册方式的兼容签名。
     pub fn with_store(config: &AppConfig, store: klaw_storage::DefaultSessionStore) -> Self {
         Self {
             config: config.tools.shell.clone(),
@@ -89,7 +89,7 @@ impl ShellTool {
         }
     }
 
-    /// 自定义模式并注入审批存储。
+    /// 自定义模式并保留与旧调用点兼容的带 store 构造函数。
     pub fn with_config_and_store(
         config: klaw_config::ShellConfig,
         store: klaw_storage::DefaultSessionStore,
@@ -101,11 +101,11 @@ impl ShellTool {
         }
     }
 
-    /// 宽松模式：不拦截命令内容，不要求审批。
+    /// 宽松模式：不拦截命令内容。
     pub fn permissive() -> Self {
         let mut config = klaw_config::ShellConfig::default();
         config.blocked_patterns.clear();
-        config.approval_policy = ShellApprovalPolicy::Never;
+        config.unsafe_patterns.clear();
         Self {
             config,
             storage_root_dir: None,
@@ -144,33 +144,17 @@ impl ShellTool {
             .iter()
             .any(|pattern| normalized.contains(&pattern.to_ascii_lowercase()))
         {
-            return CommandRisk::Destructive;
+            return CommandRisk::Blocked;
         }
-
-        if Self::contains_shell_operators(command) {
-            return CommandRisk::Mutating;
-        }
-
-        let Some(first_token) = command.split_whitespace().next() else {
-            return CommandRisk::Mutating;
-        };
-        let first_token = first_token.to_ascii_lowercase();
         if self
             .config
-            .safe_commands
+            .unsafe_patterns
             .iter()
-            .any(|item| item.eq_ignore_ascii_case(&first_token))
+            .any(|pattern| normalized.contains(&pattern.to_ascii_lowercase()))
         {
-            CommandRisk::Safe
-        } else {
-            CommandRisk::Mutating
+            return CommandRisk::Unsafe;
         }
-    }
-
-    fn contains_shell_operators(command: &str) -> bool {
-        ["&&", "||", "|", ";", ">", "<", "$(", "`"]
-            .iter()
-            .any(|op| command.contains(op))
+        CommandRisk::Safe
     }
 
     async fn check_approval(
@@ -180,16 +164,14 @@ impl ShellTool {
         session_key: &str,
         metadata: &std::collections::BTreeMap<String, Value>,
     ) -> Result<(bool, bool), ToolError> {
-        let approval_required = !matches!(risk, CommandRisk::Safe);
-
-        if !approval_required {
-            return Ok((false, true));
-        }
-
-        if matches!(self.config.approval_policy, ShellApprovalPolicy::Never) {
+        if matches!(risk, CommandRisk::Blocked) {
             return Err(ToolError::ExecutionFailed(
-                "command requires approval but shell approval policy is `never`".to_string(),
+                "security violation: command matched blocked patterns".to_string(),
             ));
+        }
+        let approval_required = matches!(risk, CommandRisk::Unsafe);
+        if !approval_required {
+            return Ok((false, false));
         }
 
         let approved_via_flag = metadata
@@ -240,14 +222,7 @@ impl ShellTool {
                     command_text: command.trim().to_string(),
                     command_preview: Some(Self::command_preview(command)),
                     command_hash: Some(command_hash),
-                    risk_level: Some(
-                        match risk {
-                            CommandRisk::Safe => "safe",
-                            CommandRisk::Mutating => "mutating",
-                            CommandRisk::Destructive => "destructive",
-                        }
-                        .to_string(),
-                    ),
+                    risk_level: Some("unsafe".to_string()),
                     requested_by: Some("agent".to_string()),
                     justification: None,
                     expires_in_minutes: Some(APPROVAL_TTL_MINUTES),
@@ -257,22 +232,16 @@ impl ShellTool {
                     ToolError::ExecutionFailed(format!("failed to create approval: {err}"))
                 })?;
             let approval_id = approval.id.clone();
-            let risk_level = match risk {
-                CommandRisk::Safe => "safe",
-                CommandRisk::Mutating => "mutating",
-                CommandRisk::Destructive => "destructive",
-            };
             return Err(ToolError::structured_execution_failed(
                 format!(
-                    "approval required: approval_id={}; approve it then retry with metadata `shell.approval_id`",
-                    approval_id
+                    "This shell command matches an unsafe pattern and requires approval.\nApproval ID: {approval_id}\nAfter approval, retry the same tool call with metadata `shell.approval_id` set to this ID."
                 ),
                 "approval_required",
                 Some(json!({
                     "approval_id": approval_id,
                     "tool_name": "shell",
                     "session_key": session_key,
-                    "risk_level": risk_level,
+                    "risk_level": "unsafe",
                     "command_preview": approval.command_preview,
                     "command_hash": approval.command_hash,
                     "expires_at_ms": approval.expires_at_ms,
@@ -282,13 +251,14 @@ impl ShellTool {
                     &approval.id,
                     "shell",
                     session_key,
-                    Some(risk_level),
+                    Some("unsafe"),
                 )],
             ));
         }
 
         Err(ToolError::ExecutionFailed(
-            "approval required: set metadata `shell.approved=true`".to_string(),
+            "This shell command matches an unsafe pattern and requires approval. Retry with approval metadata once it has been granted."
+                .to_string(),
         ))
     }
 
@@ -438,13 +408,13 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a local shell command with workspace-aware path controls, approval checks, timeout/output limits, and structured result output."
+        "Execute a local shell command with workspace-aware path controls, unsafe-pattern approval checks, timeout/output limits, and structured result output."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Arguments for shell command execution with approval checks.",
+            "description": "Arguments for shell command execution with unsafe-pattern approval checks.",
             "properties": {
                 "command": {
                     "type": "string",
@@ -481,15 +451,10 @@ impl Tool for ShellTool {
         let request = Self::parse_request(args)?;
 
         let risk = self.classify_risk(&request.command);
-        if matches!(risk, CommandRisk::Destructive) {
-            return Err(ToolError::ExecutionFailed(
-                "security violation: command matched blocked patterns".to_string(),
-            ));
-        }
-
         let (approval_required, approved) = self
             .check_approval(risk, &request.command, &ctx.session_key, &ctx.metadata)
             .await?;
+
         let base = self.resolve_workspace_base(ctx)?;
         let cwd = Self::resolve_cwd(&request, &base)?;
         let timeout_ms = self.resolve_timeout(&request)?;
@@ -536,9 +501,9 @@ impl Tool for ShellTool {
             command: request.command,
             cwd: cwd.display().to_string(),
             risk: match risk {
+                CommandRisk::Blocked => "blocked",
                 CommandRisk::Safe => "safe",
-                CommandRisk::Mutating => "mutating",
-                CommandRisk::Destructive => "destructive",
+                CommandRisk::Unsafe => "unsafe",
             },
             approval_required,
             approved,
@@ -573,11 +538,16 @@ impl Tool for ShellTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_config::{ModelProviderConfig, ShellApprovalPolicy, ShellConfig};
+    use klaw_config::{ModelProviderConfig, ShellConfig};
     use klaw_storage::{ApprovalStatus, DefaultSessionStore, SessionStorage, StoragePaths};
     use serde_json::json;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::{collections::BTreeMap, fs, path::PathBuf};
+    use std::{
+        collections::BTreeMap,
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -585,7 +555,10 @@ mod tests {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
             "klaw-shell-test-root-{}-{suffix}",
-            ShellTool::now_ms()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_millis()
         ))
     }
 
@@ -617,16 +590,8 @@ mod tests {
         cfg.tools.shell = ShellConfig {
             enabled: true,
             workspace: None,
-            blocked_patterns: vec!["rm -rf /".to_string()],
-            safe_commands: vec![
-                "echo".to_string(),
-                "cat".to_string(),
-                "ls".to_string(),
-                "pwd".to_string(),
-                "sleep".to_string(),
-                "printf".to_string(),
-            ],
-            approval_policy: ShellApprovalPolicy::OnRequest,
+            blocked_patterns: vec![":(){ :|:& };:".to_string()],
+            unsafe_patterns: vec!["rm -rf /".to_string()],
             allow_login_shell: true,
             max_timeout_ms: 5_000,
             max_output_bytes: 4 * 1024,
@@ -641,15 +606,7 @@ mod tests {
             enabled: true,
             workspace: None,
             blocked_patterns: vec![],
-            safe_commands: vec![
-                "echo".to_string(),
-                "cat".to_string(),
-                "ls".to_string(),
-                "pwd".to_string(),
-                "sleep".to_string(),
-                "printf".to_string(),
-            ],
-            approval_policy: ShellApprovalPolicy::Never,
+            unsafe_patterns: vec![],
             allow_login_shell: true,
             max_timeout_ms: 5_000,
             max_output_bytes: 4 * 1024,
@@ -753,7 +710,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dangerous_command_blocked() {
+    async fn test_blocked_command_is_rejected() {
+        let config = test_config();
+        let tool = ShellTool::new(&config);
+
+        let result = tool
+            .execute(json!({"command": ":(){ :|:& };:"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("security violation"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unsafe_command_requires_approval() {
         let config = test_config();
         let tool = ShellTool::new(&config);
 
@@ -761,51 +734,98 @@ mod tests {
             .execute(json!({"command": "rm -rf /"}), &base_ctx())
             .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("security violation"));
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("requires approval"), "unexpected error: {err}");
     }
 
     #[tokio::test]
-    async fn test_mutating_command_requires_approval() {
+    async fn test_non_blocked_command_runs_without_approval() {
         let config = test_config();
         let tool = ShellTool::new(&config);
 
         let result = tool
             .execute(json!({"command": "touch file.txt"}), &base_ctx())
-            .await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("approval required"));
-    }
-
-    #[tokio::test]
-    async fn test_mutating_command_succeeds_when_approved() {
-        let config = test_config();
-        let tool = ShellTool::new(&config);
-
-        let mut metadata = BTreeMap::new();
-        metadata.insert("shell.approved".to_string(), json!(true));
-        let ctx = ToolContext {
-            session_key: "s1".to_string(),
-            metadata,
-        };
-
-        let result = tool
-            .execute(
-                json!({
-                    "command": "touch file.txt"
-                }),
-                &ctx,
-            )
             .await
             .unwrap();
 
-        assert!(result.content_for_model.contains("\"approved\": true"));
+        assert!(result.content_for_model.contains("\"success\": true"));
+        assert!(result
+            .content_for_model
+            .contains("\"approval_required\": false"));
+        assert!(result.content_for_model.contains("\"approved\": false"));
         let _ = fs::remove_file("file.txt");
+    }
+
+    #[tokio::test]
+    async fn test_unsafe_command_creates_pending_approval() {
+        let config = test_config();
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "stdio")
+            .await
+            .expect("session should exist");
+        let tool = ShellTool::with_store(&config, store.clone());
+
+        let result = tool
+            .execute(json!({"command": "rm -rf /"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        let tool_err = result.expect_err("approval should be required");
+        let err = tool_err.to_string();
+        assert!(err.contains("Approval ID: "), "unexpected error: {err}");
+        assert_eq!(tool_err.code(), "approval_required");
+        assert!(tool_err
+            .signals()
+            .iter()
+            .any(|signal| signal.kind == "approval_required"));
+    }
+
+    #[tokio::test]
+    async fn test_unsafe_command_executes_with_approved_approval_id_once() {
+        let config = test_config();
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "stdio")
+            .await
+            .expect("session should exist");
+        let tool = ShellTool::with_store(&config, store.clone());
+
+        let first = tool
+            .execute(json!({"command": "rm -rf /"}), &base_ctx())
+            .await;
+        let first_err = first.expect_err("approval should be required").to_string();
+        let approval_id = first_err
+            .split("Approval ID: ")
+            .nth(1)
+            .and_then(|tail| tail.lines().next())
+            .map(str::trim)
+            .expect("approval id should be present")
+            .to_string();
+
+        store
+            .update_approval_status(&approval_id, ApprovalStatus::Approved, Some("user"))
+            .await
+            .expect("approval should transition to approved");
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("shell.approval_id".to_string(), json!(approval_id.clone()));
+        let approved_ctx = ToolContext {
+            session_key: "s1".to_string(),
+            metadata,
+        };
+        let approved_exec = tool
+            .execute(json!({"command": "rm -rf /"}), &approved_ctx)
+            .await
+            .expect("approved command should execute");
+        assert!(approved_exec
+            .content_for_model
+            .contains("\"approved\": true"));
+
+        let consumed = store
+            .get_approval(&approval_id)
+            .await
+            .expect("approval should exist");
+        assert_eq!(consumed.status, ApprovalStatus::Consumed);
     }
 
     #[tokio::test]
@@ -914,188 +934,6 @@ mod tests {
         assert!(result
             .content_for_model
             .contains("\"stdout_truncated\": true"));
-    }
-
-    #[tokio::test]
-    async fn test_mutating_command_creates_pending_approval() {
-        let config = test_config();
-        let store = create_store().await;
-        store
-            .touch_session("s1", "chat-1", "stdio")
-            .await
-            .expect("session should exist");
-        let tool = ShellTool::with_store(&config, store.clone());
-
-        let result = tool
-            .execute(json!({"command": "touch file.txt"}), &base_ctx())
-            .await;
-        assert!(result.is_err());
-        let tool_err = result.expect_err("approval should be required");
-        let err = tool_err.to_string();
-        assert!(err.contains("approval_id="), "unexpected error: {err}");
-        assert_eq!(tool_err.code(), "approval_required");
-        assert!(
-            tool_err
-                .signals()
-                .iter()
-                .any(|signal| signal.kind == "approval_required"),
-            "approval_required signal should be emitted"
-        );
-        let approval_id = err
-            .split("approval_id=")
-            .nth(1)
-            .and_then(|tail| tail.split(';').next())
-            .expect("approval id should be present");
-        let approval = store
-            .get_approval(approval_id)
-            .await
-            .expect("approval should be persisted");
-        assert_eq!(approval.session_key, "s1");
-        assert_eq!(approval.tool_name, "shell");
-        assert_eq!(approval.status.as_str(), "pending");
-    }
-
-    #[tokio::test]
-    async fn test_mutating_command_executes_with_approved_approval_id_once() {
-        let config = test_config();
-        let store = create_store().await;
-        store
-            .touch_session("s1", "chat-1", "stdio")
-            .await
-            .expect("session should exist");
-        let tool = ShellTool::with_store(&config, store.clone());
-
-        let first = tool
-            .execute(json!({"command": "touch file.txt"}), &base_ctx())
-            .await;
-        assert!(first.is_err());
-        let first_err = first.unwrap_err().to_string();
-        let approval_id = first_err
-            .split("approval_id=")
-            .nth(1)
-            .and_then(|tail| tail.split(';').next())
-            .expect("approval id should be present")
-            .to_string();
-
-        store
-            .update_approval_status(&approval_id, ApprovalStatus::Approved, Some("user"))
-            .await
-            .expect("approval should transition to approved");
-
-        let mut metadata = BTreeMap::new();
-        metadata.insert("shell.approval_id".to_string(), json!(approval_id.clone()));
-        let approved_ctx = ToolContext {
-            session_key: "s1".to_string(),
-            metadata,
-        };
-        let approved_exec = tool
-            .execute(json!({"command": "touch file.txt"}), &approved_ctx)
-            .await
-            .expect("approved command should execute");
-        assert!(approved_exec
-            .content_for_model
-            .contains("\"approved\": true"));
-
-        let consumed = store
-            .get_approval(&approval_id)
-            .await
-            .expect("approval should exist");
-        assert_eq!(consumed.status, ApprovalStatus::Consumed);
-    }
-
-    #[tokio::test]
-    async fn test_consumed_approval_id_cannot_be_replayed() {
-        let config = test_config();
-        let store = create_store().await;
-        store
-            .touch_session("s1", "chat-1", "stdio")
-            .await
-            .expect("session should exist");
-        let tool = ShellTool::with_store(&config, store.clone());
-
-        let first = tool
-            .execute(json!({"command": "touch file.txt"}), &base_ctx())
-            .await;
-        let first_err = first.expect_err("should require approval").to_string();
-        let approval_id = first_err
-            .split("approval_id=")
-            .nth(1)
-            .and_then(|tail| tail.split(';').next())
-            .expect("approval id should be present")
-            .to_string();
-
-        store
-            .update_approval_status(&approval_id, ApprovalStatus::Approved, Some("user"))
-            .await
-            .expect("approval should transition to approved");
-
-        let mut metadata = BTreeMap::new();
-        metadata.insert("shell.approval_id".to_string(), json!(approval_id.clone()));
-        let approved_ctx = ToolContext {
-            session_key: "s1".to_string(),
-            metadata: metadata.clone(),
-        };
-        let _ = tool
-            .execute(json!({"command": "touch file.txt"}), &approved_ctx)
-            .await
-            .expect("first approved execution should pass");
-
-        let replay = tool
-            .execute(
-                json!({"command": "touch file.txt"}),
-                &ToolContext {
-                    session_key: "s1".to_string(),
-                    metadata,
-                },
-            )
-            .await;
-        let replay_err = replay.expect_err("replay should fail").to_string();
-        assert!(replay_err.contains("approval required"));
-
-        let _ = fs::remove_file("file.txt");
-    }
-
-    #[tokio::test]
-    async fn test_mutating_command_executes_after_approve_without_metadata_id() {
-        let config = test_config();
-        let store = create_store().await;
-        store
-            .touch_session("s1", "chat-1", "stdio")
-            .await
-            .expect("session should exist");
-        let tool = ShellTool::with_store(&config, store.clone());
-
-        let first = tool
-            .execute(json!({"command": "touch file.txt"}), &base_ctx())
-            .await;
-        let first_err = first.expect_err("should require approval").to_string();
-        let approval_id = first_err
-            .split("approval_id=")
-            .nth(1)
-            .and_then(|tail| tail.split(';').next())
-            .expect("approval id should be present")
-            .to_string();
-
-        store
-            .update_approval_status(&approval_id, ApprovalStatus::Approved, Some("user"))
-            .await
-            .expect("approval should transition to approved");
-
-        let approved_exec = tool
-            .execute(json!({"command": "touch file.txt"}), &base_ctx())
-            .await
-            .expect("approved command should execute by hash match");
-        assert!(approved_exec
-            .content_for_model
-            .contains("\"approved\": true"));
-
-        let consumed = store
-            .get_approval(&approval_id)
-            .await
-            .expect("approval should exist");
-        assert_eq!(consumed.status, ApprovalStatus::Consumed);
-
-        let _ = fs::remove_file("file.txt");
     }
 
     #[tokio::test]

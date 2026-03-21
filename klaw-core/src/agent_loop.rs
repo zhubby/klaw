@@ -214,8 +214,12 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                 ToolInvocationResult::success(output.content_for_model)
             }
             Err(err) => {
-                let message = format!("tool `{name}` failed: {err}");
                 let error_code = err.code().to_string();
+                let message = if error_code == "approval_required" {
+                    err.message().to_string()
+                } else {
+                    format!("tool `{name}` failed: {err}")
+                };
                 let signals = err
                     .signals()
                     .iter()

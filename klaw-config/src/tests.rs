@@ -21,12 +21,8 @@ fn parse_default_template_succeeds() {
         default_shell_blocked_patterns()
     );
     assert_eq!(
-        parsed.tools.shell.safe_commands,
-        default_shell_safe_commands()
-    );
-    assert_eq!(
-        parsed.tools.shell.approval_policy,
-        ShellApprovalPolicy::OnRequest
+        parsed.tools.shell.unsafe_patterns,
+        default_shell_unsafe_patterns()
     );
     assert!(parsed.tools.shell.allow_login_shell);
     assert_eq!(parsed.tools.shell.max_timeout_ms, 120_000);
@@ -206,7 +202,7 @@ fn validate_fails_when_root_model_is_blank() {
 }
 
 #[test]
-fn parse_tools_shell_blocked_patterns_succeeds() {
+fn parse_tools_shell_unsafe_patterns_succeeds() {
     let raw = r#"
 model_provider = "openai"
 
@@ -219,9 +215,8 @@ env_key = "OPENAI_API_KEY"
 [tools.shell]
 enabled = true
 workspace = "/Users/example/shell"
-blocked_patterns = ["sudo rm -rf /tmp/example"]
-safe_commands = ["ls", "cat"]
-approval_policy = "never"
+blocked_patterns = [":(){ :|:& };:"]
+unsafe_patterns = ["sudo rm -rf /tmp/example"]
 allow_login_shell = false
 max_timeout_ms = 30000
 max_output_bytes = 64000
@@ -230,15 +225,11 @@ max_output_bytes = 64000
     let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
     assert_eq!(
         parsed.tools.shell.blocked_patterns,
+        vec![":(){ :|:& };:".to_string()]
+    );
+    assert_eq!(
+        parsed.tools.shell.unsafe_patterns,
         vec!["sudo rm -rf /tmp/example".to_string()]
-    );
-    assert_eq!(
-        parsed.tools.shell.safe_commands,
-        vec!["ls".to_string(), "cat".to_string()]
-    );
-    assert_eq!(
-        parsed.tools.shell.approval_policy,
-        ShellApprovalPolicy::Never
     );
     assert_eq!(
         parsed.tools.shell.workspace.as_deref(),
@@ -1009,7 +1000,6 @@ fn validate_allows_invalid_shell_config_when_disabled() {
     let mut cfg = AppConfig::default();
     cfg.tools.shell.enabled = false;
     cfg.tools.shell.workspace = Some(" ".to_string());
-    cfg.tools.shell.safe_commands.clear();
     cfg.tools.shell.max_timeout_ms = 0;
     cfg.tools.shell.max_output_bytes = 0;
     validate(&cfg).expect("should be valid when shell is disabled");
@@ -1175,19 +1165,19 @@ fn validate_allows_invalid_memory_tool_limits_when_disabled() {
 #[test]
 fn validate_fails_when_shell_limits_are_invalid() {
     let mut cfg = AppConfig::default();
-    cfg.tools.shell.safe_commands.clear();
+    cfg.tools.shell.max_timeout_ms = 0;
     let err = validate(&cfg).expect_err("should fail");
-    assert!(format!("{err}").contains("tools.shell.safe_commands"));
+    assert!(format!("{err}").contains("tools.shell.max_timeout_ms"));
 
     let mut cfg2 = AppConfig::default();
-    cfg2.tools.shell.max_timeout_ms = 0;
+    cfg2.tools.shell.max_output_bytes = 0;
     let err2 = validate(&cfg2).expect_err("should fail");
-    assert!(format!("{err2}").contains("tools.shell.max_timeout_ms"));
+    assert!(format!("{err2}").contains("tools.shell.max_output_bytes"));
 
     let mut cfg3 = AppConfig::default();
-    cfg3.tools.shell.max_output_bytes = 0;
+    cfg3.tools.shell.workspace = Some(" ".to_string());
     let err3 = validate(&cfg3).expect_err("should fail");
-    assert!(format!("{err3}").contains("tools.shell.max_output_bytes"));
+    assert!(format!("{err3}").contains("tools.shell.workspace"));
 }
 
 #[test]
@@ -1458,6 +1448,7 @@ env_key = "OPENAI_API_KEY"
 [custom]
 flag = true
 "#;
+    fs::create_dir_all(&root).expect("should recreate temp root");
     fs::write(&path, merge_raw).expect("should rewrite source config");
     let migrated_snapshot = store
         .migrate_with_defaults()

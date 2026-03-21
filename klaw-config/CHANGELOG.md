@@ -12,6 +12,7 @@
 
 - `gateway.listen_port` 默认值改为 `0`，允许启动时由系统分配随机端口
 - 观测配置校验新增 `local_store` 保留天数和刷新间隔的正整数约束
+- `tools.shell` 配置移除了 `safe_commands` 与 `approval_policy`，并调整为双层规则：`blocked_patterns` 命中即拒绝，`unsafe_patterns` 命中则请求审批，其余命令默认允许执行
 
 ## 2026-03-20
 

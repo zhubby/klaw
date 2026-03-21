@@ -219,6 +219,16 @@ async fn dispatch_outbound_message(
     msg: &Envelope<OutboundMessage>,
     config: &BackgroundServiceConfig,
 ) -> Result<(), String> {
+    if msg
+        .payload
+        .metadata
+        .get("channel.delivery_mode")
+        .and_then(|value| value.as_str())
+        == Some("direct_reply")
+    {
+        return Ok(());
+    }
+
     match msg.payload.channel.as_str() {
         "dingtalk" => dispatch_dingtalk_outbound_message(msg, config).await,
         "telegram" => dispatch_telegram_outbound_message(msg, config).await,
@@ -230,16 +240,6 @@ async fn dispatch_dingtalk_outbound_message(
     msg: &Envelope<OutboundMessage>,
     config: &BackgroundServiceConfig,
 ) -> Result<(), String> {
-    if msg
-        .payload
-        .metadata
-        .get("channel.delivery_mode")
-        .and_then(|value| value.as_str())
-        == Some("direct_reply")
-    {
-        return Ok(());
-    }
-
     let Some(session_webhook) = msg
         .payload
         .metadata

@@ -52,6 +52,7 @@
 - runtime 内置通用 IM 会话命令路由：`/help`、`/new`、`/model-provider`、`/model`
 - runtime 内置审批命令：`/approve <approval_id>`、`/reject <approval_id>`
 - runtime 审批命令与工具审批流统一通过 `klaw-approval` manager 层处理状态流转与消费
+- runtime 对 `approval_required` 工具结果会直接透传审批提示，不再包装成通用的 tool failure 文案
 - runtime 和 `klaw session` 命令的会话状态/历史操作统一通过 `klaw-session` manager 层处理
 - 普通消息默认按 Base Session -> Active Session 路由，可在会话中途切换 provider/model 并持久化
 - `stdio` 启动时会在 runtime 与 MCP 完全就绪后打印 ASCII `KLAW` 标记，以及版本、skills、tools、MCP 加载摘要

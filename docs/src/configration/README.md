@@ -33,7 +33,8 @@ env_key = "OPENAI_API_KEY"
 # 启用 Shell 工具
 [tools.shell]
 enabled = true
-safe_commands = ["ls", "cat", "echo", "git status"]
+blocked_patterns = [":(){ :|:& };:"]
+unsafe_patterns = ["rm -rf /", "mkfs"]
 ```
 
 ### 4. 验证配置

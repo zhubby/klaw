@@ -1,13 +1,12 @@
 # Shell Tool 设计与实现
 
-本文档记录 `klaw-tool` 中 `shell` 工具的升级实现：参数契约、审批模型、安全分级、执行语义、结构化输出与测试覆盖。
+本文档记录 `klaw-tool` 中 `shell` 工具的升级实现：参数契约、`blocked_patterns` / `unsafe_patterns` 规则、执行语义、结构化输出与测试覆盖。
 
 ## 目标
 
 - 提供可控的 shell 执行能力，而不是无约束的 `sh -c`。
-- 支持审批与提权请求语义（`sandbox_permissions` / `justification` / `prefix_rule`）。
 - 对模型返回结构化结果，明确 success/exit_code/timed_out。
-- 增加 workspace 边界约束、输出截断和命令风险分级。
+- 增加 workspace 边界约束、输出截断和双层命令规则匹配。
 
 ## 代码位置
 
@@ -37,9 +36,8 @@
 
 ```toml
 [tools.shell]
-blocked_patterns = ["rm -rf /", "mkfs"]
-safe_commands = ["ls", "cat", "echo", "rg", "find"]
-approval_policy = "on_request" # never / on_request
+blocked_patterns = [":(){ :|:& };:"]
+unsafe_patterns = ["rm -rf /", "mkfs"]
 allow_login_shell = true
 max_timeout_ms = 120000
 max_output_bytes = 131072
@@ -47,30 +45,15 @@ max_output_bytes = 131072
 
 校验规则：
 
-- `safe_commands` 不能为空
 - `max_timeout_ms > 0`
 - `max_output_bytes > 0`
 
-## 风险分级与审批
+## 规则判定
 
-命令分级：
-
-- `safe`：命中 `safe_commands` 且不含 shell 组合操作符
-- `mutating`：未知命令或包含 `&& | ; > < $( )` 等组合/重定向迹象
-- `destructive`：命中 `blocked_patterns`
-
-审批策略：
-
-- `destructive`：直接拒绝
-- `mutating`：要求审批
-- `sandbox_permissions=require_escalated`：无论命令风险都要求审批，且 `justification` 必填
-
-审批来源（metadata）：
-
-- `shell.approved = true`
-- `shell.approved_prefixes = [["cargo","test"],["git","status"]]`
-
-若未批准，工具返回明确错误提示。
+- 命中 `blocked_patterns`：直接拒绝
+- 命中 `unsafe_patterns`：请求审批
+- 未命中任一模式：直接执行
+- shell 组合操作符、重定向与未知命令本身不再自动触发审批；是否需要审批完全由两组模式控制
 
 ## 执行语义
 
@@ -87,7 +70,6 @@ max_output_bytes = 131072
 - 基准目录：`metadata["workspace"]`（否则 `tools.shell.workspace`，再否则 `(<storage.root_dir 或 ~/.klaw>)/workspace`）
 - `workdir` 相对路径会基于 workspace 解析并 canonicalize
 - 默认禁止越出 workspace
-- 仅当 `sandbox_permissions=require_escalated` 且审批通过时允许 workspace 外目录
 
 ## 输出与可观测性
 
@@ -115,9 +97,9 @@ max_output_bytes = 131072
 - 非 0 退出码结构化失败输出
 - workspace 工作目录
 - 超时行为（含配置上限 clamp）
-- 危险命令阻断
-- mutating 命令审批要求
-- escalated 必填 justification
+- 命中 `blocked_patterns` 的命令直接拒绝
+- 命中 `unsafe_patterns` 的命令触发审批
+- 未命中模式的命令默认直接执行
 - prefix_rule 预批准路径
 - apply_patch 拦截
 - workspace 越界阻断

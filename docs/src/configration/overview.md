@@ -60,7 +60,8 @@ client_secret = "..."
 # 工具配置
 [tools.shell]
 enabled = true
-safe_commands = ["ls", "cat", "echo"]
+blocked_patterns = [":(){ :|:& };:"]
+unsafe_patterns = ["rm -rf /", "mkfs"]
 
 [tools.web_search]
 enabled = true
@@ -241,7 +242,6 @@ pub fn reset_to_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, C
 #### 4. 工具验证
 
 **Shell 工具**:
-- `safe_commands` 不能为空
 - `max_timeout_ms` > 0
 - `max_output_bytes` > 0
 - `workspace` 如配置则不能为空
@@ -486,7 +486,7 @@ Error: failed to read config file ~/.klaw/config.toml: No such file or directory
 ### 验证失败
 
 ```
-Error: invalid config: tools.shell.safe_commands must contain at least one command
+Error: invalid config: tools.shell.max_timeout_ms must be greater than 0
 ```
 
 **解决**: 检查配置字段是否符合验证规则。

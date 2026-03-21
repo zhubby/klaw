@@ -1,8 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use klaw_config::{
-    AppConfig, ApplyPatchConfig, ConfigSnapshot, ConfigStore, MemoryToolConfig,
-    ShellApprovalPolicy, ShellConfig, SubAgentConfig, WebFetchConfig, WebSearchConfig,
+    AppConfig, ApplyPatchConfig, ConfigSnapshot, ConfigStore, MemoryToolConfig, ShellConfig,
+    SubAgentConfig, WebFetchConfig, WebSearchConfig,
 };
 use std::path::{Path, PathBuf};
 
@@ -51,8 +51,7 @@ struct ShellForm {
     enabled: bool,
     workspace: String,
     blocked_patterns_text: String,
-    safe_commands_text: String,
-    approval_policy: ShellApprovalPolicy,
+    unsafe_patterns_text: String,
     allow_login_shell: bool,
     max_timeout_ms: String,
     max_output_bytes: String,
@@ -137,8 +136,7 @@ impl ShellForm {
             enabled: config.enabled,
             workspace: config.workspace.clone().unwrap_or_default(),
             blocked_patterns_text: config.blocked_patterns.join("\n"),
-            safe_commands_text: config.safe_commands.join("\n"),
-            approval_policy: config.approval_policy,
+            unsafe_patterns_text: config.unsafe_patterns.join("\n"),
             allow_login_shell: config.allow_login_shell,
             max_timeout_ms: config.max_timeout_ms.to_string(),
             max_output_bytes: config.max_output_bytes.to_string(),
@@ -162,8 +160,7 @@ impl ShellForm {
             enabled: self.enabled,
             workspace: (!workspace.is_empty()).then(|| workspace.to_string()),
             blocked_patterns: parse_lines(&self.blocked_patterns_text),
-            safe_commands: parse_lines(&self.safe_commands_text),
-            approval_policy: self.approval_policy,
+            unsafe_patterns: parse_lines(&self.unsafe_patterns_text),
             allow_login_shell: self.allow_login_shell,
             max_timeout_ms,
             max_output_bytes,
@@ -610,26 +607,6 @@ impl ToolPanel {
                                 ui.text_edit_singleline(&mut form.workspace);
                                 ui.end_row();
 
-                                ui.label("approval_policy");
-                                egui::ComboBox::from_id_salt("tool-shell-approval-policy")
-                                    .selected_text(match form.approval_policy {
-                                        ShellApprovalPolicy::Never => "never",
-                                        ShellApprovalPolicy::OnRequest => "on_request",
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(
-                                            &mut form.approval_policy,
-                                            ShellApprovalPolicy::Never,
-                                            "never",
-                                        );
-                                        ui.selectable_value(
-                                            &mut form.approval_policy,
-                                            ShellApprovalPolicy::OnRequest,
-                                            "on_request",
-                                        );
-                                    });
-                                ui.end_row();
-
                                 ui.label("allow_login_shell");
                                 ui.checkbox(&mut form.allow_login_shell, "");
                                 ui.end_row();
@@ -647,14 +624,14 @@ impl ToolPanel {
                         ui.label("blocked_patterns (one per line)");
                         ui.add(
                             egui::TextEdit::multiline(&mut form.blocked_patterns_text)
-                                .desired_rows(5)
+                                .desired_rows(3)
                                 .desired_width(f32::INFINITY),
                         );
 
-                        ui.label("safe_commands (one per line)");
+                        ui.label("unsafe_patterns (one per line)");
                         ui.add(
-                            egui::TextEdit::multiline(&mut form.safe_commands_text)
-                                .desired_rows(6)
+                            egui::TextEdit::multiline(&mut form.unsafe_patterns_text)
+                                .desired_rows(5)
                                 .desired_width(f32::INFINITY),
                         );
                     }
@@ -1112,8 +1089,7 @@ mod tests {
             enabled: true,
             workspace: String::new(),
             blocked_patterns_text: String::new(),
-            safe_commands_text: "ls".to_string(),
-            approval_policy: ShellApprovalPolicy::OnRequest,
+            unsafe_patterns_text: String::new(),
             allow_login_shell: true,
             max_timeout_ms: "abc".to_string(),
             max_output_bytes: "1024".to_string(),

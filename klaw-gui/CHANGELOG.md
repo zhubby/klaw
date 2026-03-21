@@ -15,6 +15,7 @@
 - `LLM` 审计详情窗口现在以内置可交互 JSON tree 渲染 request/response body，并在 JSON 解析失败时回退到只读原始文本
 - `Observability` 面板继续作为纯配置页，并新增本地分析存储的开关、保留天数和刷新间隔配置
 - `Session` 聊天弹窗现在会根据当前主题切换消息卡片与角色标题配色，浅色模式下用户消息为淡粉背景、助手消息为淡蓝背景，深色模式标题色也调整为更协调的粉蓝系
+- `Tool` 配置面板移除了 shell 的 `safe_commands` 与 `approval_policy` 输入项，并为 shell 拆分出 `blocked_patterns` 与 `unsafe_patterns` 两组规则，分别用于直接拒绝和审批
 
 ## 2026-03-20
 

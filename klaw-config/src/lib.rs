@@ -776,10 +776,8 @@ pub struct ShellConfig {
     pub workspace: Option<String>,
     #[serde(default = "default_shell_blocked_patterns")]
     pub blocked_patterns: Vec<String>,
-    #[serde(default = "default_shell_safe_commands")]
-    pub safe_commands: Vec<String>,
-    #[serde(default = "default_shell_approval_policy")]
-    pub approval_policy: ShellApprovalPolicy,
+    #[serde(default = "default_shell_unsafe_patterns")]
+    pub unsafe_patterns: Vec<String>,
     #[serde(default = "default_shell_allow_login_shell")]
     pub allow_login_shell: bool,
     #[serde(default = "default_shell_max_timeout_ms")]
@@ -794,8 +792,7 @@ impl Default for ShellConfig {
             enabled: default_shell_enabled(),
             workspace: None,
             blocked_patterns: default_shell_blocked_patterns(),
-            safe_commands: default_shell_safe_commands(),
-            approval_policy: default_shell_approval_policy(),
+            unsafe_patterns: default_shell_unsafe_patterns(),
             allow_login_shell: default_shell_allow_login_shell(),
             max_timeout_ms: default_shell_max_timeout_ms(),
             max_output_bytes: default_shell_max_output_bytes(),
@@ -809,18 +806,14 @@ impl ToolEnabled for ShellConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShellApprovalPolicy {
-    Never,
-    OnRequest,
+fn default_shell_blocked_patterns() -> Vec<String> {
+    vec![":(){ :|:& };:".to_string()]
 }
 
-fn default_shell_blocked_patterns() -> Vec<String> {
+fn default_shell_unsafe_patterns() -> Vec<String> {
     vec![
         "rm -rf /".to_string(),
         "rm -rf ~".to_string(),
-        ":(){ :|:& };:".to_string(),
         "mkfs".to_string(),
         "shutdown".to_string(),
         "reboot".to_string(),
@@ -829,41 +822,6 @@ fn default_shell_blocked_patterns() -> Vec<String> {
 
 fn default_shell_enabled() -> bool {
     true
-}
-
-fn default_shell_safe_commands() -> Vec<String> {
-    vec![
-        "ls".to_string(),
-        "pwd".to_string(),
-        "cat".to_string(),
-        "echo".to_string(),
-        "head".to_string(),
-        "tail".to_string(),
-        "grep".to_string(),
-        "rg".to_string(),
-        "find".to_string(),
-        "wc".to_string(),
-        "sed".to_string(),
-        "awk".to_string(),
-        "sort".to_string(),
-        "uniq".to_string(),
-        "cut".to_string(),
-        "basename".to_string(),
-        "dirname".to_string(),
-        "date".to_string(),
-        "sleep".to_string(),
-        "printf".to_string(),
-        "which".to_string(),
-        "type".to_string(),
-        "printenv".to_string(),
-        "env".to_string(),
-        "ps".to_string(),
-        "whoami".to_string(),
-    ]
-}
-
-fn default_shell_approval_policy() -> ShellApprovalPolicy {
-    ShellApprovalPolicy::OnRequest
 }
 
 fn default_shell_allow_login_shell() -> bool {

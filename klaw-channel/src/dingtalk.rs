@@ -2769,7 +2769,7 @@ mod tests {
     #[test]
     fn build_approval_action_card_body_includes_command_preview() {
         let output = ChannelResponse {
-            content: "tool shell failed: execution failed: approval required".to_string(),
+            content: "This shell command requires approval.".to_string(),
             reasoning: None,
             metadata: BTreeMap::from([(
                 "approval.signal".to_string(),

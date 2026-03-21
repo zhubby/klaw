@@ -148,6 +148,14 @@ impl ToolError {
     }
 
     #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::InvalidArgs(message) | Self::ExecutionFailed(message) => message.as_str(),
+            Self::StructuredExecutionFailed { message, .. } => message.as_str(),
+        }
+    }
+
+    #[must_use]
     pub fn details(&self) -> Option<&serde_json::Value> {
         match self {
             Self::StructuredExecutionFailed { details, .. } => details.as_ref(),

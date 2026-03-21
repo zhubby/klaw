@@ -10,6 +10,7 @@
 
 - runtime `cron_manager` tool registration now reuses the shared `session_store` instead of reopening `klaw.db`, preventing Telegram/runtime request paths from introducing a second SQLite writer connection
 - background outbound dispatch now sends Telegram cron/runtime replies through the configured bot account instead of silently dropping non-Dingtalk outbound messages
+- runtime approval follow-up execution no longer renders `approval_required` as `tool \`shell\` failed: execution failed`; it now returns the approval prompt directly
 
 ## 2026-03-20
 

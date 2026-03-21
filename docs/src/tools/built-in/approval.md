@@ -187,16 +187,16 @@ fn now_ms() -> i64 {
 
 ## 典型用例
 
-### 1. Shell 命令审批流程
+### 1. 通用高风险操作审批流程
 
 ```json
 // 1. 请求审批
 {
   "action": "request",
-  "tool_name": "shell",
-  "command_text": "rm -rf build/",
+  "tool_name": "apply_patch",
+  "command_text": "Rewrite deployment manifests in production/",
   "risk_level": "destructive",
-  "justification": "Cleanup old build artifacts"
+  "justification": "Apply reviewed release patch"
 }
 
 // 响应
@@ -273,9 +273,9 @@ fn now_ms() -> i64 {
 
 `approval` 工具通常与以下工具配合使用：
 
-1. **Shell 工具**：高风险命令执行前请求审批
-2. **文件编辑工具**：批量文件修改前请求审批
-3. **网络工具**：外部 API 调用前的授权审批
+1. **文件编辑工具**：批量文件修改前请求审批
+2. **网络工具**：外部 API 调用前的授权审批
+3. **自定义高风险工具**：在执行前统一走审批记录与决议流
 
 典型集成模式：
 

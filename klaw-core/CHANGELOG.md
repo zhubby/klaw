@@ -8,6 +8,7 @@
 
 ### Changed
 - `AgentLoop` 在工具成功和失败路径都会上报结构化工具结果，供 GUI 分析面板统计成功率、失败分布和趋势
+- `AgentLoop` now preserves `approval_required` tool messages without wrapping them in `tool ... failed: execution failed`, so approval prompts are surfaced as approval states instead of user-facing failures
 
 ## 2026-03-20
 

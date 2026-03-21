@@ -33,6 +33,15 @@ const UPDATE_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const UPDATE_DEDUP_MAX_ENTRIES: usize = 20_000;
 type TelegramPollResult = Result<Vec<TelegramUpdate>, String>;
 
+fn callback_runtime_metadata() -> BTreeMap<String, serde_json::Value> {
+    let mut metadata = BTreeMap::new();
+    metadata.insert(
+        "channel.delivery_mode".to_string(),
+        serde_json::Value::String("direct_reply".to_string()),
+    );
+    metadata
+}
+
 #[derive(Debug, Clone)]
 pub struct TelegramChannel {
     config: TelegramChannelConfig,
@@ -294,7 +303,7 @@ impl TelegramChannel {
                     session_key,
                     chat_id: inbound.chat_id.clone(),
                     media_references: inbound.media_references.clone(),
-                    metadata: BTreeMap::new(),
+                    metadata: callback_runtime_metadata(),
                 },
                 Some(inbound.chat_id.as_str()),
             )
@@ -342,7 +351,7 @@ impl TelegramChannel {
                     session_key,
                     chat_id: inbound.chat_id.clone(),
                     media_references: Vec::new(),
-                    metadata: BTreeMap::new(),
+                    metadata: callback_runtime_metadata(),
                 },
                 Some(inbound.chat_id.as_str()),
             )
