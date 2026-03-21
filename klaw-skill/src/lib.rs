@@ -8,7 +8,7 @@ pub use error::SkillError;
 pub use fetcher::{ReqwestSkillFetcher, SkillFetcher};
 pub use fs_store::{
     open_default_skill_registry, open_default_skills_manager, FileSystemSkillStore, InstalledSkill,
-    RegistrySource, RegistrySyncReport, SkillUninstallResult,
+    RegistrySource, RegistrySyncReport, RegistrySyncStatus, SkillUninstallResult,
 };
 pub use model::{
     RegistrySkillMatch, RegistrySkillSummary, SkillRecord, SkillSource, SkillSourceKind,

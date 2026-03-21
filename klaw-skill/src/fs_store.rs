@@ -37,6 +37,13 @@ pub struct InstalledSkill {
     pub name: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegistrySyncStatus {
+    pub registry_name: String,
+    pub commit: Option<String>,
+    pub is_stale: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct RegistrySyncReport {
     pub synced_registries: Vec<String>,
@@ -592,9 +599,8 @@ where
                 "installed skills registry cannot be empty".to_string(),
             ));
         }
-        let stale;
         let mut manifest = self.load_installed_manifest().await?;
-        stale = manifest.stale_registries.contains(registry_name);
+        let stale = manifest.stale_registries.contains(registry_name);
         let record = self
             .read_registry_skill_record(registry_name, &requested_name, stale)
             .await?;
@@ -793,6 +799,24 @@ where
         }
 
         Ok(matches)
+    }
+
+    pub async fn get_registry_statuses(
+        &self,
+        registry_names: &[String],
+    ) -> Result<Vec<RegistrySyncStatus>, SkillError> {
+        let manifest = self.load_installed_manifest().await?;
+        let mut statuses = Vec::with_capacity(registry_names.len());
+        for name in registry_names {
+            let commit = manifest.registry_commits.get(name).cloned();
+            let is_stale = manifest.stale_registries.contains(name);
+            statuses.push(RegistrySyncStatus {
+                registry_name: name.clone(),
+                commit,
+                is_stale,
+            });
+        }
+        Ok(statuses)
     }
 }
 

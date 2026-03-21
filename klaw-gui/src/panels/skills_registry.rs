@@ -5,7 +5,7 @@ use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillsRegistryConfig};
-use klaw_skill::RegistrySyncReport;
+use klaw_skill::{RegistrySyncReport, RegistrySyncStatus};
 use klaw_skill::{
     open_default_skills_manager, FileSystemSkillStore, InstalledSkill, RegistrySource,
 };
@@ -83,6 +83,7 @@ pub struct SkillsRegistryPanel {
     sync_result_rx: Option<Receiver<(String, Result<RegistrySyncReport, String>)>>,
     selected_registry: Option<String>,
     delete_confirm_id: Option<String>,
+    registry_statuses: Vec<RegistrySyncStatus>,
 }
 
 impl SkillsRegistryPanel {
@@ -101,6 +102,7 @@ impl SkillsRegistryPanel {
                 let snapshot = store.snapshot();
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
+                self.load_registry_statuses();
                 notifications.success("Skills registry config loaded from disk");
             }
             Err(err) => notifications.error(format!("Failed to load config: {err}")),
@@ -166,7 +168,25 @@ impl SkillsRegistryPanel {
             .reload()
             .map_err(|err| format!("Reload failed: {err}"))?;
         self.apply_snapshot(snapshot);
+        self.load_registry_statuses();
         Ok(())
+    }
+
+    fn load_registry_statuses(&mut self) {
+        let registry_names: Vec<String> =
+            self.config.skills.registries.keys().cloned().collect();
+        if registry_names.is_empty() {
+            self.registry_statuses.clear();
+            return;
+        }
+        match run_skill_task(move |store| async move {
+            store.get_registry_statuses(&registry_names).await
+        }) {
+            Ok(statuses) => self.registry_statuses = statuses,
+            Err(err) => {
+                tracing::warn!(error = %err, "Failed to load registry statuses");
+            }
+        }
     }
 
     fn save_sync_timeout(&mut self, notifications: &mut NotificationCenter) {
@@ -537,8 +557,10 @@ impl PanelRenderer for SkillsRegistryPanel {
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .column(Column::auto().at_least(100.0))
                 .column(Column::auto().at_least(240.0))
+                .column(Column::auto().at_least(80.0))
                 .column(Column::auto().at_least(100.0))
-                .column(Column::remainder().at_least(150.0))
+                .column(Column::auto().at_least(80.0))
+                .column(Column::remainder().at_least(120.0))
                 .min_scrolled_height(0.0)
                 .max_scroll_height(available_height)
                 .sense(egui::Sense::click())
@@ -550,10 +572,16 @@ impl PanelRenderer for SkillsRegistryPanel {
                         ui.strong("Address");
                     });
                     header.col(|ui| {
-                        ui.strong("Installed Count");
+                        ui.strong("Synced");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Commit");
                     });
                     header.col(|ui| {
                         ui.strong("Installed");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Skills");
                     });
                 })
                 .body(|body| {
@@ -569,14 +597,51 @@ impl PanelRenderer for SkillsRegistryPanel {
 
                         let is_syncing = self.syncing_registry.as_deref() == Some(name.as_str());
 
+                        let status = self
+                            .registry_statuses
+                            .iter()
+                            .find(|s| s.registry_name == *name);
+
                         row.col(|ui| {
-                            if is_syncing {
-                                ui.add(egui::Spinner::new().size(14.0));
-                            }
                             ui.label(name);
                         });
                         row.col(|ui| {
                             ui.label(&registry.address);
+                        });
+                        row.col(|ui| {
+                            if is_syncing {
+                                ui.add(egui::Spinner::new().size(14.0));
+                            } else if let Some(s) = &status {
+                                if s.is_stale {
+                                    ui.label(
+                                        RichText::new(format!("{} Outdated", regular::WARNING))
+                                            .color(ui.visuals().warn_fg_color),
+                                    );
+                                } else {
+                                    ui.label(
+                                        RichText::new(format!("{} Synced", regular::CHECK))
+                                            .color(egui::Color32::from_rgb(0x22, 0xC5, 0x5E)),
+                                    );
+                                }
+                            } else {
+                                ui.label(RichText::new("-").weak());
+                            }
+                        });
+                        row.col(|ui| {
+                            if let Some(s) = &status {
+                                if let Some(commit) = &s.commit {
+                                    let short = if commit.len() > 8 {
+                                        &commit[..8]
+                                    } else {
+                                        commit.as_str()
+                                    };
+                                    ui.label(short);
+                                } else {
+                                    ui.label(RichText::new("-").weak());
+                                }
+                            } else {
+                                ui.label(RichText::new("-").weak());
+                            }
                         });
                         row.col(|ui| {
                             ui.label(registry.installed.len().to_string());
