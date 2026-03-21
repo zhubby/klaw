@@ -5,8 +5,10 @@ use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
     CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder,
     LlmAuditStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord,
-    NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, SessionCompressionState,
-    SessionIndex, SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
+    NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
+    SessionCompressionState, SessionIndex, SessionStorage, StorageError, StoragePaths,
+    UpdateCronJobPatch, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
+    WebhookEventSortOrder, WebhookEventStatus,
 };
 use async_trait::async_trait;
 use sqlx::{
@@ -145,6 +147,26 @@ struct LlmAuditRow {
     response_body_json: Option<String>,
     requested_at_ms: i64,
     responded_at_ms: Option<i64>,
+    created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct WebhookEventRow {
+    id: String,
+    source: String,
+    event_type: String,
+    session_key: String,
+    chat_id: String,
+    sender_id: String,
+    content: String,
+    payload_json: Option<String>,
+    metadata_json: Option<String>,
+    status: String,
+    error_message: Option<String>,
+    response_summary: Option<String>,
+    received_at_ms: i64,
+    processed_at_ms: Option<i64>,
+    remote_addr: Option<String>,
     created_at_ms: i64,
 }
 
@@ -307,6 +329,34 @@ impl TryFrom<LlmAuditRow> for LlmAuditRecord {
             response_body_json: value.response_body_json,
             requested_at_ms: value.requested_at_ms,
             responded_at_ms: value.responded_at_ms,
+            created_at_ms: value.created_at_ms,
+        })
+    }
+}
+
+impl TryFrom<WebhookEventRow> for WebhookEventRecord {
+    type Error = StorageError;
+
+    fn try_from(value: WebhookEventRow) -> Result<Self, Self::Error> {
+        let status = WebhookEventStatus::parse(&value.status).ok_or_else(|| {
+            StorageError::backend(format!("invalid webhook event status: {}", value.status))
+        })?;
+        Ok(Self {
+            id: value.id,
+            source: value.source,
+            event_type: value.event_type,
+            session_key: value.session_key,
+            chat_id: value.chat_id,
+            sender_id: value.sender_id,
+            content: value.content,
+            payload_json: value.payload_json,
+            metadata_json: value.metadata_json,
+            status,
+            error_message: value.error_message,
+            response_summary: value.response_summary,
+            received_at_ms: value.received_at_ms,
+            processed_at_ms: value.processed_at_ms,
+            remote_addr: value.remote_addr,
             created_at_ms: value.created_at_ms,
         })
     }
@@ -478,6 +528,58 @@ impl SqlxSessionStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_llm_audit_session_turn
              ON llm_audit(session_key, turn_index, request_seq)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS webhook_events (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                payload_json TEXT,
+                metadata_json TEXT,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                response_summary TEXT,
+                received_at_ms INTEGER NOT NULL,
+                processed_at_ms INTEGER,
+                remote_addr TEXT,
+                created_at_ms INTEGER NOT NULL,
+                FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_webhook_events_received
+             ON webhook_events(received_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_webhook_events_source_received
+             ON webhook_events(source, received_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_webhook_events_status_received
+             ON webhook_events(status, received_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_webhook_events_session_received
+             ON webhook_events(session_key, received_at_ms DESC)",
         )
         .execute(&self.pool)
         .await
@@ -1295,6 +1397,121 @@ impl SessionStorage for SqlxSessionStore {
         .await
         .map_err(StorageError::backend)?;
         rows.into_iter().map(LlmAuditRecord::try_from).collect()
+    }
+
+    async fn append_webhook_event(
+        &self,
+        input: &NewWebhookEventRecord,
+    ) -> Result<WebhookEventRecord, StorageError> {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO webhook_events (
+                id, source, event_type, session_key, chat_id, sender_id, content,
+                payload_json, metadata_json, status, error_message, response_summary,
+                received_at_ms, processed_at_ms, remote_addr, created_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        )
+        .bind(&input.id)
+        .bind(&input.source)
+        .bind(&input.event_type)
+        .bind(&input.session_key)
+        .bind(&input.chat_id)
+        .bind(&input.sender_id)
+        .bind(&input.content)
+        .bind(&input.payload_json)
+        .bind(&input.metadata_json)
+        .bind(input.status.as_str())
+        .bind(&input.error_message)
+        .bind(&input.response_summary)
+        .bind(input.received_at_ms)
+        .bind(input.processed_at_ms)
+        .bind(&input.remote_addr)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+
+        let row = sqlx::query_as::<_, WebhookEventRow>(
+            "SELECT id, source, event_type, session_key, chat_id, sender_id, content,
+                    payload_json, metadata_json, status, error_message, response_summary,
+                    received_at_ms, processed_at_ms, remote_addr, created_at_ms
+             FROM webhook_events
+             WHERE id = ?1",
+        )
+        .bind(&input.id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        WebhookEventRecord::try_from(row)
+    }
+
+    async fn update_webhook_event_status(
+        &self,
+        event_id: &str,
+        update: &UpdateWebhookEventResult,
+    ) -> Result<WebhookEventRecord, StorageError> {
+        sqlx::query(
+            "UPDATE webhook_events
+             SET status = ?2, error_message = ?3, response_summary = ?4, processed_at_ms = ?5
+             WHERE id = ?1",
+        )
+        .bind(event_id)
+        .bind(update.status.as_str())
+        .bind(&update.error_message)
+        .bind(&update.response_summary)
+        .bind(update.processed_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+
+        let row = sqlx::query_as::<_, WebhookEventRow>(
+            "SELECT id, source, event_type, session_key, chat_id, sender_id, content,
+                    payload_json, metadata_json, status, error_message, response_summary,
+                    received_at_ms, processed_at_ms, remote_addr, created_at_ms
+             FROM webhook_events
+             WHERE id = ?1",
+        )
+        .bind(event_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        WebhookEventRecord::try_from(row)
+    }
+
+    async fn list_webhook_events(
+        &self,
+        query: &WebhookEventQuery,
+    ) -> Result<Vec<WebhookEventRecord>, StorageError> {
+        let sort_order = match query.sort_order {
+            WebhookEventSortOrder::ReceivedAtAsc => "received_at_ms ASC, created_at_ms ASC",
+            WebhookEventSortOrder::ReceivedAtDesc => "received_at_ms DESC, created_at_ms DESC",
+        };
+        let rows = sqlx::query_as::<_, WebhookEventRow>(&format!(
+            "SELECT id, source, event_type, session_key, chat_id, sender_id, content,
+                    payload_json, metadata_json, status, error_message, response_summary,
+                    received_at_ms, processed_at_ms, remote_addr, created_at_ms
+             FROM webhook_events
+             WHERE (?1 IS NULL OR source = ?1)
+               AND (?2 IS NULL OR event_type = ?2)
+               AND (?3 IS NULL OR session_key = ?3)
+               AND (?4 IS NULL OR status = ?4)
+               AND (?5 IS NULL OR received_at_ms >= ?5)
+               AND (?6 IS NULL OR received_at_ms <= ?6)
+             ORDER BY {sort_order}
+             LIMIT ?7 OFFSET ?8"
+        ))
+        .bind(query.source.as_deref())
+        .bind(query.event_type.as_deref())
+        .bind(query.session_key.as_deref())
+        .bind(query.status.map(|status| status.as_str()))
+        .bind(query.received_from_ms)
+        .bind(query.received_to_ms)
+        .bind(query.limit.max(1))
+        .bind(query.offset.max(0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        rows.into_iter().map(WebhookEventRecord::try_from).collect()
     }
 
     async fn create_approval(

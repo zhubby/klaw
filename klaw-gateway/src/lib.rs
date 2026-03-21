@@ -1,20 +1,22 @@
+use async_trait::async_trait;
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        DefaultBodyLimit, Query, State,
     },
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
-    Router,
+    routing::{get, post},
+    Json, Router,
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use klaw_config::GatewayConfig;
 use klaw_observability::{exporter::PrometheusExporter, HealthRegistry};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     net::SocketAddr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -42,20 +44,35 @@ pub enum GatewayError {
     Join(String),
     #[error("failed to create prometheus exporter: {0}")]
     PrometheusExporter(String),
+    #[error("gateway webhook token could not be resolved")]
+    MissingWebhookToken,
+    #[error("gateway webhook handler is required when gateway.webhook.enabled=true")]
+    MissingWebhookHandler,
+}
+
+struct GatewayWebhookState {
+    token: String,
+    handler: Arc<dyn GatewayWebhookHandler>,
 }
 
 struct GatewayState {
     rooms: RwLock<HashMap<String, broadcast::Sender<String>>>,
     health: Arc<HealthRegistry>,
     prometheus: Option<PrometheusExporter>,
+    webhook: Option<GatewayWebhookState>,
 }
 
 impl GatewayState {
-    fn new(health: Arc<HealthRegistry>, prometheus: Option<PrometheusExporter>) -> Self {
+    fn new(
+        health: Arc<HealthRegistry>,
+        prometheus: Option<PrometheusExporter>,
+        webhook: Option<GatewayWebhookState>,
+    ) -> Self {
         Self {
             rooms: RwLock::new(HashMap::new()),
             health,
             prometheus,
+            webhook,
         }
     }
 }
@@ -65,9 +82,57 @@ struct ChatQuery {
     session_key: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayWebhookRequest {
+    pub event_id: String,
+    pub source: String,
+    pub event_type: String,
+    pub content: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub sender_id: String,
+    pub payload: Option<Value>,
+    pub metadata: BTreeMap<String, Value>,
+    pub remote_addr: Option<String>,
+    pub received_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayWebhookResponse {
+    pub event_id: String,
+    pub status: String,
+    pub session_key: String,
+}
+
+#[async_trait]
+pub trait GatewayWebhookHandler: Send + Sync {
+    async fn handle(
+        &self,
+        request: GatewayWebhookRequest,
+    ) -> Result<GatewayWebhookResponse, String>;
+}
+
+#[derive(Debug, Deserialize)]
+struct GatewayWebhookPayload {
+    source: String,
+    event_type: String,
+    content: String,
+    #[serde(default)]
+    session_key: Option<String>,
+    #[serde(default)]
+    chat_id: Option<String>,
+    #[serde(default)]
+    sender_id: Option<String>,
+    #[serde(default)]
+    payload: Option<Value>,
+    #[serde(default)]
+    metadata: Option<BTreeMap<String, Value>>,
+}
+
 pub struct GatewayOptions {
     pub health: Option<Arc<HealthRegistry>>,
     pub prometheus: Option<PrometheusExporter>,
+    pub webhook_handler: Option<Arc<dyn GatewayWebhookHandler>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +205,7 @@ impl Default for GatewayOptions {
         Self {
             health: None,
             prometheus: None,
+            webhook_handler: None,
         }
     }
 }
@@ -180,15 +246,30 @@ pub async fn spawn_gateway_with_options(
         Arc::new(registry)
     });
 
-    let state = Arc::new(GatewayState::new(health, options.prometheus));
+    let webhook = if config.webhook.enabled {
+        let token = resolve_webhook_token(config).ok_or(GatewayError::MissingWebhookToken)?;
+        let handler = options
+            .webhook_handler
+            .ok_or(GatewayError::MissingWebhookHandler)?;
+        Some(GatewayWebhookState { token, handler })
+    } else {
+        None
+    };
+    let state = Arc::new(GatewayState::new(health, options.prometheus, webhook));
 
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/ws/chat", get(ws_chat_handler))
         .route("/health/live", get(health_live_handler))
         .route("/health/ready", get(health_ready_handler))
         .route("/health/status", get(health_status_handler))
-        .route("/metrics", get(metrics_handler))
-        .with_state(state);
+        .route("/metrics", get(metrics_handler));
+    if config.webhook.enabled {
+        let webhook_router = Router::new()
+            .route(&config.webhook.path, post(webhook_handler))
+            .layer(DefaultBodyLimit::max(config.webhook.max_body_bytes));
+        app = app.merge(webhook_router);
+    }
+    let app = app.with_state(state);
 
     let listener = tokio::net::TcpListener::bind(socket_addr)
         .await
@@ -207,7 +288,7 @@ pub async fn spawn_gateway_with_options(
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let task = tokio::spawn(async move {
-        axum::serve(listener, app)
+        axum::serve(listener, app.into_make_service())
             .with_graceful_shutdown(async move {
                 let _ = shutdown_rx.await;
             })
@@ -236,6 +317,32 @@ async fn ws_chat_handler(
     };
 
     ws.on_upgrade(move |socket| handle_socket(state, session_key, socket))
+}
+
+async fn webhook_handler(
+    State(state): State<Arc<GatewayState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let Some(webhook) = state.webhook.as_ref() else {
+        return (StatusCode::NOT_FOUND, "webhook is not enabled").into_response();
+    };
+    if !is_authorized(&headers, &webhook.token) {
+        return (StatusCode::UNAUTHORIZED, "invalid webhook token").into_response();
+    }
+
+    let payload: GatewayWebhookPayload = match serde_json::from_slice(&body) {
+        Ok(payload) => payload,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid webhook payload").into_response(),
+    };
+    let request = match normalize_webhook_request(payload, None) {
+        Ok(request) => request,
+        Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
+    };
+    match webhook.handler.handle(request).await {
+        Ok(response) => (StatusCode::ACCEPTED, Json(response)).into_response(),
+        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
 }
 
 async fn handle_socket(state: Arc<GatewayState>, session_key: String, socket: WebSocket) {
@@ -372,9 +479,111 @@ async fn metrics_handler(State(state): State<Arc<GatewayState>>) -> Response {
     }
 }
 
+fn resolve_webhook_token(config: &GatewayConfig) -> Option<String> {
+    config
+        .webhook
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            config
+                .webhook
+                .env_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .and_then(|env_key| std::env::var(env_key).ok())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn is_authorized(headers: &HeaderMap, expected_token: &str) -> bool {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|token| token == expected_token)
+}
+
+fn normalize_webhook_request(
+    payload: GatewayWebhookPayload,
+    remote_addr: Option<SocketAddr>,
+) -> Result<GatewayWebhookRequest, &'static str> {
+    let source = payload.source.trim();
+    let event_type = payload.event_type.trim();
+    let content = payload.content.trim();
+    if source.is_empty() {
+        return Err("source is required");
+    }
+    if event_type.is_empty() {
+        return Err("event_type is required");
+    }
+    if content.is_empty() {
+        return Err("content is required");
+    }
+    let event_id = uuid::Uuid::new_v4().to_string();
+    let session_key = payload
+        .session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("webhook:{source}:{}", uuid::Uuid::new_v4()));
+    let chat_id = payload
+        .chat_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| session_key.clone());
+    let sender_id = payload
+        .sender_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("{source}:webhook"));
+    let received_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let mut metadata = payload.metadata.unwrap_or_default();
+    metadata.insert("trigger.kind".to_string(), Value::String("webhook".to_string()));
+    metadata.insert("webhook.source".to_string(), Value::String(source.to_string()));
+    metadata.insert(
+        "webhook.event_type".to_string(),
+        Value::String(event_type.to_string()),
+    );
+    metadata.insert(
+        "webhook.event_id".to_string(),
+        Value::String(event_id.clone()),
+    );
+    Ok(GatewayWebhookRequest {
+        event_id,
+        source: source.to_string(),
+        event_type: event_type.to_string(),
+        content: content.to_string(),
+        session_key,
+        chat_id,
+        sender_id,
+        payload: payload.payload,
+        metadata,
+        remote_addr: remote_addr.map(|addr| addr.to_string()),
+        received_at_ms,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{spawn_gateway, GatewayConfig};
+    use super::{
+        is_authorized, normalize_webhook_request, spawn_gateway, GatewayConfig,
+        GatewayWebhookPayload,
+    };
+    use axum::http::{HeaderMap, HeaderValue};
+    use serde_json::json;
 
     #[tokio::test]
     async fn spawn_gateway_uses_actual_random_port() {
@@ -383,6 +592,7 @@ mod tests {
             listen_ip: "127.0.0.1".to_string(),
             listen_port: 0,
             tls: Default::default(),
+            webhook: Default::default(),
         };
 
         let handle = spawn_gateway(&config).await.expect("gateway should start");
@@ -390,5 +600,42 @@ mod tests {
         assert!(handle.info().ws_url.contains(&handle.info().actual_port.to_string()));
 
         handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[test]
+    fn webhook_authorization_accepts_bearer_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret-token"),
+        );
+        assert!(is_authorized(&headers, "secret-token"));
+        assert!(!is_authorized(&headers, "wrong-token"));
+    }
+
+    #[test]
+    fn normalize_webhook_request_applies_defaults() {
+        let request = normalize_webhook_request(
+            GatewayWebhookPayload {
+                source: "github".to_string(),
+                event_type: "issue_comment.created".to_string(),
+                content: "New comment".to_string(),
+                session_key: None,
+                chat_id: None,
+                sender_id: None,
+                payload: Some(json!({"action":"created"})),
+                metadata: None,
+            },
+            None,
+        )
+        .expect("payload should normalize");
+
+        assert!(request.session_key.starts_with("webhook:github:"));
+        assert_eq!(request.chat_id, request.session_key);
+        assert_eq!(request.sender_id, "github:webhook");
+        assert_eq!(
+            request.metadata.get("trigger.kind"),
+            Some(&json!("webhook"))
+        );
     }
 }

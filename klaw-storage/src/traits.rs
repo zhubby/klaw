@@ -1,8 +1,9 @@
 use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus,
     LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord,
-    NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, SessionCompressionState,
-    SessionIndex, StorageError, UpdateCronJobPatch,
+    NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
+    SessionCompressionState, SessionIndex, StorageError, UpdateCronJobPatch,
+    UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -116,6 +117,22 @@ pub trait SessionStorage: Send + Sync {
         &self,
         query: &LlmAuditQuery,
     ) -> Result<Vec<LlmAuditRecord>, StorageError>;
+
+    async fn append_webhook_event(
+        &self,
+        input: &NewWebhookEventRecord,
+    ) -> Result<WebhookEventRecord, StorageError>;
+
+    async fn update_webhook_event_status(
+        &self,
+        event_id: &str,
+        update: &UpdateWebhookEventResult,
+    ) -> Result<WebhookEventRecord, StorageError>;
+
+    async fn list_webhook_events(
+        &self,
+        query: &WebhookEventQuery,
+    ) -> Result<Vec<WebhookEventRecord>, StorageError>;
 
     async fn create_approval(
         &self,

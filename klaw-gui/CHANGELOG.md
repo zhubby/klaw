@@ -5,6 +5,7 @@
 ### Added
 
 - GUI 新增独立 `Gateway` 一级 workbench 面板，支持查看 gateway 运行状态、启停与重启
+- GUI 新增独立 `Webhook` 一级 workbench 面板，支持按来源、事件类型、session、状态和时间范围筛选 webhook 事件，并查看 payload / metadata / 错误详情
 - GUI 新增 `LLM` 一级 workbench 面板，支持按 session/provider/日期范围过滤请求响应审计记录、按时间列升降序排序，并通过右键菜单打开详情
 - GUI 新增 `Analyze Dashboard` 一级 workbench 面板，用于展示本地工具调用分析数据，包括成功率、失败分布、Top 工具和时间窗趋势
 

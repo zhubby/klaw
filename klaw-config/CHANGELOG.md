@@ -5,6 +5,7 @@
 ### Added
 
 - 新增 `gateway.enabled` 配置项，用于控制 GUI/runtime 是否自动启动 gateway
+- 新增 `gateway.webhook` 配置块，用于声明 Bearer 鉴权的 webhook 事件入口、token 来源和请求体大小限制
 - 新增 `observability.local_store.enabled`、`observability.local_store.retention_days` 与 `observability.local_store.flush_interval_seconds` 配置项，用于控制本地分析存储
 
 ### Changed

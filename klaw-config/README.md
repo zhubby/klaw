@@ -14,7 +14,7 @@
 - 支持 `storage.root_dir` 配置项，用于覆盖默认 `~/.klaw` 数据目录根路径。
 - 支持独立的 `tools.skills_registry` 与 `tools.skills_manager` 开关配置。
 - 支持 `observability.local_store` 配置项,用于控制本地分析存储是否启用、保留时长与刷新间隔。
-- 支持 `gateway.enabled` 开关配置，以及 `gateway.listen_port = 0` 时的随机端口模式。
+- 支持 `gateway.enabled` 开关配置、`gateway.listen_port = 0` 随机端口模式，以及 `gateway.webhook` 的 Bearer 鉴权 webhook 入口配置。
 
 ## 模型配置
 

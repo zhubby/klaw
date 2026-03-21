@@ -20,6 +20,7 @@ mod skills_manager;
 mod skills_registry;
 mod system;
 mod tool;
+mod webhook;
 
 use crate::domain::menu::WorkbenchMenu;
 use crate::notifications::NotificationCenter;
@@ -57,6 +58,7 @@ pub struct PanelRegistry {
     memory: memory::MemoryPanel,
     archive: archive::ArchivePanel,
     tool: tool::ToolPanel,
+    webhook: webhook::WebhookPanel,
     monitor: monitor::MonitorPanel,
     logs: logs::LogsPanel,
     llm: llm::LlmPanel,
@@ -84,6 +86,7 @@ impl PanelRegistry {
             WorkbenchMenu::Cron => self.cron.render(ui, ctx, notifications),
             WorkbenchMenu::Heartbeat => self.heartbeat.render(ui, ctx, notifications),
             WorkbenchMenu::Gateway => self.gateway.render(ui, ctx, notifications),
+            WorkbenchMenu::Webhook => self.webhook.render(ui, ctx, notifications),
             WorkbenchMenu::Mcp => self.mcp.render(ui, ctx, notifications),
             WorkbenchMenu::Skill => self.skills_registry.render(ui, ctx, notifications),
             WorkbenchMenu::SkillsManager => self.skills_manager.render(ui, ctx, notifications),

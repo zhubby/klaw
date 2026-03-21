@@ -231,6 +231,108 @@ pub struct LlmAuditQuery {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum WebhookEventStatus {
+    Accepted,
+    Processed,
+    Failed,
+}
+
+impl WebhookEventStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Processed => "processed",
+            Self::Failed => "failed",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "accepted" => Some(Self::Accepted),
+            "processed" => Some(Self::Processed),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookEventSortOrder {
+    ReceivedAtAsc,
+    ReceivedAtDesc,
+}
+
+impl Default for WebhookEventSortOrder {
+    fn default() -> Self {
+        Self::ReceivedAtDesc
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookEventRecord {
+    pub id: String,
+    pub source: String,
+    pub event_type: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub sender_id: String,
+    pub content: String,
+    pub payload_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub status: WebhookEventStatus,
+    pub error_message: Option<String>,
+    pub response_summary: Option<String>,
+    pub received_at_ms: i64,
+    pub processed_at_ms: Option<i64>,
+    pub remote_addr: Option<String>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewWebhookEventRecord {
+    pub id: String,
+    pub source: String,
+    pub event_type: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub sender_id: String,
+    pub content: String,
+    pub payload_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub status: WebhookEventStatus,
+    pub error_message: Option<String>,
+    pub response_summary: Option<String>,
+    pub received_at_ms: i64,
+    pub processed_at_ms: Option<i64>,
+    pub remote_addr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateWebhookEventResult {
+    pub status: WebhookEventStatus,
+    pub error_message: Option<String>,
+    pub response_summary: Option<String>,
+    pub processed_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct WebhookEventQuery {
+    pub source: Option<String>,
+    pub event_type: Option<String>,
+    pub session_key: Option<String>,
+    pub status: Option<WebhookEventStatus>,
+    pub received_from_ms: Option<i64>,
+    pub received_to_ms: Option<i64>,
+    pub limit: i64,
+    pub offset: i64,
+    pub sort_order: WebhookEventSortOrder,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalStatus {
     Pending,
     Approved,

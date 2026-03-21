@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use klaw_storage::{
     open_default_store, ChatRecord, DefaultSessionStore, LlmAuditQuery, LlmAuditRecord,
     LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord, NewLlmUsageRecord,
-    SessionCompressionState, SessionIndex, SessionStorage,
+    NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage,
+    UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -128,6 +129,22 @@ pub trait SessionManager: Send + Sync {
         &self,
         query: &LlmAuditQuery,
     ) -> Result<Vec<LlmAuditRecord>, SessionError>;
+
+    async fn append_webhook_event(
+        &self,
+        input: &NewWebhookEventRecord,
+    ) -> Result<WebhookEventRecord, SessionError>;
+
+    async fn update_webhook_event_status(
+        &self,
+        event_id: &str,
+        update: &UpdateWebhookEventResult,
+    ) -> Result<WebhookEventRecord, SessionError>;
+
+    async fn list_webhook_events(
+        &self,
+        query: &WebhookEventQuery,
+    ) -> Result<Vec<WebhookEventRecord>, SessionError>;
 }
 
 pub struct SqliteSessionManager {
@@ -327,6 +344,31 @@ impl SessionManager for SqliteSessionManager {
         query: &LlmAuditQuery,
     ) -> Result<Vec<LlmAuditRecord>, SessionError> {
         Ok(self.store.list_llm_audit(query).await?)
+    }
+
+    async fn append_webhook_event(
+        &self,
+        input: &NewWebhookEventRecord,
+    ) -> Result<WebhookEventRecord, SessionError> {
+        Ok(self.store.append_webhook_event(input).await?)
+    }
+
+    async fn update_webhook_event_status(
+        &self,
+        event_id: &str,
+        update: &UpdateWebhookEventResult,
+    ) -> Result<WebhookEventRecord, SessionError> {
+        Ok(self
+            .store
+            .update_webhook_event_status(event_id, update)
+            .await?)
+    }
+
+    async fn list_webhook_events(
+        &self,
+        query: &WebhookEventQuery,
+    ) -> Result<Vec<WebhookEventRecord>, SessionError> {
+        Ok(self.store.list_webhook_events(query).await?)
     }
 }
 

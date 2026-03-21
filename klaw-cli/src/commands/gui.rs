@@ -59,7 +59,8 @@ impl GuiCommand {
                         runtime.as_ref(),
                         BackgroundServiceConfig::from_app_config(&config_for_thread),
                     ));
-                    let mut gateway_manager = GatewayManager::new(&config_for_thread);
+                    let mut gateway_manager =
+                        GatewayManager::new(&config_for_thread, runtime.clone());
                     if let Err(err) = gateway_manager.start_if_enabled(&config_for_thread).await {
                         warn!(error = %err, "failed to start gateway for gui runtime");
                     }

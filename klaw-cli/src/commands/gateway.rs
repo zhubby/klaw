@@ -1,6 +1,7 @@
 use clap::Args;
 use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
+use klaw_gateway::run_gateway_with_options;
 use std::{io, sync::Arc};
 use tokio::sync::watch;
 
@@ -8,7 +9,8 @@ use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
-    build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle, SharedChannelRuntime,
+    build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle, webhook,
+    SharedChannelRuntime,
 };
 use tracing::info;
 
@@ -37,9 +39,10 @@ impl GatewayCommand {
                 let (shutdown_tx, _shutdown_rx) = watch::channel(false);
                 let mut channel_manager = ChannelManager::new(Arc::clone(&adapter));
                 channel_manager.sync(channel_snapshot).await;
+                let gateway_options = webhook::gateway_options(runtime.clone());
 
                 let mut gateway_task = tokio::task::spawn_local(async move {
-                    klaw_gateway::run_gateway(&gateway_config).await
+                    run_gateway_with_options(&gateway_config, gateway_options).await
                 });
                 let run_result = tokio::select! {
                     result = &mut gateway_task => {

@@ -44,6 +44,12 @@ enabled = false
 listen_ip = "127.0.0.1"
 listen_port = 0
 
+[gateway.webhook]
+enabled = false
+path = "/webhook/events"
+env_key = "KLAW_GATEWAY_WEBHOOK_TOKEN"
+max_body_bytes = 262144
+
 # 渠道配置
 [[channels.dingtalk]]
 id = "default"
@@ -217,7 +223,10 @@ pub fn reset_to_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, C
 | 规则 | 描述 |
 |------|------|
 | `listen_ip` | 必须是有效 IP 地址 |
-| `listen_port` | 必须 > 0 |
+| `listen_port` | 允许为 `0` 或合法端口 |
+| `webhook.path` | 必须以 `/` 开头 |
+| `webhook.max_body_bytes` | 必须大于 `0` |
+| `webhook.enabled` | 启用时必须配置 `token` 或 `env_key` |
 | `tls.enabled=true` 时 | `cert_path` 和 `key_path` 必填 |
 
 #### 3. 渠道验证

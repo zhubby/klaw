@@ -30,6 +30,7 @@ impl AgentCommand {
             self.input,
             session_key,
             chat_id,
+            "local-user".to_string(),
             runtime.default_provider_id.clone(),
             runtime.runtime.active_model.clone(),
             Vec::new(),

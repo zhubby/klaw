@@ -6,7 +6,7 @@
 
 - Workbench shell with left navigation and center tab workspace
 - Workbench sidebar now includes `System` and `Setting`
-- Workbench sidebar now includes a dedicated `Gateway` panel for runtime gateway control
+- Workbench sidebar now includes dedicated `Gateway` and `Webhook` panels
 - Top menu bar (File/View/Window/Help)
   - File menu includes `Force Persist Layout` to immediately flush layout state to disk
 - Bottom status bar with version and theme-mode switcher
@@ -28,6 +28,7 @@
   - cron (db-bound list + add/edit window)
   - heartbeat (config-backed defaults/session management, add/edit/delete)
   - gateway (runtime-backed gateway status, enable/disable, restart)
+  - webhook (db-backed webhook event list, filters, and detail inspection)
   - mcp (config-bound list + add/edit window)
   - skill (installed skill management with list/detail/remove/sync actions)
   - skills registry (config-bound list + add/edit window)

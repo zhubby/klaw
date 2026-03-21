@@ -16,8 +16,9 @@ pub use types::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronTaskRun,
     CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
     LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob,
-    NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, SessionCompressionState, SessionIndex,
-    UpdateCronJobPatch,
+    NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
+    SessionCompressionState, SessionIndex, UpdateCronJobPatch, UpdateWebhookEventResult,
+    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -640,5 +641,68 @@ mod tests {
             .await
             .expect("approval should exist");
         assert_eq!(post.status, ApprovalStatus::Consumed);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn webhook_event_supports_append_update_and_filtering() {
+        let store = create_store().await;
+        store
+            .touch_session("webhook:test", "webhook:test", "webhook")
+            .await
+            .expect("session should exist for webhook foreign key");
+
+        store
+            .append_webhook_event(&NewWebhookEventRecord {
+                id: "evt-1".to_string(),
+                source: "github".to_string(),
+                event_type: "issue_comment.created".to_string(),
+                session_key: "webhook:test".to_string(),
+                chat_id: "webhook:test".to_string(),
+                sender_id: "github:webhook".to_string(),
+                content: "New comment".to_string(),
+                payload_json: Some("{\"k\":1}".to_string()),
+                metadata_json: Some("{\"trigger.kind\":\"webhook\"}".to_string()),
+                status: WebhookEventStatus::Accepted,
+                error_message: None,
+                response_summary: None,
+                received_at_ms: 1000,
+                processed_at_ms: None,
+                remote_addr: Some("127.0.0.1".to_string()),
+            })
+            .await
+            .expect("append webhook event should succeed");
+
+        store
+            .update_webhook_event_status(
+                "evt-1",
+                &UpdateWebhookEventResult {
+                    status: WebhookEventStatus::Processed,
+                    error_message: None,
+                    response_summary: Some("processed".to_string()),
+                    processed_at_ms: Some(2000),
+                },
+            )
+            .await
+            .expect("update webhook event should succeed");
+
+        let rows = store
+            .list_webhook_events(&WebhookEventQuery {
+                source: Some("github".to_string()),
+                event_type: None,
+                session_key: Some("webhook:test".to_string()),
+                status: Some(WebhookEventStatus::Processed),
+                received_from_ms: Some(900),
+                received_to_ms: Some(1500),
+                limit: 10,
+                offset: 0,
+                sort_order: WebhookEventSortOrder::ReceivedAtDesc,
+            })
+            .await
+            .expect("list webhook events should succeed");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "evt-1");
+        assert_eq!(rows[0].status, WebhookEventStatus::Processed);
+        assert_eq!(rows[0].response_summary.as_deref(), Some("processed"));
     }
 }

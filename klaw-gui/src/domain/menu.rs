@@ -15,6 +15,7 @@ pub enum WorkbenchMenu {
     Cron,
     Heartbeat,
     Gateway,
+    Webhook,
     Mcp,
     Skill,
     #[serde(alias = "SkillManage")]
@@ -29,7 +30,7 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 22] = [
+    pub const ALL: [WorkbenchMenu; 23] = [
         WorkbenchMenu::Profile,
         WorkbenchMenu::System,
         WorkbenchMenu::Setting,
@@ -42,6 +43,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Cron,
         WorkbenchMenu::Heartbeat,
         WorkbenchMenu::Gateway,
+        WorkbenchMenu::Webhook,
         WorkbenchMenu::Mcp,
         WorkbenchMenu::Skill,
         WorkbenchMenu::SkillsManager,
@@ -68,6 +70,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Cron => "cron",
             WorkbenchMenu::Heartbeat => "heartbeat",
             WorkbenchMenu::Gateway => "gateway",
+            WorkbenchMenu::Webhook => "webhook",
             WorkbenchMenu::Mcp => "mcp",
             WorkbenchMenu::Skill => "skill-registry",
             WorkbenchMenu::SkillsManager => "skills-manager",
@@ -95,6 +98,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Cron => "Cron",
             WorkbenchMenu::Heartbeat => "Heartbeat",
             WorkbenchMenu::Gateway => "Gateway",
+            WorkbenchMenu::Webhook => "Webhook",
             WorkbenchMenu::Mcp => "MCP",
             WorkbenchMenu::Skill => "Skills Registry",
             WorkbenchMenu::SkillsManager => "Skills Manager",
@@ -122,6 +126,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Cron => regular::CLOCK,
             WorkbenchMenu::Heartbeat => regular::HEARTBEAT,
             WorkbenchMenu::Gateway => regular::PLUG,
+            WorkbenchMenu::Webhook => regular::PLUG,
             WorkbenchMenu::Mcp => regular::PLUG,
             WorkbenchMenu::Skill => regular::PUZZLE_PIECE,
             WorkbenchMenu::SkillsManager => regular::PUZZLE_PIECE,
@@ -174,5 +179,11 @@ mod tests {
     fn gateway_menu_is_registered() {
         assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Gateway));
         assert_eq!(WorkbenchMenu::Gateway.id_key(), "gateway");
+    }
+
+    #[test]
+    fn webhook_menu_is_registered() {
+        assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Webhook));
+        assert_eq!(WorkbenchMenu::Webhook.id_key(), "webhook");
     }
 }

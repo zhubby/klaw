@@ -245,6 +245,8 @@ pub struct GatewayConfig {
     pub listen_port: u16,
     #[serde(default)]
     pub tls: GatewayTlsConfig,
+    #[serde(default)]
+    pub webhook: GatewayWebhookConfig,
 }
 
 impl Default for GatewayConfig {
@@ -254,6 +256,33 @@ impl Default for GatewayConfig {
             listen_ip: default_gateway_listen_ip(),
             listen_port: default_gateway_listen_port(),
             tls: GatewayTlsConfig::default(),
+            webhook: GatewayWebhookConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayWebhookConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_gateway_webhook_path")]
+    pub path: String,
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub env_key: Option<String>,
+    #[serde(default = "default_gateway_webhook_max_body_bytes")]
+    pub max_body_bytes: usize,
+}
+
+impl Default for GatewayWebhookConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: default_gateway_webhook_path(),
+            token: None,
+            env_key: None,
+            max_body_bytes: default_gateway_webhook_max_body_bytes(),
         }
     }
 }
@@ -274,6 +303,14 @@ fn default_gateway_listen_ip() -> String {
 
 fn default_gateway_listen_port() -> u16 {
     0
+}
+
+fn default_gateway_webhook_path() -> String {
+    "/webhook/events".to_string()
+}
+
+fn default_gateway_webhook_max_body_bytes() -> usize {
+    262_144
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

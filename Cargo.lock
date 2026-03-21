@@ -3502,6 +3502,7 @@ dependencies = [
 name = "klaw-gateway"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum 0.8.8",
  "futures-util",
  "klaw-config",
@@ -3511,6 +3512,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

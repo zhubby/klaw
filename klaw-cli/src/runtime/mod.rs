@@ -1,5 +1,6 @@
 pub mod gateway_manager;
 pub mod service_loop;
+pub mod webhook;
 
 use crate::env_check;
 use klaw_agent::{
@@ -15,6 +16,7 @@ use klaw_channel::{
     ChannelStreamWriter,
 };
 use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
+use klaw_gateway::GatewayWebhookRequest;
 use klaw_core::{
     compose_runtime_prompt, ensure_workspace_prompt_templates, AgentLoop, AgentRuntimeError,
     AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope,
@@ -174,6 +176,7 @@ impl ChannelRuntime for SharedChannelRuntime {
             request.input,
             route.active_session_key,
             request.chat_id,
+            "local-user".to_string(),
             route.model_provider,
             route.model,
             request.media_references,
@@ -949,6 +952,7 @@ async fn handle_im_command(
                         model_followup_input,
                         approved.session_key.clone(),
                         chat_id.clone(),
+                        "local-user".to_string(),
                         route.model_provider.clone(),
                         route.model.clone(),
                         Vec::new(),
@@ -1711,6 +1715,7 @@ pub async fn submit_and_get_output(
     input: String,
     session_key: String,
     chat_id: String,
+    sender_id: String,
     model_provider: String,
     model: String,
     media_references: Vec<MediaReference>,
@@ -1742,7 +1747,7 @@ pub async fn submit_and_get_output(
 
     let inbound_payload = InboundMessage {
         channel: channel.to_string(),
-        sender_id: "local-user".to_string(),
+        sender_id,
         chat_id: chat_id.clone(),
         session_key,
         content: input,
@@ -1814,6 +1819,34 @@ pub async fn submit_and_get_output(
             Ok(None)
         }
     }
+}
+
+pub async fn submit_webhook_event(
+    runtime: &RuntimeBundle,
+    request: &GatewayWebhookRequest,
+) -> Result<Option<AssistantOutput>, String> {
+    let route = resolve_session_route(
+        runtime,
+        "webhook",
+        &request.session_key,
+        &request.chat_id,
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+    submit_and_get_output(
+        runtime,
+        "webhook".to_string(),
+        request.content.clone(),
+        route.active_session_key,
+        request.chat_id.clone(),
+        request.sender_id.clone(),
+        route.model_provider,
+        route.model,
+        Vec::new(),
+        request.metadata.clone(),
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 #[allow(clippy::too_many_arguments)]

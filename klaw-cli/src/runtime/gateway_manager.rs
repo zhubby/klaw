@@ -1,9 +1,12 @@
+use super::{webhook, RuntimeBundle};
 use klaw_config::{AppConfig, ConfigStore};
-use klaw_gateway::{spawn_gateway, GatewayHandle};
+use klaw_gateway::{spawn_gateway_with_options, GatewayHandle};
 use klaw_gui::GatewayStatusSnapshot;
+use std::sync::Arc;
 use tracing::warn;
 
 pub struct GatewayManager {
+    runtime: Arc<RuntimeBundle>,
     handle: Option<GatewayHandle>,
     configured_enabled: bool,
     transitioning: bool,
@@ -11,8 +14,9 @@ pub struct GatewayManager {
 }
 
 impl GatewayManager {
-    pub fn new(config: &AppConfig) -> Self {
+    pub fn new(config: &AppConfig, runtime: Arc<RuntimeBundle>) -> Self {
         Self {
+            runtime,
             handle: None,
             configured_enabled: config.gateway.enabled,
             transitioning: false,
@@ -40,7 +44,8 @@ impl GatewayManager {
         }
 
         self.transitioning = true;
-        let start_result = spawn_gateway(&config.gateway).await;
+        let start_result =
+            spawn_gateway_with_options(&config.gateway, webhook::gateway_options(Arc::clone(&self.runtime))).await;
         self.transitioning = false;
 
         match start_result {

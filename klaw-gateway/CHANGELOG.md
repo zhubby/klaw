@@ -5,6 +5,7 @@
 ### Added
 
 - 新增 `GatewayHandle` 与 `GatewayRuntimeInfo`，支持在 GUI runtime 中受控管理 gateway 生命周期并暴露实际监听信息
+- 新增通用 `GatewayWebhookHandler`、webhook 请求/响应类型与 Bearer 鉴权 webhook HTTP 入口
 
 ### Changed
 
