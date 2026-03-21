@@ -5,7 +5,7 @@
 ## Responsibilities
 
 - manage the `~/.klaw` data directory layout
-- provide session and cron persistence stores
+- provide session, cron, and heartbeat persistence stores
 - expose generic SQLite access used by higher-level modules such as memory and archive services
 - persist session routing/model state used by IM command routing (`active_session_key`, `model_provider`, `model`)
 
@@ -23,9 +23,10 @@
 
 ## Notes
 
-- `DefaultSessionStore` persists session and cron data
+- `DefaultSessionStore` persists session, cron, and heartbeat data
 - the default Turso-backed session store serializes access through one shared connection to avoid driver-level concurrent-use failures
 - `tmp/` is the dedicated temporary data directory under the Klaw data root
 - session records support Base Session -> Active Session routing and per-session provider/model persistence
+- heartbeat records keep session-bound autonomous wakeups separate from isolated cron jobs
 - `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`
 - `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`

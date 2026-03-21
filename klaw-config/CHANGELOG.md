@@ -7,12 +7,14 @@
 - 新增 `gateway.enabled` 配置项，用于控制 GUI/runtime 是否自动启动 gateway
 - 新增 `gateway.webhook` 配置块，用于声明 Bearer 鉴权的 webhook 事件入口、token 来源和请求体大小限制
 - 新增 `observability.local_store.enabled`、`observability.local_store.retention_days` 与 `observability.local_store.flush_interval_seconds` 配置项，用于控制本地分析存储
+- 新增 `tools.heartbeat_manager.enabled` 配置项，用于控制 heartbeat 管理工具注册
 
 ### Changed
 
 - `gateway.listen_port` 默认值改为 `0`，允许启动时由系统分配随机端口
 - 观测配置校验新增 `local_store` 保留天数和刷新间隔的正整数约束
 - `tools.shell` 配置移除了 `safe_commands` 与 `approval_policy`，并调整为双层规则：`blocked_patterns` 命中即拒绝，`unsafe_patterns` 命中则请求审批，其余命令默认允许执行
+- `heartbeat.*` 配置块保留解析兼容性，但不再参与运行时校验或作为 heartbeat 真源
 
 ## 2026-03-20
 

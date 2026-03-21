@@ -8,9 +8,11 @@ license.workspace = true
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-klaw-config = { workspace = true }
+uuid = { workspace = true }
+klaw-core = { workspace = true }
 klaw-storage = { workspace = true }
 humantime = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

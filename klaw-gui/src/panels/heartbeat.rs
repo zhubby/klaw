@@ -1,313 +1,330 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use klaw_config::{
-    AppConfig, ConfigSnapshot, ConfigStore, HeartbeatDefaultsConfig, HeartbeatSessionConfig,
+use crate::request_run_heartbeat_now;
+use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
+use egui::Color32;
+use egui_extras::{Column, TableBuilder};
+use klaw_heartbeat::{
+    HeartbeatInput, HeartbeatManager, DEFAULT_SILENT_ACK_TOKEN, DEFAULT_TIMEZONE,
 };
-use std::path::{Path, PathBuf};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SessionEnabledMode {
-    InheritDefault,
-    Enabled,
-    Disabled,
-}
-
-impl SessionEnabledMode {
-    fn from_option(value: Option<bool>) -> Self {
-        match value {
-            Some(true) => Self::Enabled,
-            Some(false) => Self::Disabled,
-            None => Self::InheritDefault,
-        }
-    }
-
-    fn to_option(self) -> Option<bool> {
-        match self {
-            Self::InheritDefault => None,
-            Self::Enabled => Some(true),
-            Self::Disabled => Some(false),
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::InheritDefault => "Inherit Default",
-            Self::Enabled => "Enabled",
-            Self::Disabled => "Disabled",
-        }
-    }
-}
+use klaw_storage::{open_default_store, DefaultSessionStore, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus};
+use std::future::Future;
+use std::sync::Arc;
+use std::thread;
+use tokio::runtime::Builder;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
-struct HeartbeatSessionForm {
-    original_session_key: Option<String>,
+struct HeartbeatForm {
+    original_id: Option<String>,
+    id: String,
     session_key: String,
     channel: String,
     chat_id: String,
-    enabled_mode: SessionEnabledMode,
+    enabled: bool,
     every: String,
     prompt: String,
     silent_ack_token: String,
     timezone: String,
 }
 
-impl HeartbeatSessionForm {
-    fn new() -> Self {
+impl HeartbeatForm {
+    fn new(defaults: &HeartbeatDefaults) -> Self {
         Self {
-            original_session_key: None,
+            original_id: None,
+            id: Uuid::new_v4().to_string(),
             session_key: String::new(),
             channel: String::new(),
             chat_id: String::new(),
-            enabled_mode: SessionEnabledMode::InheritDefault,
-            every: String::new(),
-            prompt: String::new(),
-            silent_ack_token: String::new(),
-            timezone: String::new(),
+            enabled: defaults.enabled,
+            every: defaults.every.clone(),
+            prompt: defaults.prompt.clone(),
+            silent_ack_token: defaults.silent_ack_token.clone(),
+            timezone: defaults.timezone.clone(),
         }
     }
 
-    fn edit(session: &HeartbeatSessionConfig) -> Self {
+    fn edit(item: &HeartbeatJob) -> Self {
         Self {
-            original_session_key: Some(session.session_key.clone()),
-            session_key: session.session_key.clone(),
-            channel: session.channel.clone(),
-            chat_id: session.chat_id.clone(),
-            enabled_mode: SessionEnabledMode::from_option(session.enabled),
-            every: session.every.clone().unwrap_or_default(),
-            prompt: session.prompt.clone().unwrap_or_default(),
-            silent_ack_token: session.silent_ack_token.clone().unwrap_or_default(),
-            timezone: session.timezone.clone().unwrap_or_default(),
+            original_id: Some(item.id.clone()),
+            id: item.id.clone(),
+            session_key: item.session_key.clone(),
+            channel: item.channel.clone(),
+            chat_id: item.chat_id.clone(),
+            enabled: item.enabled,
+            every: item.every.clone(),
+            prompt: item.prompt.clone(),
+            silent_ack_token: item.silent_ack_token.clone(),
+            timezone: item.timezone.clone(),
         }
     }
 
     fn title(&self) -> &'static str {
-        if self.original_session_key.is_some() {
-            "Edit Heartbeat Session"
+        if self.original_id.is_some() {
+            "Edit Heartbeat Job"
         } else {
-            "Add Heartbeat Session"
+            "Add Heartbeat Job"
         }
     }
 
-    fn to_session_config(&self) -> HeartbeatSessionConfig {
-        HeartbeatSessionConfig {
+    fn to_input(&self) -> HeartbeatInput {
+        HeartbeatInput {
+            id: Some(self.id.trim().to_string()),
             session_key: self.session_key.trim().to_string(),
-            chat_id: self.chat_id.trim().to_string(),
             channel: self.channel.trim().to_string(),
-            enabled: self.enabled_mode.to_option(),
-            every: optional_trimmed(&self.every),
-            prompt: optional_trimmed(&self.prompt),
-            silent_ack_token: optional_trimmed(&self.silent_ack_token),
-            timezone: optional_trimmed(&self.timezone),
+            chat_id: self.chat_id.trim().to_string(),
+            enabled: self.enabled,
+            every: self.every.trim().to_string(),
+            prompt: self.prompt.trim().to_string(),
+            silent_ack_token: self.silent_ack_token.trim().to_string(),
+            timezone: self.timezone.trim().to_string(),
         }
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone)]
+struct HeartbeatDefaults {
+    enabled: bool,
+    every: String,
+    prompt: String,
+    silent_ack_token: String,
+    timezone: String,
+}
+
+impl Default for HeartbeatDefaults {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            every: "30m".to_string(),
+            prompt: "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.".to_string(),
+            silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+            timezone: DEFAULT_TIMEZONE.to_string(),
+        }
+    }
+}
+
 pub struct HeartbeatPanel {
-    store: Option<ConfigStore>,
-    config_path: Option<PathBuf>,
-    revision: Option<u64>,
-    config: AppConfig,
-    defaults_every: String,
-    defaults_prompt: String,
-    defaults_silent_ack_token: String,
-    defaults_timezone: String,
-    defaults_enabled: bool,
-    form: Option<HeartbeatSessionForm>,
-    delete_confirm_key: Option<String>,
+    loaded: bool,
+    defaults: HeartbeatDefaults,
+    jobs: Vec<HeartbeatJob>,
+    runs_heartbeat_id: Option<String>,
+    runs: Vec<HeartbeatTaskRun>,
+    form: Option<HeartbeatForm>,
+    delete_confirm_id: Option<String>,
+    selected_heartbeat: Option<String>,
+}
+
+impl Default for HeartbeatPanel {
+    fn default() -> Self {
+        Self {
+            loaded: false,
+            defaults: HeartbeatDefaults::default(),
+            jobs: Vec::new(),
+            runs_heartbeat_id: None,
+            runs: Vec::new(),
+            form: None,
+            delete_confirm_id: None,
+            selected_heartbeat: None,
+        }
+    }
 }
 
 impl HeartbeatPanel {
-    fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
-        if self.store.is_some() {
+    fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
+        if self.loaded {
             return;
         }
-        match ConfigStore::open(None) {
-            Ok(store) => {
-                let snapshot = store.snapshot();
-                self.store = Some(store);
-                self.apply_snapshot(snapshot);
-                notifications.success("Heartbeat config loaded from disk");
-            }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
-        }
+        self.refresh_jobs(notifications);
     }
 
-    fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.config_path = Some(snapshot.path);
-        self.revision = Some(snapshot.revision);
-        self.defaults_every = snapshot.config.heartbeat.defaults.every.clone();
-        self.defaults_prompt = snapshot.config.heartbeat.defaults.prompt.clone();
-        self.defaults_silent_ack_token =
-            snapshot.config.heartbeat.defaults.silent_ack_token.clone();
-        self.defaults_timezone = snapshot.config.heartbeat.defaults.timezone.clone();
-        self.defaults_enabled = snapshot.config.heartbeat.defaults.enabled;
-        self.config = snapshot.config;
-    }
-
-    fn status_label(path: Option<&Path>) -> String {
-        match path {
-            Some(path) => format!("Path: {}", path.display()),
-            None => "Path: (not loaded)".to_string(),
-        }
-    }
-
-    fn save_config(
-        &mut self,
-        next: AppConfig,
-        notifications: &mut NotificationCenter,
-        success_message: &str,
-    ) {
-        let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
-            return;
-        };
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    notifications.success(success_message);
+    fn refresh_jobs(&mut self, notifications: &mut NotificationCenter) {
+        match run_heartbeat_task(move |manager| async move { manager.list_jobs(200, 0).await }) {
+            Ok(jobs) => {
+                self.jobs = jobs;
+                self.loaded = true;
+                if let Some(id) = self.runs_heartbeat_id.clone() {
+                    self.load_runs(&id, notifications);
                 }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
-            },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
-        }
-    }
-
-    fn reload(&mut self, notifications: &mut NotificationCenter) {
-        let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
-            return;
-        };
-        match store.reload() {
-            Ok(snapshot) => {
-                self.apply_snapshot(snapshot);
-                notifications.success("Configuration reloaded from disk");
             }
-            Err(err) => notifications.error(format!("Reload failed: {err}")),
+            Err(err) => notifications.error(format!("Failed to list heartbeat jobs: {err}")),
         }
     }
 
-    fn save_defaults(&mut self, notifications: &mut NotificationCenter) {
-        let every = self.defaults_every.trim().to_string();
-        let prompt = self.defaults_prompt.trim().to_string();
-        let token = self.defaults_silent_ack_token.trim().to_string();
-        let timezone = self.defaults_timezone.trim().to_string();
-
-        if every.is_empty() {
-            notifications.error("heartbeat.defaults.every cannot be empty");
-            return;
+    fn load_runs(&mut self, heartbeat_id: &str, notifications: &mut NotificationCenter) {
+        let heartbeat_id = heartbeat_id.to_string();
+        let heartbeat_id_for_query = heartbeat_id.clone();
+        match run_heartbeat_task(move |manager| async move {
+            manager.list_runs(&heartbeat_id_for_query, 30, 0).await
+        }) {
+            Ok(runs) => {
+                self.runs_heartbeat_id = Some(heartbeat_id);
+                self.runs = runs;
+            }
+            Err(err) => notifications.error(format!("Failed to load heartbeat runs: {err}")),
         }
-        if prompt.is_empty() {
-            notifications.error("heartbeat.defaults.prompt cannot be empty");
-            return;
-        }
-        if token.is_empty() {
-            notifications.error("heartbeat.defaults.silent_ack_token cannot be empty");
-            return;
-        }
-        if timezone.is_empty() {
-            notifications.error("heartbeat.defaults.timezone cannot be empty");
-            return;
-        }
-
-        let mut next = self.config.clone();
-        next.heartbeat.defaults = HeartbeatDefaultsConfig {
-            enabled: self.defaults_enabled,
-            every,
-            prompt,
-            silent_ack_token: token,
-            timezone,
-        };
-        self.save_config(next, notifications, "heartbeat.defaults saved");
     }
 
-    fn open_add_session(&mut self) {
-        self.form = Some(HeartbeatSessionForm::new());
+    fn open_add_form(&mut self) {
+        self.form = Some(HeartbeatForm::new(&self.defaults));
     }
 
-    fn open_edit_session(&mut self, session_key: &str) {
-        if let Some(session) = self
-            .config
-            .heartbeat
-            .sessions
-            .iter()
-            .find(|item| item.session_key == session_key)
-        {
-            self.form = Some(HeartbeatSessionForm::edit(session));
+    fn open_edit_form(&mut self, heartbeat_id: &str) {
+        if let Some(item) = self.jobs.iter().find(|job| job.id == heartbeat_id) {
+            self.form = Some(HeartbeatForm::edit(item));
         }
     }
 
     fn save_form(&mut self, notifications: &mut NotificationCenter) {
         let Some(form) = self.form.as_ref() else {
+            notifications.error("Heartbeat form is not available");
             return;
         };
-        match Self::apply_form(self.config.clone(), form) {
-            Ok(next) => {
-                self.save_config(next, notifications, "Heartbeat session saved");
-                self.form = None;
-            }
-            Err(err) => notifications.error(err),
-        }
-    }
 
-    fn apply_form(mut config: AppConfig, form: &HeartbeatSessionForm) -> Result<AppConfig, String> {
-        let session = form.to_session_config();
-        if session.session_key.is_empty() {
-            return Err("Session key cannot be empty".to_string());
+        let input = form.to_input();
+        if input.id.as_deref().is_some_and(|id| id.is_empty()) {
+            notifications.error("Heartbeat ID cannot be empty");
+            return;
         }
-        if session.channel.is_empty() {
-            return Err("Channel cannot be empty".to_string());
+        if input.session_key.is_empty() {
+            notifications.error("Session key cannot be empty");
+            return;
         }
-        if session.chat_id.is_empty() {
-            return Err("Chat ID cannot be empty".to_string());
+        if input.channel.is_empty() {
+            notifications.error("Channel cannot be empty");
+            return;
         }
-
-        let mut replaced = false;
-        if let Some(original_session_key) = form.original_session_key.as_ref() {
-            for item in &mut config.heartbeat.sessions {
-                if item.session_key == *original_session_key {
-                    *item = session.clone();
-                    replaced = true;
-                    break;
-                }
-            }
-            if !replaced {
-                return Err(format!("Session '{}' was not found", original_session_key));
-            }
+        if input.chat_id.is_empty() {
+            notifications.error("Chat ID cannot be empty");
+            return;
         }
-
-        if !replaced {
-            let duplicate = config
-                .heartbeat
-                .sessions
-                .iter()
-                .any(|item| item.session_key == session.session_key);
-            if duplicate {
-                return Err(format!(
-                    "Session key '{}' already exists",
-                    session.session_key
-                ));
-            }
-            config.heartbeat.sessions.push(session);
+        if input.every.is_empty() {
+            notifications.error("Every cannot be empty");
+            return;
         }
-
-        Ok(config)
-    }
-
-    fn remove_session(&mut self, session_key: &str, notifications: &mut NotificationCenter) {
-        let mut next = self.config.clone();
-        let before = next.heartbeat.sessions.len();
-        next.heartbeat
-            .sessions
-            .retain(|item| item.session_key != session_key);
-
-        if next.heartbeat.sessions.len() == before {
-            notifications.error(format!("Session '{}' was not found", session_key));
+        if input.prompt.is_empty() {
+            notifications.error("Prompt cannot be empty");
+            return;
+        }
+        if input.silent_ack_token.is_empty() {
+            notifications.error("Silent Ack Token cannot be empty");
+            return;
+        }
+        if input.timezone.is_empty() {
+            notifications.error("Timezone cannot be empty");
             return;
         }
 
-        self.save_config(next, notifications, "Heartbeat session deleted");
+        if let Some(original_id) = &form.original_id {
+            let original_id = original_id.clone();
+            let input = input.clone();
+            match run_heartbeat_task(move |manager| async move {
+                manager.update_job(&original_id, &input).await
+            }) {
+                Ok(_) => {
+                    notifications.success("Heartbeat job updated");
+                    self.form = None;
+                    self.refresh_jobs(notifications);
+                }
+                Err(err) => notifications.error(format!("Failed to update heartbeat job: {err}")),
+            }
+            return;
+        }
+
+        match run_heartbeat_task(move |manager| async move { manager.create_job(&input).await }) {
+            Ok(_) => {
+                notifications.success("Heartbeat job created");
+                self.form = None;
+                self.refresh_jobs(notifications);
+            }
+            Err(err) => notifications.error(format!("Failed to create heartbeat job: {err}")),
+        }
+    }
+
+    fn set_enabled(
+        &mut self,
+        heartbeat_id: &str,
+        enabled: bool,
+        notifications: &mut NotificationCenter,
+    ) {
+        let heartbeat_id = heartbeat_id.to_string();
+        match run_heartbeat_task(move |manager| async move {
+            manager.set_enabled(&heartbeat_id, enabled).await
+        }) {
+            Ok(()) => {
+                notifications.success(if enabled {
+                    "Heartbeat enabled"
+                } else {
+                    "Heartbeat disabled"
+                });
+                self.refresh_jobs(notifications);
+            }
+            Err(err) => notifications.error(format!("Failed to set enabled: {err}")),
+        }
+    }
+
+    fn delete_heartbeat(&mut self, heartbeat_id: &str, notifications: &mut NotificationCenter) {
+        let heartbeat_id = heartbeat_id.to_string();
+        let heartbeat_id_for_delete = heartbeat_id.clone();
+        match run_heartbeat_task(move |manager| async move {
+            manager.delete_job(&heartbeat_id_for_delete).await
+        }) {
+            Ok(()) => {
+                notifications.success("Heartbeat job deleted");
+                if self.runs_heartbeat_id.as_deref() == Some(heartbeat_id.as_str()) {
+                    self.runs_heartbeat_id = None;
+                    self.runs.clear();
+                }
+                self.refresh_jobs(notifications);
+            }
+            Err(err) => notifications.error(format!("Failed to delete heartbeat job: {err}")),
+        }
+    }
+
+    fn run_heartbeat_now(&mut self, heartbeat_id: &str, notifications: &mut NotificationCenter) {
+        match request_run_heartbeat_now(heartbeat_id) {
+            Ok(message_id) => {
+                notifications.success(format!("Heartbeat executed: {message_id}"));
+                self.refresh_jobs(notifications);
+                self.load_runs(heartbeat_id, notifications);
+            }
+            Err(err) => notifications.error(format!("Failed to run heartbeat now: {err}")),
+        }
+    }
+
+    fn render_defaults(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.strong("Form Defaults");
+            ui.small("These defaults are local to the GUI form and are not written back to config.");
+            ui.add_space(6.0);
+            egui::Grid::new("heartbeat-defaults-grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Enabled");
+                    ui.checkbox(&mut self.defaults.enabled, "");
+                    ui.end_row();
+
+                    ui.label("Every");
+                    ui.text_edit_singleline(&mut self.defaults.every);
+                    ui.end_row();
+
+                    ui.label("Timezone");
+                    ui.text_edit_singleline(&mut self.defaults.timezone);
+                    ui.end_row();
+
+                    ui.label("Silent Ack Token");
+                    ui.text_edit_singleline(&mut self.defaults.silent_ack_token);
+                    ui.end_row();
+                });
+
+            ui.add_space(6.0);
+            ui.label("Prompt");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.defaults.prompt)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
+            );
+        });
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
@@ -323,10 +340,18 @@ impl HeartbeatPanel {
             .resizable(true)
             .show(ui.ctx(), |ui| {
                 ui.set_min_width(620.0);
-                egui::Grid::new("heartbeat-session-form-grid")
+                egui::Grid::new("heartbeat-form-grid")
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
+                        ui.label("ID");
+                        if form.original_id.is_some() {
+                            ui.add_enabled(false, egui::TextEdit::singleline(&mut form.id));
+                        } else {
+                            ui.text_edit_singleline(&mut form.id);
+                        }
+                        ui.end_row();
+
                         ui.label("Session Key");
                         ui.text_edit_singleline(&mut form.session_key);
                         ui.end_row();
@@ -340,25 +365,7 @@ impl HeartbeatPanel {
                         ui.end_row();
 
                         ui.label("Enabled");
-                        egui::ComboBox::from_id_salt("heartbeat-enabled-mode")
-                            .selected_text(form.enabled_mode.label())
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut form.enabled_mode,
-                                    SessionEnabledMode::InheritDefault,
-                                    SessionEnabledMode::InheritDefault.label(),
-                                );
-                                ui.selectable_value(
-                                    &mut form.enabled_mode,
-                                    SessionEnabledMode::Enabled,
-                                    SessionEnabledMode::Enabled.label(),
-                                );
-                                ui.selectable_value(
-                                    &mut form.enabled_mode,
-                                    SessionEnabledMode::Disabled,
-                                    SessionEnabledMode::Disabled.label(),
-                                );
-                            });
+                        ui.checkbox(&mut form.enabled, "");
                         ui.end_row();
 
                         ui.label("Every");
@@ -375,7 +382,7 @@ impl HeartbeatPanel {
                     });
 
                 ui.separator();
-                ui.label("Prompt (leave empty to inherit defaults.prompt)");
+                ui.label("Prompt");
                 ui.add(
                     egui::TextEdit::multiline(&mut form.prompt)
                         .desired_rows(6)
@@ -383,9 +390,6 @@ impl HeartbeatPanel {
                 );
 
                 ui.separator();
-                ui.small(
-                    "Optional fields (every/timezone/silent_ack_token/prompt) use defaults when blank.",
-                );
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
                         save_clicked = true;
@@ -403,6 +407,69 @@ impl HeartbeatPanel {
             self.form = None;
         }
     }
+
+    fn render_runs_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let Some(heartbeat_id) = self.runs_heartbeat_id.clone() else {
+            return;
+        };
+
+        let mut keep_open = true;
+        egui::Window::new(format!("Heartbeat Runs: {heartbeat_id}"))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(true)
+            .open(&mut keep_open)
+            .show(ui.ctx(), |ui| {
+                ui.set_min_width(820.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Refresh Runs").clicked() {
+                        self.load_runs(&heartbeat_id, notifications);
+                    }
+                    if ui.button("Run Now").clicked() {
+                        self.run_heartbeat_now(&heartbeat_id, notifications);
+                    }
+                });
+
+                ui.separator();
+
+                if self.runs.is_empty() {
+                    ui.label("No heartbeat runs found.");
+                    return;
+                }
+
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Grid::new("heartbeat-run-grid")
+                        .striped(true)
+                        .num_columns(6)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.strong("Run ID");
+                            ui.strong("Status");
+                            ui.strong("Scheduled At");
+                            ui.strong("Started At");
+                            ui.strong("Finished At");
+                            ui.strong("Error");
+                            ui.end_row();
+
+                            for run in &self.runs {
+                                let (icon, color, text) = status_display(run.status);
+                                ui.label(&run.id);
+                                ui.label(egui::RichText::new(format!("{icon} {text}")).color(color).strong());
+                                ui.label(format_timestamp_millis(run.scheduled_at_ms));
+                                ui.label(format_optional_timestamp_millis(run.started_at_ms));
+                                ui.label(format_optional_timestamp_millis(run.finished_at_ms));
+                                ui.label(run.error_message.clone().unwrap_or_default());
+                                ui.end_row();
+                            }
+                        });
+                });
+            });
+
+        if !keep_open {
+            self.runs_heartbeat_id = None;
+            self.runs.clear();
+        }
+    }
 }
 
 impl PanelRenderer for HeartbeatPanel {
@@ -412,254 +479,230 @@ impl PanelRenderer for HeartbeatPanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
-        self.ensure_store_loaded(notifications);
+        self.ensure_loaded(notifications);
 
         ui.heading(ctx.tab_title);
-        ui.label(Self::status_label(self.config_path.as_deref()));
         ui.horizontal(|ui| {
-            ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
-            ui.label(format!(
-                "Sessions: {}",
-                self.config.heartbeat.sessions.len()
-            ));
-        });
-        ui.separator();
-
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.strong("Defaults");
-            ui.add_space(6.0);
-            egui::Grid::new("heartbeat-defaults-grid")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("Enabled");
-                    ui.checkbox(&mut self.defaults_enabled, "");
-                    ui.end_row();
-
-                    ui.label("Every");
-                    ui.text_edit_singleline(&mut self.defaults_every);
-                    ui.end_row();
-
-                    ui.label("Timezone");
-                    ui.text_edit_singleline(&mut self.defaults_timezone);
-                    ui.end_row();
-
-                    ui.label("Silent Ack Token");
-                    ui.text_edit_singleline(&mut self.defaults_silent_ack_token);
-                    ui.end_row();
-                });
-
-            ui.add_space(6.0);
-            ui.label("Prompt");
-            ui.add(
-                egui::TextEdit::multiline(&mut self.defaults_prompt)
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY),
-            );
-
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if ui.button("Save Defaults").clicked() {
-                    self.save_defaults(notifications);
-                }
-                if ui.button("Reload").clicked() {
-                    self.reload(notifications);
-                }
-            });
-        });
-
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            if ui.button("Add Session").clicked() {
-                self.open_add_session();
+            if ui.button("Refresh").clicked() {
+                self.refresh_jobs(notifications);
+            }
+            if ui.button("Add Heartbeat Job").clicked() {
+                self.open_add_form();
             }
         });
 
-        ui.add_space(8.0);
-        if self.config.heartbeat.sessions.is_empty() {
-            ui.label("No heartbeat sessions configured.");
-        } else {
-            egui::Grid::new("heartbeat-session-list-grid")
-                .striped(true)
-                .num_columns(8)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.strong("Session Key");
-                    ui.strong("Channel");
-                    ui.strong("Chat ID");
-                    ui.strong("Enabled");
-                    ui.strong("Every");
-                    ui.strong("Timezone");
-                    ui.strong("Overrides");
-                    ui.strong("Actions");
-                    ui.end_row();
+        ui.separator();
+        self.render_defaults(ui);
+        ui.add_space(10.0);
+        ui.label(format!("Jobs: {}", self.jobs.len()));
 
-                    let keys = self
-                        .config
-                        .heartbeat
-                        .sessions
-                        .iter()
-                        .map(|item| item.session_key.clone())
-                        .collect::<Vec<_>>();
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.jobs.is_empty() {
+                    ui.label("No heartbeat jobs found in database.");
+                } else {
+                    let available_height = ui.available_height();
+                    let mut edit_heartbeat_id: Option<String> = None;
+                    let mut toggle_heartbeat: Option<(String, bool)> = None;
+                    let mut delete_heartbeat_id: Option<String> = None;
+                    let mut runs_heartbeat_id: Option<String> = None;
+                    let mut run_now_heartbeat_id: Option<String> = None;
 
-                    for key in keys {
-                        let Some(session) = self
-                            .config
-                            .heartbeat
-                            .sessions
-                            .iter()
-                            .find(|item| item.session_key == key)
-                        else {
-                            continue;
-                        };
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(100.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(120.0))
+                        .column(Column::auto().at_least(120.0))
+                        .column(Column::remainder().at_least(120.0))
+                        .min_scrolled_height(0.0)
+                        .max_scroll_height(available_height)
+                        .sense(egui::Sense::click())
+                        .header(20.0, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("ID");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Session");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Channel");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Enabled");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Every");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Next Run At");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Last Run At");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Updated At");
+                            });
+                        })
+                        .body(|body| {
+                            body.rows(20.0, self.jobs.len(), |mut row| {
+                                let idx = row.index();
+                                let job = &self.jobs[idx];
+                                let is_selected =
+                                    self.selected_heartbeat.as_deref() == Some(&job.id);
 
-                        let resolved_enabled = session
-                            .enabled
-                            .unwrap_or(self.config.heartbeat.defaults.enabled);
-                        let resolved_every = session
-                            .every
-                            .as_deref()
-                            .unwrap_or(&self.config.heartbeat.defaults.every);
-                        let resolved_timezone = session
-                            .timezone
-                            .as_deref()
-                            .unwrap_or(&self.config.heartbeat.defaults.timezone);
-                        let override_count = usize::from(session.enabled.is_some())
-                            + usize::from(session.every.is_some())
-                            + usize::from(session.prompt.is_some())
-                            + usize::from(session.silent_ack_token.is_some())
-                            + usize::from(session.timezone.is_some());
+                                row.set_selected(is_selected);
 
-                        ui.label(&session.session_key);
-                        ui.label(&session.channel);
-                        ui.label(&session.chat_id);
-                        ui.label(if resolved_enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
+                                row.col(|ui| {
+                                    ui.label(job.id.clone());
+                                });
+                                row.col(|ui| {
+                                    ui.label(job.session_key.clone());
+                                });
+                                row.col(|ui| {
+                                    ui.label(job.channel.clone());
+                                });
+                                row.col(|ui| {
+                                    ui.label(if job.enabled { "yes" } else { "no" });
+                                });
+                                row.col(|ui| {
+                                    ui.label(job.every.clone());
+                                });
+                                row.col(|ui| {
+                                    ui.label(format_timestamp_millis(job.next_run_at_ms));
+                                });
+                                row.col(|ui| {
+                                    ui.label(format_optional_timestamp_millis(job.last_run_at_ms));
+                                });
+                                row.col(|ui| {
+                                    ui.label(format_timestamp_millis(job.updated_at_ms));
+                                });
+
+                                let response = row.response();
+                                if response.clicked() {
+                                    self.selected_heartbeat = if is_selected {
+                                        None
+                                    } else {
+                                        Some(job.id.clone())
+                                    };
+                                }
+
+                                response.context_menu(|ui| {
+                                    if ui.button("Runs").clicked() {
+                                        runs_heartbeat_id = Some(job.id.clone());
+                                        ui.close();
+                                    }
+                                    if ui.button("Run Now").clicked() {
+                                        run_now_heartbeat_id = Some(job.id.clone());
+                                        ui.close();
+                                    }
+                                    if ui.button("Edit").clicked() {
+                                        edit_heartbeat_id = Some(job.id.clone());
+                                        ui.close();
+                                    }
+                                    let toggle_text = if job.enabled { "Disable" } else { "Enable" };
+                                    if ui.button(toggle_text).clicked() {
+                                        toggle_heartbeat = Some((job.id.clone(), !job.enabled));
+                                        ui.close();
+                                    }
+                                    if ui.button("Delete").clicked() {
+                                        delete_heartbeat_id = Some(job.id.clone());
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                    if ui.button("Copy ID").clicked() {
+                                        ui.ctx().output_mut(|o| {
+                                            o.commands.push(egui::OutputCommand::CopyText(
+                                                job.id.clone(),
+                                            ));
+                                        });
+                                        ui.close();
+                                    }
+                                });
+                            });
                         });
-                        ui.monospace(resolved_every);
-                        ui.monospace(resolved_timezone);
-                        ui.label(format!("{override_count}/5"));
-                        ui.horizontal(|ui| {
-                            if ui.button("Edit").clicked() {
-                                self.open_edit_session(&key);
-                            }
-                            if ui.button("Delete").clicked() {
-                                self.delete_confirm_key = Some(key.clone());
-                            }
-                        });
-                        ui.end_row();
+
+                    if let Some(id) = runs_heartbeat_id {
+                        self.load_runs(&id, notifications);
                     }
-                });
-        }
+                    if let Some(id) = run_now_heartbeat_id {
+                        self.run_heartbeat_now(&id, notifications);
+                    }
+                    if let Some(id) = edit_heartbeat_id {
+                        self.open_edit_form(&id);
+                    }
+                    if let Some((id, enabled)) = toggle_heartbeat {
+                        self.set_enabled(&id, enabled, notifications);
+                    }
+                    if let Some(id) = delete_heartbeat_id {
+                        self.delete_confirm_id = Some(id);
+                    }
+                }
+            });
 
-        if let Some(session_key) = self.delete_confirm_key.clone() {
-            let mut delete_clicked = false;
-            let mut cancel_clicked = false;
-            egui::Window::new("Delete Heartbeat Session")
+        if let Some(heartbeat_id) = self.delete_confirm_id.clone() {
+            egui::Window::new("Delete heartbeat job")
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
-                    ui.label(format!("Delete heartbeat session '{}' ?", session_key));
-                    ui.add_space(8.0);
+                    ui.label(format!("Delete heartbeat job '{heartbeat_id}'?"));
                     ui.horizontal(|ui| {
                         if ui.button("Delete").clicked() {
-                            delete_clicked = true;
+                            self.delete_heartbeat(&heartbeat_id, notifications);
+                            self.delete_confirm_id = None;
                         }
                         if ui.button("Cancel").clicked() {
-                            cancel_clicked = true;
+                            self.delete_confirm_id = None;
                         }
                     });
                 });
-
-            if delete_clicked {
-                self.remove_session(&session_key, notifications);
-                self.delete_confirm_key = None;
-            }
-            if cancel_clicked {
-                self.delete_confirm_key = None;
-            }
         }
 
+        self.render_runs_window(ui, notifications);
         self.render_form_window(ui, notifications);
     }
 }
 
-fn optional_trimmed(input: &str) -> Option<String> {
-    let value = input.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
+fn status_display(status: HeartbeatTaskStatus) -> (&'static str, Color32, &'static str) {
+    match status {
+        HeartbeatTaskStatus::Pending => ("◷", Color32::from_rgb(140, 140, 140), "pending"),
+        HeartbeatTaskStatus::Running => ("◑", Color32::from_rgb(70, 130, 200), "running"),
+        HeartbeatTaskStatus::Success => ("✓", Color32::from_rgb(50, 180, 80), "success"),
+        HeartbeatTaskStatus::Failed => ("✗", Color32::from_rgb(220, 60, 60), "failed"),
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn run_heartbeat_task<T, F, Fut>(op: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(HeartbeatManager<DefaultSessionStore>) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T, klaw_heartbeat::HeartbeatError>> + Send + 'static,
+{
+    let join = thread::spawn(move || {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to build runtime: {err}"))?;
 
-    #[test]
-    fn apply_form_adds_new_session() {
-        let config = AppConfig::default();
-        let mut form = HeartbeatSessionForm::new();
-        form.session_key = "stdio:main".to_string();
-        form.channel = "stdio".to_string();
-        form.chat_id = "main".to_string();
-        form.enabled_mode = SessionEnabledMode::Enabled;
-        form.every = "10m".to_string();
+        runtime.block_on(async move {
+            let store = open_default_store()
+                .await
+                .map_err(|err| format!("failed to open heartbeat store: {err}"))?;
+            let manager = HeartbeatManager::new(Arc::new(store));
+            op(manager)
+                .await
+                .map_err(|err| format!("heartbeat operation failed: {err}"))
+        })
+    });
 
-        let updated = HeartbeatPanel::apply_form(config, &form).expect("should apply");
-        assert_eq!(updated.heartbeat.sessions.len(), 1);
-        assert_eq!(updated.heartbeat.sessions[0].session_key, "stdio:main");
-        assert_eq!(updated.heartbeat.sessions[0].enabled, Some(true));
-    }
-
-    #[test]
-    fn apply_form_rejects_duplicate_session_key() {
-        let mut config = AppConfig::default();
-        config.heartbeat.sessions.push(HeartbeatSessionConfig {
-            session_key: "stdio:dup".to_string(),
-            chat_id: "dup".to_string(),
-            channel: "stdio".to_string(),
-            enabled: None,
-            every: None,
-            prompt: None,
-            silent_ack_token: None,
-            timezone: None,
-        });
-
-        let mut form = HeartbeatSessionForm::new();
-        form.session_key = "stdio:dup".to_string();
-        form.channel = "stdio".to_string();
-        form.chat_id = "main".to_string();
-
-        let err = HeartbeatPanel::apply_form(config, &form).expect_err("duplicate should fail");
-        assert!(err.contains("already exists"));
-    }
-
-    #[test]
-    fn apply_form_edits_existing_session_and_allows_inherit() {
-        let mut config = AppConfig::default();
-        config.heartbeat.sessions.push(HeartbeatSessionConfig {
-            session_key: "stdio:main".to_string(),
-            chat_id: "main".to_string(),
-            channel: "stdio".to_string(),
-            enabled: Some(true),
-            every: Some("10m".to_string()),
-            prompt: None,
-            silent_ack_token: None,
-            timezone: None,
-        });
-
-        let mut form = HeartbeatSessionForm::edit(&config.heartbeat.sessions[0]);
-        form.enabled_mode = SessionEnabledMode::InheritDefault;
-        form.every.clear();
-
-        let updated = HeartbeatPanel::apply_form(config, &form).expect("edit should apply");
-        let edited = &updated.heartbeat.sessions[0];
-        assert_eq!(edited.enabled, None);
-        assert_eq!(edited.every, None);
+    match join.join() {
+        Ok(result) => result,
+        Err(_) => Err("heartbeat operation thread panicked".to_string()),
     }
 }

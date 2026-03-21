@@ -513,3 +513,100 @@ pub struct NewCronTaskRun {
     pub attempt: i64,
     pub created_at_ms: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatJob {
+    pub id: String,
+    pub session_key: String,
+    pub channel: String,
+    pub chat_id: String,
+    pub enabled: bool,
+    pub every: String,
+    pub prompt: String,
+    pub silent_ack_token: String,
+    pub timezone: String,
+    pub next_run_at_ms: i64,
+    pub last_run_at_ms: Option<i64>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewHeartbeatJob {
+    pub id: String,
+    pub session_key: String,
+    pub channel: String,
+    pub chat_id: String,
+    pub enabled: bool,
+    pub every: String,
+    pub prompt: String,
+    pub silent_ack_token: String,
+    pub timezone: String,
+    pub next_run_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateHeartbeatJobPatch {
+    pub session_key: Option<String>,
+    pub channel: Option<String>,
+    pub chat_id: Option<String>,
+    pub every: Option<String>,
+    pub prompt: Option<String>,
+    pub silent_ack_token: Option<String>,
+    pub timezone: Option<String>,
+    pub next_run_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatTaskStatus {
+    Pending,
+    Running,
+    Success,
+    Failed,
+}
+
+impl HeartbeatTaskStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Success => "success",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "running" => Some(Self::Running),
+            "success" => Some(Self::Success),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatTaskRun {
+    pub id: String,
+    pub heartbeat_id: String,
+    pub scheduled_at_ms: i64,
+    pub started_at_ms: Option<i64>,
+    pub finished_at_ms: Option<i64>,
+    pub status: HeartbeatTaskStatus,
+    pub attempt: i64,
+    pub error_message: Option<String>,
+    pub published_message_id: Option<String>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewHeartbeatTaskRun {
+    pub id: String,
+    pub heartbeat_id: String,
+    pub scheduled_at_ms: i64,
+    pub status: HeartbeatTaskStatus,
+    pub attempt: i64,
+    pub created_at_ms: i64,
+}

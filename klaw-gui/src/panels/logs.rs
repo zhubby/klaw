@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use egui::Color32;
 use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
@@ -194,12 +195,22 @@ impl PanelRenderer for LogsPanel {
         ui.separator();
 
         ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.level_filter.trace, "trace");
-            ui.checkbox(&mut self.level_filter.debug, "debug");
-            ui.checkbox(&mut self.level_filter.info, "info");
-            ui.checkbox(&mut self.level_filter.warn, "warn");
-            ui.checkbox(&mut self.level_filter.error, "error");
-            ui.checkbox(&mut self.level_filter.unknown, "unknown");
+            let trace_label =
+                egui::RichText::new("trace").color(level_color(ParsedLevel::Trace, ui));
+            let debug_label =
+                egui::RichText::new("debug").color(level_color(ParsedLevel::Debug, ui));
+            let info_label = egui::RichText::new("info").color(level_color(ParsedLevel::Info, ui));
+            let warn_label = egui::RichText::new("warn").color(level_color(ParsedLevel::Warn, ui));
+            let error_label =
+                egui::RichText::new("error").color(level_color(ParsedLevel::Error, ui));
+            let unknown_label =
+                egui::RichText::new("unknown").color(level_color(ParsedLevel::Unknown, ui));
+            ui.checkbox(&mut self.level_filter.trace, trace_label);
+            ui.checkbox(&mut self.level_filter.debug, debug_label);
+            ui.checkbox(&mut self.level_filter.info, info_label);
+            ui.checkbox(&mut self.level_filter.warn, warn_label);
+            ui.checkbox(&mut self.level_filter.error, error_label);
+            ui.checkbox(&mut self.level_filter.unknown, unknown_label);
         });
 
         ui.horizontal(|ui| {
@@ -250,14 +261,21 @@ impl PanelRenderer for LogsPanel {
             .stick_to_bottom(self.auto_scroll && !self.paused)
             .show(ui, |ui| {
                 for entry in visible {
-                    let color = match entry.level {
-                        ParsedLevel::Warn => ui.visuals().warn_fg_color,
-                        ParsedLevel::Error => ui.visuals().error_fg_color,
-                        _ => ui.visuals().text_color(),
-                    };
+                    let color = level_color(entry.level, ui);
                     ui.label(egui::RichText::new(&entry.line).monospace().color(color));
                 }
             });
+    }
+}
+
+fn level_color(level: ParsedLevel, ui: &egui::Ui) -> Color32 {
+    match level {
+        ParsedLevel::Trace => Color32::from_rgb(140, 140, 140),
+        ParsedLevel::Debug => Color32::from_rgb(70, 130, 200),
+        ParsedLevel::Info => ui.visuals().text_color(),
+        ParsedLevel::Warn => ui.visuals().warn_fg_color,
+        ParsedLevel::Error => ui.visuals().error_fg_color,
+        ParsedLevel::Unknown => ui.visuals().text_color(),
     }
 }
 

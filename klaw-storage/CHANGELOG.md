@@ -2,6 +2,10 @@
 
 ## 2026-03-21
 
+### Added
+- added dedicated heartbeat persistence models (`HeartbeatJob`, `NewHeartbeatJob`, `UpdateHeartbeatJobPatch`, `HeartbeatTaskRun`, `NewHeartbeatTaskRun`, `HeartbeatTaskStatus`) and `HeartbeatStorage` APIs
+- added `heartbeat` / `heartbeat_task` tables plus indexes in both SQLx and Turso backends for session-bound heartbeat scheduling and run history
+
 ### Fixed
 - changed the Turso session store to serialize all access through one shared connection so concurrent runtime writers no longer fail with `concurrent use forbidden`
 

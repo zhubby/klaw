@@ -2,11 +2,13 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::request_run_cron_now;
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
+use egui::Color32;
 use egui_extras::{Column, TableBuilder};
 use klaw_cron::{
     CronError, CronJob, CronListQuery, CronScheduleKind, CronTaskRun, NewCronJob,
     SqliteCronManager, UpdateCronJobPatch,
 };
+use klaw_storage::CronTaskStatus;
 use std::future::Future;
 use std::thread;
 use tokio::runtime::Builder;
@@ -414,8 +416,9 @@ impl CronPanel {
                             ui.end_row();
 
                             for run in &self.runs {
+                                let (icon, color, text) = cron_status_display(run.status);
                                 ui.label(&run.id);
-                                ui.label(run.status.as_str());
+                                ui.label(egui::RichText::new(format!("{icon} {text}")).color(color).strong());
                                 ui.label(format_timestamp_millis(run.scheduled_at_ms));
                                 ui.label(format_optional_timestamp_millis(run.started_at_ms));
                                 ui.label(format_optional_timestamp_millis(run.finished_at_ms));
@@ -629,6 +632,15 @@ impl PanelRenderer for CronPanel {
 
         self.render_runs_window(ui, notifications);
         self.render_form_window(ui, notifications);
+    }
+}
+
+fn cron_status_display(status: CronTaskStatus) -> (&'static str, Color32, &'static str) {
+    match status {
+        CronTaskStatus::Pending => ("◷", Color32::from_rgb(140, 140, 140), "pending"),
+        CronTaskStatus::Running => ("◑", Color32::from_rgb(70, 130, 200), "running"),
+        CronTaskStatus::Success => ("✓", Color32::from_rgb(50, 180, 80), "success"),
+        CronTaskStatus::Failed => ("✗", Color32::from_rgb(220, 60, 60), "failed"),
     }
 }
 

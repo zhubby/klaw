@@ -128,6 +128,17 @@ impl GuiCommand {
                                                 }
                                                 let _ = response.send(result);
                                             }
+                                            Some(klaw_gui::RuntimeCommand::RunHeartbeatNow { heartbeat_id, response }) => {
+                                                let result = background.run_heartbeat_now(&heartbeat_id).await;
+                                                if result.is_ok() {
+                                                    let runtime = Arc::clone(&runtime);
+                                                    let background = Arc::clone(&background);
+                                                    tokio::task::spawn_local(async move {
+                                                        background.on_runtime_tick(runtime.as_ref()).await;
+                                                    });
+                                                }
+                                                let _ = response.send(result);
+                                            }
                                             Some(klaw_gui::RuntimeCommand::GetEnvCheck { response }) => {
                                                 let env_check = runtime.env_check.clone();
                                                 let _ = response.send(env_check);

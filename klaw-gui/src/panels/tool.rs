@@ -24,6 +24,7 @@ enum ToolForm {
     LocalSearch(ToggleForm),
     TerminalMultiplexers(ToggleForm),
     CronManager(ToggleForm),
+    HeartbeatManager(ToggleForm),
     SkillsRegistry(ToggleForm),
     SkillsManager(ToggleForm),
     Memory(MemoryForm),
@@ -347,6 +348,7 @@ impl ToolForm {
             | ToolForm::LocalSearch(form)
             | ToolForm::TerminalMultiplexers(form)
             | ToolForm::CronManager(form)
+            | ToolForm::HeartbeatManager(form)
             | ToolForm::SkillsRegistry(form)
             | ToolForm::SkillsManager(form) => form.title,
             ToolForm::Memory(_) => "Edit Tool: memory",
@@ -442,6 +444,7 @@ impl ToolPanel {
             "local_search" => ToolForm::LocalSearch(form),
             "terminal_multiplexers" => ToolForm::TerminalMultiplexers(form),
             "cron_manager" => ToolForm::CronManager(form),
+            "heartbeat_manager" => ToolForm::HeartbeatManager(form),
             "skills_registry" => ToolForm::SkillsRegistry(form),
             _ => ToolForm::SkillsManager(form),
         });
@@ -507,6 +510,10 @@ impl ToolPanel {
             }
             ToolForm::CronManager(form) => {
                 next.tools.cron_manager.enabled = form.enabled;
+                Ok(())
+            }
+            ToolForm::HeartbeatManager(form) => {
+                next.tools.heartbeat_manager.enabled = form.enabled;
                 Ok(())
             }
             ToolForm::SkillsRegistry(form) => {
@@ -640,6 +647,7 @@ impl ToolPanel {
                     | ToolForm::LocalSearch(form)
                     | ToolForm::TerminalMultiplexers(form)
                     | ToolForm::CronManager(form)
+                    | ToolForm::HeartbeatManager(form)
                     | ToolForm::SkillsRegistry(form)
                     | ToolForm::SkillsManager(form) => {
                         ui.horizontal(|ui| {
@@ -909,7 +917,7 @@ impl PanelRenderer for ToolPanel {
         egui::ScrollArea::vertical()
             .id_salt("tool-card-scroll")
             .show(ui, |ui| {
-                let cards: [(&str, &str, bool, &str); 13] = [
+                let cards: [(&str, &str, bool, &str); 14] = [
                     (
                         "apply_patch",
                         "Patch workspace files with constrained path policy.",
@@ -951,6 +959,12 @@ impl PanelRenderer for ToolPanel {
                         "Create and control scheduled cron jobs.",
                         self.config.tools.cron_manager.enabled,
                         "cron_manager",
+                    ),
+                    (
+                        "heartbeat_manager",
+                        "Manage session-bound heartbeat jobs.",
+                        self.config.tools.heartbeat_manager.enabled,
+                        "heartbeat_manager",
                     ),
                     (
                         "skills_registry",
@@ -1037,6 +1051,11 @@ impl PanelRenderer for ToolPanel {
                 "cron_manager",
                 "Edit Tool: cron_manager",
                 self.config.tools.cron_manager.enabled,
+            ),
+            Some("heartbeat_manager") => self.open_toggle(
+                "heartbeat_manager",
+                "Edit Tool: heartbeat_manager",
+                self.config.tools.heartbeat_manager.enabled,
             ),
             Some("skills_registry") => self.open_toggle(
                 "skills_registry",

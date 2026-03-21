@@ -26,7 +26,7 @@
   - model provider (config-bound list + add/edit window)
   - channel (config-bound list + add/edit window)
   - cron (db-bound list + add/edit window)
-  - heartbeat (config-backed defaults/session management, add/edit/delete)
+  - heartbeat (db-backed heartbeat list + add/edit/delete/run-now)
   - gateway (runtime-backed gateway status, enable/disable, restart, and base address display)
   - webhook (db-backed webhook event list, filters, detail inspection, and `gateway.webhook` config editing)
   - mcp (config-bound list + add/edit window)
@@ -97,6 +97,11 @@
   - read/manage cron jobs and task runs via `klaw-cron` manager abstraction
   - add/edit cron jobs via `egui::Window`
   - manually trigger `Run Now` from the jobs table or runs section through the live GUI runtime
+- Heartbeat panel features:
+  - read/manage persisted heartbeat jobs and run history via `klaw-heartbeat`
+  - add/edit heartbeat jobs via `egui::Window`
+  - keep form-only heartbeat defaults locally in the GUI instead of writing back to config
+  - manually trigger `Run Now` through the live GUI runtime
 - Archive panel features:
   - query archives via `klaw-archive` service abstraction with filters
   - inspect archive record details and metadata in a detail window

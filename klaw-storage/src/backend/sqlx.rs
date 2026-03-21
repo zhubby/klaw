@@ -3,12 +3,13 @@ use crate::{
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-    CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
-    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord, SessionCompressionState,
-    SessionIndex, SessionStorage, StorageError, StoragePaths, UpdateCronJobPatch,
-    UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
-    WebhookEventStatus,
+    CronTaskRun, CronTaskStatus, HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun,
+    HeartbeatTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
+    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob,
+    NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage, StorageError,
+    StoragePaths, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookEventResult,
+    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
 };
 use async_trait::async_trait;
 use sqlx::{
@@ -68,6 +69,37 @@ struct CronJobRow {
 struct CronTaskRunRow {
     id: String,
     cron_id: String,
+    scheduled_at_ms: i64,
+    started_at_ms: Option<i64>,
+    finished_at_ms: Option<i64>,
+    status: String,
+    attempt: i64,
+    error_message: Option<String>,
+    published_message_id: Option<String>,
+    created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct HeartbeatJobRow {
+    id: String,
+    session_key: String,
+    channel: String,
+    chat_id: String,
+    enabled: i64,
+    every: String,
+    prompt: String,
+    silent_ack_token: String,
+    timezone: String,
+    next_run_at_ms: i64,
+    last_run_at_ms: Option<i64>,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct HeartbeatTaskRunRow {
+    id: String,
+    heartbeat_id: String,
     scheduled_at_ms: i64,
     started_at_ms: Option<i64>,
     finished_at_ms: Option<i64>,
@@ -224,6 +256,47 @@ impl TryFrom<CronTaskRunRow> for CronTaskRun {
         Ok(Self {
             id: value.id,
             cron_id: value.cron_id,
+            scheduled_at_ms: value.scheduled_at_ms,
+            started_at_ms: value.started_at_ms,
+            finished_at_ms: value.finished_at_ms,
+            status,
+            attempt: value.attempt,
+            error_message: value.error_message,
+            published_message_id: value.published_message_id,
+            created_at_ms: value.created_at_ms,
+        })
+    }
+}
+
+impl From<HeartbeatJobRow> for HeartbeatJob {
+    fn from(value: HeartbeatJobRow) -> Self {
+        Self {
+            id: value.id,
+            session_key: value.session_key,
+            channel: value.channel,
+            chat_id: value.chat_id,
+            enabled: value.enabled != 0,
+            every: value.every,
+            prompt: value.prompt,
+            silent_ack_token: value.silent_ack_token,
+            timezone: value.timezone,
+            next_run_at_ms: value.next_run_at_ms,
+            last_run_at_ms: value.last_run_at_ms,
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
+        }
+    }
+}
+
+impl TryFrom<HeartbeatTaskRunRow> for HeartbeatTaskRun {
+    type Error = StorageError;
+
+    fn try_from(value: HeartbeatTaskRunRow) -> Result<Self, Self::Error> {
+        let status = HeartbeatTaskStatus::parse(&value.status)
+            .ok_or_else(|| StorageError::backend("invalid heartbeat task status"))?;
+        Ok(Self {
+            id: value.id,
+            heartbeat_id: value.heartbeat_id,
             scheduled_at_ms: value.scheduled_at_ms,
             started_at_ms: value.started_at_ms,
             finished_at_ms: value.finished_at_ms,
@@ -622,6 +695,44 @@ impl SqlxSessionStore {
         .await
         .map_err(StorageError::backend)?;
         sqlx::query(
+            "CREATE TABLE IF NOT EXISTS heartbeat (
+                id TEXT PRIMARY KEY,
+                session_key TEXT NOT NULL UNIQUE,
+                channel TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                every TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                silent_ack_token TEXT NOT NULL,
+                timezone TEXT NOT NULL DEFAULT 'UTC',
+                next_run_at_ms INTEGER NOT NULL,
+                last_run_at_ms INTEGER,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS heartbeat_task (
+                id TEXT PRIMARY KEY,
+                heartbeat_id TEXT NOT NULL,
+                scheduled_at_ms INTEGER NOT NULL,
+                started_at_ms INTEGER,
+                finished_at_ms INTEGER,
+                status TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                published_message_id TEXT,
+                created_at_ms INTEGER NOT NULL,
+                FOREIGN KEY (heartbeat_id) REFERENCES heartbeat(id) ON DELETE CASCADE
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_cron_enabled_next_run
              ON cron(enabled, next_run_at_ms)",
         )
@@ -638,6 +749,27 @@ impl SqlxSessionStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_cron_task_status_scheduled
              ON cron_task(status, scheduled_at_ms)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_heartbeat_enabled_next_run
+             ON heartbeat(enabled, next_run_at_ms)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_heartbeat_task_heartbeat_created
+             ON heartbeat_task(heartbeat_id, created_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_heartbeat_task_status_scheduled
+             ON heartbeat_task(status, scheduled_at_ms)",
         )
         .execute(&self.pool)
         .await
@@ -1908,6 +2040,305 @@ impl CronStorage for SqlxSessionStore {
              LIMIT ?2 OFFSET ?3",
         )
         .bind(cron_id)
+        .bind(limit.max(1))
+        .bind(offset.max(0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        rows.into_iter().map(TryInto::try_into).collect()
+    }
+}
+
+#[async_trait]
+impl HeartbeatStorage for SqlxSessionStore {
+    async fn create_heartbeat(
+        &self,
+        input: &NewHeartbeatJob,
+    ) -> Result<HeartbeatJob, StorageError> {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO heartbeat (
+                id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
+                timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12)",
+        )
+        .bind(&input.id)
+        .bind(&input.session_key)
+        .bind(&input.channel)
+        .bind(&input.chat_id)
+        .bind(if input.enabled { 1_i64 } else { 0_i64 })
+        .bind(&input.every)
+        .bind(&input.prompt)
+        .bind(&input.silent_ack_token)
+        .bind(&input.timezone)
+        .bind(input.next_run_at_ms)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        self.get_heartbeat(&input.id).await
+    }
+
+    async fn update_heartbeat(
+        &self,
+        heartbeat_id: &str,
+        patch: &UpdateHeartbeatJobPatch,
+    ) -> Result<HeartbeatJob, StorageError> {
+        let current = self.get_heartbeat(heartbeat_id).await?;
+        sqlx::query(
+            "UPDATE heartbeat
+             SET session_key = ?1,
+                 channel = ?2,
+                 chat_id = ?3,
+                 every = ?4,
+                 prompt = ?5,
+                 silent_ack_token = ?6,
+                 timezone = ?7,
+                 next_run_at_ms = ?8,
+                 updated_at_ms = ?9
+             WHERE id = ?10",
+        )
+        .bind(patch.session_key.as_ref().unwrap_or(&current.session_key))
+        .bind(patch.channel.as_ref().unwrap_or(&current.channel))
+        .bind(patch.chat_id.as_ref().unwrap_or(&current.chat_id))
+        .bind(patch.every.as_ref().unwrap_or(&current.every))
+        .bind(patch.prompt.as_ref().unwrap_or(&current.prompt))
+        .bind(
+            patch
+                .silent_ack_token
+                .as_ref()
+                .unwrap_or(&current.silent_ack_token),
+        )
+        .bind(patch.timezone.as_ref().unwrap_or(&current.timezone))
+        .bind(patch.next_run_at_ms.unwrap_or(current.next_run_at_ms))
+        .bind(now_ms())
+        .bind(heartbeat_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        self.get_heartbeat(heartbeat_id).await
+    }
+
+    async fn set_heartbeat_enabled(
+        &self,
+        heartbeat_id: &str,
+        enabled: bool,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            "UPDATE heartbeat
+             SET enabled = ?1, updated_at_ms = ?2
+             WHERE id = ?3",
+        )
+        .bind(if enabled { 1_i64 } else { 0_i64 })
+        .bind(now_ms())
+        .bind(heartbeat_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(())
+    }
+
+    async fn delete_heartbeat(&self, heartbeat_id: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM heartbeat WHERE id = ?1")
+            .bind(heartbeat_id)
+            .execute(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(())
+    }
+
+    async fn get_heartbeat(&self, heartbeat_id: &str) -> Result<HeartbeatJob, StorageError> {
+        let row = sqlx::query_as::<_, HeartbeatJobRow>(
+            "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
+                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+             FROM heartbeat
+             WHERE id = ?1",
+        )
+        .bind(heartbeat_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(row.into())
+    }
+
+    async fn get_heartbeat_by_session_key(
+        &self,
+        session_key: &str,
+    ) -> Result<HeartbeatJob, StorageError> {
+        let row = sqlx::query_as::<_, HeartbeatJobRow>(
+            "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
+                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+             FROM heartbeat
+             WHERE session_key = ?1",
+        )
+        .bind(session_key)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(row.into())
+    }
+
+    async fn list_heartbeats(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<HeartbeatJob>, StorageError> {
+        let rows = sqlx::query_as::<_, HeartbeatJobRow>(
+            "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
+                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+             FROM heartbeat
+             ORDER BY updated_at_ms DESC
+             LIMIT ?1 OFFSET ?2",
+        )
+        .bind(limit.max(1))
+        .bind(offset.max(0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn list_due_heartbeats(
+        &self,
+        now_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<HeartbeatJob>, StorageError> {
+        let rows = sqlx::query_as::<_, HeartbeatJobRow>(
+            "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
+                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+             FROM heartbeat
+             WHERE enabled = 1 AND next_run_at_ms <= ?1
+             ORDER BY next_run_at_ms ASC
+             LIMIT ?2",
+        )
+        .bind(now_ms)
+        .bind(limit.max(1))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn claim_next_heartbeat_run(
+        &self,
+        heartbeat_id: &str,
+        expected_next_run_at_ms: i64,
+        new_next_run_at_ms: i64,
+        now_ms: i64,
+    ) -> Result<bool, StorageError> {
+        let result = sqlx::query(
+            "UPDATE heartbeat
+             SET next_run_at_ms = ?1,
+                 last_run_at_ms = ?2,
+                 updated_at_ms = ?3
+             WHERE id = ?4 AND enabled = 1 AND next_run_at_ms = ?5",
+        )
+        .bind(new_next_run_at_ms)
+        .bind(expected_next_run_at_ms)
+        .bind(now_ms)
+        .bind(heartbeat_id)
+        .bind(expected_next_run_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn append_heartbeat_task_run(
+        &self,
+        input: &NewHeartbeatTaskRun,
+    ) -> Result<HeartbeatTaskRun, StorageError> {
+        sqlx::query(
+            "INSERT INTO heartbeat_task (
+                id, heartbeat_id, scheduled_at_ms, started_at_ms, finished_at_ms, status,
+                attempt, error_message, published_message_id, created_at_ms
+            ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, NULL, NULL, ?6)",
+        )
+        .bind(&input.id)
+        .bind(&input.heartbeat_id)
+        .bind(input.scheduled_at_ms)
+        .bind(input.status.as_str())
+        .bind(input.attempt)
+        .bind(input.created_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+
+        let row = sqlx::query_as::<_, HeartbeatTaskRunRow>(
+            "SELECT id, heartbeat_id, scheduled_at_ms, started_at_ms, finished_at_ms, status,
+                    attempt, error_message, published_message_id, created_at_ms
+             FROM heartbeat_task
+             WHERE id = ?1",
+        )
+        .bind(&input.id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        row.try_into()
+    }
+
+    async fn mark_heartbeat_task_running(
+        &self,
+        run_id: &str,
+        started_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            "UPDATE heartbeat_task
+             SET status = ?1, started_at_ms = ?2
+             WHERE id = ?3",
+        )
+        .bind(HeartbeatTaskStatus::Running.as_str())
+        .bind(started_at_ms)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(())
+    }
+
+    async fn mark_heartbeat_task_result(
+        &self,
+        run_id: &str,
+        status: HeartbeatTaskStatus,
+        finished_at_ms: i64,
+        error_message: Option<&str>,
+        published_message_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            "UPDATE heartbeat_task
+             SET status = ?1,
+                 finished_at_ms = ?2,
+                 error_message = ?3,
+                 published_message_id = ?4
+             WHERE id = ?5",
+        )
+        .bind(status.as_str())
+        .bind(finished_at_ms)
+        .bind(error_message)
+        .bind(published_message_id)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(())
+    }
+
+    async fn list_heartbeat_task_runs(
+        &self,
+        heartbeat_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<HeartbeatTaskRun>, StorageError> {
+        let rows = sqlx::query_as::<_, HeartbeatTaskRunRow>(
+            "SELECT id, heartbeat_id, scheduled_at_ms, started_at_ms, finished_at_ms, status,
+                    attempt, error_message, published_message_id, created_at_ms
+             FROM heartbeat_task
+             WHERE heartbeat_id = ?1
+             ORDER BY created_at_ms DESC
+             LIMIT ?2 OFFSET ?3",
+        )
+        .bind(heartbeat_id)
         .bind(limit.max(1))
         .bind(offset.max(0))
         .fetch_all(&self.pool)

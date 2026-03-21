@@ -5,7 +5,7 @@
 ## Responsibilities
 
 - define tool interfaces through the shared `Tool` trait
-- implement local tools such as `apply_patch`, `shell`, `approval`, `memory`, `web_fetch`, `web_search`, `skills_registry`, and `skills_manager`
+- implement local tools such as `apply_patch`, `shell`, `approval`, `memory`, `web_fetch`, `web_search`, `cron_manager`, `heartbeat_manager`, `skills_registry`, and `skills_manager`
 - keep tool metadata LLM-friendly so planners can infer when and how to call each tool
 
 ## Architecture
@@ -23,6 +23,7 @@
 - the `cron_manager` tool also accepts either a JSON object or a JSON string for payloads, and tolerates common boolean strings like `"true"` / `"false"` for `enabled`
 - the `cron_manager` tool supports a high-level `message` shortcut for scheduled prompts in the current conversation, auto-filling channel/chat/session defaults from tool context unless explicitly overridden
 - the `message` shortcut now defaults to an isolated cron session key like `cron:<job_id>` so scheduled runs do not silently accumulate the current chat's conversation history
+- the `heartbeat_manager` tool manages session-bound heartbeat jobs directly from storage, with session/channel/chat defaults inferred from current tool context when possible
 - sub-agent execution currently opts out of live streaming and still consumes the final aggregated agent output
 - `skills_registry` is now read-only and only browses/searches local registry mirrors
 - `skills_manager` owns installed-skill lifecycle actions, including `install_from_registry`

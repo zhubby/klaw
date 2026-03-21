@@ -3,10 +3,11 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::show_json_tree;
 use chrono::{Datelike, Local, NaiveDate};
+use egui::Color32;
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_session::{
-    LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, SessionError, SessionManager,
+    LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, SessionError, SessionManager,
     SqliteSessionManager,
 };
 use std::future::Future;
@@ -234,7 +235,8 @@ impl PanelRenderer for LlmPanel {
                                 ui.label(item.request_seq.to_string());
                             });
                             row.col(|ui| {
-                                ui.label(item.status.as_str());
+                                let (icon, color, text) = llm_status_display(item.status);
+                                ui.label(egui::RichText::new(format!("{icon} {text}")).color(color).strong());
                             });
                             row.col(|ui| {
                                 ui.label(item.provider_request_id.as_deref().unwrap_or(""));
@@ -306,7 +308,12 @@ impl PanelRenderer for LlmPanel {
                     ui.label(format!("Provider: {}", record.provider));
                     ui.label(format!("Model: {}", record.model));
                     ui.label(format!("Wire API: {}", record.wire_api));
-                    ui.label(format!("Status: {}", record.status.as_str()));
+                    let (icon, color, text) = llm_status_display(record.status);
+                    ui.label(
+                        egui::RichText::new(format!("Status: {icon} {text}"))
+                            .color(color)
+                            .strong(),
+                    );
                     if let Some(error_code) = &record.error_code {
                         ui.label(format!("Error Code: {error_code}"));
                     }
@@ -338,6 +345,13 @@ impl PanelRenderer for LlmPanel {
                 self.detail_record = None;
             }
         }
+    }
+}
+
+fn llm_status_display(status: LlmAuditStatus) -> (&'static str, Color32, &'static str) {
+    match status {
+        LlmAuditStatus::Success => ("✓", Color32::from_rgb(50, 180, 80), "success"),
+        LlmAuditStatus::Failed => ("✗", Color32::from_rgb(220, 60, 60), "failed"),
     }
 }
 

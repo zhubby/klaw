@@ -1,18 +1,24 @@
-use async_trait::async_trait;
-use klaw_config::{AppConfig, HeartbeatConfig, HeartbeatSessionConfig};
-use klaw_storage::{CronScheduleKind, CronStorage, NewCronJob, StorageError, UpdateCronJobPatch};
+use klaw_core::{Envelope, EnvelopeHeader, InboundMessage, MessageTopic, MessageTransport};
+use klaw_storage::{
+    HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun, HeartbeatTaskStatus, NewHeartbeatJob,
+    NewHeartbeatTaskRun, SessionStorage, StorageError, UpdateHeartbeatJobPatch,
+};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use thiserror::Error;
+use uuid::Uuid;
 
 pub const TRIGGER_KIND_KEY: &str = "trigger.kind";
 pub const TRIGGER_KIND_HEARTBEAT: &str = "heartbeat";
 pub const HEARTBEAT_SESSION_KEY: &str = "heartbeat.session_key";
 pub const HEARTBEAT_SILENT_ACK_TOKEN_KEY: &str = "heartbeat.silent_ack_token";
+pub const HEARTBEAT_RESOLVED_SESSION_KEY: &str = "heartbeat.resolved_session_key";
 pub const DEFAULT_SILENT_ACK_TOKEN: &str = "HEARTBEAT_OK";
+pub const DEFAULT_TIMEZONE: &str = "UTC";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HeartbeatSpec {
+pub struct HeartbeatInput {
+    pub id: Option<String>,
     pub session_key: String,
     pub channel: String,
     pub chat_id: String,
@@ -25,68 +31,326 @@ pub struct HeartbeatSpec {
 
 #[derive(Debug, Error)]
 pub enum HeartbeatError {
-    #[error("invalid heartbeat config: {0}")]
-    InvalidConfig(String),
+    #[error("invalid heartbeat input: {0}")]
+    InvalidInput(String),
     #[error("invalid heartbeat schedule: {0}")]
     InvalidSchedule(String),
     #[error("failed to serialize heartbeat payload: {0}")]
     SerializePayload(#[from] serde_json::Error),
     #[error("storage error: {0}")]
     Storage(#[from] StorageError),
+    #[error("transport error: {0}")]
+    Transport(String),
 }
 
-#[async_trait]
-pub trait HeartbeatScheduler: Send + Sync {
-    async fn reconcile(&self, specs: &[HeartbeatSpec]) -> Result<(), HeartbeatError>;
-}
-
-pub struct CronHeartbeatScheduler<S> {
+#[derive(Clone)]
+pub struct HeartbeatManager<S> {
     storage: Arc<S>,
 }
 
-impl<S> CronHeartbeatScheduler<S> {
+impl<S> HeartbeatManager<S> {
     pub fn new(storage: Arc<S>) -> Self {
         Self { storage }
     }
 }
 
-#[async_trait]
-impl<S> HeartbeatScheduler for CronHeartbeatScheduler<S>
+impl<S> HeartbeatManager<S>
 where
-    S: CronStorage + Send + Sync + 'static,
+    S: HeartbeatStorage + Send + Sync + 'static,
 {
-    async fn reconcile(&self, specs: &[HeartbeatSpec]) -> Result<(), HeartbeatError> {
-        for spec in specs {
-            reconcile_one(self.storage.as_ref(), spec).await?;
-        }
-        Ok(())
+    pub async fn list_jobs(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<HeartbeatJob>, HeartbeatError> {
+        Ok(self.storage.list_heartbeats(limit, offset).await?)
+    }
+
+    pub async fn list_runs(
+        &self,
+        heartbeat_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<HeartbeatTaskRun>, HeartbeatError> {
+        Ok(self
+            .storage
+            .list_heartbeat_task_runs(heartbeat_id, limit, offset)
+            .await?)
+    }
+
+    pub async fn get_job(&self, heartbeat_id: &str) -> Result<HeartbeatJob, HeartbeatError> {
+        Ok(self.storage.get_heartbeat(heartbeat_id).await?)
+    }
+
+    pub async fn create_job(&self, input: &HeartbeatInput) -> Result<HeartbeatJob, HeartbeatError> {
+        let normalized = normalize_input(input)?;
+        let next_run_at_ms = compute_next_run_at_ms(&normalized.every)?;
+        let id = normalized
+            .id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        Ok(self
+            .storage
+            .create_heartbeat(&NewHeartbeatJob {
+                id,
+                session_key: normalized.session_key,
+                channel: normalized.channel,
+                chat_id: normalized.chat_id,
+                enabled: normalized.enabled,
+                every: normalized.every,
+                prompt: normalized.prompt,
+                silent_ack_token: normalized.silent_ack_token,
+                timezone: normalized.timezone,
+                next_run_at_ms,
+            })
+            .await?)
+    }
+
+    pub async fn update_job(
+        &self,
+        heartbeat_id: &str,
+        input: &HeartbeatInput,
+    ) -> Result<HeartbeatJob, HeartbeatError> {
+        let normalized = normalize_input(input)?;
+        let next_run_at_ms = compute_next_run_at_ms(&normalized.every)?;
+        Ok(self
+            .storage
+            .update_heartbeat(
+                heartbeat_id,
+                &UpdateHeartbeatJobPatch {
+                    session_key: Some(normalized.session_key),
+                    channel: Some(normalized.channel),
+                    chat_id: Some(normalized.chat_id),
+                    every: Some(normalized.every),
+                    prompt: Some(normalized.prompt),
+                    silent_ack_token: Some(normalized.silent_ack_token),
+                    timezone: Some(normalized.timezone),
+                    next_run_at_ms: Some(next_run_at_ms),
+                },
+            )
+            .await?)
+    }
+
+    pub async fn set_enabled(
+        &self,
+        heartbeat_id: &str,
+        enabled: bool,
+    ) -> Result<(), HeartbeatError> {
+        Ok(self
+            .storage
+            .set_heartbeat_enabled(heartbeat_id, enabled)
+            .await?)
+    }
+
+    pub async fn delete_job(&self, heartbeat_id: &str) -> Result<(), HeartbeatError> {
+        Ok(self.storage.delete_heartbeat(heartbeat_id).await?)
     }
 }
 
-pub fn specs_from_config(config: &AppConfig) -> Result<Vec<HeartbeatSpec>, HeartbeatError> {
-    config
-        .heartbeat
-        .sessions
-        .iter()
-        .map(|session| resolve_session_spec(&config.heartbeat, session))
-        .collect()
+#[derive(Debug, Clone)]
+pub struct HeartbeatWorkerConfig {
+    pub poll_interval: Duration,
+    pub batch_limit: i64,
 }
 
-pub fn heartbeat_cron_id(session_key: &str) -> String {
-    format!("heartbeat:{session_key}")
+impl Default for HeartbeatWorkerConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval: Duration::from_secs(1),
+            batch_limit: 64,
+        }
+    }
 }
 
-pub fn build_payload_json(spec: &HeartbeatSpec) -> Result<String, HeartbeatError> {
+#[derive(Clone)]
+pub struct HeartbeatWorker<S, T> {
+    storage: Arc<S>,
+    transport: Arc<T>,
+    config: HeartbeatWorkerConfig,
+}
+
+impl<S, T> HeartbeatWorker<S, T> {
+    pub fn new(storage: Arc<S>, transport: Arc<T>, config: HeartbeatWorkerConfig) -> Self {
+        Self {
+            storage,
+            transport,
+            config,
+        }
+    }
+}
+
+impl<S, T> HeartbeatWorker<S, T>
+where
+    S: HeartbeatStorage + SessionStorage + Send + Sync + 'static,
+    T: MessageTransport<InboundMessage> + Send + Sync + 'static,
+{
+    pub async fn run_tick(&self) -> Result<usize, HeartbeatError> {
+        let now = now_ms();
+        let due_jobs = self
+            .storage
+            .list_due_heartbeats(now, self.config.batch_limit)
+            .await?;
+        let mut executed = 0usize;
+
+        for job in due_jobs {
+            let next_run_at_ms = next_run_after(&job.every, job.next_run_at_ms)?;
+            let claimed = self
+                .storage
+                .claim_next_heartbeat_run(&job.id, job.next_run_at_ms, next_run_at_ms, now)
+                .await?;
+            if !claimed {
+                continue;
+            }
+
+            if self.execute_job_run(&job, job.next_run_at_ms).await.is_ok() {
+                executed += 1;
+            }
+        }
+
+        Ok(executed)
+    }
+
+    pub async fn run_job_now(&self, heartbeat_id: &str) -> Result<String, HeartbeatError> {
+        let job = self.storage.get_heartbeat(heartbeat_id).await?;
+        self.execute_job_run(&job, now_ms()).await
+    }
+
+    pub async fn run_until_stopped(
+        &self,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), HeartbeatError> {
+        while !*shutdown.borrow() {
+            self.run_tick().await?;
+            tokio::select! {
+                _ = shutdown.changed() => {}
+                _ = tokio::time::sleep(self.config.poll_interval) => {}
+            }
+        }
+        Ok(())
+    }
+
+    async fn execute_job_run(
+        &self,
+        job: &HeartbeatJob,
+        scheduled_at_ms: i64,
+    ) -> Result<String, HeartbeatError> {
+        let run_id = Uuid::new_v4().to_string();
+        self.storage
+            .append_heartbeat_task_run(&NewHeartbeatTaskRun {
+                id: run_id.clone(),
+                heartbeat_id: job.id.clone(),
+                scheduled_at_ms,
+                status: HeartbeatTaskStatus::Pending,
+                attempt: 0,
+                created_at_ms: now_ms(),
+            })
+            .await?;
+        self.storage
+            .mark_heartbeat_task_running(&run_id, now_ms())
+            .await?;
+
+        match self.publish_inbound(job).await {
+            Ok(message_id) => {
+                self.storage
+                    .mark_heartbeat_task_result(
+                        &run_id,
+                        HeartbeatTaskStatus::Success,
+                        now_ms(),
+                        None,
+                        Some(&message_id),
+                    )
+                    .await?;
+                Ok(message_id)
+            }
+            Err(err) => {
+                self.storage
+                    .mark_heartbeat_task_result(
+                        &run_id,
+                        HeartbeatTaskStatus::Failed,
+                        now_ms(),
+                        Some(&err.to_string()),
+                        None,
+                    )
+                    .await?;
+                Err(err)
+            }
+        }
+    }
+
+    async fn publish_inbound(&self, job: &HeartbeatJob) -> Result<String, HeartbeatError> {
+        let resolved_session_key = self
+            .resolve_active_session_key(&job.session_key)
+            .await?
+            .unwrap_or_else(|| job.session_key.clone());
+        let mut payload = build_inbound_message(job);
+        payload.session_key = resolved_session_key.clone();
+        payload.metadata.insert(
+            HEARTBEAT_RESOLVED_SESSION_KEY.to_string(),
+            Value::String(resolved_session_key.clone()),
+        );
+
+        let envelope = Envelope {
+            header: EnvelopeHeader::new(resolved_session_key),
+            metadata: BTreeMap::new(),
+            payload,
+        };
+        let message_id = envelope.header.message_id.to_string();
+        self.transport
+            .publish(MessageTopic::Inbound.as_str(), envelope)
+            .await
+            .map_err(|err| HeartbeatError::Transport(err.to_string()))?;
+        Ok(message_id)
+    }
+
+    async fn resolve_active_session_key(
+        &self,
+        session_key: &str,
+    ) -> Result<Option<String>, HeartbeatError> {
+        match self.storage.get_session(session_key).await {
+            Ok(session) => Ok(session
+                .active_session_key
+                .filter(|value| !value.trim().is_empty())),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+pub fn build_inbound_message(job: &HeartbeatJob) -> InboundMessage {
+    InboundMessage {
+        channel: job.channel.clone(),
+        sender_id: "system-heartbeat".to_string(),
+        chat_id: job.chat_id.clone(),
+        session_key: job.session_key.clone(),
+        content: job.prompt.clone(),
+        metadata: BTreeMap::from([
+            (
+                TRIGGER_KIND_KEY.to_string(),
+                Value::String(TRIGGER_KIND_HEARTBEAT.to_string()),
+            ),
+            (
+                HEARTBEAT_SESSION_KEY.to_string(),
+                Value::String(job.session_key.clone()),
+            ),
+            (
+                HEARTBEAT_SILENT_ACK_TOKEN_KEY.to_string(),
+                Value::String(job.silent_ack_token.clone()),
+            ),
+        ]),
+        media_references: Vec::new(),
+    }
+}
+
+pub fn build_payload_json(job: &HeartbeatJob) -> Result<String, HeartbeatError> {
     Ok(serde_json::to_string(&json!({
-        "channel": spec.channel,
+        "channel": job.channel,
         "sender_id": "system-heartbeat",
-        "chat_id": spec.chat_id,
-        "session_key": spec.session_key,
-        "content": spec.prompt,
+        "chat_id": job.chat_id,
+        "session_key": job.session_key,
+        "content": job.prompt,
         "metadata": {
             TRIGGER_KIND_KEY: TRIGGER_KIND_HEARTBEAT,
-            HEARTBEAT_SESSION_KEY: spec.session_key,
-            HEARTBEAT_SILENT_ACK_TOKEN_KEY: spec.silent_ack_token,
+            HEARTBEAT_SESSION_KEY: job.session_key,
+            HEARTBEAT_SILENT_ACK_TOKEN_KEY: job.silent_ack_token,
         }
     }))?)
 }
@@ -115,108 +379,22 @@ pub fn should_suppress_output(content: &str, metadata: &BTreeMap<String, Value>)
     content.trim() == token
 }
 
-async fn reconcile_one<S>(storage: &S, spec: &HeartbeatSpec) -> Result<(), HeartbeatError>
-where
-    S: CronStorage + Send + Sync + 'static,
-{
-    let cron_id = heartbeat_cron_id(&spec.session_key);
-    let payload_json = build_payload_json(spec)?;
-    let next_run_at_ms = compute_next_run_at_ms(&spec.every)?;
-    match storage.get_cron(&cron_id).await {
-        Ok(current) => {
-            let mut patch = UpdateCronJobPatch {
-                name: Some(cron_id.clone()),
-                schedule_kind: None,
-                schedule_expr: None,
-                payload_json: None,
-                timezone: None,
-                next_run_at_ms: None,
-            };
+fn normalize_input(input: &HeartbeatInput) -> Result<HeartbeatInput, HeartbeatError> {
+    let session_key = require_trimmed(&input.session_key, "session_key")?;
+    let channel = require_trimmed(&input.channel, "channel")?;
+    let chat_id = require_trimmed(&input.chat_id, "chat_id")?;
+    let every = require_trimmed(&input.every, "every")?;
+    let prompt = require_trimmed(&input.prompt, "prompt")?;
+    let silent_ack_token = require_trimmed(&input.silent_ack_token, "silent_ack_token")?;
+    let timezone = require_trimmed(&input.timezone, "timezone")?;
+    compute_next_run_at_ms(&every)?;
 
-            if current.schedule_kind != CronScheduleKind::Every {
-                patch.schedule_kind = Some(CronScheduleKind::Every);
-            }
-            if current.schedule_expr != spec.every {
-                patch.schedule_expr = Some(spec.every.clone());
-                patch.next_run_at_ms = Some(next_run_at_ms);
-            }
-            if current.payload_json != payload_json {
-                patch.payload_json = Some(payload_json);
-            }
-            if current.timezone != spec.timezone {
-                patch.timezone = Some(spec.timezone.clone());
-            }
-            if current.name != cron_id {
-                patch.name = Some(cron_id.clone());
-            }
-            if patch.schedule_kind.is_some()
-                || patch.schedule_expr.is_some()
-                || patch.payload_json.is_some()
-                || patch.timezone.is_some()
-                || patch.next_run_at_ms.is_some()
-                || current.name != cron_id
-            {
-                storage.update_cron(&cron_id, &patch).await?;
-            }
-            if current.enabled != spec.enabled {
-                storage.set_enabled(&cron_id, spec.enabled).await?;
-            }
-        }
-        Err(err) if is_missing_cron_error(&err) => {
-            storage
-                .create_cron(&NewCronJob {
-                    id: cron_id.clone(),
-                    name: cron_id,
-                    schedule_kind: CronScheduleKind::Every,
-                    schedule_expr: spec.every.clone(),
-                    payload_json,
-                    enabled: spec.enabled,
-                    timezone: spec.timezone.clone(),
-                    next_run_at_ms,
-                })
-                .await?;
-        }
-        Err(err) => return Err(err.into()),
-    }
-
-    Ok(())
-}
-
-fn resolve_session_spec(
-    heartbeat: &HeartbeatConfig,
-    session: &HeartbeatSessionConfig,
-) -> Result<HeartbeatSpec, HeartbeatError> {
-    let defaults = &heartbeat.defaults;
-    let enabled = session.enabled.unwrap_or(defaults.enabled);
-    let every = resolve_text_field(
-        session.every.as_deref(),
-        &defaults.every,
-        "heartbeat.sessions.every",
-    )?;
-    let prompt = resolve_text_field(
-        session.prompt.as_deref(),
-        &defaults.prompt,
-        "heartbeat.sessions.prompt",
-    )?;
-    let silent_ack_token = resolve_text_field(
-        session.silent_ack_token.as_deref(),
-        &defaults.silent_ack_token,
-        "heartbeat.sessions.silent_ack_token",
-    )?;
-    let timezone = resolve_text_field(
-        session.timezone.as_deref(),
-        &defaults.timezone,
-        "heartbeat.sessions.timezone",
-    )?;
-    if enabled {
-        compute_next_run_at_ms(&every)?;
-    }
-
-    Ok(HeartbeatSpec {
-        session_key: require_trimmed(&session.session_key, "heartbeat.sessions.session_key")?,
-        channel: require_trimmed(&session.channel, "heartbeat.sessions.channel")?,
-        chat_id: require_trimmed(&session.chat_id, "heartbeat.sessions.chat_id")?,
-        enabled,
+    Ok(HeartbeatInput {
+        id: input.id.clone(),
+        session_key,
+        channel,
+        chat_id,
+        enabled: input.enabled,
         every,
         prompt,
         silent_ack_token,
@@ -224,142 +402,204 @@ fn resolve_session_spec(
     })
 }
 
-fn resolve_text_field(
-    override_value: Option<&str>,
-    default_value: &str,
-    field_name: &str,
-) -> Result<String, HeartbeatError> {
-    match override_value {
-        Some(value) => require_trimmed(value, field_name),
-        None => require_trimmed(default_value, field_name),
-    }
-}
-
 fn require_trimmed(value: &str, field_name: &str) -> Result<String, HeartbeatError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(HeartbeatError::InvalidConfig(format!(
+        return Err(HeartbeatError::InvalidInput(format!(
             "{field_name} cannot be empty"
         )));
     }
     Ok(trimmed.to_string())
 }
 
-fn compute_next_run_at_ms(expr: &str) -> Result<i64, HeartbeatError> {
-    let parsed = humantime::parse_duration(expr)
+fn compute_next_run_at_ms(value: &str) -> Result<i64, HeartbeatError> {
+    let every = humantime::parse_duration(value)
         .map_err(|err| HeartbeatError::InvalidSchedule(err.to_string()))?;
-    if parsed.is_zero() {
+    if every.is_zero() {
         return Err(HeartbeatError::InvalidSchedule(
             "every duration must be greater than zero".to_string(),
         ));
     }
-    Ok(now_ms().saturating_add(parsed.as_millis() as i64))
+    Ok(now_ms().saturating_add(every.as_millis() as i64))
 }
 
-fn is_missing_cron_error(err: &StorageError) -> bool {
-    matches!(err, StorageError::Backend(message) if message.contains("not found") || message.contains("no rows"))
+fn next_run_after(value: &str, after_ms: i64) -> Result<i64, HeartbeatError> {
+    let every = humantime::parse_duration(value)
+        .map_err(|err| HeartbeatError::InvalidSchedule(err.to_string()))?;
+    if every.is_zero() {
+        return Err(HeartbeatError::InvalidSchedule(
+            "every duration must be greater than zero".to_string(),
+        ));
+    }
+    Ok(after_ms.saturating_add(every.as_millis() as i64))
 }
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
+        .map(|value| value.as_millis() as i64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_config::{AppConfig, HeartbeatSessionConfig};
-    use klaw_storage::StoragePaths;
+    use klaw_core::InMemoryTransport;
+    use klaw_storage::{DefaultSessionStore, HeartbeatStorage, SessionStorage, StoragePaths};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    async fn create_store() -> klaw_storage::DefaultSessionStore {
+    async fn create_store() -> DefaultSessionStore {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let base = std::env::temp_dir().join(format!("klaw-heartbeat-test-{suffix}"));
-        klaw_storage::DefaultSessionStore::open(StoragePaths::from_root(base))
+        let base = std::env::temp_dir().join(format!(
+            "klaw-heartbeat-test-{}-{suffix}",
+            now_ms()
+        ));
+        DefaultSessionStore::open(StoragePaths::from_root(base))
             .await
             .expect("store should open")
     }
 
     #[test]
-    fn specs_from_config_applies_defaults() {
-        let mut config = AppConfig::default();
-        config.heartbeat.sessions = vec![HeartbeatSessionConfig {
+    fn build_payload_json_includes_heartbeat_metadata() {
+        let job = HeartbeatJob {
+            id: "hb-1".to_string(),
             session_key: "stdio:main".to_string(),
+            channel: "stdio".to_string(),
             chat_id: "main".to_string(),
-            channel: "stdio".to_string(),
-            enabled: None,
-            every: None,
-            prompt: None,
-            silent_ack_token: None,
-            timezone: None,
-        }];
-
-        let specs = specs_from_config(&config).expect("specs should resolve");
-        assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].session_key, "stdio:main");
-        assert_eq!(specs[0].every, "30m");
-        assert_eq!(specs[0].silent_ack_token, DEFAULT_SILENT_ACK_TOKEN);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn reconcile_creates_and_updates_heartbeat_cron() {
-        let store = create_store().await;
-        let scheduler = CronHeartbeatScheduler::new(Arc::new(store.clone()));
-        let spec = HeartbeatSpec {
-            session_key: "stdio:test".to_string(),
-            channel: "stdio".to_string(),
-            chat_id: "test".to_string(),
             enabled: true,
-            every: "30s".to_string(),
+            every: "30m".to_string(),
             prompt: "ping".to_string(),
             silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
             timezone: "UTC".to_string(),
+            next_run_at_ms: 1,
+            last_run_at_ms: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
         };
 
-        scheduler
-            .reconcile(std::slice::from_ref(&spec))
-            .await
-            .expect("create should succeed");
-        let created = store
-            .get_cron(&heartbeat_cron_id(&spec.session_key))
-            .await
-            .expect("created cron should exist");
-        assert_eq!(created.schedule_expr, "30s");
-        assert!(created.enabled);
+        let payload_json = build_payload_json(&job).expect("payload");
+        let payload: serde_json::Value = serde_json::from_str(&payload_json).expect("json");
+        assert_eq!(payload["metadata"][TRIGGER_KIND_KEY], TRIGGER_KIND_HEARTBEAT);
+        assert_eq!(payload["metadata"][HEARTBEAT_SESSION_KEY], "stdio:main");
+        assert_eq!(
+            payload["metadata"][HEARTBEAT_SILENT_ACK_TOKEN_KEY],
+            DEFAULT_SILENT_ACK_TOKEN
+        );
+    }
 
-        let mut updated_spec = spec.clone();
-        updated_spec.every = "45s".to_string();
-        updated_spec.enabled = false;
-        scheduler
-            .reconcile(std::slice::from_ref(&updated_spec))
+    #[tokio::test(flavor = "current_thread")]
+    async fn manager_persists_heartbeat_job() {
+        let store = Arc::new(create_store().await);
+        let manager = HeartbeatManager::new(store.clone());
+        let created = manager
+            .create_job(&HeartbeatInput {
+                id: None,
+                session_key: "stdio:main".to_string(),
+                channel: "stdio".to_string(),
+                chat_id: "main".to_string(),
+                enabled: true,
+                every: "10m".to_string(),
+                prompt: "review state".to_string(),
+                silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+                timezone: "UTC".to_string(),
+            })
             .await
-            .expect("update should succeed");
-        let updated = store
-            .get_cron(&heartbeat_cron_id(&updated_spec.session_key))
+            .expect("create heartbeat");
+        let stored = store
+            .get_heartbeat_by_session_key("stdio:main")
             .await
-            .expect("updated cron should exist");
-        assert_eq!(updated.schedule_expr, "45s");
-        assert!(!updated.enabled);
+            .expect("stored heartbeat");
+        assert_eq!(stored.id, created.id);
+        assert_eq!(stored.prompt, "review state");
     }
 
     #[test]
-    fn suppress_output_only_for_exact_silent_ack() {
+    fn silent_ack_detection_requires_heartbeat_metadata() {
         let metadata = BTreeMap::from([
-            (
-                TRIGGER_KIND_KEY.to_string(),
-                Value::String(TRIGGER_KIND_HEARTBEAT.to_string()),
-            ),
+            (TRIGGER_KIND_KEY.to_string(), json!(TRIGGER_KIND_HEARTBEAT)),
             (
                 HEARTBEAT_SILENT_ACK_TOKEN_KEY.to_string(),
-                Value::String(DEFAULT_SILENT_ACK_TOKEN.to_string()),
+                json!(DEFAULT_SILENT_ACK_TOKEN),
             ),
         ]);
+        assert!(should_suppress_output(" HEARTBEAT_OK ", &metadata));
 
-        assert!(should_suppress_output("  HEARTBEAT_OK \n", &metadata));
-        assert!(!should_suppress_output("HEARTBEAT_OK extra", &metadata));
+        let normal = BTreeMap::new();
+        assert!(!should_suppress_output("HEARTBEAT_OK", &normal));
+    }
+
+    #[test]
+    fn compute_next_run_rejects_zero_duration() {
+        let err = compute_next_run_at_ms("0s").expect_err("zero duration should fail");
+        assert!(format!("{err}").contains("greater than zero"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn worker_uses_active_session_key_when_present() {
+        let store = Arc::new(create_store().await);
+        store
+            .get_or_create_session_state(
+                "stdio:main",
+                "main",
+                "stdio",
+                "openai",
+                "gpt-4o-mini",
+            )
+            .await
+            .expect("base session");
+        store
+            .get_or_create_session_state(
+                "stdio:main:child",
+                "main",
+                "stdio",
+                "openai",
+                "gpt-4o-mini",
+            )
+            .await
+            .expect("child session");
+        store
+            .set_active_session("stdio:main", "main", "stdio", "stdio:main:child")
+            .await
+            .expect("set active session");
+        let heartbeat = store
+            .create_heartbeat(&NewHeartbeatJob {
+                id: "hb-1".to_string(),
+                session_key: "stdio:main".to_string(),
+                channel: "stdio".to_string(),
+                chat_id: "main".to_string(),
+                enabled: true,
+                every: "1m".to_string(),
+                prompt: "review".to_string(),
+                silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+                timezone: "UTC".to_string(),
+                next_run_at_ms: now_ms(),
+            })
+            .await
+            .expect("create heartbeat");
+        let transport = Arc::new(InMemoryTransport::<InboundMessage>::default());
+        let worker = HeartbeatWorker::new(
+            store.clone(),
+            transport.clone(),
+            HeartbeatWorkerConfig::default(),
+        );
+
+        worker
+            .run_job_now(&heartbeat.id)
+            .await
+            .expect("run now should succeed");
+
+        let messages = transport.published_messages().await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].payload.session_key, "stdio:main:child");
+        assert_eq!(
+            messages[0]
+                .payload
+                .metadata
+                .get(HEARTBEAT_SESSION_KEY)
+                .and_then(Value::as_str),
+            Some("stdio:main")
+        );
     }
 }

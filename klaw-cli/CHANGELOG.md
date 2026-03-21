@@ -5,6 +5,7 @@
 ### Added
 
 - runtime now writes provider request/response audit records to `llm_audit` via a bounded asynchronous background writer so LLM auditing does not block the main request path
+- runtime now schedules session-bound heartbeat jobs from dedicated heartbeat storage and exposes manual `RunHeartbeatNow` handling for the GUI runtime
 
 ### Fixed
 

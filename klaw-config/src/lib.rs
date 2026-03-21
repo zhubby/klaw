@@ -458,6 +458,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub cron_manager: CronManagerConfig,
     #[serde(default)]
+    pub heartbeat_manager: HeartbeatManagerConfig,
+    #[serde(default)]
     pub skills_registry: SkillsRegistryToolConfig,
     #[serde(default)]
     pub skills_manager: SkillsManagerToolConfig,
@@ -629,6 +631,30 @@ impl ToolEnabled for CronManagerConfig {
 }
 
 fn default_cron_manager_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatManagerConfig {
+    #[serde(default = "default_heartbeat_manager_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for HeartbeatManagerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_heartbeat_manager_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for HeartbeatManagerConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_heartbeat_manager_enabled() -> bool {
     true
 }
 

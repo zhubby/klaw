@@ -8,7 +8,7 @@ pub struct NotificationCenter {
 impl Default for NotificationCenter {
     fn default() -> Self {
         let toasts = Toasts::new()
-            .with_anchor(Anchor::TopRight)
+            .with_anchor(Anchor::BottomRight)
             .with_margin(vec2(16.0, 16.0));
         Self { toasts }
     }

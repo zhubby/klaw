@@ -4,6 +4,7 @@ use klaw_channel::telegram::dispatch_background_outbound as dispatch_telegram_ba
 use klaw_config::AppConfig;
 use klaw_core::{Envelope, InboundMessage, OutboundMessage};
 use klaw_cron::{CronWorker, CronWorkerConfig};
+use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig};
 use klaw_storage::DefaultSessionStore;
 use std::{
     collections::BTreeMap,
@@ -16,6 +17,8 @@ use tracing::warn;
 
 pub type StdioCronWorker =
     CronWorker<DefaultSessionStore, klaw_core::InMemoryTransport<InboundMessage>>;
+pub type StdioHeartbeatWorker =
+    HeartbeatWorker<DefaultSessionStore, klaw_core::InMemoryTransport<InboundMessage>>;
 const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
@@ -82,6 +85,7 @@ impl Default for BackgroundServiceConfig {
 
 pub struct BackgroundServices {
     cron_worker: StdioCronWorker,
+    heartbeat_worker: StdioHeartbeatWorker,
     config: BackgroundServiceConfig,
     runtime_drain_error: Mutex<Option<String>>,
     dispatched_outbound_count: Mutex<usize>,
@@ -99,8 +103,17 @@ impl BackgroundServices {
                 batch_limit: config.cron_batch_limit,
             },
         );
+        let heartbeat_worker = HeartbeatWorker::new(
+            std::sync::Arc::new(runtime.session_store.clone()),
+            std::sync::Arc::new(runtime.inbound_transport.clone()),
+            HeartbeatWorkerConfig {
+                poll_interval: Duration::from_secs(1),
+                batch_limit: config.cron_batch_limit,
+            },
+        );
         Self {
             cron_worker,
+            heartbeat_worker,
             config,
             runtime_drain_error: Mutex::new(None),
             dispatched_outbound_count: Mutex::new(0),
@@ -120,11 +133,21 @@ impl BackgroundServices {
         if let Err(err) = self.cron_worker.run_tick().await {
             warn!(error = %err, "cron tick failed");
         }
+        if let Err(err) = self.heartbeat_worker.run_tick().await {
+            warn!(error = %err, "heartbeat tick failed");
+        }
     }
 
     pub async fn run_cron_now(&self, cron_id: &str) -> Result<String, String> {
         self.cron_worker
             .run_job_now(cron_id)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn run_heartbeat_now(&self, heartbeat_id: &str) -> Result<String, String> {
+        self.heartbeat_worker
+            .run_job_now(heartbeat_id)
             .await
             .map_err(|err| err.to_string())
     }

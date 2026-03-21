@@ -11,14 +11,16 @@ pub mod backend;
 pub use error::StorageError;
 pub use memory_db::{DbRow, DbValue, MemoryDb};
 pub use paths::StoragePaths;
-pub use traits::{CronStorage, SessionStorage};
+pub use traits::{CronStorage, HeartbeatStorage, SessionStorage};
 pub use types::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronTaskRun,
-    CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
-    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord, SessionCompressionState,
-    SessionIndex, UpdateCronJobPatch, UpdateWebhookEventResult, WebhookEventQuery,
-    WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
+    CronTaskStatus, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditQuery,
+    LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource,
+    LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
+    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
+    SessionCompressionState, SessionIndex, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
+    UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
+    WebhookEventStatus,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]

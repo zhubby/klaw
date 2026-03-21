@@ -33,6 +33,7 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.local_search.enabled);
     assert!(parsed.tools.terminal_multiplexers.enabled);
     assert!(parsed.tools.cron_manager.enabled);
+    assert!(parsed.tools.heartbeat_manager.enabled);
     assert!(parsed.tools.skills_registry.enabled);
     assert!(parsed.tools.skills_manager.enabled);
     assert!(parsed.tools.shell.workspace.is_none());
@@ -579,44 +580,6 @@ fn validate_fails_when_mcp_timeout_is_zero() {
     cfg.mcp.startup_timeout_seconds = 0;
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("mcp.startup_timeout_seconds"));
-}
-
-#[test]
-fn validate_fails_when_heartbeat_session_keys_duplicate() {
-    let mut cfg = AppConfig::default();
-    cfg.heartbeat.sessions = vec![
-        HeartbeatSessionConfig {
-            session_key: "stdio:dup".to_string(),
-            chat_id: "a".to_string(),
-            channel: "stdio".to_string(),
-            enabled: None,
-            every: None,
-            prompt: None,
-            silent_ack_token: None,
-            timezone: None,
-        },
-        HeartbeatSessionConfig {
-            session_key: "stdio:dup".to_string(),
-            chat_id: "b".to_string(),
-            channel: "stdio".to_string(),
-            enabled: None,
-            every: None,
-            prompt: None,
-            silent_ack_token: None,
-            timezone: None,
-        },
-    ];
-
-    let err = validate(&cfg).expect_err("should fail");
-    assert!(format!("{err}").contains("duplicated session_key"));
-}
-
-#[test]
-fn validate_fails_when_heartbeat_every_is_invalid() {
-    let mut cfg = AppConfig::default();
-    cfg.heartbeat.defaults.every = "0s".to_string();
-    let err = validate(&cfg).expect_err("should fail");
-    assert!(format!("{err}").contains("heartbeat.defaults.every"));
 }
 
 #[test]

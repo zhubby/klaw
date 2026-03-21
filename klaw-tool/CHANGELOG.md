@@ -2,6 +2,9 @@
 
 ## 2026-03-21
 
+### Added
+- added `heartbeat_manager` for persisted session-bound heartbeat create/update/delete/get/list/list-runs and enable/disable operations
+
 ### Changed
 - `local_search` 现在优先使用 `rg`，并在系统缺少 ripgrep 时回退到兼容 BSD/macOS 的 `grep`，同时保留 `include_pattern` 与默认目录排除行为
 - `shell` 现在同时支持 `blocked_patterns` 与 `unsafe_patterns`：前者直接拒绝，后者触发审批，未命中任一模式的命令将直接执行

@@ -25,9 +25,7 @@ use klaw_core::{
     Subscription, TransportError,
 };
 use klaw_gateway::GatewayWebhookRequest;
-use klaw_heartbeat::{
-    should_suppress_output, specs_from_config, CronHeartbeatScheduler, HeartbeatScheduler,
-};
+use klaw_heartbeat::should_suppress_output;
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
 use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
 use klaw_observability::{
@@ -40,11 +38,11 @@ use klaw_session::{
 use klaw_skill::{
     open_default_skills_manager, InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager,
 };
-use klaw_storage::{open_default_store, CronStorage, DefaultSessionStore};
+use klaw_storage::{open_default_store, DefaultSessionStore};
 use klaw_tool::{
-    ApplyPatchTool, ApprovalTool, ArchiveTool, CronManagerTool, LocalSearchTool, MemoryTool,
-    ShellTool, SkillsManagerTool, SkillsRegistryTool, SubAgentTool, TerminalMultiplexerTool,
-    ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
+    ApplyPatchTool, ApprovalTool, ArchiveTool, CronManagerTool, HeartbeatManagerTool,
+    LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool, SkillsRegistryTool, SubAgentTool,
+    TerminalMultiplexerTool, ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use klaw_util::EnvironmentCheckReport;
 use serde_json::json;
@@ -1121,9 +1119,6 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
             ))
         })?;
     let session_store = open_default_store().await?;
-    reconcile_heartbeats(config, &session_store)
-        .await
-        .map_err(|err| config_err(format!("heartbeat reconcile failed: {err}")))?;
     let mut tools = ToolRegistry::default();
     if config.tools.archive.enabled() {
         tools.register(ArchiveTool::open_default(config).await?);
@@ -1147,6 +1142,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     }
     if config.tools.cron_manager.enabled() {
         tools.register(CronManagerTool::with_store(session_store.clone()));
+    }
+    if config.tools.heartbeat_manager.enabled() {
+        tools.register(HeartbeatManagerTool::with_store(session_store.clone()));
     }
     if config.tools.skills_registry.enabled() && !config.skills.registries.is_empty() {
         info!(
@@ -2212,20 +2210,6 @@ pub async fn finalize_startup_report(
     runtime.startup_report.tool_names = runtime.runtime.tools.list();
     runtime.startup_report.mcp_summary = mcp_summary;
     Ok(runtime.startup_report.clone())
-}
-
-async fn reconcile_heartbeats<S>(config: &AppConfig, storage: &S) -> Result<(), Box<dyn Error>>
-where
-    S: CronStorage + Send + Sync + Clone + 'static,
-{
-    let specs = specs_from_config(config)?;
-    if specs.is_empty() {
-        return Ok(());
-    }
-
-    let scheduler = CronHeartbeatScheduler::new(Arc::new(storage.clone()));
-    scheduler.reconcile(&specs).await?;
-    Ok(())
 }
 
 fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {

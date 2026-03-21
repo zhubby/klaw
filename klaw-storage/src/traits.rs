@@ -1,9 +1,11 @@
 use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus,
-    LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob,
-    NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
-    SessionCompressionState, SessionIndex, StorageError, UpdateCronJobPatch,
-    UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
+    HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditQuery, LlmAuditRecord,
+    LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    NewWebhookEventRecord, SessionCompressionState, SessionIndex, StorageError,
+    UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookEventResult, WebhookEventQuery,
+    WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -214,4 +216,80 @@ pub trait CronStorage: Send + Sync {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<CronTaskRun>, StorageError>;
+}
+
+#[async_trait]
+pub trait HeartbeatStorage: Send + Sync {
+    async fn create_heartbeat(
+        &self,
+        input: &NewHeartbeatJob,
+    ) -> Result<HeartbeatJob, StorageError>;
+
+    async fn update_heartbeat(
+        &self,
+        heartbeat_id: &str,
+        patch: &UpdateHeartbeatJobPatch,
+    ) -> Result<HeartbeatJob, StorageError>;
+
+    async fn set_heartbeat_enabled(
+        &self,
+        heartbeat_id: &str,
+        enabled: bool,
+    ) -> Result<(), StorageError>;
+
+    async fn delete_heartbeat(&self, heartbeat_id: &str) -> Result<(), StorageError>;
+
+    async fn get_heartbeat(&self, heartbeat_id: &str) -> Result<HeartbeatJob, StorageError>;
+
+    async fn get_heartbeat_by_session_key(
+        &self,
+        session_key: &str,
+    ) -> Result<HeartbeatJob, StorageError>;
+
+    async fn list_heartbeats(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<HeartbeatJob>, StorageError>;
+
+    async fn list_due_heartbeats(
+        &self,
+        now_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<HeartbeatJob>, StorageError>;
+
+    async fn claim_next_heartbeat_run(
+        &self,
+        heartbeat_id: &str,
+        expected_next_run_at_ms: i64,
+        new_next_run_at_ms: i64,
+        now_ms: i64,
+    ) -> Result<bool, StorageError>;
+
+    async fn append_heartbeat_task_run(
+        &self,
+        input: &NewHeartbeatTaskRun,
+    ) -> Result<HeartbeatTaskRun, StorageError>;
+
+    async fn mark_heartbeat_task_running(
+        &self,
+        run_id: &str,
+        started_at_ms: i64,
+    ) -> Result<(), StorageError>;
+
+    async fn mark_heartbeat_task_result(
+        &self,
+        run_id: &str,
+        status: HeartbeatTaskStatus,
+        finished_at_ms: i64,
+        error_message: Option<&str>,
+        published_message_id: Option<&str>,
+    ) -> Result<(), StorageError>;
+
+    async fn list_heartbeat_task_runs(
+        &self,
+        heartbeat_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<HeartbeatTaskRun>, StorageError>;
 }

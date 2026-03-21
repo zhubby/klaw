@@ -21,6 +21,7 @@ klaw-approval = { workspace = true }
 klaw-archive = { workspace = true }
 klaw-cron = { workspace = true }
 klaw-gateway = { workspace = true }
+klaw-heartbeat = { workspace = true }
 klaw-memory = { workspace = true }
 klaw-observability = { workspace = true }
 klaw-session = { workspace = true }
