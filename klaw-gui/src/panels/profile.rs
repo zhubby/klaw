@@ -91,7 +91,7 @@ impl ProfilePanel {
                 ui.label(&doc.summary);
                 ui.add_space(6.0);
                 ui.small(format!("Modified: {}", doc.modified_label));
-                ui.small(format!("Size: {} B", doc.size_bytes));
+                ui.small(format!("Size: {}", format_bytes(doc.size_bytes)));
                 ui.small(format!("Path: {}", doc.path.display()));
                 ui.add_space(8.0);
                 if ui.button("Edit").clicked() {
@@ -606,5 +606,22 @@ mod tests {
         assert_eq!(ProfilePanel::card_column_count(200.0), 1);
         assert_eq!(ProfilePanel::card_column_count(700.0), 2);
         assert_eq!(ProfilePanel::card_column_count(1100.0), 3);
+    }
+}
+
+fn format_bytes(value: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let raw = value as f64;
+    if raw >= GB {
+        format!("{:.2} GB", raw / GB)
+    } else if raw >= MB {
+        format!("{:.2} MB", raw / MB)
+    } else if raw >= KB {
+        format!("{:.2} KB", raw / KB)
+    } else {
+        format!("{value} B")
     }
 }

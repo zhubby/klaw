@@ -42,10 +42,10 @@ tray-icon = { workspace = true }
 tracing = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-image = { workspace = true, features = ["png"] }
+image = { workspace = true, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true, features = ["NSApplication", "NSImage"] }
 objc2-foundation = { workspace = true, features = ["NSData", "NSString"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-image = { workspace = true, features = ["png"] }
+image = { workspace = true, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }

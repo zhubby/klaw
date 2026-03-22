@@ -303,6 +303,11 @@ impl ArchiveService for SqliteArchiveService {
             filters.push(format!("media_kind = ?{}", params.len() + 1));
             params.push(DbValue::Text(media_kind.as_str().to_string()));
         }
+        if let Some(filename) = query.filename {
+            let pattern = format!("%{}%", filename.replace('%', "\\%").replace('_', "\\_"));
+            filters.push(format!("original_filename LIKE ?{} ESCAPE '\\'", params.len() + 1));
+            params.push(DbValue::Text(pattern));
+        }
         if !filters.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&filters.join(" AND "));
@@ -349,6 +354,25 @@ impl ArchiveService for SqliteArchiveService {
             absolute_path,
             bytes,
         })
+    }
+
+    async fn list_session_keys(&self) -> Result<Vec<String>, ArchiveError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT DISTINCT session_key FROM archives WHERE session_key IS NOT NULL ORDER BY session_key",
+                &[],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                row.get(0).and_then(|v| match v {
+                    DbValue::Text(s) => Some(s.clone()),
+                    _ => None,
+                })
+            })
+            .collect())
     }
 }
 

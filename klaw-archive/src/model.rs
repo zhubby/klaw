@@ -101,6 +101,7 @@ pub struct ArchiveQuery {
     pub chat_id: Option<String>,
     pub source_kind: Option<ArchiveSourceKind>,
     pub media_kind: Option<ArchiveMediaKind>,
+    pub filename: Option<String>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -131,4 +132,6 @@ pub trait ArchiveService: Send + Sync {
     async fn get(&self, archive_id: &str) -> Result<ArchiveRecord, ArchiveError>;
 
     async fn open_download(&self, archive_id: &str) -> Result<ArchiveBlob, ArchiveError>;
+
+    async fn list_session_keys(&self) -> Result<Vec<String>, ArchiveError>;
 }

@@ -77,6 +77,9 @@ pub struct ArchiveListCommand {
     /// Optional media kind filter.
     #[arg(long, value_enum)]
     pub media_kind: Option<ArchiveMediaArg>,
+    /// Optional filename filter (fuzzy match).
+    #[arg(long)]
+    pub filename: Option<String>,
     /// Max rows to return.
     #[arg(long, default_value_t = 20)]
     pub limit: i64,
@@ -154,6 +157,7 @@ impl ArchiveListCommand {
                 chat_id: self.chat_id,
                 source_kind: self.source_kind.map(Into::into),
                 media_kind: self.media_kind.map(Into::into),
+                filename: self.filename,
                 limit: self.limit,
                 offset: self.offset,
             })

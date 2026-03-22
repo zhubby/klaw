@@ -26,10 +26,12 @@ pub struct ArchivePanel {
     items: Vec<ArchiveRecord>,
     selected_archive: Option<String>,
     detail_id: Option<String>,
-    session_key_filter: String,
+    session_keys: Vec<String>,
+    session_key_filter: Option<String>,
     chat_id_filter: String,
-    source_kind_filter: String,
-    media_kind_filter: String,
+    source_kind_filter: Option<ArchiveSourceKind>,
+    media_kind_filter: Option<ArchiveMediaKind>,
+    filename_filter: String,
     page: i64,
     size: i64,
     preview: Option<ArchivePreview>,
@@ -43,34 +45,30 @@ impl ArchivePanel {
         if self.size == 0 {
             self.size = 100;
         }
+        self.load_filters(notifications);
         self.refresh(notifications);
     }
 
-    fn refresh(&mut self, notifications: &mut NotificationCenter) {
-        let source_kind = match parse_source_kind(&self.source_kind_filter) {
-            Ok(value) => value,
-            Err(err) => {
-                notifications.error(err);
-                return;
+    fn load_filters(&mut self, notifications: &mut NotificationCenter) {
+        match run_archive_task(move |service| async move { service.list_session_keys().await }) {
+            Ok(session_keys) => {
+                self.session_keys = session_keys;
             }
-        };
-        let media_kind = match parse_media_kind(&self.media_kind_filter) {
-            Ok(value) => value,
-            Err(err) => {
-                notifications.error(err);
-                return;
-            }
-        };
+            Err(err) => notifications.error(format!("Failed to load filters: {err}")),
+        }
+    }
 
+    fn refresh(&mut self, notifications: &mut NotificationCenter) {
         let size = self.size.max(1);
         let page = self.page.max(1);
         let offset = (page - 1) * size;
 
         let query = ArchiveQuery {
-            session_key: optional_trimmed(&self.session_key_filter),
+            session_key: self.session_key_filter.clone(),
             chat_id: optional_trimmed(&self.chat_id_filter),
-            source_kind,
-            media_kind,
+            source_kind: self.source_kind_filter,
+            media_kind: self.media_kind_filter,
+            filename: optional_trimmed(&self.filename_filter),
             limit: size,
             offset,
         };
@@ -134,13 +132,29 @@ impl PanelRenderer for ArchivePanel {
         let mut need_refresh = false;
         ui.horizontal(|ui| {
             ui.label("session_key");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.session_key_filter),
-                )
-                .changed()
-            {
+            let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
+            let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
+                .selected_text(selected_text)
+                .width(FILTER_INPUT_WIDTH)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui
+                        .selectable_value(&mut self.session_key_filter, None, "All")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    for key in &self.session_keys {
+                        if ui
+                            .selectable_value(&mut self.session_key_filter, Some(key.clone()), key)
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if combo_resp.inner.unwrap_or(false) {
                 need_refresh = true;
             }
             ui.label("chat_id");
@@ -156,27 +170,81 @@ impl PanelRenderer for ArchivePanel {
         });
         ui.horizontal(|ui| {
             ui.label("source_kind");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.source_kind_filter),
-                )
-                .changed()
-            {
+            let selected_text = self
+                .source_kind_filter
+                .map_or("All", |s| s.as_str());
+            let combo_resp = egui::ComboBox::from_id_salt("source_kind_filter")
+                .selected_text(selected_text)
+                .width(FILTER_INPUT_WIDTH)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui
+                        .selectable_value(&mut self.source_kind_filter, None, "All")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    for kind in [
+                        ArchiveSourceKind::UserUpload,
+                        ArchiveSourceKind::ChannelInbound,
+                        ArchiveSourceKind::ModelGenerated,
+                    ] {
+                        if ui
+                            .selectable_value(&mut self.source_kind_filter, Some(kind), kind.as_str())
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if combo_resp.inner.unwrap_or(false) {
                 need_refresh = true;
             }
             ui.label("media_kind");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.media_kind_filter),
-                )
-                .changed()
-            {
+            let selected_text = self.media_kind_filter.map_or("All", |s| s.as_str());
+            let combo_resp = egui::ComboBox::from_id_salt("media_kind_filter")
+                .selected_text(selected_text)
+                .width(FILTER_INPUT_WIDTH)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui
+                        .selectable_value(&mut self.media_kind_filter, None, "All")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    for kind in [
+                        ArchiveMediaKind::Pdf,
+                        ArchiveMediaKind::Image,
+                        ArchiveMediaKind::Video,
+                        ArchiveMediaKind::Audio,
+                        ArchiveMediaKind::Other,
+                    ] {
+                        if ui
+                            .selectable_value(&mut self.media_kind_filter, Some(kind), kind.as_str())
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if combo_resp.inner.unwrap_or(false) {
                 need_refresh = true;
             }
         });
         ui.horizontal(|ui| {
+            ui.label("filename");
+            if ui
+                .add_sized(
+                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(&mut self.filename_filter),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
             ui.label("page");
             if ui
                 .add_sized(
@@ -794,26 +862,6 @@ fn format_bytes(value: i64) -> String {
 fn optional_trimmed(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-fn parse_source_kind(value: &str) -> Result<Option<ArchiveSourceKind>, String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    ArchiveSourceKind::parse(trimmed).map(Some).ok_or_else(|| {
-        "source_kind must be one of: user_upload, channel_inbound, model_generated".to_string()
-    })
-}
-
-fn parse_media_kind(value: &str) -> Result<Option<ArchiveMediaKind>, String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    ArchiveMediaKind::parse(trimmed)
-        .map(Some)
-        .ok_or_else(|| "media_kind must be one of: pdf, image, video, audio, other".to_string())
 }
 
 #[cfg(test)]
