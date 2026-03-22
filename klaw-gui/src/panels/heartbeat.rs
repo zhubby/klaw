@@ -2,8 +2,9 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::request_run_heartbeat_now;
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
+use chrono::NaiveDate;
 use egui::{Color32, RichText};
-use egui_extras::{Column, TableBuilder};
+use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_heartbeat::{
     HeartbeatInput, HeartbeatManager, DEFAULT_SILENT_ACK_TOKEN, DEFAULT_TIMEZONE,
@@ -107,6 +108,11 @@ pub struct HeartbeatPanel {
     form: Option<HeartbeatForm>,
     delete_confirm_id: Option<String>,
     selected_heartbeat: Option<String>,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+    page: i64,
+    size: i64,
+    config_window: bool,
 }
 
 impl Default for HeartbeatPanel {
@@ -121,6 +127,11 @@ impl Default for HeartbeatPanel {
             form: None,
             delete_confirm_id: None,
             selected_heartbeat: None,
+            start_date: None,
+            end_date: None,
+            page: 1,
+            size: 20,
+            config_window: false,
         }
     }
 }
@@ -311,22 +322,6 @@ impl HeartbeatPanel {
             }
             Err(err) => notifications.error(format!("Failed to run heartbeat now: {err}")),
         }
-    }
-
-    fn render_defaults(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.strong("Form Defaults");
-            ui.small("Only the default enabled state is kept locally in the GUI. Other heartbeat fields use built-in defaults.");
-            ui.add_space(6.0);
-            egui::Grid::new("heartbeat-defaults-grid")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("Enabled");
-                    ui.checkbox(&mut self.defaults.enabled, "");
-                    ui.end_row();
-                });
-        });
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
@@ -533,12 +528,33 @@ impl PanelRenderer for HeartbeatPanel {
             if ui.button("Add Heartbeat Job").clicked() {
                 self.open_add_form();
             }
+            if ui.button(format!("{} Config", regular::GEAR)).clicked() {
+                self.config_window = true;
+            }
+            ui.label(format!("Jobs: {}", self.jobs.len()));
         });
 
         ui.separator();
-        self.render_defaults(ui);
-        ui.add_space(10.0);
-        ui.label(format!("Jobs: {}", self.jobs.len()));
+        ui.horizontal(|ui| {
+            ui.label("start date");
+            render_date_picker(ui, &mut self.start_date, "heartbeat-start-date");
+            ui.label("end date");
+            render_date_picker(ui, &mut self.end_date, "heartbeat-end-date");
+        });
+        ui.horizontal(|ui| {
+            ui.label("page");
+            ui.add_sized(
+                [50.0, ui.spacing().interact_size.y],
+                egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+            );
+            ui.label("size");
+            ui.add_sized(
+                [50.0, ui.spacing().interact_size.y],
+                egui::DragValue::new(&mut self.size).range(1..=1000),
+            );
+        });
+
+        ui.separator();
 
         egui::ScrollArea::both()
             .auto_shrink([false, false])
@@ -723,6 +739,21 @@ impl PanelRenderer for HeartbeatPanel {
 
         self.render_runs_window(ui, notifications);
         self.render_form_window(ui, notifications);
+
+        if self.config_window {
+            egui::Window::new("Heartbeat Config")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut self.config_window)
+                .show(ui.ctx(), |ui| {
+                    ui.label("Form Defaults");
+                    ui.add_space(6.0);
+                    ui.checkbox(&mut self.defaults.enabled, "Enabled by default");
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Only the default enabled state is kept locally in the GUI.\nOther heartbeat fields use built-in defaults.").small().weak());
+                });
+        }
     }
 }
 
@@ -786,4 +817,15 @@ fn run_session_query(limit: i64, offset: i64) -> Result<Vec<SessionIndex>, Strin
         Ok(result) => result,
         Err(_) => Err("session query thread panicked".to_string()),
     }
+}
+
+fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) {
+    ui.horizontal(|ui| {
+        if let Some(date) = value.as_mut() {
+            ui.add(DatePickerButton::new(date).id_salt(id).format("%Y/%m/%d"));
+            if ui.small_button("×").clicked() {
+                *value = None;
+            }
+        }
+    });
 }

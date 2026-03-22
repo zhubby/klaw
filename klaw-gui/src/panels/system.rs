@@ -12,6 +12,13 @@ use std::time::Duration;
 
 const TASK_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum SystemView {
+    #[default]
+    Cleanup,
+    Environment,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirKind {
     Tmp,
@@ -92,6 +99,7 @@ pub struct SystemPanel {
     clear_confirm: Option<DirKind>,
     env_check: Option<EnvironmentCheckReport>,
     env_check_loaded: bool,
+    current_view: SystemView,
 }
 
 impl SystemPanel {
@@ -448,28 +456,44 @@ impl PanelRenderer for SystemPanel {
         }
 
         ui.heading(ctx.tab_title);
-        ui.label("Inspect and clear data under the Klaw data directory.");
+
+        ui.horizontal(|ui| {
+            let cleanup_selected = self.current_view == SystemView::Cleanup;
+            let env_selected = self.current_view == SystemView::Environment;
+
+            if ui.selectable_label(cleanup_selected, "Cleanup").clicked() {
+                self.current_view = SystemView::Cleanup;
+            }
+            if ui.selectable_label(env_selected, "Environment").clicked() {
+                self.current_view = SystemView::Environment;
+            }
+        });
         ui.separator();
 
         egui::ScrollArea::vertical()
             .id_salt("system-panel-scroll")
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                self.render_env_check_section(ui);
-                ui.separator();
-                self.render_section(ui, DirKind::Tmp);
-                ui.separator();
-                self.render_section(ui, DirKind::Workspace);
-                ui.separator();
-                self.render_section(ui, DirKind::Sessions);
-                ui.separator();
-                self.render_section(ui, DirKind::Archives);
-                ui.separator();
-                self.render_section(ui, DirKind::Logs);
-                ui.separator();
-                self.render_section(ui, DirKind::Skills);
-                ui.separator();
-                self.render_section(ui, DirKind::SkillsRegistry);
+            .show(ui, |ui| match self.current_view {
+                SystemView::Cleanup => {
+                    ui.label("Inspect and clear data under the Klaw data directory.");
+                    ui.add_space(8.0);
+                    self.render_section(ui, DirKind::Tmp);
+                    ui.separator();
+                    self.render_section(ui, DirKind::Workspace);
+                    ui.separator();
+                    self.render_section(ui, DirKind::Sessions);
+                    ui.separator();
+                    self.render_section(ui, DirKind::Archives);
+                    ui.separator();
+                    self.render_section(ui, DirKind::Logs);
+                    ui.separator();
+                    self.render_section(ui, DirKind::Skills);
+                    ui.separator();
+                    self.render_section(ui, DirKind::SkillsRegistry);
+                }
+                SystemView::Environment => {
+                    self.render_env_check_section(ui);
+                }
             });
 
         self.render_clear_confirm_dialog(ui.ctx(), notifications);
