@@ -63,21 +63,16 @@ fn configure_platform_viewport(viewport: egui::ViewportBuilder) -> egui::Viewpor
 #[cfg(target_os = "macos")]
 fn load_macos_app_icon() -> Option<egui::IconData> {
     use objc2::ClassType as _;
-    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_app_kit::NSImage;
     use objc2_foundation::{MainThreadMarker, NSString};
 
-    let Some(mtm) = MainThreadMarker::new() else {
-        return None;
-    };
+    let mtm = MainThreadMarker::new()?;
 
-    let icon_path = format!("{}/assets/icons/logo.icns", env!("CARGO_MANIFEST_DIR"));
-    let icon_path = NSString::from_str(&icon_path);
-    let Some(icon) = (unsafe { NSImage::initWithContentsOfFile(NSImage::alloc(), &icon_path) })
-    else {
-        return None;
-    };
+    let icon_path = macos_icon_path();
+    let icon_path_ns = NSString::from_str(&icon_path);
+    let icon = unsafe { NSImage::initWithContentsOfFile(NSImage::alloc(), &icon_path_ns) }?;
 
-    let app = NSApplication::sharedApplication(mtm);
+    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
     unsafe {
         app.setApplicationIconImage(Some(&icon));
     }
@@ -91,6 +86,23 @@ fn load_macos_app_icon() -> Option<egui::IconData> {
             rgba: image.into_raw(),
         })
     })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_icon_path() -> String {
+    use objc2_foundation::NSBundle;
+
+    let bundle = NSBundle::mainBundle();
+    let Some(resource_url) = (unsafe { bundle.resourceURL() }) else {
+        return format!("{}/assets/icons/logo.icns", env!("CARGO_MANIFEST_DIR"));
+    };
+    let Some(path) = (unsafe { resource_url.path() }) else {
+        return format!("{}/assets/icons/logo.icns", env!("CARGO_MANIFEST_DIR"));
+    };
+    if path.is_empty() {
+        return format!("{}/assets/icons/logo.icns", env!("CARGO_MANIFEST_DIR"));
+    }
+    format!("{}/logo.icns", path)
 }
 
 #[cfg(target_os = "macos")]
