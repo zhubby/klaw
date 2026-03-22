@@ -41,6 +41,7 @@ pub struct ApprovalListQuery {
     pub session_key: Option<String>,
     pub tool_name: Option<String>,
     pub status: Option<ApprovalStatus>,
+    pub preview_filter: Option<String>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -51,6 +52,7 @@ impl Default for ApprovalListQuery {
             session_key: None,
             tool_name: None,
             status: None,
+            preview_filter: None,
             limit: 100,
             offset: 0,
         }
@@ -99,6 +101,10 @@ pub trait ApprovalManager: Send + Sync {
         approval_id: &str,
         now_ms: i64,
     ) -> Result<ApprovalResolveOutcome, ApprovalError>;
+
+    async fn list_session_keys(&self) -> Result<Vec<String>, ApprovalError>;
+
+    async fn list_tool_names(&self) -> Result<Vec<String>, ApprovalError>;
 }
 
 #[derive(Clone)]
@@ -208,6 +214,15 @@ impl ApprovalManager for SqliteApprovalManager {
         if let Some(status) = query.status {
             filters.push(format!("status = ?{}", params.len() + 1));
             params.push(DbValue::Text(status.as_str().to_string()));
+        }
+        if let Some(preview_filter) = query
+            .preview_filter
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            filters.push(format!("command_preview LIKE ?{}", params.len() + 1));
+            params.push(DbValue::Text(format!("%{preview_filter}%")));
         }
 
         let where_clause = if filters.is_empty() {
@@ -327,6 +342,40 @@ impl ApprovalManager for SqliteApprovalManager {
             .await?;
         let approval = self.get_approval(&approval.id).await?;
         Ok(ApprovalResolveOutcome { approval, updated })
+    }
+
+    async fn list_session_keys(&self) -> Result<Vec<String>, ApprovalError> {
+        let sql = "SELECT DISTINCT session_key FROM approvals ORDER BY session_key";
+        let rows = self.store.query(sql, &[]).await?;
+        rows.into_iter()
+            .map(|row| {
+                row.get(0)
+                    .and_then(|v| match v {
+                        DbValue::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        ApprovalError::InvalidApprovalRow("missing session_key".to_string())
+                    })
+            })
+            .collect()
+    }
+
+    async fn list_tool_names(&self) -> Result<Vec<String>, ApprovalError> {
+        let sql = "SELECT DISTINCT tool_name FROM approvals ORDER BY tool_name";
+        let rows = self.store.query(sql, &[]).await?;
+        rows.into_iter()
+            .map(|row| {
+                row.get(0)
+                    .and_then(|v| match v {
+                        DbValue::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        ApprovalError::InvalidApprovalRow("missing tool_name".to_string())
+                    })
+            })
+            .collect()
     }
 }
 

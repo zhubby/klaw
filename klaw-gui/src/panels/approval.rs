@@ -21,9 +21,12 @@ const PAGING_INPUT_WIDTH: f32 = 50.0;
 pub struct ApprovalPanel {
     loaded: bool,
     approvals: Vec<ApprovalRecord>,
-    session_key_filter: String,
-    tool_name_filter: String,
+    session_keys: Vec<String>,
+    tool_names: Vec<String>,
+    session_key_filter: Option<String>,
+    tool_name_filter: Option<String>,
     status_filter: Option<ApprovalStatus>,
+    preview_filter: String,
     page: i64,
     size: i64,
     selected_approval: Option<String>,
@@ -38,17 +41,41 @@ impl ApprovalPanel {
         if self.size == 0 {
             self.size = 100;
         }
+        self.load_filters(notifications);
         self.refresh(notifications);
+    }
+
+    fn load_filters(&mut self, notifications: &mut NotificationCenter) {
+        match run_approval_task(move |manager| async move {
+            let session_keys = manager.list_session_keys().await?;
+            let tool_names = manager.list_tool_names().await?;
+            Ok((session_keys, tool_names))
+        }) {
+            Ok((session_keys, tool_names)) => {
+                self.session_keys = session_keys;
+                self.tool_names = tool_names;
+            }
+            Err(err) => notifications.error(format!("Failed to load filters: {err}")),
+        }
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
         let size = self.size.max(1);
         let page = self.page.max(1);
         let offset = (page - 1) * size;
+        let session_key = self.session_key_filter.clone();
+        let tool_name = self.tool_name_filter.clone();
+        let preview_filter = self
+            .preview_filter
+            .trim()
+            .is_empty()
+            .then(|| None)
+            .unwrap_or_else(|| Some(self.preview_filter.trim().to_string()));
         let query = ApprovalListQuery {
-            session_key: optional_trimmed(&self.session_key_filter),
-            tool_name: optional_trimmed(&self.tool_name_filter),
+            session_key,
+            tool_name,
             status: self.status_filter,
+            preview_filter,
             limit: size,
             offset,
         };
@@ -124,23 +151,55 @@ impl PanelRenderer for ApprovalPanel {
         let mut need_refresh = false;
         ui.horizontal(|ui| {
             ui.label("session_key");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.session_key_filter),
-                )
-                .changed()
-            {
+            let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
+            let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
+                .selected_text(selected_text)
+                .width(FILTER_INPUT_WIDTH)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui
+                        .selectable_value(&mut self.session_key_filter, None, "All")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    for key in &self.session_keys {
+                        if ui
+                            .selectable_value(&mut self.session_key_filter, Some(key.clone()), key)
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if combo_resp.inner.unwrap_or(false) {
                 need_refresh = true;
             }
             ui.label("tool_name");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.tool_name_filter),
-                )
-                .changed()
-            {
+            let selected_text = self.tool_name_filter.as_deref().unwrap_or("All");
+            let combo_resp = egui::ComboBox::from_id_salt("tool_name_filter")
+                .selected_text(selected_text)
+                .width(FILTER_INPUT_WIDTH)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui
+                        .selectable_value(&mut self.tool_name_filter, None, "All")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    for name in &self.tool_names {
+                        if ui
+                            .selectable_value(&mut self.tool_name_filter, Some(name.clone()), name)
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if combo_resp.inner.unwrap_or(false) {
                 need_refresh = true;
             }
             ui.label("status");
@@ -175,6 +234,18 @@ impl PanelRenderer for ApprovalPanel {
                     changed
                 });
             if combo_resp.inner.unwrap_or(false) {
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("preview");
+            if ui
+                .add_sized(
+                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(&mut self.preview_filter),
+                )
+                .changed()
+            {
                 need_refresh = true;
             }
         });
@@ -495,11 +566,6 @@ where
         Ok(result) => result,
         Err(_) => Err("approval operation thread panicked".to_string()),
     }
-}
-
-fn optional_trimmed(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn now_ms() -> i64 {
