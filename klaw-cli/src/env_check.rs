@@ -32,6 +32,15 @@ const DEPENDENCIES: &[BinaryDependency] = &[
         version_parser: parse_rg_version,
     },
     BinaryDependency {
+        name: "tailscale",
+        description: "Gateway public exposure (serve/funnel)",
+        project_url: Some("https://tailscale.com"),
+        version_args: &["version"],
+        required: false,
+        category: DependencyCategory::OptionalWithFallback,
+        version_parser: parse_tailscale_version,
+    },
+    BinaryDependency {
         name: "zellij",
         description: "Terminal multiplexer (preferred)",
         project_url: Some("https://github.com/zellij-org/zellij"),
@@ -234,6 +243,10 @@ fn parse_tmux_version(output: &str) -> Option<String> {
         .map(|v| v.trim().to_string())
 }
 
+fn parse_tailscale_version(output: &str) -> Option<String> {
+    output.lines().next().map(|v| v.trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +288,26 @@ mod tests {
             rg.project_url,
             Some("https://github.com/BurntSushi/ripgrep")
         );
+    }
+
+    #[test]
+    fn tailscale_is_optional() {
+        let ts = DEPENDENCIES
+            .iter()
+            .find(|dep| dep.name == "tailscale")
+            .expect("tailscale dependency should exist");
+
+        assert!(!ts.required);
+        assert!(matches!(
+            ts.category,
+            DependencyCategory::OptionalWithFallback
+        ));
+        assert_eq!(ts.project_url, Some("https://tailscale.com"));
+    }
+
+    #[test]
+    fn parse_tailscale_version_extracts_version() {
+        let output = "1.76.6\n";
+        assert_eq!(parse_tailscale_version(output), Some("1.76.6".to_string()));
     }
 }
