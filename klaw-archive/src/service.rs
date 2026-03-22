@@ -305,7 +305,10 @@ impl ArchiveService for SqliteArchiveService {
         }
         if let Some(filename) = query.filename {
             let pattern = format!("%{}%", filename.replace('%', "\\%").replace('_', "\\_"));
-            filters.push(format!("original_filename LIKE ?{} ESCAPE '\\'", params.len() + 1));
+            filters.push(format!(
+                "original_filename LIKE ?{} ESCAPE '\\'",
+                params.len() + 1
+            ));
             params.push(DbValue::Text(pattern));
         }
         if !filters.is_empty() {

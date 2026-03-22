@@ -170,9 +170,7 @@ impl PanelRenderer for ArchivePanel {
         });
         ui.horizontal(|ui| {
             ui.label("source_kind");
-            let selected_text = self
-                .source_kind_filter
-                .map_or("All", |s| s.as_str());
+            let selected_text = self.source_kind_filter.map_or("All", |s| s.as_str());
             let combo_resp = egui::ComboBox::from_id_salt("source_kind_filter")
                 .selected_text(selected_text)
                 .width(FILTER_INPUT_WIDTH)
@@ -190,7 +188,11 @@ impl PanelRenderer for ArchivePanel {
                         ArchiveSourceKind::ModelGenerated,
                     ] {
                         if ui
-                            .selectable_value(&mut self.source_kind_filter, Some(kind), kind.as_str())
+                            .selectable_value(
+                                &mut self.source_kind_filter,
+                                Some(kind),
+                                kind.as_str(),
+                            )
                             .changed()
                         {
                             changed = true;
@@ -222,7 +224,11 @@ impl PanelRenderer for ArchivePanel {
                         ArchiveMediaKind::Other,
                     ] {
                         if ui
-                            .selectable_value(&mut self.media_kind_filter, Some(kind), kind.as_str())
+                            .selectable_value(
+                                &mut self.media_kind_filter,
+                                Some(kind),
+                                kind.as_str(),
+                            )
                             .changed()
                         {
                             changed = true;

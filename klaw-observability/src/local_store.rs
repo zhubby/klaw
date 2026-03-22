@@ -1291,23 +1291,21 @@ impl LocalMetricsStore for SqliteLocalMetricsStore {
             .into_iter()
             .map(|row| {
                 (
-                    (row.get::<String, _>("provider"), row.get::<String, _>("model")),
+                    (
+                        row.get::<String, _>("provider"),
+                        row.get::<String, _>("model"),
+                    ),
                     TurnAgg {
                         turns: row.get::<i64, _>("turns").max(0) as u64,
-                        total_requests_in_turn: row
-                            .get::<i64, _>("total_requests_in_turn")
-                            .max(0) as u64,
-                        total_tool_iterations: row
-                            .get::<i64, _>("total_tool_iterations")
-                            .max(0) as u64,
+                        total_requests_in_turn: row.get::<i64, _>("total_requests_in_turn").max(0)
+                            as u64,
+                        total_tool_iterations: row.get::<i64, _>("total_tool_iterations").max(0)
+                            as u64,
                         completed: row.get::<i64, _>("completed").max(0) as u64,
                         degraded: row.get::<i64, _>("degraded").max(0) as u64,
-                        token_budget_exceeded: row
-                            .get::<i64, _>("token_budget_exceeded")
-                            .max(0) as u64,
-                        tool_loop_exhausted: row
-                            .get::<i64, _>("tool_loop_exhausted")
-                            .max(0) as u64,
+                        token_budget_exceeded: row.get::<i64, _>("token_budget_exceeded").max(0)
+                            as u64,
+                        tool_loop_exhausted: row.get::<i64, _>("tool_loop_exhausted").max(0) as u64,
                     },
                 )
             })
@@ -1317,13 +1315,14 @@ impl LocalMetricsStore for SqliteLocalMetricsStore {
             .into_iter()
             .map(|row| {
                 (
-                    (row.get::<String, _>("provider"), row.get::<String, _>("model")),
+                    (
+                        row.get::<String, _>("provider"),
+                        row.get::<String, _>("model"),
+                    ),
                     ModelToolAgg {
                         calls: row.get::<i64, _>("calls").max(0) as u64,
                         successes: row.get::<i64, _>("successes").max(0) as u64,
-                        approvals_required: row
-                            .get::<i64, _>("approvals_required")
-                            .max(0) as u64,
+                        approvals_required: row.get::<i64, _>("approvals_required").max(0) as u64,
                     },
                 )
             })
@@ -1342,11 +1341,13 @@ impl LocalMetricsStore for SqliteLocalMetricsStore {
         .fetch_all(&self.pool)
         .await
         .map_err(LocalMetricsStoreError::Query)?;
-        let mut percentile_map =
-            std::collections::BTreeMap::<(String, String), Vec<f64>>::new();
+        let mut percentile_map = std::collections::BTreeMap::<(String, String), Vec<f64>>::new();
         for row in model_percentile_rows {
             percentile_map
-                .entry((row.get::<String, _>("provider"), row.get::<String, _>("model")))
+                .entry((
+                    row.get::<String, _>("provider"),
+                    row.get::<String, _>("model"),
+                ))
                 .or_default()
                 .push(row.get::<i64, _>("duration_ms").max(0) as f64);
         }
@@ -1365,8 +1366,7 @@ impl LocalMetricsStore for SqliteLocalMetricsStore {
                 let total_input_tokens = row.get::<i64, _>("total_input_tokens").max(0) as u64;
                 let total_output_tokens = row.get::<i64, _>("total_output_tokens").max(0) as u64;
                 let total_tokens = row.get::<i64, _>("total_tokens").max(0) as u64;
-                let cached_input_tokens =
-                    row.get::<i64, _>("cached_input_tokens").max(0) as u64;
+                let cached_input_tokens = row.get::<i64, _>("cached_input_tokens").max(0) as u64;
                 let reasoning_tokens = row.get::<i64, _>("reasoning_tokens").max(0) as u64;
                 let total_tool_calls = row.get::<i64, _>("total_tool_calls").max(0) as u64;
                 let requests_with_tool_calls =
@@ -1408,7 +1408,10 @@ impl LocalMetricsStore for SqliteLocalMetricsStore {
                     avg_input_tokens: average(total_input_tokens, requests),
                     avg_output_tokens: average(total_output_tokens, requests),
                     avg_total_tokens: average(total_tokens, requests),
-                    input_output_ratio: ratio_f64(total_input_tokens as f64, total_output_tokens as f64),
+                    input_output_ratio: ratio_f64(
+                        total_input_tokens as f64,
+                        total_output_tokens as f64,
+                    ),
                     cached_input_tokens_ratio: ratio(cached_input_tokens, total_input_tokens),
                     reasoning_tokens_ratio: ratio(reasoning_tokens, total_tokens),
                     tokens_per_second: tokens_per_second(total_tokens, total_duration_ms),
@@ -1653,8 +1656,7 @@ async fn query_model_timeseries(
         let total_duration_ms = row.get::<i64, _>("total_duration_ms").max(0) as u64;
         entry.avg_duration_ms += total_duration_ms as f64;
         entry.total_tokens += row.get::<i64, _>("total_tokens").max(0) as u64;
-        let requests_with_tool_calls =
-            row.get::<i64, _>("requests_with_tool_calls").max(0) as u64;
+        let requests_with_tool_calls = row.get::<i64, _>("requests_with_tool_calls").max(0) as u64;
         let total_tool_calls = row.get::<i64, _>("total_tool_calls").max(0) as u64;
         entry.tool_call_rate += requests_with_tool_calls as f64;
         entry.p95_duration_ms = 0.0;
@@ -1818,17 +1820,15 @@ fn summarize_model_rows(rows: &[ModelStatsRow]) -> ModelSummaryRow {
     let total_output_tokens = sum_rows(rows, |row| row.total_output_tokens);
     let total_tokens = sum_rows(rows, |row| row.total_tokens);
     let avg_duration_ms = weighted_average(rows, |row| row.avg_duration_ms, |row| row.requests);
-    let estimated_cost_usd = rows
-        .iter()
-        .try_fold(0.0, |acc, row| row.estimated_cost_usd.map(|cost| acc + cost));
+    let estimated_cost_usd = rows.iter().try_fold(0.0, |acc, row| {
+        row.estimated_cost_usd.map(|cost| acc + cost)
+    });
     let tool_successes = sum_rows(rows, |row| {
         ((row.tool_success_rate_by_model * row.requests as f64).round() as u64).min(row.requests)
     });
     let completed_turns = rows
         .iter()
-        .map(|row| {
-            (row.turn_completion_rate * row.avg_requests_per_turn.max(1.0)).round() as u64
-        })
+        .map(|row| (row.turn_completion_rate * row.avg_requests_per_turn.max(1.0)).round() as u64)
         .sum::<u64>();
 
     ModelSummaryRow {
@@ -1844,7 +1844,11 @@ fn summarize_model_rows(rows: &[ModelStatsRow]) -> ModelSummaryRow {
             |row| row.requests,
         ),
         avg_duration_ms,
-        max_duration_ms: rows.iter().map(|row| row.max_duration_ms).max().unwrap_or(0),
+        max_duration_ms: rows
+            .iter()
+            .map(|row| row.max_duration_ms)
+            .max()
+            .unwrap_or(0),
         total_input_tokens,
         total_output_tokens,
         total_tokens,
@@ -1862,7 +1866,10 @@ fn summarize_model_rows(rows: &[ModelStatsRow]) -> ModelSummaryRow {
             |row| row.reasoning_tokens_ratio,
             |row| row.total_tokens,
         ),
-        tokens_per_second: tokens_per_second(total_tokens, (avg_duration_ms * total_requests as f64) as u64),
+        tokens_per_second: tokens_per_second(
+            total_tokens,
+            (avg_duration_ms * total_requests as f64) as u64,
+        ),
         tool_call_rate: weighted_average(rows, |row| row.tool_call_rate, |row| row.requests),
         avg_tool_calls_per_request: weighted_average(
             rows,
@@ -1947,11 +1954,7 @@ fn average(total: u64, count: u64) -> f64 {
     }
 }
 
-fn weighted_average<T>(
-    rows: &[T],
-    value: impl Fn(&T) -> f64,
-    weight: impl Fn(&T) -> u64,
-) -> f64 {
+fn weighted_average<T>(rows: &[T], value: impl Fn(&T) -> f64, weight: impl Fn(&T) -> u64) -> f64 {
     let total_weight = rows.iter().map(&weight).sum::<u64>();
     if total_weight == 0 {
         return 0.0;

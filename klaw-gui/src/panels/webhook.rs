@@ -520,7 +520,12 @@ fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig, path: Op
     let gateway_status = request_gateway_status().ok();
     let runtime_url = gateway_status
         .as_ref()
-        .and_then(|status| status.info.as_ref().map(|info| gateway_base_url(&info.ws_url)))
+        .and_then(|status| {
+            status
+                .info
+                .as_ref()
+                .map(|info| gateway_base_url(&info.ws_url))
+        })
         .map(|base| format!("{base}{}", webhook.path));
     let auth_configured = gateway_status
         .as_ref()

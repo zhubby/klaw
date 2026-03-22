@@ -12,7 +12,7 @@ use klaw_core::observability::{
     AgentTelemetry, ModelRequestRecord, ModelToolOutcomeRecord, ToolOutcomeStatus,
     TurnOutcomeRecord,
 };
-use klaw_util::{observability_db_path, default_data_dir};
+use klaw_util::{default_data_dir, observability_db_path};
 use prometheus::Registry;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -122,7 +122,7 @@ pub async fn init_observability(
     } else {
         None
     };
-        let local_store = if config.local_store.enabled {
+    let local_store = if config.local_store.enabled {
         let root_dir = data_root
             .or_else(default_data_dir)
             .ok_or(ObservabilityError::Disabled)?;

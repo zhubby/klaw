@@ -51,6 +51,7 @@ url = "http://127.0.0.1:8888"
 ## 出站能力
 
 - 渠道会将 `ChannelResponse` 渲染为 Telegram `HTML` 文本，并通过 `sendMessage` 直接回复当前 chat
-- 通用帮助、命令列表、代码块、粗体标题会走 Telegram 专用渲染层，而不是复用普通 Markdown 直发
+- Telegram 渲染层会把常见 Markdown 映射为 Bot API 支持的 HTML：标题、粗体/斜体/下划线/删除线、引用块、列表、行内代码、fenced code block、链接、剧透
+- 继续使用 Telegram `HTML` parse mode，而不是直接把原始 markdown 作为 `MarkdownV2` 发出；这样可以避免 Telegram `MarkdownV2` 在普通文本、链接、代码块场景下大量上下文相关转义带来的错乱
 - 当响应包含 `approval_id` 时，会自动发送带 `Approve` / `Reject` inline keyboard 的审批消息
 - 仍未实现 Telegram 专属异步 outbound dispatcher；当前仍以“入站请求即时回复”为主

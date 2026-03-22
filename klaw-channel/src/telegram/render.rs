@@ -91,55 +91,56 @@ fn markdownish_to_telegram_html(input: &str) -> String {
         return String::new();
     }
 
-    let mut out = String::new();
-    let mut first_segment = true;
-    let mut remainder = input;
+    let lines = input.lines().collect::<Vec<_>>();
+    let mut blocks = Vec::new();
+    let mut index = 0;
 
-    while let Some(start) = remainder.find("```") {
-        let before = &remainder[..start];
-        if !before.is_empty() {
-            if !first_segment && !out.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push_str(&render_inline_html(before));
-            first_segment = false;
+    while index < lines.len() {
+        let line = lines[index];
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            index += 1;
+            continue;
         }
 
-        let after_ticks = &remainder[start + 3..];
-        let (language, after_header) = match after_ticks.find('\n') {
-            Some(newline) => (&after_ticks[..newline], &after_ticks[newline + 1..]),
-            None => ("", ""),
-        };
-
-        if let Some(end) = after_header.find("```") {
-            let code = &after_header[..end];
-            if !out.is_empty() && !out.ends_with("\n\n") {
-                out.push_str("\n\n");
-            }
-            if !language.trim().is_empty() {
-                out.push_str(&format!("<b>{}</b>\n", escape_html(language.trim())));
-            }
-            out.push_str("<pre>");
-            out.push_str(&escape_html(code.trim_end_matches('\n')));
-            out.push_str("</pre>");
-            remainder = &after_header[end + 3..];
-        } else {
-            if !out.is_empty() && !out.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push_str(&render_inline_html(&remainder[start..]));
-            return out;
+        if let Some((language, code, next_index)) = parse_fenced_code_block(&lines, index) {
+            blocks.push(render_code_block(language, &code));
+            index = next_index;
+            continue;
         }
+
+        if is_horizontal_rule(trimmed) {
+            index += 1;
+            continue;
+        }
+
+        if is_blockquote_line(trimmed) {
+            let (quote, next_index) = render_blockquote(&lines, index);
+            blocks.push(quote);
+            index = next_index;
+            continue;
+        }
+
+        if let Some(heading) = render_heading(trimmed) {
+            blocks.push(heading);
+            index += 1;
+            continue;
+        }
+
+        if is_list_item(line) {
+            let (list, next_index) = render_list(&lines, index);
+            blocks.push(list);
+            index = next_index;
+            continue;
+        }
+
+        let (paragraph, next_index) = render_paragraph(&lines, index);
+        blocks.push(paragraph);
+        index = next_index;
     }
 
-    if !remainder.is_empty() {
-        if !out.is_empty() && !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str(&render_inline_html(remainder));
-    }
-
-    out
+    blocks.join("\n\n")
 }
 
 fn render_inline_html(input: &str) -> String {
@@ -148,45 +149,328 @@ fn render_inline_html(input: &str) -> String {
 
     while i < input.len() {
         let rest = &input[i..];
-        let rest_bytes = rest.as_bytes();
 
-        if rest_bytes.starts_with(b"**") {
-            if let Some(end) = find_subslice(&rest_bytes[2..], b"**") {
-                let content = &rest[2..2 + end];
-                out.push_str("<b>");
-                out.push_str(&escape_html(content));
-                out.push_str("</b>");
-                i += 2 + end + 2;
+        if let Some((rendered, consumed)) = try_render_link(rest) {
+            out.push_str(&rendered);
+            i += consumed;
+            continue;
+        }
+
+        if let Some((rendered, consumed)) = try_render_code_span(rest) {
+            out.push_str(&rendered);
+            i += consumed;
+            continue;
+        }
+
+        if let Some((rendered, consumed)) = try_render_delimited_span(rest, "**", "b") {
+            out.push_str(&rendered);
+            i += consumed;
+            continue;
+        }
+
+        if let Some((rendered, consumed)) = try_render_delimited_span(rest, "__", "u") {
+            out.push_str(&rendered);
+            i += consumed;
+            continue;
+        }
+
+        if let Some((rendered, consumed)) = try_render_delimited_span(rest, "~~", "s") {
+            out.push_str(&rendered);
+            i += consumed;
+            continue;
+        }
+
+        if let Some((rendered, consumed)) = try_render_delimited_span(rest, "||", "tg-spoiler") {
+            out.push_str(&rendered);
+            i += consumed;
+            continue;
+        }
+
+        if let Some((rendered, consumed)) = try_render_emphasis(rest, '*') {
+            out.push_str(&rendered);
+            i += consumed;
+            continue;
+        }
+
+        if let Some((rendered, consumed)) = try_render_emphasis(rest, '_') {
+            out.push_str(&rendered);
+            i += consumed;
+            continue;
+        }
+
+        if let Some(stripped) = rest.strip_prefix('\\') {
+            if let Some(ch) = stripped.chars().next() {
+                out.push_str(&escape_html(ch.encode_utf8(&mut [0; 4])));
+                i += 1 + ch.len_utf8();
                 continue;
             }
         }
 
-        if rest_bytes.first() == Some(&b'`') {
-            if let Some(end) = rest_bytes[1..].iter().position(|ch| *ch == b'`') {
-                let content = &rest[1..1 + end];
-                out.push_str("<code>");
-                out.push_str(&escape_html(content));
-                out.push_str("</code>");
-                i += end + 2;
-                continue;
-            }
+        if let Some(ch) = rest.chars().next() {
+            out.push_str(&escape_html(ch.encode_utf8(&mut [0; 4])));
+            i += ch.len_utf8();
+            continue;
         }
 
-        let mut chars = rest.chars();
-        let ch = chars
-            .next()
-            .expect("rest should be non-empty while iterating");
-        out.push_str(&escape_html(ch.encode_utf8(&mut [0; 4])));
-        i += ch.len_utf8();
+        break;
     }
 
     out
 }
 
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+fn parse_fenced_code_block(
+    lines: &[&str],
+    start: usize,
+) -> Option<(Option<String>, String, usize)> {
+    let opening = lines.get(start)?.trim_start();
+    let language = opening.strip_prefix("```")?;
+    let language = language.trim();
+    let mut code = Vec::new();
+    let mut index = start + 1;
+
+    while index < lines.len() {
+        if lines[index].trim() == "```" {
+            return Some((
+                (!language.is_empty()).then(|| language.to_string()),
+                code.join("\n"),
+                index + 1,
+            ));
+        }
+        code.push(lines[index]);
+        index += 1;
+    }
+
+    None
+}
+
+fn render_code_block(language: Option<String>, code: &str) -> String {
+    let escaped_code = escape_html(code.trim_end_matches('\n'));
+    match language {
+        Some(language) => format!(
+            "<pre><code class=\"language-{}\">{}</code></pre>",
+            escape_html_attribute(&language),
+            escaped_code
+        ),
+        None => format!("<pre>{}</pre>", escaped_code),
+    }
+}
+
+fn render_blockquote(lines: &[&str], start: usize) -> (String, usize) {
+    let mut rendered_lines = Vec::new();
+    let mut index = start;
+
+    while index < lines.len() {
+        let trimmed = lines[index].trim();
+        if trimmed.is_empty() || !is_blockquote_line(trimmed) {
+            break;
+        }
+
+        let content = trimmed.trim_start_matches('>').trim_start().trim_end();
+        rendered_lines.push(render_inline_html(content));
+        index += 1;
+    }
+
+    (
+        format!("<blockquote>{}</blockquote>", rendered_lines.join("\n")),
+        index,
+    )
+}
+
+fn render_heading(line: &str) -> Option<String> {
+    let bytes = line.as_bytes();
+    let level = bytes.iter().take_while(|ch| **ch == b'#').count();
+    if level == 0 || level > 6 || bytes.get(level) != Some(&b' ') {
+        return None;
+    }
+
+    let content = line[level + 1..].trim();
+    if content.is_empty() {
+        return None;
+    }
+
+    Some(format!("<b>{}</b>", render_inline_html(content)))
+}
+
+fn render_list(lines: &[&str], start: usize) -> (String, usize) {
+    let mut items = Vec::new();
+    let mut index = start;
+
+    while index < lines.len() {
+        let line = lines[index];
+        if let Some((marker, content)) = parse_list_item(line) {
+            let prefix = marker.unwrap_or_else(|| "•".to_string());
+            items.push(format!("{prefix} {}", render_inline_html(content.trim())));
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    (items.join("\n"), index)
+}
+
+fn render_paragraph(lines: &[&str], start: usize) -> (String, usize) {
+    let mut parts = Vec::new();
+    let mut index = start;
+
+    while index < lines.len() {
+        let line = lines[index];
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || parse_fenced_code_block(lines, index).is_some()
+            || is_blockquote_line(trimmed)
+            || render_heading(trimmed).is_some()
+            || is_list_item(line)
+            || is_horizontal_rule(trimmed)
+        {
+            break;
+        }
+
+        parts.push(render_inline_html(trimmed));
+        index += 1;
+    }
+
+    (parts.join("\n"), index)
+}
+
+fn try_render_link(input: &str) -> Option<(String, usize)> {
+    let bracketed = input.strip_prefix('[')?;
+    let text_end = find_unescaped_char(bracketed, ']')?;
+    let text = &bracketed[..text_end];
+    let after_text = &bracketed[text_end + 1..];
+    let url_part = after_text.strip_prefix('(')?;
+    let url_end = find_unescaped_char(url_part, ')')?;
+    let url = url_part[..url_end].trim();
+    if url.is_empty() {
+        return None;
+    }
+
+    let consumed = 1 + text.len() + 1 + 1 + url_end + 1;
+    Some((
+        format!(
+            "<a href=\"{}\">{}</a>",
+            escape_html_attribute(url),
+            render_inline_html(text)
+        ),
+        consumed,
+    ))
+}
+
+fn try_render_code_span(input: &str) -> Option<(String, usize)> {
+    let rest = input.strip_prefix('`')?;
+    let end = find_unescaped_char(rest, '`')?;
+    let content = &rest[..end];
+    Some((
+        format!("<code>{}</code>", escape_html(content)),
+        1 + end + 1,
+    ))
+}
+
+fn try_render_delimited_span(input: &str, delimiter: &str, tag: &str) -> Option<(String, usize)> {
+    let rest = input.strip_prefix(delimiter)?;
+    let end = find_unescaped_subslice(rest, delimiter)?;
+    let content = &rest[..end];
+    if content.trim().is_empty() {
+        return None;
+    }
+
+    Some((
+        format!("<{tag}>{}</{tag}>", render_inline_html(content)),
+        delimiter.len() + end + delimiter.len(),
+    ))
+}
+
+fn try_render_emphasis(input: &str, delimiter: char) -> Option<(String, usize)> {
+    if !input.starts_with(delimiter) {
+        return None;
+    }
+
+    let rest = &input[delimiter.len_utf8()..];
+    let end = find_unescaped_char(rest, delimiter)?;
+    let content = &rest[..end];
+    if content.trim().is_empty() {
+        return None;
+    }
+
+    Some((
+        format!("<i>{}</i>", render_inline_html(content)),
+        delimiter.len_utf8() + end + delimiter.len_utf8(),
+    ))
+}
+
+fn find_unescaped_char(input: &str, target: char) -> Option<usize> {
+    let mut escaped = false;
+
+    for (index, ch) in input.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == target {
+            return Some(index);
+        }
+    }
+
+    None
+}
+
+fn find_unescaped_subslice(input: &str, needle: &str) -> Option<usize> {
+    let mut start = 0;
+    while let Some(relative) = input[start..].find(needle) {
+        let index = start + relative;
+        let escaped = input[..index]
+            .chars()
+            .rev()
+            .take_while(|ch| *ch == '\\')
+            .count()
+            % 2
+            == 1;
+        if !escaped {
+            return Some(index);
+        }
+        start = index + needle.len();
+    }
+    None
+}
+
+fn is_blockquote_line(line: &str) -> bool {
+    line.starts_with('>')
+}
+
+fn is_horizontal_rule(line: &str) -> bool {
+    matches!(line, "---" | "***" | "___")
+}
+
+fn is_list_item(line: &str) -> bool {
+    parse_list_item(line).is_some()
+}
+
+fn parse_list_item(line: &str) -> Option<(Option<String>, &str)> {
+    let trimmed = line.trim_start();
+    for marker in ["- ", "* ", "+ "] {
+        if let Some(content) = trimmed.strip_prefix(marker) {
+            return Some((None, content));
+        }
+    }
+
+    let digit_count = trimmed.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digit_count == 0 {
+        return None;
+    }
+
+    let suffix = trimmed.get(digit_count..)?;
+    let separator = suffix.chars().next()?;
+    if separator != '.' && separator != ')' {
+        return None;
+    }
+
+    let content = suffix[separator.len_utf8()..].strip_prefix(' ')?;
+    let marker = format!("{}.", &trimmed[..digit_count]);
+    Some((Some(marker), content))
 }
 
 fn extract_shell_approval_id(content: &str) -> Option<String> {
@@ -239,6 +523,10 @@ pub fn escape_html(input: &str) -> String {
         .replace('>', "&gt;")
 }
 
+fn escape_html_attribute(input: &str) -> String {
+    escape_html(input).replace('"', "&quot;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,7 +542,7 @@ mod tests {
 
         let rendered = render_telegram_response(&output, true);
         assert!(rendered.contains("<b>Title</b>"));
-        assert!(rendered.contains("<pre>/help</pre>"));
+        assert!(rendered.contains("<pre><code class=\"language-text\">/help</code></pre>"));
         assert!(rendered.contains("<b>Reasoning</b>"));
     }
 
@@ -292,5 +580,35 @@ mod tests {
         let rendered = render_telegram_response(&output, false);
         assert!(rendered.contains("📘"));
         assert!(rendered.contains("<b>Command Center</b>"));
+    }
+
+    #[test]
+    fn markdownish_renderer_supports_links_quotes_lists_and_inline_styles() {
+        let output = ChannelResponse {
+            content: "# Title\n\n> quoted **line**\n\n- item with [link](https://example.com?q=1&x=2)\n1. `code`\n\n__underline__ ~~gone~~ ||spoiler|| _italic_".to_string(),
+            reasoning: None,
+            metadata: BTreeMap::new(),
+        };
+
+        let rendered = render_telegram_response(&output, false);
+        assert!(rendered.contains("<b>Title</b>"));
+        assert!(rendered.contains("<blockquote>quoted <b>line</b></blockquote>"));
+        assert!(
+            rendered.contains("• item with <a href=\"https://example.com?q=1&amp;x=2\">link</a>")
+        );
+        assert!(rendered.contains("1. <code>code</code>"));
+        assert!(rendered.contains("<u>underline</u>"));
+        assert!(rendered.contains("<s>gone</s>"));
+        assert!(rendered.contains("<tg-spoiler>spoiler</tg-spoiler>"));
+        assert!(rendered.contains("<i>italic</i>"));
+    }
+
+    #[test]
+    fn fenced_code_block_with_language_uses_telegram_supported_code_class() {
+        let rendered = markdownish_to_telegram_html("```rust\nfn main() {}\n```");
+        assert_eq!(
+            rendered,
+            "<pre><code class=\"language-rust\">fn main() {}</code></pre>"
+        );
     }
 }

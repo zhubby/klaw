@@ -150,7 +150,8 @@ impl GatewayManager {
         mode: TailscaleMode,
     ) -> Result<GatewayStatusSnapshot, String> {
         if mode == TailscaleMode::Funnel && !self.auth_configured {
-            let message = "funnel mode requires authentication. Configure gateway.auth first.".to_string();
+            let message =
+                "funnel mode requires authentication. Configure gateway.auth first.".to_string();
             self.last_error = Some(message.clone());
             return Err(message);
         }

@@ -948,7 +948,7 @@ mod tests {
 
         let rendered = render_telegram_response(&output, true);
         assert!(rendered.contains("<b>Title</b>"));
-        assert!(rendered.contains("<pre>/help</pre>"));
+        assert!(rendered.contains("<pre><code class=\"language-text\">/help</code></pre>"));
 
         let approval = build_approval_message(&output, "approval-1");
         assert!(approval.contains("Approval Required"));

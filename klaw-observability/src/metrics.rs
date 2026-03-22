@@ -276,7 +276,13 @@ impl MetricsRecorder {
         self.llm_tokens_counter.add(value, &labels);
     }
 
-    pub fn incr_model_tool_success(&self, session_key: &str, provider: &str, model: &str, tool_name: &str) {
+    pub fn incr_model_tool_success(
+        &self,
+        session_key: &str,
+        provider: &str,
+        model: &str,
+        tool_name: &str,
+    ) {
         let labels = [
             KeyValue::new(LABEL_SESSION_KEY, session_key.to_string()),
             KeyValue::new(LABEL_PROVIDER, provider.to_string()),
@@ -364,7 +370,10 @@ mod tests {
             MetricName::ToolFailureTotal.as_str(),
             METRIC_TOOL_FAILURE_TOTAL
         );
-        assert_eq!(MetricName::LlmRequestTotal.as_str(), METRIC_LLM_REQUEST_TOTAL);
+        assert_eq!(
+            MetricName::LlmRequestTotal.as_str(),
+            METRIC_LLM_REQUEST_TOTAL
+        );
         assert_eq!(
             MetricName::LlmRequestDurationMs.as_str(),
             METRIC_LLM_REQUEST_DURATION_MS

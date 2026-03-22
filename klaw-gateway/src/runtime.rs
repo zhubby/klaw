@@ -69,11 +69,7 @@ pub async fn spawn_gateway_with_options(
     let health = build_health_registry(options.health);
     let webhook = build_webhook_state(config, options.webhook_handler)?;
     let auth_token = config.auth.resolve_token();
-    let state = Arc::new(GatewayState::new(
-        health,
-        options.prometheus,
-        webhook,
-    ));
+    let state = Arc::new(GatewayState::new(health, options.prometheus, webhook));
     let app = build_router(config, state, auth_token);
 
     let listener = tokio::net::TcpListener::bind(socket_addr)
@@ -115,7 +111,9 @@ pub async fn spawn_gateway_with_options(
     ))
 }
 
-fn setup_tailscale(config: &GatewayConfig) -> Result<Option<crate::tailscale::TailscaleRuntimeInfo>, GatewayError> {
+fn setup_tailscale(
+    config: &GatewayConfig,
+) -> Result<Option<crate::tailscale::TailscaleRuntimeInfo>, GatewayError> {
     if config.tailscale.mode == TailscaleMode::Off {
         return Ok(None);
     }
@@ -164,7 +162,11 @@ fn build_health_registry(health: Option<Arc<HealthRegistry>>) -> Arc<HealthRegis
     })
 }
 
-fn build_router(config: &GatewayConfig, state: Arc<GatewayState>, auth_token: Option<String>) -> Router {
+fn build_router(
+    config: &GatewayConfig,
+    state: Arc<GatewayState>,
+    auth_token: Option<String>,
+) -> Router {
     let mut app = Router::new()
         .route("/ws/chat", get(ws_chat_handler))
         .route("/health/live", get(health_live_handler))

@@ -2,6 +2,10 @@
 
 ## 2026-03-22
 
+### Changed
+
+- `telegram` 渲染层补齐常见 Markdown 到 Telegram HTML 的映射，新增标题、引用块、列表、链接、下划线、删除线、剧透、以及带语言标记的 fenced code block 支持，减少 Bot API 对普通 markdown 输出的格式丢失
+
 ### Fixed
 
 - `telegram` HTTP 客户端不再无条件禁用系统代理，避免在依赖 `HTTPS_PROXY`/`ALL_PROXY` 访问 Telegram Bot API 的环境里出现 `getUpdates` / `sendMessage` 传输失败后看似“卡死”的现象

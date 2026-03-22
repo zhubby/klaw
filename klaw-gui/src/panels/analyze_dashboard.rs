@@ -248,7 +248,8 @@ impl AnalyzeDashboardPanel {
                             for provider in &snapshot.providers {
                                 if ui
                                     .selectable_label(
-                                        self.selected_provider.as_deref() == Some(provider.as_str()),
+                                        self.selected_provider.as_deref()
+                                            == Some(provider.as_str()),
                                         provider,
                                     )
                                     .clicked()
@@ -436,10 +437,11 @@ impl AnalyzeDashboardPanel {
         });
         let mut by_failures = snapshot.model_rows.clone();
         by_failures.sort_by(|left, right| {
-            right
-                .failures
-                .cmp(&left.failures)
-                .then_with(|| right.request_failure_rate.total_cmp(&left.request_failure_rate))
+            right.failures.cmp(&left.failures).then_with(|| {
+                right
+                    .request_failure_rate
+                    .total_cmp(&left.request_failure_rate)
+            })
         });
         let mut by_p95 = snapshot.model_rows.clone();
         by_p95.sort_by(|left, right| right.p95_duration_ms.total_cmp(&left.p95_duration_ms));
@@ -466,12 +468,17 @@ impl AnalyzeDashboardPanel {
                     )
                 },
             );
-            render_model_list(&mut cols[1], "Top Models by Token Usage", by_tokens.iter(), |row| {
-                format!(
-                    "{}/{}  tokens={}  avg={:.1}",
-                    row.provider, row.model, row.total_tokens, row.avg_total_tokens
-                )
-            });
+            render_model_list(
+                &mut cols[1],
+                "Top Models by Token Usage",
+                by_tokens.iter(),
+                |row| {
+                    format!(
+                        "{}/{}  tokens={}  avg={:.1}",
+                        row.provider, row.model, row.total_tokens, row.avg_total_tokens
+                    )
+                },
+            );
         });
         ui.add_space(8.0);
         ui.columns(2, |cols| {
@@ -585,7 +592,12 @@ impl AnalyzeDashboardPanel {
             let success_rate_points: PlotPoints = snapshot
                 .timeseries
                 .iter()
-                .map(|point| [point.bucket_start_unix_ms as f64, point.success_rate * 100.0])
+                .map(|point| {
+                    [
+                        point.bucket_start_unix_ms as f64,
+                        point.success_rate * 100.0,
+                    ]
+                })
                 .collect();
 
             let calls_points: PlotPoints = snapshot
@@ -597,8 +609,10 @@ impl AnalyzeDashboardPanel {
             show_plot(
                 ui,
                 "tool_success_rate_trend",
-                &[("Success Rate", success_rate_points, rgb(100, 200, 100), 2.0),
-                  ("Calls", calls_points, rgb(100, 150, 250), 1.5)],
+                &[
+                    ("Success Rate", success_rate_points, rgb(100, 200, 100), 2.0),
+                    ("Calls", calls_points, rgb(100, 150, 250), 1.5),
+                ],
                 true,
             );
         });
@@ -619,7 +633,12 @@ impl AnalyzeDashboardPanel {
             let success_rate: PlotPoints = snapshot
                 .timeseries
                 .iter()
-                .map(|point| [point.bucket_start_unix_ms as f64, point.request_success_rate * 100.0])
+                .map(|point| {
+                    [
+                        point.bucket_start_unix_ms as f64,
+                        point.request_success_rate * 100.0,
+                    ]
+                })
                 .collect();
             let avg_duration: PlotPoints = snapshot
                 .timeseries
@@ -639,22 +658,42 @@ impl AnalyzeDashboardPanel {
             let tool_call_rate: PlotPoints = snapshot
                 .timeseries
                 .iter()
-                .map(|point| [point.bucket_start_unix_ms as f64, point.tool_call_rate * 100.0])
+                .map(|point| {
+                    [
+                        point.bucket_start_unix_ms as f64,
+                        point.tool_call_rate * 100.0,
+                    ]
+                })
                 .collect();
             let tool_success_rate: PlotPoints = snapshot
                 .timeseries
                 .iter()
-                .map(|point| [point.bucket_start_unix_ms as f64, point.tool_success_rate * 100.0])
+                .map(|point| {
+                    [
+                        point.bucket_start_unix_ms as f64,
+                        point.tool_success_rate * 100.0,
+                    ]
+                })
                 .collect();
             let requests_per_turn: PlotPoints = snapshot
                 .timeseries
                 .iter()
-                .map(|point| [point.bucket_start_unix_ms as f64, point.avg_requests_per_turn])
+                .map(|point| {
+                    [
+                        point.bucket_start_unix_ms as f64,
+                        point.avg_requests_per_turn,
+                    ]
+                })
                 .collect();
             let tool_iterations_per_turn: PlotPoints = snapshot
                 .timeseries
                 .iter()
-                .map(|point| [point.bucket_start_unix_ms as f64, point.avg_tool_iterations_per_turn])
+                .map(|point| {
+                    [
+                        point.bucket_start_unix_ms as f64,
+                        point.avg_tool_iterations_per_turn,
+                    ]
+                })
                 .collect();
 
             show_plot(
@@ -663,7 +702,12 @@ impl AnalyzeDashboardPanel {
                 &[
                     ("Success Rate", success_rate, rgb(80, 180, 120), 2.0),
                     ("Tool Call Rate", tool_call_rate, rgb(220, 170, 70), 1.5),
-                    ("Tool Success Rate", tool_success_rate, rgb(100, 140, 230), 1.5),
+                    (
+                        "Tool Success Rate",
+                        tool_success_rate,
+                        rgb(100, 140, 230),
+                        1.5,
+                    ),
                 ],
                 true,
             );
@@ -704,8 +748,14 @@ impl AnalyzeDashboardPanel {
             for (label, value) in [
                 ("Input Tokens", snapshot.token_composition.input_tokens),
                 ("Output Tokens", snapshot.token_composition.output_tokens),
-                ("Cached Input Tokens", snapshot.token_composition.cached_input_tokens),
-                ("Reasoning Tokens", snapshot.token_composition.reasoning_tokens),
+                (
+                    "Cached Input Tokens",
+                    snapshot.token_composition.cached_input_tokens,
+                ),
+                (
+                    "Reasoning Tokens",
+                    snapshot.token_composition.reasoning_tokens,
+                ),
             ] {
                 ui.horizontal(|ui| {
                     ui.label(label);
