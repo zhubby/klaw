@@ -11,10 +11,20 @@ sqlx = ["dep:sqlx"]
 
 [dependencies]
 async-trait = { workspace = true }
+futures-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util"] }
+opendal = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+walkdir = { workspace = true }
+tar = { workspace = true }
+zstd = { workspace = true }
+hostname = { workspace = true }
 sqlx = { workspace = true, optional = true }
 turso = { workspace = true, optional = true }
 klaw-util = { workspace = true }

@@ -17,7 +17,7 @@ use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
 
 const FILTER_INPUT_WIDTH: f32 = 220.0;
-const PAGING_INPUT_WIDTH: f32 = 110.0;
+const PAGING_INPUT_WIDTH: f32 = 50.0;
 
 #[derive(Debug, Clone, Default)]
 struct WebhookConfigForm {
@@ -60,7 +60,6 @@ impl WebhookConfigForm {
     }
 }
 
-#[derive(Default)]
 pub struct WebhookPanel {
     store: Option<ConfigStore>,
     config_path: Option<PathBuf>,
@@ -76,11 +75,39 @@ pub struct WebhookPanel {
     status_filter: String,
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
-    limit_text: String,
-    offset_text: String,
+    page: i64,
+    size: i64,
     sort_order: WebhookEventSortOrder,
     selected_id: Option<String>,
     detail_record: Option<WebhookEventRecord>,
+}
+
+impl Default for WebhookPanel {
+    fn default() -> Self {
+        let today = Local::now().date_naive();
+        let one_year_ago = today - chrono::Duration::days(365);
+        Self {
+            store: None,
+            config_path: None,
+            revision: None,
+            config: AppConfig::default(),
+            config_form: WebhookConfigForm::default(),
+            config_window_open: false,
+            loaded: false,
+            rows: Vec::new(),
+            source_filter: String::new(),
+            event_type_filter: String::new(),
+            session_filter: String::new(),
+            status_filter: String::new(),
+            start_date: Some(one_year_ago),
+            end_date: Some(today),
+            page: 1,
+            size: 100,
+            sort_order: WebhookEventSortOrder::ReceivedAtDesc,
+            selected_id: None,
+            detail_record: None,
+        }
+    }
 }
 
 impl WebhookPanel {
@@ -89,10 +116,6 @@ impl WebhookPanel {
         if self.loaded {
             return;
         }
-        if self.limit_text.is_empty() {
-            self.limit_text = "100".to_string();
-        }
-        self.sort_order = WebhookEventSortOrder::ReceivedAtDesc;
         self.refresh(notifications);
     }
 
@@ -118,6 +141,9 @@ impl WebhookPanel {
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
+        let size = self.size.max(1);
+        let page = self.page.max(1);
+        let offset = (page - 1) * size;
         let query = WebhookEventQuery {
             source: normalize_filter(&self.source_filter),
             event_type: normalize_filter(&self.event_type_filter),
@@ -125,8 +151,8 @@ impl WebhookPanel {
             status: parse_status_filter(&self.status_filter),
             received_from_ms: self.start_date.and_then(date_start_ms),
             received_to_ms: self.end_date.and_then(date_end_ms),
-            limit: self.limit_text.trim().parse::<i64>().unwrap_or(100),
-            offset: self.offset_text.trim().parse::<i64>().unwrap_or(0),
+            limit: size,
+            offset,
             sort_order: self.sort_order,
         };
         match run_session_task(
@@ -227,53 +253,84 @@ impl PanelRenderer for WebhookPanel {
         ui.separator();
         render_webhook_config_summary(ui, &self.config, self.config_path.as_deref());
         ui.separator();
-        egui::Grid::new("webhook-filter-grid")
-            .num_columns(4)
-            .spacing([10.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("source");
-                ui.add_sized(
+        let mut need_refresh = false;
+        ui.horizontal(|ui| {
+            ui.label("source");
+            if ui
+                .add_sized(
                     [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
                     egui::TextEdit::singleline(&mut self.source_filter),
-                );
-                ui.label("event type");
-                ui.add_sized(
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("event type");
+            if ui
+                .add_sized(
                     [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
                     egui::TextEdit::singleline(&mut self.event_type_filter),
-                );
-                ui.end_row();
-
-                ui.label("session");
-                ui.add_sized(
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("session");
+            if ui
+                .add_sized(
                     [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
                     egui::TextEdit::singleline(&mut self.session_filter),
-                );
-                ui.label("status");
-                ui.add_sized(
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("status");
+            if ui
+                .add_sized(
                     [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
                     egui::TextEdit::singleline(&mut self.status_filter),
-                );
-                ui.end_row();
-
-                ui.label("start date");
-                render_date_picker(ui, &mut self.start_date, "webhook-start-date");
-                ui.label("end date");
-                render_date_picker(ui, &mut self.end_date, "webhook-end-date");
-                ui.end_row();
-
-                ui.label("limit");
-                ui.add_sized(
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("start date");
+            if render_date_picker(ui, &mut self.start_date, "webhook-start-date") {
+                need_refresh = true;
+            }
+            ui.label("end date");
+            if render_date_picker(ui, &mut self.end_date, "webhook-end-date") {
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("page");
+            if ui
+                .add_sized(
                     [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.limit_text),
-                );
-                ui.label("offset");
-                ui.add_sized(
+                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("size");
+            if ui
+                .add_sized(
                     [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.offset_text),
-                );
-                ui.end_row();
-            });
-        if ui.button("Apply").clicked() {
+                    egui::DragValue::new(&mut self.size).range(1..=1000),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+        });
+        if need_refresh {
             self.refresh(notifications);
         }
 
@@ -583,17 +640,23 @@ fn parse_status_filter(raw: &str) -> Option<WebhookEventStatus> {
     }
 }
 
-fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) {
+fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) -> bool {
+    let mut changed = false;
     ui.horizontal(|ui| {
         if let Some(date) = value.as_mut() {
-            ui.add(DatePickerButton::new(date).id_salt(id).format("%Y/%m/%d"));
-            if ui.small_button("Clear").clicked() {
-                *value = None;
+            if ui
+                .add(DatePickerButton::new(date).id_salt(id).format("%Y/%m/%d"))
+                .changed()
+            {
+                changed = true;
             }
-        } else if ui.button("Set Date").clicked() {
-            *value = Some(Local::now().date_naive());
+            if ui.small_button("×").clicked() {
+                *value = None;
+                changed = true;
+            }
         }
     });
+    changed
 }
 
 fn date_start_ms(date: NaiveDate) -> Option<i64> {

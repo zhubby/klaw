@@ -75,9 +75,7 @@ impl HeartbeatManagerTool {
         match raw.trim().to_ascii_lowercase().as_str() {
             "true" | "1" | "yes" | "y" | "on" => Ok(true),
             "false" | "0" | "no" | "n" | "off" => Ok(false),
-            _ => Err(ToolError::InvalidArgs(
-                "expected boolean value".to_string(),
-            )),
+            _ => Err(ToolError::InvalidArgs("expected boolean value".to_string())),
         }
     }
 
@@ -86,29 +84,45 @@ impl HeartbeatManagerTool {
             None | Some(Value::Null) => Ok(None),
             Some(Value::Bool(v)) => Ok(Some(*v)),
             Some(Value::String(v)) => Self::parse_bool_like(v).map(Some),
-            Some(_) => Err(ToolError::InvalidArgs(format!(
-                "`{key}` must be a boolean"
-            ))),
+            Some(_) => Err(ToolError::InvalidArgs(format!("`{key}` must be a boolean"))),
         }
     }
 
     fn build_input(
         args: &Value,
         ctx: &ToolContext,
-    ) -> Result<(Option<String>, String, String, String, bool, String, String, String, String), ToolError> {
-        let session_key = Self::optional_str(args, "session_key")?.unwrap_or_else(|| ctx.session_key.clone());
-        let channel = Self::optional_str(args, "channel")?.or_else(|| {
-            ctx.metadata
-                .get("channel")
-                .and_then(Value::as_str)
-                .map(ToString::to_string)
-        }).ok_or_else(|| ToolError::InvalidArgs("missing `channel`".to_string()))?;
-        let chat_id = Self::optional_str(args, "chat_id")?.or_else(|| {
-            ctx.metadata
-                .get("chat_id")
-                .and_then(Value::as_str)
-                .map(ToString::to_string)
-        }).ok_or_else(|| ToolError::InvalidArgs("missing `chat_id`".to_string()))?;
+    ) -> Result<
+        (
+            Option<String>,
+            String,
+            String,
+            String,
+            bool,
+            String,
+            String,
+            String,
+            String,
+        ),
+        ToolError,
+    > {
+        let session_key =
+            Self::optional_str(args, "session_key")?.unwrap_or_else(|| ctx.session_key.clone());
+        let channel = Self::optional_str(args, "channel")?
+            .or_else(|| {
+                ctx.metadata
+                    .get("channel")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .ok_or_else(|| ToolError::InvalidArgs("missing `channel`".to_string()))?;
+        let chat_id = Self::optional_str(args, "chat_id")?
+            .or_else(|| {
+                ctx.metadata
+                    .get("chat_id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .ok_or_else(|| ToolError::InvalidArgs("missing `chat_id`".to_string()))?;
 
         let every = Self::require_str(args, "every")?;
         validate_every(&every)?;
@@ -393,9 +407,7 @@ impl Tool for HeartbeatManagerTool {
             }
         };
         let rendered = serde_json::to_string_pretty(&payload).map_err(|err| {
-            ToolError::ExecutionFailed(format!(
-                "serialize heartbeat_manager output failed: {err}"
-            ))
+            ToolError::ExecutionFailed(format!("serialize heartbeat_manager output failed: {err}"))
         })?;
         Ok(ToolOutput {
             content_for_model: rendered.clone(),

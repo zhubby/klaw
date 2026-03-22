@@ -164,3 +164,102 @@ telemetry.set_health("provider", klaw_core::HealthStatus::Ready).await;
 | `/health/live` | GET | Liveness probe |
 | `/health/ready` | GET | Readiness probe |
 | `/health/status` | GET | 返回 JSON `{ "status": "Ready|Live|Degraded|Unavailable" }` |
+
+## 8. Local Analysis Store
+
+`klaw-observability` 提供本地 SQLite 分析存储，用于持久化工具调用统计，供 GUI Analyze Dashboard 查询。
+
+### 功能特性
+
+- **本地 SQLite 存储** - 工具调用统计持久化
+- **保留期配置** - 可配置数据保留天数
+- **定期刷新** - 可配置刷新间隔
+- **GUI 集成** - Analyze Dashboard 直接查询
+
+### 配置
+
+```toml
+[observability.local_store]
+enabled = true
+retention_days = 7
+flush_interval_seconds = 5
+```
+
+### 数据模型
+
+**ToolCallStat 结构**：
+
+```rust
+pub struct ToolCallStat {
+    pub tool_name: String,
+    pub call_count: i64,
+    pub success_count: i64,
+    pub failure_count: i64,
+    pub avg_duration_ms: f64,
+    pub last_called_at: i64,
+}
+```
+
+### API 使用
+
+```rust
+use klaw_observability::LocalAnalysisStore;
+
+let store = LocalAnalysisStore::new(&config)?;
+
+// 记录工具调用
+store.record_tool_call(
+    "shell",
+    std::time::Duration::from_millis(150),
+    true,  // success
+).await?;
+
+// 查询统计数据
+let stats = store.list_tool_stats().await?;
+for stat in stats {
+    println!("{}: {} calls, {:.2}ms avg",
+        stat.tool_name,
+        stat.call_count,
+        stat.avg_duration_ms
+    );
+}
+```
+
+### GUI Analyze Dashboard
+
+**功能特性**：
+
+| 功能 | 描述 |
+|------|------|
+| **工具统计列表** | 显示所有工具的调用统计 |
+| **成功率可视化** | 进度条显示成功率百分比 |
+| **平均耗时** | 显示每个工具的平均执行时间 |
+| **调用次数** | 显示调用次数和成功/失败数 |
+| **排序功能** | 按调用次数、成功率、平均耗时排序 |
+
+**面板字段**：
+
+| 字段 | 说明 |
+|------|------|
+| Tool Name | 工具名称 |
+| Calls | 总调用次数 (成功/失败) |
+| Success Rate | 成功率百分比 + 进度条 |
+| Avg Duration | 平均执行时间 |
+| Last Called | 最后调用时间 |
+
+### 数据保留
+
+- 默认保留 7 天数据
+- 后台任务定期清理过期数据
+- 保留期可通过 `retention_days` 配置
+
+### 刷新机制
+
+- 默认每 5 秒刷新一次内存统计到 SQLite
+- 刷新间隔可通过 `flush_interval_seconds` 配置
+- 应用退出时会强制刷新
+
+## 9. 相关文档
+
+- [LLM 审计跟踪](./llm-audit.md) - LLM 请求/响应审计
+- [配置概述](../configration/overview.md) - 配置模型

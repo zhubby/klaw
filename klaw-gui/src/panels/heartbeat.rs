@@ -493,7 +493,11 @@ impl HeartbeatPanel {
                             for run in &self.runs {
                                 let (icon, color, text) = status_display(run.status);
                                 ui.label(&run.id);
-                                ui.label(egui::RichText::new(format!("{icon} {text}")).color(color).strong());
+                                ui.label(
+                                    egui::RichText::new(format!("{icon} {text}"))
+                                        .color(color)
+                                        .strong(),
+                                );
                                 ui.label(format_timestamp_millis(run.scheduled_at_ms));
                                 ui.label(format_optional_timestamp_millis(run.started_at_ms));
                                 ui.label(format_optional_timestamp_millis(run.finished_at_ms));
@@ -641,7 +645,10 @@ impl PanelRenderer for HeartbeatPanel {
                                         run_now_heartbeat_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    if ui.button(format!("{} Edit", regular::PENCIL_SIMPLE)).clicked() {
+                                    if ui
+                                        .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                        .clicked()
+                                    {
                                         edit_heartbeat_id = Some(job.id.clone());
                                         ui.close();
                                     }
@@ -769,7 +776,7 @@ fn run_session_query(limit: i64, offset: i64) -> Result<Vec<SessionIndex>, Strin
                 .await
                 .map_err(|err| format!("failed to open session store: {err}"))?;
             store
-                .list_sessions(limit, offset)
+                .list_sessions(limit, offset, None, None)
                 .await
                 .map_err(|err| format!("session query failed: {err}"))
         })

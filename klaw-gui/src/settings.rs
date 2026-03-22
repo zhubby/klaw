@@ -1,10 +1,11 @@
 use klaw_util::{default_data_dir, settings_path as default_settings_path};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-const SETTINGS_SCHEMA_VERSION: u32 = 1;
+const SETTINGS_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppSettings {
@@ -35,29 +36,17 @@ impl Default for AppSettings {
     }
 }
 
-// ==================== General Settings ====================
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct GeneralSettings {
     #[serde(default)]
     pub launch_at_startup: bool,
 }
 
-// ==================== Privacy Settings ====================
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PrivacySettings {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct PrivacySettings {
-    // Reserved for future use
-}
-
-// ==================== Security Settings ====================
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct SecuritySettings {
-    // Reserved for future use
-}
-
-// ==================== Network Settings ====================
+pub struct SecuritySettings {}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -112,9 +101,9 @@ impl ProxyConfig {
     }
 }
 
-// ==================== Sync Settings ====================
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default, Ord, PartialOrd,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncItem {
     #[default]
@@ -147,25 +136,146 @@ impl SyncItem {
     pub fn all() -> &'static [SyncItem] {
         &[
             SyncItem::Session,
-            SyncItem::Skills,
-            SyncItem::Mcp,
-            SyncItem::SkillsRegistry,
-            SyncItem::GuiSettings,
             SyncItem::Archive,
-            SyncItem::UserWorkspace,
             SyncItem::Memory,
             SyncItem::Config,
+            SyncItem::GuiSettings,
+            SyncItem::Skills,
+            SyncItem::SkillsRegistry,
+            SyncItem::UserWorkspace,
         ]
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct SyncSettings {
-    #[serde(default)]
-    pub backup_items: Vec<SyncItem>,
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncProvider {
+    #[default]
+    S3,
 }
 
-// ==================== Persistence ====================
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncMode {
+    #[default]
+    SnapshotPrimary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SyncSchedule {
+    #[serde(default)]
+    pub auto_backup: bool,
+    #[serde(default = "default_sync_interval_minutes")]
+    pub interval_minutes: u32,
+}
+
+impl Default for SyncSchedule {
+    fn default() -> Self {
+        Self {
+            auto_backup: false,
+            interval_minutes: default_sync_interval_minutes(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RetentionPolicy {
+    #[serde(default = "default_keep_last")]
+    pub keep_last: u32,
+}
+
+impl Default for RetentionPolicy {
+    fn default() -> Self {
+        Self {
+            keep_last: default_keep_last(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct S3SyncConfig {
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default = "default_s3_region")]
+    pub region: String,
+    #[serde(default)]
+    pub bucket: String,
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default)]
+    pub access_key: String,
+    #[serde(default)]
+    pub secret_key: String,
+    #[serde(default)]
+    pub session_token: String,
+    #[serde(default = "default_access_key_env")]
+    pub access_key_env: String,
+    #[serde(default = "default_secret_key_env")]
+    pub secret_key_env: String,
+    #[serde(default)]
+    pub session_token_env: String,
+    #[serde(default)]
+    pub force_path_style: bool,
+}
+
+impl Default for S3SyncConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: String::new(),
+            region: default_s3_region(),
+            bucket: String::new(),
+            prefix: String::new(),
+            access_key: String::new(),
+            secret_key: String::new(),
+            session_token: String::new(),
+            access_key_env: default_access_key_env(),
+            secret_key_env: default_secret_key_env(),
+            session_token_env: String::new(),
+            force_path_style: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub provider: SyncProvider,
+    #[serde(default)]
+    pub mode: SyncMode,
+    #[serde(default)]
+    pub backup_items: Vec<SyncItem>,
+    #[serde(default)]
+    pub schedule: SyncSchedule,
+    #[serde(default)]
+    pub s3: S3SyncConfig,
+    #[serde(default)]
+    pub retention: RetentionPolicy,
+    #[serde(default)]
+    pub last_snapshot_at: Option<i64>,
+    #[serde(default)]
+    pub last_snapshot_id: Option<String>,
+    #[serde(default = "default_device_id")]
+    pub device_id: String,
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: SyncProvider::S3,
+            mode: SyncMode::SnapshotPrimary,
+            backup_items: default_backup_items(),
+            schedule: SyncSchedule::default(),
+            s3: S3SyncConfig::default(),
+            retention: RetentionPolicy::default(),
+            last_snapshot_at: None,
+            last_snapshot_id: None,
+            device_id: default_device_id(),
+        }
+    }
+}
 
 pub fn load_settings() -> AppSettings {
     let Some(path) = settings_path() else {
@@ -186,18 +296,17 @@ pub fn save_settings(settings: &AppSettings) -> io::Result<()> {
 
 fn load_settings_from_path(path: &Path) -> io::Result<AppSettings> {
     let raw = fs::read_to_string(path)?;
-    let settings: AppSettings = serde_json::from_str(&raw)
+    let mut settings: AppSettings = serde_json::from_str(&raw)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
-    // Migrate if needed
     if settings.schema_version < SETTINGS_SCHEMA_VERSION {
-        let migrated = AppSettings {
-            schema_version: SETTINGS_SCHEMA_VERSION,
-            ..settings
-        };
-        return Ok(migrated);
+        settings.schema_version = SETTINGS_SCHEMA_VERSION;
     }
 
+    sanitize_sync_settings(&mut settings.sync);
+    if settings.sync.device_id.trim().is_empty() {
+        settings.sync.device_id = default_device_id();
+    }
     Ok(settings)
 }
 
@@ -221,6 +330,52 @@ fn save_settings_to_path(path: &Path, settings: &AppSettings) -> io::Result<()> 
 
 fn settings_path() -> Option<PathBuf> {
     default_data_dir().map(default_settings_path)
+}
+
+fn sanitize_sync_settings(sync: &mut SyncSettings) {
+    let mut seen = BTreeSet::new();
+    sync.backup_items
+        .retain(|item| *item != SyncItem::Mcp && seen.insert(*item));
+}
+
+fn default_backup_items() -> Vec<SyncItem> {
+    vec![
+        SyncItem::Session,
+        SyncItem::Memory,
+        SyncItem::Archive,
+        SyncItem::Config,
+        SyncItem::GuiSettings,
+        SyncItem::Skills,
+        SyncItem::UserWorkspace,
+    ]
+}
+
+fn default_sync_interval_minutes() -> u32 {
+    60
+}
+
+fn default_keep_last() -> u32 {
+    10
+}
+
+fn default_s3_region() -> String {
+    "us-east-1".to_string()
+}
+
+fn default_access_key_env() -> String {
+    "AWS_ACCESS_KEY_ID".to_string()
+}
+
+fn default_secret_key_env() -> String {
+    "AWS_SECRET_ACCESS_KEY".to_string()
+}
+
+fn default_device_id() -> String {
+    hostname::get()
+        .ok()
+        .and_then(|value| value.into_string().ok())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "klaw-device".to_string())
 }
 
 #[cfg(test)]
@@ -270,14 +425,62 @@ mod tests {
     #[test]
     fn sync_settings_serialization() {
         let mut settings = AppSettings::default();
-        settings.sync.backup_items = vec![SyncItem::Session, SyncItem::Skills, SyncItem::Config];
+        settings.sync.enabled = true;
+        settings.sync.backup_items = vec![SyncItem::Session, SyncItem::Memory, SyncItem::Config];
+        settings.sync.s3.bucket = "demo".to_string();
+        settings.sync.s3.access_key = "ak".to_string();
+        settings.sync.s3.secret_key = "sk".to_string();
+        settings.sync.last_snapshot_id = Some("snap-1".to_string());
 
         let json = serde_json::to_string_pretty(&settings).unwrap();
         let restored: AppSettings = serde_json::from_str(&json).unwrap();
 
+        assert!(restored.sync.enabled);
         assert_eq!(restored.sync.backup_items.len(), 3);
         assert!(restored.sync.backup_items.contains(&SyncItem::Session));
-        assert!(restored.sync.backup_items.contains(&SyncItem::Skills));
+        assert!(restored.sync.backup_items.contains(&SyncItem::Memory));
         assert!(restored.sync.backup_items.contains(&SyncItem::Config));
+        assert_eq!(restored.sync.s3.bucket, "demo");
+        assert_eq!(restored.sync.s3.access_key, "ak");
+        assert_eq!(restored.sync.s3.secret_key, "sk");
+        assert_eq!(restored.sync.last_snapshot_id.as_deref(), Some("snap-1"));
+    }
+
+    #[test]
+    fn sync_settings_migrate_missing_new_fields() {
+        let json = r#"{
+          "schema_version": 1,
+          "sync": {
+            "backup_items": ["session", "config"]
+          }
+        }"#;
+
+        let path = std::env::temp_dir().join("klaw-settings-migrate.json");
+        fs::write(&path, json).unwrap();
+        let settings = load_settings_from_path(&path).unwrap();
+
+        assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION);
+        assert_eq!(settings.sync.provider, SyncProvider::S3);
+        assert_eq!(settings.sync.mode, SyncMode::SnapshotPrimary);
+        assert!(!settings.sync.device_id.is_empty());
+    }
+
+    #[test]
+    fn sync_settings_strip_mcp_item_on_load() {
+        let json = r#"{
+          "schema_version": 2,
+          "sync": {
+            "backup_items": ["session", "mcp", "session", "config"]
+          }
+        }"#;
+
+        let path = std::env::temp_dir().join("klaw-settings-strip-mcp.json");
+        fs::write(&path, json).unwrap();
+        let settings = load_settings_from_path(&path).unwrap();
+
+        assert_eq!(
+            settings.sync.backup_items,
+            vec![SyncItem::Session, SyncItem::Config]
+        );
     }
 }

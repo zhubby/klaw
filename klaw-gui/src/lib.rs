@@ -5,6 +5,7 @@ mod panels;
 mod runtime_bridge;
 mod settings;
 mod state;
+mod sync_runtime;
 mod theme;
 mod time_format;
 mod tray;

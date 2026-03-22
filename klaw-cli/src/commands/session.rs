@@ -49,6 +49,8 @@ impl SessionListCommand {
             .list_sessions(SessionListQuery {
                 limit: self.limit,
                 offset: self.offset,
+                updated_from_ms: None,
+                updated_to_ms: None,
             })
             .await?;
         if sessions.is_empty() {

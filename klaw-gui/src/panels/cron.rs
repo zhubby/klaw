@@ -419,7 +419,11 @@ impl CronPanel {
                             for run in &self.runs {
                                 let (icon, color, text) = cron_status_display(run.status);
                                 ui.label(&run.id);
-                                ui.label(egui::RichText::new(format!("{icon} {text}")).color(color).strong());
+                                ui.label(
+                                    egui::RichText::new(format!("{icon} {text}"))
+                                        .color(color)
+                                        .strong(),
+                                );
                                 ui.label(format_timestamp_millis(run.scheduled_at_ms));
                                 ui.label(format_optional_timestamp_millis(run.started_at_ms));
                                 ui.label(format_optional_timestamp_millis(run.finished_at_ms));
@@ -567,7 +571,10 @@ impl PanelRenderer for CronPanel {
                                         run_now_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    if ui.button(format!("{} Edit", regular::PENCIL_SIMPLE)).clicked() {
+                                    if ui
+                                        .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                        .clicked()
+                                    {
                                         edit_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }

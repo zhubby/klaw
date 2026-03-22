@@ -5,8 +5,8 @@ use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
     CronTaskRun, CronTaskStatus, HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun,
     HeartbeatTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
-    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob,
-    NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
     NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage, StorageError,
     StoragePaths, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookEventResult,
     WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
@@ -808,15 +808,24 @@ impl SessionStorage for TursoSessionStore {
         &self,
         limit: i64,
         offset: i64,
+        updated_from_ms: Option<i64>,
+        updated_to_ms: Option<i64>,
     ) -> Result<Vec<SessionIndex>, StorageError> {
-        let sql = format!(
+        let mut sql = String::from(
             "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-             FROM sessions
-             ORDER BY updated_at_ms DESC
-             LIMIT {} OFFSET {}",
+             FROM sessions WHERE 1=1",
+        );
+        if let Some(from) = updated_from_ms {
+            sql.push_str(&format!(" AND updated_at_ms >= {}", from));
+        }
+        if let Some(to) = updated_to_ms {
+            sql.push_str(&format!(" AND updated_at_ms <= {}", to));
+        }
+        sql.push_str(&format!(
+            " ORDER BY updated_at_ms DESC LIMIT {} OFFSET {}",
             limit.max(1),
             offset.max(0)
-        );
+        ));
         let conn = self.connection().await?;
         let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();

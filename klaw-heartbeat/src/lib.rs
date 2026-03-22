@@ -452,10 +452,7 @@ mod tests {
 
     async fn create_store() -> DefaultSessionStore {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let base = std::env::temp_dir().join(format!(
-            "klaw-heartbeat-test-{}-{suffix}",
-            now_ms()
-        ));
+        let base = std::env::temp_dir().join(format!("klaw-heartbeat-test-{}-{suffix}", now_ms()));
         DefaultSessionStore::open(StoragePaths::from_root(base))
             .await
             .expect("store should open")
@@ -481,7 +478,10 @@ mod tests {
 
         let payload_json = build_payload_json(&job).expect("payload");
         let payload: serde_json::Value = serde_json::from_str(&payload_json).expect("json");
-        assert_eq!(payload["metadata"][TRIGGER_KIND_KEY], TRIGGER_KIND_HEARTBEAT);
+        assert_eq!(
+            payload["metadata"][TRIGGER_KIND_KEY],
+            TRIGGER_KIND_HEARTBEAT
+        );
         assert_eq!(payload["metadata"][HEARTBEAT_SESSION_KEY], "stdio:main");
         assert_eq!(
             payload["metadata"][HEARTBEAT_SILENT_ACK_TOKEN_KEY],
@@ -540,13 +540,7 @@ mod tests {
     async fn worker_uses_active_session_key_when_present() {
         let store = Arc::new(create_store().await);
         store
-            .get_or_create_session_state(
-                "stdio:main",
-                "main",
-                "stdio",
-                "openai",
-                "gpt-4o-mini",
-            )
+            .get_or_create_session_state("stdio:main", "main", "stdio", "openai", "gpt-4o-mini")
             .await
             .expect("base session");
         store

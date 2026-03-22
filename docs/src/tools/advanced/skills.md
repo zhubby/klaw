@@ -75,6 +75,45 @@ installed = ["brainstorming"]
    - 本地手工 skills（`~/.klaw/skills`）
    - 同名冲突时 registry(managed) 优先，本地同名会被忽略并告警。
 
+### 递归发现 SKILL.md 文件
+
+Registry 同步时会递归扫描目录树，发现所有 `SKILL.md` 文件：
+
+- 扫描深度无限制
+- 支持 `SKILL.md` 位于任意子目录
+- 从 `SKILL.md` 文件中解析 `name` 字段作为 skill 标识
+- 自动跳过 `.git` 目录
+
+**示例目录结构**：
+
+```
+skills-registry/
+└── vercel/
+    ├── SKILL.md              # skill name: vercel/root
+    ├── category/
+    │   └── SKILL.md          # skill name: vercel/category
+    └── tools/
+        └── brainstorming/
+            └── SKILL.md      # skill name: vercel/brainstorming
+```
+
+### 同步状态指示器
+
+GUI Skills Registry 面板显示每个 registry 的同步状态：
+
+| 状态 | 图标 | 说明 |
+|------|------|------|
+| Synced | ✓ (绿色) | 同步成功，显示 commit hash |
+| Stale | ⚠ (黄色) | 同步失败，使用本地缓存 |
+| Error | ✗ (红色) | 同步失败且无本地缓存 |
+| Pending | ◌ (灰色) | 正在同步中 |
+
+**状态判断逻辑**：
+
+- 如果 `registry_commits` 中有记录且 `stale_registries` 中没有 → Synced
+- 如果 `stale_registries` 中有该 registry → Stale
+- 如果首次同步失败且无本地缓存 → Error
+
 ## SkillsRegistry / SkillsManager 抽象
 
 `SkillsRegistry` 负责只读 registry 镜像能力：

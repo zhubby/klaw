@@ -19,9 +19,32 @@ Klaw GUI is built with **egui**, an immediate-mode GUI framework in Rust. Key fe
 
 - **Tabbed workbench** - Multi-panel workspace
 - **State persistence** - Layout, theme, window size saved across sessions
-- **15 feature panels** - Profile, Session, Provider, Memory, Skills, etc.
+- **21 feature panels** - Profile, Session, Provider, Memory, Skills, Heartbeat, Cron, Gateway, Webhook, LLM, Analyze, etc.
 - **Toast notifications** - User feedback for operations
 - **Theme support** - System/Light/Dark modes
+
+## Panel Overview
+
+| Panel | Description |
+|-------|-------------|
+| **Profile** | LLM provider profile management |
+| **Session** | Chat session and message history |
+| **Provider** | Active provider status and metrics |
+| **Memory** | Memory entries management |
+| **Skills Manager** | Installed skills management |
+| **Skills Registry** | Browse and install skills from registries |
+| **Heartbeat** | Heartbeat job scheduling and execution records |
+| **Cron** | Scheduled job management and history |
+| **Gateway** | WebSocket gateway status and port info |
+| **Webhook** | Webhook request history and status |
+| **LLM** | LLM request/response audit trail |
+| **Analyze Dashboard** | Tool call statistics and analysis |
+| **Approval** | Pending approval requests |
+| **Archive** | Archived conversations |
+| **Logs** | Real-time application logs |
+| **Observability** | Metrics and tracing information |
+| **Tool** | Tool call history and results |
+| **System** | Environment check and system info |
 
 ## Module Structure
 

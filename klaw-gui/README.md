@@ -13,7 +13,7 @@
   - Runtime provider override dropdown on the right (select from `model_providers` without editing config; applies immediately to the running runtime's default provider for new routes and `/new`)
 - System tray / macOS menu bar icon loaded from `assets/icons/logo.iconset`
   - tray menu includes `Open Klaw`, `Setting`, `About`, and `Quit Klaw`
-  - `Setting` is currently a placeholder action with an in-app notification
+  - `Setting` opens the in-app settings workbench
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
   - includes tabs/theme/fullscreen and window size
 - macOS app icon is loaded from `assets/icons/logo.icns` at startup
@@ -37,7 +37,7 @@
   - tool
   - analyze dashboard
   - system (tmp directory usage and cleanup)
-  - setting (placeholder panel)
+  - setting (general/network plus S3 snapshot backup and restore)
 - system-monitor (real-time CPU/memory/data-dir/uptime cards in a 2x2 equal-width layout, plus detailed system information)
 - logs panel (live tracing stream in-process with level filters, keyword search, pause stream, auto-scroll, clear, export, and bounded in-memory buffer)
 - analyze dashboard panel (local observability-backed tool analytics with time-range switching, success rate, failure breakdown, top tools, and trend sampling)
@@ -87,6 +87,12 @@
   - resolve `~/.klaw/tmp` through `klaw-storage::StoragePaths`
   - calculate the temporary directory size on demand
   - clear all temporary files and folders while keeping the `tmp/` root directory
+- Setting panel features:
+  - persist sync settings in `settings.json`, including S3 endpoint/region/bucket/prefix, backup scope, retention, schedule, hostname-based device ID, and both direct or env-backed credentials
+  - trigger manual snapshot backup uploads
+  - trigger manual retention cleanup against remote snapshots
+  - list remote snapshots and manually restore a selected snapshot
+  - surface startup remote-update detection and shared sync task status in the Sync UI
 - Session panel features:
   - read indexed sessions via `klaw-session` manager abstraction
   - render session metadata in a read-only table with limit/offset controls

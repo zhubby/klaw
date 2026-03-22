@@ -14,6 +14,9 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Builder;
 
+const FILTER_INPUT_WIDTH: f32 = 220.0;
+const PAGING_INPUT_WIDTH: f32 = 50.0;
+
 #[derive(Default)]
 pub struct ApprovalPanel {
     loaded: bool,
@@ -21,8 +24,8 @@ pub struct ApprovalPanel {
     session_key_filter: String,
     tool_name_filter: String,
     status_filter: Option<ApprovalStatus>,
-    limit_text: String,
-    offset_text: String,
+    page: i64,
+    size: i64,
     selected_approval: Option<String>,
     view_approval: Option<ApprovalRecord>,
 }
@@ -32,19 +35,22 @@ impl ApprovalPanel {
         if self.loaded {
             return;
         }
-        if self.limit_text.is_empty() {
-            self.limit_text = "100".to_string();
+        if self.size == 0 {
+            self.size = 100;
         }
         self.refresh(notifications);
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
+        let size = self.size.max(1);
+        let page = self.page.max(1);
+        let offset = (page - 1) * size;
         let query = ApprovalListQuery {
             session_key: optional_trimmed(&self.session_key_filter),
             tool_name: optional_trimmed(&self.tool_name_filter),
             status: self.status_filter,
-            limit: self.limit_text.trim().parse::<i64>().unwrap_or(100),
-            offset: self.offset_text.trim().parse::<i64>().unwrap_or(0),
+            limit: size,
+            offset,
         };
 
         match run_approval_task(move |manager| async move { manager.list_approvals(query).await }) {
@@ -115,57 +121,86 @@ impl PanelRenderer for ApprovalPanel {
         });
 
         ui.separator();
-        egui::Grid::new("approval-filter-grid")
-            .num_columns(4)
-            .spacing([10.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("session_key");
-                ui.text_edit_singleline(&mut self.session_key_filter);
-                ui.label("tool_name");
-                ui.text_edit_singleline(&mut self.tool_name_filter);
-                ui.end_row();
-
-                ui.label("status");
-                egui::ComboBox::from_id_salt("status_filter")
-                    .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
+        let mut need_refresh = false;
+        ui.horizontal(|ui| {
+            ui.label("session_key");
+            if ui
+                .add_sized(
+                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(&mut self.session_key_filter),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("tool_name");
+            if ui
+                .add_sized(
+                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(&mut self.tool_name_filter),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("status");
+            let combo_resp = egui::ComboBox::from_id_salt("status_filter")
+                .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui
+                        .selectable_value(&mut self.status_filter, None, "All")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    for status in [
+                        ApprovalStatus::Pending,
+                        ApprovalStatus::Approved,
+                        ApprovalStatus::Rejected,
+                        ApprovalStatus::Expired,
+                        ApprovalStatus::Consumed,
+                    ] {
                         if ui
-                            .selectable_value(&mut self.status_filter, None, "All")
+                            .selectable_value(
+                                &mut self.status_filter,
+                                Some(status),
+                                status.as_str(),
+                            )
                             .changed()
                         {
                             changed = true;
                         }
-                        for status in [
-                            ApprovalStatus::Pending,
-                            ApprovalStatus::Approved,
-                            ApprovalStatus::Rejected,
-                            ApprovalStatus::Expired,
-                            ApprovalStatus::Consumed,
-                        ] {
-                            if ui
-                                .selectable_value(
-                                    &mut self.status_filter,
-                                    Some(status),
-                                    status.as_str(),
-                                )
-                                .changed()
-                            {
-                                changed = true;
-                            }
-                        }
-                        changed
-                    });
-                ui.label("limit");
-                ui.text_edit_singleline(&mut self.limit_text);
-                ui.end_row();
-
-                ui.label("offset");
-                ui.text_edit_singleline(&mut self.offset_text);
-                ui.end_row();
-            });
-
-        if ui.button("Apply").clicked() {
+                    }
+                    changed
+                });
+            if combo_resp.inner.unwrap_or(false) {
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("page");
+            if ui
+                .add_sized(
+                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("size");
+            if ui
+                .add_sized(
+                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.size).range(1..=1000),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+        });
+        if need_refresh {
             self.refresh(notifications);
         }
 
@@ -365,7 +400,11 @@ impl PanelRenderer for ApprovalPanel {
 
                             ui.label("Status:");
                             let (icon, color, text) = approval_status_display(approval.status);
-                            ui.label(RichText::new(format!("{icon} {text}")).color(color).strong());
+                            ui.label(
+                                RichText::new(format!("{icon} {text}"))
+                                    .color(color)
+                                    .strong(),
+                            );
                             ui.end_row();
 
                             ui.label("Requested By:");
@@ -490,10 +529,26 @@ fn truncate_preview(text: &str) -> String {
 
 fn approval_status_display(status: ApprovalStatus) -> (&'static str, Color32, &'static str) {
     match status {
-        ApprovalStatus::Pending => (regular::HOURGLASS_MEDIUM, Color32::from_rgb(200, 150, 50), "pending"),
-        ApprovalStatus::Approved => (regular::CHECK_CIRCLE, Color32::from_rgb(50, 180, 80), "approved"),
-        ApprovalStatus::Rejected => (regular::X_CIRCLE, Color32::from_rgb(220, 60, 60), "rejected"),
+        ApprovalStatus::Pending => (
+            regular::HOURGLASS_MEDIUM,
+            Color32::from_rgb(200, 150, 50),
+            "pending",
+        ),
+        ApprovalStatus::Approved => (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(50, 180, 80),
+            "approved",
+        ),
+        ApprovalStatus::Rejected => (
+            regular::X_CIRCLE,
+            Color32::from_rgb(220, 60, 60),
+            "rejected",
+        ),
         ApprovalStatus::Expired => (regular::CLOCK, Color32::from_rgb(140, 140, 140), "expired"),
-        ApprovalStatus::Consumed => (regular::LIGHTNING, Color32::from_rgb(70, 130, 200), "consumed"),
+        ApprovalStatus::Consumed => (
+            regular::LIGHTNING,
+            Color32::from_rgb(70, 130, 200),
+            "consumed",
+        ),
     }
 }

@@ -17,6 +17,8 @@ use tokio::runtime::Builder;
 use uuid::Uuid;
 
 const MAX_PREVIEW_TEXT_CHARS: usize = 200_000;
+const FILTER_INPUT_WIDTH: f32 = 220.0;
+const PAGING_INPUT_WIDTH: f32 = 50.0;
 
 #[derive(Default)]
 pub struct ArchivePanel {
@@ -28,8 +30,8 @@ pub struct ArchivePanel {
     chat_id_filter: String,
     source_kind_filter: String,
     media_kind_filter: String,
-    limit_text: String,
-    offset_text: String,
+    page: i64,
+    size: i64,
     preview: Option<ArchivePreview>,
 }
 
@@ -38,8 +40,8 @@ impl ArchivePanel {
         if self.loaded {
             return;
         }
-        if self.limit_text.is_empty() {
-            self.limit_text = "50".to_string();
+        if self.size == 0 {
+            self.size = 100;
         }
         self.refresh(notifications);
     }
@@ -60,15 +62,16 @@ impl ArchivePanel {
             }
         };
 
-        let limit = self.limit_text.trim().parse::<i64>().unwrap_or(50).max(1);
-        let offset = self.offset_text.trim().parse::<i64>().unwrap_or(0).max(0);
+        let size = self.size.max(1);
+        let page = self.page.max(1);
+        let offset = (page - 1) * size;
 
         let query = ArchiveQuery {
             session_key: optional_trimmed(&self.session_key_filter),
             chat_id: optional_trimmed(&self.chat_id_filter),
             source_kind,
             media_kind,
-            limit,
+            limit: size,
             offset,
         };
 
@@ -128,30 +131,74 @@ impl PanelRenderer for ArchivePanel {
         });
 
         ui.separator();
-        egui::Grid::new("archive-filter-grid")
-            .num_columns(4)
-            .spacing([10.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("session_key");
-                ui.text_edit_singleline(&mut self.session_key_filter);
-                ui.label("chat_id");
-                ui.text_edit_singleline(&mut self.chat_id_filter);
-                ui.end_row();
-
-                ui.label("source_kind");
-                ui.text_edit_singleline(&mut self.source_kind_filter);
-                ui.label("media_kind");
-                ui.text_edit_singleline(&mut self.media_kind_filter);
-                ui.end_row();
-
-                ui.label("limit");
-                ui.text_edit_singleline(&mut self.limit_text);
-                ui.label("offset");
-                ui.text_edit_singleline(&mut self.offset_text);
-                ui.end_row();
-            });
-
-        if ui.button("Apply Filters").clicked() {
+        let mut need_refresh = false;
+        ui.horizontal(|ui| {
+            ui.label("session_key");
+            if ui
+                .add_sized(
+                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(&mut self.session_key_filter),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("chat_id");
+            if ui
+                .add_sized(
+                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(&mut self.chat_id_filter),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("source_kind");
+            if ui
+                .add_sized(
+                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(&mut self.source_kind_filter),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("media_kind");
+            if ui
+                .add_sized(
+                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(&mut self.media_kind_filter),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("page");
+            if ui
+                .add_sized(
+                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("size");
+            if ui
+                .add_sized(
+                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.size).range(1..=1000),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+        });
+        if need_refresh {
             self.refresh(notifications);
         }
 

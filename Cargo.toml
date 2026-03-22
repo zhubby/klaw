@@ -41,6 +41,7 @@ tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls", "stream"] }
+opendal = { version = "0.52", default-features = false, features = ["services-s3"] }
 tokenizers = "0.22.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -74,6 +75,9 @@ cron = "0.15"
 ipnet = "2"
 globset = "0.4"
 walkdir = "2"
+tar = "0.4"
+zstd = "0.13"
+hostname = "0.4"
 
 opentelemetry = "0.27"
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }

@@ -5,8 +5,8 @@ use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
     CronTaskRun, CronTaskStatus, HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun,
     HeartbeatTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
-    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob,
-    NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
     NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage, StorageError,
     StoragePaths, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookEventResult,
     WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
@@ -1322,18 +1322,34 @@ impl SessionStorage for SqlxSessionStore {
         &self,
         limit: i64,
         offset: i64,
+        updated_from_ms: Option<i64>,
+        updated_to_ms: Option<i64>,
     ) -> Result<Vec<SessionIndex>, StorageError> {
-        let rows = sqlx::query_as::<_, SessionIndexRow>(
+        let mut query = String::from(
             "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-             FROM sessions
-             ORDER BY updated_at_ms DESC
-             LIMIT ?1 OFFSET ?2",
-        )
-        .bind(limit.max(1))
-        .bind(offset.max(0))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(StorageError::backend)?;
+             FROM sessions WHERE 1=1",
+        );
+        if updated_from_ms.is_some() {
+            query.push_str(" AND updated_at_ms >= ?");
+        }
+        if updated_to_ms.is_some() {
+            query.push_str(" AND updated_at_ms <= ?");
+        }
+        query.push_str(" ORDER BY updated_at_ms DESC LIMIT ? OFFSET ?");
+
+        let mut q = sqlx::query_as::<_, SessionIndexRow>(&query);
+        if let Some(from) = updated_from_ms {
+            q = q.bind(from);
+        }
+        if let Some(to) = updated_to_ms {
+            q = q.bind(to);
+        }
+        q = q.bind(limit.max(1)).bind(offset.max(0));
+
+        let rows = q
+            .fetch_all(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 

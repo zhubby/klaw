@@ -2,7 +2,8 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::{ChatBox, ChatMessage, ChatRole};
-use egui_extras::{Column, TableBuilder};
+use chrono::{Datelike, Local, NaiveDate};
+use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_session::{
     LlmUsageSummary, SessionError, SessionIndex, SessionListQuery, SessionManager,
@@ -10,16 +11,37 @@ use klaw_session::{
 };
 use std::future::Future;
 use std::thread;
+use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
 
-#[derive(Default)]
+const PAGING_INPUT_WIDTH: f32 = 50.0;
+
 pub struct SessionPanel {
     loaded: bool,
     sessions: Vec<SessionRow>,
-    limit_text: String,
-    offset_text: String,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+    page: i64,
+    size: i64,
     selected_session: Option<String>,
     chat_box: Option<ChatBox>,
+}
+
+impl Default for SessionPanel {
+    fn default() -> Self {
+        let today = Local::now().date_naive();
+        let one_year_ago = today - chrono::Duration::days(365);
+        Self {
+            loaded: false,
+            sessions: Vec::new(),
+            start_date: Some(one_year_ago),
+            end_date: Some(today),
+            page: 1,
+            size: 100,
+            selected_session: None,
+            chat_box: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -33,16 +55,18 @@ impl SessionPanel {
         if self.loaded {
             return;
         }
-        if self.limit_text.is_empty() {
-            self.limit_text = "100".to_string();
-        }
         self.refresh(notifications);
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
+        let size = self.size.max(1);
+        let page = self.page.max(1);
+        let offset = (page - 1) * size;
         let query = SessionListQuery {
-            limit: self.limit_text.trim().parse::<i64>().unwrap_or(100),
-            offset: self.offset_text.trim().parse::<i64>().unwrap_or(0),
+            limit: size,
+            offset,
+            updated_from_ms: self.start_date.and_then(date_start_ms),
+            updated_to_ms: self.end_date.and_then(date_end_ms),
         };
 
         match run_session_task(move |manager| async move {
@@ -108,18 +132,40 @@ impl PanelRenderer for SessionPanel {
         });
 
         ui.separator();
-        egui::Grid::new("session-filter-grid")
-            .num_columns(4)
-            .spacing([10.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("limit");
-                ui.text_edit_singleline(&mut self.limit_text);
-                ui.label("offset");
-                ui.text_edit_singleline(&mut self.offset_text);
-                ui.end_row();
-            });
-
-        if ui.button("Apply").clicked() {
+        let mut need_refresh = false;
+        ui.horizontal(|ui| {
+            ui.label("start date");
+            if render_date_picker(ui, &mut self.start_date, "session-start-date") {
+                need_refresh = true;
+            }
+            ui.label("end date");
+            if render_date_picker(ui, &mut self.end_date, "session-end-date") {
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("page");
+            if ui
+                .add_sized(
+                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("size");
+            if ui
+                .add_sized(
+                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.size).range(1..=1000),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+        });
+        if need_refresh {
             self.refresh(notifications);
         }
 
@@ -314,4 +360,43 @@ where
         Ok(result) => result,
         Err(_) => Err("session operation thread panicked".to_string()),
     }
+}
+
+fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        if let Some(date) = value.as_mut() {
+            if ui
+                .add(DatePickerButton::new(date).id_salt(id).format("%Y/%m/%d"))
+                .changed()
+            {
+                changed = true;
+            }
+            if ui.small_button("×").clicked() {
+                *value = None;
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+fn date_start_ms(date: NaiveDate) -> Option<i64> {
+    date_boundary_ms(date, Time::MIDNIGHT)
+}
+
+fn date_end_ms(date: NaiveDate) -> Option<i64> {
+    let time = Time::from_hms_milli(23, 59, 59, 999).ok()?;
+    date_boundary_ms(date, time)
+}
+
+fn date_boundary_ms(date: NaiveDate, time: Time) -> Option<i64> {
+    let month = Month::try_from(date.month() as u8).ok()?;
+    let date = time::Date::from_calendar_date(date.year(), month, date.day() as u8).ok()?;
+    let datetime = PrimitiveDateTime::new(date, time).assume_utc();
+    Some(offset_to_ms(datetime))
+}
+
+fn offset_to_ms(datetime: OffsetDateTime) -> i64 {
+    datetime.unix_timestamp_nanos().saturating_div(1_000_000) as i64
 }

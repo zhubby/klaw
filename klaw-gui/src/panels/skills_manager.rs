@@ -443,7 +443,11 @@ impl SkillsManagerPanel {
     fn stale_display(summary: &SkillSummary) -> (&'static str, Color32, &'static str) {
         match summary.stale {
             Some(true) => (regular::WARNING, Color32::from_rgb(200, 150, 50), "stale"),
-            Some(false) => (regular::CHECK_CIRCLE, Color32::from_rgb(50, 180, 80), "fresh"),
+            Some(false) => (
+                regular::CHECK_CIRCLE,
+                Color32::from_rgb(50, 180, 80),
+                "fresh",
+            ),
             None => (regular::MINUS, Color32::from_rgb(140, 140, 140), "-"),
         }
     }
@@ -808,7 +812,11 @@ impl PanelRenderer for SkillsManagerPanel {
                         });
                         row.col(|ui| {
                             let (icon, color, text) = Self::stale_display(item);
-                            ui.label(RichText::new(format!("{icon} {text}")).color(color).strong());
+                            ui.label(
+                                RichText::new(format!("{icon} {text}"))
+                                    .color(color)
+                                    .strong(),
+                            );
                         });
                         row.col(|ui| {
                             ui.monospace(format_timestamp_millis(item.updated_at_ms));
@@ -1077,7 +1085,11 @@ fn copy_directory_recursive(from: &Path, to: &Path) -> Result<(), String> {
 fn skill_stale_display(stale: Option<bool>) -> (&'static str, Color32, &'static str) {
     match stale {
         Some(true) => (regular::WARNING, Color32::from_rgb(200, 150, 50), "stale"),
-        Some(false) => (regular::CHECK_CIRCLE, Color32::from_rgb(50, 180, 80), "fresh"),
+        Some(false) => (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(50, 180, 80),
+            "fresh",
+        ),
         None => (regular::MINUS, Color32::from_rgb(140, 140, 140), "-"),
     }
 }

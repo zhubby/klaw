@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-03-22
+
+### Added
+
+- `Setting` 面板现在提供可落盘的 S3 sync 配置，包括 endpoint/region/bucket/prefix、凭证环境变量名、设备 ID、保留策略和自动备份间隔
+- `Setting` 面板新增 `Run Backup Now`、远端快照列表和手动恢复确认流程，直接调用 `klaw-storage` 的 snapshot backup/restore 服务
+
+### Changed
+
+- GUI `settings.json` schema 升级到 v2，sync 默认备份范围调整为 session/memory/archive/config/gui settings，并补充最近一次快照状态字段
+
 ## 2026-03-21
 
 ### Added
@@ -49,6 +60,16 @@
 
 - session panel now shows aggregated input/output/total token counts per session alongside the indexed session list
 - provider panel now supports editing and displaying optional `tokenizer_path` for local token estimation fallback
+
+## 2026-03-22
+
+### Changed
+
+- sync settings now remove the `MCP` backup option from the GUI, strip legacy `mcp` entries from persisted sync scope, and keep `Skills` plus `User Workspace` in the default snapshot scope
+- sync runtime state is now shared between the settings panel and the global shell supervisor, so in-progress task labels, last snapshot metadata, and remote snapshot lists stay aligned
+- startup remote snapshot checks now populate the Sync panel state and surface a newer-remote warning directly inside the snapshot actions area
+- sync settings now expose a manual `Run Retention Cleanup` action and the shell runs one retention cleanup pass after startup when sync is enabled
+- sync settings now default `device_id` from the system hostname and support both direct S3 credential values and env-backed credential references in `settings.json` and the GUI form
 
 ## 2026-03-18
 

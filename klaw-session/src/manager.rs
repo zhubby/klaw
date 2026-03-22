@@ -11,6 +11,8 @@ use klaw_storage::{
 pub struct SessionListQuery {
     pub limit: i64,
     pub offset: i64,
+    pub updated_from_ms: Option<i64>,
+    pub updated_to_ms: Option<i64>,
 }
 
 impl Default for SessionListQuery {
@@ -18,6 +20,8 @@ impl Default for SessionListQuery {
         Self {
             limit: 100,
             offset: 0,
+            updated_from_ms: None,
+            updated_to_ms: None,
         }
     }
 }
@@ -291,7 +295,10 @@ impl SessionManager for SqliteSessionManager {
     ) -> Result<Vec<SessionIndex>, SessionError> {
         let limit = query.limit.max(1);
         let offset = query.offset.max(0);
-        Ok(self.store.list_sessions(limit, offset).await?)
+        Ok(self
+            .store
+            .list_sessions(limit, offset, query.updated_from_ms, query.updated_to_ms)
+            .await?)
     }
 
     async fn append_llm_usage(
@@ -410,6 +417,8 @@ mod tests {
             .list_sessions(SessionListQuery {
                 limit: 10,
                 offset: 0,
+                updated_from_ms: None,
+                updated_to_ms: None,
             })
             .await
             .expect("sessions should load");
@@ -432,6 +441,8 @@ mod tests {
             .list_sessions(SessionListQuery {
                 limit: 0,
                 offset: -5,
+                updated_from_ms: None,
+                updated_to_ms: None,
             })
             .await
             .expect("sessions should load");

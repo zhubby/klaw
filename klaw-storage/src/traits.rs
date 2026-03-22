@@ -1,11 +1,10 @@
 use crate::{
-    ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus,
-    HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditQuery, LlmAuditRecord,
-    LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-    NewWebhookEventRecord, SessionCompressionState, SessionIndex, StorageError,
-    UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookEventResult, WebhookEventQuery,
-    WebhookEventRecord,
+    ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus, HeartbeatJob,
+    HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmUsageRecord,
+    LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
+    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
+    SessionCompressionState, SessionIndex, StorageError, UpdateCronJobPatch,
+    UpdateHeartbeatJobPatch, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -85,6 +84,8 @@ pub trait SessionStorage: Send + Sync {
         &self,
         limit: i64,
         offset: i64,
+        updated_from_ms: Option<i64>,
+        updated_to_ms: Option<i64>,
     ) -> Result<Vec<SessionIndex>, StorageError>;
 
     async fn append_llm_usage(
@@ -220,10 +221,8 @@ pub trait CronStorage: Send + Sync {
 
 #[async_trait]
 pub trait HeartbeatStorage: Send + Sync {
-    async fn create_heartbeat(
-        &self,
-        input: &NewHeartbeatJob,
-    ) -> Result<HeartbeatJob, StorageError>;
+    async fn create_heartbeat(&self, input: &NewHeartbeatJob)
+        -> Result<HeartbeatJob, StorageError>;
 
     async fn update_heartbeat(
         &self,

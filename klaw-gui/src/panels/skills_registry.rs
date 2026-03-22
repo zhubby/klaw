@@ -6,10 +6,10 @@ use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillsRegistryConfig};
-use klaw_skill::{RegistrySyncReport, RegistrySyncStatus};
 use klaw_skill::{
     open_default_skills_manager, FileSystemSkillStore, InstalledSkill, RegistrySource,
 };
+use klaw_skill::{RegistrySyncReport, RegistrySyncStatus};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -168,8 +168,7 @@ impl SkillsRegistryPanel {
     }
 
     fn load_registry_statuses(&mut self) {
-        let registry_names: Vec<String> =
-            self.config.skills.registries.keys().cloned().collect();
+        let registry_names: Vec<String> = self.config.skills.registries.keys().cloned().collect();
         if registry_names.is_empty() {
             self.registry_statuses.clear();
             return;
@@ -753,7 +752,8 @@ mod tests {
         let mut form = SkillsRegistryForm::new();
         form.name = "private".to_string();
         form.address = "https://example.com/skills".to_string();
-        form.installed_skills = ArrayEditor::from_vec("Installed skills", &["one".to_string(), "two".to_string()]);
+        form.installed_skills =
+            ArrayEditor::from_vec("Installed skills", &["one".to_string(), "two".to_string()]);
 
         let updated = SkillsRegistryPanel::apply_form(config, &form).expect("should apply");
 

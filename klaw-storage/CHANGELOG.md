@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-03-22
+
+### Added
+- added `BackupService`, snapshot manifest models, and S3-compatible snapshot store support for managed data-root backup and restore
+- added database snapshot export, tar+zstd bundle generation, remote snapshot listing, and restore verification tests
+
+## 2026-03-22
+
+### Changed
+- remote snapshot retention cleanup now refreshes `latest.json` after pruning so the latest pointer stays consistent when old snapshots are removed outside a fresh backup upload
+- S3 snapshot configuration now supports direct credential values in addition to env references, and empty device IDs now normalize from the local hostname
+
 ## 2026-03-21
 
 ### Added
