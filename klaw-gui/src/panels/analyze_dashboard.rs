@@ -343,6 +343,18 @@ impl AnalyzeDashboardPanel {
                 .legend(Legend::default())
                 .x_axis_formatter(|x: GridMark, _| format_time_label(x.value as i64))
                 .y_axis_formatter(|y: GridMark, _| format!("{:.0}%", y.value))
+                .label_formatter(|name, value| {
+                    let time = format_time_label(value.x as i64);
+                    if name == "Success Rate" {
+                        format!("{}\n{}: {:.1}%", time, name, value.y)
+                    } else if name == "Calls" {
+                        format!("{}\n{}: {:.0}", time, name, value.y)
+                    } else if !name.is_empty() {
+                        format!("{}\n{}: {:.2}", time, name, value.y)
+                    } else {
+                        time
+                    }
+                })
                 .include_x(first_ts)
                 .include_x(last_ts)
                 .include_y(0.0)
