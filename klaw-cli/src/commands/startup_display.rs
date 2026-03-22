@@ -56,10 +56,15 @@ fn format_mcp_status(config: &AppConfig, report: &StartupReport) -> String {
 
     match &report.mcp_summary {
         Some(summary) => {
-            let failure_suffix = if summary.failures.is_empty() {
+            let failed_count = summary
+                .statuses
+                .iter()
+                .filter(|s| s.state == klaw_mcp::McpLifecycleState::Failed)
+                .count();
+            let failure_suffix = if failed_count == 0 {
                 String::new()
             } else {
-                format!(", failures {}", summary.failures.len())
+                format!(", failures {}", failed_count)
             };
             format!(
                 "ready, servers {}/{}, tools {}, {}{}",
@@ -86,7 +91,7 @@ fn join_or_dash(items: &[String]) -> String {
 mod tests {
     use crate::runtime::StartupReport;
     use klaw_config::{AppConfig, McpServerConfig, McpServerMode};
-    use klaw_mcp::McpBootstrapSummary;
+    use klaw_mcp::{McpLifecycleState, McpServerKey, McpServerStatus, McpSyncResult};
 
     use super::{format_mcp_status, join_or_dash, tools_for_display};
 
@@ -107,12 +112,21 @@ mod tests {
                 "web_search".to_string(),
                 "remote_browser".to_string(),
             ],
-            mcp_summary: Some(McpBootstrapSummary {
+            mcp_summary: Some(McpSyncResult {
+                keep: vec![McpServerKey::new("local")],
+                start: vec![],
+                restart: vec![],
+                stop: vec![],
+                statuses: vec![McpServerStatus {
+                    key: McpServerKey::new("local"),
+                    mode: McpServerMode::Stdio,
+                    enabled: true,
+                    state: McpLifecycleState::Running,
+                    last_error: None,
+                    tool_count: 2,
+                }],
                 active_servers: vec!["local".to_string()],
-                required_stdio_servers: vec!["local".to_string()],
-                active_stdio_servers: vec!["local".to_string()],
                 tool_count: 2,
-                failures: Vec::new(),
             }),
         };
 
@@ -142,12 +156,21 @@ mod tests {
         let report = StartupReport {
             skill_names: Vec::new(),
             tool_names: Vec::new(),
-            mcp_summary: Some(McpBootstrapSummary {
+            mcp_summary: Some(McpSyncResult {
+                keep: vec![McpServerKey::new("local")],
+                start: vec![],
+                restart: vec![],
+                stop: vec![],
+                statuses: vec![McpServerStatus {
+                    key: McpServerKey::new("local"),
+                    mode: McpServerMode::Stdio,
+                    enabled: true,
+                    state: McpLifecycleState::Running,
+                    last_error: None,
+                    tool_count: 3,
+                }],
                 active_servers: vec!["local".to_string()],
-                required_stdio_servers: vec!["local".to_string()],
-                active_stdio_servers: vec!["local".to_string()],
                 tool_count: 3,
-                failures: Vec::new(),
             }),
         };
 

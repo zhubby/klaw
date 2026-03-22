@@ -389,7 +389,7 @@ pub enum McpServerMode {
     Sse,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServerConfig {
     pub id: String,
     #[serde(default = "default_mcp_server_enabled")]
@@ -407,6 +407,22 @@ pub struct McpServerConfig {
     pub url: Option<String>,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            enabled: default_mcp_server_enabled(),
+            mode: McpServerMode::Stdio,
+            command: None,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            cwd: None,
+            url: None,
+            headers: BTreeMap::new(),
+        }
+    }
 }
 
 fn default_mcp_enabled() -> bool {

@@ -27,7 +27,7 @@ use klaw_core::{
 use klaw_gateway::GatewayWebhookRequest;
 use klaw_heartbeat::should_suppress_output;
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
-use klaw_mcp::{McpBootstrapHandle, McpBootstrapSummary, McpManager};
+use klaw_mcp::{McpConfigSnapshot, McpInitHandle, McpManager, McpSyncResult};
 use klaw_observability::{
     init_observability, ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry,
 };
@@ -66,7 +66,7 @@ const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
 pub struct StartupReport {
     pub skill_names: Vec<String>,
     pub tool_names: Vec<String>,
-    pub mcp_summary: Option<McpBootstrapSummary>,
+    pub mcp_summary: Option<McpSyncResult>,
 }
 
 pub struct RuntimeBundle {
@@ -84,7 +84,7 @@ pub struct RuntimeBundle {
     pub circuit_breaker: InMemoryCircuitBreaker,
     pub subscription: Subscription,
     pub session_store: DefaultSessionStore,
-    pub mcp_bootstrap: Option<Mutex<McpBootstrapHandle>>,
+    pub mcp_init: Option<Mutex<McpInitHandle>>,
     pub startup_report: StartupReport,
     pub observability: Option<ObservabilityHandle>,
     pub conversation_history_limit: usize,
@@ -1200,11 +1200,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
     }
 
-    let mcp_bootstrap = if config.mcp.enabled && configured_mcp_servers > 0 {
-        Some(Mutex::new(McpManager::spawn_bootstrap(
-            config.mcp.clone(),
-            tools.clone(),
-        )))
+    let mcp_init = if config.mcp.enabled && configured_mcp_servers > 0 {
+        let snapshot = McpConfigSnapshot::from_mcp_config(&config.mcp);
+        Some(Mutex::new(McpManager::spawn_init(tools.clone(), snapshot)))
     } else {
         None
     };
@@ -1302,7 +1300,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
             visibility_timeout: Duration::from_secs(10),
         },
         session_store,
-        mcp_bootstrap,
+        mcp_init,
         observability,
         conversation_history_limit: config.conversation_history_limit,
         llm_audit_tx,
@@ -1339,15 +1337,14 @@ fn spawn_llm_audit_writer(
 }
 
 pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<dyn Error>> {
-    if let Some(handle) = &runtime.mcp_bootstrap {
+    if let Some(handle) = &runtime.mcp_init {
         info!("shutting down runtime mcp servers");
-        let mut guard = handle.lock().await;
+        let guard = handle.lock().await;
+        let manager = guard.manager();
+        let mut manager_guard = manager.lock().await;
         let shutdown_deadline = Duration::from_secs(2);
-        match timeout(shutdown_deadline, guard.shutdown()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                return Err(config_err(format!("mcp shutdown failed: {err}")));
-            }
+        match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
+            Ok(()) => {}
             Err(_) => {
                 warn!(
                     timeout_seconds = shutdown_deadline.as_secs(),
@@ -2190,7 +2187,7 @@ async fn init_observability_from_config(config: &AppConfig) -> Option<Observabil
 pub async fn finalize_startup_report(
     runtime: &mut RuntimeBundle,
 ) -> Result<StartupReport, Box<dyn Error>> {
-    let mcp_summary = match &runtime.mcp_bootstrap {
+    let mcp_summary = match &runtime.mcp_init {
         Some(handle) => {
             let mut guard = handle.lock().await;
             if guard.is_ready() {
@@ -2198,7 +2195,7 @@ pub async fn finalize_startup_report(
                     guard
                         .wait_until_ready()
                         .await
-                        .map_err(|err| config_err(format!("mcp bootstrap failed: {err}")))?,
+                        .map_err(|err| config_err(format!("mcp init failed: {err}")))?,
                 )
             } else {
                 None
