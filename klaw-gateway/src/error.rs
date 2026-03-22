@@ -14,8 +14,16 @@ pub enum GatewayError {
     Join(String),
     #[error("failed to create prometheus exporter: {0}")]
     PrometheusExporter(String),
-    #[error("gateway webhook token could not be resolved")]
-    MissingWebhookToken,
     #[error("gateway webhook handler is required when gateway.webhook.enabled=true")]
     MissingWebhookHandler,
+    #[error("funnel mode requires gateway.auth to be configured")]
+    FunnelRequiresAuth,
+    #[error("tailscale CLI not found")]
+    TailscaleCliNotFound,
+    #[error("tailscale not logged in")]
+    TailscaleNotLoggedIn,
+    #[error("tailscale HTTPS not enabled for tailnet")]
+    TailscaleHttpsNotEnabled,
+    #[error("tailscale setup failed: {0}")]
+    TailscaleSetupFailed(String),
 }

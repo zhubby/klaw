@@ -1,3 +1,4 @@
+use crate::tailscale::{TailscaleManager, TailscaleRuntimeInfo};
 use crate::{webhook::GatewayWebhookHandler, GatewayError};
 use klaw_config::GatewayConfig;
 use klaw_observability::{exporter::PrometheusExporter, HealthRegistry};
@@ -15,7 +16,6 @@ use tokio::{
 pub(crate) const ROOM_BUFFER_SIZE: usize = 256;
 
 pub(crate) struct GatewayWebhookState {
-    pub(crate) token: String,
     pub(crate) handler: Arc<dyn GatewayWebhookHandler>,
 }
 
@@ -24,6 +24,7 @@ pub(crate) struct GatewayState {
     pub(crate) health: Arc<HealthRegistry>,
     pub(crate) prometheus: Option<PrometheusExporter>,
     pub(crate) webhook: Option<GatewayWebhookState>,
+    pub(crate) auth_token: Option<String>,
 }
 
 impl GatewayState {
@@ -31,12 +32,14 @@ impl GatewayState {
         health: Arc<HealthRegistry>,
         prometheus: Option<PrometheusExporter>,
         webhook: Option<GatewayWebhookState>,
+        auth_token: Option<String>,
     ) -> Self {
         Self {
             rooms: RwLock::new(HashMap::new()),
             health,
             prometheus,
             webhook,
+            auth_token,
         }
     }
 }
@@ -50,15 +53,22 @@ pub struct GatewayRuntimeInfo {
     pub health_url: String,
     pub metrics_url: String,
     pub started_at_unix_seconds: u64,
+    pub tailscale: Option<TailscaleRuntimeInfo>,
+    pub auth_configured: bool,
 }
 
 impl GatewayRuntimeInfo {
-    pub(crate) fn from_socket_addr(config: &GatewayConfig, socket_addr: SocketAddr) -> Self {
+    pub(crate) fn from_socket_addr(
+        config: &GatewayConfig,
+        socket_addr: SocketAddr,
+        tailscale: Option<TailscaleRuntimeInfo>,
+    ) -> Self {
         let base = format!("http://{socket_addr}");
         let started_at_unix_seconds = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        let auth_configured = config.auth.is_enabled();
         Self {
             listen_ip: config.listen_ip.clone(),
             configured_port: config.listen_port,
@@ -67,15 +77,17 @@ impl GatewayRuntimeInfo {
             health_url: format!("{base}/health/status"),
             metrics_url: format!("{base}/metrics"),
             started_at_unix_seconds,
+            tailscale,
+            auth_configured,
         }
     }
 }
 
-#[derive(Debug)]
 pub struct GatewayHandle {
     info: GatewayRuntimeInfo,
     shutdown_tx: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<Result<(), GatewayError>>>,
+    _tailscale_manager: Option<Box<TailscaleManager>>,
 }
 
 impl GatewayHandle {
@@ -83,11 +95,13 @@ impl GatewayHandle {
         info: GatewayRuntimeInfo,
         shutdown_tx: oneshot::Sender<()>,
         task: JoinHandle<Result<(), GatewayError>>,
+        tailscale_manager: Option<Box<TailscaleManager>>,
     ) -> Self {
         Self {
             info,
             shutdown_tx: Some(shutdown_tx),
             task: Some(task),
+            _tailscale_manager: tailscale_manager,
         }
     }
 

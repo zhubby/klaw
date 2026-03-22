@@ -105,8 +105,6 @@ fn parse_default_template_succeeds() {
     assert!(parsed.gateway.tls.key_path.is_none());
     assert!(!parsed.gateway.webhook.enabled);
     assert_eq!(parsed.gateway.webhook.path, "/webhook/events");
-    assert!(parsed.gateway.webhook.token.is_none());
-    assert!(parsed.gateway.webhook.env_key.is_none());
     assert_eq!(parsed.gateway.webhook.max_body_bytes, 262_144);
     validate(&parsed).expect("default template should be valid");
 }
@@ -436,7 +434,6 @@ listen_port = 18080
 [gateway.webhook]
 enabled = true
 path = "/hooks/events"
-env_key = "KLAW_WEBHOOK_TOKEN"
 max_body_bytes = 4096
 
 [gateway.tls]
@@ -449,10 +446,6 @@ enabled = false
     assert_eq!(parsed.gateway.listen_port, 18_080);
     assert!(parsed.gateway.webhook.enabled);
     assert_eq!(parsed.gateway.webhook.path, "/hooks/events");
-    assert_eq!(
-        parsed.gateway.webhook.env_key.as_deref(),
-        Some("KLAW_WEBHOOK_TOKEN")
-    );
     assert_eq!(parsed.gateway.webhook.max_body_bytes, 4096);
     assert!(!parsed.gateway.tls.enabled);
 }
@@ -595,16 +588,6 @@ fn validate_accepts_gateway_random_port() {
     let mut cfg = AppConfig::default();
     cfg.gateway.listen_port = 0;
     validate(&cfg).expect("random port should be valid");
-}
-
-#[test]
-fn validate_fails_when_gateway_webhook_auth_missing() {
-    let mut cfg = AppConfig::default();
-    cfg.gateway.webhook.enabled = true;
-    cfg.gateway.webhook.token = None;
-    cfg.gateway.webhook.env_key = None;
-    let err = validate(&cfg).expect_err("should fail");
-    assert!(format!("{err}").contains("gateway.webhook"));
 }
 
 #[test]

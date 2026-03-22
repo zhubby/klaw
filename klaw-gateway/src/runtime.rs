@@ -1,16 +1,19 @@
 use crate::{
+    auth::GatewayAuth,
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
     state::{GatewayHandle, GatewayRuntimeInfo, GatewayState},
+    tailscale::{TailscaleError, TailscaleManager},
     webhook::{build_webhook_state, webhook_handler, GatewayWebhookHandler},
     websocket::ws_chat_handler,
     GatewayError,
 };
 use axum::{
     extract::DefaultBodyLimit,
+    middleware,
     routing::{get, post},
     Router,
 };
-use klaw_config::GatewayConfig;
+use klaw_config::{GatewayConfig, TailscaleMode};
 use klaw_observability::{exporter::PrometheusExporter, HealthRegistry};
 use std::{net::SocketAddr, sync::Arc};
 use tracing::info;
@@ -55,17 +58,30 @@ pub async fn spawn_gateway_with_options(
         return Err(GatewayError::TlsNotImplemented);
     }
 
+    if config.tailscale.mode == TailscaleMode::Funnel && !config.auth.is_enabled() {
+        return Err(GatewayError::FunnelRequiresAuth);
+    }
+
+    let tailscale_info = setup_tailscale(config)?;
+    let tailscale_manager = create_tailscale_manager(config);
+
     let socket_addr = parse_socket_addr(config)?;
     let health = build_health_registry(options.health);
     let webhook = build_webhook_state(config, options.webhook_handler)?;
-    let state = Arc::new(GatewayState::new(health, options.prometheus, webhook));
-    let app = build_router(config, state);
+    let auth_token = config.auth.resolve_token();
+    let state = Arc::new(GatewayState::new(
+        health,
+        options.prometheus,
+        webhook,
+        auth_token.clone(),
+    ));
+    let app = build_router(config, state, auth_token);
 
     let listener = tokio::net::TcpListener::bind(socket_addr)
         .await
         .map_err(GatewayError::Bind)?;
     let actual_addr = listener.local_addr().map_err(GatewayError::Bind)?;
-    let info = GatewayRuntimeInfo::from_socket_addr(config, actual_addr);
+    let info = GatewayRuntimeInfo::from_socket_addr(config, actual_addr, tailscale_info);
 
     info!(
         listen_addr = %actual_addr,
@@ -74,6 +90,11 @@ pub async fn spawn_gateway_with_options(
         "gateway server started"
     );
     println!("{:<18} {}", "🌐 Gateway", info.ws_url);
+    if let Some(ref ts) = info.tailscale {
+        if let Some(ref url) = ts.public_url {
+            println!("{:<18} {}", "🌐 Tailscale", url);
+        }
+    }
     println!("{:<18} {}", "💚 Health", info.health_url);
     println!("{:<18} {}", "📊 Metrics", info.metrics_url);
 
@@ -87,7 +108,45 @@ pub async fn spawn_gateway_with_options(
             .map_err(GatewayError::Serve)
     });
 
-    Ok(GatewayHandle::new(info, shutdown_tx, task))
+    Ok(GatewayHandle::new(
+        info,
+        shutdown_tx,
+        task,
+        tailscale_manager.map(Box::new),
+    ))
+}
+
+fn setup_tailscale(config: &GatewayConfig) -> Result<Option<crate::tailscale::TailscaleRuntimeInfo>, GatewayError> {
+    if config.tailscale.mode == TailscaleMode::Off {
+        return Ok(None);
+    }
+
+    let manager = TailscaleManager::new(
+        config.tailscale.mode,
+        config.listen_port,
+        config.tailscale.reset_on_exit,
+    );
+
+    let info = manager.setup().map_err(|e| match e {
+        TailscaleError::CliNotFound => GatewayError::TailscaleCliNotFound,
+        TailscaleError::NotLoggedIn => GatewayError::TailscaleNotLoggedIn,
+        TailscaleError::HttpsNotEnabled => GatewayError::TailscaleHttpsNotEnabled,
+        other => GatewayError::TailscaleSetupFailed(other.to_string()),
+    })?;
+
+    Ok(Some(info))
+}
+
+fn create_tailscale_manager(config: &GatewayConfig) -> Option<TailscaleManager> {
+    if config.tailscale.mode == TailscaleMode::Off {
+        return None;
+    }
+
+    Some(TailscaleManager::new(
+        config.tailscale.mode,
+        config.listen_port,
+        config.tailscale.reset_on_exit,
+    ))
 }
 
 fn parse_socket_addr(config: &GatewayConfig) -> Result<SocketAddr, GatewayError> {
@@ -106,7 +165,7 @@ fn build_health_registry(health: Option<Arc<HealthRegistry>>) -> Arc<HealthRegis
     })
 }
 
-fn build_router(config: &GatewayConfig, state: Arc<GatewayState>) -> Router {
+fn build_router(config: &GatewayConfig, state: Arc<GatewayState>, auth_token: Option<String>) -> Router {
     let mut app = Router::new()
         .route("/ws/chat", get(ws_chat_handler))
         .route("/health/live", get(health_live_handler))
@@ -121,5 +180,14 @@ fn build_router(config: &GatewayConfig, state: Arc<GatewayState>) -> Router {
         app = app.merge(webhook_router);
     }
 
-    app.with_state(state)
+    let app = app.with_state(state);
+
+    if let Some(token) = auth_token {
+        app.layer(middleware::from_fn_with_state(
+            GatewayAuth::new(token),
+            GatewayAuth::middleware,
+        ))
+    } else {
+        app
+    }
 }

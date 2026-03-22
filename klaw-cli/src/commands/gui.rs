@@ -154,6 +154,10 @@ impl GuiCommand {
                                                 let result = gateway_manager.restart_from_store().await;
                                                 let _ = response.send(result);
                                             }
+                                            Some(klaw_gui::RuntimeCommand::SetTailscaleMode { mode, response }) => {
+                                                let result = gateway_manager.set_tailscale_mode(mode).await;
+                                                let _ = response.send(result);
+                                            }
                                             None => {
                                                 runtime_cmd_open = false;
                                             }

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use axum::{
     body::Bytes,
     extract::State,
-    http::{header, HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
@@ -75,22 +75,17 @@ pub(crate) fn build_webhook_state(
         return Ok(None);
     }
 
-    let token = resolve_webhook_token(config).ok_or(GatewayError::MissingWebhookToken)?;
     let handler = handler.ok_or(GatewayError::MissingWebhookHandler)?;
-    Ok(Some(GatewayWebhookState { token, handler }))
+    Ok(Some(GatewayWebhookState { handler }))
 }
 
 pub(crate) async fn webhook_handler(
     State(state): State<Arc<GatewayState>>,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let Some(webhook) = state.webhook.as_ref() else {
         return (StatusCode::NOT_FOUND, "webhook is not enabled").into_response();
     };
-    if !is_authorized(&headers, &webhook.token) {
-        return (StatusCode::UNAUTHORIZED, "invalid webhook token").into_response();
-    }
 
     let payload: GatewayWebhookPayload = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
@@ -104,35 +99,6 @@ pub(crate) async fn webhook_handler(
         Ok(response) => (StatusCode::ACCEPTED, Json(response)).into_response(),
         Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
     }
-}
-
-fn resolve_webhook_token(config: &GatewayConfig) -> Option<String> {
-    config
-        .webhook
-        .token
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .or_else(|| {
-            config
-                .webhook
-                .env_key
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .and_then(|env_key| std::env::var(env_key).ok())
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        })
-}
-
-pub(crate) fn is_authorized(headers: &HeaderMap, expected_token: &str) -> bool {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|token| token == expected_token)
 }
 
 pub(crate) fn normalize_webhook_request(

@@ -1,4 +1,5 @@
 use klaw_channel::ChannelSyncResult;
+use klaw_config::TailscaleMode;
 use klaw_gateway::GatewayRuntimeInfo;
 use klaw_util::EnvironmentCheckReport;
 use std::sync::{mpsc, Mutex, OnceLock};
@@ -11,6 +12,8 @@ pub struct GatewayStatusSnapshot {
     pub transitioning: bool,
     pub info: Option<GatewayRuntimeInfo>,
     pub last_error: Option<String>,
+    pub auth_configured: bool,
+    pub tailscale_mode: TailscaleMode,
 }
 
 #[derive(Debug)]
@@ -42,6 +45,10 @@ pub enum RuntimeCommand {
         response: mpsc::Sender<Result<GatewayStatusSnapshot, String>>,
     },
     RestartGateway {
+        response: mpsc::Sender<Result<GatewayStatusSnapshot, String>>,
+    },
+    SetTailscaleMode {
+        mode: TailscaleMode,
         response: mpsc::Sender<Result<GatewayStatusSnapshot, String>>,
     },
 }
@@ -259,6 +266,25 @@ pub fn request_restart_gateway() -> Result<GatewayStatusSnapshot, String> {
     let (response_tx, response_rx) = mpsc::channel();
     sender
         .send(RuntimeCommand::RestartGateway {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    response_rx
+        .recv()
+        .map_err(|_| "runtime command response channel closed".to_string())?
+}
+
+pub fn request_set_tailscale_mode(mode: TailscaleMode) -> Result<GatewayStatusSnapshot, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::SetTailscaleMode {
+            mode,
             response: response_tx,
         })
         .map_err(|_| "failed to send runtime command".to_string())?;

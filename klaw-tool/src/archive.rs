@@ -468,6 +468,10 @@ mod tests {
                     .clone(),
             })
         }
+
+        async fn list_session_keys(&self) -> Result<Vec<String>, ArchiveError> {
+            Ok(Vec::new())
+        }
     }
 
     fn temp_root(prefix: &str) -> PathBuf {

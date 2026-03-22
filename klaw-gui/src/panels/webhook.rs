@@ -23,8 +23,6 @@ const PAGING_INPUT_WIDTH: f32 = 50.0;
 struct WebhookConfigForm {
     enabled: bool,
     path: String,
-    token: String,
-    env_key: String,
     max_body_bytes: String,
 }
 
@@ -33,8 +31,6 @@ impl WebhookConfigForm {
         Self {
             enabled: config.enabled,
             path: config.path.clone(),
-            token: config.token.clone().unwrap_or_default(),
-            env_key: config.env_key.clone().unwrap_or_default(),
             max_body_bytes: config.max_body_bytes.to_string(),
         }
     }
@@ -53,8 +49,6 @@ impl WebhookConfigForm {
 
         config.gateway.webhook.enabled = self.enabled;
         config.gateway.webhook.path = path.to_string();
-        config.gateway.webhook.token = optional_trimmed(&self.token);
-        config.gateway.webhook.env_key = optional_trimmed(&self.env_key);
         config.gateway.webhook.max_body_bytes = max_body_bytes;
         Ok(())
     }
@@ -499,22 +493,6 @@ impl PanelRenderer for WebhookPanel {
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label("Token");
-                        ui.add_sized(
-                            [320.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.token).password(true),
-                        );
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label("Env Key");
-                        ui.add_sized(
-                            [320.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.env_key),
-                        );
-                    });
-
-                    ui.horizontal(|ui| {
                         ui.label("Max Body Bytes");
                         ui.add_sized(
                             [160.0, ui.spacing().interact_size.y],
@@ -539,10 +517,15 @@ impl PanelRenderer for WebhookPanel {
 
 fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig, path: Option<&Path>) {
     let webhook = &config.gateway.webhook;
-    let runtime_url = request_gateway_status()
-        .ok()
-        .and_then(|status| status.info.map(|info| gateway_base_url(&info.ws_url)))
+    let gateway_status = request_gateway_status().ok();
+    let runtime_url = gateway_status
+        .as_ref()
+        .and_then(|status| status.info.as_ref().map(|info| gateway_base_url(&info.ws_url)))
         .map(|base| format!("{base}{}", webhook.path));
+    let auth_configured = gateway_status
+        .as_ref()
+        .map(|status| status.auth_configured)
+        .unwrap_or(false);
 
     egui::Grid::new("webhook-config-summary-grid")
         .num_columns(2)
@@ -569,7 +552,7 @@ fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig, path: Op
             ui.end_row();
 
             ui.label("Auth Source");
-            ui.label(webhook_auth_label(webhook));
+            ui.label(webhook_auth_label(auth_configured));
             ui.end_row();
 
             ui.label("Max Body Bytes");
@@ -609,16 +592,9 @@ fn normalize_filter(raw: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-fn optional_trimmed(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-fn webhook_auth_label(config: &GatewayWebhookConfig) -> &'static str {
-    if config.token.is_some() {
-        "token"
-    } else if config.env_key.is_some() {
-        "env_key"
+fn webhook_auth_label(auth_configured: bool) -> &'static str {
+    if auth_configured {
+        "gateway auth"
     } else {
         "none"
     }

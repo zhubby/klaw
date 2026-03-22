@@ -235,6 +235,55 @@ fn default_heartbeat_timezone() -> String {
     "UTC".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GatewayAuthConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub env_key: Option<String>,
+}
+
+impl GatewayAuthConfig {
+    pub fn resolve_token(&self) -> Option<String> {
+        if let Some(token) = &self.token {
+            return Some(token.clone());
+        }
+        if let Some(env_key) = &self.env_key {
+            if let Ok(val) = std::env::var(env_key) {
+                return Some(val);
+            }
+        }
+        None
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled && self.resolve_token().is_some()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TailscaleMode {
+    #[default]
+    Off,
+    Serve,
+    Funnel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GatewayTailscaleConfig {
+    #[serde(default)]
+    pub mode: TailscaleMode,
+    #[serde(default = "default_tailscale_reset_on_exit")]
+    pub reset_on_exit: bool,
+}
+
+fn default_tailscale_reset_on_exit() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
     #[serde(default)]
@@ -243,6 +292,10 @@ pub struct GatewayConfig {
     pub listen_ip: String,
     #[serde(default = "default_gateway_listen_port")]
     pub listen_port: u16,
+    #[serde(default)]
+    pub auth: GatewayAuthConfig,
+    #[serde(default)]
+    pub tailscale: GatewayTailscaleConfig,
     #[serde(default)]
     pub tls: GatewayTlsConfig,
     #[serde(default)]
@@ -255,6 +308,8 @@ impl Default for GatewayConfig {
             enabled: false,
             listen_ip: default_gateway_listen_ip(),
             listen_port: default_gateway_listen_port(),
+            auth: GatewayAuthConfig::default(),
+            tailscale: GatewayTailscaleConfig::default(),
             tls: GatewayTlsConfig::default(),
             webhook: GatewayWebhookConfig::default(),
         }
@@ -267,10 +322,6 @@ pub struct GatewayWebhookConfig {
     pub enabled: bool,
     #[serde(default = "default_gateway_webhook_path")]
     pub path: String,
-    #[serde(default)]
-    pub token: Option<String>,
-    #[serde(default)]
-    pub env_key: Option<String>,
     #[serde(default = "default_gateway_webhook_max_body_bytes")]
     pub max_body_bytes: usize,
 }
@@ -280,8 +331,6 @@ impl Default for GatewayWebhookConfig {
         Self {
             enabled: false,
             path: default_gateway_webhook_path(),
-            token: None,
-            env_key: None,
             max_body_bytes: default_gateway_webhook_max_body_bytes(),
         }
     }

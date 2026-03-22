@@ -2,9 +2,8 @@
 mod tests {
     use crate::{
         spawn_gateway,
-        webhook::{is_authorized, normalize_webhook_request, GatewayWebhookPayload},
+        webhook::{normalize_webhook_request, GatewayWebhookPayload},
     };
-    use axum::http::{HeaderMap, HeaderValue};
     use klaw_config::GatewayConfig;
     use serde_json::json;
 
@@ -14,6 +13,8 @@ mod tests {
             enabled: true,
             listen_ip: "127.0.0.1".to_string(),
             listen_port: 0,
+            auth: Default::default(),
+            tailscale: Default::default(),
             tls: Default::default(),
             webhook: Default::default(),
         };
@@ -26,17 +27,6 @@ mod tests {
             .contains(&handle.info().actual_port.to_string()));
 
         handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[test]
-    fn webhook_authorization_accepts_bearer_token() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer secret-token"),
-        );
-        assert!(is_authorized(&headers, "secret-token"));
-        assert!(!is_authorized(&headers, "wrong-token"));
     }
 
     #[test]

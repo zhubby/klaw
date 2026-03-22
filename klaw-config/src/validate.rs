@@ -93,27 +93,6 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             "gateway.webhook.max_body_bytes must be greater than 0".to_string(),
         ));
     }
-    if config.gateway.webhook.enabled {
-        let token = config
-            .gateway
-            .webhook
-            .token
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or_default();
-        let env_key = config
-            .gateway
-            .webhook
-            .env_key
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or_default();
-        if token.is_empty() && env_key.is_empty() {
-            return Err(ConfigError::InvalidConfig(
-                "gateway.webhook requires token or env_key when enabled=true".to_string(),
-            ));
-        }
-    }
 
     validate_channels(&config.channels)?;
 

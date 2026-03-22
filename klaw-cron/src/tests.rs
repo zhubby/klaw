@@ -338,6 +338,8 @@ impl SessionStorage for FakeStorage {
         &self,
         _limit: i64,
         _offset: i64,
+        _updated_from_ms: Option<i64>,
+        _updated_to_ms: Option<i64>,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         Ok(self.sessions.lock().expect("lock").clone())
     }
