@@ -10,6 +10,7 @@
 - 基于 `session_key` 的房间隔离
 - 同房间广播、跨房间隔离
 - 连接生命周期管理
+- Tailscale Serve/Funnel 支持
 
 ## 配置
 
@@ -19,11 +20,18 @@ enabled = false
 listen_ip = "127.0.0.1"
 listen_port = 0
 
+[gateway.auth]
+enabled = false
+token = "your-secret-token"
+env_key = "KLAW_GATEWAY_TOKEN"
+
+[gateway.tailscale]
+mode = "off"              # off | serve | funnel
+reset_on_exit = true
+
 [gateway.webhook]
 enabled = false
 path = "/webhook/events"
-token = "replace-me"
-env_key = "KLAW_GATEWAY_WEBHOOK_TOKEN"
 max_body_bytes = 262144
 
 [gateway.tls]
@@ -36,8 +44,9 @@ key_path = "/path/to/privkey.pem"
 
 - `enabled = true` 时，`klaw gui` 启动会自动拉起内置 gateway
 - `listen_port = 0` 时由系统分配随机可用端口，实际端口会输出到日志并展示在 GUI Gateway 面板
-- `gateway.webhook.enabled = true` 时会注册 webhook HTTP 路由，且必须通过 `Authorization: Bearer <token>` 鉴权
-- webhook token 先读取 `gateway.webhook.token`，为空时回退到 `gateway.webhook.env_key` 指向的环境变量
+- `gateway.auth.enabled = true` 时，所有端点（除 `/health/*` 外）需要 `Authorization: Bearer <token>` 鉴权
+- `gateway.tailscale.mode` 可将 gateway 暴露到 Tailscale 私有网络或公网
+- `gateway.webhook.enabled = true` 时会注册 webhook HTTP 路由
 
 ### 配置校验
 
@@ -45,8 +54,8 @@ key_path = "/path/to/privkey.pem"
 - `listen_port` 允许为 `0`（随机端口）或任意合法 `u16` 端口
 - `gateway.webhook.path` 必须以 `/` 开头
 - `gateway.webhook.max_body_bytes` 必须大于 `0`
-- `gateway.webhook.enabled = true` 时，`token` 或 `env_key` 至少要配置一个
 - `tls.enabled=true` 时，`cert_path` 和 `key_path` 不能为空
+- `gateway.tailscale.mode = "funnel"` 时，必须配置 `gateway.auth`
 
 ## 启动
 
@@ -66,7 +75,7 @@ Webhook 示例：
 
 ```bash
 curl -X POST http://127.0.0.1:18080/webhook/events \
-  -H 'Authorization: Bearer replace-me' \
+  -H 'Authorization: Bearer your-secret-token' \
   -H 'Content-Type: application/json' \
   -d '{
     "source": "github",
@@ -75,6 +84,8 @@ curl -X POST http://127.0.0.1:18080/webhook/events \
     "payload": {"number": 42}
   }'
 ```
+
+> **注意**: Webhook 复用 `gateway.auth` 的 token 配置。若 `gateway.auth.enabled = false`，则 webhook 无需鉴权。
 
 Webhook 请求在鉴权和参数校验通过后会立即返回 `202 Accepted`，随后由 runtime 异步处理，并把请求、状态和结果摘要落库供 GUI `Webhook` 面板查看。
 
@@ -104,14 +115,11 @@ Webhook 请求在鉴权和参数校验通过后会立即返回 `202 Accepted`，
 
 - TLS 仅有配置模型，尚未实现 HTTPS/WSS 监听
 - 房间状态为进程内内存结构，重启后不保留
-- WebSocket 连接仍无独立鉴权
-- webhook 仅支持 `Authorization: Bearer <token>`，不支持自定义认证头
 - 无跨实例共享房间（单实例适用）
 
 ## 后续演进
 
 - 接入 `rustls` 实现 WSS
-- 增加连接鉴权（token / session 绑定）
 - 增加 observability 指标
 - 增加消息大小、发送频率限制
 - 支持跨实例广播后端（如 Redis pub/sub）
@@ -119,3 +127,4 @@ Webhook 请求在鉴权和参数校验通过后会立即返回 `202 Accepted`，
 
 详细文档：
 - [WebSocket 协议](./websocket.md)
+- [Tailscale 集成](./tailscale.md)

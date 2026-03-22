@@ -28,6 +28,7 @@
 - [网关](./gateway/README.md)
   - [WebSocket](./gateway/websocket.md)
   - [Webhook](./gateway/webhook.md)
+  - [Tailscale](./gateway/tailscale.md)
 - [渠道](./channels/README.md)
   - [Stdio](./channels/stdio.md)
   - [DingTalk](./channels/dingtalk.md)

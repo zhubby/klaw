@@ -24,7 +24,6 @@ pub(crate) struct GatewayState {
     pub(crate) health: Arc<HealthRegistry>,
     pub(crate) prometheus: Option<PrometheusExporter>,
     pub(crate) webhook: Option<GatewayWebhookState>,
-    pub(crate) auth_token: Option<String>,
 }
 
 impl GatewayState {
@@ -32,14 +31,12 @@ impl GatewayState {
         health: Arc<HealthRegistry>,
         prometheus: Option<PrometheusExporter>,
         webhook: Option<GatewayWebhookState>,
-        auth_token: Option<String>,
     ) -> Self {
         Self {
             rooms: RwLock::new(HashMap::new()),
             health,
             prometheus,
             webhook,
-            auth_token,
         }
     }
 }

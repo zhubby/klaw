@@ -73,7 +73,6 @@ pub async fn spawn_gateway_with_options(
         health,
         options.prometheus,
         webhook,
-        auth_token.clone(),
     ));
     let app = build_router(config, state, auth_token);
 
