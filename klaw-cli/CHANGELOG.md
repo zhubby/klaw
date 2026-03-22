@@ -1,11 +1,5 @@
 # CHANGELOG
 
-## 2026-03-22
-
-### Fixed
-
-- `klaw gui` 作为 macOS `.app` 启动时，现在会为当前进程补齐常见 Homebrew / MacPorts 目录到 `PATH`，避免 Finder 启动缺少 shell 环境导致 `rg`、`tmux`、`zellij`、`tailscale` 等外部命令被误判为不可用
-
 ## 2026-03-21
 
 ### Added
