@@ -11,11 +11,17 @@ pub use audit::{AuditEvent, AuditLogger};
 pub use config::{LocalStoreConfig, ObservabilityConfig};
 pub use health::{HealthRegistry, HealthStatus};
 pub use local_store::{
-    LocalMetricsStore, LocalMetricsStoreError, SqliteLocalMetricsStore, ToolDashboardSnapshot,
-    ToolErrorBreakdownRow, ToolMetricEvent, ToolSampleBucket, ToolStatsQuery, ToolStatsRow,
-    ToolSummaryRow, ToolTimeRange, ToolTimeseriesPoint,
+    LocalMetricsStore, LocalMetricsStoreError, ModelDashboardSnapshot, ModelErrorBreakdownRow,
+    ModelLatencyPercentilesRow, ModelStatsQuery, ModelStatsRow, ModelSummaryRow,
+    ModelTimeseriesPoint, ModelTokenCompositionRow, ModelToolBreakdownRow, SqliteLocalMetricsStore,
+    ToolDashboardSnapshot, ToolErrorBreakdownRow, ToolMetricEvent, ToolSampleBucket,
+    ToolStatsQuery, ToolStatsRow, ToolSummaryRow, ToolTimeRange, ToolTimeseriesPoint,
+    TurnEfficiencyRow,
 };
 pub use metrics::MetricsRecorder;
 pub use telemetry::{init_observability, ObservabilityHandle, OtelAgentTelemetry};
 
-pub use klaw_core::observability::{AgentTelemetry, ToolOutcomeStatus};
+pub use klaw_core::observability::{
+    AgentTelemetry, ModelRequestRecord, ModelRequestStatus, ModelToolOutcomeRecord,
+    ToolOutcomeStatus, TurnOutcomeRecord,
+};

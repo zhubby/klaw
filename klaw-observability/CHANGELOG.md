@@ -2,6 +2,16 @@
 
 All notable changes to this module will be documented in this file.
 
+## 2026-03-22
+
+### Added
+- model-level local analysis storage for provider/model request metrics, token composition, model-attributed tool outcomes, and turn-efficiency outcomes
+- public model analysis query types (`ModelStatsQuery`, `ModelStatsRow`, `ModelTimeseriesPoint`, `ModelDashboardSnapshot`) for GUI aggregation
+- estimated per-model cost calculation in local analysis snapshots using a built-in static price table
+
+### Changed
+- `OtelAgentTelemetry` now records model requests, model-attributed tool success/failure, and turn outcomes into the shared local analysis store alongside existing tool metrics
+
 ## 2026-03-21
 
 ### Added

@@ -3,8 +3,9 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use egui_plot::{GridMark, Legend, Line, Plot, PlotPoints};
 use klaw_config::{ConfigStore, ObservabilityConfig};
 use klaw_observability::{
-    LocalMetricsStore, LocalStoreConfig, SqliteLocalMetricsStore, ToolDashboardSnapshot,
-    ToolSampleBucket, ToolStatsQuery, ToolTimeRange,
+    LocalMetricsStore, LocalStoreConfig, ModelDashboardSnapshot, ModelStatsQuery,
+    SqliteLocalMetricsStore, ToolDashboardSnapshot, ToolSampleBucket, ToolStatsQuery,
+    ToolTimeRange,
 };
 use klaw_util::{default_data_dir, observability_db_path};
 use std::path::PathBuf;
@@ -14,17 +15,33 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum DashboardView {
+    #[default]
+    Tools,
+    Models,
+}
+
+struct DashboardLoad {
+    tool_snapshot: ToolDashboardSnapshot,
+    model_snapshot: ModelDashboardSnapshot,
+}
+
 #[derive(Default)]
 pub struct AnalyzeDashboardPanel {
     store: Option<ConfigStore>,
     observability: ObservabilityConfig,
     storage_root: Option<String>,
     loaded: bool,
-    query: ToolStatsQuery,
+    view: DashboardView,
+    tool_query: ToolStatsQuery,
     selected_tool: Option<String>,
-    snapshot: Option<ToolDashboardSnapshot>,
+    selected_provider: Option<String>,
+    selected_model: Option<String>,
+    tool_snapshot: Option<ToolDashboardSnapshot>,
+    model_snapshot: Option<ModelDashboardSnapshot>,
     last_error: Option<String>,
-    load_rx: Option<Receiver<Result<ToolDashboardSnapshot, String>>>,
+    load_rx: Option<Receiver<Result<DashboardLoad, String>>>,
     loading: bool,
     last_loaded_at: Option<Instant>,
 }
@@ -74,13 +91,24 @@ impl AnalyzeDashboardPanel {
                 .is_none_or(|loaded_at| loaded_at.elapsed() >= AUTO_REFRESH_INTERVAL)
     }
 
+    fn model_query(&self) -> ModelStatsQuery {
+        ModelStatsQuery {
+            time_range: self.tool_query.time_range,
+            bucket_width: self.tool_query.bucket_width,
+            limit: self.tool_query.limit.max(10),
+            provider: self.selected_provider.clone(),
+            model: self.selected_model.clone(),
+        }
+    }
+
     fn request_load(&mut self) {
         let Some(root) = self.data_root_path() else {
             self.last_error = Some("Unable to resolve local data directory".to_string());
             return;
         };
         let db_path = observability_db_path(root);
-        let query = self.query.clone();
+        let tool_query = self.tool_query.clone();
+        let model_query = self.model_query();
         let selected_tool = self.selected_tool.clone();
         let config = self.local_store_config();
         let (tx, rx) = mpsc::channel();
@@ -103,10 +131,18 @@ impl AnalyzeDashboardPanel {
                 let store = SqliteLocalMetricsStore::open(&db_path, &config)
                     .await
                     .map_err(|err| err.to_string())?;
-                store
-                    .query_tool_dashboard_snapshot(&query, selected_tool.as_deref())
+                let tool_snapshot = store
+                    .query_tool_dashboard_snapshot(&tool_query, selected_tool.as_deref())
                     .await
-                    .map_err(|err| err.to_string())
+                    .map_err(|err| err.to_string())?;
+                let model_snapshot = store
+                    .query_model_dashboard_snapshot(&model_query)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                Ok(DashboardLoad {
+                    tool_snapshot,
+                    model_snapshot,
+                })
             });
             let _ = tx.send(result);
         });
@@ -117,8 +153,9 @@ impl AnalyzeDashboardPanel {
             return;
         };
         match rx.try_recv() {
-            Ok(Ok(snapshot)) => {
-                self.snapshot = Some(snapshot);
+            Ok(Ok(load)) => {
+                self.tool_snapshot = Some(load.tool_snapshot);
+                self.model_snapshot = Some(load.model_snapshot);
                 self.last_loaded_at = Some(Instant::now());
                 self.last_error = None;
                 self.loading = false;
@@ -142,6 +179,22 @@ impl AnalyzeDashboardPanel {
     fn render_controls(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
+            ui.label("View:");
+            if ui
+                .selectable_label(self.view == DashboardView::Tools, "Tools")
+                .clicked()
+            {
+                self.view = DashboardView::Tools;
+                changed = true;
+            }
+            if ui
+                .selectable_label(self.view == DashboardView::Models, "Models")
+                .clicked()
+            {
+                self.view = DashboardView::Models;
+                changed = true;
+            }
+            ui.separator();
             ui.label("Time Range:");
             for (label, value) in [
                 ("1h", ToolTimeRange::LastHour),
@@ -149,11 +202,11 @@ impl AnalyzeDashboardPanel {
                 ("7d", ToolTimeRange::Last7Days),
             ] {
                 if ui
-                    .selectable_label(self.query.time_range == value, label)
+                    .selectable_label(self.tool_query.time_range == value, label)
                     .clicked()
                 {
-                    self.query.time_range = value;
-                    self.query.bucket_width = match value {
+                    self.tool_query.time_range = value;
+                    self.tool_query.bucket_width = match value {
                         ToolTimeRange::LastHour => ToolSampleBucket::OneMinute,
                         ToolTimeRange::Last24Hours | ToolTimeRange::Last7Days => {
                             ToolSampleBucket::OneHour
@@ -170,11 +223,66 @@ impl AnalyzeDashboardPanel {
                 ("1h", ToolSampleBucket::OneHour),
             ] {
                 if ui
-                    .selectable_label(self.query.bucket_width == value, label)
+                    .selectable_label(self.tool_query.bucket_width == value, label)
                     .clicked()
                 {
-                    self.query.bucket_width = value;
+                    self.tool_query.bucket_width = value;
                     changed = true;
+                }
+            }
+
+            if matches!(self.view, DashboardView::Models) {
+                if let Some(snapshot) = &self.model_snapshot {
+                    ui.separator();
+                    egui::ComboBox::from_id_salt("analyze-dashboard-provider")
+                        .selected_text(self.selected_provider.as_deref().unwrap_or("All Providers"))
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(self.selected_provider.is_none(), "All Providers")
+                                .clicked()
+                            {
+                                self.selected_provider = None;
+                                self.selected_model = None;
+                                changed = true;
+                            }
+                            for provider in &snapshot.providers {
+                                if ui
+                                    .selectable_label(
+                                        self.selected_provider.as_deref() == Some(provider.as_str()),
+                                        provider,
+                                    )
+                                    .clicked()
+                                {
+                                    self.selected_provider = Some(provider.clone());
+                                    self.selected_model = None;
+                                    changed = true;
+                                }
+                            }
+                        });
+
+                    egui::ComboBox::from_id_salt("analyze-dashboard-model")
+                        .selected_text(self.selected_model.as_deref().unwrap_or("All Models"))
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(self.selected_model.is_none(), "All Models")
+                                .clicked()
+                            {
+                                self.selected_model = None;
+                                changed = true;
+                            }
+                            for model in &snapshot.models {
+                                if ui
+                                    .selectable_label(
+                                        self.selected_model.as_deref() == Some(model.as_str()),
+                                        model,
+                                    )
+                                    .clicked()
+                                {
+                                    self.selected_model = Some(model.clone());
+                                    changed = true;
+                                }
+                            }
+                        });
                 }
             }
 
@@ -194,7 +302,7 @@ impl AnalyzeDashboardPanel {
         changed
     }
 
-    fn render_summary(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
+    fn render_tool_summary(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
         ui.columns(4, |cols| {
             summary_card(
                 &mut cols[0],
@@ -215,6 +323,54 @@ impl AnalyzeDashboardPanel {
                 &mut cols[3],
                 "Avg Duration",
                 format!("{:.1} ms", snapshot.summary.avg_duration_ms),
+            );
+        });
+    }
+
+    fn render_model_summary(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        ui.columns(4, |cols| {
+            summary_card(
+                &mut cols[0],
+                "Total Requests",
+                snapshot.summary.total_requests.to_string(),
+            );
+            summary_card(
+                &mut cols[1],
+                "Success Rate",
+                format_percent(snapshot.summary.request_success_rate),
+            );
+            summary_card(
+                &mut cols[2],
+                "Avg Duration",
+                format!("{:.1} ms", snapshot.summary.avg_duration_ms),
+            );
+            summary_card(
+                &mut cols[3],
+                "P95 Duration",
+                format!("{:.1} ms", snapshot.latency_percentiles.p95_duration_ms),
+            );
+        });
+        ui.add_space(8.0);
+        ui.columns(4, |cols| {
+            summary_card(
+                &mut cols[0],
+                "Total Tokens",
+                snapshot.summary.total_tokens.to_string(),
+            );
+            summary_card(
+                &mut cols[1],
+                "Estimated Cost",
+                format_optional_cost(snapshot.summary.estimated_cost_usd),
+            );
+            summary_card(
+                &mut cols[2],
+                "Tool Call Rate",
+                format_percent(snapshot.summary.tool_call_rate),
+            );
+            summary_card(
+                &mut cols[3],
+                "Turn Completion",
+                format_percent(snapshot.summary.turn_completion_rate),
             );
         });
     }
@@ -269,7 +425,95 @@ impl AnalyzeDashboardPanel {
         changed
     }
 
-    fn render_error_breakdown(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
+    fn render_model_rankings(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        let mut by_tokens = snapshot.model_rows.clone();
+        by_tokens.sort_by(|left, right| {
+            right
+                .total_tokens
+                .cmp(&left.total_tokens)
+                .then_with(|| left.provider.cmp(&right.provider))
+                .then_with(|| left.model.cmp(&right.model))
+        });
+        let mut by_failures = snapshot.model_rows.clone();
+        by_failures.sort_by(|left, right| {
+            right
+                .failures
+                .cmp(&left.failures)
+                .then_with(|| right.request_failure_rate.total_cmp(&left.request_failure_rate))
+        });
+        let mut by_p95 = snapshot.model_rows.clone();
+        by_p95.sort_by(|left, right| right.p95_duration_ms.total_cmp(&left.p95_duration_ms));
+        let mut by_cost = snapshot.model_rows.clone();
+        by_cost.sort_by(|left, right| {
+            right
+                .estimated_cost_usd
+                .unwrap_or(0.0)
+                .total_cmp(&left.estimated_cost_usd.unwrap_or(0.0))
+        });
+
+        ui.columns(2, |cols| {
+            render_model_list(
+                &mut cols[0],
+                "Top Models by Requests",
+                snapshot.model_rows.iter(),
+                |row| {
+                    format!(
+                        "{}/{}  req={}  success={}",
+                        row.provider,
+                        row.model,
+                        row.requests,
+                        format_percent(row.request_success_rate)
+                    )
+                },
+            );
+            render_model_list(&mut cols[1], "Top Models by Token Usage", by_tokens.iter(), |row| {
+                format!(
+                    "{}/{}  tokens={}  avg={:.1}",
+                    row.provider, row.model, row.total_tokens, row.avg_total_tokens
+                )
+            });
+        });
+        ui.add_space(8.0);
+        ui.columns(2, |cols| {
+            render_model_list(
+                &mut cols[0],
+                "Worst Models by Failure Load",
+                by_failures.iter(),
+                |row| {
+                    format!(
+                        "{}/{}  failures={}  timeout={}",
+                        row.provider,
+                        row.model,
+                        row.failures,
+                        format_percent(row.timeout_rate)
+                    )
+                },
+            );
+            render_model_list(
+                &mut cols[1],
+                "Highest P95 Latency Models",
+                by_p95.iter(),
+                |row| {
+                    format!(
+                        "{}/{}  p95={:.1} ms  avg={:.1} ms",
+                        row.provider, row.model, row.p95_duration_ms, row.avg_duration_ms
+                    )
+                },
+            );
+        });
+        ui.add_space(8.0);
+        render_model_list(&mut *ui, "Highest Cost Models", by_cost.iter(), |row| {
+            format!(
+                "{}/{}  cost={}  cost/success={}",
+                row.provider,
+                row.model,
+                format_optional_cost(row.estimated_cost_usd),
+                format_optional_cost(row.cost_per_successful_turn)
+            )
+        });
+    }
+
+    fn render_tool_error_breakdown(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
         ui.group(|ui| {
             ui.strong(match self.selected_tool.as_deref() {
                 Some(tool_name) => format!("Error Breakdown: {tool_name}"),
@@ -286,7 +530,8 @@ impl AnalyzeDashboardPanel {
                     ui.monospace(&row.error_code);
                     ui.add(
                         egui::ProgressBar::new(
-                            (row.failures as f32 / max_failures(snapshot) as f32).clamp(0.0, 1.0),
+                            (row.failures as f32 / max_tool_failures(snapshot) as f32)
+                                .clamp(0.0, 1.0),
                         )
                         .show_percentage()
                         .text(row.failures.to_string()),
@@ -296,11 +541,40 @@ impl AnalyzeDashboardPanel {
         });
     }
 
-    fn render_timeseries(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
+    fn render_model_error_breakdown(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        ui.group(|ui| {
+            ui.strong("Error Breakdown by Provider/Model");
+            ui.separator();
+            if snapshot.error_breakdown.is_empty() {
+                ui.label("No model request failures in the selected time range.");
+                return;
+            }
+            let max_failures = snapshot
+                .error_breakdown
+                .iter()
+                .map(|row| row.failures)
+                .max()
+                .unwrap_or(1);
+            for row in &snapshot.error_breakdown {
+                ui.horizontal(|ui| {
+                    ui.monospace(&row.error_code);
+                    ui.add(
+                        egui::ProgressBar::new(
+                            (row.failures as f32 / max_failures as f32).clamp(0.0, 1.0),
+                        )
+                        .show_percentage()
+                        .text(row.failures.to_string()),
+                    );
+                });
+            }
+        });
+    }
+
+    fn render_tool_timeseries(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
         ui.group(|ui| {
             ui.strong(format!(
                 "Success Rate Trend ({})",
-                self.query.bucket_width.label()
+                self.tool_query.bucket_width.label()
             ));
             ui.separator();
             if snapshot.timeseries.is_empty() {
@@ -311,89 +585,184 @@ impl AnalyzeDashboardPanel {
             let success_rate_points: PlotPoints = snapshot
                 .timeseries
                 .iter()
-                .map(|point| {
-                    let x = point.bucket_start_unix_ms as f64;
-                    let y = point.success_rate * 100.0;
-                    [x, y]
-                })
+                .map(|point| [point.bucket_start_unix_ms as f64, point.success_rate * 100.0])
                 .collect();
 
             let calls_points: PlotPoints = snapshot
                 .timeseries
                 .iter()
-                .map(|point| {
-                    let x = point.bucket_start_unix_ms as f64;
-                    let y = point.calls as f64;
-                    [x, y]
-                })
+                .map(|point| [point.bucket_start_unix_ms as f64, point.calls as f64])
                 .collect();
 
-            let first_ts = snapshot
-                .timeseries
-                .first()
-                .map(|p| p.bucket_start_unix_ms as f64)
-                .unwrap_or(0.0);
-            let last_ts = snapshot
-                .timeseries
-                .last()
-                .map(|p| p.bucket_start_unix_ms as f64)
-                .unwrap_or(0.0);
+            show_plot(
+                ui,
+                "tool_success_rate_trend",
+                &[("Success Rate", success_rate_points, rgb(100, 200, 100), 2.0),
+                  ("Calls", calls_points, rgb(100, 150, 250), 1.5)],
+                true,
+            );
+        });
+    }
 
-            Plot::new("success_rate_trend")
-                .legend(Legend::default())
-                .x_axis_formatter(|x: GridMark, _| format_time_label(x.value as i64))
-                .y_axis_formatter(|y: GridMark, _| format!("{:.0}%", y.value))
-                .label_formatter(|name, value| {
-                    let time = format_time_label(value.x as i64);
-                    if name == "Success Rate" {
-                        format!("{}\n{}: {:.1}%", time, name, value.y)
-                    } else if name == "Calls" {
-                        format!("{}\n{}: {:.0}", time, name, value.y)
-                    } else if !name.is_empty() {
-                        format!("{}\n{}: {:.2}", time, name, value.y)
-                    } else {
-                        time
-                    }
-                })
-                .include_x(first_ts)
-                .include_x(last_ts)
-                .include_y(0.0)
-                .include_y(100.0)
-                .allow_zoom(false)
-                .allow_drag(false)
-                .allow_scroll(false)
-                .allow_double_click_reset(false)
-                .allow_boxed_zoom(false)
-                .height(200.0)
-                .show(ui, |plot_ui| {
-                    plot_ui.line(
-                        Line::new("Success Rate", success_rate_points)
-                            .color(egui::Color32::from_rgb(100, 200, 100))
-                            .width(2.0),
-                    );
-                    plot_ui.line(
-                        Line::new("Calls", calls_points)
-                            .color(egui::Color32::from_rgb(100, 150, 250))
-                            .width(1.5),
+    fn render_model_timeseries(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        ui.group(|ui| {
+            ui.strong(format!(
+                "Model Trends ({})",
+                self.tool_query.bucket_width.label()
+            ));
+            ui.separator();
+            if snapshot.timeseries.is_empty() {
+                ui.label("No model samples in the selected time range.");
+                return;
+            }
+
+            let success_rate: PlotPoints = snapshot
+                .timeseries
+                .iter()
+                .map(|point| [point.bucket_start_unix_ms as f64, point.request_success_rate * 100.0])
+                .collect();
+            let avg_duration: PlotPoints = snapshot
+                .timeseries
+                .iter()
+                .map(|point| [point.bucket_start_unix_ms as f64, point.avg_duration_ms])
+                .collect();
+            let p95_duration: PlotPoints = snapshot
+                .timeseries
+                .iter()
+                .map(|point| [point.bucket_start_unix_ms as f64, point.p95_duration_ms])
+                .collect();
+            let tokens: PlotPoints = snapshot
+                .timeseries
+                .iter()
+                .map(|point| [point.bucket_start_unix_ms as f64, point.total_tokens as f64])
+                .collect();
+            let tool_call_rate: PlotPoints = snapshot
+                .timeseries
+                .iter()
+                .map(|point| [point.bucket_start_unix_ms as f64, point.tool_call_rate * 100.0])
+                .collect();
+            let tool_success_rate: PlotPoints = snapshot
+                .timeseries
+                .iter()
+                .map(|point| [point.bucket_start_unix_ms as f64, point.tool_success_rate * 100.0])
+                .collect();
+            let requests_per_turn: PlotPoints = snapshot
+                .timeseries
+                .iter()
+                .map(|point| [point.bucket_start_unix_ms as f64, point.avg_requests_per_turn])
+                .collect();
+            let tool_iterations_per_turn: PlotPoints = snapshot
+                .timeseries
+                .iter()
+                .map(|point| [point.bucket_start_unix_ms as f64, point.avg_tool_iterations_per_turn])
+                .collect();
+
+            show_plot(
+                ui,
+                "model_stability_trend",
+                &[
+                    ("Success Rate", success_rate, rgb(80, 180, 120), 2.0),
+                    ("Tool Call Rate", tool_call_rate, rgb(220, 170, 70), 1.5),
+                    ("Tool Success Rate", tool_success_rate, rgb(100, 140, 230), 1.5),
+                ],
+                true,
+            );
+            ui.add_space(8.0);
+            show_plot(
+                ui,
+                "model_latency_trend",
+                &[
+                    ("Avg Duration", avg_duration, rgb(180, 80, 120), 2.0),
+                    ("P95 Duration", p95_duration, rgb(220, 80, 80), 1.5),
+                ],
+                false,
+            );
+            ui.add_space(8.0);
+            show_plot(
+                ui,
+                "model_efficiency_trend",
+                &[
+                    ("Token Usage", tokens, rgb(100, 170, 250), 2.0),
+                    ("Requests/Turn", requests_per_turn, rgb(110, 210, 180), 1.5),
+                    (
+                        "Tool Iterations/Turn",
+                        tool_iterations_per_turn,
+                        rgb(210, 120, 200),
+                        1.5,
+                    ),
+                ],
+                false,
+            );
+        });
+    }
+
+    fn render_model_token_composition(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        ui.group(|ui| {
+            ui.strong("Token Composition");
+            ui.separator();
+            let total = snapshot.summary.total_tokens.max(1);
+            for (label, value) in [
+                ("Input Tokens", snapshot.token_composition.input_tokens),
+                ("Output Tokens", snapshot.token_composition.output_tokens),
+                ("Cached Input Tokens", snapshot.token_composition.cached_input_tokens),
+                ("Reasoning Tokens", snapshot.token_composition.reasoning_tokens),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.label(label);
+                    ui.add(
+                        egui::ProgressBar::new((value as f32 / total as f32).clamp(0.0, 1.0))
+                            .show_percentage()
+                            .text(value.to_string()),
                     );
                 });
-
-            ui.horizontal(|ui| {
-                ui.label("Total: ");
-                let total_calls: u64 = snapshot.timeseries.iter().map(|p| p.calls).sum();
-                let total_success: u64 = snapshot.timeseries.iter().map(|p| p.successes).sum();
-                let avg_rate = if total_calls > 0 {
-                    total_success as f64 / total_calls as f64
-                } else {
-                    0.0
-                };
-                ui.label(format!(
-                    "{} calls, {} avg success rate",
-                    total_calls,
-                    format_percent(avg_rate)
-                ));
-            });
+            }
         });
+    }
+
+    fn render_model_tool_breakdown(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        ui.group(|ui| {
+            ui.strong("Selected Model Tool Success Breakdown");
+            ui.separator();
+            if snapshot.tool_breakdown.is_empty() {
+                ui.label("No model-attributed tool data in the selected time range.");
+                return;
+            }
+            for row in &snapshot.tool_breakdown {
+                ui.label(format!(
+                    "{}  calls={}  success={}  approval={}  avg={:.1} ms",
+                    row.tool_name,
+                    row.calls,
+                    format_percent(row.success_rate),
+                    format_percent(row.approval_required_rate),
+                    row.avg_duration_ms
+                ));
+            }
+        });
+    }
+
+    fn render_tools_view(&mut self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) -> bool {
+        self.render_tool_summary(ui, snapshot);
+        ui.add_space(8.0);
+        let tool_changed = self.render_top_tools(ui, snapshot);
+        ui.add_space(8.0);
+        self.render_tool_error_breakdown(ui, snapshot);
+        ui.add_space(8.0);
+        self.render_tool_timeseries(ui, snapshot);
+        tool_changed
+    }
+
+    fn render_models_view(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        self.render_model_summary(ui, snapshot);
+        ui.add_space(8.0);
+        self.render_model_rankings(ui, snapshot);
+        ui.add_space(8.0);
+        self.render_model_token_composition(ui, snapshot);
+        ui.add_space(8.0);
+        self.render_model_tool_breakdown(ui, snapshot);
+        ui.add_space(8.0);
+        self.render_model_error_breakdown(ui, snapshot);
+        ui.add_space(8.0);
+        self.render_model_timeseries(ui, snapshot);
     }
 }
 
@@ -409,7 +778,7 @@ impl PanelRenderer for AnalyzeDashboardPanel {
         self.poll_load(notifications);
 
         ui.heading(ctx.tab_title);
-        ui.label("Tool-focused analysis from the local observability store");
+        ui.label("Tool and model analysis from the local observability store");
         ui.separator();
 
         if !self.observability.enabled {
@@ -437,21 +806,28 @@ impl PanelRenderer for AnalyzeDashboardPanel {
             ui.separator();
         }
 
-        let Some(snapshot) = self.snapshot.clone() else {
-            ui.label("No local metrics yet.");
-            return;
-        };
-
-        self.render_summary(ui, &snapshot);
-        ui.add_space(8.0);
-        let tool_changed = self.render_top_tools(ui, &snapshot);
-        ui.add_space(8.0);
-        self.render_error_breakdown(ui, &snapshot);
-        ui.add_space(8.0);
-        self.render_timeseries(ui, &snapshot);
-
-        if tool_changed && !self.loading {
-            self.request_load();
+        match self.view {
+            DashboardView::Tools => {
+                let Some(snapshot) = self.tool_snapshot.clone() else {
+                    ui.label("No local tool metrics yet.");
+                    return;
+                };
+                let tool_changed = self.render_tools_view(ui, &snapshot);
+                if tool_changed && !self.loading {
+                    self.request_load();
+                }
+            }
+            DashboardView::Models => {
+                let Some(snapshot) = self.model_snapshot.clone() else {
+                    ui.label("No local model metrics yet.");
+                    return;
+                };
+                if snapshot.summary.total_requests == 0 {
+                    ui.label("No model-level metrics yet. New charts populate from new telemetry.");
+                    return;
+                }
+                self.render_models_view(ui, &snapshot);
+            }
         }
     }
 }
@@ -464,11 +840,32 @@ fn summary_card(ui: &mut egui::Ui, title: &str, value: String) {
     });
 }
 
+fn render_model_list<'a>(
+    ui: &mut egui::Ui,
+    title: &str,
+    rows: impl IntoIterator<Item = &'a klaw_observability::ModelStatsRow>,
+    render: impl Fn(&klaw_observability::ModelStatsRow) -> String,
+) {
+    ui.group(|ui| {
+        ui.strong(title);
+        ui.separator();
+        for row in rows.into_iter().take(5) {
+            ui.label(render(row));
+        }
+    });
+}
+
 fn format_percent(value: f64) -> String {
     format!("{:.1}%", value * 100.0)
 }
 
-fn max_failures(snapshot: &ToolDashboardSnapshot) -> u64 {
+fn format_optional_cost(value: Option<f64>) -> String {
+    value
+        .map(|cost| format!("${cost:.4}"))
+        .unwrap_or_else(|| "N/A".to_string())
+}
+
+fn max_tool_failures(snapshot: &ToolDashboardSnapshot) -> u64 {
     snapshot
         .error_breakdown
         .iter()
@@ -490,4 +887,59 @@ fn format_time_label(unix_ms: i64) -> String {
             .unwrap_or(value),
         Err(_) => unix_ms.to_string(),
     }
+}
+
+fn show_plot(
+    ui: &mut egui::Ui,
+    id: &str,
+    lines: &[(&str, PlotPoints<'_>, egui::Color32, f32)],
+    percent_axis: bool,
+) {
+    let first_ts = lines
+        .iter()
+        .find_map(|(_, points, _, _)| points.points().first().map(|point| point.x))
+        .unwrap_or(0.0);
+    let last_ts = lines
+        .iter()
+        .find_map(|(_, points, _, _)| points.points().last().map(|point| point.x))
+        .unwrap_or(0.0);
+    Plot::new(id)
+        .legend(Legend::default())
+        .x_axis_formatter(|x: GridMark, _| format_time_label(x.value as i64))
+        .y_axis_formatter(|y: GridMark, _| {
+            if percent_axis {
+                format!("{:.0}%", y.value)
+            } else {
+                format!("{:.1}", y.value)
+            }
+        })
+        .label_formatter(|name, value| {
+            let time = format_time_label(value.x as i64);
+            if percent_axis {
+                format!("{time}\n{name}: {:.1}%", value.y)
+            } else {
+                format!("{time}\n{name}: {:.2}", value.y)
+            }
+        })
+        .include_x(first_ts)
+        .include_x(last_ts)
+        .allow_zoom(false)
+        .allow_drag(false)
+        .allow_scroll(false)
+        .allow_double_click_reset(false)
+        .allow_boxed_zoom(false)
+        .height(220.0)
+        .show(ui, |plot_ui| {
+            for (name, points, color, width) in lines {
+                plot_ui.line(
+                    Line::new(*name, points.points())
+                        .color(*color)
+                        .width(*width),
+                );
+            }
+        });
+}
+
+fn rgb(red: u8, green: u8, blue: u8) -> egui::Color32 {
+    egui::Color32::from_rgb(red, green, blue)
 }

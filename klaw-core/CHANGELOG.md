@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-22
+
+### Added
+- `AgentTelemetry` now exposes model-request, model-attributed tool-outcome, and turn-outcome recording APIs
+
+### Changed
+- `AgentLoop` now emits provider/model-level observability records for successful and failed model requests, model-attributed tool outcomes, and per-turn completion/degraded/budget/tool-loop outcomes
+
 ## 2026-03-21
 
 ### Added

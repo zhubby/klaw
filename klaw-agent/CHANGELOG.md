@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-22
+
+### Changed
+- `run_agent_execution` now preserves the provider-authored assistant message when a tool loop short-circuits on `approval_required`, keeping user-facing approval prompts stable while still returning tool signals and request metrics
+
 ## 2026-03-21
 
 ### Changed

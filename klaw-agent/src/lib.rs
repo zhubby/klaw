@@ -389,9 +389,10 @@ pub async fn run_agent_execution(
             let _ = stream.send(AgentExecutionStreamEvent::Clear);
         }
 
+        let assistant_content = llm_response.content.clone();
         llm_messages.push(LlmMessage {
             role: "assistant".to_string(),
-            content: llm_response.content,
+            content: assistant_content.clone(),
             media: Vec::new(),
             tool_calls: Some(llm_response.tool_calls.clone()),
             tool_call_id: None,
@@ -409,8 +410,16 @@ pub async fn run_agent_execution(
         )
         .await?
         {
+            let approval_required = short_circuit
+                .signals
+                .iter()
+                .any(|signal| signal.kind == APPROVAL_REQUIRED_SIGNAL);
             return Ok(AgentExecutionOutput {
-                content: short_circuit.content_for_model,
+                content: if approval_required && !assistant_content.trim().is_empty() {
+                    assistant_content
+                } else {
+                    short_circuit.content_for_model
+                },
                 reasoning: llm_response.reasoning,
                 tool_signals,
                 request_usages,

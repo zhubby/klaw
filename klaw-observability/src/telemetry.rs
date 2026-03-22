@@ -8,8 +8,11 @@ use crate::local_store::{
 use crate::metrics::MetricsRecorder;
 use crate::tracing_ext;
 use async_trait::async_trait;
-use klaw_core::observability::{AgentTelemetry, ToolOutcomeStatus};
-use klaw_util::observability_db_path;
+use klaw_core::observability::{
+    AgentTelemetry, ModelRequestRecord, ModelToolOutcomeRecord, ToolOutcomeStatus,
+    TurnOutcomeRecord,
+};
+use klaw_util::{observability_db_path, default_data_dir};
 use prometheus::Registry;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -119,9 +122,9 @@ pub async fn init_observability(
     } else {
         None
     };
-    let local_store = if config.local_store.enabled {
+        let local_store = if config.local_store.enabled {
         let root_dir = data_root
-            .or_else(klaw_util::default_data_dir)
+            .or_else(default_data_dir)
             .ok_or(ObservabilityError::Disabled)?;
         let db_path = observability_db_path(root_dir);
         Some(Arc::new(
@@ -203,22 +206,98 @@ impl AgentTelemetry for OtelAgentTelemetry {
         error_code: Option<&str>,
         duration: Duration,
     ) {
-        let Some(store) = &self.local_store else {
-            return;
-        };
-        if let Err(err) = store
-            .record_tool_outcome(ToolMetricEvent {
-                occurred_at_unix_ms: OffsetDateTime::now_utc().unix_timestamp_nanos() as i64
-                    / 1_000_000,
-                session_key: session_key.to_string(),
-                tool_name: tool_name.to_string(),
-                status,
-                error_code: error_code.map(ToString::to_string),
-                duration_ms: duration.as_millis() as u64,
-            })
-            .await
-        {
-            tracing::warn!(error = %err, "failed to record local tool outcome");
+        if let Some(store) = &self.local_store {
+            if let Err(err) = store
+                .record_tool_outcome(ToolMetricEvent {
+                    occurred_at_unix_ms: OffsetDateTime::now_utc().unix_timestamp_nanos() as i64
+                        / 1_000_000,
+                    session_key: session_key.to_string(),
+                    tool_name: tool_name.to_string(),
+                    status,
+                    error_code: error_code.map(ToString::to_string),
+                    duration_ms: duration.as_millis() as u64,
+                })
+                .await
+            {
+                tracing::warn!(error = %err, "failed to record local tool outcome");
+            }
+        }
+    }
+
+    async fn record_model_request(&self, record: ModelRequestRecord) {
+        self.metrics.incr_llm_request(
+            &record.session_key,
+            &record.provider,
+            &record.model,
+            record.status.as_str(),
+        );
+        self.metrics.record_llm_request_duration(
+            &record.session_key,
+            &record.provider,
+            &record.model,
+            record.status.as_str(),
+            record.duration,
+        );
+        for (token_type, value) in [
+            ("input", record.input_tokens),
+            ("output", record.output_tokens),
+            ("total", record.total_tokens),
+            ("cached_input", record.cached_input_tokens),
+            ("reasoning", record.reasoning_tokens),
+        ] {
+            if value > 0 {
+                self.metrics.incr_llm_tokens(
+                    &record.session_key,
+                    &record.provider,
+                    &record.model,
+                    token_type,
+                    value,
+                );
+            }
+        }
+        if let Some(store) = &self.local_store {
+            if let Err(err) = store.record_model_request(record).await {
+                tracing::warn!(error = %err, "failed to record local model request");
+            }
+        }
+    }
+
+    async fn record_model_tool_outcome(&self, record: ModelToolOutcomeRecord) {
+        match record.status {
+            ToolOutcomeStatus::Success => self.metrics.incr_model_tool_success(
+                &record.session_key,
+                &record.provider,
+                &record.model,
+                &record.tool_name,
+            ),
+            ToolOutcomeStatus::Failure => self.metrics.incr_model_tool_failure(
+                &record.session_key,
+                &record.provider,
+                &record.model,
+                &record.tool_name,
+                record.error_code.as_deref().unwrap_or("unknown"),
+            ),
+        }
+        if let Some(store) = &self.local_store {
+            if let Err(err) = store.record_model_tool_outcome(record).await {
+                tracing::warn!(error = %err, "failed to record model-attributed tool outcome");
+            }
+        }
+    }
+
+    async fn record_turn_outcome(&self, record: TurnOutcomeRecord) {
+        if record.completed {
+            self.metrics
+                .incr_turn_completed(&record.session_key, &record.provider, &record.model);
+        }
+        if record.degraded {
+            self.metrics
+                .incr_turn_degraded(&record.session_key, &record.provider, &record.model);
+        }
+        if let Some(store) = &self.local_store {
+            if let Err(err) = store.record_turn_outcome(record).await {
+                tracing::warn!(error = %err, "failed to record turn outcome");
+            }
         }
     }
 

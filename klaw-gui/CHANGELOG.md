@@ -2,6 +2,16 @@
 
 ## 2026-03-22
 
+### Added
+
+- `Analyze Dashboard` now includes a `Models` view backed by observability local-store data, with provider/model filters, token composition, model/tool success breakdowns, turn-efficiency summaries, and multi-series trend charts
+
+### Changed
+
+- `Analyze Dashboard` now loads both tool analytics and provider/model analytics from the shared local observability store with one refresh path
+
+## 2026-03-22
+
 ### Changed
 
 - `Analyze Dashboard` Success Rate Trend now uses egui_plot line chart instead of progress bar list, showing success rate percentage and call volume over time with interactive legend

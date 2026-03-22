@@ -13,6 +13,8 @@ LLM Audit Trail 提供完整的 LLM 请求/响应审计跟踪能力：
 
 审计数据由 LLM Provider 层自动生成，通过后台线程异步持久化，不影响主流程性能。
 
+> 说明: `llm_audit` 继续作为请求/响应明细审计来源; provider/model 聚合分析、token 结构、tool success rate 和 turn 效率图表已经迁移到 `klaw-observability` 的本地 analysis store，并由 GUI `Analyze Dashboard` 的 `Models` 视图消费。
+
 ## 代码位置
 
 | 模块 | 路径 | 职责 |

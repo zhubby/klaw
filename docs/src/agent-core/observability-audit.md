@@ -45,9 +45,26 @@ output_path = "/var/log/klaw/audit.log"
 | `agent_run_duration_ms` | Histogram | session_key, stage | 运行时长分布 (P50/P95/P99) |
 | `agent_tool_success_total` | Counter | session_key, tool_name | 工具成功计数 |
 | `agent_tool_failure_total` | Counter | session_key, tool_name, error_code | 工具失败计数 |
+| `agent_llm_request_total` | Counter | session_key, provider, model, status | 模型请求计数 |
+| `agent_llm_request_duration_ms` | Histogram | session_key, provider, model, status | 模型请求时延分布 |
+| `agent_llm_tokens_total` | Counter | session_key, provider, model, token_type | 模型 token 消耗计数 |
+| `agent_model_tool_success_total` | Counter | session_key, provider, model, tool_name | 模型归因工具成功计数 |
+| `agent_model_tool_failure_total` | Counter | session_key, provider, model, tool_name, error_code | 模型归因工具失败计数 |
+| `agent_turn_completed_total` | Counter | session_key, provider, model | 成功完成 turn 计数 |
+| `agent_turn_degraded_total` | Counter | session_key, provider, model | 降级 turn 计数 |
 | `agent_retry_total` | Counter | session_key, error_code | 重试计数 |
 | `agent_deadletter_total` | Counter | session_key | 死信计数 |
 | `agent_session_queue_depth` | Gauge | session_key | 会话队列深度 |
+
+## 本地分析存储扩展
+
+除工具层统计外,本地 SQLite analysis store 现在还会保存:
+
+- `llm_metric_events` / `llm_metric_minute_rollups`: provider/model 请求成功率、时延、token 结构、超时率、空响应率
+- `model_tool_metric_events` / `model_tool_metric_minute_rollups`: 按发起模型归因的工具成功率、审批率、耗时
+- `turn_metric_events` / `turn_metric_minute_rollups`: 每轮请求数、tool iterations、完成率、降级率、budget/tool loop 命中率
+
+GUI `Analyze Dashboard` 的 `Models` 视图直接消费这些聚合数据。
 
 ## 2. Tracing（端到端）
 

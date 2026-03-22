@@ -8,7 +8,7 @@
 - **Tracing**: 基于 OpenTelemetry 的分布式追踪,支持概率采样
 - **Audit**: 结构化审计事件记录
 - **Health**: 组件健康状态管理
-- **Local Analysis Store**: 本地 SQLite 工具调用统计,供 GUI `Analyze Dashboard` 直接查询
+- **Local Analysis Store**: 本地 SQLite 工具调用、模型请求、模型归因工具结果与 turn 效率统计,供 GUI `Analyze Dashboard` 直接查询
 
 ## 使用
 
@@ -72,6 +72,13 @@ flush_interval_seconds = 5
 | `agent_run_duration_ms` | Histogram | 运行时长分布 |
 | `agent_tool_success_total` | Counter | 工具成功计数 |
 | `agent_tool_failure_total` | Counter | 工具失败计数 |
+| `agent_llm_request_total` | Counter | 模型请求计数 |
+| `agent_llm_request_duration_ms` | Histogram | 模型请求时延分布 |
+| `agent_llm_tokens_total` | Counter | 模型 token 消耗计数 |
+| `agent_model_tool_success_total` | Counter | 按模型归因的工具成功计数 |
+| `agent_model_tool_failure_total` | Counter | 按模型归因的工具失败计数 |
+| `agent_turn_completed_total` | Counter | 成功完成 turn 计数 |
+| `agent_turn_degraded_total` | Counter | 降级 turn 计数 |
 | `agent_retry_total` | Counter | 重试计数 |
 | `agent_deadletter_total` | Counter | 死信计数 |
 | `agent_session_queue_depth` | Gauge | 会话队列深度 |

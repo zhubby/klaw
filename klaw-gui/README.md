@@ -40,7 +40,7 @@
   - setting (general/network plus S3 snapshot backup and restore)
 - system-monitor (real-time CPU/memory/data-dir/uptime cards in a 2x2 equal-width layout, plus detailed system information)
 - logs panel (live tracing stream in-process with level filters, keyword search, pause stream, auto-scroll, clear, export, and bounded in-memory buffer)
-- analyze dashboard panel (local observability-backed tool analytics with time-range switching, success rate, failure breakdown, top tools, and trend sampling)
+- analyze dashboard panel (local observability-backed tool and model analytics with time-range switching, provider/model filters, token composition, error breakdown, tool success breakdown, and trend sampling)
 - Configuration panel features:
   - load and edit `config.toml` raw text
   - TOML syntax highlighting (section/key/value/comment)

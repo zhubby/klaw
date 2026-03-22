@@ -51,6 +51,68 @@ pub enum ToolOutcomeStatus {
     Failure,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModelRequestStatus {
+    Success,
+    Failure,
+}
+
+impl ModelRequestStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRequestRecord {
+    pub session_key: String,
+    pub provider: String,
+    pub model: String,
+    pub wire_api: String,
+    pub status: ModelRequestStatus,
+    pub error_code: Option<String>,
+    pub duration: Duration,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub reasoning_tokens: u64,
+    pub provider_request_id: Option<String>,
+    pub provider_response_id: Option<String>,
+    pub tool_call_count: u32,
+    pub has_tool_call: bool,
+    pub empty_response: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelToolOutcomeRecord {
+    pub session_key: String,
+    pub provider: String,
+    pub model: String,
+    pub tool_name: String,
+    pub status: ToolOutcomeStatus,
+    pub error_code: Option<String>,
+    pub duration: Duration,
+    pub approval_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnOutcomeRecord {
+    pub session_key: String,
+    pub provider: String,
+    pub model: String,
+    pub requests_in_turn: u32,
+    pub tool_iterations: u32,
+    pub completed: bool,
+    pub degraded: bool,
+    pub token_budget_exceeded: bool,
+    pub tool_loop_exhausted: bool,
+}
+
 /// 审计事件负载。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
@@ -78,6 +140,12 @@ pub trait AgentTelemetry: Send + Sync {
         error_code: Option<&str>,
         duration: Duration,
     );
+    /// 记录模型请求结果。
+    async fn record_model_request(&self, record: ModelRequestRecord);
+    /// 记录按模型归因的工具调用结果。
+    async fn record_model_tool_outcome(&self, record: ModelToolOutcomeRecord);
+    /// 记录单轮 agent 执行结果。
+    async fn record_turn_outcome(&self, record: TurnOutcomeRecord);
     /// 增加计数器。
     async fn incr_counter(&self, name: &'static str, labels: &[(&str, &str)], value: u64);
     /// 上报直方图时延。

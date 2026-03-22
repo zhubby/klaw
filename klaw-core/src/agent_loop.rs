@@ -1,6 +1,9 @@
 use crate::{
     domain::{DeadLetterMessage, InboundMessage, OutboundMessage},
-    observability::{AgentTelemetry, ToolOutcomeStatus},
+    observability::{
+        AgentTelemetry, ModelRequestRecord, ModelRequestStatus, ModelToolOutcomeRecord,
+        ToolOutcomeStatus, TurnOutcomeRecord,
+    },
     protocol::{Envelope, ErrorCode, MessageTopic},
     reliability::{
         idempotency_key, CircuitBreaker, DeadLetterPolicy, IdempotencyStore, RetryDecision,
@@ -197,6 +200,18 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                         )
                         .await;
                     telemetry
+                        .record_model_tool_outcome(ModelToolOutcomeRecord {
+                            session_key: session_key.to_string(),
+                            provider: metadata_provider(metadata).to_string(),
+                            model: metadata_model(metadata).to_string(),
+                            tool_name: name.to_string(),
+                            status: ToolOutcomeStatus::Success,
+                            error_code: None,
+                            duration: start.elapsed(),
+                            approval_required: false,
+                        })
+                        .await;
+                    telemetry
                         .incr_counter(
                             "agent_tool_success_total",
                             &[("session_key", session_key), ("tool_name", name)],
@@ -216,7 +231,7 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
             Err(err) => {
                 let error_code = err.code().to_string();
                 let message = if error_code == "approval_required" {
-                    err.message().to_string()
+                    "approval requested".to_string()
                 } else {
                     format!("tool `{name}` failed: {err}")
                 };
@@ -235,6 +250,7 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                     "tool result"
                 );
                 if let Some(telemetry) = self.telemetry {
+                    let approval_required = error_code == "approval_required";
                     telemetry
                         .record_tool_outcome(
                             session_key,
@@ -243,6 +259,18 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                             Some(&error_code),
                             start.elapsed(),
                         )
+                        .await;
+                    telemetry
+                        .record_model_tool_outcome(ModelToolOutcomeRecord {
+                            session_key: session_key.to_string(),
+                            provider: metadata_provider(metadata).to_string(),
+                            model: metadata_model(metadata).to_string(),
+                            tool_name: name.to_string(),
+                            status: ToolOutcomeStatus::Failure,
+                            error_code: Some(error_code.clone()),
+                            duration: start.elapsed(),
+                            approval_required,
+                        })
                         .await;
                     telemetry
                         .incr_counter(
@@ -286,6 +314,193 @@ fn truncate_for_log(value: &str, max_chars: usize) -> String {
     let mut truncated = value.chars().take(max_chars).collect::<String>();
     truncated.push_str("...[truncated]");
     truncated
+}
+
+fn metadata_provider(metadata: &BTreeMap<String, serde_json::Value>) -> &str {
+    metadata
+        .get("agent.provider_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+}
+
+fn metadata_model(metadata: &BTreeMap<String, serde_json::Value>) -> &str {
+    metadata
+        .get("agent.model")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+}
+
+async fn record_model_requests(
+    telemetry: Option<&Arc<dyn AgentTelemetry>>,
+    session_key: &str,
+    fallback_provider: &str,
+    fallback_model: &str,
+    fallback_wire_api: &str,
+    audits: &[klaw_agent::AgentRequestAudit],
+    usages: &[klaw_agent::AgentRequestUsage],
+    fallback_error_code: Option<&str>,
+) {
+    let Some(telemetry) = telemetry else {
+        return;
+    };
+    let usage_by_seq = usages
+        .iter()
+        .map(|usage| (usage.request_seq, usage))
+        .collect::<BTreeMap<_, _>>();
+
+    for audit in audits {
+        let usage = usage_by_seq.get(&audit.request_seq).copied();
+        let duration = audit
+            .payload
+            .responded_at_ms
+            .and_then(|responded_at_ms| {
+                responded_at_ms
+                    .checked_sub(audit.payload.requested_at_ms)
+                    .map(|ms| Duration::from_millis(ms.max(0) as u64))
+            })
+            .unwrap_or_default();
+        let tool_call_count = audit
+            .payload
+            .response_body
+            .as_ref()
+            .and_then(extract_tool_call_count)
+            .or_else(|| usage.map(|_| 0))
+            .unwrap_or(0);
+        let empty_response = audit
+            .payload
+            .response_body
+            .as_ref()
+            .is_some_and(response_body_is_empty);
+        telemetry
+            .record_model_request(ModelRequestRecord {
+                session_key: session_key.to_string(),
+                provider: audit.payload.provider.clone(),
+                model: audit.payload.model.clone(),
+                wire_api: audit.payload.wire_api.clone(),
+                status: match audit.payload.status {
+                    klaw_llm::LlmAuditStatus::Success => ModelRequestStatus::Success,
+                    klaw_llm::LlmAuditStatus::Failed => ModelRequestStatus::Failure,
+                },
+                error_code: audit
+                    .payload
+                    .error_code
+                    .clone()
+                    .or_else(|| fallback_error_code.map(ToString::to_string)),
+                duration,
+                input_tokens: usage.map(|item| item.usage.input_tokens).unwrap_or(0),
+                output_tokens: usage.map(|item| item.usage.output_tokens).unwrap_or(0),
+                total_tokens: usage.map(|item| item.usage.total_tokens).unwrap_or(0),
+                cached_input_tokens: usage
+                    .and_then(|item| item.usage.cached_input_tokens)
+                    .unwrap_or(0),
+                reasoning_tokens: usage
+                    .and_then(|item| item.usage.reasoning_tokens)
+                    .unwrap_or(0),
+                provider_request_id: audit.payload.provider_request_id.clone(),
+                provider_response_id: audit.payload.provider_response_id.clone(),
+                tool_call_count,
+                has_tool_call: tool_call_count > 0,
+                empty_response,
+            })
+            .await;
+    }
+
+    if audits.is_empty() && !usages.is_empty() {
+        for usage in usages {
+            telemetry
+                .record_model_request(ModelRequestRecord {
+                    session_key: session_key.to_string(),
+                    provider: fallback_provider.to_string(),
+                    model: fallback_model.to_string(),
+                    wire_api: fallback_wire_api.to_string(),
+                    status: ModelRequestStatus::Success,
+                    error_code: None,
+                    duration: Duration::default(),
+                    input_tokens: usage.usage.input_tokens,
+                    output_tokens: usage.usage.output_tokens,
+                    total_tokens: usage.usage.total_tokens,
+                    cached_input_tokens: usage.usage.cached_input_tokens.unwrap_or(0),
+                    reasoning_tokens: usage.usage.reasoning_tokens.unwrap_or(0),
+                    provider_request_id: usage.usage.provider_request_id.clone(),
+                    provider_response_id: usage.usage.provider_response_id.clone(),
+                    tool_call_count: 0,
+                    has_tool_call: false,
+                    empty_response: false,
+                })
+                .await;
+        }
+    }
+}
+
+async fn record_turn_outcome(
+    telemetry: Option<&Arc<dyn AgentTelemetry>>,
+    session_key: &str,
+    provider: &str,
+    model: &str,
+    requests_in_turn: usize,
+    tool_iterations: usize,
+    completed: bool,
+    degraded: bool,
+    token_budget_exceeded: bool,
+    tool_loop_exhausted: bool,
+) {
+    let Some(telemetry) = telemetry else {
+        return;
+    };
+    telemetry
+        .record_turn_outcome(TurnOutcomeRecord {
+            session_key: session_key.to_string(),
+            provider: provider.to_string(),
+            model: model.to_string(),
+            requests_in_turn: requests_in_turn as u32,
+            tool_iterations: tool_iterations as u32,
+            completed,
+            degraded,
+            token_budget_exceeded,
+            tool_loop_exhausted,
+        })
+        .await;
+}
+
+fn extract_tool_call_count(value: &serde_json::Value) -> Option<u32> {
+    value
+        .get("output")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items.iter().fold(0u32, |count, item| {
+                count
+                    + u32::from(
+                        item.get("type")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|kind| kind.contains("tool_call")),
+                    )
+            })
+        })
+}
+
+fn response_body_is_empty(value: &serde_json::Value) -> bool {
+    value.as_object().is_some_and(|object| object.is_empty())
+}
+
+fn error_code_label(code: ErrorCode) -> &'static str {
+    match code {
+        ErrorCode::InvalidSchema => "invalid_schema",
+        ErrorCode::ValidationFailed => "validation_failed",
+        ErrorCode::DuplicateMessage => "duplicate_message",
+        ErrorCode::SessionBusy => "session_busy",
+        ErrorCode::AgentTimeout => "agent_timeout",
+        ErrorCode::ToolTimeout => "tool_timeout",
+        ErrorCode::ProviderUnavailable => "provider_unavailable",
+        ErrorCode::ProviderResponseInvalid => "provider_response_invalid",
+        ErrorCode::TransportUnavailable => "transport_unavailable",
+        ErrorCode::RetryExhausted => "retry_exhausted",
+        ErrorCode::BudgetExceeded => "budget_exceeded",
+        ErrorCode::SentToDeadLetter => "sent_to_deadletter",
+    }
 }
 
 impl AgentLoop {
@@ -567,6 +782,43 @@ impl AgentLoop {
 
         match result {
             Ok(output) => {
+                let request_count = output.request_audits.len().max(output.request_usages.len());
+                let tool_iterations = output
+                    .request_audits
+                    .iter()
+                    .filter(|record| {
+                        record
+                            .payload
+                            .response_body
+                            .as_ref()
+                            .and_then(extract_tool_call_count)
+                            .is_some_and(|count| count > 0)
+                    })
+                    .count();
+                record_model_requests(
+                    self.telemetry.as_ref(),
+                    session_key,
+                    &resolved_provider_id,
+                    &resolved_model,
+                    provider.wire_api().unwrap_or(provider.name()),
+                    &output.request_audits,
+                    &output.request_usages,
+                    None,
+                )
+                .await;
+                record_turn_outcome(
+                    self.telemetry.as_ref(),
+                    session_key,
+                    &resolved_provider_id,
+                    &resolved_model,
+                    request_count,
+                    tool_iterations,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .await;
                 state = self.transition(state, StateTransitionEvent::FinalResponseReady);
                 state = self.transition(state, StateTransitionEvent::Published);
 
@@ -718,6 +970,39 @@ impl AgentLoop {
             }
             Err(AgentExecutionError::Provider(err)) => {
                 warn!(error = %err, "provider failed");
+                let audits = err.audit().cloned().into_iter().collect::<Vec<_>>();
+                let request_audits = audits
+                    .iter()
+                    .enumerate()
+                    .map(|(index, payload)| klaw_agent::AgentRequestAudit {
+                        request_seq: (index as i64) + 1,
+                        payload: payload.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                record_model_requests(
+                    self.telemetry.as_ref(),
+                    session_key,
+                    &resolved_provider_id,
+                    &resolved_model,
+                    provider.wire_api().unwrap_or(provider.name()),
+                    &request_audits,
+                    &[],
+                    Some(error_code_label(map_llm_error_to_code(&err))),
+                )
+                .await;
+                record_turn_outcome(
+                    self.telemetry.as_ref(),
+                    session_key,
+                    &resolved_provider_id,
+                    &resolved_model,
+                    request_audits.len(),
+                    0,
+                    false,
+                    true,
+                    false,
+                    false,
+                )
+                .await;
                 if let Some(ref telemetry) = self.telemetry {
                     telemetry
                         .incr_counter(
@@ -746,13 +1031,26 @@ impl AgentLoop {
                     final_response: None,
                     error_code: Some(map_llm_error_to_code(&err)),
                     final_state: AgentRunState::Degraded,
-                    llm_audits: err.audit().cloned().into_iter().collect(),
+                    llm_audits: audits,
                     audit_message_id: Some(msg.header.message_id),
                     audit_session_key: Some(msg.payload.session_key.clone()),
                     audit_chat_id: Some(msg.payload.chat_id.clone()),
                 }
             }
             Err(AgentExecutionError::ToolLoopExhausted) => {
+                record_turn_outcome(
+                    self.telemetry.as_ref(),
+                    session_key,
+                    &resolved_provider_id,
+                    &resolved_model,
+                    0,
+                    self.limits.max_tool_iterations as usize,
+                    false,
+                    true,
+                    false,
+                    true,
+                )
+                .await;
                 if let Some(ref telemetry) = self.telemetry {
                     telemetry
                         .incr_counter(
@@ -781,6 +1079,19 @@ impl AgentLoop {
                 token_budget,
             }) => {
                 warn!(used_tokens, token_budget, "agent token budget exceeded");
+                record_turn_outcome(
+                    self.telemetry.as_ref(),
+                    session_key,
+                    &resolved_provider_id,
+                    &resolved_model,
+                    0,
+                    0,
+                    false,
+                    false,
+                    true,
+                    false,
+                )
+                .await;
                 if let Some(ref telemetry) = self.telemetry {
                     telemetry
                         .incr_counter(
@@ -1321,7 +1632,14 @@ mod tests {
         augment_user_content_with_attachment_context, current_attachment_contexts,
         heartbeat_response_metadata, AgentLoop, QueueStrategy, RunLimits, SessionSchedulingPolicy,
     };
-    use crate::{domain::InboundMessage, protocol::EnvelopeHeader};
+    use crate::{
+        domain::InboundMessage,
+        observability::{
+            AgentTelemetry, ModelRequestRecord, ModelToolOutcomeRecord, ToolOutcomeStatus,
+            TurnOutcomeRecord,
+        },
+        protocol::EnvelopeHeader,
+    };
     use async_trait::async_trait;
     use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
     use klaw_tool::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolRegistry};
@@ -1331,6 +1649,7 @@ mod tests {
         sync::{Arc, Mutex},
         time::Duration,
     };
+    use uuid::Uuid;
 
     #[test]
     fn heartbeat_metadata_is_passthrough_only_for_heartbeat_keys() {
@@ -1832,5 +2151,128 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("approval-core-test")
         );
+    }
+
+    #[derive(Default)]
+    struct CaptureTelemetry {
+        model_requests: Mutex<Vec<ModelRequestRecord>>,
+        model_tool_outcomes: Mutex<Vec<ModelToolOutcomeRecord>>,
+        turn_outcomes: Mutex<Vec<TurnOutcomeRecord>>,
+    }
+
+    #[async_trait]
+    impl AgentTelemetry for CaptureTelemetry {
+        async fn record_tool_outcome(
+            &self,
+            _session_key: &str,
+            _tool_name: &str,
+            _status: ToolOutcomeStatus,
+            _error_code: Option<&str>,
+            _duration: Duration,
+        ) {
+        }
+
+        async fn record_model_request(&self, record: ModelRequestRecord) {
+            self.model_requests
+                .lock()
+                .expect("model request mutex poisoned")
+                .push(record);
+        }
+
+        async fn record_model_tool_outcome(&self, record: ModelToolOutcomeRecord) {
+            self.model_tool_outcomes
+                .lock()
+                .expect("model tool outcome mutex poisoned")
+                .push(record);
+        }
+
+        async fn record_turn_outcome(&self, record: TurnOutcomeRecord) {
+            self.turn_outcomes
+                .lock()
+                .expect("turn outcome mutex poisoned")
+                .push(record);
+        }
+
+        async fn incr_counter(&self, _name: &'static str, _labels: &[(&str, &str)], _value: u64) {}
+
+        async fn observe_histogram(
+            &self,
+            _name: &'static str,
+            _labels: &[(&str, &str)],
+            _duration: Duration,
+        ) {
+        }
+
+        async fn emit_audit_event(
+            &self,
+            _event_name: &'static str,
+            _trace_id: Uuid,
+            _payload: serde_json::Value,
+        ) {
+        }
+
+        async fn set_health(&self, _component: &'static str, _status: crate::HealthStatus) {}
+    }
+
+    #[tokio::test]
+    async fn process_message_records_model_and_turn_observability() {
+        let provider = Arc::new(UsageProvider) as Arc<dyn LlmProvider>;
+        let telemetry = Arc::new(CaptureTelemetry::default());
+        let mut tools = ToolRegistry::default();
+        tools.register(MockApprovalTool);
+        let agent = AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 2,
+                max_tool_calls: 2,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(1),
+                tool_timeout: Duration::from_secs(1),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 1,
+                lock_ttl: Duration::from_secs(1),
+            },
+            Arc::clone(&provider),
+            "openai".to_string(),
+            "gpt-4.1-mini".to_string(),
+            tools,
+        )
+        .with_provider_registry(BTreeMap::from([("openai".to_string(), provider)]))
+        .with_telemetry(telemetry.clone());
+
+        let inbound = crate::protocol::Envelope {
+            header: EnvelopeHeader::new("im:chat-observe"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "im".to_string(),
+                sender_id: "u1".to_string(),
+                chat_id: "chat-observe".to_string(),
+                session_key: "im:chat-observe".to_string(),
+                content: "hello".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        };
+
+        let _ = agent.process_message(inbound, false).await;
+        let model_requests = telemetry
+            .model_requests
+            .lock()
+            .expect("model request mutex poisoned")
+            .clone();
+        assert_eq!(model_requests.len(), 1);
+        assert_eq!(model_requests[0].provider, "openai");
+        assert_eq!(model_requests[0].model, "gpt-4.1-mini");
+        assert_eq!(model_requests[0].total_tokens, 16);
+
+        let turn_outcomes = telemetry
+            .turn_outcomes
+            .lock()
+            .expect("turn outcome mutex poisoned")
+            .clone();
+        assert_eq!(turn_outcomes.len(), 1);
+        assert!(turn_outcomes[0].completed);
+        assert_eq!(turn_outcomes[0].requests_in_turn, 1);
     }
 }
