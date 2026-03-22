@@ -32,7 +32,7 @@ jobs:
         run: make build-macos-app
 
       - name: Import Apple signing certificate
-        if: ${{ secrets.APPLE_SIGNING_CERT_BASE64 != '' && secrets.APPLE_SIGNING_CERT_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+        if: secrets.APPLE_SIGNING_CERT_BASE64 != '' && secrets.APPLE_SIGNING_CERT_PASSWORD != '' && secrets.APPLE_TEAM_ID != ''
         env:
           APPLE_SIGNING_CERT_BASE64: ${{ secrets.APPLE_SIGNING_CERT_BASE64 }}
           APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
@@ -47,7 +47,7 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH"
 
       - name: Codesign app bundle
-        if: ${{ secrets.APPLE_SIGNING_CERT_BASE64 != '' && secrets.APPLE_SIGNING_CERT_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+        if: secrets.APPLE_SIGNING_CERT_BASE64 != '' && secrets.APPLE_SIGNING_CERT_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_SIGNING_IDENTITY != ''
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
@@ -57,7 +57,7 @@ jobs:
         run: make package-macos-dmg
 
       - name: Codesign dmg
-        if: ${{ secrets.APPLE_SIGNING_CERT_BASE64 != '' && secrets.APPLE_SIGNING_CERT_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+        if: secrets.APPLE_SIGNING_CERT_BASE64 != '' && secrets.APPLE_SIGNING_CERT_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_SIGNING_IDENTITY != ''
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
@@ -65,7 +65,7 @@ jobs:
           codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$DMG_PATH"
 
       - name: Notarize dmg
-        if: ${{ secrets.APPLE_NOTARY_APPLE_ID != '' && secrets.APPLE_NOTARY_TEAM_ID != '' && secrets.APPLE_NOTARY_PASSWORD != '' }}
+        if: secrets.APPLE_NOTARY_APPLE_ID != '' && secrets.APPLE_NOTARY_TEAM_ID != '' && secrets.APPLE_NOTARY_PASSWORD != ''
         env:
           APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
           APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
