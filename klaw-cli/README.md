@@ -33,6 +33,17 @@
 - `Klaw.app`
 - `Klaw-<version>-aarch64-apple-darwin.dmg`
 
+当 `Klaw.app` 通过 Finder / LaunchServices 启动时，`klaw-cli` 会在 GUI 启动早期为当前进程补齐常见 macOS 包管理器目录到 `PATH`，包括：
+
+- `/opt/homebrew/bin`
+- `/opt/homebrew/sbin`
+- `/usr/local/bin`
+- `/usr/local/sbin`
+- `/opt/local/bin`
+- `/opt/local/sbin`
+
+这样可以让通过 Homebrew / MacPorts 安装的 `rg`、`tmux`、`zellij`、`tailscale` 等外部命令在打包后的 `.app` 中继续被检测和调用，而不依赖用户的 shell 初始化脚本是否被执行。
+
 ## Daemon Management
 
 `klaw daemon` 只托管 `klaw gateway`：
