@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-22
+
+### Fixed
+
+- `telegram` HTTP 客户端不再无条件禁用系统代理，避免在依赖 `HTTPS_PROXY`/`ALL_PROXY` 访问 Telegram Bot API 的环境里出现 `getUpdates` / `sendMessage` 传输失败后看似“卡死”的现象
+
 ## 2026-03-21
 
 ### Added

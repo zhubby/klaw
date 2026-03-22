@@ -776,59 +776,66 @@ impl PanelRenderer for AnalyzeDashboardPanel {
         self.ensure_loaded();
         self.sync_config();
         self.poll_load(notifications);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.heading(ctx.tab_title);
+                ui.label("Tool and model analysis from the local observability store");
+                ui.separator();
 
-        ui.heading(ctx.tab_title);
-        ui.label("Tool and model analysis from the local observability store");
-        ui.separator();
-
-        if !self.observability.enabled {
-            ui.label("Observability is disabled. Enable it in the Observability panel first.");
-            return;
-        }
-        if !self.observability.local_store.enabled {
-            ui.label("Local analysis store is disabled. Enable it in the Observability panel.");
-            return;
-        }
-
-        let manual_refresh = self.render_controls(ui);
-        if manual_refresh || self.should_refresh() {
-            self.request_load();
-        }
-
-        if self.loading {
-            ui.ctx().request_repaint_after(Duration::from_millis(250));
-        } else {
-            ui.ctx().request_repaint_after(AUTO_REFRESH_INTERVAL);
-        }
-
-        if let Some(err) = &self.last_error {
-            ui.colored_label(egui::Color32::LIGHT_RED, err);
-            ui.separator();
-        }
-
-        match self.view {
-            DashboardView::Tools => {
-                let Some(snapshot) = self.tool_snapshot.clone() else {
-                    ui.label("No local tool metrics yet.");
+                if !self.observability.enabled {
+                    ui.label(
+                        "Observability is disabled. Enable it in the Observability panel first.",
+                    );
                     return;
-                };
-                let tool_changed = self.render_tools_view(ui, &snapshot);
-                if tool_changed && !self.loading {
+                }
+                if !self.observability.local_store.enabled {
+                    ui.label("Local analysis store is disabled. Enable it in the Observability panel.");
+                    return;
+                }
+
+                let manual_refresh = self.render_controls(ui);
+                if manual_refresh || self.should_refresh() {
                     self.request_load();
                 }
-            }
-            DashboardView::Models => {
-                let Some(snapshot) = self.model_snapshot.clone() else {
-                    ui.label("No local model metrics yet.");
-                    return;
-                };
-                if snapshot.summary.total_requests == 0 {
-                    ui.label("No model-level metrics yet. New charts populate from new telemetry.");
-                    return;
+
+                if self.loading {
+                    ui.ctx().request_repaint_after(Duration::from_millis(250));
+                } else {
+                    ui.ctx().request_repaint_after(AUTO_REFRESH_INTERVAL);
                 }
-                self.render_models_view(ui, &snapshot);
-            }
-        }
+
+                if let Some(err) = &self.last_error {
+                    ui.colored_label(egui::Color32::LIGHT_RED, err);
+                    ui.separator();
+                }
+
+                match self.view {
+                    DashboardView::Tools => {
+                        let Some(snapshot) = self.tool_snapshot.clone() else {
+                            ui.label("No local tool metrics yet.");
+                            return;
+                        };
+                        let tool_changed = self.render_tools_view(ui, &snapshot);
+                        if tool_changed && !self.loading {
+                            self.request_load();
+                        }
+                    }
+                    DashboardView::Models => {
+                        let Some(snapshot) = self.model_snapshot.clone() else {
+                            ui.label("No local model metrics yet.");
+                            return;
+                        };
+                        if snapshot.summary.total_requests == 0 {
+                            ui.label(
+                                "No model-level metrics yet. New charts populate from new telemetry.",
+                            );
+                            return;
+                        }
+                        self.render_models_view(ui, &snapshot);
+                    }
+                }
+            });
     }
 }
 

@@ -271,7 +271,7 @@ impl PanelRenderer for ArchivePanel {
                                 ui.label(item.mime_type.as_deref().unwrap_or(""));
                             });
                             row.col(|ui| {
-                                ui.label(item.size_bytes.to_string());
+                                ui.label(format_bytes(item.size_bytes));
                             });
                             row.col(|ui| {
                                 ui.label(format_timestamp_millis(item.created_at_ms));
@@ -341,7 +341,7 @@ impl PanelRenderer for ArchivePanel {
                         "original_filename: {}",
                         item.original_filename.unwrap_or_default()
                     ));
-                    ui.label(format!("size_bytes: {}", item.size_bytes));
+                    ui.label(format!("size: {}", format_bytes(item.size_bytes)));
                     ui.label(format!("storage_rel_path: {}", item.storage_rel_path));
                     ui.label(format!(
                         "session_key: {}",
@@ -771,6 +771,23 @@ where
     match join.join() {
         Ok(result) => result,
         Err(_) => Err("archive operation thread panicked".to_string()),
+    }
+}
+
+fn format_bytes(value: i64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let raw = value as f64;
+    if raw >= GB {
+        format!("{:.2} GB", raw / GB)
+    } else if raw >= MB {
+        format!("{:.2} MB", raw / MB)
+    } else if raw >= KB {
+        format!("{:.2} KB", raw / KB)
+    } else {
+        format!("{value} B")
     }
 }
 

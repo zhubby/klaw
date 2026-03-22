@@ -20,6 +20,7 @@
 - crate 内提供共享 `media` / `render` 模块，复用媒体引用构造、归档回填和通道输出渲染逻辑，避免各 channel 重复实现
 - `ChannelRequest` 可携带 `media_references`；`dingtalk` / `telegram` 会在入站阶段解析媒体附件，下载媒体并写入 archive，再把媒体引用透传给 runtime
 - `telegram` 可在 `stream_output=true` 时通过 `sendMessage + editMessageText` 渐进刷新同一条回复；不支持编辑的 channel 则退回完整回复
+- `telegram` HTTP 客户端默认沿用环境代理设置；若配置 `channels.telegram[].proxy`，则显式覆盖为该代理地址
 
 ## IM Channel 适配契约
 

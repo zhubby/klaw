@@ -19,9 +19,7 @@ pub struct TelegramApiClient {
 
 impl TelegramApiClient {
     pub fn new(bot_token: &str, proxy: &TelegramProxyConfig) -> ChannelResult<Self> {
-        let mut builder = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(TELEGRAM_REQUEST_TIMEOUT);
+        let mut builder = reqwest::Client::builder().timeout(TELEGRAM_REQUEST_TIMEOUT);
         if proxy.enabled {
             let proxy_url = proxy.url.trim();
             if proxy_url.is_empty() {

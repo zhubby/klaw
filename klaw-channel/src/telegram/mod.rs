@@ -115,6 +115,10 @@ impl TelegramChannel {
             .await
     }
 
+    fn build_client(&self) -> ChannelResult<TelegramApiClient> {
+        TelegramApiClient::new(&self.config.bot_token, &self.config.proxy)
+    }
+
     pub async fn run_until_shutdown(
         &mut self,
         runtime: &dyn ChannelRuntime,
@@ -140,8 +144,10 @@ impl TelegramChannel {
 
         let (updates_tx, mut updates_rx) = mpsc::unbounded_channel::<TelegramPollResult>();
         let mut poll_shutdown = shutdown.clone();
-        let client = self.client.clone();
+        let mut client = self.client.clone();
         let account_id = self.config.account_id.clone();
+        let bot_token = self.config.bot_token.clone();
+        let proxy = self.config.proxy.clone();
         let poll_task = tokio::spawn(async move {
             let mut offset: Option<i64> = None;
             loop {
@@ -164,6 +170,22 @@ impl TelegramChannel {
                         }
                     }
                     Err(error) => {
+                        match TelegramApiClient::new(&bot_token, &proxy) {
+                            Ok(rebuilt_client) => {
+                                client = rebuilt_client;
+                                info!(
+                                    account_id = account_id.as_str(),
+                                    "telegram polling client rebuilt after fetch failure"
+                                );
+                            }
+                            Err(rebuild_error) => {
+                                warn!(
+                                    account_id = account_id.as_str(),
+                                    error = %rebuild_error,
+                                    "failed to rebuild telegram polling client"
+                                );
+                            }
+                        }
                         if updates_tx.send(Err(error)).is_err() {
                             break;
                         }
@@ -393,7 +415,18 @@ impl TelegramChannel {
                 &render_telegram_response(output, self.config.show_reasoning),
             )
         };
-        let _ = self.client.send_message(request).await?;
+        let _ = match self.client.send_message(request.clone()).await {
+            Ok(message) => message,
+            Err(error) => {
+                warn!(
+                    chat_id,
+                    error = %error,
+                    "telegram send_message failed, rebuilding client and retrying"
+                );
+                let rebuilt_client = self.build_client()?;
+                rebuilt_client.send_message(request).await?
+            }
+        };
         Ok(())
     }
 
@@ -407,6 +440,8 @@ impl TelegramChannel {
             if let Some(chat_id) = chat_id {
                 let mut writer = TelegramStreamWriter::new(
                     self.client.clone(),
+                    self.config.bot_token.clone(),
+                    self.config.proxy.clone(),
                     chat_id.to_string(),
                     self.config.show_reasoning,
                 );
@@ -534,6 +569,8 @@ const TELEGRAM_STREAM_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
 
 struct TelegramStreamWriter {
     client: TelegramApiClient,
+    bot_token: String,
+    proxy: TelegramProxyConfig,
     chat_id: String,
     show_reasoning: bool,
     message_id: Option<i64>,
@@ -542,14 +579,63 @@ struct TelegramStreamWriter {
 }
 
 impl TelegramStreamWriter {
-    fn new(client: TelegramApiClient, chat_id: String, show_reasoning: bool) -> Self {
+    fn new(
+        client: TelegramApiClient,
+        bot_token: String,
+        proxy: TelegramProxyConfig,
+        chat_id: String,
+        show_reasoning: bool,
+    ) -> Self {
         Self {
             client,
+            bot_token,
+            proxy,
             chat_id,
             show_reasoning,
             message_id: None,
             last_rendered: None,
             last_update_at: None,
+        }
+    }
+
+    fn rebuild_client(&mut self) -> ChannelResult<()> {
+        self.client = TelegramApiClient::new(&self.bot_token, &self.proxy)?;
+        Ok(())
+    }
+
+    async fn send_message_with_retry(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> ChannelResult<types::TelegramMessage> {
+        match self.client.send_message(request.clone()).await {
+            Ok(message) => Ok(message),
+            Err(error) => {
+                warn!(
+                    chat_id = self.chat_id.as_str(),
+                    error = %error,
+                    "telegram stream send_message failed, rebuilding client and retrying"
+                );
+                self.rebuild_client()?;
+                self.client.send_message(request).await
+            }
+        }
+    }
+
+    async fn edit_message_with_retry(
+        &mut self,
+        request: EditMessageTextRequest,
+    ) -> ChannelResult<types::TelegramMessage> {
+        match self.client.edit_message_text(request.clone()).await {
+            Ok(message) => Ok(message),
+            Err(error) => {
+                warn!(
+                    chat_id = self.chat_id.as_str(),
+                    error = %error,
+                    "telegram stream edit_message_text failed, rebuilding client and retrying"
+                );
+                self.rebuild_client()?;
+                self.client.edit_message_text(request).await
+            }
         }
     }
 
@@ -571,14 +657,14 @@ impl TelegramStreamWriter {
                 if let Some(markup) = approval_markup {
                     request = request.with_reply_markup(markup);
                 }
-                let _ = self.client.edit_message_text(request).await?;
+                let _ = self.edit_message_with_retry(request).await?;
             }
             None => {
                 let mut request = SendMessageRequest::html(&self.chat_id, &text);
                 if let Some(markup) = approval_markup {
                     request = request.with_reply_markup(markup);
                 }
-                let message = self.client.send_message(request).await?;
+                let message = self.send_message_with_retry(request).await?;
                 self.message_id = Some(message.message_id);
             }
         }
@@ -621,14 +707,14 @@ impl ChannelStreamWriter for TelegramStreamWriter {
                         if let Some(markup) = approval_markup {
                             request = request.with_reply_markup(markup);
                         }
-                        let _ = self.client.edit_message_text(request).await?;
+                        let _ = self.edit_message_with_retry(request).await?;
                     }
                     None => {
                         let mut request = SendMessageRequest::html(&self.chat_id, &text);
                         if let Some(markup) = approval_markup {
                             request = request.with_reply_markup(markup);
                         }
-                        let message = self.client.send_message(request).await?;
+                        let message = self.send_message_with_retry(request).await?;
                         self.message_id = Some(message.message_id);
                     }
                 }
