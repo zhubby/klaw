@@ -2,6 +2,10 @@
 
 ## 2026-03-22
 
+### Changed
+
+- `Analyze Dashboard` Success Rate Trend now uses egui_plot line chart instead of progress bar list, showing success rate percentage and call volume over time with interactive legend
+
 ### Added
 
 - `Setting` 面板现在提供可落盘的 S3 sync 配置，包括 endpoint/region/bucket/prefix、凭证环境变量名、设备 ID、保留策略和自动备份间隔

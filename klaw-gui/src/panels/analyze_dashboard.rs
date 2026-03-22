@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use egui_plot::{GridMark, Legend, Line, Plot, PlotPoints};
 use klaw_config::{ConfigStore, ObservabilityConfig};
 use klaw_observability::{
     LocalMetricsStore, LocalStoreConfig, SqliteLocalMetricsStore, ToolDashboardSnapshot,
@@ -13,6 +14,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
+#[derive(Default)]
 pub struct AnalyzeDashboardPanel {
     store: Option<ConfigStore>,
     observability: ObservabilityConfig,
@@ -25,24 +27,6 @@ pub struct AnalyzeDashboardPanel {
     load_rx: Option<Receiver<Result<ToolDashboardSnapshot, String>>>,
     loading: bool,
     last_loaded_at: Option<Instant>,
-}
-
-impl Default for AnalyzeDashboardPanel {
-    fn default() -> Self {
-        Self {
-            store: None,
-            observability: ObservabilityConfig::default(),
-            storage_root: None,
-            loaded: false,
-            query: ToolStatsQuery::default(),
-            selected_tool: None,
-            snapshot: None,
-            last_error: None,
-            load_rx: None,
-            loading: false,
-            last_loaded_at: None,
-        }
-    }
 }
 
 impl AnalyzeDashboardPanel {
@@ -323,26 +307,80 @@ impl AnalyzeDashboardPanel {
                 ui.label("No samples in the selected time range.");
                 return;
             }
-            let start_index = snapshot.timeseries.len().saturating_sub(20);
-            let max_calls = snapshot
+
+            let success_rate_points: PlotPoints = snapshot
                 .timeseries
                 .iter()
-                .map(|point| point.calls)
-                .max()
-                .unwrap_or(1);
-            for point in snapshot.timeseries.iter().skip(start_index) {
-                ui.horizontal(|ui| {
-                    ui.monospace(format_bucket_label(point.bucket_start_unix_ms));
-                    ui.label(format!("{} / {}", point.successes, point.calls));
-                    ui.add(
-                        egui::ProgressBar::new(
-                            (point.calls as f32 / max_calls as f32).clamp(0.0, 1.0),
-                        )
-                        .desired_width(120.0)
-                        .text(format_percent(point.success_rate)),
+                .map(|point| {
+                    let x = point.bucket_start_unix_ms as f64;
+                    let y = point.success_rate * 100.0;
+                    [x, y]
+                })
+                .collect();
+
+            let calls_points: PlotPoints = snapshot
+                .timeseries
+                .iter()
+                .map(|point| {
+                    let x = point.bucket_start_unix_ms as f64;
+                    let y = point.calls as f64;
+                    [x, y]
+                })
+                .collect();
+
+            let first_ts = snapshot
+                .timeseries
+                .first()
+                .map(|p| p.bucket_start_unix_ms as f64)
+                .unwrap_or(0.0);
+            let last_ts = snapshot
+                .timeseries
+                .last()
+                .map(|p| p.bucket_start_unix_ms as f64)
+                .unwrap_or(0.0);
+
+            Plot::new("success_rate_trend")
+                .legend(Legend::default())
+                .x_axis_formatter(|x: GridMark, _| format_time_label(x.value as i64))
+                .y_axis_formatter(|y: GridMark, _| format!("{:.0}%", y.value))
+                .include_x(first_ts)
+                .include_x(last_ts)
+                .include_y(0.0)
+                .include_y(100.0)
+                .allow_zoom(false)
+                .allow_drag(false)
+                .allow_scroll(false)
+                .allow_double_click_reset(false)
+                .allow_boxed_zoom(false)
+                .height(200.0)
+                .show(ui, |plot_ui| {
+                    plot_ui.line(
+                        Line::new("Success Rate", success_rate_points)
+                            .color(egui::Color32::from_rgb(100, 200, 100))
+                            .width(2.0),
+                    );
+                    plot_ui.line(
+                        Line::new("Calls", calls_points)
+                            .color(egui::Color32::from_rgb(100, 150, 250))
+                            .width(1.5),
                     );
                 });
-            }
+
+            ui.horizontal(|ui| {
+                ui.label("Total: ");
+                let total_calls: u64 = snapshot.timeseries.iter().map(|p| p.calls).sum();
+                let total_success: u64 = snapshot.timeseries.iter().map(|p| p.successes).sum();
+                let avg_rate = if total_calls > 0 {
+                    total_success as f64 / total_calls as f64
+                } else {
+                    0.0
+                };
+                ui.label(format!(
+                    "{} calls, {} avg success rate",
+                    total_calls,
+                    format_percent(avg_rate)
+                ));
+            });
         });
     }
 }
@@ -427,7 +465,7 @@ fn max_failures(snapshot: &ToolDashboardSnapshot) -> u64 {
         .unwrap_or(1)
 }
 
-fn format_bucket_label(unix_ms: i64) -> String {
+fn format_time_label(unix_ms: i64) -> String {
     let Ok(timestamp) = OffsetDateTime::from_unix_timestamp_nanos((unix_ms as i128) * 1_000_000)
     else {
         return unix_ms.to_string();
