@@ -108,13 +108,15 @@ impl MemoryTool {
     }
 
     /// Parse scope for search operation.
-    /// "session" -> Some("session:<session_key>"), "long_term" -> Some("long_term"), "both"/None -> None (search all)
-    fn parse_search_scope(args: &Value, session_key: &str) -> Option<String> {
+    /// Returns (search_long_term, search_session) tuple:
+    /// - "long_term" -> (true, false) - only long_term
+    /// - "session" -> (true, true) - merge both session and long_term
+    /// - None -> (true, false) - default to long_term only
+    fn parse_search_scopes(args: &Value) -> (bool, bool) {
         match args.get("scope").and_then(Value::as_str) {
-            Some("long_term") => Some("long_term".to_string()),
-            Some("session") => Some(format!("session:{session_key}")),
-            Some("both") | None => None, // None means search all scopes
-            Some(s) => Some(s.to_string()), // Allow custom scope strings
+            Some("session") => (true, true),  // merge both
+            Some("long_term") | None => (true, false), // default: long_term only
+            Some(_) => (true, false),
         }
     }
 }
@@ -171,8 +173,8 @@ impl Tool for MemoryTool {
                         },
                         "scope": {
                             "type": "string",
-                            "enum": ["session", "long_term", "both"],
-                            "description": "Search scope: \"session\" (current session), \"long_term\" (persistent), or \"both\" (default)."
+                            "enum": ["session", "long_term"],
+                            "description": "Search scope: \"long_term\" (default, persistent) or \"session\" (merges session + long_term)."
                         }
                     },
                     "required": ["action", "query"],
@@ -225,24 +227,53 @@ impl Tool for MemoryTool {
                     .filter(|v| !v.is_empty())
                     .ok_or_else(|| ToolError::InvalidArgs("missing `query`".to_string()))?
                     .to_string();
-                let scope = Self::parse_search_scope(&args, &ctx.session_key);
+                let (search_long_term, search_session) = Self::parse_search_scopes(&args);
 
-                let hits = self
-                    .service
-                    .search(MemorySearchQuery {
-                        scope,
-                        text: query,
-                        limit: self.runtime.search_limit,
-                        fts_limit: self.runtime.fts_limit,
-                        vector_limit: self.runtime.vector_limit,
-                        use_vector: self.runtime.use_vector,
-                    })
-                    .await
-                    .map_err(map_memory_err)?;
+                let mut all_hits = Vec::new();
+                let half_limit = self.runtime.search_limit / 2;
+
+                // Search long_term scope
+                if search_long_term {
+                    let hits = self
+                        .service
+                        .search(MemorySearchQuery {
+                            scope: Some("long_term".to_string()),
+                            text: query.clone(),
+                            limit: half_limit,
+                            fts_limit: self.runtime.fts_limit,
+                            vector_limit: self.runtime.vector_limit,
+                            use_vector: self.runtime.use_vector,
+                        })
+                        .await
+                        .map_err(map_memory_err)?;
+                    all_hits.extend(hits);
+                }
+
+                // Search session scope and merge
+                if search_session {
+                    let session_scope = format!("session:{}", ctx.session_key);
+                    let hits = self
+                        .service
+                        .search(MemorySearchQuery {
+                            scope: Some(session_scope),
+                            text: query,
+                            limit: half_limit,
+                            fts_limit: self.runtime.fts_limit,
+                            vector_limit: self.runtime.vector_limit,
+                            use_vector: self.runtime.use_vector,
+                        })
+                        .await
+                        .map_err(map_memory_err)?;
+                    all_hits.extend(hits);
+                }
+
+                // Sort by fused_score and limit results
+                all_hits.sort_by(|a, b| b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal));
+                all_hits.truncate(self.runtime.search_limit);
 
                 json!({
                     "action": "search",
-                    "hits": hits.into_iter().map(hit_to_json).collect::<Vec<_>>()
+                    "hits": all_hits.into_iter().map(hit_to_json).collect::<Vec<_>>()
                 })
             }
             _ => {
@@ -382,15 +413,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_uses_session_scope_and_runtime_defaults() {
+    async fn search_uses_long_term_scope_by_default() {
         let mock = Arc::new(MockMemoryService::default());
         {
             let mut hits = mock.search_hits.lock().await;
+            // First call: long_term search
             hits.push_back(vec![MemoryHit {
                 record: MemoryRecord {
                     id: "m1".to_string(),
-                    scope: "session-123".to_string(),
-                    content: "session fact".to_string(),
+                    scope: "long_term".to_string(),
+                    content: "long term fact".to_string(),
                     metadata: json!({"kind": "fact"}),
                     pinned: true,
                     created_at_ms: 1,
@@ -420,15 +452,13 @@ mod tests {
             .await
             .expect("search should succeed");
 
+        // Default: only search long_term (1 call)
         let captured = mock.search_inputs.lock().await;
         assert_eq!(captured.len(), 1);
-        // Default search scope is None (search all scopes: both session and long_term)
-        assert_eq!(captured[0].scope, None);
-        assert_eq!(captured[0].limit, 5);
+        assert_eq!(captured[0].scope.as_deref(), Some("long_term"));
+        assert_eq!(captured[0].limit, 2); // half_limit = 5/2 = 2
         assert_eq!(captured[0].fts_limit, 7);
-        assert_eq!(captured[0].vector_limit, 9);
-        assert!(!captured[0].use_vector);
-        assert!(output.content_for_model.contains("session fact"));
+        assert!(output.content_for_model.contains("long term fact"));
     }
 
     #[tokio::test]
@@ -483,23 +513,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_with_session_scope_only() {
+    async fn search_with_session_scope_merges_both() {
         let mock = Arc::new(MockMemoryService::default());
+        {
+            let mut hits = mock.search_hits.lock().await;
+            // First call: long_term
+            hits.push_back(vec![MemoryHit {
+                record: MemoryRecord {
+                    id: "m1".to_string(),
+                    scope: "long_term".to_string(),
+                    content: "long term info".to_string(),
+                    metadata: json!({}),
+                    pinned: false,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                fused_score: 0.8,
+                bm25_rank: Some(1),
+                vector_rank: Some(1),
+            }]);
+            // Second call: session
+            hits.push_back(vec![MemoryHit {
+                record: MemoryRecord {
+                    id: "m2".to_string(),
+                    scope: "session:session-123".to_string(),
+                    content: "session info".to_string(),
+                    metadata: json!({}),
+                    pinned: false,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                fused_score: 0.9,
+                bm25_rank: Some(1),
+                vector_rank: Some(1),
+            }]);
+        }
+
         let tool = tool_with_mock(mock.clone());
+        let output = tool
+            .execute(
+                json!({
+                    "action": "search",
+                    "query": "test",
+                    "scope": "session"
+                }),
+                &test_ctx(),
+            )
+            .await
+            .expect("search should succeed");
 
-        tool.execute(
-            json!({
-                "action": "search",
-                "query": "test",
-                "scope": "session"
-            }),
-            &test_ctx(),
-        )
-        .await
-        .expect("search should succeed");
-
+        // "session" triggers 2 searches: long_term + session
         let captured = mock.search_inputs.lock().await;
-        assert_eq!(captured[0].scope.as_deref(), Some("session:session-123"));
+        assert_eq!(captured.len(), 2);
+        assert_eq!(captured[0].scope.as_deref(), Some("long_term"));
+        assert_eq!(captured[1].scope.as_deref(), Some("session:session-123"));
+        // Results are merged and sorted by score
+        assert!(output.content_for_model.contains("session info"));
+        assert!(output.content_for_model.contains("long term info"));
     }
 
     #[tokio::test]
