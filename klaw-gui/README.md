@@ -82,6 +82,8 @@
   - request a runtime skills-prompt reload after install/uninstall actions
 - Memory panel features:
   - read memory-layer aggregate stats via `klaw-memory` stats abstraction
+  - open a `Config` dialog from the toolbar to edit `memory.embedding.enabled/provider/model`
+  - populate the provider picker from configured `model_providers` and default the model field from the selected provider's `default_model`
   - show total/pinned/embedded/scope/recency/index metrics and top scopes
 - System panel features:
   - resolve `~/.klaw/tmp` through `klaw-storage::StoragePaths`
