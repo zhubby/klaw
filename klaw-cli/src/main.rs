@@ -477,4 +477,50 @@ mod tests {
         writer.flush().expect("flush should succeed");
         let _ = std::fs::remove_file(path);
     }
+
+    #[test]
+    fn compute_augmented_path_entries_prepends_missing_candidates_once() {
+        let existing = env::join_paths([
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ])
+        .expect("join test PATH");
+        let candidates = vec![
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/opt/local/bin"),
+        ];
+
+        let (merged_paths, added_paths) =
+            compute_augmented_path_entries(Some(existing), candidates);
+
+        assert_eq!(
+            merged_paths,
+            vec![
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/opt/local/bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin"),
+                PathBuf::from("/usr/local/bin"),
+            ]
+        );
+        assert_eq!(
+            added_paths,
+            vec![
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/opt/local/bin"),
+            ]
+        );
+    }
+
+    #[test]
+    fn compute_augmented_path_entries_handles_empty_path() {
+        let candidates = vec![PathBuf::from("/opt/homebrew/bin")];
+
+        let (merged_paths, added_paths) = compute_augmented_path_entries(None, candidates);
+
+        assert_eq!(merged_paths, vec![PathBuf::from("/opt/homebrew/bin")]);
+        assert_eq!(added_paths, vec![PathBuf::from("/opt/homebrew/bin")]);
+    }
 }
