@@ -121,21 +121,26 @@ impl GuiCommand {
                                                 let _ = response.send(result);
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncMcp { response }) => {
-                                                let result = match &mcp_manager {
+                                                match &mcp_manager {
                                                     Some(manager) => {
-                                                        match ConfigStore::open(None) {
-                                                            Ok(store) => {
-                                                                let snapshot = store.snapshot();
-                                                                let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
-                                                                let mut guard = manager.lock().await;
-                                                                Ok(guard.sync(mcp_snapshot).await)
-                                                            }
-                                                            Err(err) => Err(err.to_string()),
-                                                        }
+                                                        let manager = Arc::clone(manager);
+                                                        tokio::task::spawn_local(async move {
+                                                            let result = match ConfigStore::open(None) {
+                                                                Ok(store) => {
+                                                                    let snapshot = store.snapshot();
+                                                                    let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
+                                                                    let mut guard = manager.lock().await;
+                                                                    Ok(guard.sync(mcp_snapshot).await)
+                                                                }
+                                                                Err(err) => Err(err.to_string()),
+                                                            };
+                                                            let _ = response.send(result);
+                                                        });
                                                     }
-                                                    None => Err("mcp manager not initialized".to_string()),
+                                                    None => {
+                                                        let _ = response.send(Err("mcp manager not initialized".to_string()));
+                                                    }
                                                 };
-                                                let _ = response.send(result);
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetMcpStatus { response }) => {
                                                 let result = match &mcp_manager {
