@@ -65,7 +65,7 @@
 - runtime 审批命令与工具审批流统一通过 `klaw-approval` manager 层处理状态流转与消费
 - runtime 对 `approval_required` 工具结果会直接透传审批提示，不再包装成通用的 tool failure 文案
 - runtime 和 `klaw session` 命令的会话状态/历史操作统一通过 `klaw-session` manager 层处理
-- 普通消息默认按 Base Session -> Active Session 路由，可在会话中途切换 provider/model 并持久化
+- 普通消息默认按 Base Session -> Active Session 路由；全局默认 provider/model 从当前配置实时解析，session 里的 `model_provider` / `model` 只表示显式 override，不再在建会话时复制默认值
 - `stdio` 启动时会在 runtime 与 MCP 完全就绪后打印 ASCII `KLAW` 标记，以及版本、skills、tools、MCP 加载摘要
 - `stdio` 默认会将 tracing 日志写入 `~/.klaw/logs/stdio.log`，避免后台日志覆盖当前输入中的 prompt
 - `stdio --verbose-terminal` 可显式把 tracing 日志重新打回终端，便于排查启动或 MCP 问题

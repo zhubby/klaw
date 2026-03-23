@@ -1136,8 +1136,8 @@ impl SessionStorage for SqlxSessionStore {
         session_key: &str,
         chat_id: &str,
         channel: &str,
-        default_provider: &str,
-        default_model: &str,
+        _default_provider: &str,
+        _default_model: &str,
     ) -> Result<SessionIndex, StorageError> {
         let now = now_ms();
         let jsonl_path = self.session_jsonl_path(session_key);
@@ -1145,22 +1145,18 @@ impl SessionStorage for SqlxSessionStore {
         sqlx::query(
             "INSERT INTO sessions (
                 session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)
+            ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?6, ?7, 0, ?8)
             ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
                 updated_at_ms=excluded.updated_at_ms,
                 active_session_key=COALESCE(sessions.active_session_key, excluded.active_session_key),
-                model_provider=COALESCE(sessions.model_provider, excluded.model_provider),
-                model=COALESCE(sessions.model, excluded.model),
                 jsonl_path=excluded.jsonl_path",
         )
         .bind(session_key)
         .bind(chat_id)
         .bind(channel)
         .bind(session_key)
-        .bind(default_provider)
-        .bind(default_model)
         .bind(now)
         .bind(now)
         .bind(now)
@@ -1265,6 +1261,37 @@ impl SessionStorage for SqlxSessionStore {
         if updated.rows_affected() == 0 {
             return Err(StorageError::backend(format!(
                 "session '{session_key}' not found when setting model"
+            )));
+        }
+        self.get_session(session_key).await
+    }
+
+    async fn clear_model_routing_override(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let now = now_ms();
+        let updated = sqlx::query(
+            "UPDATE sessions
+             SET chat_id = ?1,
+                 channel = ?2,
+                 updated_at_ms = ?3,
+                 model_provider = NULL,
+                 model = NULL
+             WHERE session_key = ?4",
+        )
+        .bind(chat_id)
+        .bind(channel)
+        .bind(now)
+        .bind(session_key)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when clearing model routing override"
             )));
         }
         self.get_session(session_key).await

@@ -5,6 +5,10 @@
 ### Changed
 - custom S3 endpoints such as R2 now require explicit credentials or credential env names up front, avoiding fallback to missing AWS shared-profile files during sync startup and backup
 - `BackupService` now exposes progress callbacks for snapshot preparation, upload, and retention cleanup so GUI clients can render live backup progress
+- session route initialization no longer persists global default provider/model into every session row; `model_provider` / `model` now represent explicit session overrides only
+
+### Added
+- added `clear_model_routing_override` storage APIs in both SQLx and Turso backends so runtimes can normalize legacy session route state back to the global default
 
 ## 2026-03-22
 

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-23
+
+### Changed
+
+- session-manager routing APIs now treat provider/model as explicit session overrides instead of copied defaults, and expose override clearing for runtime route normalization
+
 ## 2026-03-21
 
 ### Added

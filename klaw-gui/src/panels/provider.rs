@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::runtime_bridge::request_set_provider_override;
 use egui_extras::{Column, TableBuilder};
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, ModelProviderConfig};
 use klaw_llm::OpenAiWireApi;
@@ -163,7 +164,13 @@ impl ProviderPanel {
             Ok(raw) => match store.save_raw_toml(&raw) {
                 Ok(snapshot) => {
                     self.apply_snapshot(snapshot);
-                    notifications.success(format!("Set active provider to '{provider_id}'"));
+                    match request_set_provider_override(None) {
+                        Ok(_) => notifications
+                            .success(format!("Set active provider to '{provider_id}'")),
+                        Err(err) => notifications.error(format!(
+                            "Saved active provider to '{provider_id}', but failed to sync running runtime: {err}"
+                        )),
+                    }
                 }
                 Err(err) => notifications.error(format!("Save failed: {err}")),
             },

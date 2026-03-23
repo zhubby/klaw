@@ -33,7 +33,7 @@ use klaw_observability::{
 };
 use klaw_session::{
     ChatRecord, LlmAuditStatus, LlmUsageSource, NewLlmAuditRecord, NewLlmUsageRecord,
-    SessionCompressionState, SessionManager, SqliteSessionManager,
+    SessionCompressionState, SessionIndex, SessionManager, SqliteSessionManager,
 };
 use klaw_skill::{
     open_default_skills_manager, InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager,
@@ -533,33 +533,57 @@ async fn resolve_session_route(
     chat_id: &str,
 ) -> Result<SessionRoute, Box<dyn Error>> {
     let sessions = session_manager(runtime);
-    let default_provider_id = runtime_default_provider_id(runtime);
+    let (default_provider_id, default_model) = runtime_default_route(runtime);
     let base = sessions
         .get_or_create_session_state(
             base_session_key,
             chat_id,
             channel,
             &default_provider_id,
-            default_model_for_provider(runtime, &default_provider_id),
+            &default_model,
         )
         .await?;
+    let base = normalize_session_route_state(
+        runtime,
+        base,
+        chat_id,
+        channel,
+        &default_provider_id,
+        &default_model,
+    )
+    .await?;
     let active_session_key = base
         .active_session_key
         .clone()
         .unwrap_or_else(|| base_session_key.to_string());
-    let provider = base.model_provider.clone().unwrap_or(default_provider_id);
-    let model_default = default_model_for_provider(runtime, &provider).to_string();
     let active = sessions
         .get_or_create_session_state(
             &active_session_key,
             chat_id,
             channel,
-            &provider,
-            &model_default,
+            &default_provider_id,
+            &default_model,
         )
         .await?;
-    let model_provider = active.model_provider.unwrap_or(provider);
-    let model = active.model.unwrap_or(model_default);
+    let active = normalize_session_route_state(
+        runtime,
+        active,
+        chat_id,
+        channel,
+        &default_provider_id,
+        &default_model,
+    )
+    .await?;
+    let model_provider = active
+        .model_provider
+        .unwrap_or_else(|| default_provider_id.clone());
+    let model = active.model.unwrap_or_else(|| {
+        if model_provider == default_provider_id {
+            default_model.clone()
+        } else {
+            default_model_for_provider(runtime, &model_provider).to_string()
+        }
+    });
     Ok(SessionRoute {
         active_session_key,
         model_provider,
@@ -568,6 +592,10 @@ async fn resolve_session_route(
 }
 
 fn resolve_new_session_target(runtime: &RuntimeBundle) -> (String, String) {
+    runtime_default_route(runtime)
+}
+
+fn runtime_default_route(runtime: &RuntimeBundle) -> (String, String) {
     if let Some(provider_id) = runtime_provider_override(runtime) {
         return (
             provider_id.clone(),
@@ -594,8 +622,57 @@ fn runtime_provider_override(runtime: &RuntimeBundle) -> Option<String> {
         .clone()
 }
 
-fn runtime_default_provider_id(runtime: &RuntimeBundle) -> String {
-    runtime_provider_override(runtime).unwrap_or_else(|| runtime.default_provider_id.clone())
+async fn normalize_session_route_state(
+    runtime: &RuntimeBundle,
+    session: SessionIndex,
+    chat_id: &str,
+    channel: &str,
+    global_provider: &str,
+    global_model: &str,
+) -> Result<SessionIndex, Box<dyn Error>> {
+    let sessions = session_manager(runtime);
+    let self_routed = session
+        .active_session_key
+        .as_deref()
+        .map(|value| value == session.session_key)
+        .unwrap_or(true);
+
+    if !self_routed && (session.model_provider.is_some() || session.model.is_some()) {
+        return Ok(sessions
+            .clear_model_routing_override(&session.session_key, chat_id, channel)
+            .await?);
+    }
+
+    if session.model_provider.is_none() {
+        if let Some(model) = session.model.as_deref() {
+            if model == global_model {
+                return Ok(sessions
+                    .clear_model_routing_override(&session.session_key, chat_id, channel)
+                    .await?);
+            }
+            return Ok(sessions
+                .set_model_provider(
+                    &session.session_key,
+                    chat_id,
+                    channel,
+                    global_provider,
+                    model,
+                )
+                .await?);
+        }
+        return Ok(session);
+    }
+
+    if session.model_provider.as_deref() == Some(global_provider) {
+        let resolved_model = session.model.as_deref().unwrap_or(global_model);
+        if resolved_model == global_model {
+            return Ok(sessions
+                .clear_model_routing_override(&session.session_key, chat_id, channel)
+                .await?);
+        }
+    }
+
+    Ok(session)
 }
 
 fn resolve_new_session_target_from_config(config: &AppConfig) -> (String, String) {
@@ -781,24 +858,22 @@ async fn handle_im_command(
                     }));
                 };
                 let sessions = session_manager(runtime);
-                sessions
-                    .set_model_provider(
-                        &route.active_session_key,
-                        &chat_id,
-                        &channel,
-                        provider_id,
-                        default_model,
-                    )
-                    .await?;
-                sessions
-                    .set_model_provider(
-                        &base_session_key,
-                        &chat_id,
-                        &channel,
-                        provider_id,
-                        default_model,
-                    )
-                    .await?;
+                let (global_provider, global_model) = runtime_default_route(runtime);
+                if provider_id == global_provider && default_model == &global_model {
+                    sessions
+                        .clear_model_routing_override(&route.active_session_key, &chat_id, &channel)
+                        .await?;
+                } else {
+                    sessions
+                        .set_model_provider(
+                            &route.active_session_key,
+                            &chat_id,
+                            &channel,
+                            provider_id,
+                            default_model,
+                        )
+                        .await?;
+                }
                 ChannelResponse {
                     content: format!(
                         "✅ **Provider switched**\n\n🧩 Provider: `{provider_id}`\n🤖 Model: `{default_model}`"
@@ -836,12 +911,22 @@ async fn handle_im_command(
                     }));
                 }
                 let sessions = session_manager(runtime);
-                sessions
-                    .set_model(&route.active_session_key, &chat_id, &channel, model)
-                    .await?;
-                sessions
-                    .set_model(&base_session_key, &chat_id, &channel, model)
-                    .await?;
+                let (global_provider, global_model) = runtime_default_route(runtime);
+                if route.model_provider == global_provider && model == global_model {
+                    sessions
+                        .clear_model_routing_override(&route.active_session_key, &chat_id, &channel)
+                        .await?;
+                } else {
+                    sessions
+                        .set_model_provider(
+                            &route.active_session_key,
+                            &chat_id,
+                            &channel,
+                            &route.model_provider,
+                            model,
+                        )
+                        .await?;
+                }
                 ChannelResponse {
                     content: format!(
                         "✅ **Model updated**\n\n🧩 Provider: `{}`\n🤖 Model: `{model}`",

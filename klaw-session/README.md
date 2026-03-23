@@ -6,7 +6,7 @@
 
 - Defines the `SessionManager` trait for session lifecycle workflows
 - Provides `SqliteSessionManager` as the default manager backed by the workspace storage layer
-- Supports session listing, lookup, route-state initialization, provider/model updates, and chat history read/write
+- Supports session listing, lookup, route-state initialization, explicit provider/model override updates, override clearing, and chat history read/write
 - Normalizes session list pagination through `SessionListQuery`
 - Keeps UI, CLI, and runtime callers decoupled from direct `klaw-storage` access
 

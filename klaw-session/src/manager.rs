@@ -86,6 +86,13 @@ pub trait SessionManager: Send + Sync {
         model: &str,
     ) -> Result<SessionIndex, SessionError>;
 
+    async fn clear_model_routing_override(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+    ) -> Result<SessionIndex, SessionError>;
+
     async fn get_session_compression_state(
         &self,
         session_key: &str,
@@ -265,6 +272,18 @@ impl SessionManager for SqliteSessionManager {
         Ok(self
             .store
             .set_model(session_key, chat_id, channel, model)
+            .await?)
+    }
+
+    async fn clear_model_routing_override(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+    ) -> Result<SessionIndex, SessionError> {
+        Ok(self
+            .store
+            .clear_model_routing_override(session_key, chat_id, channel)
             .await?)
     }
 

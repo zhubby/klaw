@@ -5,6 +5,11 @@
 ### Changed
 
 - `klaw gui` 现在通过新的只读 `GetMcpStatus` 运行时命令读取 MCP manager 快照，不再为面板状态轮询触发完整 `SyncMcp`
+- channel/runtime 路由现在将 `config.model_provider` 视为全局默认真相源；session `model_provider` / `model` 改为仅表示显式 override，并会在运行时归一化旧的默认值持久化记录
+
+### Fixed
+
+- Provider 面板修改 active provider 后，现在会清除运行中的临时 runtime override，让 GUI 配置态、runtime 默认路由和新会话 provider 重新对齐
 
 ## 2026-03-22
 

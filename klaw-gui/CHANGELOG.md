@@ -17,6 +17,7 @@
 - GUI app and tray icons now load from embedded image assets at runtime, so both packaged `.app` bundles and standalone macOS binaries keep the custom icon without relying on source-tree file paths
 - `Setting > Sync` now validates custom S3 endpoint credentials before startup checks or manual actions run, so R2 users no longer fall through to missing AWS shared-profile files
 - `Setting > Sync` manual backup now renders a live progress bar with stage and item detail while snapshot preparation, upload, and retention cleanup run in the background
+- Provider 面板切换全局 active provider 后，现在会主动清除临时 runtime override，让运行中的默认 provider 立即回到配置值，避免 GUI 配置态和 runtime 路由继续分叉
 
 ## 2026-03-22
 

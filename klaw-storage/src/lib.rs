@@ -189,8 +189,8 @@ mod tests {
             base.active_session_key.as_deref(),
             Some("dingtalk:acc:chat-1")
         );
-        assert_eq!(base.model_provider.as_deref(), Some("openai"));
-        assert_eq!(base.model.as_deref(), Some("gpt-4o-mini"));
+        assert_eq!(base.model_provider, None);
+        assert_eq!(base.model, None);
 
         let _new_active = store
             .get_or_create_session_state(
@@ -239,6 +239,13 @@ mod tests {
             .await
             .expect("model should be updated");
         assert_eq!(updated_model.model.as_deref(), Some("claude-opus-4"));
+
+        let cleared = store
+            .clear_model_routing_override("dingtalk:acc:chat-1:child", "chat-1", "dingtalk")
+            .await
+            .expect("routing override should clear");
+        assert_eq!(cleared.model_provider, None);
+        assert_eq!(cleared.model, None);
     }
 
     #[tokio::test(flavor = "current_thread")]

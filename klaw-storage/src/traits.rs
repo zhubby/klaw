@@ -69,6 +69,13 @@ pub trait SessionStorage: Send + Sync {
         model: &str,
     ) -> Result<SessionIndex, StorageError>;
 
+    async fn clear_model_routing_override(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+    ) -> Result<SessionIndex, StorageError>;
+
     async fn get_session_compression_state(
         &self,
         session_key: &str,

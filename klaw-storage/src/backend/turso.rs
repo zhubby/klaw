@@ -604,8 +604,8 @@ impl SessionStorage for TursoSessionStore {
         session_key: &str,
         chat_id: &str,
         channel: &str,
-        default_provider: &str,
-        default_model: &str,
+        _default_provider: &str,
+        _default_model: &str,
     ) -> Result<SessionIndex, StorageError> {
         let now = now_ms();
         let jsonl_path = self.session_jsonl_path(session_key);
@@ -613,21 +613,17 @@ impl SessionStorage for TursoSessionStore {
         let sql = format!(
             "INSERT INTO sessions (
                 session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-             ) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', {}, {}, {}, 0, '{}')
+             ) VALUES ('{}', '{}', '{}', '{}', NULL, NULL, {}, {}, {}, 0, '{}')
              ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
                 updated_at_ms=excluded.updated_at_ms,
                 active_session_key=COALESCE(sessions.active_session_key, excluded.active_session_key),
-                model_provider=COALESCE(sessions.model_provider, excluded.model_provider),
-                model=COALESCE(sessions.model, excluded.model),
                 jsonl_path=excluded.jsonl_path",
             escape_sql_text(session_key),
             escape_sql_text(chat_id),
             escape_sql_text(channel),
             escape_sql_text(session_key),
-            escape_sql_text(default_provider),
-            escape_sql_text(default_model),
             now,
             now,
             now,
@@ -744,6 +740,40 @@ impl SessionStorage for TursoSessionStore {
             if affected == 0 {
                 return Err(StorageError::backend(format!(
                     "session '{session_key}' not found when setting model"
+                )));
+            }
+        }
+        self.get_session(session_key).await
+    }
+
+    async fn clear_model_routing_override(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let sql = format!(
+            "UPDATE sessions
+             SET chat_id = '{}',
+                 channel = '{}',
+                 updated_at_ms = {},
+                 model_provider = NULL,
+                 model = NULL
+             WHERE session_key = '{}'",
+            escape_sql_text(chat_id),
+            escape_sql_text(channel),
+            now_ms(),
+            escape_sql_text(session_key)
+        );
+        {
+            let conn = self.connection().await?;
+            let affected = conn
+                .execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+            if affected == 0 {
+                return Err(StorageError::backend(format!(
+                    "session '{session_key}' not found when clearing model routing override"
                 )));
             }
         }
