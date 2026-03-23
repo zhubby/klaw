@@ -1,6 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::runtime_bridge::request_sync_mcp;
 use crate::widgets::{ArrayEditor, KeyValueEditor};
+use egui_extras::{Column, TableBuilder};
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode};
 use std::path::{Path, PathBuf};
 
@@ -87,8 +89,9 @@ pub struct McpPanel {
     revision: Option<u64>,
     config: AppConfig,
     form: Option<McpServerForm>,
-    enabled: bool,
-    startup_timeout_seconds_text: String,
+    global_settings_form: Option<(bool, String)>,
+    selected_server: Option<String>,
+    server_statuses: Vec<(String, String, usize)>,
 }
 
 impl McpPanel {
@@ -110,9 +113,27 @@ impl McpPanel {
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
         self.config_path = Some(snapshot.path);
         self.revision = Some(snapshot.revision);
-        self.enabled = snapshot.config.mcp.enabled;
-        self.startup_timeout_seconds_text = snapshot.config.mcp.startup_timeout_seconds.to_string();
+        self.global_settings_form = Some((
+            snapshot.config.mcp.enabled,
+            snapshot.config.mcp.startup_timeout_seconds.to_string(),
+        ));
         self.config = snapshot.config;
+    }
+
+    fn fetch_mcp_status(&mut self) {
+        if let Ok(result) = request_sync_mcp() {
+            self.server_statuses = result
+                .statuses
+                .iter()
+                .map(|s| {
+                    (
+                        s.key.as_str().to_string(),
+                        s.state.as_str().to_string(),
+                        s.tool_count,
+                    )
+                })
+                .collect();
+        }
     }
 
     fn status_label(path: Option<&Path>) -> String {
@@ -158,21 +179,6 @@ impl McpPanel {
         }
     }
 
-    fn save_global_settings(&mut self, notifications: &mut NotificationCenter) {
-        let timeout = match self.startup_timeout_seconds_text.trim().parse::<u64>() {
-            Ok(value) => value,
-            Err(_) => {
-                notifications.error("startup_timeout_seconds must be a positive integer");
-                return;
-            }
-        };
-
-        let mut next = self.config.clone();
-        next.mcp.enabled = self.enabled;
-        next.mcp.startup_timeout_seconds = timeout;
-        self.save_config(next, notifications, "MCP global settings saved");
-    }
-
     fn open_add_server(&mut self) {
         self.form = Some(McpServerForm::new());
     }
@@ -180,6 +186,15 @@ impl McpPanel {
     fn open_edit_server(&mut self, id: &str) {
         if let Some(server) = self.config.mcp.servers.iter().find(|item| item.id == id) {
             self.form = Some(McpServerForm::edit(server));
+        }
+    }
+
+    fn delete_server(&mut self, id: &str, notifications: &mut NotificationCenter) {
+        let mut next = self.config.clone();
+        next.mcp.servers.retain(|s| s.id != id);
+        self.save_config(next, notifications, &format!("MCP server '{}' deleted", id));
+        if self.selected_server.as_deref() == Some(id) {
+            self.selected_server = None;
         }
     }
 
@@ -317,6 +332,61 @@ impl McpPanel {
             self.form = None;
         }
     }
+
+    fn render_global_settings_window(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some((ref mut enabled, ref mut timeout_text)) = self.global_settings_form else {
+            return;
+        };
+
+        let mut save_clicked = false;
+        let mut close = false;
+
+        egui::Window::new("MCP Settings")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                ui.set_width(320.0);
+                ui.checkbox(enabled, "MCP Enabled");
+                ui.horizontal(|ui| {
+                    ui.label("startup_timeout_seconds:");
+                    ui.add(egui::TextEdit::singleline(timeout_text).desired_width(80.0));
+                });
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        save_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+
+        if save_clicked {
+            let timeout = match timeout_text.trim().parse::<u64>() {
+                Ok(value) => value,
+                Err(_) => {
+                    notifications.error("startup_timeout_seconds must be a positive integer");
+                    return;
+                }
+            };
+
+            let mut next = self.config.clone();
+            next.mcp.enabled = *enabled;
+            next.mcp.startup_timeout_seconds = timeout;
+            self.save_config(next, notifications, "MCP settings saved");
+            self.global_settings_form = None;
+        }
+        if close {
+            self.global_settings_form = None;
+        }
+    }
 }
 
 impl PanelRenderer for McpPanel {
@@ -327,6 +397,7 @@ impl PanelRenderer for McpPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
+        self.fetch_mcp_status();
 
         ui.heading(ctx.tab_title);
         ui.label(Self::status_label(self.config_path.as_deref()));
@@ -337,14 +408,14 @@ impl PanelRenderer for McpPanel {
         ui.separator();
 
         ui.horizontal(|ui| {
-            ui.checkbox(&mut self.enabled, "MCP Enabled");
-            ui.label("startup_timeout_seconds");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.startup_timeout_seconds_text)
-                    .desired_width(100.0),
-            );
-            if ui.button("Save MCP Settings").clicked() {
-                self.save_global_settings(notifications);
+            if ui.button("Config").clicked() && self.global_settings_form.is_none() {
+                self.global_settings_form = Some((
+                    self.config.mcp.enabled,
+                    self.config.mcp.startup_timeout_seconds.to_string(),
+                ));
+            }
+            if ui.button("Add").clicked() {
+                self.open_add_server();
             }
             if ui.button("Reload").clicked() {
                 self.reload(notifications);
@@ -353,71 +424,167 @@ impl PanelRenderer for McpPanel {
 
         ui.add_space(8.0);
 
-        ui.horizontal(|ui| {
-            if ui.button("Add MCP Server").clicked() {
-                self.open_add_server();
-            }
-        });
+        let server_ids = self
+            .config
+            .mcp
+            .servers
+            .iter()
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
 
-        ui.add_space(8.0);
-
-        if self.config.mcp.servers.is_empty() {
+        if server_ids.is_empty() {
             ui.label("No MCP servers configured.");
         } else {
-            egui::Grid::new("mcp-list-grid")
+            let mut edit_server_id = None;
+            let mut delete_server_id = None;
+
+            TableBuilder::new(ui)
                 .striped(true)
-                .num_columns(7)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.strong("ID");
-                    ui.strong("Enabled");
-                    ui.strong("Mode");
-                    ui.strong("Command/URL");
-                    ui.strong("Args");
-                    ui.strong("Env/Headers");
-                    ui.strong("Actions");
-                    ui.end_row();
-
-                    let ids = self
-                        .config
-                        .mcp
-                        .servers
-                        .iter()
-                        .map(|item| item.id.clone())
-                        .collect::<Vec<_>>();
-
-                    for id in ids {
-                        let Some(server) =
-                            self.config.mcp.servers.iter().find(|item| item.id == id)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::initial(100.0).resizable(true))
+                .column(Column::initial(80.0).resizable(true))
+                .column(Column::initial(70.0).resizable(true))
+                .column(Column::initial(80.0).resizable(true))
+                .column(Column::initial(60.0).resizable(true))
+                .column(Column::initial(80.0).resizable(true))
+                .column(Column::initial(60.0).resizable(true))
+                .header(20.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("ID");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Status");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Mode");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Command/URL");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Args");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Env/Headers");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Tools");
+                    });
+                })
+                .body(|body| {
+                    body.rows(20.0, server_ids.len(), |mut row| {
+                        let idx = row.index();
+                        let server_id = &server_ids[idx];
+                        let Some(server) = self
+                            .config
+                            .mcp
+                            .servers
+                            .iter()
+                            .find(|item| item.id == *server_id)
                         else {
-                            continue;
+                            return;
                         };
 
-                        ui.label(&server.id);
-                        ui.label(if server.enabled { "yes" } else { "no" });
-                        ui.label(match server.mode {
-                            McpServerMode::Stdio => "stdio",
-                            McpServerMode::Sse => "sse",
+                        let is_selected = self.selected_server.as_deref() == Some(server_id);
+                        row.set_selected(is_selected);
+
+                        let status = self
+                            .server_statuses
+                            .iter()
+                            .find(|(id, _, _)| id == server_id)
+                            .map(|(_, state, _)| state.as_str())
+                            .unwrap_or("-");
+
+                        row.col(|ui| {
+                            ui.label(&server.id);
                         });
-                        let endpoint = match server.mode {
-                            McpServerMode::Stdio => server.command.as_deref().unwrap_or("-"),
-                            McpServerMode::Sse => server.url.as_deref().unwrap_or("-"),
-                        };
-                        ui.label(endpoint);
-                        ui.label(server.args.len().to_string());
-                        ui.label(format!(
-                            "env:{} hdr:{}",
-                            server.env.len(),
-                            server.headers.len()
-                        ));
-                        if ui.button("Edit").clicked() {
-                            self.open_edit_server(&id);
+                        row.col(|ui| {
+                            let color = match status {
+                                "running" => egui::Color32::GREEN,
+                                "failed" => egui::Color32::RED,
+                                "starting" => egui::Color32::YELLOW,
+                                _ => egui::Color32::GRAY,
+                            };
+                            ui.label(egui::RichText::new(status).color(color));
+                        });
+                        row.col(|ui| {
+                            ui.label(match server.mode {
+                                McpServerMode::Stdio => "stdio",
+                                McpServerMode::Sse => "sse",
+                            });
+                        });
+                        row.col(|ui| {
+                            let endpoint = match server.mode {
+                                McpServerMode::Stdio => server.command.as_deref().unwrap_or("-"),
+                                McpServerMode::Sse => server.url.as_deref().unwrap_or("-"),
+                            };
+                            ui.label(endpoint);
+                        });
+                        row.col(|ui| {
+                            ui.label(server.args.len().to_string());
+                        });
+                        row.col(|ui| {
+                            ui.label(format!(
+                                "env:{} hdr:{}",
+                                server.env.len(),
+                                server.headers.len()
+                            ));
+                        });
+                        row.col(|ui| {
+                            let tool_count = self
+                                .server_statuses
+                                .iter()
+                                .find(|(id, _, _)| id == server_id)
+                                .map(|(_, _, count)| *count)
+                                .unwrap_or(0);
+                            ui.label(tool_count.to_string());
+                        });
+
+                        let response = row.response();
+
+                        if response.clicked() {
+                            self.selected_server = if is_selected {
+                                None
+                            } else {
+                                Some(server_id.clone())
+                            };
                         }
-                        ui.end_row();
-                    }
+
+                        let server_id_clone = server_id.clone();
+                        response.context_menu(|ui| {
+                            ui.style_mut().visuals.button_frame = false;
+                            if ui.button("Edit").clicked() {
+                                edit_server_id = Some(server_id_clone.clone());
+                                ui.close();
+                            }
+                            if ui.button("Config").clicked() {
+                                self.open_edit_server(&server_id_clone);
+                                ui.close();
+                            }
+                            ui.separator();
+                            let delete_server_id_clone = server_id_clone.clone();
+                            if ui
+                                .add(egui::Button::new(
+                                    egui::RichText::new("Delete").color(egui::Color32::RED),
+                                ))
+                                .clicked()
+                            {
+                                delete_server_id = Some(delete_server_id_clone);
+                                ui.close();
+                            }
+                        });
+                    });
                 });
+
+            if let Some(id) = edit_server_id {
+                self.open_edit_server(&id);
+            }
+            if let Some(id) = delete_server_id {
+                self.delete_server(&id, notifications);
+            }
         }
 
+        self.render_global_settings_window(ui, notifications);
         self.render_form_window(ui, notifications);
     }
 }

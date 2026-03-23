@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## 2026-03-23
+
+### Added
+
+- `MCP` panel now displays real-time server status (running/failed/starting/stopped) with color-coded indicators
+- `MCP` panel右键菜单新增 `Delete` 选项（红色字体）
+
+### Changed
+
+- `MCP` panel MCP settings now triggered via `Config` button popup dialog
+- `MCP` panel server list now uses TableBuilder with row selection support
+- `MCP` panel actions moved to right-click context menu with icons
+
 ## 2026-03-22
 
 ### Added
