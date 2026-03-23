@@ -11,12 +11,12 @@
   - File menu includes `Force Persist Layout` to immediately flush layout state to disk
 - Bottom status bar with version and theme-mode switcher
   - Runtime provider override dropdown on the right (select from `model_providers` without editing config; applies immediately to the running runtime's default provider for new routes and `/new`)
-- System tray / macOS menu bar icon loaded from `assets/icons/logo.iconset`
+- System tray / macOS menu bar icon loaded from embedded PNG assets at runtime
   - tray menu includes `Open Klaw`, `Setting`, `About`, and `Quit Klaw`
   - `Setting` opens the in-app settings workbench
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
   - includes tabs/theme/fullscreen and window size
-- macOS app icon is loaded from `assets/icons/logo.icns` at startup
+- macOS app icon is loaded from embedded image bytes at startup, so both `.app` bundles and standalone binaries keep the custom icon
 - System CJK font fallback via `fontdb` to avoid Chinese text missing-glyph rendering
 - Strongly typed menu model for workspace modules
 - Single-tab-per-menu behavior (click to open or activate)
@@ -153,4 +153,4 @@ make build-macos-app
 make package-macos-dmg
 ```
 
-The app bundle uses `assets/icons/logo.icns` as the bundle icon and emits packaged artifacts to `dist/macos/`.
+The app bundle still ships `assets/icons/logo.icns` for Finder/Dock bundle metadata, while runtime window/tray icon loading uses embedded assets so distributed binaries do not depend on the source tree layout. Packaged artifacts are emitted to `dist/macos/`.

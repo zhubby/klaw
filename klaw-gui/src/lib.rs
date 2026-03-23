@@ -1,5 +1,6 @@
 mod app;
 mod domain;
+mod icon;
 mod notifications;
 mod panels;
 mod runtime_bridge;
@@ -48,7 +49,8 @@ pub fn run() -> anyhow::Result<()> {
 
 #[cfg(target_os = "macos")]
 fn configure_platform_viewport(viewport: egui::ViewportBuilder) -> egui::ViewportBuilder {
-    if let Some(icon) = load_macos_app_icon() {
+    install_macos_app_icon();
+    if let Some(icon) = icon::viewport_icon() {
         viewport.with_icon(icon)
     } else {
         viewport
@@ -61,63 +63,19 @@ fn configure_platform_viewport(viewport: egui::ViewportBuilder) -> egui::Viewpor
 }
 
 #[cfg(target_os = "macos")]
-fn load_macos_app_icon() -> Option<egui::IconData> {
-    use objc2::ClassType as _;
-    use objc2_app_kit::NSImage;
-    use objc2_foundation::{MainThreadMarker, NSString};
+fn install_macos_app_icon() {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
 
-    let mtm = MainThreadMarker::new()?;
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let Some(icon) = icon::application_icon_image() else {
+        return;
+    };
 
-    let icon_path = macos_icon_path();
-    let icon_path_ns = NSString::from_str(&icon_path);
-    let icon = unsafe { NSImage::initWithContentsOfFile(NSImage::alloc(), &icon_path_ns) }?;
-
-    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+    let app = NSApplication::sharedApplication(mtm);
     unsafe {
         app.setApplicationIconImage(Some(&icon));
     }
-
-    let tiff = unsafe { icon.TIFFRepresentation() }?;
-    macos_nsdata_to_vec(&tiff).and_then(|bytes| {
-        let image = image::load_from_memory(&bytes).ok()?.into_rgba8();
-        Some(egui::IconData {
-            width: image.width(),
-            height: image.height(),
-            rgba: image.into_raw(),
-        })
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn macos_icon_path() -> String {
-    use objc2_foundation::NSBundle;
-
-    let bundle = NSBundle::mainBundle();
-    let Some(resource_url) = (unsafe { bundle.resourceURL() }) else {
-        return format!("{}/assets/icons/logo.icns", env!("CARGO_MANIFEST_DIR"));
-    };
-    let Some(path) = (unsafe { resource_url.path() }) else {
-        return format!("{}/assets/icons/logo.icns", env!("CARGO_MANIFEST_DIR"));
-    };
-    if path.is_empty() {
-        return format!("{}/assets/icons/logo.icns", env!("CARGO_MANIFEST_DIR"));
-    }
-    format!("{}/logo.icns", path)
-}
-
-#[cfg(target_os = "macos")]
-fn macos_nsdata_to_vec(data: &objc2_foundation::NSData) -> Option<Vec<u8>> {
-    use std::ptr::NonNull;
-
-    let len = data.length();
-    if len == 0 {
-        return None;
-    }
-
-    let mut bytes = vec![0_u8; len];
-    let ptr = NonNull::new(bytes.as_mut_ptr().cast())?;
-    unsafe {
-        data.getBytes_length(ptr, len);
-    }
-    Some(bytes)
 }
