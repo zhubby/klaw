@@ -98,9 +98,11 @@
 - Setting panel features:
   - persist sync settings in `settings.json`, including S3 endpoint/region/bucket/prefix, backup scope, retention, schedule, hostname-based device ID, and both direct or env-backed credentials
   - trigger manual snapshot backup uploads
+  - show a live progress bar plus stage/detail text while manual snapshot backup is preparing, uploading, and pruning remote history
   - trigger manual retention cleanup against remote snapshots
   - list remote snapshots and manually restore a selected snapshot
   - surface startup remote-update detection and shared sync task status in the Sync UI
+  - validate custom S3 endpoint credentials up front so R2-style endpoints do not rely on AWS shared-profile discovery
 - Session panel features:
   - read indexed sessions via `klaw-session` manager abstraction
   - render session metadata in a read-only table with limit/offset controls

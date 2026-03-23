@@ -6,13 +6,15 @@ use crate::settings::{
 };
 use crate::sync_runtime::{
     sync_runtime_finish_task, sync_runtime_set_last_snapshot, sync_runtime_set_remote_snapshots,
-    sync_runtime_set_remote_update, sync_runtime_snapshot, sync_runtime_sync_from_settings,
-    sync_runtime_try_start_task, SyncRuntimeSnapshot, SyncRuntimeTaskKind,
+    sync_runtime_set_remote_update, sync_runtime_set_task_progress, sync_runtime_snapshot,
+    sync_runtime_sync_from_settings, sync_runtime_try_start_task, SyncRuntimeProgress,
+    SyncRuntimeSnapshot, SyncRuntimeTaskKind,
 };
 use crate::time_format::format_optional_timestamp_millis;
 use egui_extras::{Size, StripBuilder};
 use klaw_storage::{
-    BackupItem, BackupPlan, BackupService, S3SnapshotStoreConfig, SnapshotListItem, SnapshotMode,
+    BackupItem, BackupPlan, BackupProgress, BackupService, S3SnapshotStoreConfig, SnapshotListItem,
+    SnapshotMode,
 };
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -286,6 +288,13 @@ impl SettingPanel {
         }
     }
 
+    fn sync_validation_error(&self) -> Option<String> {
+        self.sync_config()
+            .validate()
+            .err()
+            .map(|err| err.to_string())
+    }
+
     fn backup_plan(&self) -> BackupPlan {
         BackupPlan {
             mode: match self.settings.sync.mode {
@@ -332,11 +341,29 @@ impl SettingPanel {
                     .build()
                     .map_err(|err| err.to_string())?;
                 runtime.block_on(async move {
+                    sync_runtime_set_task_progress(
+                        SyncRuntimeTaskKind::ManualBackup,
+                        Some(SyncRuntimeProgress {
+                            fraction: 0.02,
+                            stage: "Connecting to remote storage".to_string(),
+                            detail: Some("Validating sync configuration".to_string()),
+                        }),
+                    );
                     let service = BackupService::open_s3_default(config, device_id)
                         .await
                         .map_err(|err| err.to_string())?;
+                    let mut report = |progress: BackupProgress| {
+                        sync_runtime_set_task_progress(
+                            SyncRuntimeTaskKind::ManualBackup,
+                            Some(runtime_progress_from_backup(progress)),
+                        );
+                    };
                     let result = service
-                        .create_upload_and_cleanup_snapshot(&plan, keep_last)
+                        .create_upload_and_cleanup_snapshot_with_progress(
+                            &plan,
+                            keep_last,
+                            &mut report,
+                        )
                         .await
                         .map_err(|err| err.to_string())?;
                     let snapshots = service
@@ -563,6 +590,7 @@ impl SettingPanel {
     ) {
         ui.strong("Sync Settings");
         ui.add_space(8.0);
+        let sync_validation_error = self.sync_validation_error();
 
         let mut changed = false;
         changed |= ui
@@ -780,12 +808,26 @@ impl SettingPanel {
                 ));
                 if let Some(task) = &runtime.active_task {
                     ui.label(format!("In progress: {}", task.label));
+                    if let Some(progress) = &task.progress {
+                        ui.add(
+                            egui::ProgressBar::new(progress.fraction.clamp(0.0, 1.0))
+                                .desired_width(ui.available_width().max(200.0))
+                                .show_percentage()
+                                .text(progress.stage.clone()),
+                        );
+                        if let Some(detail) = &progress.detail {
+                            ui.small(detail);
+                        }
+                    }
+                }
+                if let Some(err) = &sync_validation_error {
+                    ui.colored_label(ui.visuals().warn_fg_color, err);
                 }
                 ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
                     let can_run = self.settings.sync.enabled
                         && !self.sync_busy()
-                        && !self.settings.sync.s3.bucket.trim().is_empty();
+                        && sync_validation_error.is_none();
                     if ui
                         .add_enabled(can_run, egui::Button::new("Run Backup Now"))
                         .clicked()
@@ -794,7 +836,7 @@ impl SettingPanel {
                     }
                     if ui
                         .add_enabled(
-                            !self.sync_busy(),
+                            !self.sync_busy() && sync_validation_error.is_none(),
                             egui::Button::new("Refresh Remote Snapshots"),
                         )
                         .clicked()
@@ -803,7 +845,9 @@ impl SettingPanel {
                     }
                     if ui
                         .add_enabled(
-                            self.settings.sync.enabled && !self.sync_busy(),
+                            self.settings.sync.enabled
+                                && !self.sync_busy()
+                                && sync_validation_error.is_none(),
                             egui::Button::new("Run Retention Cleanup"),
                         )
                         .clicked()
@@ -811,10 +855,9 @@ impl SettingPanel {
                         self.run_retention_cleanup();
                     }
                 });
-                if self.settings.sync.enabled && self.settings.sync.s3.bucket.trim().is_empty() {
-                    ui.colored_label(
-                        ui.visuals().warn_fg_color,
-                        "Bucket is required before backup or restore can run.",
+                if self.settings.sync.enabled && sync_validation_error.is_none() {
+                    ui.small(
+                        "Manual backup progress is shown below while snapshot preparation and upload are running.",
                     );
                 }
             });
@@ -841,7 +884,10 @@ impl SettingPanel {
                                 ui.label(format!("Device: {}", snapshot.device_id));
                             });
                             if ui
-                                .add_enabled(!self.sync_busy(), egui::Button::new("Restore"))
+                                .add_enabled(
+                                    !self.sync_busy() && sync_validation_error.is_none(),
+                                    egui::Button::new("Restore"),
+                                )
                                 .clicked()
                             {
                                 restore_target = Some(snapshot.snapshot_id.clone());
@@ -900,6 +946,24 @@ fn sync_item_to_backup_item(item: SyncItem) -> Option<BackupItem> {
         SyncItem::UserWorkspace => Some(BackupItem::UserWorkspace),
         SyncItem::Memory => Some(BackupItem::Memory),
         SyncItem::Config => Some(BackupItem::Config),
+    }
+}
+
+fn runtime_progress_from_backup(progress: BackupProgress) -> SyncRuntimeProgress {
+    SyncRuntimeProgress {
+        fraction: progress.fraction.clamp(0.0, 1.0),
+        stage: match progress.stage {
+            klaw_storage::BackupProgressStage::PreparingSnapshot => "Preparing snapshot",
+            klaw_storage::BackupProgressStage::UploadingManifest => "Uploading manifest",
+            klaw_storage::BackupProgressStage::UploadingBundle => "Uploading bundle",
+            klaw_storage::BackupProgressStage::UpdatingLatestPointer => {
+                "Updating latest snapshot pointer"
+            }
+            klaw_storage::BackupProgressStage::CleaningUpRemote => "Cleaning up old snapshots",
+            klaw_storage::BackupProgressStage::Completed => "Backup completed",
+        }
+        .to_string(),
+        detail: Some(progress.detail),
     }
 }
 
