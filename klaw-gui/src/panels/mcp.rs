@@ -397,7 +397,6 @@ impl PanelRenderer for McpPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
-        self.fetch_mcp_status();
 
         ui.heading(ctx.tab_title);
         ui.label(Self::status_label(self.config_path.as_deref()));
@@ -419,6 +418,9 @@ impl PanelRenderer for McpPanel {
             }
             if ui.button("Reload").clicked() {
                 self.reload(notifications);
+            }
+            if ui.button("Refresh Status").clicked() {
+                self.fetch_mcp_status();
             }
         });
 
