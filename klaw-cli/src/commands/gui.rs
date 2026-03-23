@@ -144,8 +144,10 @@ impl GuiCommand {
                                                             Ok(store) => {
                                                                 let snapshot = store.snapshot();
                                                                 let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
-                                                                let guard = manager.lock().await;
-                                                                Ok(guard.runtime_snapshot(&mcp_snapshot))
+                                                                match manager.try_lock() {
+                                                                    Ok(guard) => Ok(guard.runtime_snapshot(&mcp_snapshot)),
+                                                                    Err(_) => Err("mcp manager is busy".to_string()),
+                                                                }
                                                             }
                                                             Err(err) => Err(err.to_string()),
                                                         }
