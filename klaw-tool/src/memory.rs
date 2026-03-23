@@ -97,6 +97,26 @@ impl MemoryTool {
             None => Ok(default_value),
         }
     }
+
+    /// Parse scope for add operation.
+    /// "session" -> "session:<session_key>", "long_term" -> "long_term"
+    fn parse_add_scope(args: &Value, session_key: &str) -> String {
+        match args.get("scope").and_then(Value::as_str) {
+            Some("long_term") => "long_term".to_string(),
+            Some("session") | Some(_) | None => format!("session:{session_key}"),
+        }
+    }
+
+    /// Parse scope for search operation.
+    /// "session" -> Some("session:<session_key>"), "long_term" -> Some("long_term"), "both"/None -> None (search all)
+    fn parse_search_scope(args: &Value, session_key: &str) -> Option<String> {
+        match args.get("scope").and_then(Value::as_str) {
+            Some("long_term") => Some("long_term".to_string()),
+            Some("session") => Some(format!("session:{session_key}")),
+            Some("both") | None => None, // None means search all scopes
+            Some(s) => Some(s.to_string()), // Allow custom scope strings
+        }
+    }
 }
 
 #[async_trait]
@@ -106,21 +126,26 @@ impl Tool for MemoryTool {
     }
 
     fn description(&self) -> &str {
-        "Add and search long-term memory for this agent. Use `add` to persist important facts and `search` to recall relevant prior context in the current session scope."
+        "Add and search memory for this agent. Use `add` to store facts and `search` to recall relevant context. Scope can be \"long_term\" (persistent across sessions) or \"session\" (current session only, default)."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Memory operation request. Scope and retrieval strategy are auto-managed by runtime config to reduce argument complexity.",
+            "description": "Memory operation request. Use scope to control persistence: \"long_term\" for persistent memories, \"session\" for current session only.",
             "oneOf": [
                 {
-                    "description": "Add one memory record to the current session scope.",
+                    "description": "Add one memory record. Use \"long_term\" scope for persistent memories, \"session\" for session-only.",
                     "properties": {
                         "action": { "const": "add" },
                         "content": {
                             "type": "string",
                             "description": "Memory text content."
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["session", "long_term"],
+                            "description": "Memory scope: \"session\" (current session only, default) or \"long_term\" (persistent)."
                         },
                         "metadata": {
                             "type": "object",
@@ -137,12 +162,17 @@ impl Tool for MemoryTool {
                     "additionalProperties": false
                 },
                 {
-                    "description": "Search memory records in the current session scope.",
+                    "description": "Search memory records. Searches both session and long_term scopes by default.",
                     "properties": {
                         "action": { "const": "search" },
                         "query": {
                             "type": "string",
                             "description": "Search query text."
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["session", "long_term", "both"],
+                            "description": "Search scope: \"session\" (current session), \"long_term\" (persistent), or \"both\" (default)."
                         }
                     },
                     "required": ["action", "query"],
@@ -169,12 +199,13 @@ impl Tool for MemoryTool {
                     .to_string();
                 let metadata = Self::parse_metadata(&args)?;
                 let pinned = Self::parse_bool(&args, "pinned", false)?;
+                let scope = Self::parse_add_scope(&args, &ctx.session_key);
 
                 let record = self
                     .service
                     .upsert(UpsertMemoryInput {
                         id: None,
-                        scope: ctx.session_key.clone(),
+                        scope,
                         content,
                         metadata,
                         pinned,
@@ -194,11 +225,12 @@ impl Tool for MemoryTool {
                     .filter(|v| !v.is_empty())
                     .ok_or_else(|| ToolError::InvalidArgs("missing `query`".to_string()))?
                     .to_string();
+                let scope = Self::parse_search_scope(&args, &ctx.session_key);
 
                 let hits = self
                     .service
                     .search(MemorySearchQuery {
-                        scope: Some(ctx.session_key.clone()),
+                        scope,
                         text: query,
                         limit: self.runtime.search_limit,
                         fts_limit: self.runtime.fts_limit,
@@ -343,7 +375,8 @@ mod tests {
 
         let captured = mock.upsert_inputs.lock().await;
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0].scope, "session-123");
+        // Default scope is "session:<session_key>"
+        assert_eq!(captured[0].scope, "session:session-123");
         assert!(captured[0].id.is_none());
         assert!(output.content_for_model.contains("remember this"));
     }
@@ -389,7 +422,8 @@ mod tests {
 
         let captured = mock.search_inputs.lock().await;
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0].scope.as_deref(), Some("session-123"));
+        // Default search scope is None (search all scopes: both session and long_term)
+        assert_eq!(captured[0].scope, None);
         assert_eq!(captured[0].limit, 5);
         assert_eq!(captured[0].fts_limit, 7);
         assert_eq!(captured[0].vector_limit, 9);
@@ -406,5 +440,85 @@ mod tests {
             .await
             .expect_err("delete should be rejected");
         assert!(format!("{err}").contains("add/search"));
+    }
+
+    #[tokio::test]
+    async fn add_with_long_term_scope() {
+        let mock = Arc::new(MockMemoryService::default());
+        let tool = tool_with_mock(mock.clone());
+
+        tool.execute(
+            json!({
+                "action": "add",
+                "content": "important fact",
+                "scope": "long_term"
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("add with long_term should succeed");
+
+        let captured = mock.upsert_inputs.lock().await;
+        assert_eq!(captured[0].scope, "long_term");
+    }
+
+    #[tokio::test]
+    async fn add_with_explicit_session_scope() {
+        let mock = Arc::new(MockMemoryService::default());
+        let tool = tool_with_mock(mock.clone());
+
+        tool.execute(
+            json!({
+                "action": "add",
+                "content": "session fact",
+                "scope": "session"
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("add with session should succeed");
+
+        let captured = mock.upsert_inputs.lock().await;
+        assert_eq!(captured[0].scope, "session:session-123");
+    }
+
+    #[tokio::test]
+    async fn search_with_session_scope_only() {
+        let mock = Arc::new(MockMemoryService::default());
+        let tool = tool_with_mock(mock.clone());
+
+        tool.execute(
+            json!({
+                "action": "search",
+                "query": "test",
+                "scope": "session"
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("search should succeed");
+
+        let captured = mock.search_inputs.lock().await;
+        assert_eq!(captured[0].scope.as_deref(), Some("session:session-123"));
+    }
+
+    #[tokio::test]
+    async fn search_with_long_term_scope_only() {
+        let mock = Arc::new(MockMemoryService::default());
+        let tool = tool_with_mock(mock.clone());
+
+        tool.execute(
+            json!({
+                "action": "search",
+                "query": "test",
+                "scope": "long_term"
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("search should succeed");
+
+        let captured = mock.search_inputs.lock().await;
+        assert_eq!(captured[0].scope.as_deref(), Some("long_term"));
     }
 }
