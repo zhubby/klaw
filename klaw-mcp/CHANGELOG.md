@@ -1,5 +1,28 @@
 # CHANGELOG
 
+## 2026-03-22
+
+### Added
+
+- 新增 MCP 热重载支持：`McpManager` 支持动态启动/停止/重启 MCP 服务器
+- 新增 `McpServerKey`、`McpLifecycleState`、`McpServerStatus` 数据结构用于状态管理
+- 新增 `McpConfigSnapshot` 用于配置快照和差异比较
+- 新增 `McpSyncResult` 返回同步操作结果
+- 新增 `RuntimeCommand::SyncMcp` 命令支持 GUI 触发 MCP 配置同步
+- 新增 `ToolRegistry::unregister` 和 `unregister_many` 方法支持工具动态注销
+
+### Changed
+
+- `McpManager::spawn_init` 现在接收 `ToolRegistry` 和 `McpConfigSnapshot` 参数，返回 `McpInitHandle`
+- `McpInitHandle` 包含 `manager()` 方法获取 `Arc<Mutex<McpManager>>` 用于后续 sync 操作
+- `McpClientHub::remove` 返回类型改为 `()`
+- `McpServerConfig` 新增 `Default` 和 `PartialEq` 实现
+
+### Fixed
+
+- Stdio 类型的 MCP 服务器在停止时正确杀子进程
+- SSE 类型的 MCP 服务器在停止时仅更新内存数据
+
 ## 2026-03-13
 
 ### Added

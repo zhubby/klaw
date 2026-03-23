@@ -56,6 +56,10 @@ impl McpClientHub {
         self.clients.keys().cloned().collect()
     }
 
+    pub fn contains(&self, server_id: &str) -> bool {
+        self.clients.contains_key(server_id)
+    }
+
     pub async fn call_tool(
         &self,
         server_id: &str,

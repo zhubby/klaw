@@ -3687,6 +3687,7 @@ dependencies = [
  "klaw-gateway",
  "klaw-heartbeat",
  "klaw-llm",
+ "klaw-mcp",
  "klaw-memory",
  "klaw-observability",
  "klaw-session",

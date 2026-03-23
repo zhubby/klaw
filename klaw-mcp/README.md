@@ -1,13 +1,45 @@
 # klaw-mcp
 
-`klaw-mcp` 负责 MCP server 的连接、bootstrap、远程工具发现，以及把远端工具挂接到本地 `ToolRegistry`。
+`klaw-mcp` 负责 MCP server 的连接、bootstrap、远程工具发现，以及把远端工具挂接到本地 `ToolRegistry`，并支持 MCP 服务器的热重载。
 
 ## Responsibilities
 
 - 按配置启动 `stdio` MCP 子进程或连接 `sse` MCP 服务
 - 执行 `initialize` / `tools/list` 并汇总可用工具
 - 处理工具名冲突与 bootstrap 失败汇总
+- 支持动态启动/停止/重启 MCP 服务器（热重载）
 - 在 runtime 退出时关闭已连接的 MCP client
+
+## Hot Reload
+
+`McpManager` 支持通过配置变更动态管理 MCP 服务器：
+
+```rust
+// 初始化
+let manager = McpManager::spawn_init(tools, config_snapshot);
+let mcp_manager = manager.manager();
+
+// 热重载配置
+let new_snapshot = McpConfigSnapshot::from_mcp_config(&new_config);
+let result = mcp_manager.lock().await.sync(new_snapshot).await;
+```
+
+### Lifecycle States
+
+| State | Description |
+|-------|-------------|
+| `Starting` | Server is being initialized |
+| `Running` | Server is operational |
+| `Stopped` | Server is stopped |
+| `Failed` | Server failed to start |
+
+### Stdio vs SSE Handling
+
+| Operation | Stdio Mode | SSE Mode |
+|-----------|------------|----------|
+| Start | Spawn subprocess + init handshake | Create HTTP client + init handshake |
+| Stop | Kill subprocess + cleanup | Remove client from hub (memory only) |
+| Restart | Kill → Respawn | Update client config |
 
 ## Shutdown
 

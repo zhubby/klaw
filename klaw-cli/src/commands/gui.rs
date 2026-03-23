@@ -1,6 +1,7 @@
 use clap::Args;
 use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
+use klaw_mcp::McpConfigSnapshot;
 use std::{io, sync::Arc};
 use tokio::sync::watch;
 
@@ -78,6 +79,8 @@ impl GuiCommand {
                             let mut channel_manager = ChannelManager::new(Arc::clone(&adapter));
                             channel_manager.sync(channel_snapshot).await;
 
+                            let mcp_manager = runtime.mcp_init.as_ref().and_then(|h| h.try_lock().ok().map(|g| g.manager()));
+
                             let shutdown_by_signal = loop {
                                 tokio::select! {
                                     changed = shutdown_rx.changed() => {
@@ -114,6 +117,23 @@ impl GuiCommand {
                                                         }
                                                     }
                                                     Err(err) => Err(err.to_string()),
+                                                };
+                                                let _ = response.send(result);
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::SyncMcp { response }) => {
+                                                let result = match &mcp_manager {
+                                                    Some(manager) => {
+                                                        match ConfigStore::open(None) {
+                                                            Ok(store) => {
+                                                                let snapshot = store.snapshot();
+                                                                let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
+                                                                let mut guard = manager.lock().await;
+                                                                Ok(guard.sync(mcp_snapshot).await)
+                                                            }
+                                                            Err(err) => Err(err.to_string()),
+                                                        }
+                                                    }
+                                                    None => Err("mcp manager not initialized".to_string()),
                                                 };
                                                 let _ = response.send(result);
                                             }

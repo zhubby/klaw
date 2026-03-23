@@ -1,6 +1,7 @@
 use klaw_channel::ChannelSyncResult;
 use klaw_config::TailscaleMode;
 use klaw_gateway::GatewayRuntimeInfo;
+use klaw_mcp::McpSyncResult;
 use klaw_util::EnvironmentCheckReport;
 use std::sync::{mpsc, Mutex, OnceLock};
 use tokio::sync::mpsc::UnboundedSender;
@@ -25,6 +26,9 @@ pub enum RuntimeCommand {
     },
     SyncChannels {
         response: mpsc::Sender<Result<ChannelSyncResult, String>>,
+    },
+    SyncMcp {
+        response: mpsc::Sender<Result<McpSyncResult, String>>,
     },
     RunCronNow {
         cron_id: String,
@@ -285,6 +289,24 @@ pub fn request_set_tailscale_mode(mode: TailscaleMode) -> Result<GatewayStatusSn
     sender
         .send(RuntimeCommand::SetTailscaleMode {
             mode,
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    response_rx
+        .recv()
+        .map_err(|_| "runtime command response channel closed".to_string())?
+}
+
+pub fn request_sync_mcp() -> Result<McpSyncResult, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::SyncMcp {
             response: response_tx,
         })
         .map_err(|_| "failed to send runtime command".to_string())?;

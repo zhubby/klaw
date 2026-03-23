@@ -239,4 +239,25 @@ impl ToolRegistry {
             .cloned()
             .collect()
     }
+
+    /// 注销工具。
+    pub fn unregister(&self, name: &str) -> bool {
+        self.tools
+            .write()
+            .unwrap_or_else(|err| err.into_inner())
+            .remove(name)
+            .is_some()
+    }
+
+    /// 注销多个工具。
+    pub fn unregister_many(&self, names: &[&str]) -> usize {
+        let mut guard = self.tools.write().unwrap_or_else(|err| err.into_inner());
+        let mut count = 0;
+        for name in names {
+            if guard.remove(*name).is_some() {
+                count += 1;
+            }
+        }
+        count
+    }
 }
