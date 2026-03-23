@@ -121,6 +121,7 @@ pub struct McpPanel {
     sync_fetch_rx: Option<Receiver<Result<McpSyncResult, String>>>,
     last_status_refresh_at: Option<Instant>,
     status_refresh_announce: bool,
+    status_refresh_manual: bool,
     sync_announce: bool,
 }
 
@@ -164,6 +165,7 @@ impl McpPanel {
         self.status_fetch_rx = Some(rx);
         self.last_status_refresh_at = Some(Instant::now());
         self.status_refresh_announce = announce;
+        self.status_refresh_manual = announce;
 
         thread::spawn(move || {
             let _ = tx.send(request_mcp_status());
@@ -231,6 +233,7 @@ impl McpPanel {
                     notifications.success("MCP status refreshed");
                 }
                 self.status_refresh_announce = false;
+                self.status_refresh_manual = false;
             }
             Ok(Err(err)) => {
                 self.status_fetch_rx = None;
@@ -238,6 +241,7 @@ impl McpPanel {
                     notifications.error(format!("Failed to refresh MCP status: {err}"));
                 }
                 self.status_refresh_announce = false;
+                self.status_refresh_manual = false;
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -247,6 +251,7 @@ impl McpPanel {
                         .error("Failed to refresh MCP status: background task disconnected");
                 }
                 self.status_refresh_announce = false;
+                self.status_refresh_manual = false;
             }
         }
     }
@@ -609,8 +614,10 @@ impl PanelRenderer for McpPanel {
                 ui.label("Applying MCP changes...");
             }
             if self.status_fetch_rx.is_some() {
-                ui.spinner();
-                ui.label("Refreshing runtime status...");
+                if self.status_refresh_manual {
+                    ui.spinner();
+                    ui.label("Refreshing runtime status...");
+                }
             }
         });
         ui.separator();
