@@ -137,6 +137,23 @@ impl GuiCommand {
                                                 };
                                                 let _ = response.send(result);
                                             }
+                                            Some(klaw_gui::RuntimeCommand::GetMcpStatus { response }) => {
+                                                let result = match &mcp_manager {
+                                                    Some(manager) => {
+                                                        match ConfigStore::open(None) {
+                                                            Ok(store) => {
+                                                                let snapshot = store.snapshot();
+                                                                let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
+                                                                let guard = manager.lock().await;
+                                                                Ok(guard.runtime_snapshot(&mcp_snapshot))
+                                                            }
+                                                            Err(err) => Err(err.to_string()),
+                                                        }
+                                                    }
+                                                    None => Err("mcp manager not initialized".to_string()),
+                                                };
+                                                let _ = response.send(result);
+                                            }
                                             Some(klaw_gui::RuntimeCommand::RunCronNow { cron_id, response }) => {
                                                 let result = background.run_cron_now(&cron_id).await;
                                                 if result.is_ok() {

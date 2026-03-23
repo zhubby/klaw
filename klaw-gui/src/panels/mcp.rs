@@ -1,12 +1,13 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::runtime_bridge::request_sync_mcp;
+use crate::runtime_bridge::request_mcp_status;
 use crate::widgets::{ArrayEditor, KeyValueEditor};
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode};
-use klaw_mcp::McpSyncResult;
+use klaw_mcp::{McpRuntimeSnapshot, McpServerDetail};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -95,6 +96,13 @@ impl McpServerForm {
 struct ServerRuntimeStatus {
     state: String,
     tool_count: usize,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct McpServerDetailWindow {
+    server_id: String,
+    markdown: String,
 }
 
 #[derive(Default)]
@@ -107,7 +115,9 @@ pub struct McpPanel {
     global_settings_form: Option<(bool, String)>,
     selected_server: Option<String>,
     server_statuses: BTreeMap<String, ServerRuntimeStatus>,
-    status_fetch_rx: Option<Receiver<Result<McpSyncResult, String>>>,
+    server_details: BTreeMap<String, McpServerDetail>,
+    detail_window: Option<McpServerDetailWindow>,
+    status_fetch_rx: Option<Receiver<Result<McpRuntimeSnapshot, String>>>,
     last_status_refresh_at: Option<Instant>,
     status_refresh_announce: bool,
 }
@@ -154,7 +164,7 @@ impl McpPanel {
         self.status_refresh_announce = announce;
 
         thread::spawn(move || {
-            let _ = tx.send(request_sync_mcp());
+            let _ = tx.send(request_mcp_status());
         });
     }
 
@@ -189,9 +199,15 @@ impl McpPanel {
                             ServerRuntimeStatus {
                                 state: status.state.as_str().to_string(),
                                 tool_count: status.tool_count,
+                                last_error: status.last_error,
                             },
                         )
                     })
+                    .collect();
+                self.server_details = result
+                    .details
+                    .into_iter()
+                    .map(|detail| (detail.key.as_str().to_string(), detail))
                     .collect();
                 self.status_fetch_rx = None;
                 if self.status_refresh_announce {
@@ -278,6 +294,7 @@ impl McpPanel {
         next.mcp.servers.retain(|s| s.id != id);
         self.save_config(next, notifications, &format!("MCP server '{id}' deleted"));
         self.server_statuses.remove(id);
+        self.server_details.remove(id);
         if self.selected_server.as_deref() == Some(id) {
             self.selected_server = None;
         }
@@ -338,6 +355,15 @@ impl McpPanel {
             .get(id)
             .map(|status| status.tool_count)
             .unwrap_or(0)
+    }
+
+    fn open_detail_window(&mut self, server_id: &str) {
+        let detail = self.server_details.get(server_id).cloned();
+        let status = self.server_statuses.get(server_id).cloned();
+        self.detail_window = Some(McpServerDetailWindow {
+            server_id: server_id.to_string(),
+            markdown: build_server_detail_markdown(server_id, status.as_ref(), detail.as_ref()),
+        });
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
@@ -486,6 +512,29 @@ impl McpPanel {
             self.global_settings_form = None;
         }
     }
+
+    fn render_detail_window(&mut self, ctx: &egui::Context) {
+        let Some(detail_window) = self.detail_window.as_mut() else {
+            return;
+        };
+
+        let mut open = true;
+        egui::Window::new(format!("MCP Detail: {}", detail_window.server_id))
+            .open(&mut open)
+            .resizable(true)
+            .default_width(860.0)
+            .default_height(620.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt(("mcp-detail-scroll", &detail_window.server_id))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| render_markdown(ui, &detail_window.markdown));
+            });
+
+        if !open {
+            self.detail_window = None;
+        }
+    }
 }
 
 impl PanelRenderer for McpPanel {
@@ -547,6 +596,7 @@ impl PanelRenderer for McpPanel {
         } else {
             let mut edit_server_id = None;
             let mut delete_server_id = None;
+            let mut detail_server_id = None;
             let mut open_settings_from_menu = false;
             let available_height = ui.available_height();
 
@@ -664,6 +714,13 @@ impl PanelRenderer for McpPanel {
                         let server_id_clone = server_id.clone();
                         response.context_menu(|ui| {
                             if ui
+                                .button(format!("{} Detail", regular::FILE_TEXT))
+                                .clicked()
+                            {
+                                detail_server_id = Some(server_id_clone.clone());
+                                ui.close();
+                            }
+                            if ui
                                 .button(format!("{} Edit", regular::PENCIL_SIMPLE))
                                 .clicked()
                             {
@@ -692,6 +749,9 @@ impl PanelRenderer for McpPanel {
             if let Some(id) = edit_server_id {
                 self.open_edit_server(&id);
             }
+            if let Some(id) = detail_server_id {
+                self.open_detail_window(&id);
+            }
             if open_settings_from_menu && self.global_settings_form.is_none() {
                 self.open_global_settings();
             }
@@ -701,7 +761,86 @@ impl PanelRenderer for McpPanel {
         }
 
         self.render_global_settings_window(ui, notifications);
+        self.render_detail_window(ui.ctx());
         self.render_form_window(ui, notifications);
+    }
+}
+
+fn build_server_detail_markdown(
+    server_id: &str,
+    status: Option<&ServerRuntimeStatus>,
+    detail: Option<&McpServerDetail>,
+) -> String {
+    let state = status.map(|item| item.state.as_str()).unwrap_or("stopped");
+    let tool_count = status.map(|item| item.tool_count).unwrap_or(0);
+    let last_error = status
+        .and_then(|item| item.last_error.as_deref())
+        .unwrap_or("-");
+    let tools_list_response = detail
+        .and_then(|item| item.tools_list_response.as_ref())
+        .map(pretty_json)
+        .unwrap_or_else(|| "null".to_string());
+
+    format!(
+        "# MCP Server Detail\n\n- Server: `{server_id}`\n- State: `{state}`\n- Tools: `{tool_count}`\n- Last Error: `{last_error}`\n\n## tools/list response\n\n```json\n{tools_list_response}\n```"
+    )
+}
+
+fn pretty_json(value: &Value) -> String {
+    serde_json::to_string_pretty(value)
+        .unwrap_or_else(|err| format!("{{\"error\":\"failed to render json: {err}\"}}"))
+}
+
+fn render_markdown(ui: &mut egui::Ui, markdown: &str) {
+    let mut in_code_block = false;
+    let mut code_block = String::new();
+
+    for line in markdown.lines() {
+        if line.trim_start().starts_with("```") {
+            if in_code_block {
+                ui.add_sized(
+                    [ui.available_width(), 220.0],
+                    egui::TextEdit::multiline(&mut code_block)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace)
+                        .interactive(false),
+                );
+                code_block.clear();
+                in_code_block = false;
+            } else {
+                in_code_block = true;
+            }
+            continue;
+        }
+
+        if in_code_block {
+            code_block.push_str(line);
+            code_block.push('\n');
+            continue;
+        }
+
+        if let Some(text) = line.strip_prefix("# ") {
+            ui.heading(text);
+            continue;
+        }
+        if let Some(text) = line.strip_prefix("## ") {
+            ui.add_space(6.0);
+            ui.strong(text);
+            continue;
+        }
+        if let Some(text) = line.strip_prefix("- ") {
+            ui.horizontal(|ui| {
+                ui.label("-");
+                ui.label(text);
+            });
+            continue;
+        }
+        if line.is_empty() {
+            ui.add_space(4.0);
+            continue;
+        }
+
+        ui.label(line);
     }
 }
 

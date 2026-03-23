@@ -6,11 +6,12 @@
 
 - `MCP` panel now shows live runtime server state and tool counts in a selectable table
 - `MCP` panel server rows now expose icon-based context actions including a red `Delete`
+- `MCP` panel now exposes a `Detail` popup that renders the cached `tools/list` response as markdown-friendly content
 
 ### Changed
 
 - `MCP` global settings moved behind a `Config` dialog instead of rendering inline
-- `MCP` runtime status refresh now runs off the GUI thread and is polled back into the panel asynchronously
+- `MCP` runtime status refresh now reads a manager snapshot instead of triggering a full sync, avoiding long-lived GUI spinners while keeping polling off the GUI thread
 
 ## 2026-03-22
 

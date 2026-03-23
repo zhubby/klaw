@@ -16,7 +16,7 @@ pub use domain::menu::WorkbenchMenu;
 pub use panels::{PanelRenderer, RenderCtx};
 pub use runtime_bridge::{
     clear_log_receiver, clear_runtime_command_sender, drain_log_chunks, install_log_receiver,
-    install_runtime_command_sender, request_env_check, request_gateway_status,
+    install_runtime_command_sender, request_env_check, request_gateway_status, request_mcp_status,
     request_restart_gateway, request_run_cron_now, request_run_heartbeat_now,
     request_set_gateway_enabled, request_set_tailscale_mode, request_sync_channels,
     request_sync_mcp, GatewayStatusSnapshot, RuntimeCommand,

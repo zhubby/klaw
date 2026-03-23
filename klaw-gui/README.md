@@ -89,9 +89,10 @@
   - clear all temporary files and folders while keeping the `tmp/` root directory
 - MCP panel features:
   - manage global MCP settings through a `Config` popup instead of inline controls
-  - render configured servers in a selectable `TableBuilder` list with right-click `Edit` / `Config` / `Delete` actions
-  - poll runtime MCP status asynchronously so GUI refreshes do not block the egui thread
+  - render configured servers in a selectable `TableBuilder` list with right-click `Detail` / `Edit` / `Config` / `Delete` actions
+  - poll runtime MCP status asynchronously from a manager snapshot so GUI refreshes do not block the egui thread or retrigger MCP sync
   - show per-server runtime state and discovered tool counts directly in the table
+  - open a detail popup that renders the cached MCP `tools/list` response for the selected server
 - Setting panel features:
   - persist sync settings in `settings.json`, including S3 endpoint/region/bucket/prefix, backup scope, retention, schedule, hostname-based device ID, and both direct or env-backed credentials
   - trigger manual snapshot backup uploads
