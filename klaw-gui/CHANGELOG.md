@@ -14,6 +14,7 @@
 - `MCP` global settings moved behind a `Config` dialog instead of rendering inline
 - `MCP` runtime status refresh now reads a manager snapshot instead of triggering a full sync, avoiding long-lived GUI spinners while keeping polling off the GUI thread
 - `Memory` panel provider selection now reads available providers from `config.toml` and fills the embedding model from the selected provider's default model
+- GUI app and tray icons now load from embedded image assets at runtime, so both packaged `.app` bundles and standalone macOS binaries keep the custom icon without relying on source-tree file paths
 
 ## 2026-03-22
 

@@ -1,3 +1,4 @@
+use crate::icon;
 use anyhow::Context;
 use std::sync::mpsc::{self, Receiver};
 use tray_icon::{
@@ -25,9 +26,7 @@ pub struct TrayIntegration {
 }
 
 pub fn install(egui_ctx: &egui::Context) -> anyhow::Result<Option<TrayIntegration>> {
-    let Some(icon) = load_tray_icon()? else {
-        return Ok(None);
-    };
+    let icon = load_tray_icon()?;
     let menu = build_tray_menu()?;
     let (command_tx, command_rx) = mpsc::channel();
     let repaint_ctx = egui_ctx.clone();
@@ -53,33 +52,8 @@ pub fn install(egui_ctx: &egui::Context) -> anyhow::Result<Option<TrayIntegratio
     }))
 }
 
-fn load_tray_icon() -> anyhow::Result<Option<tray_icon::Icon>> {
-    let icon_path = tray_icon_path();
-    if !icon_path.exists() {
-        return Ok(None);
-    }
-
-    let image = image::open(&icon_path)
-        .with_context(|| format!("failed to load tray icon from {}", icon_path.display()))?
-        .into_rgba8();
-    let width = image.width();
-    let height = image.height();
-
-    tray_icon::Icon::from_rgba(image.into_raw(), width, height)
-        .map(Some)
-        .map_err(|err| anyhow::anyhow!("failed to convert tray icon image: {err}"))
-}
-
-#[cfg(target_os = "macos")]
-fn tray_icon_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("assets/icons/logo.iconset/icon_16x16@2x.png")
-}
-
-#[cfg(not(target_os = "macos"))]
-fn tray_icon_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("assets/icons/logo.iconset/icon_32x32.png")
+fn load_tray_icon() -> anyhow::Result<tray_icon::Icon> {
+    icon::tray_icon().context("failed to load embedded tray icon")
 }
 
 fn build_tray_menu() -> anyhow::Result<Menu> {
