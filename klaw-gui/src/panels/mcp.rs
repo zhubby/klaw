@@ -1,12 +1,12 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::runtime_bridge::request_mcp_status;
+use crate::runtime_bridge::{request_mcp_status, request_sync_mcp};
 use crate::widgets::{ArrayEditor, KeyValueEditor};
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode};
-use klaw_mcp::{McpRuntimeSnapshot, McpServerDetail};
+use klaw_mcp::{McpRuntimeSnapshot, McpServerDetail, McpSyncResult};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -118,8 +118,10 @@ pub struct McpPanel {
     server_details: BTreeMap<String, McpServerDetail>,
     detail_window: Option<McpServerDetailWindow>,
     status_fetch_rx: Option<Receiver<Result<McpRuntimeSnapshot, String>>>,
+    sync_fetch_rx: Option<Receiver<Result<McpSyncResult, String>>>,
     last_status_refresh_at: Option<Instant>,
     status_refresh_announce: bool,
+    sync_announce: bool,
 }
 
 impl McpPanel {
@@ -165,6 +167,21 @@ impl McpPanel {
 
         thread::spawn(move || {
             let _ = tx.send(request_mcp_status());
+        });
+    }
+
+    fn schedule_manager_sync(&mut self, announce: bool) {
+        if self.sync_fetch_rx.is_some() {
+            self.sync_announce |= announce;
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        self.sync_fetch_rx = Some(rx);
+        self.sync_announce = announce;
+
+        thread::spawn(move || {
+            let _ = tx.send(request_sync_mcp());
         });
     }
 
@@ -234,6 +251,38 @@ impl McpPanel {
         }
     }
 
+    fn poll_manager_sync(&mut self, notifications: &mut NotificationCenter) {
+        let Some(rx) = self.sync_fetch_rx.as_ref() else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok(Ok(_)) => {
+                self.sync_fetch_rx = None;
+                self.schedule_status_refresh(false);
+                if self.sync_announce {
+                    notifications.success("MCP runtime synchronized");
+                }
+                self.sync_announce = false;
+            }
+            Ok(Err(err)) => {
+                self.sync_fetch_rx = None;
+                if self.sync_announce {
+                    notifications.error(format!("Failed to sync MCP runtime: {err}"));
+                } else {
+                    notifications.error(format!("Failed to sync MCP runtime: {err}"));
+                }
+                self.sync_announce = false;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.sync_fetch_rx = None;
+                notifications.error("Failed to sync MCP runtime: background task disconnected");
+                self.sync_announce = false;
+            }
+        }
+    }
+
     fn status_label(path: Option<&Path>) -> String {
         match path {
             Some(path) => format!("Path: {}", path.display()),
@@ -255,7 +304,7 @@ impl McpPanel {
             Ok(raw) => match store.save_raw_toml(&raw) {
                 Ok(snapshot) => {
                     self.apply_snapshot(snapshot);
-                    self.schedule_status_refresh(false);
+                    self.schedule_manager_sync(false);
                     notifications.success(success_message);
                 }
                 Err(err) => notifications.error(format!("Save failed: {err}")),
@@ -272,7 +321,7 @@ impl McpPanel {
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
-                self.schedule_status_refresh(false);
+                self.schedule_manager_sync(false);
                 notifications.success("Configuration reloaded from disk");
             }
             Err(err) => notifications.error(format!("Reload failed: {err}")),
@@ -545,6 +594,7 @@ impl PanelRenderer for McpPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
+        self.poll_manager_sync(notifications);
         self.poll_status_refresh(notifications);
         self.refresh_status_if_due();
         ui.ctx().request_repaint_after(MCP_STATUS_POLL_INTERVAL);
@@ -554,6 +604,10 @@ impl PanelRenderer for McpPanel {
         ui.horizontal(|ui| {
             ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!("Servers: {}", self.config.mcp.servers.len()));
+            if self.sync_fetch_rx.is_some() {
+                ui.spinner();
+                ui.label("Applying MCP changes...");
+            }
             if self.status_fetch_rx.is_some() {
                 ui.spinner();
                 ui.label("Refreshing runtime status...");
@@ -607,9 +661,8 @@ impl PanelRenderer for McpPanel {
                 .column(Column::auto().at_least(60.0))
                 .column(Column::auto().at_least(90.0))
                 .column(Column::auto().at_least(80.0))
-                .column(Column::remainder().at_least(180.0))
+                .column(Column::remainder().at_least(240.0))
                 .column(Column::auto().at_least(60.0))
-                .column(Column::auto().at_least(100.0))
                 .column(Column::auto().at_least(60.0))
                 .min_scrolled_height(0.0)
                 .max_scroll_height(available_height)
@@ -632,9 +685,6 @@ impl PanelRenderer for McpPanel {
                     });
                     header.col(|ui| {
                         ui.strong("Args");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Env/Headers");
                     });
                     header.col(|ui| {
                         ui.strong("Tools");
@@ -682,21 +732,10 @@ impl PanelRenderer for McpPanel {
                             });
                         });
                         row.col(|ui| {
-                            let endpoint = match server.mode {
-                                McpServerMode::Stdio => server.command.as_deref().unwrap_or("-"),
-                                McpServerMode::Sse => server.url.as_deref().unwrap_or("-"),
-                            };
-                            ui.label(endpoint);
+                            ui.label(command_display(server));
                         });
                         row.col(|ui| {
                             ui.label(server.args.len().to_string());
-                        });
-                        row.col(|ui| {
-                            ui.label(format!(
-                                "env:{} hdr:{}",
-                                server.env.len(),
-                                server.headers.len()
-                            ));
                         });
                         row.col(|ui| {
                             ui.label(tool_count.to_string());
@@ -789,6 +828,27 @@ fn build_server_detail_markdown(
 fn pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value)
         .unwrap_or_else(|err| format!("{{\"error\":\"failed to render json: {err}\"}}"))
+}
+
+fn command_display(server: &McpServerConfig) -> String {
+    match server.mode {
+        McpServerMode::Stdio => {
+            let mut parts = Vec::new();
+            if let Some(command) = server.command.as_deref() {
+                let command = command.trim();
+                if !command.is_empty() {
+                    parts.push(command.to_string());
+                }
+            }
+            parts.extend(server.args.iter().cloned());
+            if parts.is_empty() {
+                "-".to_string()
+            } else {
+                parts.join(" ")
+            }
+        }
+        McpServerMode::Sse => server.url.clone().unwrap_or_else(|| "-".to_string()),
+    }
 }
 
 fn render_markdown(ui: &mut egui::Ui, markdown: &str) {
@@ -925,5 +985,22 @@ mod tests {
 
         assert_eq!(panel.server_status_text("missing"), "stopped");
         assert_eq!(panel.server_tool_count("missing"), 0);
+    }
+
+    #[test]
+    fn command_display_joins_stdio_command_and_args() {
+        let server = McpServerConfig {
+            id: "browser".to_string(),
+            enabled: true,
+            mode: McpServerMode::Stdio,
+            command: Some("npx".to_string()),
+            args: vec!["@browsermcp/mcp@latest".to_string()],
+            env: BTreeMap::new(),
+            cwd: None,
+            url: None,
+            headers: BTreeMap::new(),
+        };
+
+        assert_eq!(command_display(&server), "npx @browsermcp/mcp@latest");
     }
 }

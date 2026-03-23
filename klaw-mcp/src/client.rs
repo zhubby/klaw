@@ -4,6 +4,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
+    path::Path,
     process::Stdio,
     str::FromStr,
     sync::{
@@ -87,6 +88,9 @@ impl StdioMcpClient {
             .stderr(Stdio::piped());
         for (key, value) in &server.env {
             cmd.env(key, value);
+        }
+        if should_force_npx_yes(command.trim(), &server.env) {
+            cmd.env("npm_config_yes", "true");
         }
 
         let mut child = cmd
@@ -207,6 +211,21 @@ impl StdioMcpClient {
             Some(lines.iter().cloned().collect::<Vec<_>>().join("\n"))
         }
     }
+}
+
+fn should_force_npx_yes(command: &str, env: &std::collections::BTreeMap<String, String>) -> bool {
+    if env.contains_key("npm_config_yes") {
+        return false;
+    }
+
+    let Some(file_name) = Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+
+    file_name.eq_ignore_ascii_case("npx")
 }
 
 async fn write_stdio_frame(stdin: &mut ChildStdin, payload: &Value) -> Result<(), McpClientError> {
@@ -533,5 +552,22 @@ mod tests {
                 .and_then(|h| h.to_str().ok()),
             Some("application/custom")
         );
+    }
+
+    #[test]
+    fn force_npx_yes_for_noninteractive_launch() {
+        assert!(should_force_npx_yes("npx", &BTreeMap::new()));
+        assert!(should_force_npx_yes(
+            "/opt/homebrew/bin/npx",
+            &BTreeMap::new()
+        ));
+    }
+
+    #[test]
+    fn preserves_explicit_npm_yes_override() {
+        let mut env = BTreeMap::new();
+        env.insert("npm_config_yes".to_string(), "false".to_string());
+        assert!(!should_force_npx_yes("npx", &env));
+        assert!(!should_force_npx_yes("uvx", &BTreeMap::new()));
     }
 }
