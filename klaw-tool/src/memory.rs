@@ -114,7 +114,7 @@ impl MemoryTool {
     /// - None -> (true, false) - default to long_term only
     fn parse_search_scopes(args: &Value) -> (bool, bool) {
         match args.get("scope").and_then(Value::as_str) {
-            Some("session") => (true, true),  // merge both
+            Some("session") => (true, true),           // merge both
             Some("long_term") | None => (true, false), // default: long_term only
             Some(_) => (true, false),
         }
@@ -268,7 +268,11 @@ impl Tool for MemoryTool {
                 }
 
                 // Sort by fused_score and limit results
-                all_hits.sort_by(|a, b| b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal));
+                all_hits.sort_by(|a, b| {
+                    b.fused_score
+                        .partial_cmp(&a.fused_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 all_hits.truncate(self.runtime.search_limit);
 
                 json!({
