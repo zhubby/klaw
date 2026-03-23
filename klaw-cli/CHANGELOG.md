@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-23
+
+### Changed
+
+- `klaw gui` 现在通过新的只读 `GetMcpStatus` 运行时命令读取 MCP manager 快照，不再为面板状态轮询触发完整 `SyncMcp`
+
 ## 2026-03-22
 
 ### Fixed

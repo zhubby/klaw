@@ -121,14 +121,38 @@ impl GuiCommand {
                                                 let _ = response.send(result);
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncMcp { response }) => {
+                                                match &mcp_manager {
+                                                    Some(manager) => {
+                                                        let manager = Arc::clone(manager);
+                                                        tokio::task::spawn_local(async move {
+                                                            let result = match ConfigStore::open(None) {
+                                                                Ok(store) => {
+                                                                    let snapshot = store.snapshot();
+                                                                    let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
+                                                                    let mut guard = manager.lock().await;
+                                                                    Ok(guard.sync(mcp_snapshot).await)
+                                                                }
+                                                                Err(err) => Err(err.to_string()),
+                                                            };
+                                                            let _ = response.send(result);
+                                                        });
+                                                    }
+                                                    None => {
+                                                        let _ = response.send(Err("mcp manager not initialized".to_string()));
+                                                    }
+                                                };
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::GetMcpStatus { response }) => {
                                                 let result = match &mcp_manager {
                                                     Some(manager) => {
                                                         match ConfigStore::open(None) {
                                                             Ok(store) => {
                                                                 let snapshot = store.snapshot();
                                                                 let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
-                                                                let mut guard = manager.lock().await;
-                                                                Ok(guard.sync(mcp_snapshot).await)
+                                                                match manager.try_lock() {
+                                                                    Ok(guard) => Ok(guard.runtime_snapshot(&mcp_snapshot)),
+                                                                    Err(_) => Err("mcp manager is busy".to_string()),
+                                                                }
                                                             }
                                                             Err(err) => Err(err.to_string()),
                                                         }

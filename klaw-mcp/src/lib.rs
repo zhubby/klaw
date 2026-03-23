@@ -9,6 +9,6 @@ pub use hub::{
 };
 pub use manager::{
     McpBootstrapError, McpConfigSnapshot, McpInitHandle, McpLifecycleState, McpManager,
-    McpServerKey, McpServerStatus, McpSyncResult,
+    McpRuntimeSnapshot, McpServerDetail, McpServerKey, McpServerStatus, McpSyncResult,
 };
 pub use runtime::McpProxyTool;

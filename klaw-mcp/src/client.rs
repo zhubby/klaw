@@ -4,6 +4,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
+    path::Path,
     process::Stdio,
     str::FromStr,
     sync::{
@@ -13,7 +14,7 @@ use std::{
 };
 use thiserror::Error;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command},
     sync::Mutex,
     task::JoinHandle,
@@ -87,6 +88,9 @@ impl StdioMcpClient {
             .stderr(Stdio::piped());
         for (key, value) in &server.env {
             cmd.env(key, value);
+        }
+        if should_force_npx_yes(command.trim(), &server.env) {
+            cmd.env("npm_config_yes", "true");
         }
 
         let mut child = cmd
@@ -209,26 +213,52 @@ impl StdioMcpClient {
     }
 }
 
-async fn write_stdio_frame(stdin: &mut ChildStdin, payload: &Value) -> Result<(), McpClientError> {
-    let bytes =
+fn should_force_npx_yes(command: &str, env: &std::collections::BTreeMap<String, String>) -> bool {
+    if env.contains_key("npm_config_yes") {
+        return false;
+    }
+
+    let Some(file_name) = Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+
+    file_name.eq_ignore_ascii_case("npx")
+}
+
+async fn write_stdio_frame<W: AsyncWrite + Unpin>(
+    stdin: &mut W,
+    payload: &Value,
+) -> Result<(), McpClientError> {
+    let mut bytes =
         serde_json::to_vec(payload).map_err(|err| McpClientError::Protocol(err.to_string()))?;
-    let header = format!("Content-Length: {}\r\n\r\n", bytes.len());
-    stdin.write_all(header.as_bytes()).await?;
+    bytes.push(b'\n');
     stdin.write_all(&bytes).await?;
     Ok(())
 }
 
-async fn read_stdio_frame(stdout: &mut BufReader<ChildStdout>) -> Result<Vec<u8>, McpClientError> {
+async fn read_stdio_frame<R: AsyncBufRead + Unpin>(
+    stdout: &mut R,
+) -> Result<Vec<u8>, McpClientError> {
+    let mut first_line = String::new();
+    let n = stdout.read_line(&mut first_line).await?;
+    if n == 0 {
+        return Err(McpClientError::Protocol(
+            "unexpected EOF while reading MCP stdio message".to_string(),
+        ));
+    }
+
+    let trimmed = first_line.trim_end_matches(['\r', '\n']);
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return Ok(trimmed.as_bytes().to_vec());
+    }
+
     let mut content_length = None;
+    let mut current_line = first_line;
     loop {
-        let mut line = String::new();
-        let n = stdout.read_line(&mut line).await?;
-        if n == 0 {
-            return Err(McpClientError::Protocol(
-                "unexpected EOF while reading MCP headers".to_string(),
-            ));
-        }
-        let trimmed = line.trim_end_matches(['\r', '\n']);
+        let trimmed = current_line.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
             break;
         }
@@ -241,6 +271,14 @@ async fn read_stdio_frame(stdout: &mut BufReader<ChildStdout>) -> Result<Vec<u8>
                 .parse::<usize>()
                 .map_err(|err| McpClientError::Protocol(err.to_string()))?;
             content_length = Some(parsed);
+        }
+
+        current_line.clear();
+        let n = stdout.read_line(&mut current_line).await?;
+        if n == 0 {
+            return Err(McpClientError::Protocol(
+                "unexpected EOF while reading MCP headers".to_string(),
+            ));
         }
     }
 
@@ -532,6 +570,41 @@ mod tests {
                 .get(CONTENT_TYPE)
                 .and_then(|h| h.to_str().ok()),
             Some("application/custom")
+        );
+    }
+
+    #[test]
+    fn force_npx_yes_for_noninteractive_launch() {
+        assert!(should_force_npx_yes("npx", &BTreeMap::new()));
+        assert!(should_force_npx_yes(
+            "/opt/homebrew/bin/npx",
+            &BTreeMap::new()
+        ));
+    }
+
+    #[test]
+    fn preserves_explicit_npm_yes_override() {
+        let mut env = BTreeMap::new();
+        env.insert("npm_config_yes".to_string(), "false".to_string());
+        assert!(!should_force_npx_yes("npx", &env));
+        assert!(!should_force_npx_yes("uvx", &BTreeMap::new()));
+    }
+
+    #[tokio::test]
+    async fn read_stdio_frame_accepts_jsonl_messages() {
+        let (client, server) = tokio::io::duplex(256);
+        let data = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n";
+        tokio::spawn(async move {
+            let mut server = server;
+            server.write_all(data).await.expect("write duplex");
+        });
+        let mut reader = BufReader::new(client);
+
+        let frame = read_stdio_frame(&mut reader).await.expect("read frame");
+
+        assert_eq!(
+            std::str::from_utf8(&frame).expect("utf8"),
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"
         );
     }
 }

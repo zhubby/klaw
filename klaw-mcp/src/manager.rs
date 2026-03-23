@@ -4,6 +4,7 @@ use crate::{
 };
 use klaw_config::{McpConfig, McpServerConfig, McpServerMode};
 use klaw_tool::ToolRegistry;
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -75,6 +76,18 @@ pub struct McpServerStatus {
     pub state: McpLifecycleState,
     pub last_error: Option<String>,
     pub tool_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct McpServerDetail {
+    pub key: McpServerKey,
+    pub tools_list_response: Option<Value>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct McpRuntimeSnapshot {
+    pub statuses: Vec<McpServerStatus>,
+    pub details: Vec<McpServerDetail>,
 }
 
 impl McpServerStatus {
@@ -198,6 +211,7 @@ pub struct McpManager {
     hub: McpClientHub,
     servers: BTreeMap<McpServerKey, McpServerHandle>,
     statuses: Arc<StdMutex<BTreeMap<McpServerKey, McpServerStatus>>>,
+    details: Arc<StdMutex<BTreeMap<McpServerKey, McpServerDetail>>>,
     config: McpConfigSnapshot,
 }
 
@@ -208,6 +222,7 @@ impl McpManager {
             hub: McpClientHub::default(),
             servers: BTreeMap::new(),
             statuses: Arc::new(StdMutex::new(BTreeMap::new())),
+            details: Arc::new(StdMutex::new(BTreeMap::new())),
             config: McpConfigSnapshot::default(),
         }
     }
@@ -296,7 +311,29 @@ impl McpManager {
             .collect()
     }
 
+    #[must_use]
+    pub fn runtime_snapshot(&self, snapshot: &McpConfigSnapshot) -> McpRuntimeSnapshot {
+        let statuses = self.snapshot_statuses(snapshot);
+        let detail_guard = self.details.lock().unwrap_or_else(|err| err.into_inner());
+        let details = snapshot
+            .servers
+            .iter()
+            .map(|config| {
+                detail_guard
+                    .get(&McpServerKey::new(&config.id))
+                    .cloned()
+                    .unwrap_or_else(|| McpServerDetail {
+                        key: McpServerKey::new(&config.id),
+                        tools_list_response: None,
+                    })
+            })
+            .collect();
+
+        McpRuntimeSnapshot { statuses, details }
+    }
+
     async fn do_init(&mut self, config: &McpConfigSnapshot) -> McpSyncResult {
+        self.config = config.clone();
         if !config.enabled {
             return McpSyncResult::default();
         }
@@ -438,6 +475,7 @@ impl McpManager {
         }
 
         for ok in &oks {
+            self.set_tools_list_detail(&ok.server_id, &ok.tools);
             let tool_names: Vec<String> = ok.tools.iter().map(|t| t.name.clone()).collect();
             for tool in &ok.tools {
                 let descriptor = McpToolDescriptor {
@@ -489,6 +527,7 @@ impl McpManager {
                 );
             }
             for failure in &failures {
+                self.clear_tools_list_detail(failure.key.as_str());
                 guard.insert(failure.key.clone(), failure.clone());
             }
         }
@@ -543,6 +582,7 @@ impl McpManager {
 
         match result {
             Ok(Ok((client, tools))) => {
+                self.set_tools_list_detail(&config.id, &tools);
                 let tool_names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
 
                 for tool in &tools {
@@ -592,6 +632,7 @@ impl McpManager {
                 );
             }
             Ok(Err((reason, stderr))) => {
+                self.clear_tools_list_detail(&config.id);
                 let message = format_failure_reason(&reason, stderr.as_deref());
                 warn!(
                     server = %config.id,
@@ -611,6 +652,7 @@ impl McpManager {
                 );
             }
             Err(_) => {
+                self.clear_tools_list_detail(&config.id);
                 let message = format!("timeout after {timeout_seconds}s");
                 warn!(
                     server = %config.id,
@@ -639,6 +681,7 @@ impl McpManager {
 
         let tool_names: Vec<&str> = handle.tool_names.iter().map(String::as_str).collect();
         self.tools.unregister_many(&tool_names);
+        self.clear_tools_list_detail(key.as_str());
 
         if handle.config.mode == McpServerMode::Stdio {
             let client = Arc::clone(&handle.client);
@@ -686,6 +729,13 @@ impl McpManager {
 
         let mut guard = self.statuses.lock().unwrap_or_else(|err| err.into_inner());
         guard.retain(|key, _| desired_keys.contains(key));
+        drop(guard);
+
+        let mut detail_guard = self.details.lock().unwrap_or_else(|err| err.into_inner());
+        detail_guard.retain(|key, _| desired_keys.contains(key));
+        drop(detail_guard);
+
+        let mut guard = self.statuses.lock().unwrap_or_else(|err| err.into_inner());
 
         for config in &snapshot.servers {
             let key = McpServerKey::new(&config.id);
@@ -722,6 +772,31 @@ impl McpManager {
                     })
             })
             .collect()
+    }
+
+    fn set_tools_list_detail(&self, server_id: &str, tools: &[McpRemoteTool]) {
+        let mut guard = self.details.lock().unwrap_or_else(|err| err.into_inner());
+        guard.insert(
+            McpServerKey::new(server_id),
+            McpServerDetail {
+                key: McpServerKey::new(server_id),
+                tools_list_response: Some(json!({
+                    "tools": tools
+                        .iter()
+                        .map(|tool| json!({
+                            "name": tool.name.clone(),
+                            "description": tool.description.clone(),
+                            "inputSchema": tool.parameters.clone(),
+                        }))
+                        .collect::<Vec<_>>()
+                })),
+            },
+        );
+    }
+
+    fn clear_tools_list_detail(&self, server_id: &str) {
+        let mut guard = self.details.lock().unwrap_or_else(|err| err.into_inner());
+        guard.remove(&McpServerKey::new(server_id));
     }
 }
 

@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-03-23
+
+### Added
+
+- 新增 `McpRuntimeSnapshot` 与 `McpServerDetail`，支持读取运行中 MCP server 的状态快照和缓存的 `tools/list` 响应
+
+### Changed
+
+- `McpManager` 现在会在工具发现成功后缓存每个 server 的 `tools/list` 结果，供 GUI 详情弹窗读取
+- 运行时状态查询现在可直接读取 manager 快照，而不必触发一次完整 `sync`
+
 ## 2026-03-22
 
 ### Added

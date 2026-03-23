@@ -1,7 +1,7 @@
 use klaw_channel::ChannelSyncResult;
 use klaw_config::TailscaleMode;
 use klaw_gateway::GatewayRuntimeInfo;
-use klaw_mcp::McpSyncResult;
+use klaw_mcp::{McpRuntimeSnapshot, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
 use std::sync::{mpsc, Mutex, OnceLock};
 use tokio::sync::mpsc::UnboundedSender;
@@ -29,6 +29,9 @@ pub enum RuntimeCommand {
     },
     SyncMcp {
         response: mpsc::Sender<Result<McpSyncResult, String>>,
+    },
+    GetMcpStatus {
+        response: mpsc::Sender<Result<McpRuntimeSnapshot, String>>,
     },
     RunCronNow {
         cron_id: String,
@@ -314,4 +317,29 @@ pub fn request_sync_mcp() -> Result<McpSyncResult, String> {
     response_rx
         .recv()
         .map_err(|_| "runtime command response channel closed".to_string())?
+}
+
+pub fn request_mcp_status() -> Result<McpRuntimeSnapshot, String> {
+    let sender = match sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+    {
+        Some(s) => s,
+        None => return Err("runtime command channel is not available".to_string()),
+    };
+    let (response_tx, response_rx) = mpsc::channel();
+    if sender
+        .send(RuntimeCommand::GetMcpStatus {
+            response: response_tx,
+        })
+        .is_err()
+    {
+        return Err("failed to send runtime command".to_string());
+    }
+
+    match response_rx.recv() {
+        Ok(result) => result,
+        Err(_) => Err("runtime command response channel closed".to_string()),
+    }
 }
