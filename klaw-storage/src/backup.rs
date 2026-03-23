@@ -143,6 +143,24 @@ impl S3SnapshotStoreConfig {
                 "sync.s3 access_key_env and secret_key_env must both be set or both be empty",
             ));
         }
+        if !self.endpoint.trim().is_empty() && access_key.is_empty() && secret_key.is_empty() {
+            if access.is_empty() && secret.is_empty() {
+                return Err(StorageError::backend(
+                    "sync.s3 custom endpoint requires explicit credentials via access_key/secret_key or access_key_env/secret_key_env; R2 does not use AWS shared profile files",
+                ));
+            }
+
+            let missing_envs = [access, secret]
+                .into_iter()
+                .filter(|name| std::env::var_os(name).is_none())
+                .collect::<Vec<_>>();
+            if !missing_envs.is_empty() {
+                return Err(StorageError::backend(format!(
+                    "sync.s3 custom endpoint requires credential env vars to exist: {}; otherwise set access_key and secret_key directly",
+                    missing_envs.join(", ")
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -178,6 +196,23 @@ pub struct SnapshotPrepareResult {
 pub struct BackupResult {
     pub snapshot_id: String,
     pub manifest: SnapshotManifest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackupProgressStage {
+    PreparingSnapshot,
+    UploadingManifest,
+    UploadingBundle,
+    UpdatingLatestPointer,
+    CleaningUpRemote,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackupProgress {
+    pub stage: BackupProgressStage,
+    pub fraction: f32,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -268,8 +303,11 @@ impl BackupService {
         &self,
         plan: &BackupPlan,
     ) -> Result<BackupResult, StorageError> {
-        let prepared = self.create_snapshot(plan).await?;
-        let result = self.upload_snapshot(&prepared).await?;
+        let mut noop = |_| {};
+        let prepared = self.create_snapshot_with_progress(plan, &mut noop).await?;
+        let result = self
+            .upload_snapshot_with_progress(&prepared, &mut noop)
+            .await?;
         let _ = fs::remove_dir_all(&prepared.snapshot_dir).await;
         Ok(result)
     }
@@ -279,8 +317,37 @@ impl BackupService {
         plan: &BackupPlan,
         keep_last: u32,
     ) -> Result<BackupResult, StorageError> {
-        let result = self.create_and_upload_snapshot(plan).await?;
+        let mut noop = |_| {};
+        self.create_upload_and_cleanup_snapshot_with_progress(plan, keep_last, &mut noop)
+            .await
+    }
+
+    pub async fn create_upload_and_cleanup_snapshot_with_progress<F>(
+        &self,
+        plan: &BackupPlan,
+        keep_last: u32,
+        progress: &mut F,
+    ) -> Result<BackupResult, StorageError>
+    where
+        F: FnMut(BackupProgress),
+    {
+        let prepared = self.create_snapshot_with_progress(plan, progress).await?;
+        let result = self
+            .upload_snapshot_with_progress(&prepared, progress)
+            .await?;
+        report_progress(
+            progress,
+            BackupProgressStage::CleaningUpRemote,
+            0.98,
+            format!("Keeping the latest {} remote snapshot(s)", keep_last.max(1)),
+        );
         self.cleanup_remote_snapshots(keep_last).await?;
+        report_progress(
+            progress,
+            BackupProgressStage::Completed,
+            1.0,
+            format!("Snapshot {} uploaded successfully", result.snapshot_id),
+        );
         Ok(result)
     }
 
@@ -288,6 +355,18 @@ impl BackupService {
         &self,
         plan: &BackupPlan,
     ) -> Result<SnapshotPrepareResult, StorageError> {
+        let mut noop = |_| {};
+        self.create_snapshot_with_progress(plan, &mut noop).await
+    }
+
+    pub async fn create_snapshot_with_progress<F>(
+        &self,
+        plan: &BackupPlan,
+        progress: &mut F,
+    ) -> Result<SnapshotPrepareResult, StorageError>
+    where
+        F: FnMut(BackupProgress),
+    {
         self.paths.ensure_dirs().await?;
 
         let snapshot_id = build_snapshot_id();
@@ -305,16 +384,26 @@ impl BackupService {
             .await
             .map_err(StorageError::CreateTmpDir)?;
 
+        let sources = self.resolve_sources(plan)?;
+        let total_sources = sources.len();
+        report_progress(
+            progress,
+            BackupProgressStage::PreparingSnapshot,
+            0.05,
+            if total_sources == 0 {
+                "No local files matched the selected backup scope".to_string()
+            } else {
+                format!("Preparing {total_sources} snapshot item(s)")
+            },
+        );
+
         let mut entries = Vec::new();
-        for source in self.collect_sources(plan) {
+        for (index, source) in sources.into_iter().enumerate() {
             match source {
-                LocalSource::Database {
+                ResolvedLocalSource::Database {
                     source_path,
                     relative_path,
                 } => {
-                    if !path_exists(&source_path).await {
-                        continue;
-                    }
                     let dest = snapshot_dir.join(&relative_path);
                     if let Some(parent) = dest.parent() {
                         fs::create_dir_all(parent)
@@ -326,14 +415,12 @@ impl BackupService {
                         continue;
                     }
                     entries.push(build_entry(&snapshot_dir, &dest).await?);
+                    report_preparing_progress(progress, index + 1, total_sources, &relative_path);
                 }
-                LocalSource::File {
+                ResolvedLocalSource::File {
                     source_path,
                     relative_path,
                 } => {
-                    if !path_exists(&source_path).await {
-                        continue;
-                    }
                     let dest = snapshot_dir.join(&relative_path);
                     if let Some(parent) = dest.parent() {
                         fs::create_dir_all(parent)
@@ -344,30 +431,7 @@ impl BackupService {
                         .await
                         .map_err(StorageError::backend)?;
                     entries.push(build_entry(&snapshot_dir, &dest).await?);
-                }
-                LocalSource::Directory {
-                    source_dir,
-                    relative_root,
-                } => {
-                    if !path_exists(&source_dir).await {
-                        continue;
-                    }
-                    for file_path in walk_files(&source_dir)? {
-                        let rel = file_path
-                            .strip_prefix(&source_dir)
-                            .map_err(StorageError::backend)?;
-                        let relative_path = relative_root.join(rel);
-                        let dest = snapshot_dir.join(&relative_path);
-                        if let Some(parent) = dest.parent() {
-                            fs::create_dir_all(parent)
-                                .await
-                                .map_err(StorageError::CreateTmpDir)?;
-                        }
-                        fs::copy(&file_path, &dest)
-                            .await
-                            .map_err(StorageError::backend)?;
-                        entries.push(build_entry(&snapshot_dir, &dest).await?);
-                    }
+                    report_preparing_progress(progress, index + 1, total_sources, &relative_path);
                 }
             }
         }
@@ -386,8 +450,20 @@ impl BackupService {
 
         let manifest_path = snapshot_dir.join("manifest.json");
         write_json(&manifest_path, &manifest).await?;
+        report_progress(
+            progress,
+            BackupProgressStage::PreparingSnapshot,
+            0.72,
+            "Writing snapshot manifest".to_string(),
+        );
         let bundle_path = snapshot_dir.join("bundle.tar.zst");
         create_bundle(&snapshot_dir, &bundle_path).await?;
+        report_progress(
+            progress,
+            BackupProgressStage::PreparingSnapshot,
+            0.8,
+            "Compressing snapshot bundle".to_string(),
+        );
 
         Ok(SnapshotPrepareResult {
             manifest,
@@ -401,6 +477,19 @@ impl BackupService {
         &self,
         prepared: &SnapshotPrepareResult,
     ) -> Result<BackupResult, StorageError> {
+        let mut noop = |_| {};
+        self.upload_snapshot_with_progress(prepared, &mut noop)
+            .await
+    }
+
+    pub async fn upload_snapshot_with_progress<F>(
+        &self,
+        prepared: &SnapshotPrepareResult,
+        progress: &mut F,
+    ) -> Result<BackupResult, StorageError>
+    where
+        F: FnMut(BackupProgress),
+    {
         let manifest_bytes = fs::read(&prepared.manifest_path)
             .await
             .map_err(StorageError::backend)?;
@@ -409,13 +498,31 @@ impl BackupService {
             .map_err(StorageError::backend)?;
         let manifest_key = manifest_object_key(&prepared.manifest.snapshot_id);
         let bundle_key = bundle_object_key(&prepared.manifest.snapshot_id);
+        report_progress(
+            progress,
+            BackupProgressStage::UploadingManifest,
+            0.86,
+            format!("Uploading {}", manifest_key),
+        );
         self.store
             .put_bytes(&manifest_key, manifest_bytes, "application/json")
             .await?;
+        report_progress(
+            progress,
+            BackupProgressStage::UploadingBundle,
+            0.94,
+            format!("Uploading {}", bundle_key),
+        );
         self.store
             .put_bytes(&bundle_key, bundle_bytes, "application/zstd")
             .await?;
         let latest = SnapshotListItem::from_manifest(&prepared.manifest);
+        report_progress(
+            progress,
+            BackupProgressStage::UpdatingLatestPointer,
+            0.97,
+            "Updating latest.json".to_string(),
+        );
         self.store
             .put_bytes(
                 &latest_object_key(),
@@ -600,6 +707,55 @@ impl BackupService {
             }
         }
         sources
+    }
+
+    fn resolve_sources(&self, plan: &BackupPlan) -> Result<Vec<ResolvedLocalSource>, StorageError> {
+        let mut resolved = Vec::new();
+        for source in self.collect_sources(plan) {
+            match source {
+                LocalSource::Database {
+                    source_path,
+                    relative_path,
+                } => {
+                    if source_path.exists() {
+                        resolved.push(ResolvedLocalSource::Database {
+                            source_path,
+                            relative_path,
+                        });
+                    }
+                }
+                LocalSource::File {
+                    source_path,
+                    relative_path,
+                } => {
+                    if source_path.exists() {
+                        resolved.push(ResolvedLocalSource::File {
+                            source_path,
+                            relative_path,
+                        });
+                    }
+                }
+                LocalSource::Directory {
+                    source_dir,
+                    relative_root,
+                } => {
+                    if !source_dir.exists() {
+                        continue;
+                    }
+                    for file_path in walk_files(&source_dir)? {
+                        let rel = file_path
+                            .strip_prefix(&source_dir)
+                            .map_err(StorageError::backend)?
+                            .to_path_buf();
+                        resolved.push(ResolvedLocalSource::File {
+                            source_path: file_path,
+                            relative_path: relative_root.join(&rel),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(resolved)
     }
 
     async fn apply_restore(
@@ -888,6 +1044,18 @@ enum LocalSource {
     },
 }
 
+#[derive(Debug, Clone)]
+enum ResolvedLocalSource {
+    Database {
+        source_path: PathBuf,
+        relative_path: PathBuf,
+    },
+    File {
+        source_path: PathBuf,
+        relative_path: PathBuf,
+    },
+}
+
 fn default_snapshot_interval_minutes() -> u32 {
     60
 }
@@ -988,6 +1156,41 @@ fn dedup_items(items: &[BackupItem]) -> Vec<BackupItem> {
         }
     }
     out
+}
+
+fn report_progress<F>(progress: &mut F, stage: BackupProgressStage, fraction: f32, detail: String)
+where
+    F: FnMut(BackupProgress),
+{
+    progress(BackupProgress {
+        stage,
+        fraction: fraction.clamp(0.0, 1.0),
+        detail,
+    });
+}
+
+fn report_preparing_progress<F>(
+    progress: &mut F,
+    completed: usize,
+    total: usize,
+    relative_path: &Path,
+) where
+    F: FnMut(BackupProgress),
+{
+    let fraction = if total == 0 {
+        0.7
+    } else {
+        0.1 + (completed as f32 / total as f32) * 0.6
+    };
+    report_progress(
+        progress,
+        BackupProgressStage::PreparingSnapshot,
+        fraction,
+        format!(
+            "Prepared {completed}/{total}: {}",
+            relative_path.to_string_lossy().replace('\\', "/")
+        ),
+    );
 }
 
 async fn path_exists(path: &Path) -> bool {
@@ -1469,5 +1672,16 @@ mod tests {
         };
         let err = config.validate().expect_err("config should fail");
         assert!(err.to_string().contains("access_key and secret_key"));
+    }
+
+    #[test]
+    fn s3_custom_endpoint_requires_explicit_credentials() {
+        let config = S3SnapshotStoreConfig {
+            endpoint: "https://example.r2.cloudflarestorage.com".to_string(),
+            bucket: "demo".to_string(),
+            ..Default::default()
+        };
+        let err = config.validate().expect_err("config should fail");
+        assert!(err.to_string().contains("custom endpoint requires"));
     }
 }

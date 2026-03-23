@@ -495,7 +495,7 @@ impl SyncSupervisor {
 }
 
 fn sync_ready(settings: &AppSettings) -> bool {
-    settings.sync.enabled && !settings.sync.s3.bucket.trim().is_empty()
+    settings.sync.enabled && build_sync_store_config(settings).validate().is_ok()
 }
 
 fn build_sync_store_config(settings: &AppSettings) -> S3SnapshotStoreConfig {

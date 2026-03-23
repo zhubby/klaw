@@ -38,5 +38,7 @@
 - `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`
 - `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`
 - `BackupService` snapshots managed SQLite/filesystem state into `manifest.json` plus `bundle.tar.zst`, uploads them, and restores full snapshots after checksum verification
+- `BackupService` can emit progress updates for snapshot preparation, object upload, and retention cleanup so callers can surface live backup state
 - retention cleanup keeps only the configured latest snapshot count and refreshes `latest.json` after pruning
 - S3 snapshot config accepts either direct credentials (`access_key`, `secret_key`, `session_token`) or environment-variable indirection, and empty device IDs normalize to the local hostname
+- custom S3 endpoints such as R2 must provide explicit credentials or credential env names instead of relying on AWS shared-profile discovery

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-23
+
+### Changed
+- custom S3 endpoints such as R2 now require explicit credentials or credential env names up front, avoiding fallback to missing AWS shared-profile files during sync startup and backup
+- `BackupService` now exposes progress callbacks for snapshot preparation, upload, and retention cleanup so GUI clients can render live backup progress
+
 ## 2026-03-22
 
 ### Added

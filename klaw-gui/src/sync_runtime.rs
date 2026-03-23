@@ -20,10 +20,18 @@ pub struct SyncRuntimeSnapshot {
     pub last_snapshot_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncRuntimeProgress {
+    pub fraction: f32,
+    pub stage: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct SyncRuntimeTask {
     pub kind: SyncRuntimeTaskKind,
     pub label: String,
+    pub progress: Option<SyncRuntimeProgress>,
 }
 
 #[derive(Debug, Default)]
@@ -64,6 +72,7 @@ pub fn sync_runtime_try_start_task(kind: SyncRuntimeTaskKind, label: impl Into<S
         state.active_task = Some(SyncRuntimeTask {
             kind,
             label: label.into(),
+            progress: None,
         });
         true
     })
@@ -80,6 +89,19 @@ pub fn sync_runtime_finish_task(kind: SyncRuntimeTaskKind) {
 pub fn sync_runtime_set_remote_snapshots(snapshots: Vec<SnapshotListItem>) {
     with_runtime_state(|state| {
         state.remote_snapshots = snapshots;
+    });
+}
+
+pub fn sync_runtime_set_task_progress(
+    kind: SyncRuntimeTaskKind,
+    progress: Option<SyncRuntimeProgress>,
+) {
+    with_runtime_state(|state| {
+        if let Some(task) = state.active_task.as_mut() {
+            if task.kind == kind {
+                task.progress = progress;
+            }
+        }
     });
 }
 
@@ -131,5 +153,30 @@ mod tests {
             "Auto backup"
         ));
         sync_runtime_finish_task(SyncRuntimeTaskKind::AutoBackup);
+    }
+
+    #[test]
+    fn task_progress_updates_active_task() {
+        sync_runtime_finish_task(SyncRuntimeTaskKind::ManualBackup);
+        assert!(sync_runtime_try_start_task(
+            SyncRuntimeTaskKind::ManualBackup,
+            "Manual backup"
+        ));
+        sync_runtime_set_task_progress(
+            SyncRuntimeTaskKind::ManualBackup,
+            Some(SyncRuntimeProgress {
+                fraction: 0.5,
+                stage: "Preparing snapshot".to_string(),
+                detail: Some("Prepared 1/2".to_string()),
+            }),
+        );
+
+        let snapshot = sync_runtime_snapshot();
+        let task = snapshot.active_task.expect("active task should exist");
+        let progress = task.progress.expect("progress should exist");
+        assert_eq!(progress.fraction, 0.5);
+        assert_eq!(progress.stage, "Preparing snapshot");
+
+        sync_runtime_finish_task(SyncRuntimeTaskKind::ManualBackup);
     }
 }

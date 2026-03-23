@@ -15,6 +15,8 @@
 - `MCP` runtime status refresh now reads a manager snapshot instead of triggering a full sync, avoiding long-lived GUI spinners while keeping polling off the GUI thread
 - `Memory` panel provider selection now reads available providers from `config.toml` and fills the embedding model from the selected provider's default model
 - GUI app and tray icons now load from embedded image assets at runtime, so both packaged `.app` bundles and standalone macOS binaries keep the custom icon without relying on source-tree file paths
+- `Setting > Sync` now validates custom S3 endpoint credentials before startup checks or manual actions run, so R2 users no longer fall through to missing AWS shared-profile files
+- `Setting > Sync` manual backup now renders a live progress bar with stage and item detail while snapshot preparation, upload, and retention cleanup run in the background
 
 ## 2026-03-22
 
