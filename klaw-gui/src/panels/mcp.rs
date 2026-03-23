@@ -1,8 +1,19 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::runtime_bridge::request_sync_mcp;
 use crate::widgets::{ArrayEditor, KeyValueEditor};
+use egui::RichText;
+use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode};
+use klaw_mcp::McpSyncResult;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const MCP_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
 struct McpServerForm {
@@ -61,12 +72,12 @@ impl McpServerForm {
         self.id.trim().to_string()
     }
 
-    fn to_config(&self) -> Result<McpServerConfig, String> {
+    fn to_config(&self) -> McpServerConfig {
         let command = self.command.trim();
         let cwd = self.cwd.trim();
         let url = self.url.trim();
 
-        Ok(McpServerConfig {
+        McpServerConfig {
             id: self.normalized_id(),
             enabled: self.enabled,
             mode: self.mode.clone(),
@@ -76,8 +87,14 @@ impl McpServerForm {
             cwd: (!cwd.is_empty()).then(|| cwd.to_string()),
             url: (!url.is_empty()).then(|| url.to_string()),
             headers: self.headers_input.to_map(),
-        })
+        }
     }
+}
+
+#[derive(Debug, Clone)]
+struct ServerRuntimeStatus {
+    state: String,
+    tool_count: usize,
 }
 
 #[derive(Default)]
@@ -87,8 +104,12 @@ pub struct McpPanel {
     revision: Option<u64>,
     config: AppConfig,
     form: Option<McpServerForm>,
-    enabled: bool,
-    startup_timeout_seconds_text: String,
+    global_settings_form: Option<(bool, String)>,
+    selected_server: Option<String>,
+    server_statuses: BTreeMap<String, ServerRuntimeStatus>,
+    status_fetch_rx: Option<Receiver<Result<McpSyncResult, String>>>,
+    last_status_refresh_at: Option<Instant>,
+    status_refresh_announce: bool,
 }
 
 impl McpPanel {
@@ -101,6 +122,7 @@ impl McpPanel {
                 let snapshot = store.snapshot();
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
+                self.schedule_status_refresh(false);
                 notifications.success("MCP config loaded from disk");
             }
             Err(err) => notifications.error(format!("Failed to load config: {err}")),
@@ -110,9 +132,90 @@ impl McpPanel {
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
         self.config_path = Some(snapshot.path);
         self.revision = Some(snapshot.revision);
-        self.enabled = snapshot.config.mcp.enabled;
-        self.startup_timeout_seconds_text = snapshot.config.mcp.startup_timeout_seconds.to_string();
         self.config = snapshot.config;
+    }
+
+    fn open_global_settings(&mut self) {
+        self.global_settings_form = Some((
+            self.config.mcp.enabled,
+            self.config.mcp.startup_timeout_seconds.to_string(),
+        ));
+    }
+
+    fn schedule_status_refresh(&mut self, announce: bool) {
+        if self.status_fetch_rx.is_some() {
+            self.status_refresh_announce |= announce;
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        self.status_fetch_rx = Some(rx);
+        self.last_status_refresh_at = Some(Instant::now());
+        self.status_refresh_announce = announce;
+
+        thread::spawn(move || {
+            let _ = tx.send(request_sync_mcp());
+        });
+    }
+
+    fn refresh_status_if_due(&mut self) {
+        if self.status_fetch_rx.is_some() {
+            return;
+        }
+
+        let Some(last_refresh) = self.last_status_refresh_at else {
+            self.schedule_status_refresh(false);
+            return;
+        };
+
+        if last_refresh.elapsed() >= MCP_STATUS_POLL_INTERVAL {
+            self.schedule_status_refresh(false);
+        }
+    }
+
+    fn poll_status_refresh(&mut self, notifications: &mut NotificationCenter) {
+        let Some(rx) = self.status_fetch_rx.as_ref() else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                self.server_statuses = result
+                    .statuses
+                    .into_iter()
+                    .map(|status| {
+                        (
+                            status.key.as_str().to_string(),
+                            ServerRuntimeStatus {
+                                state: status.state.as_str().to_string(),
+                                tool_count: status.tool_count,
+                            },
+                        )
+                    })
+                    .collect();
+                self.status_fetch_rx = None;
+                if self.status_refresh_announce {
+                    notifications.success("MCP status refreshed");
+                }
+                self.status_refresh_announce = false;
+            }
+            Ok(Err(err)) => {
+                self.status_fetch_rx = None;
+                if self.status_refresh_announce {
+                    notifications.error(format!("Failed to refresh MCP status: {err}"));
+                }
+                self.status_refresh_announce = false;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.status_fetch_rx = None;
+                if self.status_refresh_announce {
+                    notifications
+                        .error("Failed to refresh MCP status: background task disconnected");
+                }
+                self.status_refresh_announce = false;
+            }
+        }
     }
 
     fn status_label(path: Option<&Path>) -> String {
@@ -136,6 +239,7 @@ impl McpPanel {
             Ok(raw) => match store.save_raw_toml(&raw) {
                 Ok(snapshot) => {
                     self.apply_snapshot(snapshot);
+                    self.schedule_status_refresh(false);
                     notifications.success(success_message);
                 }
                 Err(err) => notifications.error(format!("Save failed: {err}")),
@@ -152,25 +256,11 @@ impl McpPanel {
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
+                self.schedule_status_refresh(false);
                 notifications.success("Configuration reloaded from disk");
             }
             Err(err) => notifications.error(format!("Reload failed: {err}")),
         }
-    }
-
-    fn save_global_settings(&mut self, notifications: &mut NotificationCenter) {
-        let timeout = match self.startup_timeout_seconds_text.trim().parse::<u64>() {
-            Ok(value) => value,
-            Err(_) => {
-                notifications.error("startup_timeout_seconds must be a positive integer");
-                return;
-            }
-        };
-
-        let mut next = self.config.clone();
-        next.mcp.enabled = self.enabled;
-        next.mcp.startup_timeout_seconds = timeout;
-        self.save_config(next, notifications, "MCP global settings saved");
     }
 
     fn open_add_server(&mut self) {
@@ -180,6 +270,16 @@ impl McpPanel {
     fn open_edit_server(&mut self, id: &str) {
         if let Some(server) = self.config.mcp.servers.iter().find(|item| item.id == id) {
             self.form = Some(McpServerForm::edit(server));
+        }
+    }
+
+    fn delete_server(&mut self, id: &str, notifications: &mut NotificationCenter) {
+        let mut next = self.config.clone();
+        next.mcp.servers.retain(|s| s.id != id);
+        self.save_config(next, notifications, &format!("MCP server '{id}' deleted"));
+        self.server_statuses.remove(id);
+        if self.selected_server.as_deref() == Some(id) {
+            self.selected_server = None;
         }
     }
 
@@ -197,7 +297,7 @@ impl McpPanel {
     }
 
     fn apply_form(mut config: AppConfig, form: &McpServerForm) -> Result<AppConfig, String> {
-        let server = form.to_config()?;
+        let server = form.to_config();
         if server.id.is_empty() {
             return Err("MCP server ID cannot be empty".to_string());
         }
@@ -224,6 +324,20 @@ impl McpPanel {
         }
 
         Ok(config)
+    }
+
+    fn server_status_text(&self, id: &str) -> &str {
+        self.server_statuses
+            .get(id)
+            .map(|status| status.state.as_str())
+            .unwrap_or("stopped")
+    }
+
+    fn server_tool_count(&self, id: &str) -> usize {
+        self.server_statuses
+            .get(id)
+            .map(|status| status.tool_count)
+            .unwrap_or(0)
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
@@ -317,6 +431,61 @@ impl McpPanel {
             self.form = None;
         }
     }
+
+    fn render_global_settings_window(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some((ref mut enabled, ref mut timeout_text)) = self.global_settings_form else {
+            return;
+        };
+
+        let mut save_clicked = false;
+        let mut close = false;
+
+        egui::Window::new("MCP Settings")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                ui.set_width(320.0);
+                ui.checkbox(enabled, "MCP Enabled");
+                ui.horizontal(|ui| {
+                    ui.label("startup_timeout_seconds:");
+                    ui.add(egui::TextEdit::singleline(timeout_text).desired_width(80.0));
+                });
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        save_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+
+        if save_clicked {
+            let timeout = match timeout_text.trim().parse::<u64>() {
+                Ok(value) => value,
+                Err(_) => {
+                    notifications.error("startup_timeout_seconds must be a positive integer");
+                    return;
+                }
+            };
+
+            let mut next = self.config.clone();
+            next.mcp.enabled = *enabled;
+            next.mcp.startup_timeout_seconds = timeout;
+            self.save_config(next, notifications, "MCP settings saved");
+            self.global_settings_form = None;
+        }
+        if close {
+            self.global_settings_form = None;
+        }
+    }
 }
 
 impl PanelRenderer for McpPanel {
@@ -327,97 +496,211 @@ impl PanelRenderer for McpPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
+        self.poll_status_refresh(notifications);
+        self.refresh_status_if_due();
+        ui.ctx().request_repaint_after(MCP_STATUS_POLL_INTERVAL);
 
         ui.heading(ctx.tab_title);
         ui.label(Self::status_label(self.config_path.as_deref()));
         ui.horizontal(|ui| {
             ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!("Servers: {}", self.config.mcp.servers.len()));
+            if self.status_fetch_rx.is_some() {
+                ui.spinner();
+                ui.label("Refreshing runtime status...");
+            }
         });
         ui.separator();
 
         ui.horizontal(|ui| {
-            ui.checkbox(&mut self.enabled, "MCP Enabled");
-            ui.label("startup_timeout_seconds");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.startup_timeout_seconds_text)
-                    .desired_width(100.0),
-            );
-            if ui.button("Save MCP Settings").clicked() {
-                self.save_global_settings(notifications);
+            if ui.button(format!("{} Config", regular::GEAR)).clicked()
+                && self.global_settings_form.is_none()
+            {
+                self.open_global_settings();
+            }
+            if ui.button("Add").clicked() {
+                self.open_add_server();
             }
             if ui.button("Reload").clicked() {
                 self.reload(notifications);
             }
-        });
-
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            if ui.button("Add MCP Server").clicked() {
-                self.open_add_server();
+            if ui
+                .button(format!("{} Refresh Status", regular::ARROW_CLOCKWISE))
+                .clicked()
+            {
+                self.schedule_status_refresh(true);
             }
         });
 
         ui.add_space(8.0);
 
-        if self.config.mcp.servers.is_empty() {
+        let server_ids = self
+            .config
+            .mcp
+            .servers
+            .iter()
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
+
+        if server_ids.is_empty() {
             ui.label("No MCP servers configured.");
         } else {
-            egui::Grid::new("mcp-list-grid")
+            let mut edit_server_id = None;
+            let mut delete_server_id = None;
+            let mut open_settings_from_menu = false;
+            let available_height = ui.available_height();
+
+            TableBuilder::new(ui)
                 .striped(true)
-                .num_columns(7)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.strong("ID");
-                    ui.strong("Enabled");
-                    ui.strong("Mode");
-                    ui.strong("Command/URL");
-                    ui.strong("Args");
-                    ui.strong("Env/Headers");
-                    ui.strong("Actions");
-                    ui.end_row();
-
-                    let ids = self
-                        .config
-                        .mcp
-                        .servers
-                        .iter()
-                        .map(|item| item.id.clone())
-                        .collect::<Vec<_>>();
-
-                    for id in ids {
-                        let Some(server) =
-                            self.config.mcp.servers.iter().find(|item| item.id == id)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::auto().at_least(120.0))
+                .column(Column::auto().at_least(60.0))
+                .column(Column::auto().at_least(90.0))
+                .column(Column::auto().at_least(80.0))
+                .column(Column::remainder().at_least(180.0))
+                .column(Column::auto().at_least(60.0))
+                .column(Column::auto().at_least(100.0))
+                .column(Column::auto().at_least(60.0))
+                .min_scrolled_height(0.0)
+                .max_scroll_height(available_height)
+                .sense(egui::Sense::click())
+                .header(20.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("ID");
+                    });
+                    header.col(|ui| {
+                        ui.strong("On");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Status");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Mode");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Command/URL");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Args");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Env/Headers");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Tools");
+                    });
+                })
+                .body(|body| {
+                    body.rows(22.0, server_ids.len(), |mut row| {
+                        let idx = row.index();
+                        let server_id = &server_ids[idx];
+                        let Some(server) = self
+                            .config
+                            .mcp
+                            .servers
+                            .iter()
+                            .find(|item| item.id == *server_id)
                         else {
-                            continue;
+                            return;
                         };
 
-                        ui.label(&server.id);
-                        ui.label(if server.enabled { "yes" } else { "no" });
-                        ui.label(match server.mode {
-                            McpServerMode::Stdio => "stdio",
-                            McpServerMode::Sse => "sse",
+                        let is_selected = self.selected_server.as_deref() == Some(server_id);
+                        row.set_selected(is_selected);
+
+                        let status = self.server_status_text(server_id);
+                        let tool_count = self.server_tool_count(server_id);
+
+                        row.col(|ui| {
+                            ui.label(&server.id);
                         });
-                        let endpoint = match server.mode {
-                            McpServerMode::Stdio => server.command.as_deref().unwrap_or("-"),
-                            McpServerMode::Sse => server.url.as_deref().unwrap_or("-"),
-                        };
-                        ui.label(endpoint);
-                        ui.label(server.args.len().to_string());
-                        ui.label(format!(
-                            "env:{} hdr:{}",
-                            server.env.len(),
-                            server.headers.len()
-                        ));
-                        if ui.button("Edit").clicked() {
-                            self.open_edit_server(&id);
+                        row.col(|ui| {
+                            ui.label(if server.enabled { "yes" } else { "no" });
+                        });
+                        row.col(|ui| {
+                            let color = match status {
+                                "running" => egui::Color32::LIGHT_GREEN,
+                                "failed" => egui::Color32::LIGHT_RED,
+                                "starting" => egui::Color32::YELLOW,
+                                _ => egui::Color32::GRAY,
+                            };
+                            ui.label(RichText::new(status).color(color));
+                        });
+                        row.col(|ui| {
+                            ui.label(match server.mode {
+                                McpServerMode::Stdio => "stdio",
+                                McpServerMode::Sse => "sse",
+                            });
+                        });
+                        row.col(|ui| {
+                            let endpoint = match server.mode {
+                                McpServerMode::Stdio => server.command.as_deref().unwrap_or("-"),
+                                McpServerMode::Sse => server.url.as_deref().unwrap_or("-"),
+                            };
+                            ui.label(endpoint);
+                        });
+                        row.col(|ui| {
+                            ui.label(server.args.len().to_string());
+                        });
+                        row.col(|ui| {
+                            ui.label(format!(
+                                "env:{} hdr:{}",
+                                server.env.len(),
+                                server.headers.len()
+                            ));
+                        });
+                        row.col(|ui| {
+                            ui.label(tool_count.to_string());
+                        });
+
+                        let response = row.response();
+                        if response.clicked() {
+                            self.selected_server = if is_selected {
+                                None
+                            } else {
+                                Some(server_id.clone())
+                            };
                         }
-                        ui.end_row();
-                    }
+
+                        let server_id_clone = server_id.clone();
+                        response.context_menu(|ui| {
+                            if ui
+                                .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                .clicked()
+                            {
+                                edit_server_id = Some(server_id_clone.clone());
+                                ui.close();
+                            }
+                            if ui.button(format!("{} Config", regular::GEAR)).clicked() {
+                                open_settings_from_menu = true;
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui
+                                .add(egui::Button::new(
+                                    RichText::new(format!("{} Delete", regular::TRASH))
+                                        .color(egui::Color32::RED),
+                                ))
+                                .clicked()
+                            {
+                                delete_server_id = Some(server_id_clone.clone());
+                                ui.close();
+                            }
+                        });
+                    });
                 });
+
+            if let Some(id) = edit_server_id {
+                self.open_edit_server(&id);
+            }
+            if open_settings_from_menu && self.global_settings_form.is_none() {
+                self.open_global_settings();
+            }
+            if let Some(id) = delete_server_id {
+                self.delete_server(&id, notifications);
+            }
         }
 
+        self.render_global_settings_window(ui, notifications);
         self.render_form_window(ui, notifications);
     }
 }
@@ -425,7 +708,6 @@ impl PanelRenderer for McpPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     #[test]
     fn apply_form_adds_new_server() {
@@ -496,5 +778,13 @@ mod tests {
             .find(|item| item.id == "docs")
             .expect("server should exist");
         assert_eq!(server.command.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn server_status_defaults_to_stopped_without_runtime_data() {
+        let panel = McpPanel::default();
+
+        assert_eq!(panel.server_status_text("missing"), "stopped");
+        assert_eq!(panel.server_tool_count("missing"), 0);
     }
 }

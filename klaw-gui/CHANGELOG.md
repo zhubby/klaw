@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-03-23
+
+### Added
+
+- `MCP` panel now shows live runtime server state and tool counts in a selectable table
+- `MCP` panel server rows now expose icon-based context actions including a red `Delete`
+
+### Changed
+
+- `MCP` global settings moved behind a `Config` dialog instead of rendering inline
+- `MCP` runtime status refresh now runs off the GUI thread and is polled back into the panel asynchronously
+
 ## 2026-03-22
 
 ### Added

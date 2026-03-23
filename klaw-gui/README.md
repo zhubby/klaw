@@ -87,6 +87,11 @@
   - resolve `~/.klaw/tmp` through `klaw-storage::StoragePaths`
   - calculate the temporary directory size on demand
   - clear all temporary files and folders while keeping the `tmp/` root directory
+- MCP panel features:
+  - manage global MCP settings through a `Config` popup instead of inline controls
+  - render configured servers in a selectable `TableBuilder` list with right-click `Edit` / `Config` / `Delete` actions
+  - poll runtime MCP status asynchronously so GUI refreshes do not block the egui thread
+  - show per-server runtime state and discovered tool counts directly in the table
 - Setting panel features:
   - persist sync settings in `settings.json`, including S3 endpoint/region/bucket/prefix, backup scope, retention, schedule, hostname-based device ID, and both direct or env-backed credentials
   - trigger manual snapshot backup uploads
