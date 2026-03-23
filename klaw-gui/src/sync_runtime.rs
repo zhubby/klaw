@@ -16,8 +16,8 @@ pub struct SyncRuntimeSnapshot {
     pub active_task: Option<SyncRuntimeTask>,
     pub remote_snapshots: Vec<SnapshotListItem>,
     pub remote_update: Option<SnapshotListItem>,
-    pub last_snapshot_id: Option<String>,
-    pub last_snapshot_at: Option<i64>,
+    pub last_manifest_id: Option<String>,
+    pub last_sync_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,8 +39,8 @@ struct SyncRuntimeState {
     active_task: Option<SyncRuntimeTask>,
     remote_snapshots: Vec<SnapshotListItem>,
     remote_update: Option<SnapshotListItem>,
-    last_snapshot_id: Option<String>,
-    last_snapshot_at: Option<i64>,
+    last_manifest_id: Option<String>,
+    last_sync_at: Option<i64>,
 }
 
 fn runtime_state() -> &'static Arc<Mutex<SyncRuntimeState>> {
@@ -59,8 +59,8 @@ pub fn sync_runtime_snapshot() -> SyncRuntimeSnapshot {
         active_task: state.active_task.clone(),
         remote_snapshots: state.remote_snapshots.clone(),
         remote_update: state.remote_update.clone(),
-        last_snapshot_id: state.last_snapshot_id.clone(),
-        last_snapshot_at: state.last_snapshot_at,
+        last_manifest_id: state.last_manifest_id.clone(),
+        last_sync_at: state.last_sync_at,
     })
 }
 
@@ -111,23 +111,23 @@ pub fn sync_runtime_set_remote_update(snapshot: Option<SnapshotListItem>) {
     });
 }
 
-pub fn sync_runtime_set_last_snapshot(snapshot_id: Option<String>, created_at: Option<i64>) {
+pub fn sync_runtime_set_last_snapshot(manifest_id: Option<String>, synced_at: Option<i64>) {
     with_runtime_state(|state| {
-        state.last_snapshot_id = snapshot_id;
-        state.last_snapshot_at = created_at;
+        state.last_manifest_id = manifest_id;
+        state.last_sync_at = synced_at;
     });
 }
 
 pub fn sync_runtime_sync_from_settings(
-    last_snapshot_id: Option<String>,
-    last_snapshot_at: Option<i64>,
+    last_manifest_id: Option<String>,
+    last_sync_at: Option<i64>,
 ) {
     with_runtime_state(|state| {
-        if state.last_snapshot_id != last_snapshot_id {
-            state.last_snapshot_id = last_snapshot_id;
+        if state.last_manifest_id != last_manifest_id {
+            state.last_manifest_id = last_manifest_id;
         }
-        if state.last_snapshot_at != last_snapshot_at {
-            state.last_snapshot_at = last_snapshot_at;
+        if state.last_sync_at != last_sync_at {
+            state.last_sync_at = last_sync_at;
         }
     });
 }
@@ -166,7 +166,7 @@ mod tests {
             SyncRuntimeTaskKind::ManualBackup,
             Some(SyncRuntimeProgress {
                 fraction: 0.5,
-                stage: "Preparing snapshot".to_string(),
+                stage: "Preparing manifest".to_string(),
                 detail: Some("Prepared 1/2".to_string()),
             }),
         );
@@ -175,7 +175,7 @@ mod tests {
         let task = snapshot.active_task.expect("active task should exist");
         let progress = task.progress.expect("progress should exist");
         assert_eq!(progress.fraction, 0.5);
-        assert_eq!(progress.stage, "Preparing snapshot");
+        assert_eq!(progress.stage, "Preparing manifest");
 
         sync_runtime_finish_task(SyncRuntimeTaskKind::ManualBackup);
     }

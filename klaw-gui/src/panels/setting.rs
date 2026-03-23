@@ -53,14 +53,14 @@ impl SettingsSection {
 
 enum SyncTaskMessage {
     BackupDone {
-        snapshot_id: String,
+        manifest_id: String,
         created_at: i64,
     },
     ListDone {
         snapshots: Vec<SnapshotListItem>,
     },
     RestoreDone {
-        snapshot_id: String,
+        manifest_id: String,
     },
     CleanupDone,
     Failed(String),
@@ -72,7 +72,7 @@ pub struct SettingPanel {
     save_error: Option<String>,
     sync_task_rx: Option<Receiver<SyncTaskMessage>>,
     sync_task_kind: Option<SyncRuntimeTaskKind>,
-    pending_restore_snapshot_id: Option<String>,
+    pending_restore_manifest_id: Option<String>,
 }
 
 impl Default for SettingPanel {
@@ -84,7 +84,7 @@ impl Default for SettingPanel {
             save_error: None,
             sync_task_rx: None,
             sync_task_kind: None,
-            pending_restore_snapshot_id: None,
+            pending_restore_manifest_id: None,
         }
     }
 }
@@ -194,8 +194,8 @@ impl SettingPanel {
             Ok(()) => {
                 self.save_error = None;
                 sync_runtime_sync_from_settings(
-                    self.settings.sync.last_snapshot_id.clone(),
-                    self.settings.sync.last_snapshot_at,
+                    self.settings.sync.last_manifest_id.clone(),
+                    self.settings.sync.last_sync_at,
                 );
                 true
             }
@@ -211,29 +211,29 @@ impl SettingPanel {
         while let Some(rx) = self.sync_task_rx.as_ref() {
             match rx.try_recv() {
                 Ok(SyncTaskMessage::BackupDone {
-                    snapshot_id,
+                    manifest_id,
                     created_at,
                 }) => {
-                    self.settings.sync.last_snapshot_id = Some(snapshot_id.clone());
-                    self.settings.sync.last_snapshot_at = Some(created_at);
-                    sync_runtime_set_last_snapshot(Some(snapshot_id.clone()), Some(created_at));
+                    self.settings.sync.last_manifest_id = Some(manifest_id.clone());
+                    self.settings.sync.last_sync_at = Some(created_at);
+                    sync_runtime_set_last_snapshot(Some(manifest_id.clone()), Some(created_at));
                     let _ = self.try_save();
-                    notifications.success(format!("Snapshot {snapshot_id} uploaded to S3."));
+                    notifications.success(format!("Manifest {manifest_id} uploaded to S3."));
                     clear_task = true;
                 }
                 Ok(SyncTaskMessage::ListDone { snapshots }) => {
                     sync_runtime_set_remote_snapshots(snapshots);
-                    notifications.success("Remote snapshots refreshed.");
+                    notifications.success("Remote manifests refreshed.");
                     clear_task = true;
                 }
-                Ok(SyncTaskMessage::RestoreDone { snapshot_id }) => {
+                Ok(SyncTaskMessage::RestoreDone { manifest_id }) => {
                     notifications.warning(format!(
-                        "Snapshot {snapshot_id} restored. Restart Klaw before continuing."
+                        "Manifest {manifest_id} restored. Restart Klaw before continuing."
                     ));
                     clear_task = true;
                 }
                 Ok(SyncTaskMessage::CleanupDone) => {
-                    notifications.success("Remote snapshot retention cleanup completed.");
+                    notifications.success("Remote manifest retention cleanup completed.");
                     clear_task = true;
                 }
                 Ok(SyncTaskMessage::Failed(err)) => {
@@ -298,7 +298,7 @@ impl SettingPanel {
     fn backup_plan(&self) -> BackupPlan {
         BackupPlan {
             mode: match self.settings.sync.mode {
-                SyncMode::SnapshotPrimary => SnapshotMode::SnapshotPrimary,
+                SyncMode::ManifestVersioned => SnapshotMode::ManifestVersioned,
             },
             items: self
                 .settings
@@ -334,7 +334,7 @@ impl SettingPanel {
         let keep_last = self.settings.sync.retention.keep_last;
         self.spawn_sync_task(
             SyncRuntimeTaskKind::ManualBackup,
-            "Uploading snapshot",
+            "Uploading manifest sync",
             move || {
                 let runtime = Builder::new_current_thread()
                     .enable_all()
@@ -373,7 +373,7 @@ impl SettingPanel {
                     sync_runtime_set_remote_snapshots(snapshots);
                     sync_runtime_set_remote_update(None);
                     Ok(SyncTaskMessage::BackupDone {
-                        snapshot_id: result.snapshot_id,
+                        manifest_id: result.manifest_id,
                         created_at: result.manifest.created_at,
                     })
                 })
@@ -386,7 +386,7 @@ impl SettingPanel {
         let device_id = self.settings.sync.device_id.clone();
         self.spawn_sync_task(
             SyncRuntimeTaskKind::RefreshRemoteSnapshots,
-            "Loading snapshots",
+            "Loading manifests",
             move || {
                 let runtime = Builder::new_current_thread()
                     .enable_all()
@@ -407,12 +407,12 @@ impl SettingPanel {
         );
     }
 
-    fn restore_snapshot(&mut self, snapshot_id: String) {
+    fn restore_snapshot(&mut self, manifest_id: String) {
         let config = self.sync_config();
         let device_id = self.settings.sync.device_id.clone();
         self.spawn_sync_task(
             SyncRuntimeTaskKind::RestoreSnapshot,
-            "Restoring snapshot",
+            "Restoring manifest",
             move || {
                 let runtime = Builder::new_current_thread()
                     .enable_all()
@@ -423,10 +423,10 @@ impl SettingPanel {
                         .await
                         .map_err(|err| err.to_string())?;
                     service
-                        .restore_snapshot(&snapshot_id)
+                        .restore_snapshot(&manifest_id)
                         .await
                         .map_err(|err| err.to_string())?;
-                    Ok(SyncTaskMessage::RestoreDone { snapshot_id })
+                    Ok(SyncTaskMessage::RestoreDone { manifest_id })
                 })
             },
         );
@@ -438,7 +438,7 @@ impl SettingPanel {
         let keep_last = self.settings.sync.retention.keep_last;
         self.spawn_sync_task(
             SyncRuntimeTaskKind::RetentionCleanup,
-            "Cleaning up remote snapshots",
+            "Cleaning up remote manifests",
             move || {
                 let runtime = Builder::new_current_thread()
                     .enable_all()
@@ -466,11 +466,11 @@ impl SettingPanel {
 
     fn refresh_settings_from_runtime(&mut self) -> SyncRuntimeSnapshot {
         let runtime = sync_runtime_snapshot();
-        if let Some(snapshot_id) = runtime.last_snapshot_id.clone() {
-            self.settings.sync.last_snapshot_id = Some(snapshot_id);
+        if let Some(manifest_id) = runtime.last_manifest_id.clone() {
+            self.settings.sync.last_manifest_id = Some(manifest_id);
         }
-        if runtime.last_snapshot_at.is_some() {
-            self.settings.sync.last_snapshot_at = runtime.last_snapshot_at;
+        if runtime.last_sync_at.is_some() {
+            self.settings.sync.last_sync_at = runtime.last_sync_at;
         }
         runtime
     }
@@ -596,7 +596,7 @@ impl SettingPanel {
         changed |= ui
             .checkbox(
                 &mut self.settings.sync.enabled,
-                "Enable snapshot backup and S3 sync",
+                "Enable manifest sync and S3 storage",
             )
             .changed();
 
@@ -619,8 +619,8 @@ impl SettingPanel {
                         changed |= ui
                             .radio_value(
                                 &mut self.settings.sync.mode,
-                                SyncMode::SnapshotPrimary,
-                                "Snapshot primary",
+                                SyncMode::ManifestVersioned,
+                                "Versioned manifest",
                             )
                             .changed();
                         ui.end_row();
@@ -657,7 +657,7 @@ impl SettingPanel {
                         }
                         ui.end_row();
 
-                        ui.label("Keep latest snapshots:");
+                        ui.label("Keep latest manifests:");
                         let mut keep_last = self.settings.sync.retention.keep_last.to_string();
                         if ui.text_edit_singleline(&mut keep_last).changed() {
                             if let Ok(parsed) = keep_last.parse::<u32>() {
@@ -772,11 +772,11 @@ impl SettingPanel {
                 }
                 ui.add_space(4.0);
                 ui.label(
-                    "Default restore is full-snapshot only. Temporary, logs, and observability data are excluded.",
+                    "Restore replays a selected manifest version. Temporary, logs, and observability data are excluded.",
                 );
             });
 
-        egui::CollapsingHeader::new("Snapshot Actions")
+        egui::CollapsingHeader::new("Manifest Actions")
             .id_salt("sync-actions")
             .default_open(true)
             .show(ui, |ui| {
@@ -784,8 +784,8 @@ impl SettingPanel {
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
                         format!(
-                            "Remote snapshot {} from {} is newer than local.",
-                            remote_update.snapshot_id, remote_update.device_id
+                            "Remote manifest {} from {} is newer than local.",
+                            remote_update.manifest_id, remote_update.device_id
                         ),
                     );
                     ui.label(format!(
@@ -795,14 +795,14 @@ impl SettingPanel {
                     ui.add_space(6.0);
                 }
                 ui.label(format!(
-                    "Last snapshot: {}",
-                    format_optional_timestamp_millis(self.settings.sync.last_snapshot_at)
+                    "Last sync: {}",
+                    format_optional_timestamp_millis(self.settings.sync.last_sync_at)
                 ));
                 ui.label(format!(
-                    "Last snapshot ID: {}",
+                    "Last manifest ID: {}",
                     self.settings
                         .sync
-                        .last_snapshot_id
+                        .last_manifest_id
                         .clone()
                         .unwrap_or_default()
                 ));
@@ -829,7 +829,7 @@ impl SettingPanel {
                         && !self.sync_busy()
                         && sync_validation_error.is_none();
                     if ui
-                        .add_enabled(can_run, egui::Button::new("Run Backup Now"))
+                        .add_enabled(can_run, egui::Button::new("Run Sync Now"))
                         .clicked()
                     {
                         self.run_backup();
@@ -837,7 +837,7 @@ impl SettingPanel {
                     if ui
                         .add_enabled(
                             !self.sync_busy() && sync_validation_error.is_none(),
-                            egui::Button::new("Refresh Remote Snapshots"),
+                            egui::Button::new("Refresh Remote Manifests"),
                         )
                         .clicked()
                     {
@@ -857,24 +857,24 @@ impl SettingPanel {
                 });
                 if self.settings.sync.enabled && sync_validation_error.is_none() {
                     ui.small(
-                        "Manual backup progress is shown below while snapshot preparation and upload are running.",
+                        "Manual sync progress is shown below while reconciliation, blob upload, and manifest publish are running.",
                     );
                 }
             });
 
-        egui::CollapsingHeader::new("Remote Snapshots")
+        egui::CollapsingHeader::new("Remote Manifests")
             .id_salt("sync-remote")
             .default_open(true)
             .show(ui, |ui| {
                 if runtime.remote_snapshots.is_empty() {
-                    ui.label("No remote snapshots loaded.");
+                    ui.label("No remote manifests loaded.");
                 } else {
                     let mut restore_target = None;
                     for snapshot in &runtime.remote_snapshots {
                         ui.separator();
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(format!("Snapshot: {}", snapshot.snapshot_id));
+                                ui.label(format!("Manifest: {}", snapshot.manifest_id));
                                 ui.label(format!(
                                     "Created: {}",
                                     crate::time_format::format_timestamp_millis(
@@ -890,12 +890,12 @@ impl SettingPanel {
                                 )
                                 .clicked()
                             {
-                                restore_target = Some(snapshot.snapshot_id.clone());
+                                restore_target = Some(snapshot.manifest_id.clone());
                             }
                         });
                     }
-                    if let Some(snapshot_id) = restore_target {
-                        self.pending_restore_snapshot_id = Some(snapshot_id);
+                    if let Some(manifest_id) = restore_target {
+                        self.pending_restore_manifest_id = Some(manifest_id);
                     }
                 }
             });
@@ -904,32 +904,33 @@ impl SettingPanel {
             self.try_save();
         }
 
-        if let Some(snapshot_id) = self.pending_restore_snapshot_id.clone() {
+        if let Some(manifest_id) = self.pending_restore_manifest_id.clone() {
             let mut keep_open = true;
             egui::Window::new("Confirm Restore")
                 .collapsible(false)
                 .resizable(false)
                 .open(&mut keep_open)
                 .show(ui.ctx(), |ui| {
-                    ui.label("Restore replaces the current local snapshot-managed data.");
+                    ui.label("Restore replaces the current local manifest-managed data.");
+                    ui.label("Restore replays the selected manifest version.");
                     ui.label("Restart Klaw after restore completes.");
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui.button("Cancel").clicked() {
-                            self.pending_restore_snapshot_id = None;
+                            self.pending_restore_manifest_id = None;
                         }
                         if ui
                             .add_enabled(!self.sync_busy(), egui::Button::new("Restore Now"))
                             .clicked()
                         {
-                            self.pending_restore_snapshot_id = None;
-                            self.restore_snapshot(snapshot_id.clone());
+                            self.pending_restore_manifest_id = None;
+                            self.restore_snapshot(manifest_id.clone());
                             notifications.info("Restore started.");
                         }
                     });
                 });
             if !keep_open {
-                self.pending_restore_snapshot_id = None;
+                self.pending_restore_manifest_id = None;
             }
         }
     }
@@ -953,14 +954,15 @@ fn runtime_progress_from_backup(progress: BackupProgress) -> SyncRuntimeProgress
     SyncRuntimeProgress {
         fraction: progress.fraction.clamp(0.0, 1.0),
         stage: match progress.stage {
-            klaw_storage::BackupProgressStage::PreparingSnapshot => "Preparing snapshot",
+            klaw_storage::BackupProgressStage::ReconcilingRemote => "Reconciling remote manifest",
+            klaw_storage::BackupProgressStage::PreparingManifest => "Preparing manifest",
+            klaw_storage::BackupProgressStage::UploadingBlobs => "Uploading blobs",
             klaw_storage::BackupProgressStage::UploadingManifest => "Uploading manifest",
-            klaw_storage::BackupProgressStage::UploadingBundle => "Uploading bundle",
             klaw_storage::BackupProgressStage::UpdatingLatestPointer => {
-                "Updating latest snapshot pointer"
+                "Updating latest manifest pointer"
             }
-            klaw_storage::BackupProgressStage::CleaningUpRemote => "Cleaning up old snapshots",
-            klaw_storage::BackupProgressStage::Completed => "Backup completed",
+            klaw_storage::BackupProgressStage::CleaningUpRemote => "Cleaning up old manifests",
+            klaw_storage::BackupProgressStage::Completed => "Sync completed",
         }
         .to_string(),
         detail: Some(progress.detail),

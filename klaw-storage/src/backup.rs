@@ -5,27 +5,25 @@ use opendal::services::S3;
 use opendal::Operator;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tar::{Archive, Builder as TarBuilder};
 use time::OffsetDateTime;
 use tokio::fs;
 use uuid::Uuid;
 use walkdir::WalkDir;
-use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
 
-const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+const MANIFEST_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotMode {
-    SnapshotPrimary,
+    ManifestVersioned,
 }
 
 impl Default for SnapshotMode {
     fn default() -> Self {
-        Self::SnapshotPrimary
+        Self::ManifestVersioned
     }
 }
 
@@ -34,7 +32,6 @@ impl Default for SnapshotMode {
 pub enum BackupItem {
     Session,
     Skills,
-    Mcp,
     SkillsRegistry,
     GuiSettings,
     Archive,
@@ -71,7 +68,7 @@ pub struct BackupPlan {
 impl Default for BackupPlan {
     fn default() -> Self {
         Self {
-            mode: SnapshotMode::SnapshotPrimary,
+            mode: SnapshotMode::ManifestVersioned,
             items: default_backup_items(),
         }
     }
@@ -165,44 +162,67 @@ impl S3SnapshotStoreConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SnapshotEntry {
-    pub relative_path: String,
-    pub size_bytes: u64,
-    pub sha256: String,
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ManifestEntryKind {
+    File,
+    SqliteSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SnapshotManifest {
+pub struct ManifestEntry {
+    pub relative_path: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub kind: ManifestEntryKind,
+    #[serde(default)]
+    pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SyncManifest {
     pub schema_version: u32,
-    pub snapshot_id: String,
+    pub manifest_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_manifest_id: Option<String>,
     pub created_at: i64,
     pub device_id: String,
     pub app_version: String,
     pub mode: SnapshotMode,
     pub included_items: Vec<BackupItem>,
-    pub entries: Vec<SnapshotEntry>,
+    pub entries: Vec<ManifestEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LatestRef {
+    pub schema_version: u32,
+    pub manifest_id: String,
+    pub updated_at: i64,
+    pub device_id: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct SnapshotPrepareResult {
-    pub manifest: SnapshotManifest,
-    pub snapshot_dir: PathBuf,
-    pub bundle_path: PathBuf,
-    pub manifest_path: PathBuf,
+    pub manifest: SyncManifest,
+    pub latest_ref: LatestRef,
+    staging_dir: PathBuf,
+    staged_files: BTreeMap<String, StagedFile>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BackupResult {
-    pub snapshot_id: String,
-    pub manifest: SnapshotManifest,
+    pub manifest_id: String,
+    pub manifest: SyncManifest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackupProgressStage {
-    PreparingSnapshot,
+    ReconcilingRemote,
+    PreparingManifest,
+    UploadingBlobs,
     UploadingManifest,
-    UploadingBundle,
     UpdatingLatestPointer,
     CleaningUpRemote,
     Completed,
@@ -217,7 +237,7 @@ pub struct BackupProgress {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SnapshotListItem {
-    pub snapshot_id: String,
+    pub manifest_id: String,
     pub created_at: i64,
     pub device_id: String,
     pub app_version: String,
@@ -227,7 +247,7 @@ pub struct SnapshotListItem {
 
 #[derive(Debug, Clone)]
 pub struct SnapshotRestoreResult {
-    pub snapshot_id: String,
+    pub manifest_id: String,
     pub restored_paths: Vec<PathBuf>,
 }
 
@@ -242,6 +262,7 @@ pub trait SnapshotStore: Send + Sync {
     async fn get_bytes(&self, key: &str) -> Result<Vec<u8>, StorageError>;
     async fn list_keys(&self, prefix: &str) -> Result<Vec<String>, StorageError>;
     async fn delete(&self, key: &str) -> Result<(), StorageError>;
+    async fn exists(&self, key: &str) -> Result<bool, StorageError>;
 }
 
 #[async_trait]
@@ -304,12 +325,8 @@ impl BackupService {
         plan: &BackupPlan,
     ) -> Result<BackupResult, StorageError> {
         let mut noop = |_| {};
-        let prepared = self.create_snapshot_with_progress(plan, &mut noop).await?;
-        let result = self
-            .upload_snapshot_with_progress(&prepared, &mut noop)
-            .await?;
-        let _ = fs::remove_dir_all(&prepared.snapshot_dir).await;
-        Ok(result)
+        self.create_upload_and_cleanup_snapshot_with_progress(plan, 1, &mut noop)
+            .await
     }
 
     pub async fn create_upload_and_cleanup_snapshot(
@@ -331,220 +348,51 @@ impl BackupService {
     where
         F: FnMut(BackupProgress),
     {
-        let prepared = self.create_snapshot_with_progress(plan, progress).await?;
+        self.paths.ensure_dirs().await?;
+        self.reject_legacy_snapshot_layout().await?;
+
+        let remote_manifest = self.load_latest_manifest().await?;
+        report_progress(
+            progress,
+            BackupProgressStage::ReconcilingRemote,
+            0.05,
+            "Reconciling local files with remote manifest".to_string(),
+        );
+        if let Some(manifest) = remote_manifest.as_ref() {
+            self.reconcile_local_from_remote(manifest, progress).await?;
+        }
+
+        let prepared = self.prepare_manifest(plan, remote_manifest.as_ref(), progress).await?;
         let result = self
-            .upload_snapshot_with_progress(&prepared, progress)
+            .upload_prepared_manifest_with_progress(&prepared, progress)
             .await?;
         report_progress(
             progress,
             BackupProgressStage::CleaningUpRemote,
-            0.98,
-            format!("Keeping the latest {} remote snapshot(s)", keep_last.max(1)),
+            0.96,
+            format!("Keeping the latest {} remote manifest(s)", keep_last.max(1)),
         );
         self.cleanup_remote_snapshots(keep_last).await?;
+        let _ = fs::remove_dir_all(&prepared.staging_dir).await;
         report_progress(
             progress,
             BackupProgressStage::Completed,
             1.0,
-            format!("Snapshot {} uploaded successfully", result.snapshot_id),
+            format!("Manifest {} uploaded successfully", result.manifest_id),
         );
         Ok(result)
     }
 
-    pub async fn create_snapshot(
-        &self,
-        plan: &BackupPlan,
-    ) -> Result<SnapshotPrepareResult, StorageError> {
-        let mut noop = |_| {};
-        self.create_snapshot_with_progress(plan, &mut noop).await
-    }
-
-    pub async fn create_snapshot_with_progress<F>(
-        &self,
-        plan: &BackupPlan,
-        progress: &mut F,
-    ) -> Result<SnapshotPrepareResult, StorageError>
-    where
-        F: FnMut(BackupProgress),
-    {
-        self.paths.ensure_dirs().await?;
-
-        let snapshot_id = build_snapshot_id();
-        let snapshot_dir = self
-            .paths
-            .tmp_dir
-            .join("snapshots")
-            .join(snapshot_id.as_str());
-        let db_dir = snapshot_dir.join("db");
-        let files_dir = snapshot_dir.join("files");
-        fs::create_dir_all(&db_dir)
-            .await
-            .map_err(StorageError::CreateTmpDir)?;
-        fs::create_dir_all(&files_dir)
-            .await
-            .map_err(StorageError::CreateTmpDir)?;
-
-        let sources = self.resolve_sources(plan)?;
-        let total_sources = sources.len();
-        report_progress(
-            progress,
-            BackupProgressStage::PreparingSnapshot,
-            0.05,
-            if total_sources == 0 {
-                "No local files matched the selected backup scope".to_string()
-            } else {
-                format!("Preparing {total_sources} snapshot item(s)")
-            },
-        );
-
-        let mut entries = Vec::new();
-        for (index, source) in sources.into_iter().enumerate() {
-            match source {
-                ResolvedLocalSource::Database {
-                    source_path,
-                    relative_path,
-                } => {
-                    let dest = snapshot_dir.join(&relative_path);
-                    if let Some(parent) = dest.parent() {
-                        fs::create_dir_all(parent)
-                            .await
-                            .map_err(StorageError::CreateTmpDir)?;
-                    }
-                    let exported = self.exporter.export_snapshot(&source_path, &dest).await?;
-                    if !exported {
-                        continue;
-                    }
-                    entries.push(build_entry(&snapshot_dir, &dest).await?);
-                    report_preparing_progress(progress, index + 1, total_sources, &relative_path);
-                }
-                ResolvedLocalSource::File {
-                    source_path,
-                    relative_path,
-                } => {
-                    let dest = snapshot_dir.join(&relative_path);
-                    if let Some(parent) = dest.parent() {
-                        fs::create_dir_all(parent)
-                            .await
-                            .map_err(StorageError::CreateTmpDir)?;
-                    }
-                    fs::copy(&source_path, &dest)
-                        .await
-                        .map_err(StorageError::backend)?;
-                    entries.push(build_entry(&snapshot_dir, &dest).await?);
-                    report_preparing_progress(progress, index + 1, total_sources, &relative_path);
-                }
-            }
-        }
-
-        entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-        let manifest = SnapshotManifest {
-            schema_version: SNAPSHOT_SCHEMA_VERSION,
-            snapshot_id: snapshot_id.clone(),
-            created_at: OffsetDateTime::now_utc().unix_timestamp() * 1000,
-            device_id: self.device_id.clone(),
-            app_version: self.app_version.clone(),
-            mode: plan.mode,
-            included_items: dedup_items(&plan.items),
-            entries,
-        };
-
-        let manifest_path = snapshot_dir.join("manifest.json");
-        write_json(&manifest_path, &manifest).await?;
-        report_progress(
-            progress,
-            BackupProgressStage::PreparingSnapshot,
-            0.72,
-            "Writing snapshot manifest".to_string(),
-        );
-        let bundle_path = snapshot_dir.join("bundle.tar.zst");
-        create_bundle(&snapshot_dir, &bundle_path).await?;
-        report_progress(
-            progress,
-            BackupProgressStage::PreparingSnapshot,
-            0.8,
-            "Compressing snapshot bundle".to_string(),
-        );
-
-        Ok(SnapshotPrepareResult {
-            manifest,
-            snapshot_dir,
-            bundle_path,
-            manifest_path,
-        })
-    }
-
-    pub async fn upload_snapshot(
-        &self,
-        prepared: &SnapshotPrepareResult,
-    ) -> Result<BackupResult, StorageError> {
-        let mut noop = |_| {};
-        self.upload_snapshot_with_progress(prepared, &mut noop)
-            .await
-    }
-
-    pub async fn upload_snapshot_with_progress<F>(
-        &self,
-        prepared: &SnapshotPrepareResult,
-        progress: &mut F,
-    ) -> Result<BackupResult, StorageError>
-    where
-        F: FnMut(BackupProgress),
-    {
-        let manifest_bytes = fs::read(&prepared.manifest_path)
-            .await
-            .map_err(StorageError::backend)?;
-        let bundle_bytes = fs::read(&prepared.bundle_path)
-            .await
-            .map_err(StorageError::backend)?;
-        let manifest_key = manifest_object_key(&prepared.manifest.snapshot_id);
-        let bundle_key = bundle_object_key(&prepared.manifest.snapshot_id);
-        report_progress(
-            progress,
-            BackupProgressStage::UploadingManifest,
-            0.86,
-            format!("Uploading {}", manifest_key),
-        );
-        self.store
-            .put_bytes(&manifest_key, manifest_bytes, "application/json")
-            .await?;
-        report_progress(
-            progress,
-            BackupProgressStage::UploadingBundle,
-            0.94,
-            format!("Uploading {}", bundle_key),
-        );
-        self.store
-            .put_bytes(&bundle_key, bundle_bytes, "application/zstd")
-            .await?;
-        let latest = SnapshotListItem::from_manifest(&prepared.manifest);
-        report_progress(
-            progress,
-            BackupProgressStage::UpdatingLatestPointer,
-            0.97,
-            "Updating latest.json".to_string(),
-        );
-        self.store
-            .put_bytes(
-                &latest_object_key(),
-                serde_json::to_vec_pretty(&latest).map_err(StorageError::backend)?,
-                "application/json",
-            )
-            .await?;
-        Ok(BackupResult {
-            snapshot_id: prepared.manifest.snapshot_id.clone(),
-            manifest: prepared.manifest.clone(),
-        })
-    }
-
     pub async fn list_remote_snapshots(&self) -> Result<Vec<SnapshotListItem>, StorageError> {
-        let keys = self.store.list_keys(&snapshots_prefix()).await?;
+        self.reject_legacy_snapshot_layout().await?;
+        let keys = self.store.list_keys(&manifests_prefix()).await?;
         let mut items = Vec::new();
         for key in keys {
-            if !key.ends_with("/manifest.json") {
+            if !key.ends_with(".json") {
                 continue;
             }
             let bytes = self.store.get_bytes(&key).await?;
-            let manifest: SnapshotManifest =
+            let manifest: SyncManifest =
                 serde_json::from_slice(&bytes).map_err(StorageError::backend)?;
             items.push(SnapshotListItem::from_manifest(&manifest));
         }
@@ -552,86 +400,459 @@ impl BackupService {
             right
                 .created_at
                 .cmp(&left.created_at)
-                .then_with(|| right.snapshot_id.cmp(&left.snapshot_id))
+                .then_with(|| right.manifest_id.cmp(&left.manifest_id))
         });
         Ok(items)
     }
 
     pub async fn cleanup_remote_snapshots(&self, keep_last: u32) -> Result<(), StorageError> {
+        self.reject_legacy_snapshot_layout().await?;
+
         let keep_last = keep_last.max(1) as usize;
-        let snapshots = self.list_remote_snapshots().await?;
-        for snapshot in snapshots.into_iter().skip(keep_last) {
+        let manifests = self.load_all_remote_manifests().await?;
+        let kept = manifests.iter().take(keep_last).cloned().collect::<Vec<_>>();
+        let removed = manifests.iter().skip(keep_last).cloned().collect::<Vec<_>>();
+
+        let mut referenced_hashes = BTreeSet::new();
+        for manifest in &kept {
+            for entry in manifest.entries.iter().filter(|entry| !entry.deleted) {
+                referenced_hashes.insert(entry.sha256.clone());
+            }
+        }
+
+        for manifest in &removed {
             self.store
-                .delete(&manifest_object_key(&snapshot.snapshot_id))
-                .await?;
-            self.store
-                .delete(&bundle_object_key(&snapshot.snapshot_id))
+                .delete(&manifest_object_key(&manifest.manifest_id))
                 .await?;
         }
-        self.refresh_latest_snapshot_pointer().await?;
-        Ok(())
-    }
 
-    pub async fn refresh_latest_snapshot_pointer(&self) -> Result<(), StorageError> {
-        let newest = self.list_remote_snapshots().await?.into_iter().next();
-        match newest {
-            Some(snapshot) => {
+        let blob_keys = self.store.list_keys(&blobs_prefix()).await?;
+        for key in blob_keys {
+            let Some(hash) = key.strip_prefix("blobs/sha256/") else {
+                continue;
+            };
+            if !referenced_hashes.contains(hash) {
+                self.store.delete(&key).await?;
+            }
+        }
+
+        match kept.first() {
+            Some(manifest) => {
+                let latest = LatestRef::from_manifest(manifest);
                 self.store
                     .put_bytes(
                         &latest_object_key(),
-                        serde_json::to_vec_pretty(&snapshot).map_err(StorageError::backend)?,
+                        serde_json::to_vec_pretty(&latest).map_err(StorageError::backend)?,
                         "application/json",
                     )
                     .await?;
             }
             None => {
-                self.store.delete(&latest_object_key()).await?;
+                if self.store.exists(&latest_object_key()).await? {
+                    self.store.delete(&latest_object_key()).await?;
+                }
             }
         }
+
         Ok(())
     }
 
     pub async fn restore_snapshot(
         &self,
-        snapshot_id: &str,
+        manifest_id: &str,
     ) -> Result<SnapshotRestoreResult, StorageError> {
         self.paths.ensure_dirs().await?;
-        let manifest_bytes = self
-            .store
-            .get_bytes(&manifest_object_key(snapshot_id))
-            .await?;
-        let manifest: SnapshotManifest =
-            serde_json::from_slice(&manifest_bytes).map_err(StorageError::backend)?;
-        let bundle_bytes = self
-            .store
-            .get_bytes(&bundle_object_key(snapshot_id))
-            .await?;
+        self.reject_legacy_snapshot_layout().await?;
+        let manifest = self.load_manifest(manifest_id).await?;
+        self.restore_manifest(&manifest).await
+    }
 
-        let restore_dir = self
-            .paths
-            .tmp_dir
-            .join("snapshot-restore")
-            .join(snapshot_id);
-        if path_exists(&restore_dir).await {
-            let _ = fs::remove_dir_all(&restore_dir).await;
-        }
-        fs::create_dir_all(&restore_dir)
+    async fn prepare_manifest<F>(
+        &self,
+        plan: &BackupPlan,
+        remote_manifest: Option<&SyncManifest>,
+        progress: &mut F,
+    ) -> Result<SnapshotPrepareResult, StorageError>
+    where
+        F: FnMut(BackupProgress),
+    {
+        let stage_id = Uuid::new_v4().simple().to_string();
+        let staging_dir = self.paths.tmp_dir.join("sync-staging").join(stage_id);
+        fs::create_dir_all(&staging_dir)
             .await
             .map_err(StorageError::CreateTmpDir)?;
 
-        let bundle_path = restore_dir.join("bundle.tar.zst");
-        fs::write(&bundle_path, bundle_bytes)
-            .await
-            .map_err(StorageError::backend)?;
-        extract_bundle(&bundle_path, &restore_dir).await?;
-        verify_manifest_entries(&restore_dir, &manifest).await?;
+        let sources = self.resolve_sources(plan)?;
+        let total_sources = sources.len();
+        report_progress(
+            progress,
+            BackupProgressStage::PreparingManifest,
+            0.12,
+            if total_sources == 0 {
+                "No local files matched the selected backup scope".to_string()
+            } else {
+                format!("Preparing {total_sources} staged file(s)")
+            },
+        );
 
-        let restored_paths = self.apply_restore(&restore_dir, &manifest).await?;
-        let _ = fs::remove_dir_all(&restore_dir).await;
-        Ok(SnapshotRestoreResult {
-            snapshot_id: snapshot_id.to_string(),
-            restored_paths,
+        let mut staged_files = BTreeMap::new();
+        for (index, source) in sources.into_iter().enumerate() {
+            let staged = self.stage_source(&staging_dir, source).await?;
+            report_preparing_progress(progress, index + 1, total_sources, &staged.relative_path);
+            staged_files.insert(staged.relative_path.clone(), staged);
+        }
+
+        let mut entries = staged_files
+            .values()
+            .map(|staged| ManifestEntry {
+                relative_path: staged.relative_path.clone(),
+                sha256: staged.sha256.clone(),
+                size_bytes: staged.size_bytes,
+                kind: staged.kind,
+                deleted: false,
+                modified_at_ms: staged.modified_at_ms,
+            })
+            .collect::<Vec<_>>();
+
+        if let Some(remote) = remote_manifest {
+            let current_paths = staged_files.keys().cloned().collect::<BTreeSet<_>>();
+            for remote_entry in &remote.entries {
+                if current_paths.contains(&remote_entry.relative_path) {
+                    continue;
+                }
+                entries.push(ManifestEntry {
+                    relative_path: remote_entry.relative_path.clone(),
+                    sha256: String::new(),
+                    size_bytes: 0,
+                    kind: remote_entry.kind,
+                    deleted: true,
+                    modified_at_ms: Some(now_ms()),
+                });
+            }
+        }
+
+        entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        let manifest = SyncManifest {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            manifest_id: build_manifest_id(),
+            parent_manifest_id: remote_manifest.map(|manifest| manifest.manifest_id.clone()),
+            created_at: now_ms(),
+            device_id: self.device_id.clone(),
+            app_version: self.app_version.clone(),
+            mode: plan.mode,
+            included_items: dedup_items(&plan.items),
+            entries,
+        };
+        let latest_ref = LatestRef::from_manifest(&manifest);
+
+        Ok(SnapshotPrepareResult {
+            manifest,
+            latest_ref,
+            staging_dir,
+            staged_files,
         })
+    }
+
+    async fn upload_prepared_manifest_with_progress<F>(
+        &self,
+        prepared: &SnapshotPrepareResult,
+        progress: &mut F,
+    ) -> Result<BackupResult, StorageError>
+    where
+        F: FnMut(BackupProgress),
+    {
+        let upload_targets = prepared
+            .manifest
+            .entries
+            .iter()
+            .filter(|entry| !entry.deleted)
+            .collect::<Vec<_>>();
+        let total = upload_targets.len().max(1);
+        for (index, entry) in upload_targets.into_iter().enumerate() {
+            let blob_key = blob_object_key(&entry.sha256);
+            if !self.store.exists(&blob_key).await? {
+                let staged = prepared
+                    .staged_files
+                    .get(&entry.relative_path)
+                    .ok_or_else(|| StorageError::backend("missing staged file for upload"))?;
+                let bytes = fs::read(&staged.staged_path)
+                    .await
+                    .map_err(StorageError::backend)?;
+                report_progress(
+                    progress,
+                    BackupProgressStage::UploadingBlobs,
+                    0.55 + ((index as f32) / (total as f32)) * 0.25,
+                    format!("Uploading blob {}", entry.sha256),
+                );
+                self.store
+                    .put_bytes(&blob_key, bytes, "application/octet-stream")
+                    .await?;
+            }
+        }
+
+        report_progress(
+            progress,
+            BackupProgressStage::UploadingManifest,
+            0.84,
+            format!("Uploading manifest {}", prepared.manifest.manifest_id),
+        );
+        self.store
+            .put_bytes(
+                &manifest_object_key(&prepared.manifest.manifest_id),
+                serde_json::to_vec_pretty(&prepared.manifest).map_err(StorageError::backend)?,
+                "application/json",
+            )
+            .await?;
+
+        report_progress(
+            progress,
+            BackupProgressStage::UpdatingLatestPointer,
+            0.9,
+            "Updating latest.json".to_string(),
+        );
+        self.store
+            .put_bytes(
+                &latest_object_key(),
+                serde_json::to_vec_pretty(&prepared.latest_ref).map_err(StorageError::backend)?,
+                "application/json",
+            )
+            .await?;
+
+        Ok(BackupResult {
+            manifest_id: prepared.manifest.manifest_id.clone(),
+            manifest: prepared.manifest.clone(),
+        })
+    }
+
+    async fn reconcile_local_from_remote<F>(
+        &self,
+        manifest: &SyncManifest,
+        progress: &mut F,
+    ) -> Result<(), StorageError>
+    where
+        F: FnMut(BackupProgress),
+    {
+        let total = manifest.entries.len().max(1);
+        for (index, entry) in manifest.entries.iter().enumerate() {
+            let target = snapshot_relative_to_root(&self.paths.root_dir, &entry.relative_path)?;
+            if entry.deleted {
+                if path_exists(&target).await {
+                    remove_file_and_sidecars(&target).await?;
+                }
+                continue;
+            }
+
+            let current_hash = self.current_local_hash(entry).await?;
+            if current_hash.as_deref() == Some(entry.sha256.as_str()) {
+                continue;
+            }
+
+            let blob_key = blob_object_key(&entry.sha256);
+            let bytes = self.store.get_bytes(&blob_key).await?;
+            let actual_hash = hex::encode(Sha256::digest(&bytes));
+            if actual_hash != entry.sha256 {
+                return Err(StorageError::backend(format!(
+                    "remote blob verification failed for {}",
+                    entry.relative_path
+                )));
+            }
+
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .await
+                    .map_err(StorageError::CreateDataDir)?;
+            }
+            remove_file_and_sidecars(&target).await?;
+            fs::write(&target, bytes)
+                .await
+                .map_err(StorageError::backend)?;
+            report_progress(
+                progress,
+                BackupProgressStage::ReconcilingRemote,
+                0.05 + ((index as f32) / (total as f32)) * 0.05,
+                format!("Reconciled {}", entry.relative_path),
+            );
+        }
+        Ok(())
+    }
+
+    async fn restore_manifest(
+        &self,
+        manifest: &SyncManifest,
+    ) -> Result<SnapshotRestoreResult, StorageError> {
+        self.clear_restore_scope(&manifest.included_items).await?;
+
+        let mut restored = BTreeSet::new();
+        for entry in &manifest.entries {
+            let target = snapshot_relative_to_root(&self.paths.root_dir, &entry.relative_path)?;
+            if entry.deleted {
+                remove_file_and_sidecars(&target).await?;
+                continue;
+            }
+            let bytes = self.store.get_bytes(&blob_object_key(&entry.sha256)).await?;
+            let actual_hash = hex::encode(Sha256::digest(&bytes));
+            if actual_hash != entry.sha256 {
+                return Err(StorageError::backend(format!(
+                    "manifest verification failed for {}",
+                    entry.relative_path
+                )));
+            }
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .await
+                    .map_err(StorageError::CreateDataDir)?;
+            }
+            remove_file_and_sidecars(&target).await?;
+            fs::write(&target, bytes)
+                .await
+                .map_err(StorageError::backend)?;
+            restored.insert(target);
+        }
+
+        Ok(SnapshotRestoreResult {
+            manifest_id: manifest.manifest_id.clone(),
+            restored_paths: restored.into_iter().collect(),
+        })
+    }
+
+    async fn clear_restore_scope(&self, items: &[BackupItem]) -> Result<(), StorageError> {
+        for item in dedup_items(items) {
+            match item {
+                BackupItem::Session => {
+                    if path_exists(&self.paths.sessions_dir).await {
+                        fs::remove_dir_all(&self.paths.sessions_dir)
+                            .await
+                            .map_err(StorageError::backend)?;
+                    }
+                    remove_file_and_sidecars(&self.paths.db_path).await?;
+                }
+                BackupItem::Memory => {
+                    remove_file_and_sidecars(&self.paths.memory_db_path).await?;
+                }
+                BackupItem::Archive => {
+                    if path_exists(&self.paths.archives_dir).await {
+                        fs::remove_dir_all(&self.paths.archives_dir)
+                            .await
+                            .map_err(StorageError::backend)?;
+                    }
+                    remove_file_and_sidecars(&self.paths.archive_db_path).await?;
+                }
+                BackupItem::Config => {
+                    remove_file_and_sidecars(&klaw_util::config_path(&self.paths.root_dir)).await?;
+                }
+                BackupItem::GuiSettings => {
+                    remove_file_and_sidecars(&klaw_util::settings_path(&self.paths.root_dir))
+                        .await?;
+                }
+                BackupItem::Skills => {
+                    if path_exists(&self.paths.skills_dir).await {
+                        fs::remove_dir_all(&self.paths.skills_dir)
+                            .await
+                            .map_err(StorageError::backend)?;
+                    }
+                }
+                BackupItem::SkillsRegistry => {
+                    remove_file_and_sidecars(
+                        &klaw_util::skills_registry_manifest_path(&self.paths.root_dir),
+                    )
+                    .await?;
+                }
+                BackupItem::UserWorkspace => {
+                    if path_exists(&self.paths.workspace_dir).await {
+                        fs::remove_dir_all(&self.paths.workspace_dir)
+                            .await
+                            .map_err(StorageError::backend)?;
+                    }
+                }
+            }
+        }
+        self.paths.ensure_dirs().await?;
+        Ok(())
+    }
+
+    async fn current_local_hash(
+        &self,
+        entry: &ManifestEntry,
+    ) -> Result<Option<String>, StorageError> {
+        let target = snapshot_relative_to_root(&self.paths.root_dir, &entry.relative_path)?;
+        match entry.kind {
+            ManifestEntryKind::File => {
+                if !path_exists(&target).await {
+                    return Ok(None);
+                }
+                Ok(Some(hash_file(&target).await?))
+            }
+            ManifestEntryKind::SqliteSnapshot => {
+                if !path_exists(&target).await {
+                    return Ok(None);
+                }
+                let export_dir = self.paths.tmp_dir.join("sync-verify");
+                fs::create_dir_all(&export_dir)
+                    .await
+                    .map_err(StorageError::CreateTmpDir)?;
+                let snapshot_path = export_dir.join(format!("{}.db", Uuid::new_v4().simple()));
+                let exported = self.exporter.export_snapshot(&target, &snapshot_path).await?;
+                if !exported {
+                    return Ok(None);
+                }
+                let hash = hash_file(&snapshot_path).await?;
+                let _ = fs::remove_file(&snapshot_path).await;
+                Ok(Some(hash))
+            }
+        }
+    }
+
+    async fn load_latest_manifest(&self) -> Result<Option<SyncManifest>, StorageError> {
+        if !self.store.exists(&latest_object_key()).await? {
+            return Ok(None);
+        }
+        let latest_bytes = self.store.get_bytes(&latest_object_key()).await?;
+        let latest: LatestRef =
+            serde_json::from_slice(&latest_bytes).map_err(StorageError::backend)?;
+        Ok(Some(self.load_manifest(&latest.manifest_id).await?))
+    }
+
+    async fn load_manifest(&self, manifest_id: &str) -> Result<SyncManifest, StorageError> {
+        let bytes = self
+            .store
+            .get_bytes(&manifest_object_key(manifest_id))
+            .await?;
+        serde_json::from_slice(&bytes).map_err(StorageError::backend)
+    }
+
+    async fn load_all_remote_manifests(&self) -> Result<Vec<SyncManifest>, StorageError> {
+        let mut manifests = self
+            .list_remote_snapshots()
+            .await?
+            .into_iter()
+            .map(|item| item.manifest_id)
+            .collect::<Vec<_>>();
+        let mut out = Vec::with_capacity(manifests.len());
+        for manifest_id in manifests.drain(..) {
+            out.push(self.load_manifest(&manifest_id).await?);
+        }
+        out.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.manifest_id.cmp(&left.manifest_id))
+        });
+        Ok(out)
+    }
+
+    async fn reject_legacy_snapshot_layout(&self) -> Result<(), StorageError> {
+        let has_latest = self.store.exists(&latest_object_key()).await?;
+        let manifests = self.store.list_keys(&manifests_prefix()).await?;
+        if has_latest || !manifests.is_empty() {
+            return Ok(());
+        }
+        let legacy = self.store.list_keys(&legacy_snapshots_prefix()).await?;
+        if legacy.is_empty() {
+            return Ok(());
+        }
+        Err(StorageError::backend(
+            "legacy bundle.tar.zst snapshots are not supported by the manifest sync engine",
+        ))
     }
 
     fn collect_sources(&self, plan: &BackupPlan) -> Vec<LocalSource> {
@@ -676,10 +897,6 @@ impl BackupService {
                         source_path: klaw_util::settings_path(root),
                         relative_path: PathBuf::from("files/settings.json"),
                     });
-                    sources.push(LocalSource::File {
-                        source_path: klaw_util::gui_state_path(root),
-                        relative_path: PathBuf::from("files/gui_state.json"),
-                    });
                 }
                 BackupItem::Skills => {
                     sources.push(LocalSource::Directory {
@@ -688,10 +905,6 @@ impl BackupService {
                     });
                 }
                 BackupItem::SkillsRegistry => {
-                    sources.push(LocalSource::Directory {
-                        source_dir: self.paths.skills_registry_dir.clone(),
-                        relative_root: PathBuf::from("files/skills-registry"),
-                    });
                     sources.push(LocalSource::File {
                         source_path: klaw_util::skills_registry_manifest_path(root),
                         relative_path: PathBuf::from("files/skills-registry-manifest.json"),
@@ -703,7 +916,6 @@ impl BackupService {
                         relative_root: PathBuf::from("files/workspace"),
                     });
                 }
-                BackupItem::Mcp => {}
             }
         }
         sources
@@ -718,9 +930,10 @@ impl BackupService {
                     relative_path,
                 } => {
                     if source_path.exists() {
-                        resolved.push(ResolvedLocalSource::Database {
+                        resolved.push(ResolvedLocalSource {
                             source_path,
                             relative_path,
+                            kind: ManifestEntryKind::SqliteSnapshot,
                         });
                     }
                 }
@@ -729,9 +942,10 @@ impl BackupService {
                     relative_path,
                 } => {
                     if source_path.exists() {
-                        resolved.push(ResolvedLocalSource::File {
+                        resolved.push(ResolvedLocalSource {
                             source_path,
                             relative_path,
+                            kind: ManifestEntryKind::File,
                         });
                     }
                 }
@@ -747,9 +961,10 @@ impl BackupService {
                             .strip_prefix(&source_dir)
                             .map_err(StorageError::backend)?
                             .to_path_buf();
-                        resolved.push(ResolvedLocalSource::File {
+                        resolved.push(ResolvedLocalSource {
                             source_path: file_path,
                             relative_path: relative_root.join(&rel),
+                            kind: ManifestEntryKind::File,
                         });
                     }
                 }
@@ -758,60 +973,76 @@ impl BackupService {
         Ok(resolved)
     }
 
-    async fn apply_restore(
+    async fn stage_source(
         &self,
-        restore_dir: &Path,
-        manifest: &SnapshotManifest,
-    ) -> Result<Vec<PathBuf>, StorageError> {
-        let mut file_targets = BTreeSet::new();
-        let mut dir_targets = BTreeSet::new();
-        for entry in &manifest.entries {
-            let target = snapshot_relative_to_root(&self.paths.root_dir, &entry.relative_path)?;
-            if let Some(dir) = restore_root_dir(&self.paths, &entry.relative_path) {
-                dir_targets.insert(dir);
-            } else {
-                file_targets.insert(target);
-            }
+        staging_dir: &Path,
+        source: ResolvedLocalSource,
+    ) -> Result<StagedFile, StorageError> {
+        let staged_path = staging_dir.join(&source.relative_path);
+        if let Some(parent) = staged_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(StorageError::CreateTmpDir)?;
         }
-
-        for dir in &dir_targets {
-            if path_exists(dir).await {
-                fs::remove_dir_all(dir)
+        match source.kind {
+            ManifestEntryKind::SqliteSnapshot => {
+                let exported = self
+                    .exporter
+                    .export_snapshot(&source.source_path, &staged_path)
+                    .await?;
+                if !exported {
+                    return Err(StorageError::backend("failed to export sqlite snapshot"));
+                }
+            }
+            ManifestEntryKind::File => {
+                fs::copy(&source.source_path, &staged_path)
                     .await
                     .map_err(StorageError::backend)?;
             }
         }
-        for file in &file_targets {
-            remove_file_and_sidecars(file).await?;
-        }
-
-        let mut restored = BTreeSet::new();
-        for entry in &manifest.entries {
-            let source = restore_dir.join(&entry.relative_path);
-            let target = snapshot_relative_to_root(&self.paths.root_dir, &entry.relative_path)?;
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)
-                    .await
-                    .map_err(StorageError::CreateDataDir)?;
-            }
-            fs::copy(&source, &target)
-                .await
-                .map_err(StorageError::backend)?;
-            restored.insert(target);
-        }
-        Ok(restored.into_iter().collect())
+        let metadata = fs::metadata(&staged_path)
+            .await
+            .map_err(StorageError::backend)?;
+        let modified_at_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as i64);
+        let sha256 = hash_file_from_bytes_path(&staged_path).await?;
+        Ok(StagedFile {
+            relative_path: source
+                .relative_path
+                .to_string_lossy()
+                .replace('\\', "/"),
+            staged_path,
+            kind: source.kind,
+            size_bytes: metadata.len(),
+            sha256,
+            modified_at_ms,
+        })
     }
 }
 
 impl SnapshotListItem {
-    fn from_manifest(manifest: &SnapshotManifest) -> Self {
+    fn from_manifest(manifest: &SyncManifest) -> Self {
         Self {
-            snapshot_id: manifest.snapshot_id.clone(),
+            manifest_id: manifest.manifest_id.clone(),
             created_at: manifest.created_at,
             device_id: manifest.device_id.clone(),
             app_version: manifest.app_version.clone(),
             mode: manifest.mode,
             included_items: manifest.included_items.clone(),
+        }
+    }
+}
+
+impl LatestRef {
+    fn from_manifest(manifest: &SyncManifest) -> Self {
+        Self {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            manifest_id: manifest.manifest_id.clone(),
+            updated_at: manifest.created_at,
+            device_id: manifest.device_id.clone(),
         }
     }
 }
@@ -916,6 +1147,13 @@ impl SnapshotStore for S3SnapshotStore {
             .await
             .map_err(StorageError::backend)?;
         Ok(())
+    }
+
+    async fn exists(&self, key: &str) -> Result<bool, StorageError> {
+        self.operator
+            .exists(&self.key(key))
+            .await
+            .map_err(StorageError::backend)
     }
 }
 
@@ -1045,15 +1283,20 @@ enum LocalSource {
 }
 
 #[derive(Debug, Clone)]
-enum ResolvedLocalSource {
-    Database {
-        source_path: PathBuf,
-        relative_path: PathBuf,
-    },
-    File {
-        source_path: PathBuf,
-        relative_path: PathBuf,
-    },
+struct ResolvedLocalSource {
+    source_path: PathBuf,
+    relative_path: PathBuf,
+    kind: ManifestEntryKind,
+}
+
+#[derive(Debug, Clone)]
+struct StagedFile {
+    relative_path: String,
+    staged_path: PathBuf,
+    kind: ManifestEntryKind,
+    size_bytes: u64,
+    sha256: String,
+    modified_at_ms: Option<i64>,
 }
 
 fn default_snapshot_interval_minutes() -> u32 {
@@ -1084,15 +1327,19 @@ fn default_secret_key_env() -> String {
     "AWS_SECRET_ACCESS_KEY".to_string()
 }
 
-fn build_snapshot_id() -> String {
+fn build_manifest_id() -> String {
     format!(
         "{}-{}",
         OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
-            .unwrap_or_else(|_| "snapshot".to_string())
+            .unwrap_or_else(|_| "manifest".to_string())
             .replace(':', "-"),
         Uuid::new_v4().simple()
     )
+}
+
+fn now_ms() -> i64 {
+    OffsetDateTime::now_utc().unix_timestamp() * 1000
 }
 
 fn normalize_device_id(device_id: String) -> String {
@@ -1173,23 +1420,20 @@ fn report_preparing_progress<F>(
     progress: &mut F,
     completed: usize,
     total: usize,
-    relative_path: &Path,
+    relative_path: &str,
 ) where
     F: FnMut(BackupProgress),
 {
     let fraction = if total == 0 {
-        0.7
+        0.45
     } else {
-        0.1 + (completed as f32 / total as f32) * 0.6
+        0.12 + (completed as f32 / total as f32) * 0.35
     };
     report_progress(
         progress,
-        BackupProgressStage::PreparingSnapshot,
+        BackupProgressStage::PreparingManifest,
         fraction,
-        format!(
-            "Prepared {completed}/{total}: {}",
-            relative_path.to_string_lossy().replace('\\', "/")
-        ),
+        format!("Prepared {completed}/{total}: {relative_path}"),
     );
 }
 
@@ -1208,101 +1452,36 @@ fn walk_files(root: &Path) -> Result<Vec<PathBuf>, StorageError> {
     Ok(files)
 }
 
-async fn build_entry(snapshot_dir: &Path, file_path: &Path) -> Result<SnapshotEntry, StorageError> {
-    let relative_path = file_path
-        .strip_prefix(snapshot_dir)
-        .map_err(StorageError::backend)?
-        .to_string_lossy()
-        .replace('\\', "/");
-    let metadata = fs::metadata(file_path)
-        .await
-        .map_err(StorageError::backend)?;
-    let sha256 = hash_file(file_path).await?;
-    Ok(SnapshotEntry {
-        relative_path,
-        size_bytes: metadata.len(),
-        sha256,
-    })
-}
-
 async fn hash_file(path: &Path) -> Result<String, StorageError> {
     let bytes = fs::read(path).await.map_err(StorageError::backend)?;
-    let digest = Sha256::digest(&bytes);
-    Ok(hex::encode(digest))
+    Ok(hex::encode(Sha256::digest(&bytes)))
 }
 
-async fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), StorageError> {
-    let bytes = serde_json::to_vec_pretty(value).map_err(StorageError::backend)?;
-    fs::write(path, bytes)
-        .await
-        .map_err(StorageError::backend)?;
-    Ok(())
-}
-
-async fn create_bundle(snapshot_dir: &Path, bundle_path: &Path) -> Result<(), StorageError> {
-    let snapshot_dir = snapshot_dir.to_path_buf();
-    let bundle_path = bundle_path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
-        let bundle_file = std::fs::File::create(&bundle_path).map_err(StorageError::backend)?;
-        let encoder = ZstdEncoder::new(bundle_file, 3).map_err(StorageError::backend)?;
-        let mut tar = TarBuilder::new(encoder.auto_finish());
-        tar.append_dir_all("db", snapshot_dir.join("db"))
-            .map_err(StorageError::backend)?;
-        tar.append_dir_all("files", snapshot_dir.join("files"))
-            .map_err(StorageError::backend)?;
-        tar.append_path_with_name(snapshot_dir.join("manifest.json"), "manifest.json")
-            .map_err(StorageError::backend)?;
-        tar.finish().map_err(StorageError::backend)?;
-        Ok(())
-    })
-    .await
-    .map_err(StorageError::backend)?
-}
-
-async fn extract_bundle(bundle_path: &Path, output_dir: &Path) -> Result<(), StorageError> {
-    let bundle_path = bundle_path.to_path_buf();
-    let output_dir = output_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
-        let bundle_file = std::fs::File::open(&bundle_path).map_err(StorageError::backend)?;
-        let decoder = ZstdDecoder::new(bundle_file).map_err(StorageError::backend)?;
-        let mut archive = Archive::new(decoder);
-        archive.unpack(&output_dir).map_err(StorageError::backend)?;
-        Ok(())
-    })
-    .await
-    .map_err(StorageError::backend)?
-}
-
-async fn verify_manifest_entries(
-    restore_dir: &Path,
-    manifest: &SnapshotManifest,
-) -> Result<(), StorageError> {
-    for entry in &manifest.entries {
-        let file_path = restore_dir.join(&entry.relative_path);
-        let actual_hash = hash_file(&file_path).await?;
-        if actual_hash != entry.sha256 {
-            return Err(StorageError::backend(format!(
-                "snapshot verification failed for {}",
-                entry.relative_path
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn manifest_object_key(snapshot_id: &str) -> String {
-    format!("snapshots/{snapshot_id}/manifest.json")
-}
-
-fn bundle_object_key(snapshot_id: &str) -> String {
-    format!("snapshots/{snapshot_id}/bundle.tar.zst")
+async fn hash_file_from_bytes_path(path: &Path) -> Result<String, StorageError> {
+    hash_file(path).await
 }
 
 fn latest_object_key() -> String {
     "latest.json".to_string()
 }
 
-fn snapshots_prefix() -> String {
+fn manifest_object_key(manifest_id: &str) -> String {
+    format!("manifests/{manifest_id}.json")
+}
+
+fn manifests_prefix() -> String {
+    "manifests/".to_string()
+}
+
+fn blob_object_key(sha256: &str) -> String {
+    format!("blobs/sha256/{sha256}")
+}
+
+fn blobs_prefix() -> String {
+    "blobs/sha256/".to_string()
+}
+
+fn legacy_snapshots_prefix() -> String {
     "snapshots/".to_string()
 }
 
@@ -1322,28 +1501,19 @@ fn snapshot_relative_to_root(
     )))
 }
 
-fn restore_root_dir(paths: &StoragePaths, relative_path: &str) -> Option<PathBuf> {
-    if relative_path.starts_with("files/sessions/") {
-        return Some(paths.sessions_dir.clone());
-    }
-    if relative_path.starts_with("files/archives/") {
-        return Some(paths.archives_dir.clone());
-    }
-    if relative_path.starts_with("files/workspace/") {
-        return Some(paths.workspace_dir.clone());
-    }
-    if relative_path.starts_with("files/skills/") {
-        return Some(paths.skills_dir.clone());
-    }
-    if relative_path.starts_with("files/skills-registry/") {
-        return Some(paths.skills_registry_dir.clone());
-    }
-    None
-}
-
 async fn remove_file_and_sidecars(path: &Path) -> Result<(), StorageError> {
     if path_exists(path).await {
-        fs::remove_file(path).await.map_err(StorageError::backend)?;
+        if fs::metadata(path)
+            .await
+            .map_err(StorageError::backend)?
+            .is_dir()
+        {
+            fs::remove_dir_all(path)
+                .await
+                .map_err(StorageError::backend)?;
+        } else {
+            fs::remove_file(path).await.map_err(StorageError::backend)?;
+        }
     }
     if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
         let wal = path.with_file_name(format!("{name}-wal"));
@@ -1412,6 +1582,14 @@ mod tests {
             self.objects.lock().expect("objects lock").remove(key);
             Ok(())
         }
+
+        async fn exists(&self, key: &str) -> Result<bool, StorageError> {
+            Ok(self
+                .objects
+                .lock()
+                .expect("objects lock")
+                .contains_key(key))
+        }
     }
 
     fn test_root(name: &str) -> PathBuf {
@@ -1440,248 +1618,422 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn snapshot_manifest_tracks_selected_items() {
-        let service = create_service("manifest", "device-a").await;
+    async fn initial_sync_uploads_manifest_and_blobs() {
+        let service = create_service("initial-sync", "device-a").await;
         write_file(&service.paths.db_path, "db").await;
         write_file(&service.paths.sessions_dir.join("demo.jsonl"), "[]").await;
-        write_file(
-            &klaw_util::config_path(&service.paths.root_dir),
-            "name = 'demo'",
-        )
-        .await;
 
-        let plan = BackupPlan {
-            mode: SnapshotMode::SnapshotPrimary,
-            items: vec![BackupItem::Session, BackupItem::Config],
-        };
-        let prepared = service.create_snapshot(&plan).await.expect("snapshot");
-
-        assert_eq!(
-            prepared.manifest.included_items,
-            vec![BackupItem::Session, BackupItem::Config]
-        );
-        assert!(prepared
-            .manifest
-            .entries
-            .iter()
-            .any(|entry| entry.relative_path == "db/klaw.db"));
-        assert!(prepared
-            .manifest
-            .entries
-            .iter()
-            .any(|entry| entry.relative_path == "files/sessions/demo.jsonl"));
-        assert!(prepared
-            .manifest
-            .entries
-            .iter()
-            .any(|entry| entry.relative_path == "files/config.toml"));
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn snapshot_entries_have_matching_hashes() {
-        let service = create_service("hash", "device-a").await;
-        write_file(&service.paths.db_path, "db").await;
-
-        let prepared = service
-            .create_snapshot(&BackupPlan {
-                mode: SnapshotMode::SnapshotPrimary,
-                items: vec![BackupItem::Session],
-            })
-            .await
-            .expect("snapshot");
-
-        let entry = prepared
-            .manifest
-            .entries
-            .iter()
-            .find(|entry| entry.relative_path == "db/klaw.db")
-            .expect("db entry");
-        let actual_hash = hash_file(&prepared.snapshot_dir.join("db/klaw.db"))
-            .await
-            .expect("hash");
-        assert_eq!(entry.sha256, actual_hash);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn restore_aborts_on_checksum_mismatch() {
-        let service = create_service("restore-fail", "device-a").await;
-        write_file(&service.paths.db_path, "old").await;
-
-        let prepared = service
-            .create_snapshot(&BackupPlan {
-                mode: SnapshotMode::SnapshotPrimary,
-                items: vec![BackupItem::Session],
-            })
-            .await
-            .expect("snapshot");
-        service.upload_snapshot(&prepared).await.expect("upload");
-
-        let store = service.store.clone();
-        let manifest_key = manifest_object_key(&prepared.manifest.snapshot_id);
-        let mut manifest: SnapshotManifest =
-            serde_json::from_slice(&store.get_bytes(&manifest_key).await.expect("manifest"))
-                .expect("decode manifest");
-        manifest.entries[0].sha256 = "deadbeef".to_string();
-        store
-            .put_bytes(
-                &manifest_key,
-                serde_json::to_vec_pretty(&manifest).expect("manifest json"),
-                "application/json",
+        let result = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Session],
+                },
+                5,
             )
             .await
-            .expect("put manifest");
+            .expect("sync");
 
-        let err = service
-            .restore_snapshot(&prepared.manifest.snapshot_id)
+        assert!(!result.manifest_id.is_empty());
+        assert_eq!(result.manifest.parent_manifest_id, None);
+        assert!(service.store.exists(&latest_object_key()).await.expect("latest"));
+        assert!(service
+            .store
+            .exists(&manifest_object_key(&result.manifest_id))
             .await
-            .expect_err("restore should fail");
-        assert!(err.to_string().contains("verification failed"));
+            .expect("manifest"));
+        for entry in result.manifest.entries.iter().filter(|entry| !entry.deleted) {
+            assert!(service
+                .store
+                .exists(&blob_object_key(&entry.sha256))
+                .await
+                .expect("blob"));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeat_sync_deduplicates_existing_blobs() {
+        let service = create_service("repeat-sync", "device-a").await;
+        write_file(&service.paths.db_path, "db").await;
+        let first = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Session],
+                },
+                5,
+            )
+            .await
+            .expect("first sync");
+        let blob_keys_before = service.store.list_keys(&blobs_prefix()).await.expect("keys");
+
+        let second = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Session],
+                },
+                5,
+            )
+            .await
+            .expect("second sync");
+        let blob_keys_after = service.store.list_keys(&blobs_prefix()).await.expect("keys");
+
+        assert_ne!(first.manifest_id, second.manifest_id);
+        assert_eq!(blob_keys_before, blob_keys_after);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn remote_manifest_wins_on_local_content_change() {
+        let service = create_service("changed-blob", "device-a").await;
+        write_file(&service.paths.db_path, "remote").await;
+        let first = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Session],
+                },
+                5,
+            )
+            .await
+            .expect("first sync");
+
+        write_file(&service.paths.db_path, "local").await;
+        let second = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Session],
+                },
+                5,
+            )
+            .await
+            .expect("second sync");
 
         let current = fs::read_to_string(&service.paths.db_path)
             .await
             .expect("read db");
-        assert_eq!(current, "old");
+        assert_eq!(current, "remote");
+        assert_eq!(
+            first.manifest.entries[0].sha256,
+            second.manifest.entries[0].sha256
+        );
+        assert_eq!(
+            service.store.list_keys(&blobs_prefix()).await.expect("keys").len(),
+            1
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn remote_snapshot_list_sorts_latest_first() {
-        let store = Arc::new(MockStore::default());
-        let paths_a = StoragePaths::from_root(test_root("list-a"));
-        paths_a.ensure_dirs().await.expect("dirs a");
-        let service_a = BackupService::with_store(
-            paths_a,
-            store.clone(),
-            Arc::new(DefaultDatabaseSnapshotExporter),
-            "device-a".to_string(),
+    async fn duplicate_content_is_stored_once() {
+        let service = create_service("dedupe", "device-a").await;
+        write_file(&service.paths.skills_dir.join("a.txt"), "same").await;
+        write_file(&service.paths.skills_dir.join("b.txt"), "same").await;
+
+        let result = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                5,
+            )
+            .await
+            .expect("sync");
+
+        assert_eq!(result.manifest.entries.len(), 2);
+        let unique_hashes = result
+            .manifest
+            .entries
+            .iter()
+            .map(|entry| entry.sha256.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(unique_hashes.len(), 1);
+        assert_eq!(
+            service.store.list_keys(&blobs_prefix()).await.expect("keys").len(),
+            1
         );
-        let paths_b = StoragePaths::from_root(test_root("list-b"));
-        paths_b.ensure_dirs().await.expect("dirs b");
-        let service_b = BackupService::with_store(
-            paths_b,
-            store.clone(),
-            Arc::new(DefaultDatabaseSnapshotExporter),
-            "device-b".to_string(),
-        );
-
-        write_file(&service_a.paths.db_path, "a").await;
-        write_file(&service_b.paths.db_path, "b").await;
-
-        let first = service_a
-            .create_snapshot(&BackupPlan {
-                mode: SnapshotMode::SnapshotPrimary,
-                items: vec![BackupItem::Session],
-            })
-            .await
-            .expect("first");
-        service_a
-            .upload_snapshot(&first)
-            .await
-            .expect("upload first");
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        let second = service_b
-            .create_snapshot(&BackupPlan {
-                mode: SnapshotMode::SnapshotPrimary,
-                items: vec![BackupItem::Session],
-            })
-            .await
-            .expect("second");
-        service_b
-            .upload_snapshot(&second)
-            .await
-            .expect("upload second");
-
-        let listed = service_a.list_remote_snapshots().await.expect("list");
-        assert_eq!(listed.len(), 2);
-        assert_eq!(listed[0].device_id, "device-b");
-        assert_eq!(listed[1].device_id, "device-a");
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn cleanup_remote_snapshots_keeps_only_latest_n() {
-        let store = Arc::new(MockStore::default());
-        let paths_a = StoragePaths::from_root(test_root("cleanup-a"));
-        paths_a.ensure_dirs().await.expect("dirs a");
-        let service = BackupService::with_store(
-            paths_a,
-            store.clone(),
-            Arc::new(DefaultDatabaseSnapshotExporter),
-            "device-a".to_string(),
-        );
+    async fn remote_hash_mismatch_reconciles_local_from_remote() {
+        let service = create_service("remote-wins", "device-a").await;
+        write_file(&service.paths.db_path, "remote").await;
+        let remote = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Session],
+                },
+                5,
+            )
+            .await
+            .expect("remote sync");
 
-        write_file(&service.paths.db_path, "a").await;
+        write_file(&service.paths.db_path, "local").await;
+        let next = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Session],
+                },
+                5,
+            )
+            .await
+            .expect("reconciled sync");
+
+        let current = fs::read_to_string(&service.paths.db_path)
+            .await
+            .expect("read db");
+        assert_eq!(current, "remote");
+        assert_eq!(next.manifest.entries[0].sha256, remote.manifest.entries[0].sha256);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn remote_manifest_recreates_locally_deleted_file() {
+        let service = create_service("tombstone", "device-a").await;
+        write_file(&service.paths.skills_dir.join("note.txt"), "keep").await;
         let first = service
-            .create_snapshot(&BackupPlan {
-                mode: SnapshotMode::SnapshotPrimary,
-                items: vec![BackupItem::Session],
-            })
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                5,
+            )
             .await
-            .expect("first");
-        service.upload_snapshot(&first).await.expect("upload first");
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            .expect("first sync");
+
+        fs::remove_file(service.paths.skills_dir.join("note.txt"))
+            .await
+            .expect("remove local");
         let second = service
-            .create_snapshot(&BackupPlan {
-                mode: SnapshotMode::SnapshotPrimary,
-                items: vec![BackupItem::Session],
-            })
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                5,
+            )
             .await
-            .expect("second");
+            .expect("second sync");
+
+        let current = fs::read_to_string(service.paths.skills_dir.join("note.txt"))
+            .await
+            .expect("recreated local file");
+        assert_eq!(current, "keep");
+        assert!(first.manifest.entries.iter().all(|entry| !entry.deleted));
+        assert!(second.manifest.entries.iter().all(|entry| !entry.deleted));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn restore_manifest_replays_historic_state() {
+        let service = create_service("restore-history", "device-a").await;
+        write_file(&service.paths.skills_dir.join("note.txt"), "v1").await;
+        let first = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                5,
+            )
+            .await
+            .expect("first sync");
+        write_file(&service.paths.skills_dir.join("note.txt"), "v2").await;
+        let _second = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                5,
+            )
+            .await
+            .expect("second sync");
+
         service
-            .upload_snapshot(&second)
+            .restore_snapshot(&first.manifest_id)
             .await
-            .expect("upload second");
+            .expect("restore old manifest");
+        let current = fs::read_to_string(service.paths.skills_dir.join("note.txt"))
+            .await
+            .expect("restored body");
+        assert_eq!(current, "v1");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cleanup_keeps_latest_manifests_and_live_blobs() {
+        let service = create_service("cleanup", "device-a").await;
+        write_file(&service.paths.skills_dir.join("note.txt"), "v1").await;
+        let first = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                10,
+            )
+            .await
+            .expect("first sync");
+        write_file(&service.paths.skills_dir.join("note.txt"), "v2").await;
+        let second = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                10,
+            )
+            .await
+            .expect("second sync");
 
         service
             .cleanup_remote_snapshots(1)
             .await
-            .expect("cleanup snapshots");
+            .expect("cleanup");
 
-        let listed = service.list_remote_snapshots().await.expect("list");
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].snapshot_id, second.manifest.snapshot_id);
-        assert!(!store
-            .objects
-            .lock()
-            .expect("objects lock")
-            .contains_key(&manifest_object_key(&first.manifest.snapshot_id)));
-        let latest: SnapshotListItem = serde_json::from_slice(
-            &store
+        assert!(!service
+            .store
+            .exists(&manifest_object_key(&first.manifest_id))
+            .await
+            .expect("first manifest"));
+        assert!(service
+            .store
+            .exists(&manifest_object_key(&second.manifest_id))
+            .await
+            .expect("second manifest"));
+        assert_eq!(
+            service.store.list_keys(&blobs_prefix()).await.expect("blobs").len(),
+            1
+        );
+        let latest: LatestRef = serde_json::from_slice(
+            &service
+                .store
                 .get_bytes(&latest_object_key())
                 .await
-                .expect("latest object"),
+                .expect("latest"),
         )
         .expect("decode latest");
-        assert_eq!(latest.snapshot_id, second.manifest.snapshot_id);
+        assert_eq!(latest.manifest_id, second.manifest_id);
     }
 
-    #[test]
-    fn s3_config_requires_bucket() {
-        let config = S3SnapshotStoreConfig {
-            bucket: String::new(),
-            ..Default::default()
-        };
-        let err = config.validate().expect_err("config should fail");
-        assert!(err.to_string().contains("bucket"));
+    #[tokio::test(flavor = "current_thread")]
+    async fn restore_rejects_blob_checksum_mismatch() {
+        let service = create_service("bad-blob", "device-a").await;
+        write_file(&service.paths.skills_dir.join("note.txt"), "body").await;
+        let result = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                5,
+            )
+            .await
+            .expect("sync");
+
+        let entry = result.manifest.entries[0].clone();
+        service
+            .store
+            .put_bytes(
+                &blob_object_key(&entry.sha256),
+                b"corrupted".to_vec(),
+                "application/octet-stream",
+            )
+            .await
+            .expect("overwrite blob");
+
+        let err = service
+            .restore_snapshot(&result.manifest_id)
+            .await
+            .expect_err("restore should fail");
+        assert!(err.to_string().contains("verification failed"));
     }
 
-    #[test]
-    fn s3_config_requires_direct_credentials_in_pairs() {
-        let config = S3SnapshotStoreConfig {
-            bucket: "demo".to_string(),
-            access_key: "only-access".to_string(),
-            ..Default::default()
-        };
-        let err = config.validate().expect_err("config should fail");
-        assert!(err.to_string().contains("access_key and secret_key"));
+    #[tokio::test(flavor = "current_thread")]
+    async fn legacy_snapshot_layout_is_rejected() {
+        let service = create_service("legacy", "device-a").await;
+        service
+            .store
+            .put_bytes(
+                "snapshots/old/bundle.tar.zst",
+                b"bundle".to_vec(),
+                "application/zstd",
+            )
+            .await
+            .expect("put bundle");
+
+        let err = service
+            .list_remote_snapshots()
+            .await
+            .expect_err("legacy should fail");
+        assert!(err.to_string().contains("legacy bundle.tar.zst"));
     }
 
-    #[test]
-    fn s3_custom_endpoint_requires_explicit_credentials() {
-        let config = S3SnapshotStoreConfig {
-            endpoint: "https://example.r2.cloudflarestorage.com".to_string(),
-            bucket: "demo".to_string(),
-            ..Default::default()
+    #[tokio::test(flavor = "current_thread")]
+    async fn remote_tombstone_removes_local_file_before_publish() {
+        let service = create_service("remote-tombstone", "device-a").await;
+        write_file(&service.paths.skills_dir.join("note.txt"), "body").await;
+        let initial = service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                5,
+            )
+            .await
+            .expect("initial sync");
+
+        let tombstone = SyncManifest {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            manifest_id: build_manifest_id(),
+            parent_manifest_id: Some(initial.manifest_id.clone()),
+            created_at: now_ms(),
+            device_id: "device-b".to_string(),
+            app_version: "test".to_string(),
+            mode: SnapshotMode::ManifestVersioned,
+            included_items: vec![BackupItem::Skills],
+            entries: vec![ManifestEntry {
+                relative_path: "files/skills/note.txt".to_string(),
+                sha256: String::new(),
+                size_bytes: 0,
+                kind: ManifestEntryKind::File,
+                deleted: true,
+                modified_at_ms: Some(now_ms()),
+            }],
         };
-        let err = config.validate().expect_err("config should fail");
-        assert!(err.to_string().contains("custom endpoint requires"));
+        service
+            .store
+            .put_bytes(
+                &manifest_object_key(&tombstone.manifest_id),
+                serde_json::to_vec_pretty(&tombstone).expect("manifest json"),
+                "application/json",
+            )
+            .await
+            .expect("put tombstone manifest");
+        service
+            .store
+            .put_bytes(
+                &latest_object_key(),
+                serde_json::to_vec_pretty(&LatestRef::from_manifest(&tombstone))
+                    .expect("latest"),
+                "application/json",
+            )
+            .await
+            .expect("put latest");
+
+        service
+            .create_upload_and_cleanup_snapshot(
+                &BackupPlan {
+                    mode: SnapshotMode::ManifestVersioned,
+                    items: vec![BackupItem::Skills],
+                },
+                5,
+            )
+            .await
+            .expect("sync after tombstone");
+        assert!(!path_exists(&service.paths.skills_dir.join("note.txt")).await);
     }
 }

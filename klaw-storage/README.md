@@ -8,7 +8,7 @@
 - provide session, cron, and heartbeat persistence stores
 - expose generic SQLite access used by higher-level modules such as memory and archive services
 - persist session routing/model state used by IM command routing (`active_session_key`, `model_provider`, `model`)
-- create and restore snapshot bundles for the managed data root via S3-compatible object storage
+- sync and restore versioned manifests plus deduplicated blobs for the managed data root via S3-compatible object storage
 
 ## Data Layout
 
@@ -38,8 +38,9 @@
 - heartbeat records keep session-bound autonomous wakeups separate from isolated cron jobs
 - `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`
 - `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`
-- `BackupService` snapshots managed SQLite/filesystem state into `manifest.json` plus `bundle.tar.zst`, uploads them, and restores full snapshots after checksum verification
-- `BackupService` can emit progress updates for snapshot preparation, object upload, and retention cleanup so callers can surface live backup state
-- retention cleanup keeps only the configured latest snapshot count and refreshes `latest.json` after pruning
+- `BackupService` stages managed SQLite/filesystem state into versioned manifests plus content-addressed blobs, uploads only missing blobs, and restores historical manifests after checksum verification
+- `BackupService` keeps `latest.json` as the current-manifest ref while preserving `manifests/<id>.json` history for restore and GC
+- `BackupService` can emit progress updates for remote reconciliation, manifest preparation, blob upload, manifest publish, and retention cleanup so callers can surface live sync state
+- retention cleanup keeps only the configured latest manifest count, refreshes `latest.json`, and removes unreferenced blobs after pruning
 - S3 snapshot config accepts either direct credentials (`access_key`, `secret_key`, `session_token`) or environment-variable indirection, and empty device IDs normalize to the local hostname
 - custom S3 endpoints such as R2 must provide explicit credentials or credential env names instead of relying on AWS shared-profile discovery

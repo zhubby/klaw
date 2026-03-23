@@ -37,7 +37,7 @@
   - tool
   - analyze dashboard
   - system (tmp directory usage and cleanup)
-  - setting (general/network plus S3 snapshot backup and restore)
+  - setting (general/network plus versioned manifest sync, retention, and restore)
 - system-monitor (real-time CPU/memory/data-dir/uptime cards in a 2x2 equal-width layout, plus detailed system information)
 - logs panel (live tracing stream in-process with level filters, keyword search, pause stream, auto-scroll, clear, export, and bounded in-memory buffer)
 - analyze dashboard panel (local observability-backed tool and model analytics with time-range switching, provider/model filters, token composition, error breakdown, tool success breakdown, and trend sampling)
@@ -97,10 +97,10 @@
   - open a detail popup that renders the cached MCP `tools/list` response for the selected server
 - Setting panel features:
   - persist sync settings in `settings.json`, including S3 endpoint/region/bucket/prefix, backup scope, retention, schedule, hostname-based device ID, and both direct or env-backed credentials
-  - trigger manual snapshot backup uploads
-  - show a live progress bar plus stage/detail text while manual snapshot backup is preparing, uploading, and pruning remote history
-  - trigger manual retention cleanup against remote snapshots
-  - list remote snapshots and manually restore a selected snapshot
+  - trigger manual manifest sync runs against the remote blob store
+  - show a live progress bar plus stage/detail text while manual sync is reconciling, uploading blobs, publishing manifests, and pruning remote history
+  - trigger manual retention cleanup against remote manifests
+  - list remote manifests and manually restore a selected manifest version
   - surface startup remote-update detection and shared sync task status in the Sync UI
   - validate custom S3 endpoint credentials up front so R2-style endpoints do not rely on AWS shared-profile discovery
 - Session panel features:

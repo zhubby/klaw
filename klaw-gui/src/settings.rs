@@ -158,7 +158,7 @@ pub enum SyncProvider {
 #[serde(rename_all = "snake_case")]
 pub enum SyncMode {
     #[default]
-    SnapshotPrimary,
+    ManifestVersioned,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -253,9 +253,9 @@ pub struct SyncSettings {
     #[serde(default)]
     pub retention: RetentionPolicy,
     #[serde(default)]
-    pub last_snapshot_at: Option<i64>,
+    pub last_sync_at: Option<i64>,
     #[serde(default)]
-    pub last_snapshot_id: Option<String>,
+    pub last_manifest_id: Option<String>,
     #[serde(default = "default_device_id")]
     pub device_id: String,
 }
@@ -265,13 +265,13 @@ impl Default for SyncSettings {
         Self {
             enabled: false,
             provider: SyncProvider::S3,
-            mode: SyncMode::SnapshotPrimary,
+            mode: SyncMode::ManifestVersioned,
             backup_items: default_backup_items(),
             schedule: SyncSchedule::default(),
             s3: S3SyncConfig::default(),
             retention: RetentionPolicy::default(),
-            last_snapshot_at: None,
-            last_snapshot_id: None,
+            last_sync_at: None,
+            last_manifest_id: None,
             device_id: default_device_id(),
         }
     }
@@ -430,7 +430,7 @@ mod tests {
         settings.sync.s3.bucket = "demo".to_string();
         settings.sync.s3.access_key = "ak".to_string();
         settings.sync.s3.secret_key = "sk".to_string();
-        settings.sync.last_snapshot_id = Some("snap-1".to_string());
+        settings.sync.last_manifest_id = Some("manifest-1".to_string());
 
         let json = serde_json::to_string_pretty(&settings).unwrap();
         let restored: AppSettings = serde_json::from_str(&json).unwrap();
@@ -443,7 +443,7 @@ mod tests {
         assert_eq!(restored.sync.s3.bucket, "demo");
         assert_eq!(restored.sync.s3.access_key, "ak");
         assert_eq!(restored.sync.s3.secret_key, "sk");
-        assert_eq!(restored.sync.last_snapshot_id.as_deref(), Some("snap-1"));
+        assert_eq!(restored.sync.last_manifest_id.as_deref(), Some("manifest-1"));
     }
 
     #[test]
@@ -461,7 +461,7 @@ mod tests {
 
         assert_eq!(settings.schema_version, SETTINGS_SCHEMA_VERSION);
         assert_eq!(settings.sync.provider, SyncProvider::S3);
-        assert_eq!(settings.sync.mode, SyncMode::SnapshotPrimary);
+        assert_eq!(settings.sync.mode, SyncMode::ManifestVersioned);
         assert!(!settings.sync.device_id.is_empty());
     }
 

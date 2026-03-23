@@ -316,7 +316,7 @@ enum SyncSupervisorMessage {
         local_last_at: Option<i64>,
     },
     AutoBackupFinished {
-        snapshot_id: String,
+        manifest_id: String,
         created_at: i64,
     },
     RetentionCleanupFinished {
@@ -342,8 +342,8 @@ impl SyncSupervisor {
 
         let settings = load_settings();
         sync_runtime_sync_from_settings(
-            settings.sync.last_snapshot_id.clone(),
-            settings.sync.last_snapshot_at,
+            settings.sync.last_manifest_id.clone(),
+            settings.sync.last_sync_at,
         );
         if !self.startup_check_completed
             && !self.startup_check_running
@@ -370,7 +370,7 @@ impl SyncSupervisor {
         let now_ms = OffsetDateTime::now_utc().unix_timestamp() * 1000;
         let should_backup = settings
             .sync
-            .last_snapshot_at
+            .last_sync_at
             .map(|last| now_ms.saturating_sub(last) >= interval_ms)
             .unwrap_or(true);
         if should_backup {
@@ -384,9 +384,9 @@ impl SyncSupervisor {
 
     fn spawn_task(&mut self, kind: SyncRuntimeTaskKind, settings: AppSettings) {
         let label = match kind {
-            SyncRuntimeTaskKind::StartupCheck => "Checking remote snapshots",
-            SyncRuntimeTaskKind::AutoBackup => "Automatic snapshot backup",
-            SyncRuntimeTaskKind::RetentionCleanup => "Cleaning up remote snapshots",
+            SyncRuntimeTaskKind::StartupCheck => "Checking remote manifests",
+            SyncRuntimeTaskKind::AutoBackup => "Automatic manifest sync",
+            SyncRuntimeTaskKind::RetentionCleanup => "Cleaning up remote manifests",
             SyncRuntimeTaskKind::ManualBackup
             | SyncRuntimeTaskKind::RefreshRemoteSnapshots
             | SyncRuntimeTaskKind::RestoreSnapshot => return,
@@ -443,7 +443,7 @@ impl SyncSupervisor {
                 sync_runtime_set_remote_snapshots(snapshots.clone());
                 let newest = snapshots.first().cloned();
                 if let Some(remote) = newest {
-                    let remote_id = remote.snapshot_id.clone();
+                    let remote_id = remote.manifest_id.clone();
                     let remote_at = remote.created_at;
                     let remote_is_newer = match local_last_at {
                         Some(local_at) => remote_at > local_at,
@@ -453,7 +453,7 @@ impl SyncSupervisor {
                     if remote_is_newer && remote_is_different {
                         sync_runtime_set_remote_update(Some(remote.clone()));
                         notifications.info(format!(
-                            "Remote snapshot available: {remote_id}. Open Setting > Sync to restore."
+                            "Remote manifest available: {remote_id}. Open Setting > Sync to restore."
                         ));
                     } else {
                         sync_runtime_set_remote_update(None);
@@ -463,18 +463,18 @@ impl SyncSupervisor {
                 }
             }
             SyncSupervisorMessage::AutoBackupFinished {
-                snapshot_id,
+                manifest_id,
                 created_at,
             } => {
                 sync_runtime_finish_task(SyncRuntimeTaskKind::AutoBackup);
                 let mut settings = load_settings();
-                settings.sync.last_snapshot_id = Some(snapshot_id.clone());
-                settings.sync.last_snapshot_at = Some(created_at);
+                settings.sync.last_manifest_id = Some(manifest_id.clone());
+                settings.sync.last_sync_at = Some(created_at);
                 let _ = save_settings(&settings);
-                sync_runtime_set_last_snapshot(Some(snapshot_id.clone()), Some(created_at));
+                sync_runtime_set_last_snapshot(Some(manifest_id.clone()), Some(created_at));
                 sync_runtime_set_remote_update(None);
                 notifications.success(format!(
-                    "Automatic snapshot backup completed: {snapshot_id}."
+                    "Automatic manifest sync completed: {manifest_id}."
                 ));
             }
             SyncSupervisorMessage::RetentionCleanupFinished { snapshots } => {
@@ -517,7 +517,7 @@ fn build_sync_store_config(settings: &AppSettings) -> S3SnapshotStoreConfig {
 fn build_backup_plan(settings: &AppSettings) -> BackupPlan {
     BackupPlan {
         mode: match settings.sync.mode {
-            SyncMode::SnapshotPrimary => SnapshotMode::SnapshotPrimary,
+            SyncMode::ManifestVersioned => SnapshotMode::ManifestVersioned,
         },
         items: settings
             .sync
@@ -546,8 +546,8 @@ fn run_startup_check_task(settings: &AppSettings) -> Result<SyncSupervisorMessag
         .map_err(|err| err.to_string())?;
     let config = build_sync_store_config(settings);
     let device_id = settings.sync.device_id.clone();
-    let local_last_id = settings.sync.last_snapshot_id.clone();
-    let local_last_at = settings.sync.last_snapshot_at;
+    let local_last_id = settings.sync.last_manifest_id.clone();
+    let local_last_at = settings.sync.last_sync_at;
     runtime.block_on(async move {
         let service = BackupService::open_s3_default(config, device_id)
             .await
@@ -587,7 +587,7 @@ fn run_auto_backup_task(settings: &AppSettings) -> Result<SyncSupervisorMessage,
             .map_err(|err| err.to_string())?;
         sync_runtime_set_remote_snapshots(snapshots);
         Ok(SyncSupervisorMessage::AutoBackupFinished {
-            snapshot_id: result.snapshot_id,
+            manifest_id: result.manifest_id,
             created_at: result.manifest.created_at,
         })
     })

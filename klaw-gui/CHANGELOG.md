@@ -11,6 +11,8 @@
 
 ### Changed
 
+- `Setting > Sync` now uses versioned manifest history plus content-addressed blob sync terminology throughout the UI, including last-manifest tracking, remote-manifest lists, and restore messaging
+- startup checks, auto sync, and retention cleanup now operate on remote manifests instead of bundle snapshots while preserving the shared sync runtime state between the shell supervisor and settings panel
 - `MCP` global settings moved behind a `Config` dialog instead of rendering inline
 - `MCP` runtime status refresh now reads a manager snapshot instead of triggering a full sync, avoiding long-lived GUI spinners while keeping polling off the GUI thread
 - `Memory` panel provider selection now reads available providers from `config.toml` and fills the embedding model from the selected provider's default model

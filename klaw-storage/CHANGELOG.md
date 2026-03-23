@@ -3,6 +3,11 @@
 ## 2026-03-23
 
 ### Changed
+- replaced bundle-based S3 snapshots with a versioned manifest plus content-addressed blob store; `latest.json` now points at the current manifest while remote history lives under `manifests/<id>.json`
+- `BackupService` now reconciles local files against the remote manifest baseline before publishing a new manifest, uploads only missing blobs, and restores historical manifests directly from blob objects
+- remote retention cleanup now prunes unreferenced blobs in addition to expired manifests, and legacy `bundle.tar.zst` layouts are rejected explicitly
+
+### Changed
 - custom S3 endpoints such as R2 now require explicit credentials or credential env names up front, avoiding fallback to missing AWS shared-profile files during sync startup and backup
 - `BackupService` now exposes progress callbacks for snapshot preparation, upload, and retention cleanup so GUI clients can render live backup progress
 - session route initialization no longer persists global default provider/model into every session row; `model_provider` / `model` now represent explicit session overrides only
