@@ -3,10 +3,10 @@ use anyhow::Context;
 const APP_ICON_PNG: &[u8] = include_bytes!("../assets/icons/logo.iconset/icon_512x512@2x.png");
 
 #[cfg(target_os = "macos")]
-const TRAY_ICON_PNG: &[u8] = include_bytes!("../assets/icons/logo.iconset/icon_16x16@2x.png");
+const TRAY_ICON_PNG: &[u8] = include_bytes!("../assets/icons/logo.iconset/status_bar_icon.png");
 
 #[cfg(not(target_os = "macos"))]
-const TRAY_ICON_PNG: &[u8] = include_bytes!("../assets/icons/logo.iconset/icon_32x32.png");
+const TRAY_ICON_PNG: &[u8] = include_bytes!("../assets/icons/logo.iconset/status_bar_icon.png");
 
 struct DecodedIcon {
     rgba: Vec<u8>,
