@@ -128,35 +128,35 @@ impl Tool for MemoryTool {
     }
 
     fn description(&self) -> &str {
-        "Add and search memory for this agent. Use `add` to store facts and `search` to recall relevant context. Scope can be \"long_term\" (persistent across sessions) or \"session\" (current session only, default)."
+        "Persistent memory store for the agent. Use `add` to save important facts and `search` to retrieve them. Memories persist across conversations when stored with scope=\"long_term\"."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Memory operation request. Use scope to control persistence: \"long_term\" for persistent memories, \"session\" for current session only.",
+            "description": "Add or search memories. For `add`: use scope to choose persistence. For `search`: defaults to long_term only; use \"session\" to include current session memories.",
             "oneOf": [
                 {
-                    "description": "Add one memory record. Use \"long_term\" scope for persistent memories, \"session\" for session-only.",
+                    "description": "Store a fact or piece of context. Use \"long_term\" for facts that should persist across sessions, \"session\" for temporary notes.",
                     "properties": {
                         "action": { "const": "add" },
                         "content": {
                             "type": "string",
-                            "description": "Memory text content."
+                            "description": "The fact or context to remember."
                         },
                         "scope": {
                             "type": "string",
                             "enum": ["session", "long_term"],
-                            "description": "Memory scope: \"session\" (current session only, default) or \"long_term\" (persistent)."
+                            "description": "How long to retain this memory. \"long_term\": persists forever. \"session\": discarded after conversation ends (default)."
                         },
                         "metadata": {
                             "type": "object",
-                            "description": "Optional structured metadata for filtering/traceability.",
+                            "description": "Optional tags or structured data for this memory.",
                             "additionalProperties": true
                         },
                         "pinned": {
                             "type": "boolean",
-                            "description": "Pinned flag for add.",
+                            "description": "If true, this memory appears first in search results.",
                             "default": false
                         }
                     },
@@ -164,17 +164,17 @@ impl Tool for MemoryTool {
                     "additionalProperties": false
                 },
                 {
-                    "description": "Search memory records. Searches both session and long_term scopes by default.",
+                    "description": "Search for relevant memories by keyword. By default searches long_term only; use \"session\" to also include current session memories.",
                     "properties": {
                         "action": { "const": "search" },
                         "query": {
                             "type": "string",
-                            "description": "Search query text."
+                            "description": "Keywords to search for in stored memories."
                         },
                         "scope": {
                             "type": "string",
                             "enum": ["session", "long_term"],
-                            "description": "Search scope: \"long_term\" (default, persistent) or \"session\" (merges session + long_term)."
+                            "description": "Which memories to search. \"long_term\": only persistent memories (default). \"session\": merges current session + long_term memories."
                         }
                     },
                     "required": ["action", "query"],
