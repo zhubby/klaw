@@ -7,6 +7,7 @@
 - changed workspace prompt template backfill so `BOOTSTRAP.md` is created only during the first workspace initialization and is not recreated after later deletion
 - changed runtime system prompt assembly to inline workspace `AGENTS.md` / `SOUL.md` / `IDENTITY.md` / `TOOLS.md` content ahead of the existing runtime sections, added a leading workspace path/role descriptor, and limited on-demand doc guidance to `USER.md`, `HEARTBEAT.md`, and `BOOTSTRAP.md`
 - aligned prompt templates with the new runtime prompt model by treating `USER.md` as on-demand context, updating `SOUL.md` continuity wording, and removing raw credentials from `TOOLS.md`
+- updated current-message attachment guidance so turns with archived files explicitly steer the model toward `archive.get` for known ids and `list_session_attachments` for earlier files from the same session
 
 ### Removed
 - removed the unused deprecated `load_or_create_system_prompt*` compatibility shims from `klaw-core`

@@ -1582,7 +1582,10 @@ fn augment_user_content_with_attachment_context(
         return user_content.to_string();
     }
 
-    let mut lines = vec!["Current message attachments:".to_string()];
+    let mut lines = vec![
+        "Current message attachments:".to_string(),
+        "If an attachment below already includes an archive_id, prefer calling the archive tool with action=get and that exact archive_id. Use list_current_attachments only to confirm attachments from the current message, and use list_session_attachments when the user is referring to files from earlier turns in this same session.".to_string(),
+    ];
     for (idx, attachment) in attachments.iter().enumerate() {
         let Some(item) = attachment.as_object() else {
             continue;
@@ -1709,7 +1712,9 @@ mod tests {
             })],
         );
         assert!(content.contains("Current message attachments:"));
+        assert!(content.contains("prefer calling the archive tool with action=get"));
         assert!(content.contains("archive_id=arch-1"));
+        assert!(content.contains("use list_session_attachments"));
         assert!(content.contains("access=read_only archive"));
         assert!(content.contains("copy the file into workspace first"));
     }

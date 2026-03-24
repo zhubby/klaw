@@ -13,6 +13,7 @@ use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 const META_CURRENT_ATTACHMENTS_KEY: &str = "agent.current_attachments";
 const DEFAULT_READ_MAX_CHARS: usize = 16_000;
 const MAX_READ_MAX_CHARS: usize = 200_000;
+const DEFAULT_SESSION_ATTACHMENT_LIMIT: i64 = 50;
 
 pub struct ArchiveTool {
     service: Arc<dyn ArchiveService>,
@@ -216,6 +217,27 @@ impl ArchiveTool {
             "created_at_ms": record.created_at_ms,
         })
     }
+
+    async fn session_attachments(&self, ctx: &ToolContext) -> Result<Vec<Value>, ToolError> {
+        let records = self
+            .service
+            .find(klaw_archive::ArchiveQuery {
+                session_key: Some(ctx.session_key.clone()),
+                limit: DEFAULT_SESSION_ATTACHMENT_LIMIT,
+                ..Default::default()
+            })
+            .await
+            .map_err(|err| {
+                ToolError::ExecutionFailed(format!(
+                    "failed to list session archive records for `{}`: {err}",
+                    ctx.session_key
+                ))
+            })?;
+        Ok(records
+            .iter()
+            .map(Self::archive_record_to_json)
+            .collect::<Vec<_>>())
+    }
 }
 
 #[async_trait]
@@ -225,16 +247,28 @@ impl Tool for ArchiveTool {
     }
 
     fn description(&self) -> &str {
-        "Inspect archived attachments for the current conversation. Archives are read-only source material. Use this tool to list current archived attachments, inspect archive metadata, read text-like archived files, or copy an archived file into workspace before editing."
+        "Inspect archived attachments for the current conversation. Prefer `get` when the current message already includes an `archive_id`. Use `list_current_attachments` only for current-message attachments, and `list_session_attachments` for archived attachments from the current session."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Read-only archive access and copy-to-workspace operations. Never modify files under archives/ directly; use copy_to_workspace first if you need to transform a file.",
+            "description": "Read-only archive access and copy-to-workspace operations. Prefer `get` when you already have an `archive_id`. Use `list_current_attachments` only to confirm attachments from the current user message, and `list_session_attachments` to inspect archived attachments from the broader current session. Never modify files under archives/ directly; use copy_to_workspace first if you need to transform a file.",
             "oneOf": [
                 {
-                    "description": "List archived attachments from the current user message context.",
+                    "description": "Inspect one archive record by archive id. Prefer this when the current message summary already includes an `archive_id`.",
+                    "properties": {
+                        "action": { "const": "get" },
+                        "archive_id": {
+                            "type": "string",
+                            "description": "Exact archive record id, usually taken from the current attachment summary. Pass the id exactly without extra punctuation."
+                        }
+                    },
+                    "required": ["action", "archive_id"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "List archived attachments from the current user message context only. Do not use this for historical session attachments.",
                     "properties": {
                         "action": { "const": "list_current_attachments" }
                     },
@@ -242,15 +276,11 @@ impl Tool for ArchiveTool {
                     "additionalProperties": false
                 },
                 {
-                    "description": "Inspect one archive record by archive id.",
+                    "description": "List archived attachments from the current session across prior turns. Use this when the user refers to earlier files from the same conversation.",
                     "properties": {
-                        "action": { "const": "get" },
-                        "archive_id": {
-                            "type": "string",
-                            "description": "Archive record id, usually taken from the current attachment summary."
-                        }
+                        "action": { "const": "list_session_attachments" }
                     },
-                    "required": ["action", "archive_id"],
+                    "required": ["action"],
                     "additionalProperties": false
                 },
                 {
@@ -292,12 +322,6 @@ impl Tool for ArchiveTool {
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let request = Self::parse_request(args)?;
         let payload = match request.action.as_str() {
-            "list_current_attachments" => json!({
-                "action": request.action,
-                "attachments": Self::current_attachments(ctx)?,
-                "archives_are_read_only": true,
-                "workflow": "copy_to_workspace_before_edit",
-            }),
             "get" => {
                 let archive_id = Self::require_archive_id(&request)?;
                 let record = self.service.get(archive_id).await.map_err(|err| {
@@ -307,6 +331,24 @@ impl Tool for ArchiveTool {
                     "action": request.action,
                     "record": Self::archive_record_to_json(&record),
                     "archives_are_read_only": true,
+                    "workflow": "copy_to_workspace_before_edit",
+                })
+            }
+            "list_current_attachments" => json!({
+                "action": request.action,
+                "attachments": Self::current_attachments(ctx)?,
+                "archives_are_read_only": true,
+                "workflow": "copy_to_workspace_before_edit",
+                "scope": "current_message_only",
+            }),
+            "list_session_attachments" => {
+                let attachments = self.session_attachments(ctx).await?;
+                json!({
+                    "action": request.action,
+                    "attachments": attachments,
+                    "archives_are_read_only": true,
+                    "scope": "current_session",
+                    "session_key": ctx.session_key,
                     "workflow": "copy_to_workspace_before_edit",
                 })
             }
@@ -386,7 +428,7 @@ impl Tool for ArchiveTool {
                 })
             }
             _ => return Err(ToolError::InvalidArgs(
-                "`action` must be one of list_current_attachments/get/read_text/copy_to_workspace"
+                "`action` must be one of get/list_current_attachments/list_session_attachments/read_text/copy_to_workspace"
                     .to_string(),
             )),
         };
@@ -412,6 +454,7 @@ mod tests {
     #[derive(Default)]
     struct FakeArchiveService {
         record: Mutex<Option<ArchiveRecord>>,
+        find_records: Mutex<Vec<ArchiveRecord>>,
         bytes: Mutex<Vec<u8>>,
         absolute_path: Mutex<Option<PathBuf>>,
     }
@@ -435,7 +478,11 @@ mod tests {
         }
 
         async fn find(&self, _query: ArchiveQuery) -> Result<Vec<ArchiveRecord>, ArchiveError> {
-            unreachable!()
+            Ok(self
+                .find_records
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .clone())
         }
 
         async fn get(&self, _archive_id: &str) -> Result<ArchiveRecord, ArchiveError> {
@@ -524,6 +571,57 @@ mod tests {
                 .content_for_model
                 .contains("\"archives_are_read_only\": true")
         );
+        assert!(
+            output
+                .content_for_model
+                .contains("\"scope\": \"current_message_only\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn list_session_attachments_reads_current_session_records() {
+        let tool = ArchiveTool {
+            service: Arc::new(FakeArchiveService {
+                find_records: Mutex::new(vec![ArchiveRecord {
+                    id: "arch-session-1".to_string(),
+                    source_kind: ArchiveSourceKind::ChannelInbound,
+                    media_kind: ArchiveMediaKind::Image,
+                    mime_type: Some("image/png".to_string()),
+                    extension: Some("png".to_string()),
+                    original_filename: Some("screen.png".to_string()),
+                    content_sha256: "hash-1".to_string(),
+                    size_bytes: 42,
+                    storage_rel_path: "archives/2026-03-24/arch-session-1.png".to_string(),
+                    session_key: Some("im:chat-1".to_string()),
+                    channel: Some("dingtalk".to_string()),
+                    chat_id: Some("chat-1".to_string()),
+                    message_id: Some("msg-1".to_string()),
+                    metadata_json: "{}".to_string(),
+                    created_at_ms: 1,
+                }]),
+                ..Default::default()
+            }),
+            storage_root_dir: None,
+        };
+        let output = tool
+            .execute(json!({"action": "list_session_attachments"}), &base_ctx())
+            .await
+            .expect("list session attachments");
+        assert!(
+            output
+                .content_for_model
+                .contains("\"scope\": \"current_session\"")
+        );
+        assert!(
+            output
+                .content_for_model
+                .contains("\"session_key\": \"im:chat-1\"")
+        );
+        assert!(
+            output
+                .content_for_model
+                .contains("\"id\": \"arch-session-1\"")
+        );
     }
 
     #[tokio::test]
@@ -550,6 +648,7 @@ mod tests {
                 metadata_json: "{}".to_string(),
                 created_at_ms: 0,
             })),
+            find_records: Mutex::new(Vec::new()),
             bytes: Mutex::new(b"hello archive".to_vec()),
             absolute_path: Mutex::new(Some(source)),
         };
