@@ -742,6 +742,10 @@ impl AgentLoop {
             "agent.parent_session_key".to_string(),
             serde_json::Value::String(msg.payload.session_key.clone()),
         );
+        tool_metadata.insert(
+            "agent.message_id".to_string(),
+            serde_json::Value::String(msg.header.message_id.to_string()),
+        );
         if !current_attachments.is_empty() {
             tool_metadata.insert(
                 META_CURRENT_ATTACHMENTS_KEY.to_string(),

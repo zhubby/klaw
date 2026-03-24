@@ -13,12 +13,13 @@ use tokio::fs;
 use tokio::process::Command;
 use tokio::time::{Instant, sleep, timeout};
 
-use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
+use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolSignal};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 20;
 const DEFAULT_HISTORY_LINES: usize = 200;
 const DEFAULT_WAIT_HISTORY_LINES: usize = 2000;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
+const DEFAULT_MAX_AUTO_OBSERVE_STEPS: u32 = 5;
 const SOCKET_DIR_ENV: &str = "KLAW_TMUX_SOCKET_DIR";
 const SOCKET_FILE_NAME: &str = "k.sock";
 
@@ -35,7 +36,17 @@ struct SessionMetadata {
     default_target: String,
     created_at: String,
     last_used_at: String,
+    #[serde(default)]
+    last_turn_id: Option<String>,
+    #[serde(default)]
+    observation_steps_used: u32,
     purpose: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObservationStateUpdate {
+    Reset,
+    Increment,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +94,37 @@ impl TerminalMultiplexerTool {
                 ToolError::InvalidArgs("`poll_interval_ms` must be an integer".to_string())
             }),
             None => Ok(DEFAULT_POLL_INTERVAL_MS),
+        }
+    }
+
+    fn current_turn_id(ctx: &ToolContext) -> Option<String> {
+        ctx.metadata
+            .get("agent.message_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    }
+
+    fn max_auto_observe_steps(ctx: &ToolContext) -> Result<u32, ToolError> {
+        match ctx
+            .metadata
+            .get("terminal_multiplexer.max_auto_observe_steps")
+        {
+            Some(value) => {
+                let value = value.as_u64().ok_or_else(|| {
+                    ToolError::InvalidArgs(
+                        "`terminal_multiplexer.max_auto_observe_steps` must be an integer"
+                            .to_string(),
+                    )
+                })?;
+                u32::try_from(value).map_err(|_| {
+                    ToolError::InvalidArgs(
+                        "`terminal_multiplexer.max_auto_observe_steps` is too large".to_string(),
+                    )
+                })
+            }
+            None => Ok(DEFAULT_MAX_AUTO_OBSERVE_STEPS),
         }
     }
 
@@ -237,12 +279,20 @@ impl TerminalMultiplexerTool {
         layout: &SocketLayout,
         session: &str,
         purpose: Option<String>,
+        ctx: &ToolContext,
+        observation_update: ObservationStateUpdate,
     ) -> Result<SessionMetadata, ToolError> {
         self.ensure_layout(layout).await?;
         let metadata_path = Self::metadata_path(layout, session);
         let now = Self::now_timestamp()?;
+        let current_turn_id = Self::current_turn_id(ctx);
         let metadata = match self.read_metadata(layout, session).await? {
             Some(mut existing) => {
+                Self::apply_observation_update(
+                    &mut existing,
+                    current_turn_id.as_deref(),
+                    observation_update,
+                );
                 existing.last_used_at = now.clone();
                 if purpose.is_some() {
                     existing.purpose = purpose;
@@ -255,6 +305,11 @@ impl TerminalMultiplexerTool {
                 default_target: Self::session_target(session, None),
                 created_at: now.clone(),
                 last_used_at: now,
+                last_turn_id: current_turn_id,
+                observation_steps_used: match observation_update {
+                    ObservationStateUpdate::Increment => 1,
+                    ObservationStateUpdate::Reset => 0,
+                },
                 purpose,
             },
         };
@@ -268,6 +323,24 @@ impl TerminalMultiplexerTool {
             ))
         })?;
         Ok(metadata)
+    }
+
+    fn apply_observation_update(
+        metadata: &mut SessionMetadata,
+        current_turn_id: Option<&str>,
+        observation_update: ObservationStateUpdate,
+    ) {
+        let turn_changed = current_turn_id != metadata.last_turn_id.as_deref();
+        if turn_changed {
+            metadata.observation_steps_used = 0;
+        }
+        metadata.last_turn_id = current_turn_id.map(ToString::to_string);
+        match observation_update {
+            ObservationStateUpdate::Reset => metadata.observation_steps_used = 0,
+            ObservationStateUpdate::Increment => {
+                metadata.observation_steps_used = metadata.observation_steps_used.saturating_add(1);
+            }
+        }
     }
 
     async fn read_metadata(
@@ -689,6 +762,41 @@ impl TerminalMultiplexerTool {
         })
     }
 
+    fn observation_budget_error(
+        layout: &SocketLayout,
+        session: &str,
+        target: &str,
+        metadata: &SessionMetadata,
+        captured: String,
+        max_auto_observe_steps: u32,
+        reason: &str,
+    ) -> ToolError {
+        ToolError::structured_execution_failed(
+            format!(
+                "automatic tmux observation budget exhausted after {} steps; summarize the current tmux state for the user and wait for their decision before continuing",
+                metadata.observation_steps_used
+            ),
+            "observation_budget_exhausted",
+            Some(json!({
+                "reason": reason,
+                "backend": "tmux",
+                "socket": layout.socket_path.to_string_lossy().to_string(),
+                "session": session,
+                "target": target,
+                "observation_steps_used": metadata.observation_steps_used,
+                "max_auto_observe_steps": max_auto_observe_steps,
+                "monitor_attach_command": Self::monitor_attach_command(&layout.socket_path, session),
+                "monitor_capture_command": Self::monitor_capture_command(&layout.socket_path, target),
+                "captured": captured,
+            })),
+            false,
+            vec![ToolSignal::stop_current_turn(
+                Some("terminal_multiplexer_observation_budget_exhausted"),
+                Some("terminal_multiplexer"),
+            )],
+        )
+    }
+
     async fn start_or_resume(
         &self,
         args: &Value,
@@ -742,7 +850,15 @@ impl TerminalMultiplexerTool {
             .await?;
         }
 
-        let metadata = self.write_metadata(&layout, session, purpose).await?;
+        let metadata = self
+            .write_metadata(
+                &layout,
+                session,
+                purpose,
+                ctx,
+                ObservationStateUpdate::Reset,
+            )
+            .await?;
         let summary = if existed {
             format!("session `{session}` resumed on klaw tmux socket")
         } else {
@@ -878,7 +994,9 @@ impl TerminalMultiplexerTool {
         )
         .await?;
 
-        let metadata = self.write_metadata(&layout, session, None).await?;
+        let metadata = self
+            .write_metadata(&layout, session, None, ctx, ObservationStateUpdate::Reset)
+            .await?;
         let summary = if let Some(content) = content.as_deref() {
             format!("sent {} chars to `{target}`", content.chars().count())
         } else {
@@ -913,12 +1031,32 @@ impl TerminalMultiplexerTool {
         let full = args.get("full").and_then(Value::as_bool).unwrap_or(false);
         let history_lines =
             Self::parse_history_lines(args, "history_lines", DEFAULT_HISTORY_LINES)?;
+        let max_auto_observe_steps = Self::max_auto_observe_steps(ctx)?;
         let layout = self.socket_layout(ctx);
         let target = Self::session_target(session, args.get("target").and_then(Value::as_str));
         let captured = self
             .capture_pane(&layout, &target, history_lines, full, timeout_secs, ctx)
             .await?;
-        let metadata = self.write_metadata(&layout, session, None).await?;
+        let metadata = self
+            .write_metadata(
+                &layout,
+                session,
+                None,
+                ctx,
+                ObservationStateUpdate::Increment,
+            )
+            .await?;
+        if metadata.observation_steps_used >= max_auto_observe_steps {
+            return Err(Self::observation_budget_error(
+                &layout,
+                session,
+                &target,
+                &metadata,
+                captured,
+                max_auto_observe_steps,
+                "capture",
+            ));
+        }
         self.build_session_response(
             &layout,
             session,
@@ -947,6 +1085,7 @@ impl TerminalMultiplexerTool {
         let history_lines =
             Self::parse_history_lines(args, "history_lines", DEFAULT_WAIT_HISTORY_LINES)?;
         let poll_interval_ms = Self::parse_poll_interval_ms(args)?;
+        let max_auto_observe_steps = Self::max_auto_observe_steps(ctx)?;
         let layout = self.socket_layout(ctx);
         let target = Self::session_target(session, args.get("target").and_then(Value::as_str));
         let compiled_regex = if use_regex {
@@ -968,7 +1107,26 @@ impl TerminalMultiplexerTool {
                 captured.contains(pattern)
             };
             if matched {
-                let metadata = self.write_metadata(&layout, session, None).await?;
+                let metadata = self
+                    .write_metadata(
+                        &layout,
+                        session,
+                        None,
+                        ctx,
+                        ObservationStateUpdate::Increment,
+                    )
+                    .await?;
+                if metadata.observation_steps_used >= max_auto_observe_steps {
+                    return Err(Self::observation_budget_error(
+                        &layout,
+                        session,
+                        &target,
+                        &metadata,
+                        captured,
+                        max_auto_observe_steps,
+                        "wait_for_text",
+                    ));
+                }
                 return self
                     .build_session_response(
                         &layout,
@@ -1279,6 +1437,10 @@ mod tests {
             "tmux_socket_dir".to_string(),
             Value::String(socket_dir.to_string_lossy().to_string()),
         );
+        metadata.insert(
+            "agent.message_id".to_string(),
+            Value::String("msg-1".to_string()),
+        );
         ToolContext {
             session_key: "test-session".to_string(),
             metadata,
@@ -1321,6 +1483,27 @@ mod tests {
             TerminalMultiplexerTool::session_target("demo", None),
             "demo:0.0".to_string()
         );
+    }
+
+    #[test]
+    fn observation_update_resets_on_new_turn() {
+        let mut metadata = SessionMetadata {
+            socket_path: "/tmp/k.sock".to_string(),
+            session_name: "demo".to_string(),
+            default_target: "demo:0.0".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            last_used_at: "2026-01-01T00:00:00Z".to_string(),
+            last_turn_id: Some("msg-1".to_string()),
+            observation_steps_used: 3,
+            purpose: None,
+        };
+        TerminalMultiplexerTool::apply_observation_update(
+            &mut metadata,
+            Some("msg-2"),
+            ObservationStateUpdate::Increment,
+        );
+        assert_eq!(metadata.last_turn_id.as_deref(), Some("msg-2"));
+        assert_eq!(metadata.observation_steps_used, 1);
     }
 
     #[tokio::test]
@@ -1514,6 +1697,52 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), "wait_timeout");
+
+        tool.execute(json!({ "action": "kill_all" }), &ctx)
+            .await
+            .unwrap();
+        let _ = fs::remove_dir_all(socket_dir).await;
+    }
+
+    #[tokio::test]
+    async fn observation_budget_exhaustion_returns_stop_signal_error() {
+        if !tmux_available() {
+            return;
+        }
+
+        let socket_dir = unique_test_dir("observe-budget");
+        let mut ctx = test_ctx(&socket_dir);
+        ctx.metadata.insert(
+            "terminal_multiplexer.max_auto_observe_steps".to_string(),
+            Value::Number(serde_json::Number::from(1)),
+        );
+        let tool = TerminalMultiplexerTool::new();
+
+        tool.execute(
+            json!({
+                "action": "start_or_resume",
+                "session": "budgetdemo",
+                "initial_command": "printf 'budget-ready\\n'"
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        let err = tool
+            .execute(
+                json!({
+                    "action": "wait_for_text",
+                    "session": "budgetdemo",
+                    "pattern": "budget-ready",
+                    "timeout": 5
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "observation_budget_exhausted");
+        assert!(err.signals().iter().any(|signal| signal.kind == "stop"));
 
         tool.execute(json!({ "action": "kill_all" }), &ctx)
             .await

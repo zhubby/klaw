@@ -38,3 +38,4 @@
 - read-only file inspection should be handled by other tools or higher-level runtime capabilities
 - the `terminal_multiplexer` tool is tmux-only and always uses an isolated private socket under `${KLAW_TMUX_SOCKET_DIR:-${TMPDIR:-/tmp}/klaw-tmux-sockets}`, so listing or terminating sessions never touches the user's personal tmux server
 - `terminal_multiplexer` returns structured session metadata and monitor commands, and now supports `wait_for_text` to synchronize interactive CLIs before sending the next command
+- `terminal_multiplexer` now enforces a bounded auto-observation budget per user turn; once repeated `capture` / `wait_for_text` calls hit the limit, it emits a stop signal with the latest pane output so the model must summarize state back to the user before continuing
