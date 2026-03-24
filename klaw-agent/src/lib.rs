@@ -22,6 +22,7 @@ pub use context_compression::{
 };
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
+const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
 const APPROVAL_REQUIRED_SIGNAL: &str = "approval_required";
 
 #[derive(Debug, Clone, Copy)]
@@ -297,7 +298,7 @@ pub async fn run_agent_execution(
             include: None,
             store: None,
             parallel_tool_calls: None,
-            tool_choice: None,
+            tool_choice: extract_tool_choice(&input.tool_metadata),
             text: None,
             reasoning: None,
             truncation: None,
@@ -445,6 +446,13 @@ fn extract_system_prompt(metadata: &BTreeMap<String, Value>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn extract_tool_choice(metadata: &BTreeMap<String, Value>) -> Option<Value> {
+    metadata
+        .get(META_TOOL_CHOICE_KEY)
+        .cloned()
+        .filter(|value| !value.is_null())
 }
 
 fn is_supported_history_role(role: &str) -> bool {
@@ -673,6 +681,7 @@ mod tests {
     #[derive(Default)]
     struct CaptureFirstMessageProvider {
         first_message_role: Arc<Mutex<Option<String>>>,
+        tool_choice: Arc<Mutex<Option<Value>>>,
     }
 
     #[async_trait]
@@ -690,13 +699,17 @@ mod tests {
             messages: Vec<LlmMessage>,
             _tools: Vec<ToolDefinition>,
             _model: Option<&str>,
-            _options: ChatOptions,
+            options: ChatOptions,
         ) -> Result<LlmResponse, LlmError> {
             let first_role = messages.first().map(|m| m.role.clone());
             *self
                 .first_message_role
                 .lock()
                 .expect("mutex poisoned for first role") = first_role;
+            *self
+                .tool_choice
+                .lock()
+                .expect("mutex poisoned for tool choice") = options.tool_choice;
             Ok(LlmResponse {
                 content: "ok".to_string(),
                 reasoning: None,
@@ -744,6 +757,44 @@ mod tests {
             .expect("mutex poisoned for assert")
             .clone();
         assert_eq!(first_role.as_deref(), Some("system"));
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_includes_tool_choice_from_metadata() {
+        let provider = CaptureFirstMessageProvider::default();
+        let tools = MockToolExecutor;
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            META_TOOL_CHOICE_KEY.to_string(),
+            Value::String("required".to_string()),
+        );
+        let _ = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "hello".to_string(),
+                user_media: Vec::new(),
+                conversation_history: Vec::new(),
+                session_key: "s1".to_string(),
+                tool_metadata: metadata,
+                model: None,
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 2,
+                max_tool_calls: 2,
+                token_budget: 0,
+            },
+            None,
+        )
+        .await
+        .expect("agent execution should succeed");
+
+        let tool_choice = provider
+            .tool_choice
+            .lock()
+            .expect("mutex poisoned for tool choice assert")
+            .clone();
+        assert_eq!(tool_choice, Some(Value::String("required".to_string())));
     }
 
     #[derive(Default)]
