@@ -8,6 +8,17 @@ use thiserror::Error;
 use tokio::fs;
 
 const SKILLS_LAZY_LOAD_INSTRUCTIONS: &str = "When a task may require a skill, consult the available skills list first.\nBefore using a skill, read the SKILL.md file at the listed path.\nOnly load skill files when needed.";
+const WORKSPACE_PROMPT_DOC_FILES: [&str; 7] = [
+    "AGENTS.md",
+    "BOOTSTRAP.md",
+    "HEARTBEAT.md",
+    "IDENTITY.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "USER.md",
+];
+const RUNTIME_PROMPT_RULES: &str = "Prefer lazy-loading context from files and skills instead of relying on embedded long prompt bodies. Read only what is needed for the current user request.";
+const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "When local workspace docs are relevant, read them from disk on demand before acting. Do not assume their content without reading the files.\nWhen a task requires remembering or recalling prior context, use the memory tool. Do not rely on ad-hoc markdown memory files.\nFiles under archives/ are read-only source material. Never edit, move, or delete them in place. If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.";
 
 const PROMPT_TEMPLATE_FILES: [(&str, &str); 7] = [
     ("AGENTS.md", include_str!("../templates/prompt/AGENTS.md")),
@@ -15,6 +26,20 @@ const PROMPT_TEMPLATE_FILES: [(&str, &str); 7] = [
         "BOOTSTRAP.md",
         include_str!("../templates/prompt/BOOTSTRAP.md"),
     ),
+    (
+        "HEARTBEAT.md",
+        include_str!("../templates/prompt/HEARTBEAT.md"),
+    ),
+    (
+        "IDENTITY.md",
+        include_str!("../templates/prompt/IDENTITY.md"),
+    ),
+    ("SOUL.md", include_str!("../templates/prompt/SOUL.md")),
+    ("TOOLS.md", include_str!("../templates/prompt/TOOLS.md")),
+    ("USER.md", include_str!("../templates/prompt/USER.md")),
+];
+const AUTO_CREATE_PROMPT_TEMPLATE_FILES: [(&str, &str); 6] = [
+    ("AGENTS.md", include_str!("../templates/prompt/AGENTS.md")),
     (
         "HEARTBEAT.md",
         include_str!("../templates/prompt/HEARTBEAT.md"),
@@ -79,6 +104,7 @@ pub async fn ensure_workspace_prompt_templates_in_dir(
         })?;
 
     let workspace_dir = workspace_dir(&data_dir);
+    let workspace_previously_existed = path_exists(&workspace_dir).await?;
     fs::create_dir_all(&workspace_dir)
         .await
         .map_err(|source| PromptError::CreateDir {
@@ -89,7 +115,20 @@ pub async fn ensure_workspace_prompt_templates_in_dir(
     let mut created_files = Vec::new();
     let mut skipped_files = Vec::new();
 
-    for (file_name, content) in PROMPT_TEMPLATE_FILES {
+    if !workspace_previously_existed {
+        let bootstrap_path = workspace_dir.join("BOOTSTRAP.md");
+        let bootstrap_content = get_default_template_content("BOOTSTRAP.md")
+            .expect("BOOTSTRAP.md template content should exist");
+        fs::write(&bootstrap_path, bootstrap_content)
+            .await
+            .map_err(|source| PromptError::WriteTemplateFile {
+                path: bootstrap_path.display().to_string(),
+                source,
+            })?;
+        created_files.push("BOOTSTRAP.md".to_string());
+    }
+
+    for (file_name, content) in AUTO_CREATE_PROMPT_TEMPLATE_FILES {
         let target = workspace_dir.join(file_name);
         if path_exists(&target).await? {
             skipped_files.push(file_name.to_string());
@@ -147,6 +186,27 @@ pub fn get_default_template_content(file_name: &str) -> Option<&'static str> {
         .map(|(_, content)| *content)
 }
 
+pub fn format_workspace_docs_for_prompt() -> String {
+    let base = std::env::var("HOME")
+        .map(|home| format!("{home}/.klaw/workspace"))
+        .unwrap_or_else(|_| "~/.klaw/workspace".to_string());
+    let docs = WORKSPACE_PROMPT_DOC_FILES
+        .iter()
+        .map(|name| format!("- {base}/{name}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "Read these workspace docs on demand when relevant:\n{docs}\n\
+\n\
+Recommended usage:\n\
+- Start with AGENTS.md and USER.md for baseline behavior and user preferences.\n\
+- Read TOOLS.md before tool-heavy tasks or environment-specific operations.\n\
+- Read HEARTBEAT.md only for heartbeat/autonomous polling turns.\n\
+- Read BOOTSTRAP.md only during first-run initialization or cold-start setup.\n\
+- Use the memory tool for durable memory; do not use markdown files as memory storage."
+    )
+}
+
 pub fn compose_runtime_prompt(input: RuntimePromptInput) -> Option<String> {
     let mut sections = Vec::new();
 
@@ -176,6 +236,16 @@ pub fn compose_runtime_prompt(input: RuntimePromptInput) -> Option<String> {
     Some(sections.join("\n\n--------------------------------\n\n"))
 }
 
+pub fn build_runtime_system_prompt(skills: Vec<SkillPromptEntry>) -> Option<String> {
+    compose_runtime_prompt(RuntimePromptInput {
+        runtime_metadata: None,
+        rules: Some(RUNTIME_PROMPT_RULES.to_string()),
+        local_docs: Some(format_workspace_docs_for_prompt()),
+        additional_instructions: Some(RUNTIME_PROMPT_EXTRA_INSTRUCTIONS.to_string()),
+        skills,
+    })
+}
+
 fn push_section(sections: &mut Vec<String>, title: &str, content: Option<String>) {
     let Some(content) = content.map(|value| value.trim().to_string()) else {
         return;
@@ -197,18 +267,6 @@ async fn path_exists(path: &Path) -> Result<bool, PromptError> {
 
 fn resolve_default_data_dir() -> Result<PathBuf, PromptError> {
     default_data_dir().ok_or(PromptError::HomeDirUnavailable)
-}
-
-pub async fn load_or_create_system_prompt() -> Result<String, PromptError> {
-    let data_dir = resolve_default_data_dir()?;
-    load_or_create_system_prompt_in_dir(data_dir).await
-}
-
-pub async fn load_or_create_system_prompt_in_dir(data_dir: PathBuf) -> Result<String, PromptError> {
-    // Compatibility shim: SYSTEM.md is deprecated and no longer read or written.
-    // Keep this API for callers that have not migrated yet.
-    let _ = ensure_workspace_prompt_templates_in_dir(data_dir).await?;
-    Ok(String::new())
 }
 
 #[cfg(test)]
@@ -257,6 +315,38 @@ mod tests {
             .await
             .expect("agents should still exist");
         assert_eq!(agents, "custom agents");
+        assert!(
+            !workspace.join("BOOTSTRAP.md").exists(),
+            "bootstrap should not be auto-created during backfill"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ensure_templates_does_not_recreate_bootstrap_after_first_init() {
+        let data_dir = std::env::temp_dir().join(format!("klaw-prompt-test-{}", Uuid::new_v4()));
+        let workspace = workspace_dir(&data_dir);
+
+        let first_report = ensure_workspace_prompt_templates_in_dir(data_dir.clone())
+            .await
+            .expect("first init should succeed");
+        assert!(first_report.created_files.contains(&"BOOTSTRAP.md".to_string()));
+        assert!(workspace.join("BOOTSTRAP.md").exists());
+
+        fs::remove_file(workspace.join("BOOTSTRAP.md"))
+            .await
+            .expect("bootstrap should be removable");
+
+        let second_report = ensure_workspace_prompt_templates_in_dir(data_dir.clone())
+            .await
+            .expect("second init should succeed");
+        assert!(
+            !second_report.created_files.contains(&"BOOTSTRAP.md".to_string()),
+            "bootstrap should not be recreated after first init"
+        );
+        assert!(
+            !workspace.join("BOOTSTRAP.md").exists(),
+            "bootstrap should stay deleted after later backfill"
+        );
     }
 
     #[test]
@@ -299,25 +389,32 @@ mod tests {
         assert!(!prompt.contains("## Available Skills"));
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn load_or_create_system_prompt_is_compat_shim_without_system_md() {
-        let data_dir = std::env::temp_dir().join(format!("klaw-prompt-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&data_dir)
-            .await
-            .expect("temp data dir should be created");
-        let system_md = data_dir.join("SYSTEM.md");
-        fs::write(&system_md, "legacy value")
-            .await
-            .expect("legacy system prompt should be written");
+    #[test]
+    fn workspace_docs_prompt_contains_routing_and_memory_tool_rule() {
+        let docs_prompt = format_workspace_docs_for_prompt();
 
-        let loaded = load_or_create_system_prompt_in_dir(data_dir)
-            .await
-            .expect("compat shim should succeed");
+        assert!(docs_prompt.contains("Read these workspace docs on demand when relevant:"));
+        assert!(docs_prompt.contains("Recommended usage:"));
+        assert!(docs_prompt.contains("AGENTS.md"));
+        assert!(docs_prompt.contains("USER.md"));
+        assert!(docs_prompt.contains("TOOLS.md"));
+        assert!(docs_prompt.contains("Use the memory tool for durable memory"));
+    }
 
-        assert!(loaded.is_empty());
-        let legacy = fs::read_to_string(system_md)
-            .await
-            .expect("legacy file should remain untouched");
-        assert_eq!(legacy, "legacy value");
+    #[test]
+    fn build_runtime_system_prompt_includes_runtime_sections() {
+        let prompt = build_runtime_system_prompt(vec![SkillPromptEntry {
+            name: "github".to_string(),
+            path: "workspace/skills/github/SKILL.md".to_string(),
+            description: "interact with GitHub repositories".to_string(),
+            source: "workspace".to_string(),
+        }])
+        .expect("runtime prompt expected");
+
+        assert!(prompt.contains("## Rules"));
+        assert!(prompt.contains("## Available Skills"));
+        assert!(prompt.contains("## Instructions"));
+        assert!(prompt.contains("## Local Docs"));
+        assert!(prompt.contains("## Additional Instructions"));
     }
 }

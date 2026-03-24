@@ -17,12 +17,12 @@ use klaw_channel::{
 };
 use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
 use klaw_core::{
-    compose_runtime_prompt, ensure_workspace_prompt_templates, AgentLoop, AgentRuntimeError,
+    build_runtime_system_prompt, ensure_workspace_prompt_templates, AgentLoop, AgentRuntimeError,
     AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope,
     EnvelopeHeader, ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker,
     InMemoryIdempotencyStore, InMemoryTransport, InboundMessage, MediaReference, OutboundMessage,
-    QueueStrategy, RunLimits, RuntimePromptInput, SessionSchedulingPolicy, SkillPromptEntry,
-    Subscription, TransportError,
+    QueueStrategy, RunLimits, SessionSchedulingPolicy, SkillPromptEntry, Subscription,
+    TransportError,
 };
 use klaw_gateway::GatewayWebhookRequest;
 use klaw_heartbeat::should_suppress_output;
@@ -268,18 +268,6 @@ pub struct AssistantOutput {
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 const META_PROVIDER_KEY: &str = "agent.provider_id";
 const META_MODEL_KEY: &str = "agent.model";
-const WORKSPACE_PROMPT_DOC_FILES: [&str; 7] = [
-    "AGENTS.md",
-    "BOOTSTRAP.md",
-    "HEARTBEAT.md",
-    "IDENTITY.md",
-    "SOUL.md",
-    "TOOLS.md",
-    "USER.md",
-];
-
-const RUNTIME_PROMPT_RULES: &str = "Prefer lazy-loading context from files and skills instead of relying on embedded long prompt bodies. Read only what is needed for the current user request.";
-const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "When local workspace docs are relevant, read them from disk on demand before acting. Do not assume their content without reading the files.\nWhen a task requires remembering or recalling prior context, use the memory tool. Do not rely on ad-hoc markdown memory files.\nFiles under archives/ are read-only source material. Never edit, move, or delete them in place. If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.";
 
 #[derive(Debug, Clone)]
 struct SessionRoute {
@@ -1295,13 +1283,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     ensure_workspace_prompt_templates_if_possible().await;
     let loaded_skills = load_skills_system_prompt(config).await;
     let skill_names = loaded_skills.skill_names.clone();
-    let system_prompt = compose_runtime_prompt(RuntimePromptInput {
-        runtime_metadata: None,
-        rules: Some(RUNTIME_PROMPT_RULES.to_string()),
-        local_docs: Some(format_workspace_docs_for_prompt()),
-        additional_instructions: Some(RUNTIME_PROMPT_EXTRA_INSTRUCTIONS.to_string()),
-        skills: loaded_skills.skill_entries,
-    });
+    let system_prompt = build_runtime_system_prompt(loaded_skills.skill_entries);
 
     let observability = init_observability_from_config(config).await;
     let llm_audit_tx = spawn_llm_audit_writer(session_store.clone());
@@ -1455,13 +1437,7 @@ pub async fn reload_runtime_skills_prompt(
     ensure_workspace_prompt_templates_if_possible().await;
     let loaded_skills = load_skills_system_prompt(&snapshot.config).await;
     let skill_names = loaded_skills.skill_names.clone();
-    let system_prompt = compose_runtime_prompt(RuntimePromptInput {
-        runtime_metadata: None,
-        rules: Some(RUNTIME_PROMPT_RULES.to_string()),
-        local_docs: Some(format_workspace_docs_for_prompt()),
-        additional_instructions: Some(RUNTIME_PROMPT_EXTRA_INSTRUCTIONS.to_string()),
-        skills: loaded_skills.skill_entries,
-    });
+    let system_prompt = build_runtime_system_prompt(loaded_skills.skill_entries);
     runtime.runtime.set_system_prompt(system_prompt);
     info!(skills = ?skill_names, "reloaded runtime skills prompt");
     Ok(skill_names)
@@ -1597,27 +1573,6 @@ async fn ensure_workspace_prompt_templates_if_possible() {
     if let Err(err) = ensure_workspace_prompt_templates().await {
         warn!("failed to initialize workspace prompt templates: {err}");
     }
-}
-
-fn format_workspace_docs_for_prompt() -> String {
-    let base = std::env::var("HOME")
-        .map(|home| format!("{home}/.klaw/workspace"))
-        .unwrap_or_else(|_| "~/.klaw/workspace".to_string());
-    let docs = WORKSPACE_PROMPT_DOC_FILES
-        .iter()
-        .map(|name| format!("- {base}/{name}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "Read these workspace docs on demand when relevant:\n{docs}\n\
-\n\
-Recommended usage:\n\
-- Start with AGENTS.md and USER.md for baseline behavior and user preferences.\n\
-- Read TOOLS.md before tool-heavy tasks or environment-specific operations.\n\
-- Read HEARTBEAT.md only for heartbeat/autonomous polling turns.\n\
-- Read BOOTSTRAP.md only during first-run initialization or cold-start setup.\n\
-- Use the memory tool for durable memory; do not use markdown files as memory storage."
-    )
 }
 
 fn trim_conversation_history(
@@ -2303,7 +2258,7 @@ mod tests {
     use super::{
         build_history_for_model, build_unavailable_provider, compression_trigger_interval,
         configured_default_model, first_arg_token, format_approve_already_handled_message,
-        format_workspace_docs_for_prompt, normalize_runtime_provider_override, parse_im_command,
+        normalize_runtime_provider_override, parse_im_command,
         resolve_new_session_target_from_config, should_emit_outbound, should_trigger_compression,
         trim_conversation_history,
     };
@@ -2451,18 +2406,6 @@ mod tests {
         let err = normalize_runtime_provider_override(&providers, "openai", Some("missing"))
             .expect_err("unknown provider should fail");
         assert!(err.to_string().contains("unknown runtime provider"));
-    }
-
-    #[test]
-    fn workspace_docs_prompt_contains_routing_and_memory_tool_rule() {
-        let docs_prompt = format_workspace_docs_for_prompt();
-
-        assert!(docs_prompt.contains("Read these workspace docs on demand when relevant:"));
-        assert!(docs_prompt.contains("Recommended usage:"));
-        assert!(docs_prompt.contains("AGENTS.md"));
-        assert!(docs_prompt.contains("USER.md"));
-        assert!(docs_prompt.contains("TOOLS.md"));
-        assert!(docs_prompt.contains("Use the memory tool for durable memory"));
     }
 
     #[test]
