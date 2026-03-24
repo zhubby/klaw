@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-24
+
+### Changed
+- moved runtime system prompt assembly helpers into `prompt.rs`, including the shared workspace-docs prompt block and a new `build_runtime_system_prompt` entrypoint
+
+### Removed
+- removed the unused deprecated `load_or_create_system_prompt*` compatibility shims from `klaw-core`
+
 ## 2026-03-22
 
 ### Added
