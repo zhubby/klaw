@@ -1,14 +1,14 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::{header::USER_AGENT, Client};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use reqwest::{Client, header::USER_AGENT};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    estimate::estimate_chat_usage, ChatOptions, LlmAuditPayload, LlmAuditStatus, LlmError,
-    LlmMessage, LlmProvider, LlmResponse, LlmStreamEvent, LlmUsage, LlmUsageSource, ToolCall,
-    ToolDefinition,
+    ChatOptions, LlmAuditPayload, LlmAuditStatus, LlmError, LlmMessage, LlmProvider, LlmResponse,
+    LlmStreamEvent, LlmUsage, LlmUsageSource, ToolCall, ToolDefinition,
+    estimate::estimate_chat_usage,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -182,9 +182,14 @@ pub fn get_default_template_content(file_name: &str) -> Option<&'static str> {
 }
 
 pub fn format_workspace_docs_for_prompt() -> String {
-    let base = std::env::var("HOME")
-        .map(|home| format!("{home}/.klaw/workspace"))
-        .unwrap_or_else(|_| "~/.klaw/workspace".to_string());
+    resolve_default_data_dir()
+        .ok()
+        .map(|data_dir| format_workspace_docs_for_prompt_in_dir(&data_dir))
+        .unwrap_or_else(|| format_workspace_docs_for_prompt_in_dir(Path::new("~/.klaw")))
+}
+
+fn format_workspace_docs_for_prompt_in_dir(data_dir: &Path) -> String {
+    let base = workspace_dir(data_dir).display().to_string();
     let docs = ON_DEMAND_WORKSPACE_PROMPT_DOC_FILES
         .iter()
         .map(|name| format!("- {base}/{name}"))
@@ -201,9 +206,16 @@ Recommended usage:\n\
 }
 
 pub fn compose_runtime_prompt(input: RuntimePromptInput) -> Option<String> {
+    compose_runtime_prompt_with_descriptor(input, format_workspace_descriptor_for_prompt())
+}
+
+fn compose_runtime_prompt_with_descriptor(
+    input: RuntimePromptInput,
+    workspace_descriptor: Option<String>,
+) -> Option<String> {
     let mut sections = Vec::new();
 
-    if let Some(workspace_descriptor) = format_workspace_descriptor_for_prompt() {
+    if let Some(workspace_descriptor) = workspace_descriptor {
         sections.push(workspace_descriptor);
     }
 
@@ -241,30 +253,41 @@ pub fn compose_runtime_prompt(input: RuntimePromptInput) -> Option<String> {
 }
 
 pub fn build_runtime_system_prompt(skills: Vec<SkillPromptEntry>) -> Option<String> {
-    compose_runtime_prompt(RuntimePromptInput {
-        workspace_context: format_inlined_workspace_context_for_prompt(),
-        runtime_metadata: None,
-        rules: Some(RUNTIME_PROMPT_RULES.to_string()),
-        local_docs: Some(format_workspace_docs_for_prompt()),
-        additional_instructions: Some(RUNTIME_PROMPT_EXTRA_INSTRUCTIONS.to_string()),
-        skills,
-    })
+    let data_dir = resolve_default_data_dir().ok()?;
+    build_runtime_system_prompt_in_dir(&data_dir, skills)
+}
+
+fn build_runtime_system_prompt_in_dir(
+    data_dir: &Path,
+    skills: Vec<SkillPromptEntry>,
+) -> Option<String> {
+    compose_runtime_prompt_with_descriptor(
+        RuntimePromptInput {
+            workspace_context: format_inlined_workspace_context_for_prompt_in_dir(&workspace_dir(
+                data_dir,
+            )),
+            runtime_metadata: None,
+            rules: Some(RUNTIME_PROMPT_RULES.to_string()),
+            local_docs: Some(format_workspace_docs_for_prompt_in_dir(data_dir)),
+            additional_instructions: Some(RUNTIME_PROMPT_EXTRA_INSTRUCTIONS.to_string()),
+            skills,
+        },
+        Some(format_workspace_descriptor_for_prompt_in_dir(data_dir)),
+    )
 }
 
 fn format_workspace_descriptor_for_prompt() -> Option<String> {
     let data_dir = resolve_default_data_dir().ok()?;
-    let workspace = workspace_dir(&data_dir);
-    let workspace_path = workspace.display().to_string();
-
-    Some(format!(
-        "## Workspace\n\nPath: `{workspace_path}`\n\nThis is the agent workspace home. It stores persistent workspace docs, identity, behavior rules, and local environment notes that define how the agent should operate across sessions."
-    ))
+    Some(format_workspace_descriptor_for_prompt_in_dir(&data_dir))
 }
 
-fn format_inlined_workspace_context_for_prompt() -> Option<String> {
-    let data_dir = resolve_default_data_dir().ok()?;
-    let workspace = workspace_dir(&data_dir);
-    format_inlined_workspace_context_for_prompt_in_dir(&workspace)
+fn format_workspace_descriptor_for_prompt_in_dir(data_dir: &Path) -> String {
+    let workspace = workspace_dir(data_dir);
+    let workspace_path = workspace.display().to_string();
+
+    format!(
+        "## Workspace\n\nPath: `{workspace_path}`\n\nThis is the agent workspace home. It stores persistent workspace docs, identity, behavior rules, and local environment notes that define how the agent should operate across sessions."
+    )
 }
 
 fn format_inlined_workspace_context_for_prompt_in_dir(workspace_dir: &Path) -> Option<String> {
@@ -372,9 +395,11 @@ mod tests {
         let first_report = ensure_workspace_prompt_templates_in_dir(data_dir.clone())
             .await
             .expect("first init should succeed");
-        assert!(first_report
-            .created_files
-            .contains(&"BOOTSTRAP.md".to_string()));
+        assert!(
+            first_report
+                .created_files
+                .contains(&"BOOTSTRAP.md".to_string())
+        );
         assert!(workspace.join("BOOTSTRAP.md").exists());
 
         fs::remove_file(workspace.join("BOOTSTRAP.md"))
@@ -498,21 +523,16 @@ mod tests {
             .await
             .expect("tools should be written");
 
-        let previous_home = std::env::var_os("HOME");
-        std::env::set_var("HOME", &data_dir);
-
-        let prompt = build_runtime_system_prompt(vec![SkillPromptEntry {
-            name: "github".to_string(),
-            path: "workspace/skills/github/SKILL.md".to_string(),
-            description: "interact with GitHub repositories".to_string(),
-            source: "workspace".to_string(),
-        }])
+        let prompt = build_runtime_system_prompt_in_dir(
+            &klaw_root,
+            vec![SkillPromptEntry {
+                name: "github".to_string(),
+                path: "workspace/skills/github/SKILL.md".to_string(),
+                description: "interact with GitHub repositories".to_string(),
+                source: "workspace".to_string(),
+            }],
+        )
         .expect("runtime prompt expected");
-
-        match previous_home {
-            Some(home) => std::env::set_var("HOME", home),
-            None => std::env::remove_var("HOME"),
-        }
 
         let workspace_pos = prompt.find("## Workspace").expect("workspace section");
         let agents_pos = prompt.find("# AGENTS.md").expect("agents section");

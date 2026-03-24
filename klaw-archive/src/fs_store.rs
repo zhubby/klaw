@@ -1,4 +1,4 @@
-use crate::{sniff::SniffedMedia, ArchiveError};
+use crate::{ArchiveError, sniff::SniffedMedia};
 use hex::encode as hex_encode;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};

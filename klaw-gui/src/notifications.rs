@@ -1,4 +1,4 @@
-use egui::{vec2, Context};
+use egui::{Context, vec2};
 use egui_notify::{Anchor, Toasts};
 
 pub struct NotificationCenter {

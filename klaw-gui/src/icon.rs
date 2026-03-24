@@ -52,7 +52,7 @@ fn decode_png_icon(bytes: &[u8]) -> anyhow::Result<DecodedIcon> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_png_icon, APP_ICON_PNG, TRAY_ICON_PNG};
+    use super::{APP_ICON_PNG, TRAY_ICON_PNG, decode_png_icon};
 
     #[test]
     fn embedded_viewport_icon_decodes() {

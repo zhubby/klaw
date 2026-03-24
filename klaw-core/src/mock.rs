@@ -1,11 +1,11 @@
 use crate::{
+    Envelope,
     reliability::IdempotencyStore,
     scheduler::{QueueOverflowPolicy, SessionScheduler, SessionTask, TaskScheduleDecision},
     transport::{
         DeliveryMode, MessageTransport, Subscription, TransportAckHandle, TransportError,
         TransportMessage,
     },
-    Envelope,
 };
 use async_trait::async_trait;
 use std::{collections::HashSet, collections::VecDeque, sync::Arc, time::Duration};

@@ -1,6 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use egui::{text::LayoutJob, Color32, FontId, TextFormat};
+use egui::{Color32, FontId, TextFormat, text::LayoutJob};
 use egui_extras::{Size, StripBuilder};
 use klaw_config::{ConfigSnapshot, ConfigStore};
 use std::path::{Path, PathBuf};
@@ -525,9 +525,11 @@ env_key = "OPENAI_API_KEY"
         panel.editor_raw = panel.editor_raw.replace("gpt-4o-mini", "gpt-4.1-mini");
         panel.handle_save(&mut notifications);
         assert!(!panel.is_dirty());
-        assert!(fs::read_to_string(&path)
-            .expect("saved config should be readable")
-            .contains("gpt-4.1-mini"));
+        assert!(
+            fs::read_to_string(&path)
+                .expect("saved config should be readable")
+                .contains("gpt-4.1-mini")
+        );
 
         panel.editor_raw = "[broken".to_string();
         panel.handle_save(&mut notifications);

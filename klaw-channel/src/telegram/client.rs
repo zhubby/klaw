@@ -2,7 +2,7 @@ use super::render::TelegramParseMode;
 use super::types::{TelegramFile, TelegramInlineKeyboardMarkup, TelegramMessage, TelegramUpdate};
 use crate::ChannelResult;
 use klaw_config::TelegramProxyConfig;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
 use tokio::time::Duration;
 

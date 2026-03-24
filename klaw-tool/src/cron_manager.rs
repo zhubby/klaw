@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use klaw_storage::{
-    open_default_store, CronJob, CronScheduleKind, CronStorage, CronTaskRun, DefaultSessionStore,
-    NewCronJob, StorageError, UpdateCronJobPatch,
+    CronJob, CronScheduleKind, CronStorage, CronTaskRun, DefaultSessionStore, NewCronJob,
+    StorageError, UpdateCronJobPatch, open_default_store,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -683,7 +683,7 @@ fn build_payload_from_shortcut(
         Some(_) => {
             return Err(ToolError::InvalidArgs(
                 "`metadata` must be a JSON object when used with `message`".to_string(),
-            ))
+            ));
         }
     }
 
@@ -1297,9 +1297,10 @@ mod tests {
             .await
             .expect_err("create should fail");
 
-        assert!(err
-            .to_string()
-            .contains("must decode to a valid InboundMessage-like object"));
+        assert!(
+            err.to_string()
+                .contains("must decode to a valid InboundMessage-like object")
+        );
     }
 
     #[tokio::test]

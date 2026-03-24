@@ -2,7 +2,7 @@ use crate::state::GatewayState;
 use axum::{
     body::Body,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;

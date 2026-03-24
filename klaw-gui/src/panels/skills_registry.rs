@@ -7,7 +7,7 @@ use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillsRegistryConfig};
 use klaw_skill::{
-    open_default_skills_manager, FileSystemSkillStore, InstalledSkill, RegistrySource,
+    FileSystemSkillStore, InstalledSkill, RegistrySource, open_default_skills_manager,
 };
 use klaw_skill::{RegistrySyncReport, RegistrySyncStatus};
 use std::future::Future;

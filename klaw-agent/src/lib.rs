@@ -8,7 +8,7 @@ use klaw_llm::{
     ToolDefinition,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
@@ -17,8 +17,8 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tracing::{debug, warn};
 
 pub use context_compression::{
-    build_compression_prompt, merge_or_reset_summary, parse_conversation_summary,
-    ConversationSummary,
+    ConversationSummary, build_compression_prompt, merge_or_reset_summary,
+    parse_conversation_summary,
 };
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";

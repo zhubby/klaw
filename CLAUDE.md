@@ -44,6 +44,7 @@ After each modification, ensure the relevant crate/workspace tests pass before c
 
 ## Rust Style and Idioms
 
+- Target Rust 2024 for new code and examples. Prefer edition-aware idioms, and only use raw identifiers such as `r#gen` when compatibility leaves no cleaner choice.
 - Use traits for behaviour boundaries. Prefer generics for hot paths, `dyn Trait` for heterogeneous/runtime dispatch.
 - Derive `Default` when all fields have sensible defaults.
 - Use concrete types (`struct`/`enum`) over `serde_json::Value` wherever shape is known.
@@ -59,6 +60,11 @@ After each modification, ensure the relevant crate/workspace tests pass before c
 - Prefer `chrono` only if already imported in the crate; default to `time` for new code.
 - Prefer crates over subprocesses (`std::process::Command`). Use subprocesses only when no mature crate exists.
 - Prefer guard clauses (early returns) over nested `if` blocks.
+- Prefer `let-else` when destructuring must succeed and the failure path should return, `continue`, or `break`.
+- Prefer `if let` chains, `matches!`, and pattern guards over nested single-arm `match` blocks when they make branching flatter and clearer.
+- Prefer `Option`/`Result` combinators such as `is_some_and`, `is_none_or`, `then_some`, `transpose`, and `inspect` when they keep ownership and control flow obvious; switch back to `match` once the closure logic stops being trivial.
+- Prefer destructuring assignment, field init shorthand, and struct update syntax when they remove boilerplate without obscuring moves or borrow lifetimes.
+- In Rust 2024, treat process-wide environment mutation (`std::env::set_var`, `remove_var`) as a special case: avoid it when possible, and if it is truly required, isolate it to startup or single-threaded test setup with a narrowly scoped safety comment.
 - Prefer iterators/combinators over manual loops. Use `Cow<'_, str>` when allocation is conditional.
 - Keep public API surfaces small. Use `#[must_use]` where return values matter.
 

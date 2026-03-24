@@ -1,7 +1,7 @@
 use clap::{Args, Subcommand, ValueEnum};
 use klaw_archive::{
-    open_default_archive_service, ArchiveIngestInput, ArchiveMediaKind, ArchiveQuery,
-    ArchiveService, ArchiveSourceKind, SqliteArchiveService,
+    ArchiveIngestInput, ArchiveMediaKind, ArchiveQuery, ArchiveService, ArchiveSourceKind,
+    SqliteArchiveService, open_default_archive_service,
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -294,8 +294,8 @@ fn resolve_output_path(provided: Option<PathBuf>, record: &klaw_archive::Archive
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_metadata_json, resolve_output_path, ArchiveMediaArg, ArchivePullCommand,
-        ArchivePushCommand, ArchiveSourceArg,
+        ArchiveMediaArg, ArchivePullCommand, ArchivePushCommand, ArchiveSourceArg,
+        parse_metadata_json, resolve_output_path,
     };
     use klaw_archive::{ArchiveMediaKind, ArchiveRecord, ArchiveSourceKind};
     use serde_json::json;

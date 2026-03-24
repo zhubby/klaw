@@ -4,8 +4,8 @@ mod manager;
 mod runtime;
 
 pub use hub::{
-    format_tool_result_for_model, McpBootstrapFailure, McpBootstrapResult, McpClientHub,
-    McpClientHubError, McpRuntimeHandles, McpToolDescriptor,
+    McpBootstrapFailure, McpBootstrapResult, McpClientHub, McpClientHubError, McpRuntimeHandles,
+    McpToolDescriptor, format_tool_result_for_model,
 };
 pub use manager::{
     McpBootstrapError, McpConfigSnapshot, McpInitHandle, McpLifecycleState, McpManager,

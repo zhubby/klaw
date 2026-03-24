@@ -4,7 +4,7 @@ use klaw_approval::{ApprovalCreateInput, ApprovalManager, SqliteApprovalManager}
 use klaw_config::AppConfig;
 use klaw_util::{default_data_dir, workspace_dir};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -703,10 +703,12 @@ mod tests {
             .execute(json!({"command": "sleep 2", "timeout_ms": 10}), &base_ctx())
             .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("timed out after 10ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("timed out after 10ms")
+        );
     }
 
     #[tokio::test]
@@ -749,9 +751,11 @@ mod tests {
             .unwrap();
 
         assert!(result.content_for_model.contains("\"success\": true"));
-        assert!(result
-            .content_for_model
-            .contains("\"approval_required\": false"));
+        assert!(
+            result
+                .content_for_model
+                .contains("\"approval_required\": false")
+        );
         assert!(result.content_for_model.contains("\"approved\": false"));
         let _ = fs::remove_file("file.txt");
     }
@@ -774,10 +778,12 @@ mod tests {
         let err = tool_err.to_string();
         assert!(err.contains("Approval ID: "), "unexpected error: {err}");
         assert_eq!(tool_err.code(), "approval_required");
-        assert!(tool_err
-            .signals()
-            .iter()
-            .any(|signal| signal.kind == "approval_required"));
+        assert!(
+            tool_err
+                .signals()
+                .iter()
+                .any(|signal| signal.kind == "approval_required")
+        );
     }
 
     #[tokio::test]
@@ -817,9 +823,11 @@ mod tests {
             .execute(json!({"command": "rm -rf /"}), &approved_ctx)
             .await
             .expect("approved command should execute");
-        assert!(approved_exec
-            .content_for_model
-            .contains("\"approved\": true"));
+        assert!(
+            approved_exec
+                .content_for_model
+                .contains("\"approved\": true")
+        );
 
         let consumed = store
             .get_approval(&approval_id)
@@ -881,10 +889,12 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("timed out after 100ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("timed out after 100ms")
+        );
     }
 
     #[tokio::test]
@@ -931,9 +941,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result
-            .content_for_model
-            .contains("\"stdout_truncated\": true"));
+        assert!(
+            result
+                .content_for_model
+                .contains("\"stdout_truncated\": true")
+        );
     }
 
     #[tokio::test]
@@ -956,9 +968,11 @@ mod tests {
             .unwrap();
         let expected_workspace = root_dir.join("workspace");
         assert!(expected_workspace.is_dir());
-        assert!(result
-            .content_for_model
-            .contains(expected_workspace.to_string_lossy().as_ref()));
+        assert!(
+            result
+                .content_for_model
+                .contains(expected_workspace.to_string_lossy().as_ref())
+        );
 
         let _ = fs::remove_dir_all(root_dir);
     }

@@ -1,6 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use egui::{text::LayoutJob, Color32, FontId, TextFormat};
+use egui::{Color32, FontId, TextFormat, text::LayoutJob};
 use egui_extras::{Size, StripBuilder};
 use klaw_util::default_workspace_dir;
 use std::fs;

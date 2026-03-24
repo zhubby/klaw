@@ -5,8 +5,8 @@ use klaw_core::observability::{
     TurnOutcomeRecord,
 };
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     Row, SqlitePool,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use std::path::Path;
 use std::sync::Mutex;
@@ -1939,11 +1939,7 @@ fn ratio(part: u64, total: u64) -> f64 {
 }
 
 fn ratio_f64(left: f64, right: f64) -> f64 {
-    if right <= 0.0 {
-        0.0
-    } else {
-        left / right
-    }
+    if right <= 0.0 { 0.0 } else { left / right }
 }
 
 fn average(total: u64, count: u64) -> f64 {

@@ -3,7 +3,7 @@ use klaw_config::TailscaleMode;
 use klaw_gateway::GatewayRuntimeInfo;
 use klaw_mcp::{McpRuntimeSnapshot, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, mpsc};
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, Clone, Default)]

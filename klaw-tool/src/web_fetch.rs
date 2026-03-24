@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use ipnet::IpNet;
 use klaw_config::AppConfig;
 use reqwest::Url;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     net::IpAddr,

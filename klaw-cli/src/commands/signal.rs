@@ -1,7 +1,7 @@
 pub async fn shutdown_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         if let Ok(mut terminate) = signal(SignalKind::terminate()) {
             tokio::select! {

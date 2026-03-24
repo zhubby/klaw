@@ -1,14 +1,14 @@
 use crate::{
-    state::{GatewayState, GatewayWebhookState},
     GatewayError,
+    state::{GatewayState, GatewayWebhookState},
 };
 use async_trait::async_trait;
 use axum::{
+    Json,
     body::Bytes,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use klaw_config::GatewayConfig;
 use serde::{Deserialize, Serialize};

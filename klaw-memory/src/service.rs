@@ -1,12 +1,11 @@
 use crate::{
-    build_embedding_provider_from_config,
-    util::{db_string, f32_vec_to_blob, now_ms, row_to_record, rrf_score},
     EmbeddingProvider, MemoryError, MemoryHit, MemoryRecord, MemorySearchQuery, MemoryService,
-    UpsertMemoryInput,
+    UpsertMemoryInput, build_embedding_provider_from_config,
+    util::{db_string, f32_vec_to_blob, now_ms, row_to_record, rrf_score},
 };
 use async_trait::async_trait;
 use klaw_config::AppConfig;
-use klaw_storage::{open_default_memory_db, DbValue, MemoryDb, StorageError};
+use klaw_storage::{DbValue, MemoryDb, StorageError, open_default_memory_db};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,

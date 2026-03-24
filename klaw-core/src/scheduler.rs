@@ -39,7 +39,7 @@ where
 {
     /// 调度任务并返回决策。
     async fn schedule(&self, task: T, overflow_policy: QueueOverflowPolicy)
-        -> TaskScheduleDecision;
+    -> TaskScheduleDecision;
 
     /// 标记任务执行完成，释放会话占用。
     async fn complete(&self, session_key: &str, task_id: &str);

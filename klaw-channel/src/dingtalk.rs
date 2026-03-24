@@ -1,12 +1,12 @@
 use crate::{
+    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime,
     manager::{ChannelKind, ManagedChannelDriver},
     media::{
-        attach_declared_media_metadata, build_media_reference, first_object_string_value,
-        first_string_value, ingest_media_reference_bytes, resolve_metadata_value_candidates,
-        ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES,
+        ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES, attach_declared_media_metadata,
+        build_media_reference, first_object_string_value, first_string_value,
+        ingest_media_reference_bytes, resolve_metadata_value_candidates,
     },
-    render::{render_agent_output, OutputRenderStyle},
-    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime,
+    render::{OutputRenderStyle, render_agent_output},
 };
 use futures_util::{SinkExt, StreamExt};
 use klaw_archive::open_default_archive_service;
@@ -1596,9 +1596,7 @@ fn extract_dingtalk_message_text(
                 .filter(|s| !s.is_empty())
                 .map(|name| format!("（{name}）"))
                 .unwrap_or_default();
-            format!(
-                "[DingTalk图片消息{title}]\n用户发送了一张图片。"
-            )
+            format!("[DingTalk图片消息{title}]\n用户发送了一张图片。")
         }
         "video" => {
             let title = first_string_value(
@@ -2257,16 +2255,16 @@ fn escape_markdown_for_action_card(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
+        ApprovalAction, CardCallbackEvent, DingtalkApiClient, EventDeduper, InboundEvent,
         build_approval_action_card_body, extract_approval_command_preview,
         extract_approval_id_for_action_card, extract_dingtalk_media_references,
         extract_dingtalk_message_text, extract_shell_approval_id, is_sender_allowed,
         parse_card_callback_event, parse_inbound_event, parse_stream_data, resolve_chat_id,
-        resolve_download_code_candidates, ApprovalAction, CardCallbackEvent, DingtalkApiClient,
-        EventDeduper, InboundEvent,
+        resolve_download_code_candidates,
     };
     use crate::{
-        render::{render_agent_output, OutputRenderStyle},
         ChannelResponse,
+        render::{OutputRenderStyle, render_agent_output},
     };
     use std::collections::BTreeMap;
     use std::thread;

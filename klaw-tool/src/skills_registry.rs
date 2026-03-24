@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use klaw_config::AppConfig;
 use klaw_skill::{
-    open_default_skill_registry, FileSystemSkillStore, ReqwestSkillFetcher, SkillsRegistry,
+    FileSystemSkillStore, ReqwestSkillFetcher, SkillsRegistry, open_default_skill_registry,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
@@ -272,7 +272,7 @@ impl Tool for SkillsRegistryTool {
             _ => {
                 return Err(ToolError::InvalidArgs(
                     "`action` must be one of list/show/search".to_string(),
-                ))
+                ));
             }
         };
 

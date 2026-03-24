@@ -1,4 +1,4 @@
-use crate::{time::now_ms, CronError, ScheduleSpec};
+use crate::{CronError, ScheduleSpec, time::now_ms};
 use klaw_core::{Envelope, EnvelopeHeader, InboundMessage, MessageTopic, MessageTransport};
 use klaw_storage::{CronJob, CronStorage, CronTaskStatus, NewCronTaskRun, SessionStorage};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -232,8 +232,8 @@ fn infer_telegram_base_session_key(session_key: &str, chat_id: &str) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::{
-        infer_base_session_key, infer_dingtalk_base_session_key, infer_telegram_base_session_key,
-        CronWorker, CronWorkerConfig,
+        CronWorker, CronWorkerConfig, infer_base_session_key, infer_dingtalk_base_session_key,
+        infer_telegram_base_session_key,
     };
     use crate::time::now_ms;
     use async_trait::async_trait;

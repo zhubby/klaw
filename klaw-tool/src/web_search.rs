@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use klaw_config::{AppConfig, BraveWebSearchConfig, TavilyWebSearchConfig};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Duration;
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
@@ -55,7 +55,7 @@ impl WebSearchTool {
             other => {
                 return Err(ToolError::InvalidArgs(format!(
                     "unsupported web_search provider '{other}'"
-                )))
+                )));
             }
         };
         Ok(Self { provider })

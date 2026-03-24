@@ -1,4 +1,4 @@
-use crate::{dingtalk::DingtalkChannel, telegram::TelegramChannel, ChannelResult, ChannelRuntime};
+use crate::{ChannelResult, ChannelRuntime, dingtalk::DingtalkChannel, telegram::TelegramChannel};
 use klaw_config::{ChannelsConfig, DingtalkConfig, TelegramConfig};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -200,7 +200,7 @@ pub trait ManagedChannelDriver {
 
 pub trait ChannelDriverFactory {
     fn build(&self, config: &ChannelInstanceConfig)
-        -> ChannelResult<Box<dyn ManagedChannelDriver>>;
+    -> ChannelResult<Box<dyn ManagedChannelDriver>>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -773,10 +773,12 @@ mod tests {
                 manager.shutdown_all().await;
 
                 assert_eq!(shutdowns.load(Ordering::SeqCst), 2);
-                assert!(manager
-                    .snapshot()
-                    .iter()
-                    .all(|status| status.state == ChannelLifecycleState::Stopped));
+                assert!(
+                    manager
+                        .snapshot()
+                        .iter()
+                        .all(|status| status.state == ChannelLifecycleState::Stopped)
+                );
             })
             .await;
     }

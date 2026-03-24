@@ -1,8 +1,8 @@
 use crate::{StorageError, StoragePaths};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use opendal::services::S3;
 use opendal::Operator;
+use opendal::services::S3;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1645,27 +1645,33 @@ mod tests {
 
         assert!(!result.manifest_id.is_empty());
         assert_eq!(result.manifest.parent_manifest_id, None);
-        assert!(service
-            .store
-            .exists(&latest_object_key())
-            .await
-            .expect("latest"));
-        assert!(service
-            .store
-            .exists(&manifest_object_key(&result.manifest_id))
-            .await
-            .expect("manifest"));
+        assert!(
+            service
+                .store
+                .exists(&latest_object_key())
+                .await
+                .expect("latest")
+        );
+        assert!(
+            service
+                .store
+                .exists(&manifest_object_key(&result.manifest_id))
+                .await
+                .expect("manifest")
+        );
         for entry in result
             .manifest
             .entries
             .iter()
             .filter(|entry| !entry.deleted)
         {
-            assert!(service
-                .store
-                .exists(&blob_object_key(&entry.sha256))
-                .await
-                .expect("blob"));
+            assert!(
+                service
+                    .store
+                    .exists(&blob_object_key(&entry.sha256))
+                    .await
+                    .expect("blob")
+            );
         }
     }
 
@@ -1929,16 +1935,20 @@ mod tests {
 
         service.cleanup_remote_snapshots(1).await.expect("cleanup");
 
-        assert!(!service
-            .store
-            .exists(&manifest_object_key(&first.manifest_id))
-            .await
-            .expect("first manifest"));
-        assert!(service
-            .store
-            .exists(&manifest_object_key(&second.manifest_id))
-            .await
-            .expect("second manifest"));
+        assert!(
+            !service
+                .store
+                .exists(&manifest_object_key(&first.manifest_id))
+                .await
+                .expect("first manifest")
+        );
+        assert!(
+            service
+                .store
+                .exists(&manifest_object_key(&second.manifest_id))
+                .await
+                .expect("second manifest")
+        );
         assert_eq!(
             service
                 .store

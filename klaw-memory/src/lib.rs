@@ -6,7 +6,7 @@ mod types;
 mod util;
 
 pub use error::MemoryError;
-pub use provider::{build_embedding_provider_from_config, OpenAiEmbeddingProvider};
+pub use provider::{OpenAiEmbeddingProvider, build_embedding_provider_from_config};
 pub use service::SqliteMemoryService;
 pub use stats::{MemoryStats, ScopeStat, SqliteMemoryStatsService};
 pub use types::{

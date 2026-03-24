@@ -11,7 +11,7 @@ use klaw_util::{default_data_dir, observability_db_path};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 

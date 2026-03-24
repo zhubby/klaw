@@ -5,15 +5,15 @@ mod types;
 use self::client::{BotCommand, EditMessageTextRequest, SendMessageRequest, TelegramApiClient};
 use self::render::{build_approval_message, extract_approval_id, render_telegram_response};
 use self::types::{
-    is_sender_allowed, EventDeduper, TelegramCallbackInbound, TelegramInbound, TelegramUpdate,
+    EventDeduper, TelegramCallbackInbound, TelegramInbound, TelegramUpdate, is_sender_allowed,
 };
 use crate::{
-    manager::{ChannelKind, ManagedChannelDriver},
-    media::{
-        ingest_media_reference_bytes, ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES,
-    },
     Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
     ChannelStreamWriter,
+    manager::{ChannelKind, ManagedChannelDriver},
+    media::{
+        ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES, ingest_media_reference_bytes,
+    },
 };
 use klaw_archive::open_default_archive_service;
 use klaw_config::{TelegramConfig, TelegramProxyConfig};
@@ -775,9 +775,9 @@ impl Channel for TelegramChannel {
 mod tests {
     use super::render::{build_approval_message, render_telegram_response};
     use super::types::{
-        extract_media_references, is_sender_allowed, message_text, TelegramAudio,
-        TelegramCallbackInbound, TelegramCallbackQuery, TelegramChat, TelegramDocument,
-        TelegramInlineKeyboardMarkup, TelegramMessage, TelegramPhotoSize, TelegramUser,
+        TelegramAudio, TelegramCallbackInbound, TelegramCallbackQuery, TelegramChat,
+        TelegramDocument, TelegramInlineKeyboardMarkup, TelegramMessage, TelegramPhotoSize,
+        TelegramUser, extract_media_references, is_sender_allowed, message_text,
     };
     use crate::ChannelResponse;
     use serde_json::Value;

@@ -8,8 +8,8 @@ use egui_file_dialog::FileDialog;
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_skill::{
-    open_default_skills_manager, FileSystemSkillStore, RegistrySkillSummary, SkillRecord,
-    SkillSourceKind, SkillSummary, SkillUninstallResult, SkillsManager,
+    FileSystemSkillStore, RegistrySkillSummary, SkillRecord, SkillSourceKind, SkillSummary,
+    SkillUninstallResult, SkillsManager, open_default_skills_manager,
 };
 use std::fs;
 use std::future::Future;

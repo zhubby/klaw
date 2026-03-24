@@ -1,20 +1,20 @@
 use crate::{
+    GatewayError,
     auth::GatewayAuth,
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
     state::{GatewayHandle, GatewayRuntimeInfo, GatewayState},
     tailscale::{TailscaleError, TailscaleManager},
-    webhook::{build_webhook_state, webhook_handler, GatewayWebhookHandler},
+    webhook::{GatewayWebhookHandler, build_webhook_state, webhook_handler},
     websocket::ws_chat_handler,
-    GatewayError,
 };
 use axum::{
+    Router,
     extract::DefaultBodyLimit,
     middleware,
     routing::{get, post},
-    Router,
 };
 use klaw_config::{GatewayConfig, TailscaleMode};
-use klaw_observability::{exporter::PrometheusExporter, HealthRegistry};
+use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{net::SocketAddr, sync::Arc};
 use tracing::info;
 

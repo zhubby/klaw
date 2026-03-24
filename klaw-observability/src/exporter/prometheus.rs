@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    http::{header, Response, StatusCode},
+    http::{Response, StatusCode, header},
 };
 use opentelemetry::global;
 use opentelemetry_sdk::metrics::SdkMeterProvider;

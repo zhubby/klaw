@@ -1,7 +1,7 @@
 use crate::tailscale::{TailscaleManager, TailscaleRuntimeInfo};
-use crate::{webhook::GatewayWebhookHandler, GatewayError};
+use crate::{GatewayError, webhook::GatewayWebhookHandler};
 use klaw_config::GatewayConfig;
-use klaw_observability::{exporter::PrometheusExporter, HealthRegistry};
+use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -9,7 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    sync::{broadcast, oneshot, RwLock},
+    sync::{RwLock, broadcast, oneshot},
     task::JoinHandle,
 };
 
