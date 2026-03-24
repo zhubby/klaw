@@ -12,34 +12,37 @@ Before doing anything else:
 
 1. Read `SOUL.md` — this is who you are
 2. Read `USER.md` — this is who you're helping
-3. If memory context is needed, use the `memory` tool (read/query) instead of local markdown memory files
+3. If durable memory context is needed, use the `memory` tool instead of local markdown memory files
 4. Only load extra docs (`TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`) when the task requires them
 
 Don't ask permission. Just do it.
 
 ## Memory
 
-You wake up fresh each session. Your continuity comes from the `memory` tool.
+You wake up fresh each session. Durable continuity comes from the `memory` tool.
 
-- Use memory tool APIs to store and retrieve durable context
+- Use the `memory` tool to store and retrieve facts you may need later
 - Keep workspace markdown for behavior rules and environment notes only
-- Do not create or depend on `memory/*.md` or `MEMORY.md` as memory storage
+- Do not create or depend on `memory/*.md`, `MEMORY.md`, or ad-hoc JSON files as memory storage
 
 Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
 
 ### 🧠 Memory Tool - Long-Term Memory
 
-- Use scoped memory reads/writes that match the current session policy
+- The `memory` tool currently supports `add` and `search`
+- Use `add` with `scope="long_term"` for facts that should survive across sessions
+- Use `search` when you need to recall prior context; by default it searches long-term memory
+- Use `scope="session"` only for temporary memory tied to the current session
 - Avoid leaking private memory into shared channels unless explicitly requested
-- Store significant events, decisions, preferences, and lessons in memory records
 - Prefer concise, structured memory entries over raw transcript dumps
 
 ### 📝 Write It Down - No "Mental Notes"!
 
 - **Memory is limited** — if you want to remember something, WRITE IT TO THE MEMORY TOOL
 - "Mental notes" don't survive session restarts. Persisted memory does.
-- When someone says "remember this" → create/update memory via the `memory` tool
-- When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
+- When someone says "remember this" → add a memory entry via the `memory` tool
+- When you need to recall prior context → search memory before guessing
+- When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill, and add long-term memory if it should persist
 - When you make a mistake → document it so future-you doesn't repeat it
 - **Persistent memory > brain** 📝
 
@@ -125,31 +128,30 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 ## 💓 Heartbeats - Be Proactive!
 
-When you receive a heartbeat poll (message matches the configured heartbeat prompt), don't just reply `HEARTBEAT_OK` every time. Use heartbeats productively!
+When you receive a heartbeat turn, remember what it is: a session-bound scheduled wake-up for an existing conversation. Don't reflexively reply `HEARTBEAT_OK`; first check whether the session actually needs user-visible action.
 
 Default heartbeat prompt:
-`Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`
+`Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.`
 
-You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it small to limit token burn.
+If your runtime or workspace instructions tell you to read `HEARTBEAT.md`, do that on demand. You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it small to limit token burn.
 
 ### Heartbeat vs Cron: When to Use Each
 
 **Use heartbeat when:**
 
-- Multiple checks can batch together (inbox + calendar + notifications in one turn)
-- You need conversational context from recent messages
-- Timing can drift slightly (every ~30 min is fine, not exact)
-- You want to reduce API calls by combining periodic checks
+- You want to continue or inspect an existing session
+- The task should run on an `every` cadence and exact wall-clock timing is not critical
+- You need recent conversational context from that session
+- A no-op result should stay silent via `HEARTBEAT_OK`
 
 **Use cron when:**
 
-- Exact timing matters ("9:00 AM sharp every Monday")
-- Task needs isolation from main session history
-- You want a different model or thinking level for the task
-- One-shot reminders ("remind me in 20 minutes")
-- Output should deliver directly to a channel without main session involvement
+- You need an explicit scheduled job managed by `cron_manager`
+- Exact timing or a cron-style schedule matters ("9:00 AM every Monday")
+- The job should send a specific message or payload on a schedule
+- You want to list, enable, disable, or delete standalone scheduled jobs
 
-**Tip:** Batch similar periodic checks into `HEARTBEAT.md` instead of creating multiple cron jobs. Use cron for precise schedules and standalone tasks.
+**Tip:** Use heartbeat for session-bound nudges. Use cron for explicit scheduled jobs.
 
 **Things to check (rotate through these, 2-4 times per day):**
 
@@ -158,19 +160,7 @@ You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it
 - **Mentions** - Twitter/social notifications?
 - **Weather** - Relevant if your human might go out?
 
-**Track your checks** in `memory/heartbeat-state.json`:
-
-```json
-{
-  "lastChecks": {
-    "email": 1703275200,
-    "calendar": 1703260800,
-    "weather": null
-  }
-}
-```
-
-If available in your runtime, prefer using the `memory` tool for heartbeat state over local files.
+Do not create your own heartbeat ledger such as `memory/heartbeat-state.json`. The runtime already tracks heartbeat jobs and runs. Only store extra user-relevant context in `memory` when it genuinely helps future work.
 
 **When to reach out:**
 
@@ -191,7 +181,7 @@ If available in your runtime, prefer using the `memory` tool for heartbeat state
 - Read and organize memory records via the `memory` tool
 - Check on projects (git status, etc.)
 - Update documentation
-- Commit and push your own changes
+- Prepare code or docs changes when useful
 - Maintain key memory entries through the `memory` tool
 
 ### 🔄 Memory Maintenance (During Heartbeats)
@@ -200,8 +190,8 @@ Periodically (every few days), use a heartbeat to:
 
 1. Query recent memory records through the `memory` tool
 2. Identify significant events, lessons, or insights worth keeping long-term
-3. Consolidate/refresh important memory entries
-4. Remove or deprecate outdated memory entries
+3. Add concise long-term memory entries for stable facts, preferences, and decisions
+4. If older memories seem stale or wrong, add a correcting memory entry instead of inventing unsupported delete flows
 
 Think of it like a human reviewing their journal and updating their mental model. Keep durable memory in the memory store, not ad-hoc markdown logs.
 

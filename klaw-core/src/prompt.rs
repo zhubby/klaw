@@ -200,9 +200,9 @@ pub fn format_workspace_docs_for_prompt() -> String {
 \n\
 Recommended usage:\n\
 - Start with AGENTS.md and USER.md for baseline behavior and user preferences.\n\
-- Read TOOLS.md before tool-heavy tasks or environment-specific operations.\n\
-- Read HEARTBEAT.md only for heartbeat/autonomous polling turns.\n\
-- Read BOOTSTRAP.md only during first-run initialization or cold-start setup.\n\
+- Read `TOOLS.md` before tool-heavy tasks or environment-specific operations.\n\
+- Read `HEARTBEAT.md` only for heartbeat/autonomous polling turns.\n\
+- Read `BOOTSTRAP.md` only during first-run initialization or cold-start setup.\n\
 - Use the memory tool for durable memory; do not use markdown files as memory storage."
     )
 }
