@@ -50,6 +50,7 @@
 - Profile panel features:
   - read markdown files directly under `~/.klaw/workspace`
   - show workspace docs as cards with file summary, modified time, and path
+  - create a new workspace-root file from a popup with `file name` and `body`
   - edit a document in a fixed-height markdown-highlighted popup editor
   - save, cancel, or reset in the editor footer
 - Provider panel features:

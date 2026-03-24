@@ -4,6 +4,16 @@
 
 ### Added
 
+- `Profile` 面板新增 `Create File` 弹窗，可直接在 workspace 根目录输入文件名与正文创建新文件
+
+### Changed
+
+- `Profile` 面板创建 workspace 文件时现在会校验文件名仅落在 workspace 根目录下，并阻止覆盖已存在文件
+
+## 2026-03-23
+
+### Added
+
 - `MCP` panel now shows live runtime server state and tool counts in a selectable table
 - `MCP` panel server rows now expose icon-based context actions including a red `Delete`
 - `MCP` panel now exposes a `Detail` popup that renders the cached `tools/list` response as markdown-friendly content

@@ -30,11 +30,19 @@ struct WorkspaceMarkdownEditor {
     open: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+struct WorkspaceFileCreateForm {
+    file_name: String,
+    body: String,
+    open: bool,
+}
+
 #[derive(Default)]
 pub struct ProfilePanel {
     workspace_dir: Option<PathBuf>,
     docs: Vec<WorkspaceMarkdownDoc>,
     editor: Option<WorkspaceMarkdownEditor>,
+    create_form: WorkspaceFileCreateForm,
     loaded: bool,
     pending_default_confirm: Option<String>,
 }
@@ -277,6 +285,99 @@ impl ProfilePanel {
             self.pending_default_confirm = None;
         }
     }
+
+    fn render_create_file_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        if !self.create_form.open {
+            return;
+        }
+
+        let Some(workspace_dir) = self.workspace_dir.clone() else {
+            notifications.error("Workspace path is unavailable.");
+            self.create_form.open = false;
+            return;
+        };
+
+        let viewport_height = ctx.input(|input| {
+            input
+                .viewport()
+                .inner_rect
+                .map(|rect| rect.height())
+                .unwrap_or(760.0)
+        });
+        let window_max_height = (viewport_height - 120.0).clamp(360.0, 680.0);
+        let mut create_clicked = false;
+        let mut cancel_clicked = false;
+
+        egui::Window::new("Create workspace file")
+            .open(&mut self.create_form.open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(720.0)
+            .default_height(window_max_height.min(480.0))
+            .max_height(window_max_height)
+            .show(ctx, |ui| {
+                ui.label(format!("Workspace Path: {}", workspace_dir.display()));
+                ui.small("The file will be created directly under the workspace directory.");
+                ui.add_space(8.0);
+
+                ui.label("File Name");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.create_form.file_name)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("example.md"),
+                );
+                ui.add_space(8.0);
+
+                ui.label("Body");
+                egui::ScrollArea::vertical()
+                    .id_salt("workspace-create-body-scroll")
+                    .max_height((window_max_height - 180.0).max(180.0))
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            [ui.available_width(), ui.available_height().max(200.0)],
+                            egui::TextEdit::multiline(&mut self.create_form.body)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_rows(16)
+                                .desired_width(f32::INFINITY)
+                                .code_editor(),
+                        );
+                    });
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Create").clicked() {
+                        create_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                });
+            });
+
+        if create_clicked {
+            match create_workspace_file(
+                &workspace_dir,
+                &self.create_form.file_name,
+                &self.create_form.body,
+            ) {
+                Ok(path) => {
+                    notifications.success(format!("Created {}", path.display()));
+                    self.reload(notifications);
+                    self.create_form = WorkspaceFileCreateForm::default();
+                }
+                Err(err) => notifications.error(err),
+            }
+        }
+
+        if cancel_clicked || !self.create_form.open {
+            self.create_form = WorkspaceFileCreateForm::default();
+        }
+    }
 }
 
 impl PanelRenderer for ProfilePanel {
@@ -297,6 +398,9 @@ impl PanelRenderer for ProfilePanel {
             ui.label(format!("Markdown Files: {}", self.docs.len()));
             if ui.button("Reload").clicked() {
                 self.reload(notifications);
+            }
+            if ui.button("Create File").clicked() {
+                self.create_form.open = true;
             }
         });
         ui.separator();
@@ -331,6 +435,7 @@ impl PanelRenderer for ProfilePanel {
         }
         self.render_editor_window(ui.ctx(), notifications);
         self.render_default_confirm_dialog(ui.ctx(), notifications);
+        self.render_create_file_dialog(ui.ctx(), notifications);
     }
 }
 
@@ -390,6 +495,48 @@ fn load_workspace_markdown_docs() -> Result<(PathBuf, Vec<WorkspaceMarkdownDoc>)
 
 fn resolve_workspace_dir() -> Result<PathBuf, String> {
     default_workspace_dir().ok_or_else(|| "HOME is unavailable".to_string())
+}
+
+fn validate_workspace_file_name(file_name: &str) -> Result<String, String> {
+    use std::path::Component;
+
+    let trimmed = file_name.trim();
+    if trimmed.is_empty() {
+        return Err("File name is required.".to_string());
+    }
+
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("File name must be relative to the workspace directory.".to_string());
+    }
+
+    let mut components = path.components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(trimmed.to_string()),
+        _ => Err("File name must not contain directory separators.".to_string()),
+    }
+}
+
+fn create_workspace_file(
+    workspace_dir: &Path,
+    file_name: &str,
+    body: &str,
+) -> Result<PathBuf, String> {
+    let file_name = validate_workspace_file_name(file_name)?;
+    fs::create_dir_all(workspace_dir).map_err(|err| {
+        format!(
+            "Unable to create workspace dir {}: {err}",
+            workspace_dir.display()
+        )
+    })?;
+
+    let path = workspace_dir.join(&file_name);
+    if path.exists() {
+        return Err(format!("{} already exists.", path.display()));
+    }
+
+    fs::write(&path, body).map_err(|err| format!("Failed to create {}: {err}", path.display()))?;
+    Ok(path)
 }
 
 fn is_markdown_path(path: &Path) -> bool {
@@ -606,6 +753,46 @@ mod tests {
         assert_eq!(ProfilePanel::card_column_count(200.0), 1);
         assert_eq!(ProfilePanel::card_column_count(700.0), 2);
         assert_eq!(ProfilePanel::card_column_count(1100.0), 3);
+    }
+
+    #[test]
+    fn validate_workspace_file_name_rejects_nested_paths() {
+        let err = validate_workspace_file_name("nested/file.md").expect_err("nested path");
+        assert!(err.contains("directory separators"));
+    }
+
+    #[test]
+    fn create_workspace_file_writes_requested_body() {
+        let workspace_dir = temp_workspace_dir();
+        fs::create_dir_all(&workspace_dir).expect("workspace dir");
+
+        let path = create_workspace_file(&workspace_dir, "PROFILE.md", "# Title\nbody")
+            .expect("create file");
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("PROFILE.md")
+        );
+        assert_eq!(
+            fs::read_to_string(&path).expect("read file"),
+            "# Title\nbody"
+        );
+
+        let _ = fs::remove_dir_all(workspace_dir);
+    }
+
+    #[test]
+    fn create_workspace_file_rejects_existing_target() {
+        let workspace_dir = temp_workspace_dir();
+        fs::create_dir_all(&workspace_dir).expect("workspace dir");
+        fs::write(workspace_dir.join("PROFILE.md"), "old").expect("seed file");
+
+        let err =
+            create_workspace_file(&workspace_dir, "PROFILE.md", "new").expect_err("existing file");
+
+        assert!(err.contains("already exists"));
+
+        let _ = fs::remove_dir_all(workspace_dir);
     }
 }
 
