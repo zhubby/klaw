@@ -1,9 +1,9 @@
 use async_trait::async_trait;
-use klaw_archive::{open_default_archive_service, ArchiveRecord, ArchiveService};
+use klaw_archive::{ArchiveRecord, ArchiveService, open_default_archive_service};
 use klaw_config::AppConfig;
 use klaw_util::{default_data_dir, workspace_dir};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
@@ -514,12 +514,16 @@ mod tests {
             .execute(json!({"action": "list_current_attachments"}), &ctx)
             .await
             .expect("list current attachments");
-        assert!(output
-            .content_for_model
-            .contains("\"archive_id\": \"arch-1\""));
-        assert!(output
-            .content_for_model
-            .contains("\"archives_are_read_only\": true"));
+        assert!(
+            output
+                .content_for_model
+                .contains("\"archive_id\": \"arch-1\"")
+        );
+        assert!(
+            output
+                .content_for_model
+                .contains("\"archives_are_read_only\": true")
+        );
     }
 
     #[tokio::test]
@@ -566,8 +570,10 @@ mod tests {
             std::fs::read_to_string(copied).expect("copied file"),
             "hello archive"
         );
-        assert!(output
-            .content_for_model
-            .contains("\"next_step\": \"edit_or_transform_the_workspace_copy_only\""));
+        assert!(
+            output
+                .content_for_model
+                .contains("\"next_step\": \"edit_or_transform_the_workspace_copy_only\"")
+        );
     }
 }

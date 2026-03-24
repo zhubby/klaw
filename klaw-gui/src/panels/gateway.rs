@@ -2,8 +2,8 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_seconds;
 use crate::{
-    request_gateway_status, request_restart_gateway, request_set_tailscale_mode,
-    GatewayStatusSnapshot,
+    GatewayStatusSnapshot, request_gateway_status, request_restart_gateway,
+    request_set_tailscale_mode,
 };
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, GatewayConfig, TailscaleMode};
 use klaw_gateway::TailscaleStatus;

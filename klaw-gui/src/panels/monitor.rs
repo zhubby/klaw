@@ -1,7 +1,7 @@
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_seconds;
 use klaw_config::ConfigStore;
-use klaw_util::{default_data_dir, KLAW_DIR_NAME};
+use klaw_util::{KLAW_DIR_NAME, default_data_dir};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};

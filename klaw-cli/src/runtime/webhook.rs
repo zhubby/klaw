@@ -1,4 +1,4 @@
-use super::{submit_webhook_event, RuntimeBundle};
+use super::{RuntimeBundle, submit_webhook_event};
 use async_trait::async_trait;
 use klaw_gateway::{
     GatewayOptions, GatewayWebhookHandler, GatewayWebhookRequest, GatewayWebhookResponse,

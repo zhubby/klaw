@@ -9,8 +9,8 @@ use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
-    build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle, webhook,
-    SharedChannelRuntime,
+    SharedChannelRuntime, build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle,
+    webhook,
 };
 use tracing::info;
 

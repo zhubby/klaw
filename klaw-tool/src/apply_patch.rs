@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use klaw_config::{AppConfig, ApplyPatchConfig};
 use klaw_util::{default_data_dir, workspace_dir};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -592,10 +592,11 @@ mod tests {
             .await;
 
         assert!(out.is_err());
-        assert!(out
-            .unwrap_err()
-            .to_string()
-            .contains("unknown field `action`"));
+        assert!(
+            out.unwrap_err()
+                .to_string()
+                .contains("unknown field `action`")
+        );
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use klaw_util::{
-    default_data_dir, skills_dir, skills_registry_dir, skills_registry_manifest_path,
-    SKILLS_REGISTRY_MANIFEST_FILE_NAME,
+    SKILLS_REGISTRY_MANIFEST_FILE_NAME, default_data_dir, skills_dir, skills_registry_dir,
+    skills_registry_manifest_path,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,7 +11,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::task::JoinSet;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use tracing::{info, warn};
 
 use crate::{
@@ -1940,14 +1940,18 @@ mod tests {
             .load_installed_manifest()
             .await
             .expect("load final manifest");
-        assert!(manifest
-            .managed
-            .iter()
-            .any(|item| item.registry == "openclaw" && item.name == "legacy"));
-        assert!(manifest
-            .managed
-            .iter()
-            .any(|item| item.registry == "openai" && item.name == "demo"));
+        assert!(
+            manifest
+                .managed
+                .iter()
+                .any(|item| item.registry == "openclaw" && item.name == "legacy")
+        );
+        assert!(
+            manifest
+                .managed
+                .iter()
+                .any(|item| item.registry == "openai" && item.name == "demo")
+        );
         assert_eq!(
             manifest
                 .registry_commits

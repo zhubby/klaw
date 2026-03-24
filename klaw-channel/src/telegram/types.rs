@@ -326,11 +326,7 @@ fn build_file_media_reference(
 fn file_extension_from_name(name: &str) -> Option<&str> {
     let (_, ext) = name.rsplit_once('.')?;
     let ext = ext.trim();
-    if ext.is_empty() {
-        None
-    } else {
-        Some(ext)
-    }
+    if ext.is_empty() { None } else { Some(ext) }
 }
 
 pub fn is_sender_allowed(allowlist: &[String], sender_id: &str) -> bool {

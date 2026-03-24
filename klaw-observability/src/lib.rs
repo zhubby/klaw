@@ -19,7 +19,7 @@ pub use local_store::{
     TurnEfficiencyRow,
 };
 pub use metrics::MetricsRecorder;
-pub use telemetry::{init_observability, ObservabilityHandle, OtelAgentTelemetry};
+pub use telemetry::{ObservabilityHandle, OtelAgentTelemetry, init_observability};
 
 pub use klaw_core::observability::{
     AgentTelemetry, ModelRequestRecord, ModelRequestStatus, ModelToolOutcomeRecord,

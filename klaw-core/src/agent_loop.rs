@@ -6,16 +6,16 @@ use crate::{
     },
     protocol::{Envelope, ErrorCode, MessageTopic},
     reliability::{
-        idempotency_key, CircuitBreaker, DeadLetterPolicy, IdempotencyStore, RetryDecision,
-        RetryPolicy,
+        CircuitBreaker, DeadLetterPolicy, IdempotencyStore, RetryDecision, RetryPolicy,
+        idempotency_key,
     },
     transport::{MessageTransport, Subscription, TransportAckHandle, TransportError},
 };
 use async_trait::async_trait;
 use klaw_agent::{
-    run_agent_execution, AgentExecutionError, AgentExecutionInput, AgentExecutionLimits,
-    AgentExecutionStreamEvent, ConversationMessage, ToolExecutor, ToolInvocationResult,
-    ToolInvocationSignal,
+    AgentExecutionError, AgentExecutionInput, AgentExecutionLimits, AgentExecutionStreamEvent,
+    ConversationMessage, ToolExecutor, ToolInvocationResult, ToolInvocationSignal,
+    run_agent_execution,
 };
 use klaw_llm::{LlmAuditPayload, LlmError, LlmMedia, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
@@ -1629,8 +1629,9 @@ fn augment_user_content_with_attachment_context(
 #[cfg(test)]
 mod tests {
     use super::{
+        AgentLoop, QueueStrategy, RunLimits, SessionSchedulingPolicy,
         augment_user_content_with_attachment_context, current_attachment_contexts,
-        heartbeat_response_metadata, AgentLoop, QueueStrategy, RunLimits, SessionSchedulingPolicy,
+        heartbeat_response_metadata,
     };
     use crate::{
         domain::InboundMessage,

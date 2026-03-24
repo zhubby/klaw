@@ -5,9 +5,9 @@ use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
-    build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle, SharedChannelRuntime,
+    SharedChannelRuntime, build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle,
 };
-use klaw_channel::{stdio::StdioChannel, Channel};
+use klaw_channel::{Channel, stdio::StdioChannel};
 use klaw_config::AppConfig;
 
 #[derive(Debug, Args)]

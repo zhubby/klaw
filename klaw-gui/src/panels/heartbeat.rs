@@ -7,11 +7,11 @@ use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_heartbeat::{
-    HeartbeatInput, HeartbeatManager, DEFAULT_SILENT_ACK_TOKEN, DEFAULT_TIMEZONE,
+    DEFAULT_SILENT_ACK_TOKEN, DEFAULT_TIMEZONE, HeartbeatInput, HeartbeatManager,
 };
 use klaw_storage::{
-    open_default_store, DefaultSessionStore, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus,
-    SessionIndex, SessionStorage,
+    DefaultSessionStore, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, SessionIndex,
+    SessionStorage, open_default_store,
 };
 use std::future::Future;
 use std::sync::Arc;

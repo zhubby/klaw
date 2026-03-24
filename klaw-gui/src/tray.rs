@@ -2,8 +2,8 @@ use crate::icon;
 use anyhow::Context;
 use std::sync::mpsc::{self, Receiver};
 use tray_icon::{
-    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     TrayIcon,
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 
 const MENU_OPEN_KLAW_ID: &str = "tray.open_klaw";
@@ -89,8 +89,8 @@ fn tray_command_for_menu_id(menu_id: &str) -> Option<TrayCommand> {
 #[cfg(test)]
 mod tests {
     use super::{
-        tray_command_for_menu_id, TrayCommand, MENU_OPEN_KLAW_ID, MENU_OPEN_SETTINGS_ID,
-        MENU_QUIT_KLAW_ID, MENU_SHOW_ABOUT_ID,
+        MENU_OPEN_KLAW_ID, MENU_OPEN_SETTINGS_ID, MENU_QUIT_KLAW_ID, MENU_SHOW_ABOUT_ID,
+        TrayCommand, tray_command_for_menu_id,
     };
 
     #[test]

@@ -1,11 +1,11 @@
 use async_trait::async_trait;
-use reqwest::{header::USER_AGENT, Client};
+use reqwest::{Client, header::USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    estimate::estimate_chat_usage, ChatOptions, LlmAuditPayload, LlmAuditStatus, LlmError,
-    LlmMessage, LlmProvider, LlmResponse, LlmUsage, LlmUsageSource, ToolCall, ToolDefinition,
+    ChatOptions, LlmAuditPayload, LlmAuditStatus, LlmError, LlmMessage, LlmProvider, LlmResponse,
+    LlmUsage, LlmUsageSource, ToolCall, ToolDefinition, estimate::estimate_chat_usage,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -146,8 +146,8 @@ fn is_preferred_cjk_family(family_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        install_embedded_preferred_fonts, is_preferred_cjk_family, LXGW_WENKAI_MONOSPACE_NAME,
-        LXGW_WENKAI_PROPORTIONAL_NAME,
+        LXGW_WENKAI_MONOSPACE_NAME, LXGW_WENKAI_PROPORTIONAL_NAME,
+        install_embedded_preferred_fonts, is_preferred_cjk_family,
     };
 
     #[test]

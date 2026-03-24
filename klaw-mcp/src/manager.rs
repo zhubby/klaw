@@ -4,7 +4,7 @@ use crate::{
 };
 use klaw_config::{McpConfig, McpServerConfig, McpServerMode};
 use klaw_tool::ToolRegistry;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -13,7 +13,7 @@ use std::{
 };
 use thiserror::Error;
 use tokio::{
-    sync::{watch, Mutex},
+    sync::{Mutex, watch},
     task::{JoinHandle, JoinSet},
     time::timeout,
 };

@@ -1,5 +1,5 @@
-use super::{drain_runtime_queue, RuntimeBundle};
-use klaw_channel::dingtalk::{send_session_webhook_markdown_via_proxy, DingtalkProxyConfig};
+use super::{RuntimeBundle, drain_runtime_queue};
+use klaw_channel::dingtalk::{DingtalkProxyConfig, send_session_webhook_markdown_via_proxy};
 use klaw_channel::telegram::dispatch_background_outbound as dispatch_telegram_background_outbound;
 use klaw_config::AppConfig;
 use klaw_core::{Envelope, InboundMessage, OutboundMessage};
@@ -8,7 +8,7 @@ use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig};
 use klaw_storage::DefaultSessionStore;
 use std::{
     collections::BTreeMap,
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
     thread,
     time::Duration,
 };

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use globset::{Glob, GlobMatcher};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};

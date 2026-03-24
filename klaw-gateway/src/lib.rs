@@ -10,8 +10,8 @@ mod websocket;
 
 pub use error::GatewayError;
 pub use runtime::{
-    run_gateway, run_gateway_with_options, spawn_gateway, spawn_gateway_with_options,
-    GatewayOptions,
+    GatewayOptions, run_gateway, run_gateway_with_options, spawn_gateway,
+    spawn_gateway_with_options,
 };
 pub use state::{GatewayHandle, GatewayRuntimeInfo};
 pub use tailscale::{TailscaleRuntimeInfo, TailscaleStatus};

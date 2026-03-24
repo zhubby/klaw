@@ -1,14 +1,14 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::settings::{
-    load_settings, save_settings, AppSettings, ProxyMode, S3SyncConfig, SyncItem, SyncMode,
-    SyncProvider,
+    AppSettings, ProxyMode, S3SyncConfig, SyncItem, SyncMode, SyncProvider, load_settings,
+    save_settings,
 };
 use crate::sync_runtime::{
-    sync_runtime_finish_task, sync_runtime_set_last_snapshot, sync_runtime_set_remote_snapshots,
+    SyncRuntimeProgress, SyncRuntimeSnapshot, SyncRuntimeTaskKind, sync_runtime_finish_task,
+    sync_runtime_set_last_snapshot, sync_runtime_set_remote_snapshots,
     sync_runtime_set_remote_update, sync_runtime_set_task_progress, sync_runtime_snapshot,
-    sync_runtime_sync_from_settings, sync_runtime_try_start_task, SyncRuntimeProgress,
-    SyncRuntimeSnapshot, SyncRuntimeTaskKind,
+    sync_runtime_sync_from_settings, sync_runtime_try_start_task,
 };
 use crate::time_format::format_optional_timestamp_millis;
 use egui_extras::{Size, StripBuilder};

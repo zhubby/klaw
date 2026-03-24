@@ -4,7 +4,7 @@ use klaw_memory::{
     MemoryError, MemoryHit, MemoryRecord, MemorySearchQuery, MemoryService, SqliteMemoryService,
     UpsertMemoryInput,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
@@ -283,7 +283,7 @@ impl Tool for MemoryTool {
             _ => {
                 return Err(ToolError::InvalidArgs(
                     "`action` must be one of add/search".to_string(),
-                ))
+                ));
             }
         };
 

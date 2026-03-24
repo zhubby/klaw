@@ -5,8 +5,8 @@ use egui::{ColorImage, TextureHandle};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_archive::{
-    open_default_archive_service, ArchiveBlob, ArchiveError, ArchiveMediaKind, ArchiveQuery,
-    ArchiveRecord, ArchiveService, ArchiveSourceKind, SqliteArchiveService,
+    ArchiveBlob, ArchiveError, ArchiveMediaKind, ArchiveQuery, ArchiveRecord, ArchiveService,
+    ArchiveSourceKind, SqliteArchiveService, open_default_archive_service,
 };
 use std::ffi::OsStr;
 use std::fs;

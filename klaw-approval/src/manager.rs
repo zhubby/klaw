@@ -1,8 +1,8 @@
 use crate::ApprovalError;
 use async_trait::async_trait;
 use klaw_storage::{
-    open_default_store, ApprovalRecord, ApprovalStatus, DbRow, DbValue, DefaultSessionStore,
-    MemoryDb, NewApprovalRecord, SessionStorage,
+    ApprovalRecord, ApprovalStatus, DbRow, DbValue, DefaultSessionStore, MemoryDb,
+    NewApprovalRecord, SessionStorage, open_default_store,
 };
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
@@ -489,8 +489,8 @@ fn row_opt_i64(row: &DbRow, index: usize) -> Result<Option<i64>, ApprovalError> 
 #[cfg(test)]
 mod tests {
     use super::{
-        now_ms, ApprovalCreateInput, ApprovalListQuery, ApprovalManager, ApprovalResolveDecision,
-        SqliteApprovalManager,
+        ApprovalCreateInput, ApprovalListQuery, ApprovalManager, ApprovalResolveDecision,
+        SqliteApprovalManager, now_ms,
     };
     use klaw_storage::{ApprovalStatus, DefaultSessionStore, SessionStorage, StoragePaths};
     use std::sync::atomic::{AtomicU64, Ordering};

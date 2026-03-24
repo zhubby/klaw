@@ -1,6 +1,6 @@
 use crate::{
-    render::{render_agent_output, OutputRenderStyle},
     Channel, ChannelRequest, ChannelResult, ChannelRuntime,
+    render::{OutputRenderStyle, render_agent_output},
 };
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -130,7 +130,7 @@ impl Channel for StdioChannel {
 async fn shutdown_signal() -> io::Result<()> {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         if let Ok(mut terminate) = signal(SignalKind::terminate()) {
             tokio::select! {
@@ -165,8 +165,8 @@ where
 mod tests {
     use super::StdioChannel;
     use crate::{
-        render::{render_agent_output, OutputRenderStyle},
         ChannelResponse,
+        render::{OutputRenderStyle, render_agent_output},
     };
 
     #[test]

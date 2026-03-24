@@ -1051,11 +1051,13 @@ mod tests {
 
         let updated = ChannelPanel::apply_dingtalk_form(config, &form).expect("should apply");
 
-        assert!(updated
-            .channels
-            .dingtalk
-            .iter()
-            .any(|item| item.id == "ops"));
+        assert!(
+            updated
+                .channels
+                .dingtalk
+                .iter()
+                .any(|item| item.id == "ops")
+        );
     }
 
     #[test]
@@ -1128,11 +1130,13 @@ mod tests {
 
         let updated = ChannelPanel::apply_telegram_form(config, &form).expect("should apply");
 
-        assert!(updated
-            .channels
-            .telegram
-            .iter()
-            .any(|item| item.id == "ops-bot"));
+        assert!(
+            updated
+                .channels
+                .telegram
+                .iter()
+                .any(|item| item.id == "ops-bot")
+        );
     }
 
     #[test]

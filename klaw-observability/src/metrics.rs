@@ -1,7 +1,6 @@
 use opentelemetry::{
-    global,
+    KeyValue, global,
     metrics::{Counter, Gauge, Histogram, Meter},
-    KeyValue,
 };
 use prometheus::Registry;
 use std::sync::Arc;

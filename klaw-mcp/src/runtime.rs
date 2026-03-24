@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use klaw_tool::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 use std::sync::Arc;
 
-use crate::{format_tool_result_for_model, McpClientHub, McpToolDescriptor};
+use crate::{McpClientHub, McpToolDescriptor, format_tool_result_for_model};
 
 pub struct McpProxyTool {
     descriptor: McpToolDescriptor,

@@ -1,8 +1,8 @@
 use crate::state::{GatewayState, ROOM_BUFFER_SIZE};
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::StatusCode,
     response::{IntoResponse, Response},

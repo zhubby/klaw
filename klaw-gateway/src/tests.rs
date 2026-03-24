@@ -2,7 +2,7 @@
 mod tests {
     use crate::{
         spawn_gateway,
-        webhook::{normalize_webhook_request, GatewayWebhookPayload},
+        webhook::{GatewayWebhookPayload, normalize_webhook_request},
     };
     use klaw_config::GatewayConfig;
     use serde_json::json;
@@ -21,10 +21,12 @@ mod tests {
 
         let handle = spawn_gateway(&config).await.expect("gateway should start");
         assert!(handle.info().actual_port > 0);
-        assert!(handle
-            .info()
-            .ws_url
-            .contains(&handle.info().actual_port.to_string()));
+        assert!(
+            handle
+                .info()
+                .ws_url
+                .contains(&handle.info().actual_port.to_string())
+        );
 
         handle.shutdown().await.expect("gateway should stop");
     }

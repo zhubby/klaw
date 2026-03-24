@@ -2,7 +2,7 @@ use std::env;
 
 use anyhow::Result;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn env_or_default(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.to_string())

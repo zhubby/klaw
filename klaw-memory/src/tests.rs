@@ -1,7 +1,7 @@
 use crate::{
+    EmbeddingProvider, MemorySearchQuery, MemoryService, SqliteMemoryService, UpsertMemoryInput,
     build_embedding_provider_from_config,
     util::{now_ms, rrf_score},
-    EmbeddingProvider, MemorySearchQuery, MemoryService, SqliteMemoryService, UpsertMemoryInput,
 };
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
@@ -9,8 +9,8 @@ use klaw_storage::{DefaultMemoryDb, MemoryDb, StoragePaths};
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 

@@ -1439,9 +1439,9 @@ mod io;
 mod validate;
 
 pub use io::{
-    default_config_path, default_config_template, load_or_init, migrate_with_defaults,
-    reset_to_defaults, validate_config_file, ConfigSnapshot, ConfigStore, LoadedConfig,
-    MigratedConfig,
+    ConfigSnapshot, ConfigStore, LoadedConfig, MigratedConfig, default_config_path,
+    default_config_template, load_or_init, migrate_with_defaults, reset_to_defaults,
+    validate_config_file,
 };
 #[cfg(test)]
 pub(crate) use io::{load_from_path, migrate_path_with_defaults, reset_path_to_defaults};

@@ -207,7 +207,7 @@ pub trait CronStorage: Send + Sync {
     async fn append_task_run(&self, input: &NewCronTaskRun) -> Result<CronTaskRun, StorageError>;
 
     async fn mark_task_running(&self, run_id: &str, started_at_ms: i64)
-        -> Result<(), StorageError>;
+    -> Result<(), StorageError>;
 
     async fn mark_task_result(
         &self,
@@ -229,7 +229,7 @@ pub trait CronStorage: Send + Sync {
 #[async_trait]
 pub trait HeartbeatStorage: Send + Sync {
     async fn create_heartbeat(&self, input: &NewHeartbeatJob)
-        -> Result<HeartbeatJob, StorageError>;
+    -> Result<HeartbeatJob, StorageError>;
 
     async fn update_heartbeat(
         &self,

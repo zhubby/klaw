@@ -1,5 +1,5 @@
-use crate::{util::now_ms, MemoryError};
-use klaw_storage::{open_default_memory_db, DbValue, MemoryDb};
+use crate::{MemoryError, util::now_ms};
+use klaw_storage::{DbValue, MemoryDb, open_default_memory_db};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Default)]

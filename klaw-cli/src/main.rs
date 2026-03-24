@@ -13,7 +13,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
     path::PathBuf,
-    sync::{mpsc, Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
 };
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -173,7 +173,11 @@ fn augment_path_for_macos_gui() -> Option<PathUpdate> {
     }
 
     if let Ok(joined) = env::join_paths(&merged_paths) {
-        env::set_var("PATH", joined);
+        // SAFETY: This runs during CLI startup before we spawn any additional tasks or threads
+        // that might concurrently read or mutate the process environment.
+        unsafe {
+            env::set_var("PATH", joined);
+        }
         return Some(PathUpdate { added_paths });
     }
 

@@ -75,11 +75,13 @@ fn parse_default_template_succeeds() {
             .map(|registry| registry.address.as_str()),
         Some("https://github.com/anthropics/skills")
     );
-    assert!(parsed
-        .skills
-        .registries
-        .get("anthropic")
-        .is_some_and(|registry| registry.installed.is_empty()));
+    assert!(
+        parsed
+            .skills
+            .registries
+            .get("anthropic")
+            .is_some_and(|registry| registry.installed.is_empty())
+    );
     assert_eq!(parsed.cron.tick_ms, 1_000);
     assert_eq!(parsed.cron.runtime_tick_ms, 200);
     assert_eq!(parsed.cron.runtime_drain_batch, 8);

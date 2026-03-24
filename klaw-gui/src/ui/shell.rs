@@ -1,11 +1,11 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::PanelRegistry;
-use crate::settings::{load_settings, save_settings, AppSettings, SyncMode};
+use crate::settings::{AppSettings, SyncMode, load_settings, save_settings};
 use crate::state::{ThemeMode, UiAction, UiState};
 use crate::sync_runtime::{
-    sync_runtime_finish_task, sync_runtime_set_last_snapshot, sync_runtime_set_remote_snapshots,
-    sync_runtime_set_remote_update, sync_runtime_sync_from_settings, sync_runtime_try_start_task,
-    SyncRuntimeTaskKind,
+    SyncRuntimeTaskKind, sync_runtime_finish_task, sync_runtime_set_last_snapshot,
+    sync_runtime_set_remote_snapshots, sync_runtime_set_remote_update,
+    sync_runtime_sync_from_settings, sync_runtime_try_start_task,
 };
 use crate::ui::{sidebar, workbench};
 use egui_phosphor::regular;

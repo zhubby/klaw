@@ -4,9 +4,8 @@ pub mod webhook;
 
 use crate::env_check;
 use klaw_agent::{
-    build_compression_prompt, build_provider_from_config, merge_or_reset_summary,
-    parse_conversation_summary, AgentExecutionStreamEvent, ConversationMessage,
-    ConversationSummary,
+    AgentExecutionStreamEvent, ConversationMessage, ConversationSummary, build_compression_prompt,
+    build_provider_from_config, merge_or_reset_summary, parse_conversation_summary,
 };
 use klaw_approval::{
     ApprovalManager, ApprovalResolveDecision, ApprovalStatus, SqliteApprovalManager,
@@ -17,28 +16,28 @@ use klaw_channel::{
 };
 use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
 use klaw_core::{
-    build_runtime_system_prompt, ensure_workspace_prompt_templates, AgentLoop, AgentRuntimeError,
-    AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage, DeadLetterPolicy, Envelope,
-    EnvelopeHeader, ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker,
-    InMemoryIdempotencyStore, InMemoryTransport, InboundMessage, MediaReference, OutboundMessage,
-    QueueStrategy, RunLimits, SessionSchedulingPolicy, SkillPromptEntry, Subscription,
-    TransportError,
+    AgentLoop, AgentRuntimeError, AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage,
+    DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
+    InMemoryCircuitBreaker, InMemoryIdempotencyStore, InMemoryTransport, InboundMessage,
+    MediaReference, OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
+    SkillPromptEntry, Subscription, TransportError, build_runtime_system_prompt,
+    ensure_workspace_prompt_templates,
 };
 use klaw_gateway::GatewayWebhookRequest;
 use klaw_heartbeat::should_suppress_output;
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
 use klaw_mcp::{McpConfigSnapshot, McpInitHandle, McpManager, McpSyncResult};
 use klaw_observability::{
-    init_observability, ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry,
+    ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry, init_observability,
 };
 use klaw_session::{
     ChatRecord, LlmAuditStatus, LlmUsageSource, NewLlmAuditRecord, NewLlmUsageRecord,
     SessionCompressionState, SessionIndex, SessionManager, SqliteSessionManager,
 };
 use klaw_skill::{
-    open_default_skills_manager, InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager,
+    InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager, open_default_skills_manager,
 };
-use klaw_storage::{open_default_store, DefaultSessionStore};
+use klaw_storage::{DefaultSessionStore, open_default_store};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, ArchiveTool, CronManagerTool, HeartbeatManagerTool,
     LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool, SkillsRegistryTool, SubAgentTool,
@@ -1916,15 +1915,17 @@ pub async fn submit_and_get_output(
             let mut metadata = request_metadata;
             metadata.insert(
                 META_CONVERSATION_HISTORY_KEY.to_string(),
-                json!(conversation_history
-                    .into_iter()
-                    .map(|record| {
-                        json!({
-                            "role": record.role,
-                            "content": record.content,
+                json!(
+                    conversation_history
+                        .into_iter()
+                        .map(|record| {
+                            json!({
+                                "role": record.role,
+                                "content": record.content,
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>()),
+                        .collect::<Vec<_>>()
+                ),
             );
             metadata.insert(
                 META_PROVIDER_KEY.to_string(),
@@ -2052,15 +2053,17 @@ pub async fn submit_and_stream_output(
             let mut metadata = request_metadata;
             metadata.insert(
                 META_CONVERSATION_HISTORY_KEY.to_string(),
-                json!(conversation_history
-                    .into_iter()
-                    .map(|record| {
-                        json!({
-                            "role": record.role,
-                            "content": record.content,
+                json!(
+                    conversation_history
+                        .into_iter()
+                        .map(|record| {
+                            json!({
+                                "role": record.role,
+                                "content": record.content,
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>()),
+                        .collect::<Vec<_>>()
+                ),
             );
             metadata.insert(
                 META_PROVIDER_KEY.to_string(),
@@ -2380,13 +2383,14 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_history_for_model, build_new_session_bootstrap_user_message,
-        build_unavailable_provider, compression_trigger_interval, configured_default_model,
-        extract_skill_short_description, first_arg_token, format_approve_already_handled_message,
+        RuntimeBundle, StartupReport, build_history_for_model,
+        build_new_session_bootstrap_user_message, build_unavailable_provider,
+        compression_trigger_interval, configured_default_model, extract_skill_short_description,
+        first_arg_token, format_approve_already_handled_message,
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, resolve_new_session_target_from_config, resolve_session_route,
         should_emit_outbound, should_trigger_compression, spawn_llm_audit_writer,
-        trim_conversation_history, RuntimeBundle, StartupReport,
+        trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_config::{AppConfig, ModelProviderConfig};
@@ -2832,9 +2836,11 @@ A .docx file is a ZIP archive containing XML files.
         let model_history = build_history_for_model(full_history, 2, Some(&summary));
         assert_eq!(model_history.len(), 2);
         assert_eq!(model_history[0].role, "system");
-        assert!(model_history[0]
-            .content
-            .contains("Conversation Summary (JSON):"));
+        assert!(
+            model_history[0]
+                .content
+                .contains("Conversation Summary (JSON):")
+        );
         assert_eq!(model_history[1].content, "c");
     }
 

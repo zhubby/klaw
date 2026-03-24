@@ -27,6 +27,7 @@ For docs: `mdbook build docs` (or `mdbook serve docs` for local preview).
 
 ## Rust Style and Idioms
 
+- Target Rust 2024 for new code and examples. Prefer edition-aware idioms, and only use raw identifiers such as `r#gen` when compatibility leaves no cleaner choice.
 - Use traits for behaviour boundaries. Prefer generics for hot paths, `dyn Trait` for heterogeneous/runtime dispatch.
 - Derive `Default` when all fields have sensible defaults.
 - Use concrete types (`struct`/`enum`) over `serde_json::Value` wherever shape is known.
@@ -42,6 +43,10 @@ For docs: `mdbook build docs` (or `mdbook serve docs` for local preview).
 - Prefer `chrono` only if already imported in the crate; default to `time` for new code.
 - Prefer crates over subprocesses (`std::process::Command`). Use subprocesses only when no mature crate exists.
 - Prefer guard clauses (early returns) over nested `if` blocks.
+- Prefer `let-else` when destructuring must succeed and the failure path should return, `continue`, or `break`.
+- Prefer `if let` chains, `matches!`, and pattern guards over nested single-arm `match` blocks when they make branching flatter and clearer.
+- Prefer `Option`/`Result` combinators such as `is_some_and`, `is_none_or`, `then_some`, `transpose`, and `inspect` when they keep ownership and control flow obvious; switch back to `match` once the closure logic stops being trivial.
+- Prefer destructuring assignment, field init shorthand, and struct update syntax when they remove boilerplate without obscuring moves or borrow lifetimes.
 - Prefer iterators/combinators over manual loops. Use `Cow<'_, str>` when allocation is conditional.
 - Keep public API surfaces small. Use `#[must_use]` where return values matter.
 - For a single SQLite database file, reuse the same store/connection pool across the process. Do not open a second independent connection/manager to the same DB for background writers or sidecar tasks; share the existing store instead.
@@ -70,7 +75,7 @@ tokio = { workspace = true, features = ["fs"] }
 ```
 
 ## Coding Style & Naming Conventions
-Follow Rust 2021 defaults and `rustfmt` output (4-space indentation, trailing commas where formatter adds them). Prefer:
+Follow Rust 2024 defaults and `rustfmt` output (4-space indentation, trailing commas where formatter adds them). Prefer:
 - `snake_case` for modules/functions/files.
 - `PascalCase` for types/traits.
 - small modules with explicit ownership boundaries.
