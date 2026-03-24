@@ -13,7 +13,7 @@
 - route per-message provider/model selection from inbound metadata (`agent.provider_id`, `agent.model`)
 - emit model-request, model-attributed tool, and turn-level observability records through `AgentTelemetry`
 - support runtime system-prompt hot reload through `AgentLoop::set_system_prompt`
-- bootstrap workspace prompt templates under `~/.klaw/workspace` on demand
+- backfill standard workspace prompt templates under `~/.klaw/workspace` on demand, while creating `BOOTSTRAP.md` only on first initialization
 - compose runtime prompt sections with skill shortlists and lazy-load skill instructions
 
 ## Notes

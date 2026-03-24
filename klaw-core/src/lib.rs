@@ -31,11 +31,10 @@ pub use media::{MediaReference, MediaSourceKind};
 pub use mock::{InMemoryIdempotencyStore, InMemorySessionScheduler, InMemoryTransport};
 pub use observability::{AgentTelemetry, HealthStatus};
 pub use prompt::{
-    compose_runtime_prompt, ensure_workspace_prompt_templates,
+    build_runtime_system_prompt, compose_runtime_prompt, ensure_workspace_prompt_templates,
     ensure_workspace_prompt_templates_in_dir, format_skills_for_prompt,
-    get_default_template_content, load_or_create_system_prompt,
-    load_or_create_system_prompt_in_dir, skills_lazy_load_instructions, PromptError,
-    PromptTemplateWriteReport, RuntimePromptInput, SkillPromptEntry,
+    format_workspace_docs_for_prompt, get_default_template_content, skills_lazy_load_instructions,
+    PromptError, PromptTemplateWriteReport, RuntimePromptInput, SkillPromptEntry,
 };
 pub use protocol::{Envelope, EnvelopeHeader, ErrorCode, MessageTopic, SchemaVersion};
 pub use reliability::{

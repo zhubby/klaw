@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-24
+
+### Changed
+
+- runtime startup and skills-prompt reload now delegate system prompt assembly to `klaw-core::build_runtime_system_prompt`, keeping `klaw-cli` focused on runtime data loading instead of prompt section composition
+
 ## 2026-03-23
 
 ### Changed
