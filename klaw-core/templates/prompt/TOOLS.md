@@ -37,13 +37,12 @@ Skills are shared. Your setup is yours. Keeping them apart means you can update 
 
 Memory should not be stored here. Use the `memory` tool for durable memory, and keep this file only for local environment notes.
 
+Assume this file may be inlined into prompts. Keep it concise, factual, and free of secrets.
+
+Secrets should not be stored here. Put credentials in environment variables, secret managers, or local config files that are not inlined into prompts.
+
 ---
 
 Add whatever helps you do your job. This is your cheat sheet.
 
-## Tavily Search
-
-- **API Key:** `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`
-- **Free tier:** 1,000 searches/month
-- **Script:** `~/.klaw/workspace/skills/tavily-search/scripts/tavily_search.py`
-- **Usage:** `python scripts/tavily_search.py "<query>" --depth advanced --results 10`
+If you rely on an external service, record the command shape, script path, env var names, or non-sensitive setup notes here. Do not store raw credentials.

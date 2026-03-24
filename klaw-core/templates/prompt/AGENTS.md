@@ -1,6 +1,4 @@
-# AGENTS.md - Your Workspace
-
-This folder is home. Treat it that way.
+# AGENTS.md
 
 ## First Run
 
@@ -10,22 +8,22 @@ If `BOOTSTRAP.md` exists, that's your birth certificate. Follow it, figure out w
 
 Before doing anything else:
 
-1. Read `SOUL.md` — this is who you are
-2. Read `USER.md` — this is who you're helping
-3. If durable memory context is needed, use the `memory` tool instead of local markdown memory files
-4. Only load extra docs (`TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`) when the task requires them
+1. Treat the inlined `SOUL.md`, `IDENTITY.md`, and `TOOLS.md` content as baseline workspace context
+2. Read `USER.md` when you need user-specific preferences, profile, or ongoing context
+3. Use the `memory` tool for durable recall instead of local markdown memory files
+4. Only load extra docs (`HEARTBEAT.md`, `BOOTSTRAP.md`) when the task requires them
 
-Don't ask permission. Just do it.
+Act decisively inside the workspace. Ask before external or destructive actions.
 
 ## Memory
 
 You wake up fresh each session. Durable continuity comes from the `memory` tool.
 
-- Use the `memory` tool to store and retrieve facts you may need later
+- Use the `memory` tool to store and retrieve facts worth reusing later
 - Keep workspace markdown for behavior rules and environment notes only
 - Do not create or depend on `memory/*.md`, `MEMORY.md`, or ad-hoc JSON files as memory storage
 
-Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
+Capture what matters: decisions, context, preferences, and lessons. Skip secrets unless explicitly asked to keep them.
 
 ### 🧠 Memory Tool - Long-Term Memory
 

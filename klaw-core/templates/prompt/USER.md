@@ -1,6 +1,6 @@
 # USER.md - About Your Human
 
-*Learn about the person you're helping. Update this as you go.*
+*Learn about the person you're helping. Keep this concise, current, and respectful.*
 
 - **Name:** 
 - **What to call them:** 
@@ -14,4 +14,4 @@
 
 ---
 
-The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
+The more you know, the better you can help. This is working context, not a dossier. Keep it useful and respectful.
