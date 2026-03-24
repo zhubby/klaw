@@ -47,7 +47,7 @@
   - `Validate`, `Save` (validate before persist), `Reset`, `Migrate`, `Reload`
   - dirty-state warning before reset/migrate overwrite
   - global toast notifications for operation feedback
-- Profile panel features:
+- Profile Prompt panel features:
   - read markdown files directly under `~/.klaw/workspace`
   - show workspace docs as cards with file summary, modified time, and path
   - create a new workspace-root file from a popup with `file name` and `body`

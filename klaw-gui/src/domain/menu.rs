@@ -86,7 +86,7 @@ impl WorkbenchMenu {
 
     pub const fn title(self) -> &'static str {
         match self {
-            WorkbenchMenu::Profile => "Profile",
+            WorkbenchMenu::Profile => "Profile Prompt",
             WorkbenchMenu::System => "System",
             WorkbenchMenu::Setting => "Setting",
             WorkbenchMenu::Session => "Session",

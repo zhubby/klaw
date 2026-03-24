@@ -9,6 +9,7 @@
 ### Changed
 
 - `Profile` 面板创建 workspace 文件时现在会校验文件名仅落在 workspace 根目录下，并阻止覆盖已存在文件
+- GUI `Profile` 菜单与标签文案现统一显示为 `Profile Prompt`，内部 `profile` key 保持不变
 
 ## 2026-03-23
 
