@@ -1,6 +1,6 @@
 use crate::{
-    AppConfig, BraveWebSearchConfig, ChannelsConfig, ConfigError, McpServerMode,
-    TavilyWebSearchConfig,
+    AppConfig, BraveWebSearchConfig, ChannelsConfig, ConfigError, McpServerMode, SttProviderKind,
+    TavilyWebSearchConfig, TtsProviderKind, VoiceConfig,
 };
 use std::net::IpAddr;
 
@@ -95,6 +95,7 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     }
 
     validate_channels(&config.channels)?;
+    validate_voice(&config.voice)?;
 
     if config.memory.embedding.enabled {
         if config.memory.embedding.provider.trim().is_empty() {
@@ -417,6 +418,79 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
     for channel in &channels.disable_session_commands_for {
         require_non_empty(channel, "channels.disable_session_commands_for")?;
     }
+    Ok(())
+}
+
+fn validate_voice(voice: &VoiceConfig) -> Result<(), ConfigError> {
+    if !voice.enabled {
+        return Ok(());
+    }
+
+    require_non_empty(&voice.default_language, "voice.default_language")?;
+
+    match voice.stt_provider {
+        SttProviderKind::Deepgram => {
+            require_non_empty(
+                &voice.providers.deepgram.base_url,
+                "voice.providers.deepgram.base_url",
+            )?;
+            require_non_empty(
+                &voice.providers.deepgram.streaming_base_url,
+                "voice.providers.deepgram.streaming_base_url",
+            )?;
+            require_non_empty(
+                &voice.providers.deepgram.stt_model,
+                "voice.providers.deepgram.stt_model",
+            )?;
+            if voice.providers.deepgram.resolve_api_key().is_none() {
+                return Err(ConfigError::InvalidConfig(
+                    "voice.providers.deepgram requires api_key or api_key_env when voice.enabled=true".to_string(),
+                ));
+            }
+        }
+        SttProviderKind::Assemblyai => {
+            require_non_empty(
+                &voice.providers.assemblyai.base_url,
+                "voice.providers.assemblyai.base_url",
+            )?;
+            require_non_empty(
+                &voice.providers.assemblyai.streaming_base_url,
+                "voice.providers.assemblyai.streaming_base_url",
+            )?;
+            require_non_empty(
+                &voice.providers.assemblyai.stt_model,
+                "voice.providers.assemblyai.stt_model",
+            )?;
+            if voice.providers.assemblyai.resolve_api_key().is_none() {
+                return Err(ConfigError::InvalidConfig(
+                    "voice.providers.assemblyai requires api_key or api_key_env when voice.enabled=true".to_string(),
+                ));
+            }
+        }
+    }
+
+    match voice.tts_provider {
+        TtsProviderKind::Elevenlabs => {
+            require_non_empty(
+                &voice.providers.elevenlabs.base_url,
+                "voice.providers.elevenlabs.base_url",
+            )?;
+            require_non_empty(
+                &voice.providers.elevenlabs.streaming_base_url,
+                "voice.providers.elevenlabs.streaming_base_url",
+            )?;
+            require_non_empty(
+                &voice.providers.elevenlabs.default_model,
+                "voice.providers.elevenlabs.default_model",
+            )?;
+            if voice.providers.elevenlabs.resolve_api_key().is_none() {
+                return Err(ConfigError::InvalidConfig(
+                    "voice.providers.elevenlabs requires api_key or api_key_env when voice.enabled=true".to_string(),
+                ));
+            }
+        }
+    }
+
     Ok(())
 }
 

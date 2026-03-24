@@ -11,6 +11,7 @@ mod theme;
 mod time_format;
 mod tray;
 mod ui;
+mod voice_test;
 pub mod widgets;
 
 pub use domain::menu::WorkbenchMenu;

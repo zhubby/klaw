@@ -12,7 +12,7 @@ use klaw_approval::{
 };
 use klaw_channel::{
     ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
-    ChannelStreamWriter,
+    ChannelStreamWriter, DefaultChannelDriverFactory,
 };
 use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
 use klaw_core::{
@@ -41,7 +41,7 @@ use klaw_storage::{DefaultSessionStore, open_default_store};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, ArchiveTool, CronManagerTool, HeartbeatManagerTool,
     LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool, SkillsRegistryTool, SubAgentTool,
-    TerminalMultiplexerTool, ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
+    TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool, WebFetchTool, WebSearchTool,
 };
 use klaw_util::EnvironmentCheckReport;
 use serde_json::{Value, json};
@@ -263,6 +263,12 @@ pub struct AssistantOutput {
     pub content: String,
     pub reasoning: Option<String>,
     pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+pub fn build_channel_driver_factory(
+    _config: &AppConfig,
+) -> Result<DefaultChannelDriverFactory, Box<dyn Error>> {
+    Ok(DefaultChannelDriverFactory::default())
 }
 
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
@@ -1267,6 +1273,15 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let mut tools = ToolRegistry::default();
     if config.tools.archive.enabled() {
         tools.register(ArchiveTool::open_default(config).await?);
+    }
+    if config.tools.voice.enabled() {
+        if config.voice.enabled {
+            tools.register(VoiceTool::open_default(config).await?);
+        } else {
+            warn!(
+                "voice tool enabled but voice service is disabled in config; skipping registration"
+            );
+        }
     }
     if config.tools.apply_patch.enabled() {
         tools.register(ApplyPatchTool::new(config));

@@ -7,6 +7,7 @@
 - Workbench shell with left navigation and center tab workspace
 - Workbench sidebar now includes `System` and `Setting`
 - Workbench sidebar now includes dedicated `Gateway` and `Webhook` panels
+- Workbench sidebar now includes a dedicated `Voice` panel for voice config editing and microphone-to-STT testing
 - Top menu bar (File/View/Window/Help)
   - File menu includes `Force Persist Layout` to immediately flush layout state to disk
 - Bottom status bar with version and theme-mode switcher
@@ -25,6 +26,7 @@
   - configuration
   - model provider (config-bound list + add/edit window)
   - channel (config-bound list + add/edit window)
+  - voice (config-bound voice settings + microphone transcription test)
   - cron (db-bound list + add/edit window)
   - heartbeat (db-backed heartbeat list + add/edit/delete/run-now)
   - gateway (runtime-backed gateway status, enable/disable, restart, and base address display)
@@ -65,6 +67,11 @@
   - delete channel instances from the table
   - edit and save `channels.disable_session_commands_for`
   - request a live GUI runtime `SyncChannels` after channel saves/reloads so running channel instances update without restarting the app
+- Voice panel features:
+  - read/write `voice.enabled`, default language/voice, and provider-specific Deepgram/AssemblyAI/ElevenLabs fields
+  - show configured key source per provider (`api_key` vs `api_key_env`) without exposing secret values in the summary view
+  - capture microphone audio from the system default input device, encode it as WAV, and send it to the configured STT provider for a full-chain transcription test
+  - surface recording/transcribing progress plus transcript, language, confidence, device, and audio format metadata in the panel
 - MCP panel features:
   - read/write `mcp.enabled`, `mcp.startup_timeout_seconds`, `mcp.servers`
   - add/edit MCP servers via `egui::Window`

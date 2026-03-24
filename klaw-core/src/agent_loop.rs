@@ -1584,7 +1584,7 @@ fn augment_user_content_with_attachment_context(
 
     let mut lines = vec![
         "Current message attachments:".to_string(),
-        "If an attachment below already includes an archive_id, prefer calling the archive tool with action=get and that exact archive_id. Use list_current_attachments only to confirm attachments from the current message, and use list_session_attachments when the user is referring to files from earlier turns in this same session.".to_string(),
+        "If an attachment below already includes an archive_id, prefer calling the archive tool with action=get and that exact archive_id. Use list_current_attachments only to confirm attachments from the current message, and use list_session_attachments when the user is referring to files from earlier turns in this same session. For audio or voice attachments, use the voice tool with action=stt and the attachment archive_id to transcribe them.".to_string(),
     ];
     for (idx, attachment) in attachments.iter().enumerate() {
         let Some(item) = attachment.as_object() else {
@@ -1715,6 +1715,7 @@ mod tests {
         assert!(content.contains("prefer calling the archive tool with action=get"));
         assert!(content.contains("archive_id=arch-1"));
         assert!(content.contains("use list_session_attachments"));
+        assert!(content.contains("voice tool with action=stt"));
         assert!(content.contains("access=read_only archive"));
         assert!(content.contains("copy the file into workspace first"));
     }

@@ -325,7 +325,11 @@ impl TelegramChannel {
                     session_key,
                     chat_id: inbound.chat_id.clone(),
                     media_references: inbound.media_references.clone(),
-                    metadata: callback_runtime_metadata(),
+                    metadata: {
+                        let mut metadata = callback_runtime_metadata();
+                        metadata.extend(inbound.metadata.clone());
+                        metadata
+                    },
                 },
                 Some(inbound.chat_id.as_str()),
             )

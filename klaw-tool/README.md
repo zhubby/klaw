@@ -5,7 +5,7 @@
 ## Responsibilities
 
 - define tool interfaces through the shared `Tool` trait
-- implement local tools such as `apply_patch`, `shell`, `approval`, `memory`, `web_fetch`, `web_search`, `cron_manager`, `heartbeat_manager`, `skills_registry`, and `skills_manager`
+- implement local tools such as `apply_patch`, `shell`, `approval`, `archive`, `voice`, `memory`, `web_fetch`, `web_search`, `cron_manager`, `heartbeat_manager`, `skills_registry`, and `skills_manager`
 - keep tool metadata LLM-friendly so planners can infer when and how to call each tool
 
 ## Architecture
@@ -30,6 +30,7 @@
 - `local_search` uses `rg` first and falls back to BSD-compatible `grep` when ripgrep is not installed, while still honoring `include_pattern` and the default `.git` / `node_modules` exclusions
 - multi-action tools use action-specific `oneOf` parameter schemas to keep requests explicit and avoid mixing unrelated fields in a single call
 - the `archive` tool distinguishes between current-message attachments (`list_current_attachments`) and session-wide archived attachments (`list_session_attachments`), and now explicitly prefers `get` when the model already has an `archive_id`
+- the `voice` tool exposes both `stt` and `tts`: `stt` reads archived audio by `archive_id` and returns transcript text, while `tts` synthesizes text, archives the generated audio, and returns the new archive record
 - `tools.apply_patch.allow_absolute_paths = true` allows any absolute path outside the workspace
 - `tools.apply_patch.allowed_roots = ["/some/path"]` allows specific extra directories while keeping the default workspace boundary elsewhere
 - when `metadata.workspace` and `tools.*.workspace` are both unset, `shell` and `apply_patch` default to `(<storage.root_dir or ~/.klaw>)/workspace`

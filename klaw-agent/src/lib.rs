@@ -14,7 +14,7 @@ use std::env;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::{self, UnboundedSender};
-use tracing::{debug, warn};
+use tracing::{trace, warn};
 
 pub use context_compression::{
     ConversationSummary, build_compression_prompt, merge_or_reset_summary,
@@ -305,7 +305,7 @@ pub async fn run_agent_execution(
             user: None,
             service_tier: None,
         };
-        debug!(
+        trace!(
             iteration,
             session_key = %input.session_key,
             model_override = ?input.model,

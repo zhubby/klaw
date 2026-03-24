@@ -2033,6 +2033,7 @@ mod tests {
     async fn create_store() -> SqliteLocalMetricsStore {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let db_path = std::env::temp_dir().join(format!("klaw-observability-{suffix}.db"));
+        let _ = std::fs::remove_file(&db_path);
         SqliteLocalMetricsStore::open(
             &db_path,
             &LocalStoreConfig {

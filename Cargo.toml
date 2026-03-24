@@ -3,6 +3,7 @@ members = [
     "klaw-agent",
     "klaw-approval",
     "klaw-archive",
+    "klaw-voice",
     "klaw-core",
     "klaw-util",
     "klaw-llm",
@@ -41,6 +42,8 @@ tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls", "stream"] }
+bytes = "1"
+tokio-stream = "0.1"
 opendal = { version = "0.52", default-features = false, features = ["services-s3"] }
 tokenizers = "0.22.1"
 tracing = "0.1"
@@ -86,10 +89,13 @@ opentelemetry-otlp = { version = "0.27", features = ["metrics", "trace", "grpc-t
 opentelemetry-prometheus = "0.27"
 prometheus = "0.13"
 tracing-opentelemetry = "0.28"
+cpal = "0.16"
+hound = "3.5"
 
 klaw-core = { path = "klaw-core" }
 klaw-approval = { path = "klaw-approval" }
 klaw-archive = { path = "klaw-archive" }
+klaw-voice = { path = "klaw-voice" }
 klaw-util = { path = "klaw-util" }
 klaw-llm = { path = "klaw-llm" }
 klaw-tool = { path = "klaw-tool" }

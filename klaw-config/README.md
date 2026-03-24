@@ -15,6 +15,7 @@
 - 支持独立的 `tools.skills_registry` 与 `tools.skills_manager` 开关配置。
 - 支持 `observability.local_store` 配置项,用于控制本地分析存储是否启用、保留时长与刷新间隔。
 - 支持 `gateway.enabled` 开关配置、`gateway.listen_port = 0` 随机端口模式，以及 `gateway.webhook` 的 Bearer 鉴权 webhook 入口配置。
+- 支持完整 `voice` 配置块，用于声明 STT/TTS 默认 provider、默认语言/音色，以及 Deepgram、AssemblyAI、ElevenLabs 的 provider 参数。
 
 ## 模型配置
 
@@ -23,3 +24,8 @@
 - `model_providers.<id>.default_model`：provider 默认模型。
 - `model_providers.<id>.stream`：是否启用 provider 原生 stream API。
 - `channels.telegram[].stream_output` / `channels.dingtalk[].stream_output`：是否允许 channel 侧尝试增量输出。
+- `voice.enabled`：是否启用语音能力。
+- `voice.stt_provider`：当前 STT provider，支持 `deepgram` / `assemblyai`。
+- `voice.tts_provider`：当前 TTS provider，当前支持 `elevenlabs`。
+- `voice.default_language` / `voice.default_voice_id`：语音默认语言与默认音色。
+- `voice.providers.*`：各语音 provider 的 `api_key` / `api_key_env` / base URL / streaming URL / 模型参数。

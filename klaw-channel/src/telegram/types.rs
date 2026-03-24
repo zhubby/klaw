@@ -125,6 +125,7 @@ pub struct TelegramInbound {
     pub chat_id: String,
     pub text: String,
     pub media_references: Vec<MediaReference>,
+    pub metadata: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +144,7 @@ impl TelegramInbound {
             chat_id: message.chat.id.to_string(),
             text,
             media_references: extract_media_references(&message),
+            metadata: BTreeMap::new(),
         })
     }
 }

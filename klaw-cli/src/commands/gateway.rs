@@ -9,8 +9,8 @@ use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
-    SharedChannelRuntime, build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle,
-    webhook,
+    SharedChannelRuntime, build_channel_driver_factory, build_runtime_bundle,
+    finalize_startup_report, shutdown_runtime_bundle, webhook,
 };
 use tracing::info;
 
@@ -37,7 +37,9 @@ impl GatewayCommand {
         local
             .run_until(async move {
                 let (shutdown_tx, _shutdown_rx) = watch::channel(false);
-                let mut channel_manager = ChannelManager::new(Arc::clone(&adapter));
+                let channel_factory = build_channel_driver_factory(config.as_ref())?;
+                let mut channel_manager =
+                    ChannelManager::with_factory(Arc::clone(&adapter), channel_factory);
                 channel_manager.sync(channel_snapshot).await;
                 let gateway_options = webhook::gateway_options(runtime.clone());
 

@@ -10,8 +10,9 @@ use crate::commands::signal::shutdown_signal;
 use crate::runtime::gateway_manager::GatewayManager;
 use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
-    SharedChannelRuntime, build_runtime_bundle, finalize_startup_report,
-    reload_runtime_skills_prompt, set_runtime_provider_override, shutdown_runtime_bundle,
+    SharedChannelRuntime, build_channel_driver_factory, build_runtime_bundle,
+    finalize_startup_report, reload_runtime_skills_prompt, set_runtime_provider_override,
+    shutdown_runtime_bundle,
 };
 use klaw_config::ConfigStore;
 use tracing::{info, warn};
@@ -76,7 +77,10 @@ impl GuiCommand {
                             let mut shutdown_rx = shutdown_rx;
                             let mut runtime_cmd_rx = runtime_cmd_rx;
                             let mut runtime_cmd_open = true;
-                            let mut channel_manager = ChannelManager::new(Arc::clone(&adapter));
+                            let channel_factory = build_channel_driver_factory(&config_for_thread)
+                                .map_err(|err| err.to_string())?;
+                            let mut channel_manager =
+                                ChannelManager::with_factory(Arc::clone(&adapter), channel_factory);
                             channel_manager.sync(channel_snapshot).await;
 
                             let mcp_manager = runtime.mcp_init.as_ref().and_then(|h| h.try_lock().ok().map(|g| g.manager()));

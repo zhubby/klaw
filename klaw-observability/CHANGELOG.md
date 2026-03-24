@@ -2,6 +2,11 @@
 
 All notable changes to this module will be documented in this file.
 
+## 2026-03-24
+
+### Fixed
+- test local SQLite stores now remove any stale temp database path before opening, avoiding cross-run contamination in repeated workspace test runs
+
 ## 2026-03-22
 
 ### Added

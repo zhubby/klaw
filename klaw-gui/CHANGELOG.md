@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-03-24
+
+### Added
+
+- GUI 新增 `Voice` 一级 workbench 面板，支持编辑 `config.toml` 中的 voice 配置并执行系统麦克风录音转写测试
+- Tool 面板新增 `voice` 开关，支持启停新的 `voice` tool
+
 ## 2026-03-23
 
 ### Added

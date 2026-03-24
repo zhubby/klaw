@@ -2,6 +2,10 @@
 
 ## 2026-03-24
 
+### Added
+
+- runtime now registers a `voice` tool when `tools.voice.enabled=true` and `voice.enabled=true`, exposing archived-audio STT and archived TTS generation to the model
+
 ### Changed
 
 - shared channel runtime `/new` bootstrap turn now requests `tool_choice=required` and explicitly tells the model to use tools for reading `BOOTSTRAP.md` and persisting bootstrap doc changes instead of only describing them

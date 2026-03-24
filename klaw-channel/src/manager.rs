@@ -203,7 +203,7 @@ pub trait ChannelDriverFactory {
     -> ChannelResult<Box<dyn ManagedChannelDriver>>;
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct DefaultChannelDriverFactory;
 
 impl ChannelDriverFactory for DefaultChannelDriverFactory {
@@ -245,7 +245,7 @@ where
 {
     #[must_use]
     pub fn new(runtime: Arc<R>) -> Self {
-        Self::with_factory(runtime, DefaultChannelDriverFactory)
+        Self::with_factory(runtime, DefaultChannelDriverFactory::default())
     }
 }
 
