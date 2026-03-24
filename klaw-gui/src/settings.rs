@@ -443,7 +443,10 @@ mod tests {
         assert_eq!(restored.sync.s3.bucket, "demo");
         assert_eq!(restored.sync.s3.access_key, "ak");
         assert_eq!(restored.sync.s3.secret_key, "sk");
-        assert_eq!(restored.sync.last_manifest_id.as_deref(), Some("manifest-1"));
+        assert_eq!(
+            restored.sync.last_manifest_id.as_deref(),
+            Some("manifest-1")
+        );
     }
 
     #[test]

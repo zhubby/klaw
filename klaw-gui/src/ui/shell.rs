@@ -473,9 +473,7 @@ impl SyncSupervisor {
                 let _ = save_settings(&settings);
                 sync_runtime_set_last_snapshot(Some(manifest_id.clone()), Some(created_at));
                 sync_runtime_set_remote_update(None);
-                notifications.success(format!(
-                    "Automatic manifest sync completed: {manifest_id}."
-                ));
+                notifications.success(format!("Automatic manifest sync completed: {manifest_id}."));
             }
             SyncSupervisorMessage::RetentionCleanupFinished { snapshots } => {
                 sync_runtime_finish_task(SyncRuntimeTaskKind::RetentionCleanup);

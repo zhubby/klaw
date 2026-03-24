@@ -362,7 +362,9 @@ impl BackupService {
             self.reconcile_local_from_remote(manifest, progress).await?;
         }
 
-        let prepared = self.prepare_manifest(plan, remote_manifest.as_ref(), progress).await?;
+        let prepared = self
+            .prepare_manifest(plan, remote_manifest.as_ref(), progress)
+            .await?;
         let result = self
             .upload_prepared_manifest_with_progress(&prepared, progress)
             .await?;
@@ -410,8 +412,16 @@ impl BackupService {
 
         let keep_last = keep_last.max(1) as usize;
         let manifests = self.load_all_remote_manifests().await?;
-        let kept = manifests.iter().take(keep_last).cloned().collect::<Vec<_>>();
-        let removed = manifests.iter().skip(keep_last).cloned().collect::<Vec<_>>();
+        let kept = manifests
+            .iter()
+            .take(keep_last)
+            .cloned()
+            .collect::<Vec<_>>();
+        let removed = manifests
+            .iter()
+            .skip(keep_last)
+            .cloned()
+            .collect::<Vec<_>>();
 
         let mut referenced_hashes = BTreeSet::new();
         for manifest in &kept {
@@ -689,7 +699,10 @@ impl BackupService {
                 remove_file_and_sidecars(&target).await?;
                 continue;
             }
-            let bytes = self.store.get_bytes(&blob_object_key(&entry.sha256)).await?;
+            let bytes = self
+                .store
+                .get_bytes(&blob_object_key(&entry.sha256))
+                .await?;
             let actual_hash = hex::encode(Sha256::digest(&bytes));
             if actual_hash != entry.sha256 {
                 return Err(StorageError::backend(format!(
@@ -752,9 +765,9 @@ impl BackupService {
                     }
                 }
                 BackupItem::SkillsRegistry => {
-                    remove_file_and_sidecars(
-                        &klaw_util::skills_registry_manifest_path(&self.paths.root_dir),
-                    )
+                    remove_file_and_sidecars(&klaw_util::skills_registry_manifest_path(
+                        &self.paths.root_dir,
+                    ))
                     .await?;
                 }
                 BackupItem::UserWorkspace => {
@@ -791,7 +804,10 @@ impl BackupService {
                     .await
                     .map_err(StorageError::CreateTmpDir)?;
                 let snapshot_path = export_dir.join(format!("{}.db", Uuid::new_v4().simple()));
-                let exported = self.exporter.export_snapshot(&target, &snapshot_path).await?;
+                let exported = self
+                    .exporter
+                    .export_snapshot(&target, &snapshot_path)
+                    .await?;
                 if !exported {
                     return Ok(None);
                 }
@@ -1010,10 +1026,7 @@ impl BackupService {
             .map(|duration| duration.as_millis() as i64);
         let sha256 = hash_file_from_bytes_path(&staged_path).await?;
         Ok(StagedFile {
-            relative_path: source
-                .relative_path
-                .to_string_lossy()
-                .replace('\\', "/"),
+            relative_path: source.relative_path.to_string_lossy().replace('\\', "/"),
             staged_path,
             kind: source.kind,
             size_bytes: metadata.len(),
@@ -1584,11 +1597,7 @@ mod tests {
         }
 
         async fn exists(&self, key: &str) -> Result<bool, StorageError> {
-            Ok(self
-                .objects
-                .lock()
-                .expect("objects lock")
-                .contains_key(key))
+            Ok(self.objects.lock().expect("objects lock").contains_key(key))
         }
     }
 
@@ -1636,13 +1645,22 @@ mod tests {
 
         assert!(!result.manifest_id.is_empty());
         assert_eq!(result.manifest.parent_manifest_id, None);
-        assert!(service.store.exists(&latest_object_key()).await.expect("latest"));
+        assert!(service
+            .store
+            .exists(&latest_object_key())
+            .await
+            .expect("latest"));
         assert!(service
             .store
             .exists(&manifest_object_key(&result.manifest_id))
             .await
             .expect("manifest"));
-        for entry in result.manifest.entries.iter().filter(|entry| !entry.deleted) {
+        for entry in result
+            .manifest
+            .entries
+            .iter()
+            .filter(|entry| !entry.deleted)
+        {
             assert!(service
                 .store
                 .exists(&blob_object_key(&entry.sha256))
@@ -1665,7 +1683,11 @@ mod tests {
             )
             .await
             .expect("first sync");
-        let blob_keys_before = service.store.list_keys(&blobs_prefix()).await.expect("keys");
+        let blob_keys_before = service
+            .store
+            .list_keys(&blobs_prefix())
+            .await
+            .expect("keys");
 
         let second = service
             .create_upload_and_cleanup_snapshot(
@@ -1677,7 +1699,11 @@ mod tests {
             )
             .await
             .expect("second sync");
-        let blob_keys_after = service.store.list_keys(&blobs_prefix()).await.expect("keys");
+        let blob_keys_after = service
+            .store
+            .list_keys(&blobs_prefix())
+            .await
+            .expect("keys");
 
         assert_ne!(first.manifest_id, second.manifest_id);
         assert_eq!(blob_keys_before, blob_keys_after);
@@ -1719,7 +1745,12 @@ mod tests {
             second.manifest.entries[0].sha256
         );
         assert_eq!(
-            service.store.list_keys(&blobs_prefix()).await.expect("keys").len(),
+            service
+                .store
+                .list_keys(&blobs_prefix())
+                .await
+                .expect("keys")
+                .len(),
             1
         );
     }
@@ -1750,7 +1781,12 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(unique_hashes.len(), 1);
         assert_eq!(
-            service.store.list_keys(&blobs_prefix()).await.expect("keys").len(),
+            service
+                .store
+                .list_keys(&blobs_prefix())
+                .await
+                .expect("keys")
+                .len(),
             1
         );
     }
@@ -1786,7 +1822,10 @@ mod tests {
             .await
             .expect("read db");
         assert_eq!(current, "remote");
-        assert_eq!(next.manifest.entries[0].sha256, remote.manifest.entries[0].sha256);
+        assert_eq!(
+            next.manifest.entries[0].sha256,
+            remote.manifest.entries[0].sha256
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1888,10 +1927,7 @@ mod tests {
             .await
             .expect("second sync");
 
-        service
-            .cleanup_remote_snapshots(1)
-            .await
-            .expect("cleanup");
+        service.cleanup_remote_snapshots(1).await.expect("cleanup");
 
         assert!(!service
             .store
@@ -1904,7 +1940,12 @@ mod tests {
             .await
             .expect("second manifest"));
         assert_eq!(
-            service.store.list_keys(&blobs_prefix()).await.expect("blobs").len(),
+            service
+                .store
+                .list_keys(&blobs_prefix())
+                .await
+                .expect("blobs")
+                .len(),
             1
         );
         let latest: LatestRef = serde_json::from_slice(
@@ -2017,8 +2058,7 @@ mod tests {
             .store
             .put_bytes(
                 &latest_object_key(),
-                serde_json::to_vec_pretty(&LatestRef::from_manifest(&tombstone))
-                    .expect("latest"),
+                serde_json::to_vec_pretty(&LatestRef::from_manifest(&tombstone)).expect("latest"),
                 "application/json",
             )
             .await

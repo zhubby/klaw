@@ -46,3 +46,24 @@ impl ScheduleSpec {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ScheduleSpec;
+    use klaw_storage::CronScheduleKind;
+
+    #[test]
+    fn parse_every_schedule() {
+        let spec = ScheduleSpec::from_kind_expr(CronScheduleKind::Every, "45s").expect("parse");
+        let next = spec.next_run_after_ms(1_000).expect("next");
+        assert_eq!(next, 46_000);
+    }
+
+    #[test]
+    fn parse_cron_schedule() {
+        let spec =
+            ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, "0 */2 * * * *").expect("parse");
+        let next = spec.next_run_after_ms(0).expect("next");
+        assert_eq!(next, 120_000);
+    }
+}

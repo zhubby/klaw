@@ -9,6 +9,3 @@ pub use klaw_storage::{CronJob, CronScheduleKind, CronTaskRun, NewCronJob, Updat
 pub use manager::{CronListQuery, SqliteCronManager};
 pub use schedule::ScheduleSpec;
 pub use worker::{CronWorker, CronWorkerConfig};
-
-#[cfg(test)]
-mod tests;

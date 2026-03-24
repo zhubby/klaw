@@ -12,8 +12,8 @@ pub mod backend;
 pub use backup::{
     BackupItem, BackupPlan, BackupProgress, BackupProgressStage, BackupResult, BackupService,
     DatabaseSnapshotExporter, LatestRef, ManifestEntry, ManifestEntryKind, S3SnapshotStoreConfig,
-    SnapshotListItem, SnapshotMode, SnapshotPrepareResult, SnapshotRestoreResult,
-    SnapshotSchedule, SnapshotStore, SyncManifest,
+    SnapshotListItem, SnapshotMode, SnapshotPrepareResult, SnapshotRestoreResult, SnapshotSchedule,
+    SnapshotStore, SyncManifest,
 };
 pub use error::StorageError;
 pub use memory_db::{DbRow, DbValue, MemoryDb};
