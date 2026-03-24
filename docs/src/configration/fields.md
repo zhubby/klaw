@@ -46,7 +46,7 @@ model = "gpt-4-turbo"
 ### `conversation_history_limit`
 
 **类型**: `usize`
-**默认值**: `20`
+**默认值**: `40`
 **必填**: 否
 
 控制每次发送给模型的历史消息窗口大小（按条数，保留最近 N 条）。
@@ -61,7 +61,7 @@ model = "gpt-4-turbo"
 - 压缩失败时自动回退到普通滑动窗口，不影响主流程。
 
 ```toml
-conversation_history_limit = 20  # 推荐默认值
+conversation_history_limit = 40  # 推荐默认值
 ```
 
 ### `model_providers.<name>`
