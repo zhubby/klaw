@@ -33,3 +33,4 @@ sha2.workspace = true
 time.workspace = true
 globset.workspace = true
 walkdir.workspace = true
+regex.workspace = true

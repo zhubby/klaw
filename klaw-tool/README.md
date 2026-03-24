@@ -35,3 +35,5 @@
 - `tools.apply_patch.allowed_roots = ["/some/path"]` allows specific extra directories while keeping the default workspace boundary elsewhere
 - when `metadata.workspace` and `tools.*.workspace` are both unset, `shell` and `apply_patch` default to `(<storage.root_dir or ~/.klaw>)/workspace`
 - read-only file inspection should be handled by other tools or higher-level runtime capabilities
+- the `terminal_multiplexer` tool is tmux-only and always uses an isolated private socket under `${KLAW_TMUX_SOCKET_DIR:-${TMPDIR:-/tmp}/klaw-tmux-sockets}`, so listing or terminating sessions never touches the user's personal tmux server
+- `terminal_multiplexer` returns structured session metadata and monitor commands, and now supports `wait_for_text` to synchronize interactive CLIs before sending the next command

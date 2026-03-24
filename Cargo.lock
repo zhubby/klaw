@@ -3939,6 +3939,7 @@ dependencies = [
  "klaw-storage",
  "klaw-util",
  "klaw-voice",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

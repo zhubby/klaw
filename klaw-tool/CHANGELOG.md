@@ -10,6 +10,7 @@
 ### Changed
 - clarified the `archive` tool metadata so models prefer `get` when an exact `archive_id` is already present and use `list_current_attachments` only for current-message attachments
 - changed `skills_registry` from browse-only to full registry lifecycle management while keeping `list` / `show` / `search` for synced catalogs
+- redesigned `terminal_multiplexer` as a tmux-only interactive session orchestrator with a private socket, structured session metadata, pane monitor commands, and `wait_for_text` prompt synchronization
 
 ## 2026-03-21
 
