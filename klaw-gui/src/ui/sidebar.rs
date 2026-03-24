@@ -12,37 +12,41 @@ fn grouped_menus() -> Vec<(WorkbenchMenuGroup, Vec<WorkbenchMenu>)> {
 pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
     let mut actions = Vec::new();
 
-    ui.label(
-        egui::RichText::new(format!("{} Klaw", regular::ROBOT))
-            .strong()
-            .size(20.0),
-    );
-    ui.separator();
-
-    let groups = grouped_menus();
-    for (index, (group, menus)) in groups.iter().enumerate() {
-        if index > 0 {
-            ui.add_space(6.0);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(format!("{} Klaw", regular::ROBOT))
+                    .strong()
+                    .size(20.0),
+            );
             ui.separator();
-            ui.add_space(6.0);
-        }
 
-        ui.label(
-            egui::RichText::new(group.title())
-                .small()
-                .strong()
-                .weak(),
-        );
-        ui.add_space(4.0);
+            let groups = grouped_menus();
+            for (index, (group, menus)) in groups.iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                }
 
-        for menu in menus {
-            let is_active = state.workbench.active_tab.is_some_and(|id| id.menu == *menu);
-            let label = format!("{} {}", menu.icon(), menu.title());
-            if ui.selectable_label(is_active, label).clicked() {
-                actions.push(UiAction::OpenMenu(*menu));
+                ui.label(
+                    egui::RichText::new(group.title())
+                        .small()
+                        .strong()
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(4.0);
+
+                for menu in menus {
+                    let is_active = state.workbench.active_tab.is_some_and(|id| id.menu == *menu);
+                    let label = format!("{} {}", menu.icon(), menu.title());
+                    if ui.selectable_label(is_active, label).clicked() {
+                        actions.push(UiAction::OpenMenu(*menu));
+                    }
+                }
             }
-        }
-    }
+        });
 
     actions
 }
