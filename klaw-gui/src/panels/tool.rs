@@ -20,6 +20,7 @@ enum ToolForm {
     ApplyPatch(ApplyPatchForm),
     Shell(ShellForm),
     Archive(ToggleForm),
+    Voice(ToggleForm),
     Approval(ToggleForm),
     LocalSearch(ToggleForm),
     TerminalMultiplexers(ToggleForm),
@@ -344,6 +345,7 @@ impl ToolForm {
             ToolForm::ApplyPatch(_) => "Edit Tool: apply_patch",
             ToolForm::Shell(_) => "Edit Tool: shell",
             ToolForm::Archive(form)
+            | ToolForm::Voice(form)
             | ToolForm::Approval(form)
             | ToolForm::LocalSearch(form)
             | ToolForm::TerminalMultiplexers(form)
@@ -440,6 +442,7 @@ impl ToolPanel {
         let form = ToggleForm { title, enabled };
         self.form = Some(match key {
             "archive" => ToolForm::Archive(form),
+            "voice" => ToolForm::Voice(form),
             "approval" => ToolForm::Approval(form),
             "local_search" => ToolForm::LocalSearch(form),
             "terminal_multiplexers" => ToolForm::TerminalMultiplexers(form),
@@ -494,6 +497,10 @@ impl ToolPanel {
             },
             ToolForm::Archive(form) => {
                 next.tools.archive.enabled = form.enabled;
+                Ok(())
+            }
+            ToolForm::Voice(form) => {
+                next.tools.voice.enabled = form.enabled;
                 Ok(())
             }
             ToolForm::Approval(form) => {
@@ -643,6 +650,7 @@ impl ToolPanel {
                         );
                     }
                     ToolForm::Archive(form)
+                    | ToolForm::Voice(form)
                     | ToolForm::Approval(form)
                     | ToolForm::LocalSearch(form)
                     | ToolForm::TerminalMultiplexers(form)
@@ -917,7 +925,7 @@ impl PanelRenderer for ToolPanel {
         egui::ScrollArea::vertical()
             .id_salt("tool-card-scroll")
             .show(ui, |ui| {
-                let cards: [(&str, &str, bool, &str); 14] = [
+                let cards: [(&str, &str, bool, &str); 15] = [
                     (
                         "apply_patch",
                         "Patch workspace files with constrained path policy.",
@@ -935,6 +943,12 @@ impl PanelRenderer for ToolPanel {
                         "Manage archived attachments from conversations.",
                         self.config.tools.archive.enabled,
                         "archive",
+                    ),
+                    (
+                        "voice",
+                        "Transcribe audio and synthesize text into speech.",
+                        self.config.tools.voice.enabled,
+                        "voice",
                     ),
                     (
                         "approval",
@@ -1032,6 +1046,9 @@ impl PanelRenderer for ToolPanel {
                 "Edit Tool: archive",
                 self.config.tools.archive.enabled,
             ),
+            Some("voice") => {
+                self.open_toggle("voice", "Edit Tool: voice", self.config.tools.voice.enabled)
+            }
             Some("approval") => self.open_toggle(
                 "approval",
                 "Edit Tool: approval",

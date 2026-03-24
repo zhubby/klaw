@@ -89,6 +89,8 @@ opentelemetry-otlp = { version = "0.27", features = ["metrics", "trace", "grpc-t
 opentelemetry-prometheus = "0.27"
 prometheus = "0.13"
 tracing-opentelemetry = "0.28"
+cpal = "0.16"
+hound = "3.5"
 
 klaw-core = { path = "klaw-core" }
 klaw-approval = { path = "klaw-approval" }

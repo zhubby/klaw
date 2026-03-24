@@ -4,7 +4,7 @@
 
 ### Added
 
-- runtime 现在会根据 `voice` 配置构建共享 `VoiceService`，并通过 channel driver factory 注入给 Telegram 等 channel，用于入站语音识别链路
+- runtime now registers a `voice` tool when `tools.voice.enabled=true` and `voice.enabled=true`, exposing archived-audio STT and archived TTS generation to the model
 
 ### Changed
 

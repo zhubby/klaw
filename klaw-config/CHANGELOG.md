@@ -5,6 +5,7 @@
 ### Added
 
 - 新增完整 `voice` 配置块，支持声明默认 STT/TTS provider、默认语言/音色，以及 Deepgram、AssemblyAI、ElevenLabs 的 provider 参数与校验规则
+- 新增 `tools.voice.enabled` 配置项，用于控制 runtime 是否向模型暴露 `voice` tool
 
 ### Changed
 

@@ -20,6 +20,7 @@ mod skills_manager;
 mod skills_registry;
 mod system;
 mod tool;
+mod voice;
 mod webhook;
 
 use crate::domain::menu::WorkbenchMenu;
@@ -49,6 +50,7 @@ pub struct PanelRegistry {
     configuration: configuration::ConfigurationPanel,
     provider: provider::ProviderPanel,
     channel: channel::ChannelPanel,
+    voice: voice::VoicePanel,
     cron: cron::CronPanel,
     heartbeat: heartbeat::HeartbeatPanel,
     gateway: gateway::GatewayPanel,
@@ -83,6 +85,7 @@ impl PanelRegistry {
             WorkbenchMenu::Provider => self.provider.render(ui, ctx, notifications),
             WorkbenchMenu::Llm => self.llm.render(ui, ctx, notifications),
             WorkbenchMenu::Channel => self.channel.render(ui, ctx, notifications),
+            WorkbenchMenu::Voice => self.voice.render(ui, ctx, notifications),
             WorkbenchMenu::Cron => self.cron.render(ui, ctx, notifications),
             WorkbenchMenu::Heartbeat => self.heartbeat.render(ui, ctx, notifications),
             WorkbenchMenu::Gateway => self.gateway.render(ui, ctx, notifications),

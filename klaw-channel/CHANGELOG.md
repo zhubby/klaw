@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-24
+
+### Changed
+
+- `telegram` 通道不再在入站阶段自动对 `voice` / `audio` 媒体执行 STT；现在统一只下载并归档音频附件，把 `archive_id` 暴露给 runtime，由模型按需调用 `voice` tool 转写
+
 ## 2026-03-22
 
 ### Added

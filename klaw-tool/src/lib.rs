@@ -10,6 +10,7 @@ pub mod skills_manager;
 pub mod skills_registry;
 pub mod sub_agent;
 pub mod terminal_multiplexers;
+pub mod voice;
 pub mod web_fetch;
 pub mod web_search;
 
@@ -31,6 +32,7 @@ pub use skills_manager::SkillsManagerTool;
 pub use skills_registry::SkillsRegistryTool;
 pub use sub_agent::SubAgentTool;
 pub use terminal_multiplexers::TerminalMultiplexerTool;
+pub use voice::VoiceTool;
 pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
 

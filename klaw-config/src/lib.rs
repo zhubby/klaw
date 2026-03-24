@@ -753,6 +753,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub archive: ArchiveToolConfig,
     #[serde(default)]
+    pub voice: VoiceToolConfig,
+    #[serde(default)]
     pub apply_patch: ApplyPatchConfig,
     #[serde(default)]
     pub shell: ShellConfig,
@@ -805,6 +807,30 @@ impl ToolEnabled for ArchiveToolConfig {
 }
 
 fn default_archive_tool_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceToolConfig {
+    #[serde(default = "default_voice_tool_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for VoiceToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_voice_tool_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for VoiceToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_voice_tool_enabled() -> bool {
     true
 }
 

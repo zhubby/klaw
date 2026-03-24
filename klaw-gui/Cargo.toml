@@ -29,6 +29,7 @@ klaw-observability = { workspace = true }
 klaw-session = { workspace = true }
 klaw-skill = { workspace = true }
 klaw-storage = { workspace = true }
+klaw-voice = { workspace = true }
 klaw-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -41,6 +42,8 @@ time = { workspace = true }
 chrono = { workspace = true }
 tray-icon = { workspace = true }
 tracing = { workspace = true }
+cpal = { workspace = true }
+hound = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 image = { workspace = true, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
