@@ -38,6 +38,20 @@ const PROMPT_TEMPLATE_FILES: [(&str, &str); 7] = [
     ("TOOLS.md", include_str!("../templates/prompt/TOOLS.md")),
     ("USER.md", include_str!("../templates/prompt/USER.md")),
 ];
+const AUTO_CREATE_PROMPT_TEMPLATE_FILES: [(&str, &str); 6] = [
+    ("AGENTS.md", include_str!("../templates/prompt/AGENTS.md")),
+    (
+        "HEARTBEAT.md",
+        include_str!("../templates/prompt/HEARTBEAT.md"),
+    ),
+    (
+        "IDENTITY.md",
+        include_str!("../templates/prompt/IDENTITY.md"),
+    ),
+    ("SOUL.md", include_str!("../templates/prompt/SOUL.md")),
+    ("TOOLS.md", include_str!("../templates/prompt/TOOLS.md")),
+    ("USER.md", include_str!("../templates/prompt/USER.md")),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptTemplateWriteReport {
@@ -90,6 +104,7 @@ pub async fn ensure_workspace_prompt_templates_in_dir(
         })?;
 
     let workspace_dir = workspace_dir(&data_dir);
+    let workspace_previously_existed = path_exists(&workspace_dir).await?;
     fs::create_dir_all(&workspace_dir)
         .await
         .map_err(|source| PromptError::CreateDir {
@@ -100,7 +115,20 @@ pub async fn ensure_workspace_prompt_templates_in_dir(
     let mut created_files = Vec::new();
     let mut skipped_files = Vec::new();
 
-    for (file_name, content) in PROMPT_TEMPLATE_FILES {
+    if !workspace_previously_existed {
+        let bootstrap_path = workspace_dir.join("BOOTSTRAP.md");
+        let bootstrap_content = get_default_template_content("BOOTSTRAP.md")
+            .expect("BOOTSTRAP.md template content should exist");
+        fs::write(&bootstrap_path, bootstrap_content)
+            .await
+            .map_err(|source| PromptError::WriteTemplateFile {
+                path: bootstrap_path.display().to_string(),
+                source,
+            })?;
+        created_files.push("BOOTSTRAP.md".to_string());
+    }
+
+    for (file_name, content) in AUTO_CREATE_PROMPT_TEMPLATE_FILES {
         let target = workspace_dir.join(file_name);
         if path_exists(&target).await? {
             skipped_files.push(file_name.to_string());
@@ -287,6 +315,38 @@ mod tests {
             .await
             .expect("agents should still exist");
         assert_eq!(agents, "custom agents");
+        assert!(
+            !workspace.join("BOOTSTRAP.md").exists(),
+            "bootstrap should not be auto-created during backfill"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ensure_templates_does_not_recreate_bootstrap_after_first_init() {
+        let data_dir = std::env::temp_dir().join(format!("klaw-prompt-test-{}", Uuid::new_v4()));
+        let workspace = workspace_dir(&data_dir);
+
+        let first_report = ensure_workspace_prompt_templates_in_dir(data_dir.clone())
+            .await
+            .expect("first init should succeed");
+        assert!(first_report.created_files.contains(&"BOOTSTRAP.md".to_string()));
+        assert!(workspace.join("BOOTSTRAP.md").exists());
+
+        fs::remove_file(workspace.join("BOOTSTRAP.md"))
+            .await
+            .expect("bootstrap should be removable");
+
+        let second_report = ensure_workspace_prompt_templates_in_dir(data_dir.clone())
+            .await
+            .expect("second init should succeed");
+        assert!(
+            !second_report.created_files.contains(&"BOOTSTRAP.md".to_string()),
+            "bootstrap should not be recreated after first init"
+        );
+        assert!(
+            !workspace.join("BOOTSTRAP.md").exists(),
+            "bootstrap should stay deleted after later backfill"
+        );
     }
 
     #[test]
