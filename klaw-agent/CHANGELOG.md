@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-24
+
+### Changed
+- `run_agent_execution` now forwards per-request `agent.tool_choice` metadata into provider `ChatOptions`, allowing callers to require tool use for specific turns such as bootstrap/session initialization
+
 ## 2026-03-22
 
 ### Changed

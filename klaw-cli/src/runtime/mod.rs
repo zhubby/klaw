@@ -44,7 +44,7 @@ use klaw_tool::{
     TerminalMultiplexerTool, ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use klaw_util::EnvironmentCheckReport;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -60,7 +60,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
-const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, read it and follow it before anything else. If it does not exist, start with a short, natural greeting.\nGuide the user through initializing the agent's identity, vibe, and context. Do not mention that this message was auto-generated.";
+const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, use the available workspace tools to read it and follow it before anything else. If it does not exist, start with a short, natural greeting.\nGuide the user through initializing the agent's identity, vibe, and context. When you learn durable bootstrap details, use tools to update `IDENTITY.md` and `USER.md`, and delete `BOOTSTRAP.md` once bootstrap is truly complete. Do not claim files were updated unless you actually changed them with tools. Do not mention that this message was auto-generated.";
 
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
@@ -268,6 +268,7 @@ pub struct AssistantOutput {
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 const META_PROVIDER_KEY: &str = "agent.provider_id";
 const META_MODEL_KEY: &str = "agent.model";
+const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
 
 #[derive(Debug, Clone)]
 struct SessionRoute {
@@ -587,6 +588,13 @@ fn build_new_session_bootstrap_user_message() -> String {
     NEW_SESSION_BOOTSTRAP_USER_MESSAGE.to_string()
 }
 
+fn build_new_session_bootstrap_request_metadata() -> BTreeMap<String, Value> {
+    BTreeMap::from([(
+        META_TOOL_CHOICE_KEY.to_string(),
+        Value::String("required".to_string()),
+    )])
+}
+
 fn format_new_session_started_message(
     session_key: &str,
     provider: &str,
@@ -844,7 +852,7 @@ async fn handle_im_command(
                 new_session_provider.clone(),
                 new_session_model.clone(),
                 Vec::new(),
-                BTreeMap::new(),
+                build_new_session_bootstrap_request_metadata(),
             )
             .await
             {
@@ -2406,7 +2414,7 @@ mod tests {
     use klaw_storage::{DefaultSessionStore, StoragePaths};
     use klaw_tool::ToolRegistry;
     use klaw_util::EnvironmentCheckReport;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::{
         collections::{BTreeMap, BTreeSet},
         sync::{Arc, Mutex, RwLock},
@@ -2418,6 +2426,7 @@ mod tests {
     #[derive(Default, Clone)]
     struct BootstrapCaptureProvider {
         last_user_message: Arc<Mutex<Option<String>>>,
+        last_tool_choice: Arc<Mutex<Option<Value>>>,
     }
 
     #[async_trait::async_trait]
@@ -2435,7 +2444,7 @@ mod tests {
             messages: Vec<klaw_llm::LlmMessage>,
             _tools: Vec<klaw_llm::ToolDefinition>,
             _model: Option<&str>,
-            _options: ChatOptions,
+            options: ChatOptions,
         ) -> Result<klaw_llm::LlmResponse, LlmError> {
             let last_user_message = messages
                 .iter()
@@ -2446,6 +2455,10 @@ mod tests {
                 .last_user_message
                 .lock()
                 .unwrap_or_else(|err| err.into_inner()) = last_user_message;
+            *self
+                .last_tool_choice
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = options.tool_choice;
             Ok(klaw_llm::LlmResponse {
                 content: "bootstrap reply".to_string(),
                 reasoning: None,
@@ -2602,8 +2615,11 @@ mod tests {
     fn new_session_bootstrap_user_message_mentions_bootstrap_or_greeting() {
         let message = build_new_session_bootstrap_user_message();
         assert!(message.contains("You just woke up"));
-        assert!(message.contains("If `BOOTSTRAP.md` exists"));
+        assert!(message.contains("If `BOOTSTRAP.md` exists, use the available workspace tools"));
         assert!(message.contains("start with a short, natural greeting"));
+        assert!(message.contains(
+            "Do not claim files were updated unless you actually changed them with tools"
+        ));
     }
 
     #[test]
@@ -2960,5 +2976,11 @@ A .docx file is a ZIP archive containing XML files.
             .unwrap_or_else(|err| err.into_inner())
             .clone();
         assert_eq!(captured.as_deref(), Some(new_history[0].content.as_str()));
+        let tool_choice = provider
+            .last_tool_choice
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
+        assert_eq!(tool_choice, Some(Value::String("required".to_string())));
     }
 }
