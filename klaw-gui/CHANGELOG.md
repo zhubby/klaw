@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-25
+
+### Added
+
+- `Profile Prompt` 面板新增只读 `System Prompt Preview` 区块，使用 markdown 高亮渲染当前 runtime system prompt，并以固定剩余高度显示、内容过长时在框内滚动
+
 ## 2026-03-24
 
 ### Changed

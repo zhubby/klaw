@@ -1,16 +1,26 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use egui::{Color32, FontId, TextFormat, text::LayoutJob};
-use egui_extras::{Size, StripBuilder};
+use egui::{Color32, FontId, RichText, TextFormat, text::LayoutJob};
+use egui_extras::{Column, Size, StripBuilder, TableBuilder};
+use egui_phosphor::regular;
+use klaw_config::{AppConfig, ConfigStore};
+use klaw_core::{SkillPromptEntry, build_runtime_system_prompt};
+use klaw_skill::{
+    FileSystemSkillStore, InstalledSkill, RegistrySource, ReqwestSkillFetcher, SkillSourceKind,
+    SkillsManager, open_default_skills_manager,
+};
 use klaw_util::default_workspace_dir;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
 use std::time::UNIX_EPOCH;
+use tokio::runtime::Builder;
 
 const MIN_EDITOR_HEIGHT: f32 = 320.0;
 const FOOTER_HEIGHT: f32 = 48.0;
-const CARD_MIN_WIDTH: f32 = 320.0;
-const CARD_SPACING_X: f32 = 12.0;
+const DOCS_SECTION_MIN_HEIGHT: f32 = 180.0;
+const DOCS_SECTION_MAX_HEIGHT: f32 = 320.0;
+const SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT: f32 = 260.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkspaceMarkdownDoc {
@@ -31,6 +41,14 @@ struct WorkspaceMarkdownEditor {
 }
 
 #[derive(Debug, Clone, Default)]
+struct WorkspaceMarkdownPreview {
+    file_name: String,
+    path: PathBuf,
+    content: String,
+    open: bool,
+}
+
+#[derive(Debug, Clone, Default)]
 struct WorkspaceFileCreateForm {
     file_name: String,
     body: String,
@@ -41,10 +59,14 @@ struct WorkspaceFileCreateForm {
 pub struct ProfilePanel {
     workspace_dir: Option<PathBuf>,
     docs: Vec<WorkspaceMarkdownDoc>,
+    selected_doc: Option<String>,
+    system_prompt_preview: String,
     editor: Option<WorkspaceMarkdownEditor>,
+    preview: Option<WorkspaceMarkdownPreview>,
     create_form: WorkspaceFileCreateForm,
     loaded: bool,
     pending_default_confirm: Option<String>,
+    pending_delete_doc: Option<WorkspaceMarkdownDoc>,
 }
 
 impl ProfilePanel {
@@ -60,6 +82,12 @@ impl ProfilePanel {
             Ok((workspace_dir, docs)) => {
                 self.workspace_dir = Some(workspace_dir);
                 self.docs = docs;
+                if let Some(selected_doc) = self.selected_doc.as_deref()
+                    && !self.docs.iter().any(|doc| doc.file_name == selected_doc)
+                {
+                    self.selected_doc = None;
+                }
+                self.system_prompt_preview = load_system_prompt_preview();
                 self.loaded = true;
             }
             Err(err) => {
@@ -85,35 +113,149 @@ impl ProfilePanel {
         }
     }
 
-    fn render_doc_card(ui: &mut egui::Ui, doc: &WorkspaceMarkdownDoc) -> bool {
-        let mut edit_clicked = false;
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_min_width(320.0);
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.strong(&doc.file_name);
-                    ui.add_space(8.0);
-                    ui.colored_label(Color32::LIGHT_BLUE, "markdown");
+    fn open_preview(&mut self, doc: &WorkspaceMarkdownDoc, notifications: &mut NotificationCenter) {
+        match fs::read_to_string(&doc.path) {
+            Ok(content) => {
+                self.preview = Some(WorkspaceMarkdownPreview {
+                    file_name: doc.file_name.clone(),
+                    path: doc.path.clone(),
+                    content,
+                    open: true,
                 });
-                ui.add_space(4.0);
-                ui.label(&doc.summary);
-                ui.add_space(6.0);
-                ui.small(format!("Modified: {}", doc.modified_label));
-                ui.small(format!("Size: {}", format_bytes(doc.size_bytes)));
-                ui.small(format!("Path: {}", doc.path.display()));
-                ui.add_space(8.0);
-                if ui.button("Edit").clicked() {
-                    edit_clicked = true;
-                }
-            });
-        });
-        edit_clicked
+            }
+            Err(err) => {
+                notifications.error(format!("Failed to read {}: {err}", doc.path.display()))
+            }
+        }
     }
 
-    fn card_column_count(available_width: f32) -> usize {
-        let full_card_width = CARD_MIN_WIDTH + CARD_SPACING_X;
-        let columns = ((available_width + CARD_SPACING_X) / full_card_width).floor() as usize;
-        columns.max(1)
+    fn render_docs_section(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let mut edit_target = None;
+        let mut preview_target = None;
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong("Workspace Markdown Files");
+                ui.label(format!("({})", self.docs.len()));
+            });
+            ui.add_space(6.0);
+
+            if self.docs.is_empty() {
+                ui.label("No markdown files found in the workspace directory.");
+                return;
+            }
+
+            let available_height = ui.available_height();
+            TableBuilder::new(ui)
+                .striped(true)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::auto().at_least(140.0))
+                .column(Column::remainder().at_least(220.0))
+                .column(Column::auto().at_least(90.0))
+                .column(Column::auto().at_least(110.0))
+                .column(Column::remainder().at_least(260.0))
+                .min_scrolled_height(0.0)
+                .max_scroll_height(available_height)
+                .sense(egui::Sense::click())
+                .header(22.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("Name");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Summary");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Size");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Modified");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Path");
+                    });
+                })
+                .body(|body| {
+                    body.rows(22.0, self.docs.len(), |mut row| {
+                        let idx = row.index();
+                        let doc = &self.docs[idx];
+                        let is_selected = self.selected_doc.as_deref() == Some(&doc.file_name);
+                        row.set_selected(is_selected);
+
+                        row.col(|ui| {
+                            ui.label(&doc.file_name);
+                        });
+                        row.col(|ui| {
+                            ui.label(&doc.summary);
+                        });
+                        row.col(|ui| {
+                            ui.label(format_bytes(doc.size_bytes));
+                        });
+                        row.col(|ui| {
+                            ui.label(&doc.modified_label);
+                        });
+                        row.col(|ui| {
+                            ui.label(doc.path.display().to_string());
+                        });
+
+                        let response = row.response();
+                        if response.clicked() {
+                            self.selected_doc = if is_selected {
+                                None
+                            } else {
+                                Some(doc.file_name.clone())
+                            };
+                        }
+
+                        let doc_clone = doc.clone();
+                        response.context_menu(|ui| {
+                            if ui.button(format!("{} Preview", regular::EYE)).clicked() {
+                                preview_target = Some(doc_clone.clone());
+                                ui.close();
+                            }
+                            if ui
+                                .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                .clicked()
+                            {
+                                edit_target = Some(doc_clone.clone());
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui
+                                .add(egui::Button::new(
+                                    RichText::new(format!("{} Delete", regular::TRASH))
+                                        .color(egui::Color32::RED),
+                                ))
+                                .clicked()
+                            {
+                                self.pending_delete_doc = Some(doc_clone.clone());
+                                ui.close();
+                            }
+                        });
+                    });
+                });
+        });
+
+        if let Some(doc) = edit_target {
+            self.open_editor(&doc, notifications);
+        }
+        if let Some(doc) = preview_target {
+            self.open_preview(&doc, notifications);
+        }
+    }
+
+    fn render_system_prompt_preview(&self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.strong("System Prompt Preview");
+            ui.small("Rendered from current workspace prompt docs and installed skills.");
+            ui.add_space(6.0);
+
+            egui::ScrollArea::vertical()
+                .id_salt("system-prompt-preview-scroll")
+                .max_height(ui.available_height())
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    render_markdown(ui, &self.system_prompt_preview);
+                });
+        });
     }
 
     fn render_editor_window(
@@ -378,6 +520,93 @@ impl ProfilePanel {
             self.create_form = WorkspaceFileCreateForm::default();
         }
     }
+
+    fn render_preview_window(&mut self, ctx: &egui::Context) {
+        let Some(preview) = self.preview.as_mut() else {
+            return;
+        };
+
+        egui::Window::new(format!("Preview {}", preview.file_name))
+            .open(&mut preview.open)
+            .resizable(true)
+            .default_width(860.0)
+            .default_height(620.0)
+            .show(ctx, |ui| {
+                ui.label(format!("Path: {}", preview.path.display()));
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt(("workspace-markdown-preview", &preview.file_name))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| render_markdown(ui, &preview.content));
+            });
+
+        if self.preview.as_ref().is_some_and(|preview| !preview.open) {
+            self.preview = None;
+        }
+    }
+
+    fn render_delete_confirm_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some(doc) = self.pending_delete_doc.clone() else {
+            return;
+        };
+
+        let mut confirmed = false;
+        let mut cancelled = false;
+        egui::Window::new("Delete workspace file")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!("Delete {} ?", doc.file_name));
+                ui.small(format!("Path: {}", doc.path.display()));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(egui::Button::new(
+                            RichText::new(format!("{} Delete", regular::TRASH))
+                                .color(egui::Color32::RED),
+                        ))
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            match fs::remove_file(&doc.path) {
+                Ok(()) => {
+                    if self.selected_doc.as_deref() == Some(&doc.file_name) {
+                        self.selected_doc = None;
+                    }
+                    if self
+                        .preview
+                        .as_ref()
+                        .is_some_and(|preview| preview.path == doc.path)
+                    {
+                        self.preview = None;
+                    }
+                    notifications.success(format!("Deleted {}", doc.file_name));
+                    self.reload(notifications);
+                }
+                Err(err) => {
+                    notifications.error(format!("Failed to delete {}: {err}", doc.path.display()));
+                }
+            }
+            self.pending_delete_doc = None;
+        }
+
+        if cancelled {
+            self.pending_delete_doc = None;
+        }
+    }
 }
 
 impl PanelRenderer for ProfilePanel {
@@ -404,38 +633,21 @@ impl PanelRenderer for ProfilePanel {
             }
         });
         ui.separator();
-
-        let mut edit_target = None;
-        egui::ScrollArea::vertical()
-            .id_salt("workspace-markdown-card-scroll")
-            .show(ui, |ui| {
-                if self.docs.is_empty() {
-                    ui.label("No markdown files found in the workspace directory.");
-                    return;
-                }
-
-                let columns = Self::card_column_count(ui.available_width());
-                egui::Grid::new("workspace-markdown-card-grid")
-                    .num_columns(columns)
-                    .spacing([CARD_SPACING_X, 12.0])
-                    .show(ui, |ui| {
-                        for (index, doc) in self.docs.iter().enumerate() {
-                            if Self::render_doc_card(ui, doc) {
-                                edit_target = Some(doc.clone());
-                            }
-                            if (index + 1) % columns == 0 {
-                                ui.end_row();
-                            }
-                        }
-                    });
+        let docs_height =
+            (ui.available_height() * 0.38).clamp(DOCS_SECTION_MIN_HEIGHT, DOCS_SECTION_MAX_HEIGHT);
+        StripBuilder::new(ui)
+            .size(Size::exact(docs_height))
+            .size(Size::remainder().at_least(SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT))
+            .vertical(|mut strip| {
+                strip.cell(|ui| self.render_docs_section(ui, notifications));
+                strip.cell(|ui| self.render_system_prompt_preview(ui));
             });
 
-        if let Some(doc) = edit_target {
-            self.open_editor(&doc, notifications);
-        }
         self.render_editor_window(ui.ctx(), notifications);
         self.render_default_confirm_dialog(ui.ctx(), notifications);
         self.render_create_file_dialog(ui.ctx(), notifications);
+        self.render_preview_window(ui.ctx());
+        self.render_delete_confirm_dialog(ui.ctx(), notifications);
     }
 }
 
@@ -586,6 +798,254 @@ fn format_modified_time(value: Option<std::time::SystemTime>) -> String {
         return "unknown".to_string();
     };
     format!("{}", duration.as_secs())
+}
+
+fn load_system_prompt_preview() -> String {
+    let config = match ConfigStore::open(None) {
+        Ok(store) => store.snapshot().config,
+        Err(err) => {
+            return format!(
+                "# System Prompt Preview Unavailable\n\nFailed to load config.toml: {err}"
+            );
+        }
+    };
+
+    let skills = load_runtime_skill_prompt_entries(config).unwrap_or_default();
+    build_runtime_system_prompt(skills).unwrap_or_else(|| {
+        "# System Prompt Preview Unavailable\n\nFailed to assemble the runtime system prompt."
+            .to_string()
+    })
+}
+
+fn load_runtime_skill_prompt_entries(config: AppConfig) -> Result<Vec<SkillPromptEntry>, String> {
+    let join = thread::spawn(move || {
+        let store = open_default_skills_manager()
+            .map_err(|err| format!("failed to open skills manager: {err}"))?;
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to build runtime: {err}"))?;
+        runtime.block_on(async move {
+            sync_registry_installed_skills(&store, &config).await;
+
+            let skills = store
+                .load_all_installed_skill_markdowns()
+                .await
+                .map_err(|err| format!("failed to load installed skills: {err}"))?;
+            Ok(skills
+                .into_iter()
+                .map(|skill| SkillPromptEntry {
+                    name: skill.name,
+                    path: skill.local_path.display().to_string(),
+                    description: extract_skill_short_description(&skill.content),
+                    source: format_skill_source(
+                        &skill.source_kind,
+                        skill.registry.as_deref(),
+                        skill.stale,
+                    ),
+                })
+                .collect())
+        })
+    });
+
+    match join.join() {
+        Ok(result) => result,
+        Err(_) => Err("skill prompt loader thread panicked".to_string()),
+    }
+}
+
+async fn sync_registry_installed_skills(
+    store: &FileSystemSkillStore<ReqwestSkillFetcher>,
+    config: &AppConfig,
+) {
+    let sources: Vec<RegistrySource> = config
+        .skills
+        .registries
+        .iter()
+        .map(|(name, registry)| RegistrySource {
+            name: name.clone(),
+            address: registry.address.clone(),
+        })
+        .collect();
+    let installed: Vec<InstalledSkill> = config
+        .skills
+        .registries
+        .iter()
+        .flat_map(|(registry_name, registry)| {
+            registry.installed.iter().map(|skill_name| InstalledSkill {
+                registry: registry_name.clone(),
+                name: skill_name.clone(),
+            })
+        })
+        .collect();
+
+    let _ = store
+        .sync_registry_installed_skills(&sources, &installed, config.skills.sync_timeout)
+        .await;
+}
+
+fn extract_skill_short_description(markdown: &str) -> String {
+    const MAX_LEN: usize = 180;
+    extract_skill_frontmatter_description(markdown)
+        .or_else(|| extract_skill_body_description(markdown))
+        .map(|description| truncate_skill_description(&description, MAX_LEN))
+        .unwrap_or_else(|| "no description".to_string())
+}
+
+fn extract_skill_frontmatter_description(markdown: &str) -> Option<String> {
+    frontmatter_lines(markdown)?
+        .find_map(|line| line.trim().strip_prefix("description:").map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(trim_matching_quotes)
+        .map(str::to_string)
+}
+
+fn extract_skill_body_description(markdown: &str) -> Option<String> {
+    let body = strip_frontmatter(markdown).unwrap_or(markdown);
+    body.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#') && *line != "---")
+        .map(str::to_string)
+}
+
+fn strip_frontmatter(markdown: &str) -> Option<&str> {
+    let mut lines = markdown.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return None;
+    }
+
+    let mut offset = markdown.find('\n')? + 1;
+    for line in lines {
+        let line_end = offset + line.len();
+        let next_offset = if markdown.as_bytes().get(line_end) == Some(&b'\n') {
+            line_end + 1
+        } else {
+            line_end
+        };
+        if line.trim() == "---" {
+            return Some(&markdown[next_offset..]);
+        }
+        offset = next_offset;
+    }
+
+    None
+}
+
+fn frontmatter_lines(markdown: &str) -> Option<impl Iterator<Item = &str>> {
+    let frontmatter = markdown
+        .strip_prefix("---\n")
+        .or_else(|| markdown.strip_prefix("---\r\n"))?;
+    let (frontmatter, _) = frontmatter
+        .split_once("\n---\n")
+        .or_else(|| frontmatter.split_once("\r\n---\r\n"))?;
+    Some(frontmatter.lines())
+}
+
+fn trim_matching_quotes(value: &str) -> &str {
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        if (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
+        {
+            return &value[1..value.len() - 1];
+        }
+    }
+
+    value
+}
+
+fn truncate_skill_description(description: &str, max_len: usize) -> String {
+    if description.chars().count() <= max_len {
+        return description.to_string();
+    }
+
+    let mut trimmed = description.chars().take(max_len).collect::<String>();
+    trimmed.push_str("...");
+    trimmed
+}
+
+fn format_skill_source(
+    source_kind: &SkillSourceKind,
+    registry: Option<&str>,
+    stale: Option<bool>,
+) -> String {
+    let mut source = match source_kind {
+        SkillSourceKind::Local => "workspace/local".to_string(),
+        SkillSourceKind::Registry => format!(
+            "managed/{}",
+            registry
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("registry")
+        ),
+    };
+    if stale.unwrap_or(false) {
+        source.push_str(" (stale)");
+    }
+    source
+}
+
+fn render_markdown(ui: &mut egui::Ui, markdown: &str) {
+    let mut in_code_block = false;
+    let mut code_block = String::new();
+
+    for line in markdown.lines() {
+        if line.trim_start().starts_with("```") {
+            if in_code_block {
+                ui.add_sized(
+                    [ui.available_width(), 220.0],
+                    egui::TextEdit::multiline(&mut code_block)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace)
+                        .interactive(false),
+                );
+                code_block.clear();
+                in_code_block = false;
+            } else {
+                in_code_block = true;
+            }
+            continue;
+        }
+
+        if in_code_block {
+            code_block.push_str(line);
+            code_block.push('\n');
+            continue;
+        }
+
+        if let Some(text) = line.strip_prefix("# ") {
+            ui.heading(text);
+            continue;
+        }
+        if let Some(text) = line.strip_prefix("## ") {
+            ui.add_space(6.0);
+            ui.strong(text);
+            continue;
+        }
+        if let Some(text) = line.strip_prefix("- ") {
+            ui.horizontal(|ui| {
+                ui.label("-");
+                ui.label(text);
+            });
+            continue;
+        }
+        if line.is_empty() {
+            ui.add_space(4.0);
+            continue;
+        }
+
+        ui.label(line);
+    }
+
+    if in_code_block && !code_block.is_empty() {
+        ui.add_sized(
+            [ui.available_width(), 220.0],
+            egui::TextEdit::multiline(&mut code_block)
+                .desired_width(f32::INFINITY)
+                .font(egui::TextStyle::Monospace)
+                .interactive(false),
+        );
+    }
 }
 
 fn markdown_highlight_job(markdown: &str) -> LayoutJob {

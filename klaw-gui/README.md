@@ -24,7 +24,7 @@
 - Sidebar group headings for `WORKSPACE`, `AI & CAPABILITY`, `RUNTIME & ACCESS`, `AUTOMATION & OPERATIONS`, `DATA & HISTORY`, and `OBSERVABILITY`
 - Single-tab-per-menu behavior (click to open or activate)
 - Workbench panel renderers for:
-  - profile (workspace markdown doc cards + editor window)
+  - profile (workspace markdown doc cards + editor window + runtime system prompt preview)
   - configuration
   - model provider (config-bound list + add/edit window)
   - channel (config-bound list + add/edit window)
@@ -54,6 +54,7 @@
 - Profile Prompt panel features:
   - read markdown files directly under `~/.klaw/workspace`
   - show workspace docs as cards with file summary, modified time, and path
+  - render a read-only runtime system prompt preview that fills the remaining panel height
   - create a new workspace-root file from a popup with `file name` and `body`
   - edit a document in a fixed-height markdown-highlighted popup editor
   - save, cancel, or reset in the editor footer
