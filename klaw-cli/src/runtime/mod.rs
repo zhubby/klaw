@@ -1593,22 +1593,79 @@ async fn load_skills_system_prompt(config: &AppConfig) -> LoadedSkillsPrompt {
 }
 
 fn extract_skill_short_description(markdown: &str) -> String {
-    let line = markdown
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('#'))
-        .unwrap_or_default();
-
-    if line.is_empty() {
-        return "no description".to_string();
-    }
-
     const MAX_LEN: usize = 180;
-    if line.chars().count() <= MAX_LEN {
-        return line.to_string();
+    extract_skill_frontmatter_description(markdown)
+        .or_else(|| extract_skill_body_description(markdown))
+        .map(|description| truncate_skill_description(&description, MAX_LEN))
+        .unwrap_or_else(|| "no description".to_string())
+}
+
+fn extract_skill_frontmatter_description(markdown: &str) -> Option<String> {
+    frontmatter_lines(markdown)?
+        .find_map(|line| line.trim().strip_prefix("description:").map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(trim_matching_quotes)
+        .map(str::to_string)
+}
+
+fn extract_skill_body_description(markdown: &str) -> Option<String> {
+    let body = strip_frontmatter(markdown).unwrap_or(markdown);
+    body.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#') && *line != "---")
+        .map(str::to_string)
+}
+
+fn strip_frontmatter(markdown: &str) -> Option<&str> {
+    let mut lines = markdown.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return None;
     }
 
-    let mut trimmed = line.chars().take(MAX_LEN).collect::<String>();
+    let mut offset = markdown.find('\n')? + 1;
+    for line in lines {
+        let line_end = offset + line.len();
+        let next_offset = if markdown.as_bytes().get(line_end) == Some(&b'\n') {
+            line_end + 1
+        } else {
+            line_end
+        };
+        if line.trim() == "---" {
+            return Some(&markdown[next_offset..]);
+        }
+        offset = next_offset;
+    }
+
+    None
+}
+
+fn frontmatter_lines(markdown: &str) -> Option<impl Iterator<Item = &str>> {
+    let frontmatter = markdown.strip_prefix("---\n").or_else(|| markdown.strip_prefix("---\r\n"))?;
+    let (frontmatter, _) = frontmatter
+        .split_once("\n---\n")
+        .or_else(|| frontmatter.split_once("\r\n---\r\n"))?;
+    Some(frontmatter.lines())
+}
+
+fn trim_matching_quotes(value: &str) -> &str {
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        if (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
+        {
+            return &value[1..value.len() - 1];
+        }
+    }
+
+    value
+}
+
+fn truncate_skill_description(description: &str, max_len: usize) -> String {
+    if description.chars().count() <= max_len {
+        return description.to_string();
+    }
+
+    let mut trimmed = description.chars().take(max_len).collect::<String>();
     trimmed.push_str("...");
     trimmed
 }
@@ -2323,7 +2380,7 @@ mod tests {
     use super::{
         build_history_for_model, build_new_session_bootstrap_user_message,
         build_unavailable_provider, compression_trigger_interval, configured_default_model,
-        first_arg_token, format_approve_already_handled_message,
+        extract_skill_short_description, first_arg_token, format_approve_already_handled_message,
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, resolve_new_session_target_from_config, resolve_session_route,
         should_emit_outbound, should_trigger_compression, spawn_llm_audit_writer,
@@ -2541,6 +2598,81 @@ mod tests {
         assert!(message.contains("You just woke up"));
         assert!(message.contains("If `BOOTSTRAP.md` exists"));
         assert!(message.contains("start with a short, natural greeting"));
+    }
+
+    #[test]
+    fn skill_description_prefers_frontmatter_description() {
+        let markdown = r#"---
+name: pdf
+description: "Use this skill whenever the user wants to do anything with PDF files."
+---
+
+# PDF Processing Guide
+
+## Overview
+
+This body line should not be used.
+"#;
+
+        assert_eq!(
+            extract_skill_short_description(markdown),
+            "Use this skill whenever the user wants to do anything with PDF files."
+        );
+    }
+
+    #[test]
+    fn skill_description_falls_back_to_body_when_frontmatter_has_no_description() {
+        let markdown = r#"---
+name: local-skill
+license: Proprietary
+---
+
+# Local Skill
+
+## Overview
+
+Use this skill for local workflows.
+"#;
+
+        assert_eq!(
+            extract_skill_short_description(markdown),
+            "Use this skill for local workflows."
+        );
+    }
+
+    #[test]
+    fn skill_description_supports_body_only_skills() {
+        let markdown = r#"# kubeease
+
+## Overview
+
+Kubeease 管理终端技能。
+"#;
+
+        assert_eq!(
+            extract_skill_short_description(markdown),
+            "Kubeease 管理终端技能。"
+        );
+    }
+
+    #[test]
+    fn skill_description_does_not_return_frontmatter_delimiter() {
+        let markdown = r#"---
+name: docx
+license: Proprietary
+---
+
+# DOCX creation, editing, and analysis
+
+## Overview
+
+A .docx file is a ZIP archive containing XML files.
+"#;
+
+        assert_eq!(
+            extract_skill_short_description(markdown),
+            "A .docx file is a ZIP archive containing XML files."
+        );
     }
 
     #[test]
