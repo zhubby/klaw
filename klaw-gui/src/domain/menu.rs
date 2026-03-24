@@ -1,6 +1,38 @@
 use egui_phosphor::regular;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WorkbenchMenuGroup {
+    Workspace,
+    AiAndCapability,
+    RuntimeAndAccess,
+    AutomationAndOperations,
+    DataAndHistory,
+    Observability,
+}
+
+impl WorkbenchMenuGroup {
+    pub const ALL: [WorkbenchMenuGroup; 6] = [
+        WorkbenchMenuGroup::Workspace,
+        WorkbenchMenuGroup::AiAndCapability,
+        WorkbenchMenuGroup::RuntimeAndAccess,
+        WorkbenchMenuGroup::AutomationAndOperations,
+        WorkbenchMenuGroup::DataAndHistory,
+        WorkbenchMenuGroup::Observability,
+    ];
+
+    pub const fn title(self) -> &'static str {
+        match self {
+            WorkbenchMenuGroup::Workspace => "WORKSPACE",
+            WorkbenchMenuGroup::AiAndCapability => "AI & CAPABILITY",
+            WorkbenchMenuGroup::RuntimeAndAccess => "RUNTIME & ACCESS",
+            WorkbenchMenuGroup::AutomationAndOperations => "AUTOMATION & OPERATIONS",
+            WorkbenchMenuGroup::DataAndHistory => "DATA & HISTORY",
+            WorkbenchMenuGroup::Observability => "OBSERVABILITY",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WorkbenchMenu {
     Profile,
@@ -91,7 +123,7 @@ impl WorkbenchMenu {
         match self {
             WorkbenchMenu::Profile => "Profile Prompt",
             WorkbenchMenu::System => "System",
-            WorkbenchMenu::Setting => "Setting",
+            WorkbenchMenu::Setting => "Settings",
             WorkbenchMenu::Session => "Session",
             WorkbenchMenu::Approval => "Approval",
             WorkbenchMenu::Configuration => "Configuration",
@@ -148,11 +180,48 @@ impl WorkbenchMenu {
     pub const fn default_tab_title(self) -> &'static str {
         self.title()
     }
+
+    pub const fn group(self) -> WorkbenchMenuGroup {
+        match self {
+            WorkbenchMenu::Profile
+            | WorkbenchMenu::System
+            | WorkbenchMenu::Setting
+            | WorkbenchMenu::Configuration => WorkbenchMenuGroup::Workspace,
+            WorkbenchMenu::Provider
+            | WorkbenchMenu::Llm
+            | WorkbenchMenu::Mcp
+            | WorkbenchMenu::Skill
+            | WorkbenchMenu::SkillsManager
+            | WorkbenchMenu::Tool
+            | WorkbenchMenu::Voice => WorkbenchMenuGroup::AiAndCapability,
+            WorkbenchMenu::Channel | WorkbenchMenu::Gateway | WorkbenchMenu::Webhook => {
+                WorkbenchMenuGroup::RuntimeAndAccess
+            }
+            WorkbenchMenu::Approval
+            | WorkbenchMenu::Cron
+            | WorkbenchMenu::Heartbeat
+            | WorkbenchMenu::Session => WorkbenchMenuGroup::AutomationAndOperations,
+            WorkbenchMenu::Memory | WorkbenchMenu::Archive => WorkbenchMenuGroup::DataAndHistory,
+            WorkbenchMenu::Monitor
+            | WorkbenchMenu::Logs
+            | WorkbenchMenu::AnalyzeDashboard
+            | WorkbenchMenu::Observability => WorkbenchMenuGroup::Observability,
+        }
+    }
+
+    pub fn sorted_for_group(group: WorkbenchMenuGroup) -> Vec<WorkbenchMenu> {
+        let mut menus = Self::ALL
+            .into_iter()
+            .filter(|menu| menu.group() == group)
+            .collect::<Vec<_>>();
+        menus.sort_by_key(|menu| menu.title());
+        menus
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::WorkbenchMenu;
+    use super::{WorkbenchMenu, WorkbenchMenuGroup};
     use std::collections::HashSet;
 
     #[test]
@@ -196,5 +265,38 @@ mod tests {
     fn voice_menu_is_registered() {
         assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Voice));
         assert_eq!(WorkbenchMenu::Voice.id_key(), "voice");
+    }
+
+    #[test]
+    fn every_menu_has_a_group_and_groups_cover_all_menus_once() {
+        let mut seen = HashSet::new();
+
+        for group in WorkbenchMenuGroup::ALL {
+            for menu in WorkbenchMenu::sorted_for_group(group) {
+                assert_eq!(menu.group(), group);
+                assert!(seen.insert(menu), "menu assigned more than once: {:?}", menu);
+            }
+        }
+
+        assert_eq!(seen.len(), WorkbenchMenu::ALL.len());
+    }
+
+    #[test]
+    fn settings_title_is_plural_while_id_key_stays_stable() {
+        assert_eq!(WorkbenchMenu::Setting.title(), "Settings");
+        assert_eq!(WorkbenchMenu::Setting.id_key(), "setting");
+    }
+
+    #[test]
+    fn menus_within_group_are_sorted_by_title() {
+        for group in WorkbenchMenuGroup::ALL {
+            let menus = WorkbenchMenu::sorted_for_group(group);
+            let mut titles = menus.iter().map(|menu| menu.title()).collect::<Vec<_>>();
+            let mut sorted_titles = titles.clone();
+            sorted_titles.sort_unstable();
+            assert_eq!(titles, sorted_titles);
+            titles.dedup();
+            assert_eq!(titles.len(), menus.len());
+        }
     }
 }

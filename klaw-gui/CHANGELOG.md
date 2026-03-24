@@ -2,6 +2,11 @@
 
 ## 2026-03-24
 
+### Changed
+
+- GUI 左侧栏现在按 `WORKSPACE`、`AI & CAPABILITY`、`RUNTIME & ACCESS`、`AUTOMATION & OPERATIONS`、`DATA & HISTORY`、`OBSERVABILITY` 分组显示，并在组内按菜单标题首字母排序
+- GUI 侧栏菜单文案将 `Setting` 统一为 `Settings`，内部持久化 key `setting` 保持不变
+
 ### Added
 
 - GUI 新增 `Voice` 一级 workbench 面板，支持编辑 `config.toml` 中的 voice 配置并执行系统麦克风录音转写测试
