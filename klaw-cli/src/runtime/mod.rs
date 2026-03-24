@@ -1640,7 +1640,9 @@ fn strip_frontmatter(markdown: &str) -> Option<&str> {
 }
 
 fn frontmatter_lines(markdown: &str) -> Option<impl Iterator<Item = &str>> {
-    let frontmatter = markdown.strip_prefix("---\n").or_else(|| markdown.strip_prefix("---\r\n"))?;
+    let frontmatter = markdown
+        .strip_prefix("---\n")
+        .or_else(|| markdown.strip_prefix("---\r\n"))?;
     let (frontmatter, _) = frontmatter
         .split_once("\n---\n")
         .or_else(|| frontmatter.split_once("\r\n---\r\n"))?;

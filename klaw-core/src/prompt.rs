@@ -8,17 +8,15 @@ use thiserror::Error;
 use tokio::fs;
 
 const SKILLS_LAZY_LOAD_INSTRUCTIONS: &str = "When a task may require a skill, consult the available skills list first.\nBefore using a skill, read the SKILL.md file at the listed path.\nOnly load skill files when needed.";
-const WORKSPACE_PROMPT_DOC_FILES: [&str; 7] = [
-    "AGENTS.md",
-    "BOOTSTRAP.md",
-    "HEARTBEAT.md",
-    "IDENTITY.md",
-    "SOUL.md",
-    "TOOLS.md",
-    "USER.md",
+const INLINED_WORKSPACE_PROMPT_DOC_FILES: [(&str, &str); 4] = [
+    ("AGENTS.md", "Workspace Behavior"),
+    ("SOUL.md", "Assistant Character"),
+    ("IDENTITY.md", "Assistant Identity"),
+    ("TOOLS.md", "Local Environment"),
 ];
-const RUNTIME_PROMPT_RULES: &str = "Prefer lazy-loading context from files and skills instead of relying on embedded long prompt bodies. Read only what is needed for the current user request.";
-const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "When local workspace docs are relevant, read them from disk on demand before acting. Do not assume their content without reading the files.\nWhen a task requires remembering or recalling prior context, use the memory tool. Do not rely on ad-hoc markdown memory files.\nFiles under archives/ are read-only source material. Never edit, move, or delete them in place. If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.";
+const ON_DEMAND_WORKSPACE_PROMPT_DOC_FILES: [&str; 3] = ["USER.md", "HEARTBEAT.md", "BOOTSTRAP.md"];
+const RUNTIME_PROMPT_RULES: &str = "Use the inlined workspace context below as your baseline operating instructions. Only lazy-load remaining workspace docs and skills when they are relevant to the current user request.";
+const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "Do not re-read `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, or `TOOLS.md` just to recover instructions that are already inlined into this system prompt.\nWhen additional workspace context is needed, read only the remaining on-demand docs from disk before acting.\nWhen a task requires remembering or recalling prior context, use the memory tool. Do not rely on ad-hoc markdown memory files.\nFiles under archives/ are read-only source material. Never edit, move, or delete them in place. If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.";
 
 const PROMPT_TEMPLATE_FILES: [(&str, &str); 7] = [
     ("AGENTS.md", include_str!("../templates/prompt/AGENTS.md")),
@@ -69,6 +67,7 @@ pub struct SkillPromptEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuntimePromptInput {
+    pub workspace_context: Option<String>,
     pub runtime_metadata: Option<String>,
     pub rules: Option<String>,
     pub local_docs: Option<String>,
@@ -190,7 +189,7 @@ pub fn format_workspace_docs_for_prompt() -> String {
     let base = std::env::var("HOME")
         .map(|home| format!("{home}/.klaw/workspace"))
         .unwrap_or_else(|_| "~/.klaw/workspace".to_string());
-    let docs = WORKSPACE_PROMPT_DOC_FILES
+    let docs = ON_DEMAND_WORKSPACE_PROMPT_DOC_FILES
         .iter()
         .map(|name| format!("- {base}/{name}"))
         .collect::<Vec<_>>()
@@ -199,8 +198,7 @@ pub fn format_workspace_docs_for_prompt() -> String {
         "Read these workspace docs on demand when relevant:\n{docs}\n\
 \n\
 Recommended usage:\n\
-- Start with AGENTS.md and USER.md for baseline behavior and user preferences.\n\
-- Read `TOOLS.md` before tool-heavy tasks or environment-specific operations.\n\
+- Read `USER.md` when user-specific preferences or profile context is needed.\n\
 - Read `HEARTBEAT.md` only for heartbeat/autonomous polling turns.\n\
 - Read `BOOTSTRAP.md` only during first-run initialization or cold-start setup.\n\
 - Use the memory tool for durable memory; do not use markdown files as memory storage."
@@ -209,6 +207,13 @@ Recommended usage:\n\
 
 pub fn compose_runtime_prompt(input: RuntimePromptInput) -> Option<String> {
     let mut sections = Vec::new();
+
+    if let Some(workspace_context) = input.workspace_context {
+        let workspace_context = workspace_context.trim();
+        if !workspace_context.is_empty() {
+            sections.push(workspace_context.to_string());
+        }
+    }
 
     push_section(&mut sections, "Runtime Metadata", input.runtime_metadata);
     push_section(&mut sections, "Rules", input.rules);
@@ -238,12 +243,59 @@ pub fn compose_runtime_prompt(input: RuntimePromptInput) -> Option<String> {
 
 pub fn build_runtime_system_prompt(skills: Vec<SkillPromptEntry>) -> Option<String> {
     compose_runtime_prompt(RuntimePromptInput {
+        workspace_context: format_inlined_workspace_context_for_prompt(),
         runtime_metadata: None,
         rules: Some(RUNTIME_PROMPT_RULES.to_string()),
         local_docs: Some(format_workspace_docs_for_prompt()),
         additional_instructions: Some(RUNTIME_PROMPT_EXTRA_INSTRUCTIONS.to_string()),
         skills,
     })
+}
+
+fn format_inlined_workspace_context_for_prompt() -> Option<String> {
+    let data_dir = resolve_default_data_dir().ok()?;
+    let workspace = workspace_dir(&data_dir);
+    format_inlined_workspace_context_for_prompt_in_dir(&workspace)
+}
+
+fn format_inlined_workspace_context_for_prompt_in_dir(workspace_dir: &Path) -> Option<String> {
+    let mut sections = Vec::new();
+
+    for (file_name, title) in INLINED_WORKSPACE_PROMPT_DOC_FILES {
+        let path = workspace_dir.join(file_name);
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let content = normalize_inlined_prompt_doc_content(&content);
+        if content.is_empty() {
+            continue;
+        }
+        sections.push(format!("### {title}\n\n{content}"));
+    }
+
+    if sections.is_empty() {
+        return None;
+    }
+
+    Some(format!("## Workspace Context\n\n{}", sections.join("\n\n")))
+}
+
+fn normalize_inlined_prompt_doc_content(content: &str) -> String {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = trimmed.lines();
+    let Some(first_line) = lines.next() else {
+        return String::new();
+    };
+
+    if first_line.trim_start().starts_with("# ") {
+        return lines.collect::<Vec<_>>().join("\n").trim().to_string();
+    }
+
+    trimmed.to_string()
 }
 
 fn push_section(sections: &mut Vec<String>, title: &str, content: Option<String>) {
@@ -379,6 +431,7 @@ mod tests {
     #[test]
     fn compose_runtime_prompt_skips_empty_sections() {
         let prompt = compose_runtime_prompt(RuntimePromptInput {
+            workspace_context: None,
             runtime_metadata: Some("  ".to_string()),
             rules: Some("rule-a".to_string()),
             local_docs: None,
@@ -399,9 +452,13 @@ mod tests {
 
         assert!(docs_prompt.contains("Read these workspace docs on demand when relevant:"));
         assert!(docs_prompt.contains("Recommended usage:"));
-        assert!(docs_prompt.contains("AGENTS.md"));
         assert!(docs_prompt.contains("USER.md"));
-        assert!(docs_prompt.contains("TOOLS.md"));
+        assert!(docs_prompt.contains("HEARTBEAT.md"));
+        assert!(docs_prompt.contains("BOOTSTRAP.md"));
+        assert!(!docs_prompt.contains("AGENTS.md"));
+        assert!(!docs_prompt.contains("SOUL.md"));
+        assert!(!docs_prompt.contains("IDENTITY.md"));
+        assert!(!docs_prompt.contains("TOOLS.md"));
         assert!(docs_prompt.contains("Use the memory tool for durable memory"));
     }
 
@@ -415,10 +472,86 @@ mod tests {
         }])
         .expect("runtime prompt expected");
 
+        assert!(prompt.contains("## Workspace Context"));
         assert!(prompt.contains("## Rules"));
         assert!(prompt.contains("## Available Skills"));
         assert!(prompt.contains("## Instructions"));
         assert!(prompt.contains("## Local Docs"));
         assert!(prompt.contains("## Additional Instructions"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inlined_workspace_context_reads_docs_in_expected_order() {
+        let workspace =
+            std::env::temp_dir().join(format!("klaw-prompt-workspace-{}", Uuid::new_v4()));
+        fs::create_dir_all(&workspace)
+            .await
+            .expect("workspace dir should be created");
+        fs::write(workspace.join("AGENTS.md"), "# AGENTS.md\n\nagents body")
+            .await
+            .expect("agents should be written");
+        fs::write(workspace.join("SOUL.md"), "# SOUL.md\n\nsoul body")
+            .await
+            .expect("soul should be written");
+        fs::write(
+            workspace.join("IDENTITY.md"),
+            "# IDENTITY.md\n\nidentity body",
+        )
+        .await
+        .expect("identity should be written");
+        fs::write(workspace.join("TOOLS.md"), "# TOOLS.md\n\ntools body")
+            .await
+            .expect("tools should be written");
+
+        let prompt = format_inlined_workspace_context_for_prompt_in_dir(&workspace)
+            .expect("workspace context should be composed");
+
+        assert!(prompt.contains("## Workspace Context"));
+        assert!(prompt.contains("### Workspace Behavior\n\nagents body"));
+        assert!(prompt.contains("### Assistant Character\n\nsoul body"));
+        assert!(prompt.contains("### Assistant Identity\n\nidentity body"));
+        assert!(prompt.contains("### Local Environment\n\ntools body"));
+        assert!(!prompt.contains("# AGENTS.md"));
+
+        let agents_pos = prompt
+            .find("### Workspace Behavior")
+            .expect("agents section");
+        let soul_pos = prompt
+            .find("### Assistant Character")
+            .expect("soul section");
+        let identity_pos = prompt
+            .find("### Assistant Identity")
+            .expect("identity section");
+        let tools_pos = prompt.find("### Local Environment").expect("tools section");
+
+        assert!(agents_pos < soul_pos);
+        assert!(soul_pos < identity_pos);
+        assert!(identity_pos < tools_pos);
+    }
+
+    #[test]
+    fn compose_runtime_prompt_places_workspace_context_before_existing_sections() {
+        let prompt = compose_runtime_prompt(RuntimePromptInput {
+            workspace_context: Some("## Workspace Context\n\nworkspace body".to_string()),
+            runtime_metadata: None,
+            rules: Some("rule-a".to_string()),
+            local_docs: Some("docs-a".to_string()),
+            additional_instructions: Some("extra-a".to_string()),
+            skills: vec![],
+        })
+        .expect("composed prompt expected");
+
+        let workspace_pos = prompt
+            .find("## Workspace Context")
+            .expect("workspace context should exist");
+        let rules_pos = prompt.find("## Rules").expect("rules should exist");
+        let instructions_pos = prompt
+            .find("## Instructions")
+            .expect("instructions should exist");
+
+        assert!(workspace_pos < rules_pos);
+        assert!(rules_pos < instructions_pos);
+        assert!(prompt.contains("## Local Docs\n\ndocs-a"));
+        assert!(prompt.contains("## Additional Instructions\n\nextra-a"));
     }
 }
