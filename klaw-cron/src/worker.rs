@@ -252,11 +252,28 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
+    type TestTransport = InMemoryTransport<InboundMessage>;
+
     #[derive(Default)]
     struct FakeStorage {
         jobs: Mutex<Vec<CronJob>>,
         runs: Mutex<Vec<CronTaskRun>>,
         sessions: Mutex<Vec<SessionIndex>>,
+    }
+
+    impl FakeStorage {
+        fn upsert_session(&self, session: SessionIndex) -> SessionIndex {
+            let mut sessions = self.sessions.lock().expect("lock");
+            if let Some(item) = sessions
+                .iter_mut()
+                .find(|item| item.session_key == session.session_key)
+            {
+                *item = session.clone();
+            } else {
+                sessions.push(session.clone());
+            }
+            session
+        }
     }
 
     #[async_trait]
@@ -518,14 +535,7 @@ mod tests {
         ) -> Result<SessionIndex, StorageError> {
             let mut session = self.touch_session(session_key, chat_id, channel).await?;
             session.active_session_key = Some(active_session_key.to_string());
-            let mut sessions = self.sessions.lock().expect("lock");
-            if let Some(item) = sessions
-                .iter_mut()
-                .find(|item| item.session_key == session_key)
-            {
-                *item = session.clone();
-            }
-            Ok(session)
+            Ok(self.upsert_session(session))
         }
 
         async fn set_model_provider(
@@ -539,14 +549,7 @@ mod tests {
             let mut session = self.touch_session(session_key, chat_id, channel).await?;
             session.model_provider = Some(model_provider.to_string());
             session.model = Some(model.to_string());
-            let mut sessions = self.sessions.lock().expect("lock");
-            if let Some(item) = sessions
-                .iter_mut()
-                .find(|item| item.session_key == session_key)
-            {
-                *item = session.clone();
-            }
-            Ok(session)
+            Ok(self.upsert_session(session))
         }
 
         async fn set_model(
@@ -558,14 +561,7 @@ mod tests {
         ) -> Result<SessionIndex, StorageError> {
             let mut session = self.touch_session(session_key, chat_id, channel).await?;
             session.model = Some(model.to_string());
-            let mut sessions = self.sessions.lock().expect("lock");
-            if let Some(item) = sessions
-                .iter_mut()
-                .find(|item| item.session_key == session_key)
-            {
-                *item = session.clone();
-            }
-            Ok(session)
+            Ok(self.upsert_session(session))
         }
 
         async fn clear_model_routing_override(
@@ -577,14 +573,7 @@ mod tests {
             let mut session = self.touch_session(session_key, chat_id, channel).await?;
             session.model_provider = None;
             session.model = None;
-            let mut sessions = self.sessions.lock().expect("lock");
-            if let Some(item) = sessions
-                .iter_mut()
-                .find(|item| item.session_key == session_key)
-            {
-                *item = session.clone();
-            }
-            Ok(session)
+            Ok(self.upsert_session(session))
         }
 
         async fn get_session_compression_state(
@@ -846,30 +835,85 @@ mod tests {
         assert_eq!(infer_base_session_key(&payload), None);
     }
 
+    fn cron_payload_json(channel: &str, session_key: &str, metadata_json: &str) -> String {
+        format!(
+            "{{\"channel\":\"{channel}\",\"sender_id\":\"system\",\"chat_id\":\"chat1\",\"session_key\":\"{session_key}\",\"content\":\"hello\",\"metadata\":{metadata_json}}}"
+        )
+    }
+
+    async fn insert_due_job(
+        storage: &Arc<FakeStorage>,
+        job_id: &str,
+        channel: &str,
+        session_key: &str,
+        metadata_json: &str,
+    ) {
+        storage
+            .create_cron(&NewCronJob {
+                id: job_id.to_string(),
+                name: "job".to_string(),
+                schedule_kind: CronScheduleKind::Every,
+                schedule_expr: "5s".to_string(),
+                payload_json: cron_payload_json(channel, session_key, metadata_json),
+                enabled: true,
+                timezone: "UTC".to_string(),
+                next_run_at_ms: now_ms().saturating_sub(1_000),
+            })
+            .await
+            .expect("create job");
+    }
+
+    async fn insert_job_with_next_run(
+        storage: &Arc<FakeStorage>,
+        job_id: &str,
+        channel: &str,
+        session_key: &str,
+        metadata_json: &str,
+        next_run_at_ms: i64,
+    ) {
+        storage
+            .create_cron(&NewCronJob {
+                id: job_id.to_string(),
+                name: "job".to_string(),
+                schedule_kind: CronScheduleKind::Every,
+                schedule_expr: "5s".to_string(),
+                payload_json: cron_payload_json(channel, session_key, metadata_json),
+                enabled: true,
+                timezone: "UTC".to_string(),
+                next_run_at_ms,
+            })
+            .await
+            .expect("create job");
+    }
+
+    fn test_worker(
+        storage: &Arc<FakeStorage>,
+        transport: &Arc<TestTransport>,
+    ) -> CronWorker<FakeStorage, TestTransport> {
+        CronWorker::new(
+            storage.clone(),
+            transport.clone(),
+            CronWorkerConfig::default(),
+        )
+    }
+
+    async fn assert_single_message_session(
+        transport: &Arc<TestTransport>,
+        expected_session_key: &str,
+    ) {
+        let messages = transport.published_messages().await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].header.session_key, expected_session_key);
+        assert_eq!(messages[0].payload.session_key, expected_session_key);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn run_tick_publishes_inbound_and_marks_success() {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
-        let now = now_ms();
-        storage
-            .create_cron(&NewCronJob {
-                id: "job-1".to_string(),
-                name: "job".to_string(),
-                schedule_kind: CronScheduleKind::Every,
-                schedule_expr: "5s".to_string(),
-                payload_json: "{\"channel\":\"cron\",\"sender_id\":\"system\",\"chat_id\":\"chat1\",\"session_key\":\"cron:chat1\",\"content\":\"hello\",\"metadata\":{}}".to_string(),
-                enabled: true,
-                timezone: "UTC".to_string(),
-                next_run_at_ms: now.saturating_sub(1_000),
-            })
-            .await
-            .expect("create job");
+        insert_due_job(&storage, "job-1", "cron", "cron:chat1", "{}").await;
 
-        let worker = CronWorker::new(
-            storage.clone(),
-            transport.clone(),
-            CronWorkerConfig::default(),
-        );
+        let worker = test_worker(&storage, &transport);
         let executed = worker.run_tick().await.expect("tick");
         assert_eq!(executed, 1);
 
@@ -894,7 +938,6 @@ mod tests {
     async fn run_tick_resolves_dingtalk_active_session_from_metadata() {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
-        let now = now_ms();
         storage
             .set_active_session(
                 "dingtalk:acc:chat1",
@@ -904,25 +947,16 @@ mod tests {
             )
             .await
             .expect("session route should exist");
-        storage
-            .create_cron(&NewCronJob {
-                id: "job-dingtalk".to_string(),
-                name: "job".to_string(),
-                schedule_kind: CronScheduleKind::Every,
-                schedule_expr: "5s".to_string(),
-                payload_json: "{\"channel\":\"dingtalk\",\"sender_id\":\"system\",\"chat_id\":\"chat1\",\"session_key\":\"cron:job-dingtalk\",\"content\":\"hello\",\"metadata\":{\"cron.base_session_key\":\"dingtalk:acc:chat1\"}}".to_string(),
-                enabled: true,
-                timezone: "UTC".to_string(),
-                next_run_at_ms: now.saturating_sub(1_000),
-            })
-            .await
-            .expect("create job");
+        insert_due_job(
+            &storage,
+            "job-dingtalk",
+            "dingtalk",
+            "cron:job-dingtalk",
+            "{\"cron.base_session_key\":\"dingtalk:acc:chat1\"}",
+        )
+        .await;
 
-        let worker = CronWorker::new(
-            storage.clone(),
-            transport.clone(),
-            CronWorkerConfig::default(),
-        );
+        let worker = test_worker(&storage, &transport);
         worker.run_tick().await.expect("tick");
 
         let messages = transport.published_messages().await;
@@ -951,7 +985,6 @@ mod tests {
     async fn run_tick_resolves_telegram_active_session_from_metadata() {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
-        let now = now_ms();
         storage
             .set_active_session(
                 "telegram:acc:chat1",
@@ -961,25 +994,16 @@ mod tests {
             )
             .await
             .expect("session route should exist");
-        storage
-            .create_cron(&NewCronJob {
-                id: "job-telegram".to_string(),
-                name: "job".to_string(),
-                schedule_kind: CronScheduleKind::Every,
-                schedule_expr: "5s".to_string(),
-                payload_json: "{\"channel\":\"telegram\",\"sender_id\":\"system\",\"chat_id\":\"chat1\",\"session_key\":\"cron:job-telegram\",\"content\":\"hello\",\"metadata\":{\"cron.base_session_key\":\"telegram:acc:chat1\"}}".to_string(),
-                enabled: true,
-                timezone: "UTC".to_string(),
-                next_run_at_ms: now.saturating_sub(1_000),
-            })
-            .await
-            .expect("create job");
+        insert_due_job(
+            &storage,
+            "job-telegram",
+            "telegram",
+            "cron:job-telegram",
+            "{\"cron.base_session_key\":\"telegram:acc:chat1\"}",
+        )
+        .await;
 
-        let worker = CronWorker::new(
-            storage.clone(),
-            transport.clone(),
-            CronWorkerConfig::default(),
-        );
+        let worker = test_worker(&storage, &transport);
         worker.run_tick().await.expect("tick");
 
         let messages = transport.published_messages().await;
@@ -1008,64 +1032,31 @@ mod tests {
     async fn run_tick_falls_back_to_original_session_when_no_active_route_exists() {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
-        let now = now_ms();
-        storage
-            .create_cron(&NewCronJob {
-                id: "job-fallback".to_string(),
-                name: "job".to_string(),
-                schedule_kind: CronScheduleKind::Every,
-                schedule_expr: "5s".to_string(),
-                payload_json: "{\"channel\":\"dingtalk\",\"sender_id\":\"system\",\"chat_id\":\"chat1\",\"session_key\":\"cron:job-fallback\",\"content\":\"hello\",\"metadata\":{\"cron.base_session_key\":\"dingtalk:acc:chat1\"}}".to_string(),
-                enabled: true,
-                timezone: "UTC".to_string(),
-                next_run_at_ms: now.saturating_sub(1_000),
-            })
-            .await
-            .expect("create job");
+        insert_due_job(
+            &storage,
+            "job-fallback",
+            "dingtalk",
+            "cron:job-fallback",
+            "{\"cron.base_session_key\":\"dingtalk:acc:chat1\"}",
+        )
+        .await;
 
-        let worker = CronWorker::new(
-            storage.clone(),
-            transport.clone(),
-            CronWorkerConfig::default(),
-        );
+        let worker = test_worker(&storage, &transport);
         worker.run_tick().await.expect("tick");
 
-        let messages = transport.published_messages().await;
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].header.session_key, "cron:job-fallback");
-        assert_eq!(messages[0].payload.session_key, "cron:job-fallback");
+        assert_single_message_session(&transport, "cron:job-fallback").await;
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn run_tick_keeps_stdio_session_unchanged() {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
-        let now = now_ms();
-        storage
-            .create_cron(&NewCronJob {
-                id: "job-stdio".to_string(),
-                name: "job".to_string(),
-                schedule_kind: CronScheduleKind::Every,
-                schedule_expr: "5s".to_string(),
-                payload_json: "{\"channel\":\"stdio\",\"sender_id\":\"system\",\"chat_id\":\"chat1\",\"session_key\":\"stdio:chat1\",\"content\":\"hello\",\"metadata\":{}}".to_string(),
-                enabled: true,
-                timezone: "UTC".to_string(),
-                next_run_at_ms: now.saturating_sub(1_000),
-            })
-            .await
-            .expect("create job");
+        insert_due_job(&storage, "job-stdio", "stdio", "stdio:chat1", "{}").await;
 
-        let worker = CronWorker::new(
-            storage.clone(),
-            transport.clone(),
-            CronWorkerConfig::default(),
-        );
+        let worker = test_worker(&storage, &transport);
         worker.run_tick().await.expect("tick");
 
-        let messages = transport.published_messages().await;
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].header.session_key, "stdio:chat1");
-        assert_eq!(messages[0].payload.session_key, "stdio:chat1");
+        assert_single_message_session(&transport, "stdio:chat1").await;
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1073,25 +1064,17 @@ mod tests {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
         let next_run_at_ms = now_ms() + 60_000;
-        storage
-            .create_cron(&NewCronJob {
-                id: "job-manual".to_string(),
-                name: "job".to_string(),
-                schedule_kind: CronScheduleKind::Every,
-                schedule_expr: "5s".to_string(),
-                payload_json: "{\"channel\":\"cron\",\"sender_id\":\"system\",\"chat_id\":\"chat1\",\"session_key\":\"cron:chat1\",\"content\":\"hello\",\"metadata\":{}}".to_string(),
-                enabled: true,
-                timezone: "UTC".to_string(),
-                next_run_at_ms,
-            })
-            .await
-            .expect("create job");
+        insert_job_with_next_run(
+            &storage,
+            "job-manual",
+            "cron",
+            "cron:chat1",
+            "{}",
+            next_run_at_ms,
+        )
+        .await;
 
-        let worker = CronWorker::new(
-            storage.clone(),
-            transport.clone(),
-            CronWorkerConfig::default(),
-        );
+        let worker = test_worker(&storage, &transport);
         worker.run_job_now("job-manual").await.expect("manual run");
 
         let messages = transport.published_messages().await;
