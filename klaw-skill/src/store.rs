@@ -1,12 +1,18 @@
 use async_trait::async_trait;
 
 use crate::{
-    RegistrySkillMatch, RegistrySkillSummary, SkillError, SkillRecord, SkillSummary,
-    SkillUninstallResult,
+    RegistryDeleteReport, RegistrySkillMatch, RegistrySkillSummary, RegistrySyncStatus, SkillError,
+    SkillRecord, SkillSummary, SkillUninstallResult,
 };
 
 #[async_trait]
 pub trait SkillsRegistry: Send + Sync {
+    async fn sync_source(
+        &self,
+        source_name: &str,
+        source_address: &str,
+    ) -> Result<RegistrySyncStatus, SkillError>;
+    async fn delete_source(&self, source_name: &str) -> Result<RegistryDeleteReport, SkillError>;
     async fn list_source_skills(
         &self,
         source_name: &str,

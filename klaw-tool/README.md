@@ -25,7 +25,7 @@
 - the `message` shortcut now defaults to an isolated cron session key like `cron:<job_id>` so scheduled runs do not silently accumulate the current chat's conversation history
 - the `heartbeat_manager` tool manages session-bound heartbeat jobs directly from storage, with session/channel/chat defaults inferred from current tool context when possible
 - sub-agent execution currently opts out of live streaming and still consumes the final aggregated agent output
-- `skills_registry` is now read-only and only browses/searches local registry mirrors
+- `skills_registry` now manages registry sources end to end: `add` persists `[skills.<source>]` into config, `sync` refreshes local mirrors, `delete` removes config + local clone + manifest state, and `list/show/search` browse synced registry skills
 - `skills_manager` owns installed-skill lifecycle actions, including `install_from_registry`
 - `local_search` uses `rg` first and falls back to BSD-compatible `grep` when ripgrep is not installed, while still honoring `include_pattern` and the default `.git` / `node_modules` exclusions
 - multi-action tools use action-specific `oneOf` parameter schemas to keep requests explicit and avoid mixing unrelated fields in a single call

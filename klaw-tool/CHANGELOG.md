@@ -5,9 +5,11 @@
 ### Added
 - added `archive.list_session_attachments` to list archived files from the current session across prior turns
 - added `voice` tool with `stt` (archived audio -> transcript text) and `tts` (text -> archived generated audio) actions
+- added `skills_registry.add`, `skills_registry.sync`, and `skills_registry.delete` so registry sources can be managed directly from the tool without editing config first
 
 ### Changed
 - clarified the `archive` tool metadata so models prefer `get` when an exact `archive_id` is already present and use `list_current_attachments` only for current-message attachments
+- changed `skills_registry` from browse-only to full registry lifecycle management while keeping `list` / `show` / `search` for synced catalogs
 
 ## 2026-03-21
 

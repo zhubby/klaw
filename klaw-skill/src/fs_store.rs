@@ -44,6 +44,13 @@ pub struct RegistrySyncStatus {
     pub is_stale: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegistryDeleteReport {
+    pub registry_name: String,
+    pub removed_managed_count: usize,
+    pub removed_local_clone: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct RegistrySyncReport {
     pub synced_registries: Vec<String>,
@@ -720,6 +727,92 @@ where
         Ok(removed_count)
     }
 
+    pub async fn sync_source(
+        &self,
+        source_name: &str,
+        source_address: &str,
+    ) -> Result<RegistrySyncStatus, SkillError> {
+        let registry_name = source_name.trim();
+        if registry_name.is_empty() {
+            return Err(SkillError::InvalidSkillName(
+                "source name cannot be empty".to_string(),
+            ));
+        }
+        let address = source_address.trim();
+        if address.is_empty() {
+            return Err(SkillError::InvalidSkillName(
+                "source address cannot be empty".to_string(),
+            ));
+        }
+
+        self.ensure_registry_dir().await?;
+        let registry_root = self.skills_registry_dir();
+        let source = RegistrySource {
+            name: registry_name.to_string(),
+            address: address.to_string(),
+        };
+        sync_source_repository(&registry_root, &source).await?;
+
+        let commit = read_registry_head_commit(&registry_root.join(registry_name)).await?;
+        let mut manifest = self.load_installed_manifest().await?;
+        manifest.stale_registries.remove(registry_name);
+        if let Some(commit) = &commit {
+            manifest
+                .registry_commits
+                .insert(registry_name.to_string(), commit.clone());
+        } else {
+            manifest.registry_commits.remove(registry_name);
+        }
+        self.write_installed_manifest(&manifest).await?;
+
+        Ok(RegistrySyncStatus {
+            registry_name: registry_name.to_string(),
+            commit,
+            is_stale: false,
+        })
+    }
+
+    pub async fn delete_source(
+        &self,
+        source_name: &str,
+    ) -> Result<RegistryDeleteReport, SkillError> {
+        let registry_name = source_name.trim();
+        if registry_name.is_empty() {
+            return Err(SkillError::InvalidSkillName(
+                "source name cannot be empty".to_string(),
+            ));
+        }
+
+        let repo_dir = self.skills_registry_dir().join(registry_name);
+        let exists = fs::try_exists(&repo_dir)
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "try_exists",
+                path: repo_dir.clone(),
+                source,
+            })?;
+
+        let removed_local_clone = if exists {
+            fs::remove_dir_all(&repo_dir)
+                .await
+                .map_err(|source| SkillError::Io {
+                    op: "remove_dir_all",
+                    path: repo_dir.clone(),
+                    source,
+                })?;
+            true
+        } else {
+            false
+        };
+
+        let removed_managed_count = self.cleanup_registry(registry_name).await?;
+        Ok(RegistryDeleteReport {
+            registry_name: registry_name.to_string(),
+            removed_managed_count,
+            removed_local_clone,
+        })
+    }
+
     pub async fn uninstall(&self, skill_name: &str) -> Result<SkillUninstallResult, SkillError> {
         let name = Self::validate_skill_name(skill_name)?;
         let mut manifest = self.load_installed_manifest().await?;
@@ -945,6 +1038,18 @@ impl<F> SkillsRegistry for FileSystemSkillStore<F>
 where
     F: SkillFetcher,
 {
+    async fn sync_source(
+        &self,
+        source_name: &str,
+        source_address: &str,
+    ) -> Result<RegistrySyncStatus, SkillError> {
+        FileSystemSkillStore::sync_source(self, source_name, source_address).await
+    }
+
+    async fn delete_source(&self, source_name: &str) -> Result<RegistryDeleteReport, SkillError> {
+        FileSystemSkillStore::delete_source(self, source_name).await
+    }
+
     async fn list_source_skills(
         &self,
         source_name: &str,
@@ -1961,6 +2066,102 @@ mod tests {
         );
         assert!(manifest.registry_commits.contains_key("openai"));
         assert!(manifest.stale_registries.contains("openclaw"));
+    }
+
+    #[tokio::test]
+    async fn sync_source_clones_repo_and_records_commit() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        let repo_dir = init_local_git_registry_repo(&root, "openai", "demo");
+
+        let status = store
+            .sync_source("openai", &repo_dir.display().to_string())
+            .await
+            .expect("sync source should succeed");
+
+        assert_eq!(status.registry_name, "openai");
+        assert!(!status.is_stale);
+        assert!(status.commit.is_some());
+
+        let mirrored_skill = root
+            .join(SKILLS_REGISTRY_DIR_NAME)
+            .join("openai")
+            .join("skills")
+            .join("demo")
+            .join(SKILL_MARKDOWN_FILE);
+        let exists = fs::try_exists(&mirrored_skill)
+            .await
+            .expect("check mirrored skill");
+        assert!(exists);
+
+        let manifest = store
+            .load_installed_manifest()
+            .await
+            .expect("load manifest");
+        assert_eq!(
+            manifest.registry_commits.get("openai"),
+            status.commit.as_ref()
+        );
+        assert!(!manifest.stale_registries.contains("openai"));
+    }
+
+    #[tokio::test]
+    async fn delete_source_removes_local_clone_and_manifest_entries() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        let repo_dir = init_local_git_registry_repo(&root, "openai", "demo");
+
+        store
+            .sync_source("openai", &repo_dir.display().to_string())
+            .await
+            .expect("sync source should succeed");
+
+        let mut manifest = store
+            .load_installed_manifest()
+            .await
+            .expect("load manifest");
+        manifest.managed.push(InstalledSkill {
+            registry: "openai".to_string(),
+            name: "demo".to_string(),
+        });
+        manifest.managed.push(InstalledSkill {
+            registry: "other".to_string(),
+            name: "keep".to_string(),
+        });
+        manifest
+            .registry_commits
+            .insert("other".to_string(), "other-commit".to_string());
+        manifest.stale_registries.insert("other".to_string());
+        store
+            .write_installed_manifest(&manifest)
+            .await
+            .expect("rewrite manifest");
+
+        let deleted = store
+            .delete_source("openai")
+            .await
+            .expect("delete source should succeed");
+        assert_eq!(deleted.registry_name, "openai");
+        assert_eq!(deleted.removed_managed_count, 1);
+        assert!(deleted.removed_local_clone);
+
+        let clone_dir = root.join(SKILLS_REGISTRY_DIR_NAME).join("openai");
+        let exists = fs::try_exists(&clone_dir).await.expect("check clone dir");
+        assert!(!exists);
+
+        let manifest = store
+            .load_installed_manifest()
+            .await
+            .expect("load final manifest");
+        assert_eq!(manifest.managed.len(), 1);
+        assert_eq!(manifest.managed[0].registry, "other");
+        assert!(!manifest.registry_commits.contains_key("openai"));
+        assert_eq!(
+            manifest.registry_commits.get("other").map(String::as_str),
+            Some("other-commit")
+        );
+        assert!(!manifest.stale_registries.contains("openai"));
+        assert!(manifest.stale_registries.contains("other"));
     }
 
     #[test]

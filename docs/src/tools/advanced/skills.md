@@ -6,7 +6,7 @@
 
 - 在本地数据目录统一管理 skills（`~/.klaw/skills`）。
 - 抽象并拆分两类能力：
-  - registry 目录/镜像的只读浏览与检索
+  - registry 目录/镜像的管理、同步、浏览与检索
   - 已安装 skill 的安装、卸载、查看与加载
 - 支持多个可配置 registry 源（Git 仓库），并从配置文件读取。
 - 在程序启动时加载本地 skill 内容，并注入模型 system prompt。
@@ -116,8 +116,10 @@ GUI Skills Registry 面板显示每个 registry 的同步状态：
 
 ## SkillsRegistry / SkillsManager 抽象
 
-`SkillsRegistry` 负责只读 registry 镜像能力：
+`SkillsRegistry` 负责 registry 源与镜像能力：
 
+- `sync_source(source_name, source_address)`
+- `delete_source(source_name)`
 - `list_source_skills(source_name)`
 - `get_source_skill(source_name, skill_name)`
 - `search_source_skills(source_name, query)`
@@ -143,6 +145,9 @@ GUI Skills Registry 面板显示每个 registry 的同步状态：
 
 支持 action：
 
+- `add`（需 `address`，`source` 可选；成功后立即同步）
+- `sync`（需 `source`）
+- `delete`（需 `source`）
 - `list`（需 `source`）
 - `search`（需 `query`，`source` 可选，支持 `limit`）
 - `show`（需 `source` + `skill_name`）

@@ -1306,7 +1306,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     if config.tools.heartbeat_manager.enabled() {
         tools.register(HeartbeatManagerTool::with_store(session_store.clone()));
     }
-    if config.tools.skills_registry.enabled() && !config.skills.registries.is_empty() {
+    if config.tools.skills_registry.enabled() {
         info!(
             sources = config.skills.registries.len(),
             source_names = ?config.skills.registries.keys().cloned().collect::<Vec<_>>(),
@@ -1318,10 +1318,8 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
                 warn!("skills registry tool disabled: {err}");
             }
         }
-    } else if !config.tools.skills_registry.enabled() {
-        info!("skills registry tool disabled by config");
     } else {
-        info!("skills registry tool disabled: no configured sources");
+        info!("skills registry tool disabled by config");
     }
     if config.tools.skills_manager.enabled() {
         match SkillsManagerTool::open_default(config) {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-24
+
+### Added
+- added single-source registry lifecycle APIs to `FileSystemSkillStore` / `SkillsRegistry` for syncing and deleting one source at a time
+
+### Changed
+- deleting a registry source now removes its local mirror clone in addition to clearing manifest-managed entries and registry metadata
+
 ## 2026-03-21
 
 ### Changed
