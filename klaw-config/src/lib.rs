@@ -57,7 +57,7 @@ impl Default for AppConfig {
 }
 
 fn default_conversation_history_limit() -> usize {
-    20
+    40
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

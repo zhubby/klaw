@@ -10,7 +10,7 @@ fn parse_default_template_succeeds() {
     let parsed: AppConfig = toml::from_str(&template).expect("default template should parse");
     assert_eq!(parsed.model_provider, "openai");
     assert!(parsed.model.is_none());
-    assert_eq!(parsed.conversation_history_limit, 20);
+    assert_eq!(parsed.conversation_history_limit, 40);
     assert!(parsed.model_providers.contains_key("openai"));
     assert!(!parsed.model_providers["openai"].proxy);
     assert!(!parsed.memory.embedding.enabled);

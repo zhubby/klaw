@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-24
+
+### Changed
+
+- `conversation_history_limit` 默认值由 `20` 调整为 `40`，在保持 `N/2` 压缩触发规则不变的前提下扩大默认历史窗口
+
 ## 2026-03-21
 
 ### Added
