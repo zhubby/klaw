@@ -329,7 +329,9 @@ mod tests {
         let first_report = ensure_workspace_prompt_templates_in_dir(data_dir.clone())
             .await
             .expect("first init should succeed");
-        assert!(first_report.created_files.contains(&"BOOTSTRAP.md".to_string()));
+        assert!(first_report
+            .created_files
+            .contains(&"BOOTSTRAP.md".to_string()));
         assert!(workspace.join("BOOTSTRAP.md").exists());
 
         fs::remove_file(workspace.join("BOOTSTRAP.md"))
@@ -340,7 +342,9 @@ mod tests {
             .await
             .expect("second init should succeed");
         assert!(
-            !second_report.created_files.contains(&"BOOTSTRAP.md".to_string()),
+            !second_report
+                .created_files
+                .contains(&"BOOTSTRAP.md".to_string()),
             "bootstrap should not be recreated after first init"
         );
         assert!(

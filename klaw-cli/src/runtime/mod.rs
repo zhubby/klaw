@@ -61,6 +61,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
+const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, read it and follow it before anything else. If it does not exist, start with a short, natural greeting.\nGuide the user through initializing the agent's identity, vibe, and context. Do not mention that this message was auto-generated.";
 
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
@@ -583,6 +584,28 @@ fn resolve_new_session_target(runtime: &RuntimeBundle) -> (String, String) {
     runtime_default_route(runtime)
 }
 
+fn build_new_session_bootstrap_user_message() -> String {
+    NEW_SESSION_BOOTSTRAP_USER_MESSAGE.to_string()
+}
+
+fn format_new_session_started_message(
+    session_key: &str,
+    provider: &str,
+    model: &str,
+    assistant_reply: Option<&str>,
+) -> String {
+    let summary = format!(
+        "🆕 **New session started**\n\n🧵 Session: `{session_key}`\n🧩 Provider: `{provider}`\n🤖 Model: `{model}`"
+    );
+    match assistant_reply
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(reply) => format!("{summary}\n\n{reply}"),
+        None => summary,
+    }
+}
+
 fn runtime_default_route(runtime: &RuntimeBundle) -> (String, String) {
     if let Some(provider_id) = runtime_provider_override(runtime) {
         return (
@@ -811,13 +834,55 @@ async fn handle_im_command(
             sessions
                 .set_active_session(&base_session_key, &chat_id, &channel, &new_session_key)
                 .await?;
-            ChannelResponse {
-                content: format!(
-                    "🆕 **New session started**\n\n🧵 Session: `{new_session_key}`\n🧩 Provider: `{}`\n🤖 Model: `{}`",
-                    new_session_provider, new_session_model
-                ),
-                reasoning: None,
-                metadata: BTreeMap::new(),
+            let bootstrap_input = build_new_session_bootstrap_user_message();
+            match submit_and_get_output(
+                runtime,
+                channel.clone(),
+                bootstrap_input,
+                new_session_key.clone(),
+                chat_id.clone(),
+                "local-user".to_string(),
+                new_session_provider.clone(),
+                new_session_model.clone(),
+                Vec::new(),
+                BTreeMap::new(),
+            )
+            .await
+            {
+                Ok(Some(output)) => ChannelResponse {
+                    content: format_new_session_started_message(
+                        &new_session_key,
+                        &new_session_provider,
+                        &new_session_model,
+                        Some(&output.content),
+                    ),
+                    reasoning: output.reasoning,
+                    metadata: output.metadata,
+                },
+                Ok(None) => ChannelResponse {
+                    content: format_new_session_started_message(
+                        &new_session_key,
+                        &new_session_provider,
+                        &new_session_model,
+                        None,
+                    ),
+                    reasoning: None,
+                    metadata: BTreeMap::new(),
+                },
+                Err(err) => ChannelResponse {
+                    content: format!(
+                        "{}\n\n⚠️ Session bootstrap reply failed: {}",
+                        format_new_session_started_message(
+                            &new_session_key,
+                            &new_session_provider,
+                            &new_session_model,
+                            None,
+                        ),
+                        err
+                    ),
+                    reasoning: None,
+                    metadata: BTreeMap::new(),
+                },
             }
         }
         "model_provider" => {
@@ -2256,20 +2321,157 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_history_for_model, build_unavailable_provider, compression_trigger_interval,
-        configured_default_model, first_arg_token, format_approve_already_handled_message,
-        normalize_runtime_provider_override, parse_im_command,
-        resolve_new_session_target_from_config, should_emit_outbound, should_trigger_compression,
-        trim_conversation_history,
+        build_history_for_model, build_new_session_bootstrap_user_message,
+        build_unavailable_provider, compression_trigger_interval, configured_default_model,
+        first_arg_token, format_approve_already_handled_message,
+        format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
+        parse_im_command, resolve_new_session_target_from_config, resolve_session_route,
+        should_emit_outbound, should_trigger_compression, spawn_llm_audit_writer,
+        trim_conversation_history, RuntimeBundle, StartupReport,
     };
     use klaw_agent::ConversationSummary;
     use klaw_config::{AppConfig, ModelProviderConfig};
-    use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
+    use klaw_core::{
+        CircuitBreakerPolicy, DeadLetterPolicy, Envelope, EnvelopeHeader,
+        ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker, InMemoryIdempotencyStore,
+        InMemoryTransport, OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
+        Subscription,
+    };
     use klaw_llm::{ChatOptions, LlmError, LlmProvider};
-    use klaw_session::ChatRecord;
+    use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
     use klaw_storage::ApprovalStatus;
+    use klaw_storage::{DefaultSessionStore, StoragePaths};
+    use klaw_tool::ToolRegistry;
+    use klaw_util::EnvironmentCheckReport;
     use serde_json::json;
-    use std::collections::BTreeMap;
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        sync::{Arc, Mutex, RwLock},
+        time::Duration,
+    };
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    #[derive(Default, Clone)]
+    struct BootstrapCaptureProvider {
+        last_user_message: Arc<Mutex<Option<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for BootstrapCaptureProvider {
+        fn name(&self) -> &str {
+            "test-provider"
+        }
+
+        fn default_model(&self) -> &str {
+            "test-model"
+        }
+
+        async fn chat(
+            &self,
+            messages: Vec<klaw_llm::LlmMessage>,
+            _tools: Vec<klaw_llm::ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<klaw_llm::LlmResponse, LlmError> {
+            let last_user_message = messages
+                .iter()
+                .rev()
+                .find(|message| message.role == "user")
+                .map(|message| message.content.clone());
+            *self
+                .last_user_message
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = last_user_message;
+            Ok(klaw_llm::LlmResponse {
+                content: "bootstrap reply".to_string(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
+                audit: None,
+            })
+        }
+    }
+
+    async fn create_test_store() -> DefaultSessionStore {
+        let root = std::env::temp_dir().join(format!("klaw-runtime-test-{}", Uuid::new_v4()));
+        DefaultSessionStore::open(StoragePaths::from_root(root))
+            .await
+            .expect("test session store should open")
+    }
+
+    async fn build_test_runtime(provider: Arc<dyn LlmProvider>) -> RuntimeBundle {
+        let session_store = create_test_store().await;
+        let runtime = klaw_core::AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 0,
+                max_tool_calls: 0,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(5),
+                tool_timeout: Duration::from_secs(5),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 8,
+                lock_ttl: Duration::from_secs(5),
+            },
+            provider.clone(),
+            "test-provider".to_string(),
+            "test-model".to_string(),
+            ToolRegistry::default(),
+        )
+        .with_provider_registry(BTreeMap::from([("test-provider".to_string(), provider)]));
+        RuntimeBundle {
+            runtime,
+            default_provider_id: "test-provider".to_string(),
+            provider_default_models: BTreeMap::from([(
+                "test-provider".to_string(),
+                "test-model".to_string(),
+            )]),
+            runtime_provider_override: Arc::new(RwLock::new(None)),
+            disable_session_commands_for: BTreeSet::new(),
+            inbound_transport: InMemoryTransport::new(),
+            outbound_transport: InMemoryTransport::new(),
+            deadletter_transport: InMemoryTransport::new(),
+            idempotency: InMemoryIdempotencyStore::default(),
+            retry_policy: ExponentialBackoffRetryPolicy {
+                max_attempts: 3,
+                base_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(5),
+                jitter_ratio: 0.0,
+            },
+            deadletter_policy: DeadLetterPolicy {
+                topic: "agent.dlq",
+                max_payload_bytes: 1024 * 1024,
+                include_error_stack: false,
+            },
+            circuit_breaker: InMemoryCircuitBreaker::new(CircuitBreakerPolicy {
+                failure_threshold: 5,
+                open_interval: Duration::from_secs(1),
+                half_open_max_requests: 1,
+            }),
+            subscription: Subscription {
+                topic: "agent.inbound",
+                consumer_group: "test".to_string(),
+                visibility_timeout: Duration::from_secs(5),
+            },
+            session_store: session_store.clone(),
+            mcp_init: None,
+            startup_report: StartupReport::default(),
+            observability: None,
+            conversation_history_limit: 16,
+            llm_audit_tx: spawn_llm_audit_writer(session_store),
+            env_check: EnvironmentCheckReport {
+                checks: Vec::new(),
+                checked_at: OffsetDateTime::UNIX_EPOCH,
+            },
+        }
+    }
+
+    fn test_session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {
+        SqliteSessionManager::from_store(runtime.session_store.clone())
+    }
 
     #[test]
     fn silent_heartbeat_ack_is_filtered() {
@@ -2331,6 +2533,27 @@ mod tests {
             Some(("model", Some("qwen-plus /help")))
         );
         assert_eq!(parse_im_command("hello"), None);
+    }
+
+    #[test]
+    fn new_session_bootstrap_user_message_mentions_bootstrap_or_greeting() {
+        let message = build_new_session_bootstrap_user_message();
+        assert!(message.contains("You just woke up"));
+        assert!(message.contains("If `BOOTSTRAP.md` exists"));
+        assert!(message.contains("start with a short, natural greeting"));
+    }
+
+    #[test]
+    fn new_session_started_message_appends_assistant_reply_when_present() {
+        let content = format_new_session_started_message(
+            "telegram:main:child",
+            "openai",
+            "gpt-4.1",
+            Some("hello there"),
+        );
+        assert!(content.contains("New session started"));
+        assert!(content.contains("telegram:main:child"));
+        assert!(content.contains("hello there"));
     }
 
     #[test]
@@ -2532,5 +2755,70 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn new_command_writes_bootstrap_user_message_into_new_session() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let channel = "telegram".to_string();
+        let base_session_key = "telegram:chat-1".to_string();
+        let chat_id = "chat-1".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &base_session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+
+        let response = handle_im_command(
+            &runtime,
+            channel.clone(),
+            base_session_key.clone(),
+            chat_id.clone(),
+            "/new".to_string(),
+        )
+        .await
+        .expect("new command should succeed")
+        .expect("new command should return a response");
+
+        assert!(response.content.contains("New session started"));
+        assert!(response.content.contains("bootstrap reply"));
+
+        let route = resolve_session_route(&runtime, &channel, &base_session_key, &chat_id)
+            .await
+            .expect("new session route should resolve");
+        assert_ne!(route.active_session_key, base_session_key);
+
+        let new_history = sessions
+            .read_chat_records(&route.active_session_key)
+            .await
+            .expect("new session history should load");
+        assert_eq!(new_history.len(), 2);
+        assert_eq!(new_history[0].role, "user");
+        assert_eq!(
+            new_history[0].content,
+            build_new_session_bootstrap_user_message()
+        );
+        assert_eq!(new_history[1].role, "assistant");
+        assert_eq!(new_history[1].content, "bootstrap reply");
+
+        let base_history = sessions
+            .read_chat_records(&base_session_key)
+            .await
+            .expect("base session history should load");
+        assert!(base_history.is_empty());
+
+        let captured = provider
+            .last_user_message
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
+        assert_eq!(captured.as_deref(), Some(new_history[0].content.as_str()));
     }
 }
