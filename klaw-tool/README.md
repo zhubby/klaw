@@ -29,6 +29,7 @@
 - `skills_manager` owns installed-skill lifecycle actions, including `install_from_registry`
 - `local_search` uses `rg` first and falls back to BSD-compatible `grep` when ripgrep is not installed, while still honoring `include_pattern` and the default `.git` / `node_modules` exclusions
 - multi-action tools use action-specific `oneOf` parameter schemas to keep requests explicit and avoid mixing unrelated fields in a single call
+- the `archive` tool distinguishes between current-message attachments (`list_current_attachments`) and session-wide archived attachments (`list_session_attachments`), and now explicitly prefers `get` when the model already has an `archive_id`
 - `tools.apply_patch.allow_absolute_paths = true` allows any absolute path outside the workspace
 - `tools.apply_patch.allowed_roots = ["/some/path"]` allows specific extra directories while keeping the default workspace boundary elsewhere
 - when `metadata.workspace` and `tools.*.workspace` are both unset, `shell` and `apply_patch` default to `(<storage.root_dir or ~/.klaw>)/workspace`
