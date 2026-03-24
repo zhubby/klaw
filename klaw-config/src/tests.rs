@@ -92,6 +92,22 @@ fn parse_default_template_succeeds() {
     assert!(parsed.heartbeat.sessions.is_empty());
     assert!(parsed.channels.dingtalk.is_empty());
     assert!(parsed.channels.telegram.is_empty());
+    assert!(!parsed.voice.enabled);
+    assert_eq!(parsed.voice.stt_provider.as_str(), "deepgram");
+    assert_eq!(parsed.voice.tts_provider.as_str(), "elevenlabs");
+    assert_eq!(parsed.voice.default_language, "zh-CN");
+    assert_eq!(
+        parsed.voice.providers.deepgram.api_key_env,
+        "DEEPGRAM_API_KEY".to_string()
+    );
+    assert_eq!(
+        parsed.voice.providers.assemblyai.api_key_env,
+        "ASSEMBLYAI_API_KEY".to_string()
+    );
+    assert_eq!(
+        parsed.voice.providers.elevenlabs.api_key_env,
+        "ELEVENLABS_API_KEY".to_string()
+    );
     assert_eq!(
         parsed.tools.sub_agent.exclude_tools,
         vec!["sub_agent".to_string()]
@@ -143,6 +159,68 @@ env_key = "OPENAI_API_KEY"
 
     let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
     assert!(parsed.model_providers["openai"].proxy);
+}
+
+#[test]
+fn parse_voice_config_succeeds() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[voice]
+enabled = true
+stt_provider = "assemblyai"
+tts_provider = "elevenlabs"
+default_language = "en-US"
+default_voice_id = "voice-42"
+
+[voice.providers.deepgram]
+api_key = "dg-key"
+base_url = "https://api.deepgram.com"
+streaming_base_url = "wss://api.deepgram.com"
+stt_model = "nova-2"
+
+[voice.providers.assemblyai]
+api_key = "aa-key"
+base_url = "https://api.assemblyai.com"
+streaming_base_url = "wss://streaming.assemblyai.com"
+stt_model = "universal"
+
+[voice.providers.elevenlabs]
+api_key = "el-key"
+base_url = "https://api.elevenlabs.io"
+streaming_base_url = "wss://api.elevenlabs.io"
+default_model = "eleven_multilingual_v2"
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("voice config should parse");
+    assert!(parsed.voice.enabled);
+    assert_eq!(parsed.voice.stt_provider.as_str(), "assemblyai");
+    assert_eq!(parsed.voice.tts_provider.as_str(), "elevenlabs");
+    assert_eq!(parsed.voice.default_language, "en-US");
+    assert_eq!(parsed.voice.default_voice_id.as_deref(), Some("voice-42"));
+    assert_eq!(
+        parsed.voice.providers.deepgram.api_key.as_deref(),
+        Some("dg-key")
+    );
+}
+
+#[test]
+fn validate_voice_enabled_requires_selected_provider_keys() {
+    let cfg = AppConfig {
+        voice: VoiceConfig {
+            enabled: true,
+            ..VoiceConfig::default()
+        },
+        ..Default::default()
+    };
+    let err = validate(&cfg).expect_err("voice config should require provider keys");
+    assert!(format!("{err}").contains("voice.providers.deepgram requires api_key or api_key_env"));
 }
 
 #[test]

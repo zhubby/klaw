@@ -2,6 +2,10 @@
 
 ## 2026-03-22
 
+### Added
+
+- `telegram` 通道现在支持注入共享 `VoiceService`，并在 `voice` / `audio` 入站媒体下载后尝试 STT，把 transcript 回填为实际提交给 runtime 的用户输入
+
 ### Changed
 
 - `telegram` 渲染层补齐常见 Markdown 到 Telegram HTML 的映射，新增标题、引用块、列表、链接、下划线、删除线、剧透、以及带语言标记的 fenced code block 支持，减少 Bot API 对普通 markdown 输出的格式丢失

@@ -2,6 +2,10 @@
 
 ## 2026-03-24
 
+### Added
+
+- 新增完整 `voice` 配置块，支持声明默认 STT/TTS provider、默认语言/音色，以及 Deepgram、AssemblyAI、ElevenLabs 的 provider 参数与校验规则
+
 ### Changed
 
 - `conversation_history_limit` 默认值由 `20` 调整为 `40`，在保持 `N/2` 压缩触发规则不变的前提下扩大默认历史窗口

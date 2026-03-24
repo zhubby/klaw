@@ -18,11 +18,13 @@ use crate::{
 use klaw_archive::open_default_archive_service;
 use klaw_config::{TelegramConfig, TelegramProxyConfig};
 use klaw_core::OutboundMessage;
+use klaw_voice::{SttInput, VoiceService};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
@@ -42,11 +44,50 @@ fn callback_runtime_metadata() -> BTreeMap<String, serde_json::Value> {
     metadata
 }
 
+fn apply_voice_transcript(
+    inbound: &mut TelegramInbound,
+    transcript: &str,
+    provider: &str,
+    language: Option<&str>,
+) {
+    let transcript = transcript.trim();
+    if transcript.is_empty() {
+        return;
+    }
+    inbound.metadata.insert(
+        "voice.transcript".to_string(),
+        Value::String(transcript.to_string()),
+    );
+    inbound.metadata.insert(
+        "voice.provider".to_string(),
+        Value::String(provider.to_string()),
+    );
+    inbound.metadata.insert(
+        "voice.source".to_string(),
+        Value::String("telegram".to_string()),
+    );
+    if let Some(language) = language.map(str::trim).filter(|value| !value.is_empty()) {
+        inbound.metadata.insert(
+            "voice.language".to_string(),
+            Value::String(language.to_string()),
+        );
+    }
+    if matches!(
+        inbound.text.as_str(),
+        "Received audio attachment." | "Received voice attachment."
+    ) {
+        inbound.text = transcript.to_string();
+    } else {
+        inbound.text = format!("{}\n\nVoice transcript:\n{}", inbound.text, transcript);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TelegramChannel {
     config: TelegramChannelConfig,
     client: TelegramApiClient,
     update_deduper: EventDeduper,
+    voice_service: Option<Arc<VoiceService>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,22 +116,36 @@ impl Default for TelegramChannelConfig {
 
 impl TelegramChannel {
     pub fn from_app_config(config: TelegramConfig) -> ChannelResult<Self> {
-        Self::new(TelegramChannelConfig {
-            account_id: config.id,
-            bot_token: config.bot_token,
-            show_reasoning: config.show_reasoning,
-            stream_output: config.stream_output,
-            allowlist: config.allowlist,
-            proxy: config.proxy,
-        })
+        Self::from_app_config_with_voice(config, None)
     }
 
-    pub fn new(config: TelegramChannelConfig) -> ChannelResult<Self> {
+    pub fn from_app_config_with_voice(
+        config: TelegramConfig,
+        voice_service: Option<Arc<VoiceService>>,
+    ) -> ChannelResult<Self> {
+        Self::new(
+            TelegramChannelConfig {
+                account_id: config.id,
+                bot_token: config.bot_token,
+                show_reasoning: config.show_reasoning,
+                stream_output: config.stream_output,
+                allowlist: config.allowlist,
+                proxy: config.proxy,
+            },
+            voice_service,
+        )
+    }
+
+    pub fn new(
+        config: TelegramChannelConfig,
+        voice_service: Option<Arc<VoiceService>>,
+    ) -> ChannelResult<Self> {
         let client = TelegramApiClient::new(&config.bot_token, &config.proxy)?;
         Ok(Self {
             config,
             client,
             update_deduper: EventDeduper::new(UPDATE_DEDUP_TTL, UPDATE_DEDUP_MAX_ENTRIES),
+            voice_service,
         })
     }
 
@@ -325,7 +380,11 @@ impl TelegramChannel {
                     session_key,
                     chat_id: inbound.chat_id.clone(),
                     media_references: inbound.media_references.clone(),
-                    metadata: callback_runtime_metadata(),
+                    metadata: {
+                        let mut metadata = callback_runtime_metadata();
+                        metadata.extend(inbound.metadata.clone());
+                        metadata
+                    },
                 },
                 Some(inbound.chat_id.as_str()),
             )
@@ -468,6 +527,8 @@ impl TelegramChannel {
             }
         };
 
+        let mut attempted_voice_stt = false;
+        let mut pending_transcript: Option<(String, String, Option<String>)> = None;
         for media in &mut inbound.media_references {
             let Some(file_id) = media
                 .metadata
@@ -512,6 +573,60 @@ impl TelegramChannel {
                 Value::String(file_path.to_string()),
             );
 
+            if !attempted_voice_stt
+                && self.voice_service.is_some()
+                && media
+                    .mime_type
+                    .as_deref()
+                    .or_else(|| {
+                        media
+                            .metadata
+                            .get("telegram.declared_mime_type")
+                            .and_then(Value::as_str)
+                    })
+                    .is_some_and(|mime| mime.starts_with("audio/"))
+            {
+                attempted_voice_stt = true;
+                if let Some(voice_service) = &self.voice_service {
+                    let mime_type = media
+                        .mime_type
+                        .clone()
+                        .or_else(|| {
+                            media
+                                .metadata
+                                .get("telegram.declared_mime_type")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        })
+                        .unwrap_or_else(|| "audio/ogg".to_string());
+                    match voice_service
+                        .transcribe(SttInput {
+                            audio_bytes: bytes.clone(),
+                            mime_type,
+                            language: None,
+                        })
+                        .await
+                    {
+                        Ok(output) => {
+                            if !output.text.trim().is_empty() {
+                                pending_transcript = Some((
+                                    output.text,
+                                    voice_service.stt_provider_name().to_string(),
+                                    output.language,
+                                ));
+                            }
+                        }
+                        Err(err) => {
+                            warn!(
+                                update_id = inbound.update_id,
+                                error = %err,
+                                "telegram voice transcription failed, keeping original input"
+                            );
+                        }
+                    }
+                }
+            }
+
             if let Err(err) = ingest_media_reference_bytes(
                 &archive_service,
                 ArchiveMediaIngestContext {
@@ -530,6 +645,14 @@ impl TelegramChannel {
             {
                 warn!(update_id = inbound.update_id, file_id = file_id.as_str(), error = %err, "failed to ingest telegram media into archive");
             }
+        }
+        if let Some((transcript, provider, language)) = pending_transcript {
+            apply_voice_transcript(inbound, &transcript, &provider, language.as_deref());
+            info!(
+                update_id = inbound.update_id,
+                transcript_chars = inbound.text.chars().count(),
+                "telegram audio transcript generated via voice service"
+            );
         }
     }
 }
@@ -957,6 +1080,60 @@ mod tests {
         assert_eq!(
             keyboard.inline_keyboard[0][0].callback_data,
             "approve:approval-1"
+        );
+    }
+
+    #[test]
+    fn apply_voice_transcript_replaces_placeholder_text() {
+        let mut inbound = super::types::TelegramInbound {
+            update_id: 1,
+            message_id: "m1".to_string(),
+            chat_id: "c1".to_string(),
+            text: "Received voice attachment.".to_string(),
+            media_references: Vec::new(),
+            metadata: BTreeMap::new(),
+        };
+
+        super::apply_voice_transcript(&mut inbound, "你好，世界", "deepgram", Some("zh-CN"));
+
+        assert_eq!(inbound.text, "你好，世界");
+        assert_eq!(
+            inbound
+                .metadata
+                .get("voice.provider")
+                .and_then(Value::as_str),
+            Some("deepgram")
+        );
+        assert_eq!(
+            inbound
+                .metadata
+                .get("voice.language")
+                .and_then(Value::as_str),
+            Some("zh-CN")
+        );
+    }
+
+    #[test]
+    fn apply_voice_transcript_appends_to_existing_text() {
+        let mut inbound = super::types::TelegramInbound {
+            update_id: 1,
+            message_id: "m2".to_string(),
+            chat_id: "c2".to_string(),
+            text: "请帮我总结这段语音".to_string(),
+            media_references: Vec::new(),
+            metadata: BTreeMap::new(),
+        };
+
+        super::apply_voice_transcript(&mut inbound, "这是转写结果", "assemblyai", None);
+
+        assert!(inbound.text.contains("请帮我总结这段语音"));
+        assert!(inbound.text.contains("Voice transcript:\n这是转写结果"));
+        assert_eq!(
+            inbound
+                .metadata
+                .get("voice.provider")
+                .and_then(Value::as_str),
+            Some("assemblyai")
         );
     }
 }

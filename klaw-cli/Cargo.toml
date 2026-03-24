@@ -16,6 +16,7 @@ klaw-llm = { workspace = true }
 klaw-tool = { workspace = true }
 klaw-approval = { workspace = true }
 klaw-archive = { workspace = true }
+klaw-voice = { workspace = true }
 klaw-heartbeat = { workspace = true }
 klaw-config = { workspace = true }
 klaw-session = { workspace = true }

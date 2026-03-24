@@ -1,5 +1,6 @@
 use crate::{ChannelResult, ChannelRuntime, dingtalk::DingtalkChannel, telegram::TelegramChannel};
 use klaw_config::{ChannelsConfig, DingtalkConfig, TelegramConfig};
+use klaw_voice::VoiceService;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -203,8 +204,17 @@ pub trait ChannelDriverFactory {
     -> ChannelResult<Box<dyn ManagedChannelDriver>>;
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct DefaultChannelDriverFactory;
+#[derive(Debug, Default, Clone)]
+pub struct DefaultChannelDriverFactory {
+    voice_service: Option<Arc<VoiceService>>,
+}
+
+impl DefaultChannelDriverFactory {
+    #[must_use]
+    pub fn new(voice_service: Option<Arc<VoiceService>>) -> Self {
+        Self { voice_service }
+    }
+}
 
 impl ChannelDriverFactory for DefaultChannelDriverFactory {
     fn build(
@@ -216,7 +226,10 @@ impl ChannelDriverFactory for DefaultChannelDriverFactory {
                 Ok(Box::new(DingtalkChannel::from_app_config(config.clone())?))
             }
             ChannelInstanceConfig::Telegram(config) => {
-                Ok(Box::new(TelegramChannel::from_app_config(config.clone())?))
+                Ok(Box::new(TelegramChannel::from_app_config_with_voice(
+                    config.clone(),
+                    self.voice_service.clone(),
+                )?))
             }
         }
     }
@@ -245,7 +258,7 @@ where
 {
     #[must_use]
     pub fn new(runtime: Arc<R>) -> Self {
-        Self::with_factory(runtime, DefaultChannelDriverFactory)
+        Self::with_factory(runtime, DefaultChannelDriverFactory::default())
     }
 }
 

@@ -12,7 +12,7 @@ use klaw_approval::{
 };
 use klaw_channel::{
     ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
-    ChannelStreamWriter,
+    ChannelStreamWriter, DefaultChannelDriverFactory,
 };
 use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
 use klaw_core::{
@@ -44,6 +44,7 @@ use klaw_tool::{
     TerminalMultiplexerTool, ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
 };
 use klaw_util::EnvironmentCheckReport;
+use klaw_voice::VoiceService;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -263,6 +264,17 @@ pub struct AssistantOutput {
     pub content: String,
     pub reasoning: Option<String>,
     pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+pub fn build_channel_driver_factory(
+    config: &AppConfig,
+) -> Result<DefaultChannelDriverFactory, Box<dyn Error>> {
+    let voice_service = if config.voice.enabled {
+        Some(Arc::new(VoiceService::from_config(&config.voice)?))
+    } else {
+        None
+    };
+    Ok(DefaultChannelDriverFactory::new(voice_service))
 }
 
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";

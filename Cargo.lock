@@ -3552,6 +3552,7 @@ dependencies = [
  "klaw-archive",
  "klaw-config",
  "klaw-core",
+ "klaw-voice",
  "reqwest",
  "rustls",
  "serde",
@@ -3587,6 +3588,7 @@ dependencies = [
  "klaw-storage",
  "klaw-tool",
  "klaw-util",
+ "klaw-voice",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3877,6 +3879,26 @@ version = "0.1.1"
 dependencies = [
  "serde",
  "time",
+]
+
+[[package]]
+name = "klaw-voice"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "klaw-archive",
+ "klaw-config",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite",
+ "tracing",
 ]
 
 [[package]]

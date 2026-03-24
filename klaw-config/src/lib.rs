@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub conversation_history_limit: usize,
     pub model_providers: BTreeMap<String, ModelProviderConfig>,
     #[serde(default)]
+    pub voice: VoiceConfig,
+    #[serde(default)]
     pub gateway: GatewayConfig,
     #[serde(default)]
     pub channels: ChannelsConfig,
@@ -42,6 +44,7 @@ impl Default for AppConfig {
             model: None,
             conversation_history_limit: default_conversation_history_limit(),
             model_providers,
+            voice: VoiceConfig::default(),
             gateway: GatewayConfig::default(),
             channels: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
@@ -58,6 +61,245 @@ impl Default for AppConfig {
 
 fn default_conversation_history_limit() -> usize {
     40
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub stt_provider: SttProviderKind,
+    #[serde(default)]
+    pub tts_provider: TtsProviderKind,
+    #[serde(default = "default_voice_language")]
+    pub default_language: String,
+    #[serde(default)]
+    pub default_voice_id: Option<String>,
+    #[serde(default)]
+    pub providers: VoiceProvidersConfig,
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            stt_provider: SttProviderKind::default(),
+            tts_provider: TtsProviderKind::default(),
+            default_language: default_voice_language(),
+            default_voice_id: None,
+            providers: VoiceProvidersConfig::default(),
+        }
+    }
+}
+
+fn default_voice_language() -> String {
+    "zh-CN".to_string()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SttProviderKind {
+    #[default]
+    Deepgram,
+    Assemblyai,
+}
+
+impl SttProviderKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Deepgram => "deepgram",
+            Self::Assemblyai => "assemblyai",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TtsProviderKind {
+    #[default]
+    Elevenlabs,
+}
+
+impl TtsProviderKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Elevenlabs => "elevenlabs",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VoiceProvidersConfig {
+    #[serde(default)]
+    pub elevenlabs: ElevenLabsVoiceConfig,
+    #[serde(default)]
+    pub deepgram: DeepgramVoiceConfig,
+    #[serde(default)]
+    pub assemblyai: AssemblyAiVoiceConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElevenLabsVoiceConfig {
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default = "default_elevenlabs_api_key_env")]
+    pub api_key_env: String,
+    #[serde(default = "default_elevenlabs_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_elevenlabs_streaming_base_url")]
+    pub streaming_base_url: String,
+    #[serde(default = "default_elevenlabs_model")]
+    pub default_model: String,
+    #[serde(default)]
+    pub default_voice_id: Option<String>,
+}
+
+impl Default for ElevenLabsVoiceConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            api_key_env: default_elevenlabs_api_key_env(),
+            base_url: default_elevenlabs_base_url(),
+            streaming_base_url: default_elevenlabs_streaming_base_url(),
+            default_model: default_elevenlabs_model(),
+            default_voice_id: None,
+        }
+    }
+}
+
+impl ElevenLabsVoiceConfig {
+    #[must_use]
+    pub fn resolve_api_key(&self) -> Option<String> {
+        self.api_key.clone().or_else(|| {
+            (!self.api_key_env.trim().is_empty())
+                .then(|| std::env::var(self.api_key_env.trim()).ok())
+                .flatten()
+        })
+    }
+}
+
+fn default_elevenlabs_api_key_env() -> String {
+    "ELEVENLABS_API_KEY".to_string()
+}
+
+fn default_elevenlabs_base_url() -> String {
+    "https://api.elevenlabs.io".to_string()
+}
+
+fn default_elevenlabs_streaming_base_url() -> String {
+    "wss://api.elevenlabs.io".to_string()
+}
+
+fn default_elevenlabs_model() -> String {
+    "eleven_multilingual_v2".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeepgramVoiceConfig {
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default = "default_deepgram_api_key_env")]
+    pub api_key_env: String,
+    #[serde(default = "default_deepgram_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_deepgram_streaming_base_url")]
+    pub streaming_base_url: String,
+    #[serde(default = "default_deepgram_stt_model")]
+    pub stt_model: String,
+}
+
+impl Default for DeepgramVoiceConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            api_key_env: default_deepgram_api_key_env(),
+            base_url: default_deepgram_base_url(),
+            streaming_base_url: default_deepgram_streaming_base_url(),
+            stt_model: default_deepgram_stt_model(),
+        }
+    }
+}
+
+impl DeepgramVoiceConfig {
+    #[must_use]
+    pub fn resolve_api_key(&self) -> Option<String> {
+        self.api_key.clone().or_else(|| {
+            (!self.api_key_env.trim().is_empty())
+                .then(|| std::env::var(self.api_key_env.trim()).ok())
+                .flatten()
+        })
+    }
+}
+
+fn default_deepgram_api_key_env() -> String {
+    "DEEPGRAM_API_KEY".to_string()
+}
+
+fn default_deepgram_base_url() -> String {
+    "https://api.deepgram.com".to_string()
+}
+
+fn default_deepgram_streaming_base_url() -> String {
+    "wss://api.deepgram.com".to_string()
+}
+
+fn default_deepgram_stt_model() -> String {
+    "nova-2".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssemblyAiVoiceConfig {
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default = "default_assemblyai_api_key_env")]
+    pub api_key_env: String,
+    #[serde(default = "default_assemblyai_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_assemblyai_streaming_base_url")]
+    pub streaming_base_url: String,
+    #[serde(default = "default_assemblyai_stt_model")]
+    pub stt_model: String,
+}
+
+impl Default for AssemblyAiVoiceConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            api_key_env: default_assemblyai_api_key_env(),
+            base_url: default_assemblyai_base_url(),
+            streaming_base_url: default_assemblyai_streaming_base_url(),
+            stt_model: default_assemblyai_stt_model(),
+        }
+    }
+}
+
+impl AssemblyAiVoiceConfig {
+    #[must_use]
+    pub fn resolve_api_key(&self) -> Option<String> {
+        self.api_key.clone().or_else(|| {
+            (!self.api_key_env.trim().is_empty())
+                .then(|| std::env::var(self.api_key_env.trim()).ok())
+                .flatten()
+        })
+    }
+}
+
+fn default_assemblyai_api_key_env() -> String {
+    "ASSEMBLYAI_API_KEY".to_string()
+}
+
+fn default_assemblyai_base_url() -> String {
+    "https://api.assemblyai.com".to_string()
+}
+
+fn default_assemblyai_streaming_base_url() -> String {
+    "wss://streaming.assemblyai.com".to_string()
+}
+
+fn default_assemblyai_stt_model() -> String {
+    "universal".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -2,6 +2,10 @@
 
 ## 2026-03-24
 
+### Added
+
+- runtime 现在会根据 `voice` 配置构建共享 `VoiceService`，并通过 channel driver factory 注入给 Telegram 等 channel，用于入站语音识别链路
+
 ### Changed
 
 - shared channel runtime `/new` bootstrap turn now requests `tool_choice=required` and explicitly tells the model to use tools for reading `BOOTSTRAP.md` and persisting bootstrap doc changes instead of only describing them
