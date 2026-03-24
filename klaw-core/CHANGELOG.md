@@ -9,6 +9,7 @@
 - aligned prompt templates with the new runtime prompt model by treating `USER.md` as on-demand context, updating `SOUL.md` continuity wording, and removing raw credentials from `TOOLS.md`
 - updated current-message attachment guidance so turns with archived files explicitly steer the model toward `archive.get` for known ids and `list_session_attachments` for earlier files from the same session
 - updated current-message attachment guidance so archived audio / voice attachments also steer the model toward `voice.stt`
+- `AgentLoop` now forwards tool `stop` signals as successful stopped-turn metadata (`turn.stopped`, `turn.stop_signal`) instead of treating the turn as a loop failure
 
 ### Removed
 - removed the unused deprecated `load_or_create_system_prompt*` compatibility shims from `klaw-core`

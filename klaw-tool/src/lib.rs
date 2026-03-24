@@ -105,6 +105,20 @@ impl ToolSignal {
             payload,
         }
     }
+
+    pub fn stop_current_turn(reason: Option<&str>, source: Option<&str>) -> Self {
+        let mut payload = serde_json::json!({});
+        if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
+            payload["reason"] = serde_json::Value::String(reason.to_string());
+        }
+        if let Some(source) = source.map(str::trim).filter(|value| !value.is_empty()) {
+            payload["source"] = serde_json::Value::String(source.to_string());
+        }
+        Self {
+            kind: "stop".to_string(),
+            payload,
+        }
+    }
 }
 
 /// 工具错误定义。

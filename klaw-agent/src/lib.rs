@@ -24,6 +24,8 @@ pub use context_compression::{
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
 const APPROVAL_REQUIRED_SIGNAL: &str = "approval_required";
+const STOP_SIGNAL: &str = "stop";
+const STOPPED_TURN_MESSAGE: &str = "Current turn stopped. No further tool calls were made.";
 
 #[derive(Debug, Clone, Copy)]
 pub struct AgentExecutionLimits {
@@ -415,9 +417,15 @@ pub async fn run_agent_execution(
                 .signals
                 .iter()
                 .any(|signal| signal.kind == APPROVAL_REQUIRED_SIGNAL);
+            let stopped = short_circuit
+                .signals
+                .iter()
+                .any(|signal| signal.kind == STOP_SIGNAL);
             return Ok(AgentExecutionOutput {
                 content: if approval_required && !assistant_content.trim().is_empty() {
                     assistant_content
+                } else if stopped {
+                    STOPPED_TURN_MESSAGE.to_string()
                 } else {
                     short_circuit.content_for_model
                 },
@@ -481,10 +489,14 @@ async fn apply_tool_calls(
         let result = tools
             .execute(&call.name, call.arguments, session_key, tool_metadata)
             .await;
-        let stop_after_result = result
+        let approval_required = result
             .signals
             .iter()
             .any(|signal| signal.kind == APPROVAL_REQUIRED_SIGNAL);
+        let stop_requested = result
+            .signals
+            .iter()
+            .any(|signal| signal.kind == STOP_SIGNAL);
         collected_signals.extend(result.signals.clone());
         llm_messages.push(LlmMessage {
             role: "tool".to_string(),
@@ -493,7 +505,7 @@ async fn apply_tool_calls(
             tool_calls: None,
             tool_call_id: call.id,
         });
-        if stop_after_result {
+        if approval_required || stop_requested {
             return Ok(Some(result));
         }
     }
@@ -1028,6 +1040,128 @@ mod tests {
         assert!(output.content.contains("approval required"));
         assert_eq!(output.tool_signals.len(), 1);
         assert_eq!(output.tool_signals[0].kind, APPROVAL_REQUIRED_SIGNAL);
+        assert_eq!(
+            *provider.call_count.lock().expect("mutex poisoned"),
+            1,
+            "provider should only be called once"
+        );
+        assert_eq!(
+            *tools.call_count.lock().expect("mutex poisoned"),
+            1,
+            "tool should only be called once"
+        );
+    }
+
+    #[derive(Default)]
+    struct StopShortCircuitProvider {
+        call_count: Arc<Mutex<u32>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for StopShortCircuitProvider {
+        fn name(&self) -> &str {
+            "stop-provider"
+        }
+
+        fn default_model(&self) -> &str {
+            "stop-model"
+        }
+
+        async fn chat(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            let mut count = self.call_count.lock().expect("mutex poisoned");
+            *count += 1;
+            if *count > 1 {
+                panic!("provider should not be called again after stop signal");
+            }
+            Ok(LlmResponse {
+                content: String::new(),
+                reasoning: None,
+                tool_calls: vec![ToolCall {
+                    id: Some("call_stop".to_string()),
+                    name: "stop_tool".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+                usage: None,
+                usage_source: None,
+                audit: None,
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct StopSignalToolExecutor {
+        call_count: Arc<Mutex<u32>>,
+    }
+
+    #[async_trait]
+    impl ToolExecutor for StopSignalToolExecutor {
+        fn definitions(&self) -> Vec<ToolDefinition> {
+            vec![ToolDefinition {
+                name: "stop_tool".to_string(),
+                description: "stops current turn".to_string(),
+                parameters: serde_json::json!({"type":"object"}),
+            }]
+        }
+
+        async fn execute(
+            &self,
+            _name: &str,
+            _arguments: Value,
+            _session_key: &str,
+            _metadata: &BTreeMap<String, Value>,
+        ) -> ToolInvocationResult {
+            let mut count = self.call_count.lock().expect("mutex poisoned");
+            *count += 1;
+            ToolInvocationResult::error(
+                "stop requested".to_string(),
+                "stop_requested".to_string(),
+                None,
+                false,
+                vec![ToolInvocationSignal {
+                    kind: STOP_SIGNAL.to_string(),
+                    payload: serde_json::json!({
+                        "reason": "tool requested stop",
+                        "source": "stop_tool"
+                    }),
+                }],
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_stops_after_stop_signal() {
+        let provider = StopShortCircuitProvider::default();
+        let tools = StopSignalToolExecutor::default();
+        let output = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "stop this turn".to_string(),
+                user_media: Vec::new(),
+                conversation_history: Vec::new(),
+                session_key: "s1".to_string(),
+                tool_metadata: BTreeMap::new(),
+                model: None,
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 4,
+                max_tool_calls: 4,
+                token_budget: 0,
+            },
+            None,
+        )
+        .await
+        .expect("agent execution should short-circuit successfully");
+
+        assert_eq!(output.content, STOPPED_TURN_MESSAGE);
+        assert_eq!(output.tool_signals.len(), 1);
+        assert_eq!(output.tool_signals[0].kind, STOP_SIGNAL);
         assert_eq!(
             *provider.call_count.lock().expect("mutex poisoned"),
             1,

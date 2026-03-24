@@ -9,7 +9,9 @@
 - 支持当前用户轮次同时携带媒体输入（`AgentExecutionInput.user_media`）。
 - 执行工具调用循环，并将工具结果回填给模型。
 - 当工具发出 `approval_required` 信号时立即停止当前工具循环，避免单轮对话重复堆积审批单。
+- 当工具发出 `stop` 信号时立即停止当前工具循环，并返回统一的“当前轮次已停止”用户文案。
 - 在 `approval_required` 短路时保留模型原始审批提示文案，同时继续返回工具信号与请求级 usage/audit 记录。
+- 在 `stop` 短路时继续返回工具信号与请求级 usage/audit 记录，供 runtime 透传 stopped metadata。
 - 输出最终文本与可选推理内容。
 - 可选转发流式快照事件给 runtime/channel，用于支持逐步更新的前端或 IM channel。
 

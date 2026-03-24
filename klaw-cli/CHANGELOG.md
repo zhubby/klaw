@@ -5,12 +5,14 @@
 ### Added
 
 - runtime now registers a `voice` tool when `tools.voice.enabled=true` and `voice.enabled=true`, exposing archived-audio STT and archived TTS generation to the model
+- added `/stop` as a built-in runtime IM command that stops the current turn without entering the agent loop and returns structured stopped-turn metadata
 
 ### Changed
 
 - shared channel runtime `/new` bootstrap turn now requests `tool_choice=required` and explicitly tells the model to use tools for reading `BOOTSTRAP.md` and persisting bootstrap doc changes instead of only describing them
 - runtime startup and skills-prompt reload now delegate system prompt assembly to `klaw-core::build_runtime_system_prompt`, keeping `klaw-cli` focused on runtime data loading instead of prompt section composition
 - shared channel runtime `/new` 现在会在新 session 中自动写入首条 bootstrap `user` 消息并立即触发首轮 assistant 回复，统一覆盖 Telegram、钉钉等所有 channel
+- runtime now mirrors agent stop-short-circuit semantics by returning `turn.stopped`, `turn.stop_signal`, and `tool.signals=[{kind:\"stop\"...}]` for `/stop`
 
 ## 2026-03-23
 

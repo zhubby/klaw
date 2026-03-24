@@ -35,6 +35,7 @@ const META_CURRENT_ATTACHMENTS_KEY: &str = "agent.current_attachments";
 const META_LLM_USAGE_RECORDS_KEY: &str = "llm.usage.records";
 const META_LLM_AUDIT_RECORDS_KEY: &str = "llm.audit.records";
 const TOOL_RESULT_LOG_LIMIT: usize = 4000;
+const STOP_SIGNAL: &str = "stop";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunState {
@@ -881,6 +882,16 @@ impl AgentLoop {
                                 serde_json::Value::String(approval_id.to_string()),
                             );
                         }
+                    }
+                    if let Some(stop_signal) = output
+                        .tool_signals
+                        .iter()
+                        .find(|signal| signal.kind == STOP_SIGNAL)
+                    {
+                        response_metadata
+                            .insert("turn.stopped".to_string(), serde_json::Value::Bool(true));
+                        response_metadata
+                            .insert("turn.stop_signal".to_string(), stop_signal.payload.clone());
                     }
                 }
                 if let Some(reasoning) = output.reasoning.filter(|value| !value.trim().is_empty()) {
@@ -1842,6 +1853,8 @@ mod tests {
 
     struct MockApprovalTool;
 
+    struct MockStopTool;
+
     #[async_trait]
     impl Tool for MockApprovalTool {
         fn name(&self) -> &str {
@@ -1879,6 +1892,42 @@ mod tests {
                     "mock_approval",
                     &ctx.session_key,
                     None,
+                )],
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl Tool for MockStopTool {
+        fn name(&self) -> &str {
+            "mock_stop"
+        }
+
+        fn description(&self) -> &str {
+            "mock stop tool"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            json!({"type":"object"})
+        }
+
+        fn category(&self) -> ToolCategory {
+            ToolCategory::Messaging
+        }
+
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            Err(ToolError::structured_execution_failed(
+                "stop requested",
+                "stop_requested",
+                None,
+                false,
+                vec![klaw_tool::ToolSignal::stop_current_turn(
+                    Some("tool requested stop"),
+                    Some("mock_stop"),
                 )],
             ))
         }
@@ -2157,6 +2206,109 @@ mod tests {
                 .get("approval.id")
                 .and_then(serde_json::Value::as_str),
             Some("approval-core-test")
+        );
+    }
+
+    #[derive(Default)]
+    struct StopToolCallingProvider {
+        call_count: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for StopToolCallingProvider {
+        fn name(&self) -> &str {
+            "stop-calling"
+        }
+
+        fn default_model(&self) -> &str {
+            "stop-calling-v1"
+        }
+
+        async fn chat(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            let mut call_count = self.call_count.lock().expect("mutex poisoned");
+            *call_count += 1;
+            if *call_count > 1 {
+                panic!("provider should not be called again after stop signal");
+            }
+            Ok(LlmResponse {
+                content: String::new(),
+                reasoning: None,
+                tool_calls: vec![klaw_llm::ToolCall {
+                    id: Some("call_stop_1".to_string()),
+                    name: "mock_stop".to_string(),
+                    arguments: json!({}),
+                }],
+                usage: None,
+                usage_source: None,
+                audit: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn process_message_propagates_stop_signal_to_outbound_metadata() {
+        let provider = Arc::new(StopToolCallingProvider::default()) as Arc<dyn LlmProvider>;
+        let mut tools = ToolRegistry::default();
+        tools.register(MockStopTool);
+        let agent = AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 2,
+                max_tool_calls: 2,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(1),
+                tool_timeout: Duration::from_secs(1),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 1,
+                lock_ttl: Duration::from_secs(1),
+            },
+            Arc::clone(&provider),
+            "stop-calling".to_string(),
+            "stop-calling-v1".to_string(),
+            tools,
+        )
+        .with_provider_registry(BTreeMap::from([("stop-calling".to_string(), provider)]));
+
+        let inbound = crate::protocol::Envelope {
+            header: EnvelopeHeader::new("im:chat-stop"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "im".to_string(),
+                sender_id: "u1".to_string(),
+                chat_id: "chat-stop".to_string(),
+                session_key: "im:chat-stop".to_string(),
+                content: "stop tool".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        };
+        let outcome = agent.process_message(inbound, false).await;
+        let response = outcome.final_response.expect("response should be present");
+        assert_eq!(
+            response.payload.content,
+            "Current turn stopped. No further tool calls were made."
+        );
+        assert_eq!(
+            response
+                .payload
+                .metadata
+                .get("turn.stopped")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            response.payload.metadata.get("turn.stop_signal"),
+            Some(&json!({
+                "reason": "tool requested stop",
+                "source": "mock_stop"
+            }))
         );
     }
 

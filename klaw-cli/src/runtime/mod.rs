@@ -769,6 +769,10 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
     ];
     lines.push(format!("{:<24}{}", "/new", "Start a new session context"));
     lines.push(format!("{:<24}{}", "/help", "Show this help"));
+    lines.push(format!(
+        "{:<24}{}",
+        "/stop", "Stop the current turn without calling the agent"
+    ));
     if runtime.provider_default_models.len() > 1 {
         lines.push(format!(
             "{:<24}{}",
@@ -806,6 +810,31 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
     lines.join("\n")
 }
 
+fn stopped_turn_metadata(reason: &str, source: &str) -> BTreeMap<String, serde_json::Value> {
+    BTreeMap::from([
+        ("turn.stopped".to_string(), serde_json::Value::Bool(true)),
+        (
+            "turn.stop_signal".to_string(),
+            serde_json::json!({
+                "reason": reason,
+                "source": source,
+            }),
+        ),
+        (
+            "tool.signals".to_string(),
+            serde_json::json!([
+                {
+                    "kind": "stop",
+                    "payload": {
+                        "reason": reason,
+                        "source": source,
+                    }
+                }
+            ]),
+        ),
+    ])
+}
+
 fn approval_manager(runtime: &RuntimeBundle) -> SqliteApprovalManager {
     SqliteApprovalManager::from_store(runtime.session_store.clone())
 }
@@ -830,6 +859,11 @@ async fn handle_im_command(
             content: render_help_text(runtime),
             reasoning: None,
             metadata: BTreeMap::new(),
+        },
+        "stop" => ChannelResponse {
+            content: "Current turn stopped manually. No further tool calls were made.".to_string(),
+            reasoning: None,
+            metadata: stopped_turn_metadata("manual stop command", "im_command"),
         },
         "new" => {
             let new_session_key = format!("{base_session_key}:{}", Uuid::new_v4().simple());
@@ -2613,6 +2647,7 @@ mod tests {
     #[test]
     fn parse_im_command_supports_name_and_optional_arg() {
         assert_eq!(parse_im_command("/help"), Some(("help", None)));
+        assert_eq!(parse_im_command("/stop"), Some(("stop", None)));
         assert_eq!(
             parse_im_command("/model_provider openai"),
             Some(("model_provider", Some("openai")))
@@ -2995,5 +3030,49 @@ A .docx file is a ZIP archive containing XML files.
             .unwrap_or_else(|err| err.into_inner())
             .clone();
         assert_eq!(tool_choice, Some(Value::String("required".to_string())));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stop_command_returns_stopped_response_without_running_agent() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let channel = "telegram".to_string();
+        let base_session_key = "telegram:chat-stop".to_string();
+        let chat_id = "chat-stop".to_string();
+
+        let response = handle_im_command(
+            &runtime,
+            channel,
+            base_session_key,
+            chat_id,
+            "/stop".to_string(),
+        )
+        .await
+        .expect("stop command should succeed")
+        .expect("stop command should return a response");
+
+        assert!(response.content.contains("Current turn stopped manually"));
+        assert_eq!(
+            response
+                .metadata
+                .get("turn.stopped")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            response.metadata.get("turn.stop_signal"),
+            Some(&json!({
+                "reason": "manual stop command",
+                "source": "im_command"
+            }))
+        );
+        assert_eq!(
+            provider
+                .last_user_message
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .clone(),
+            None
+        );
     }
 }
