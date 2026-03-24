@@ -1,3 +1,4 @@
+use crate::domain::menu::WorkbenchMenu;
 use crate::runtime_bridge::request_set_provider_override;
 use crate::state::persistence;
 use crate::state::{UiAction, UiState, WindowSize};
@@ -7,6 +8,15 @@ use crate::ui::shell::ShellUi;
 use std::time::{Duration, Instant};
 
 const UI_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+
+fn tray_command_ui_action(command: TrayCommand) -> Option<UiAction> {
+    match command {
+        TrayCommand::OpenKlaw => None,
+        TrayCommand::OpenSettings => Some(UiAction::OpenMenu(WorkbenchMenu::Setting)),
+        TrayCommand::ShowAbout => Some(UiAction::ShowAbout),
+        TrayCommand::QuitKlaw => Some(UiAction::CloseWindow),
+    }
+}
 
 pub struct KlawGuiApp {
     state: UiState,
@@ -119,18 +129,17 @@ impl KlawGuiApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                self.shell
-                    .show_info("Settings is not implemented in the tray menu yet.");
             }
             TrayCommand::ShowAbout => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                self.handle_action(ctx, UiAction::ShowAbout);
             }
-            TrayCommand::QuitKlaw => {
-                self.handle_action(ctx, UiAction::CloseWindow);
-            }
+            TrayCommand::QuitKlaw => {}
+        }
+
+        if let Some(action) = tray_command_ui_action(command) {
+            self.handle_action(ctx, action);
         }
     }
 
@@ -197,5 +206,34 @@ impl eframe::App for KlawGuiApp {
         if close_requested {
             self.save_state_now();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tray_command_ui_action;
+    use crate::domain::menu::WorkbenchMenu;
+    use crate::state::UiAction;
+    use crate::tray::TrayCommand;
+
+    #[test]
+    fn tray_settings_command_opens_setting_menu() {
+        assert_eq!(
+            tray_command_ui_action(TrayCommand::OpenSettings),
+            Some(UiAction::OpenMenu(WorkbenchMenu::Setting))
+        );
+    }
+
+    #[test]
+    fn tray_about_and_quit_commands_keep_expected_actions() {
+        assert_eq!(
+            tray_command_ui_action(TrayCommand::ShowAbout),
+            Some(UiAction::ShowAbout)
+        );
+        assert_eq!(
+            tray_command_ui_action(TrayCommand::QuitKlaw),
+            Some(UiAction::CloseWindow)
+        );
+        assert_eq!(tray_command_ui_action(TrayCommand::OpenKlaw), None);
     }
 }
