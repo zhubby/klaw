@@ -274,7 +274,11 @@ mod tests {
         for group in WorkbenchMenuGroup::ALL {
             for menu in WorkbenchMenu::sorted_for_group(group) {
                 assert_eq!(menu.group(), group);
-                assert!(seen.insert(menu), "menu assigned more than once: {:?}", menu);
+                assert!(
+                    seen.insert(menu),
+                    "menu assigned more than once: {:?}",
+                    menu
+                );
             }
         }
 

@@ -39,7 +39,10 @@ pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
                 ui.add_space(4.0);
 
                 for menu in menus {
-                    let is_active = state.workbench.active_tab.is_some_and(|id| id.menu == *menu);
+                    let is_active = state
+                        .workbench
+                        .active_tab
+                        .is_some_and(|id| id.menu == *menu);
                     let label = format!("{} {}", menu.icon(), menu.title());
                     if ui.selectable_label(is_active, label).clicked() {
                         actions.push(UiAction::OpenMenu(*menu));
@@ -59,7 +62,10 @@ mod tests {
     #[test]
     fn grouped_menus_follow_expected_group_order() {
         let groups = grouped_menus();
-        let order = groups.into_iter().map(|(group, _)| group).collect::<Vec<_>>();
+        let order = groups
+            .into_iter()
+            .map(|(group, _)| group)
+            .collect::<Vec<_>>();
         assert_eq!(order, WorkbenchMenuGroup::ALL);
     }
 
