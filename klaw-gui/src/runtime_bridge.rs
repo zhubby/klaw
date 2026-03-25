@@ -4,6 +4,7 @@ use klaw_gateway::{GatewayRuntimeInfo, TailscaleHostInfo};
 use klaw_mcp::{McpRuntimeSnapshot, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
 use std::sync::{Mutex, OnceLock, mpsc};
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, Clone, Default)]
@@ -245,8 +246,15 @@ pub fn request_gateway_status() -> Result<GatewayStatusSnapshot, String> {
         .map_err(|_| "failed to send runtime command".to_string())?;
 
     response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())
+        .recv_timeout(Duration::from_secs(2))
+        .map_err(|err| match err {
+            mpsc::RecvTimeoutError::Timeout => {
+                "timed out waiting for gateway status response".to_string()
+            }
+            mpsc::RecvTimeoutError::Disconnected => {
+                "runtime command response channel closed".to_string()
+            }
+        })
 }
 
 pub fn request_start_gateway() -> Result<GatewayStatusSnapshot, String> {

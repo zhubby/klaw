@@ -26,7 +26,7 @@ impl GatewayManager {
             transitioning: false,
             last_error: None,
             tailscale_mode: config.gateway.tailscale.mode,
-            tailscale_host: TailscaleManager::inspect_host(),
+            tailscale_host: Default::default(),
             auth_configured: config.gateway.auth.is_enabled(),
         }
     }
