@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Release Main"
+  short_description: "仅在 main 上执行 GitHub Release 发布流程"
+  default_prompt: "Use $github-release-main to run the main-branch release workflow, optionally choosing a version or defaulting to the next patch release."
