@@ -64,9 +64,6 @@ pub async fn spawn_gateway_with_options(
         return Err(GatewayError::FunnelRequiresAuth);
     }
 
-    let tailscale_info = setup_tailscale(config)?;
-    let tailscale_manager = create_tailscale_manager(config);
-
     let socket_addr = parse_socket_addr(config)?;
     let health = build_health_registry(options.health);
     let webhook = build_webhook_state(config, options.webhook_handler)?;
@@ -78,6 +75,8 @@ pub async fn spawn_gateway_with_options(
         .await
         .map_err(GatewayError::Bind)?;
     let actual_addr = listener.local_addr().map_err(GatewayError::Bind)?;
+    let tailscale_info = setup_tailscale(config, actual_addr.port())?;
+    let tailscale_manager = create_tailscale_manager(config, actual_addr.port());
     let info = GatewayRuntimeInfo::from_socket_addr(config, actual_addr, tailscale_info);
 
     info!(
@@ -115,6 +114,7 @@ pub async fn spawn_gateway_with_options(
 
 fn setup_tailscale(
     config: &GatewayConfig,
+    actual_port: u16,
 ) -> Result<Option<crate::tailscale::TailscaleRuntimeInfo>, GatewayError> {
     if config.tailscale.mode == TailscaleMode::Off {
         return Ok(None);
@@ -122,7 +122,7 @@ fn setup_tailscale(
 
     let manager = TailscaleManager::new(
         config.tailscale.mode,
-        config.listen_port,
+        actual_port,
         config.tailscale.reset_on_exit,
     );
 
@@ -136,14 +136,14 @@ fn setup_tailscale(
     Ok(Some(info))
 }
 
-fn create_tailscale_manager(config: &GatewayConfig) -> Option<TailscaleManager> {
+fn create_tailscale_manager(config: &GatewayConfig, actual_port: u16) -> Option<TailscaleManager> {
     if config.tailscale.mode == TailscaleMode::Off {
         return None;
     }
 
     Some(TailscaleManager::new(
         config.tailscale.mode,
-        config.listen_port,
+        actual_port,
         config.tailscale.reset_on_exit,
     ))
 }

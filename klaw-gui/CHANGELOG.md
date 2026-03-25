@@ -10,6 +10,8 @@
 
 - `Webhook` 面板配置编辑与摘要展示现支持 `gateway.webhook.events` / `gateway.webhook.agents` 双 endpoint；`Gateway` 面板中的 webhook 配置入口也会继续写入 `events` 子配置
 - `Gateway` 面板中的 Tailscale 模式切换改为持久化待应用选择，并通过显式 `Apply` 按钮提交，避免下拉选择在下一帧渲染时回退
+- `Gateway` 面板不再持久显示 `Last Error` 行，错误改为只通过 toast 等即时反馈通道展示，避免长错误文本破坏状态区布局
+- `Gateway` 面板中的 Tailscale `Apply` 失败后会保留用户选中的目标模式，便于修正环境问题后直接重试，而不会被立即锁回已生效配置
 
 ### Fixed
 

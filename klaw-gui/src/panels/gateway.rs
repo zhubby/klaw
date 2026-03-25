@@ -276,6 +276,7 @@ impl GatewayPanel {
             Err(err) => {
                 notifications.error(format!("Failed to set tailscale mode: {err}"));
                 self.refresh(notifications, false);
+                self.selected_tailscale_mode = mode;
             }
         }
     }
@@ -488,12 +489,6 @@ impl PanelRenderer for GatewayPanel {
 
                     ui.label("Started At");
                     ui.label(format_timestamp_seconds(info.started_at_unix_seconds));
-                    ui.end_row();
-                }
-
-                if let Some(err) = &status.last_error {
-                    ui.label("Last Error");
-                    ui.colored_label(ui.visuals().error_fg_color, err);
                     ui.end_row();
                 }
             });

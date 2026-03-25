@@ -180,6 +180,7 @@ impl GatewayManager {
             return Err(message);
         }
 
+        let previous_mode = self.tailscale_mode;
         let config = save_tailscale_mode(mode)?;
         self.tailscale_mode = mode;
         self.auth_configured = config.gateway.auth.is_enabled();
@@ -189,7 +190,21 @@ impl GatewayManager {
                 warn!(error = %err, "failed to stop gateway before tailscale mode change");
             }
             if config.gateway.enabled {
-                self.start_from_config(&config).await
+                match self.start_from_config(&config).await {
+                    Ok(status) => Ok(status),
+                    Err(err) => {
+                        if let Err(revert_err) = save_tailscale_mode(previous_mode) {
+                            warn!(
+                                error = %revert_err,
+                                previous_mode = ?previous_mode,
+                                "failed to revert tailscale mode after start failure"
+                            );
+                        }
+                        self.tailscale_mode = previous_mode;
+                        self.last_error = Some(err.clone());
+                        Err(err)
+                    }
+                }
             } else {
                 Ok(self.snapshot())
             }
