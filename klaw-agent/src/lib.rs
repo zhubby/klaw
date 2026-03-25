@@ -23,6 +23,7 @@ pub use context_compression::{
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
+const META_REQUIRED_TOOL_NAME_KEY: &str = "agent.required_tool_name";
 const APPROVAL_REQUIRED_SIGNAL: &str = "approval_required";
 const STOP_SIGNAL: &str = "stop";
 const STOPPED_TURN_MESSAGE: &str = "Current turn stopped. No further tool calls were made.";
@@ -246,7 +247,13 @@ pub async fn run_agent_execution(
     limits: AgentExecutionLimits,
     stream: Option<UnboundedSender<AgentExecutionStreamEvent>>,
 ) -> Result<AgentExecutionOutput, AgentExecutionError> {
-    let tool_defs = tools.definitions();
+    let mut tool_defs = tools.definitions();
+    let force_required_tool =
+        extract_required_tool_name(&input.tool_metadata).is_some_and(|name| {
+            let before = tool_defs.len();
+            tool_defs.retain(|tool| tool.name == name);
+            tool_defs.len() == 1 && before > 0
+        });
     let mut llm_messages = Vec::new();
     if let Some(system_prompt) = extract_system_prompt(&input.tool_metadata) {
         llm_messages.push(LlmMessage {
@@ -300,7 +307,11 @@ pub async fn run_agent_execution(
             include: None,
             store: None,
             parallel_tool_calls: None,
-            tool_choice: extract_tool_choice(&input.tool_metadata),
+            tool_choice: if force_required_tool {
+                Some(Value::String("required".to_string()))
+            } else {
+                extract_tool_choice(&input.tool_metadata)
+            },
             text: None,
             reasoning: None,
             truncation: None,
@@ -461,6 +472,14 @@ fn extract_tool_choice(metadata: &BTreeMap<String, Value>) -> Option<Value> {
         .get(META_TOOL_CHOICE_KEY)
         .cloned()
         .filter(|value| !value.is_null())
+}
+
+fn extract_required_tool_name(metadata: &BTreeMap<String, Value>) -> Option<&str> {
+    metadata
+        .get(META_REQUIRED_TOOL_NAME_KEY)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn is_supported_history_role(role: &str) -> bool {
@@ -694,6 +713,7 @@ mod tests {
     struct CaptureFirstMessageProvider {
         first_message_role: Arc<Mutex<Option<String>>>,
         tool_choice: Arc<Mutex<Option<Value>>>,
+        tool_names: Arc<Mutex<Vec<String>>>,
     }
 
     #[async_trait]
@@ -709,7 +729,7 @@ mod tests {
         async fn chat(
             &self,
             messages: Vec<LlmMessage>,
-            _tools: Vec<ToolDefinition>,
+            tools: Vec<ToolDefinition>,
             _model: Option<&str>,
             options: ChatOptions,
         ) -> Result<LlmResponse, LlmError> {
@@ -722,6 +742,11 @@ mod tests {
                 .tool_choice
                 .lock()
                 .expect("mutex poisoned for tool choice") = options.tool_choice;
+            *self
+                .tool_names
+                .lock()
+                .expect("mutex poisoned for tool names") =
+                tools.into_iter().map(|tool| tool.name).collect();
             Ok(LlmResponse {
                 content: "ok".to_string(),
                 reasoning: None,
@@ -807,6 +832,83 @@ mod tests {
             .expect("mutex poisoned for tool choice assert")
             .clone();
         assert_eq!(tool_choice, Some(Value::String("required".to_string())));
+    }
+
+    #[derive(Default)]
+    struct MultiToolExecutor;
+
+    #[async_trait]
+    impl ToolExecutor for MultiToolExecutor {
+        fn definitions(&self) -> Vec<ToolDefinition> {
+            vec![
+                ToolDefinition {
+                    name: "echo_tool".to_string(),
+                    description: "echo".to_string(),
+                    parameters: serde_json::json!({"type":"object"}),
+                },
+                ToolDefinition {
+                    name: "other_tool".to_string(),
+                    description: "other".to_string(),
+                    parameters: serde_json::json!({"type":"object"}),
+                },
+            ]
+        }
+
+        async fn execute(
+            &self,
+            _name: &str,
+            _arguments: Value,
+            _session_key: &str,
+            _metadata: &BTreeMap<String, Value>,
+        ) -> ToolInvocationResult {
+            ToolInvocationResult::success("tool-result".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_limits_tools_when_required_tool_name_is_set() {
+        let provider = CaptureFirstMessageProvider::default();
+        let tools = MultiToolExecutor;
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            META_REQUIRED_TOOL_NAME_KEY.to_string(),
+            Value::String("echo_tool".to_string()),
+        );
+
+        let _ = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "hello".to_string(),
+                user_media: Vec::new(),
+                conversation_history: Vec::new(),
+                session_key: "s1".to_string(),
+                tool_metadata: metadata,
+                model: None,
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 2,
+                max_tool_calls: 2,
+                token_budget: 0,
+            },
+            None,
+        )
+        .await
+        .expect("agent execution should succeed");
+
+        let tool_choice = provider
+            .tool_choice
+            .lock()
+            .expect("mutex poisoned for tool choice assert")
+            .clone();
+        let tool_names = provider
+            .tool_names
+            .lock()
+            .expect("mutex poisoned for tool names assert")
+            .clone();
+
+        assert_eq!(tool_choice, Some(Value::String("required".to_string())));
+        assert_eq!(tool_names, vec!["echo_tool".to_string()]);
     }
 
     #[derive(Default)]

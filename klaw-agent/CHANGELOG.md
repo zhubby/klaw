@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-25
+
+### Changed
+- `run_agent_execution` now honors `agent.required_tool_name` metadata by narrowing the advertised tool list to a single named tool and forcing `tool_choice="required"` for that turn, preventing manager-style requests from succeeding without an actual tool call
+
 ## 2026-03-24
 
 ### Changed

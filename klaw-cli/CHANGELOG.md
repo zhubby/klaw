@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-25
+
+### Fixed
+
+- runtime now detects direct and follow-up cron / heartbeat management requests and injects `agent.required_tool_name`, so schedule mutations are forced through the corresponding manager tool instead of allowing text-only fake success replies
+
 ## 2026-03-24
 
 ### Added

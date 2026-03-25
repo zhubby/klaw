@@ -296,6 +296,7 @@ impl OpenAiCompatibleProvider {
             max_tokens: options.max_tokens,
             stream: None,
             user: options.user,
+            tool_choice: options.tool_choice,
             messages: messages
                 .into_iter()
                 .map(|m| OpenAiMessage {
@@ -426,6 +427,7 @@ impl OpenAiCompatibleProvider {
             max_tokens: options.max_tokens,
             stream: Some(true),
             user: options.user,
+            tool_choice: options.tool_choice,
             messages: messages
                 .into_iter()
                 .map(|m| OpenAiMessage {
@@ -1271,6 +1273,8 @@ struct OpenAiChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<OpenAiToolDefinition>>,
 }
 
@@ -1703,6 +1707,27 @@ mod tests {
         assert_eq!(usage.total_tokens, 27);
         assert_eq!(usage.cached_input_tokens, Some(4));
         assert_eq!(usage.reasoning_tokens, Some(1));
+    }
+
+    #[test]
+    fn chat_completion_request_serializes_tool_choice_when_present() {
+        let request = OpenAiChatCompletionRequest {
+            model: "test-model".to_string(),
+            messages: Vec::new(),
+            temperature: 0.2,
+            max_tokens: None,
+            stream: None,
+            user: None,
+            tool_choice: Some(serde_json::json!("required")),
+            tools: None,
+        };
+
+        let value = serde_json::to_value(request).expect("request should serialize");
+
+        assert_eq!(
+            value.get("tool_choice"),
+            Some(&serde_json::json!("required"))
+        );
     }
 
     #[test]

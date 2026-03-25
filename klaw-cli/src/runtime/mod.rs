@@ -338,6 +338,204 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+fn maybe_inject_required_manager_tool(
+    runtime: &RuntimeBundle,
+    input: &str,
+    recent_history: &[ChatRecord],
+    metadata: &mut BTreeMap<String, Value>,
+) {
+    if metadata.contains_key(META_TOOL_CHOICE_KEY)
+        || metadata.contains_key("agent.required_tool_name")
+    {
+        return;
+    }
+
+    let Some(tool_name) = infer_required_manager_tool_name(runtime, input, recent_history) else {
+        return;
+    };
+    metadata.insert(
+        "agent.required_tool_name".to_string(),
+        Value::String(tool_name.to_string()),
+    );
+}
+
+fn infer_required_manager_tool_name(
+    runtime: &RuntimeBundle,
+    input: &str,
+    recent_history: &[ChatRecord],
+) -> Option<&'static str> {
+    let input_lower = input.trim().to_ascii_lowercase();
+    if input_lower.is_empty() || is_manager_capability_question(&input_lower) {
+        return None;
+    }
+
+    let recent_context = recent_history
+        .iter()
+        .rev()
+        .take(6)
+        .map(|record| record.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let recent_lower = recent_context.to_ascii_lowercase();
+
+    if tool_is_available(runtime, "cron_manager")
+        && should_require_cron_manager(&input_lower, &recent_lower)
+    {
+        return Some("cron_manager");
+    }
+    if tool_is_available(runtime, "heartbeat_manager")
+        && should_require_heartbeat_manager(&input_lower, &recent_lower)
+    {
+        return Some("heartbeat_manager");
+    }
+    None
+}
+
+fn tool_is_available(runtime: &RuntimeBundle, tool_name: &str) -> bool {
+    runtime
+        .startup_report
+        .tool_names
+        .iter()
+        .any(|name| name == tool_name)
+}
+
+fn should_require_cron_manager(input_lower: &str, recent_lower: &str) -> bool {
+    let domain_in_input = contains_any(input_lower, CRON_DOMAIN_TERMS);
+    let domain_in_recent = contains_any(recent_lower, CRON_DOMAIN_TERMS)
+        || contains_any(recent_lower, CRON_CONTEXT_TERMS);
+    let direct_request = contains_any(input_lower, MANAGER_ACTION_TERMS)
+        && (domain_in_input || contains_any(input_lower, SCHEDULE_HINT_TERMS));
+    let contextual_adjustment = domain_in_recent && contains_any(input_lower, CRON_FOLLOW_UP_TERMS);
+    direct_request || contextual_adjustment
+}
+
+fn should_require_heartbeat_manager(input_lower: &str, recent_lower: &str) -> bool {
+    let domain_in_input = contains_any(input_lower, HEARTBEAT_DOMAIN_TERMS);
+    let domain_in_recent = contains_any(recent_lower, HEARTBEAT_DOMAIN_TERMS);
+    let direct_request = contains_any(input_lower, MANAGER_ACTION_TERMS)
+        && (domain_in_input || contains_any(input_lower, HEARTBEAT_HINT_TERMS));
+    let contextual_adjustment =
+        domain_in_recent && contains_any(input_lower, HEARTBEAT_FOLLOW_UP_TERMS);
+    direct_request || contextual_adjustment
+}
+
+fn is_manager_capability_question(input_lower: &str) -> bool {
+    contains_any(
+        input_lower,
+        &[
+            "有哪些能力",
+            "什么能力",
+            "哪些能力",
+            "怎么用",
+            "是什么",
+            "what can",
+            "capabilities",
+            "ability",
+        ],
+    )
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
+
+const MANAGER_ACTION_TERMS: &[&str] = &[
+    "create",
+    "add",
+    "new",
+    "update",
+    "modify",
+    "change",
+    "adjust",
+    "set",
+    "delete",
+    "remove",
+    "enable",
+    "disable",
+    "pause",
+    "resume",
+    "list",
+    "show",
+    "get",
+    "query",
+    "run now",
+    "创建",
+    "新增",
+    "添加",
+    "新建",
+    "更新",
+    "修改",
+    "改成",
+    "改为",
+    "调整",
+    "设置",
+    "删除",
+    "移除",
+    "启用",
+    "禁用",
+    "暂停",
+    "恢复",
+    "查看",
+    "列出",
+    "查询",
+    "立即执行",
+];
+
+const SCHEDULE_HINT_TERMS: &[&str] = &[
+    "cron",
+    "schedule",
+    "expr",
+    "表达式",
+    "调度",
+    "频率",
+    "每分钟",
+    "每小时",
+    "每天",
+    "每周",
+    "每月",
+    "任务",
+];
+
+const CRON_DOMAIN_TERMS: &[&str] = &[
+    "cron",
+    "定时任务",
+    "计划任务",
+    "调度任务",
+    "调度表达式",
+    "运行记录",
+];
+
+const CRON_CONTEXT_TERMS: &[&str] = &[
+    "任务 id",
+    "schedule_expr",
+    "已更新定时任务",
+    "已成功创建定时任务",
+];
+
+const CRON_FOLLOW_UP_TERMS: &[&str] = &[
+    "重新",
+    "调整",
+    "改",
+    "更新",
+    "表达式",
+    "频率",
+    "时间",
+    "交易时间",
+    "开盘",
+    "收盘",
+    "分钟",
+    "小时",
+    "每天",
+];
+
+const HEARTBEAT_DOMAIN_TERMS: &[&str] = &["heartbeat", "心跳", "会话唤醒", "提醒"];
+
+const HEARTBEAT_HINT_TERMS: &[&str] = &["every", "prompt", "提醒", "唤醒", "间隔", "频率"];
+
+const HEARTBEAT_FOLLOW_UP_TERMS: &[&str] = &[
+    "重新", "调整", "改", "提醒", "唤醒", "间隔", "频率", "prompt",
+];
+
 fn extract_llm_usage_records(
     metadata: &BTreeMap<String, serde_json::Value>,
 ) -> Vec<PersistedLlmUsageMetadata> {
@@ -1937,6 +2135,8 @@ pub async fn submit_and_get_output(
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let sessions = session_manager(runtime);
     let full_history = sessions.read_chat_records(&session_key).await?;
+    let mut request_metadata = request_metadata;
+    maybe_inject_required_manager_tool(runtime, &input, &full_history, &mut request_metadata);
     let summary = maybe_refresh_summary(
         runtime,
         &session_key,
@@ -2075,6 +2275,8 @@ pub async fn submit_and_stream_output(
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let sessions = session_manager(runtime);
     let full_history = sessions.read_chat_records(&session_key).await?;
+    let mut request_metadata = request_metadata;
+    maybe_inject_required_manager_tool(runtime, &input, &full_history, &mut request_metadata);
     let summary = maybe_refresh_summary(
         runtime,
         &session_key,
@@ -2442,10 +2644,10 @@ mod tests {
         build_new_session_bootstrap_user_message, build_unavailable_provider,
         compression_trigger_interval, configured_default_model, extract_skill_short_description,
         first_arg_token, format_approve_already_handled_message,
-        format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
-        parse_im_command, resolve_new_session_target_from_config, resolve_session_route,
-        should_emit_outbound, should_trigger_compression, spawn_llm_audit_writer,
-        trim_conversation_history,
+        format_new_session_started_message, handle_im_command, infer_required_manager_tool_name,
+        normalize_runtime_provider_override, parse_im_command,
+        resolve_new_session_target_from_config, resolve_session_route, should_emit_outbound,
+        should_trigger_compression, spawn_llm_audit_writer, trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_config::{AppConfig, ModelProviderConfig};
@@ -2831,6 +3033,68 @@ A .docx file is a ZIP archive containing XML files.
         let err = normalize_runtime_provider_override(&providers, "openai", Some("missing"))
             .expect_err("unknown provider should fail");
         assert!(err.to_string().contains("unknown runtime provider"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn infer_required_manager_tool_name_matches_direct_cron_request() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let mut runtime = build_test_runtime(provider).await;
+        runtime.startup_report.tool_names = vec!["cron_manager".to_string()];
+
+        let inferred = infer_required_manager_tool_name(
+            &runtime,
+            "请修改定时任务 stock-snapshot-10m 的调度表达式并启用",
+            &[],
+        );
+
+        assert_eq!(inferred, Some("cron_manager"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn infer_required_manager_tool_name_matches_cron_follow_up_context() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let mut runtime = build_test_runtime(provider).await;
+        runtime.startup_report.tool_names = vec!["cron_manager".to_string()];
+        let history = vec![ChatRecord::new(
+            "assistant",
+            "已更新定时任务：任务 ID：stock-snapshot-10m，新调度表达式：*/10 9-15 * * *",
+            None,
+        )];
+
+        let inferred = infer_required_manager_tool_name(
+            &runtime,
+            "股市交易时间是 9:30-11:30 和 13:00-15:00",
+            &history,
+        );
+
+        assert_eq!(inferred, Some("cron_manager"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn infer_required_manager_tool_name_skips_capability_questions() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let mut runtime = build_test_runtime(provider).await;
+        runtime.startup_report.tool_names =
+            vec!["cron_manager".to_string(), "heartbeat_manager".to_string()];
+
+        let inferred = infer_required_manager_tool_name(&runtime, "cron_manager 有哪些能力", &[]);
+
+        assert_eq!(inferred, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn infer_required_manager_tool_name_matches_heartbeat_request() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let mut runtime = build_test_runtime(provider).await;
+        runtime.startup_report.tool_names = vec!["heartbeat_manager".to_string()];
+
+        let inferred = infer_required_manager_tool_name(
+            &runtime,
+            "请把这个会话的 heartbeat 提醒改成每 30 分钟",
+            &[],
+        );
+
+        assert_eq!(inferred, Some("heartbeat_manager"));
     }
 
     #[test]
