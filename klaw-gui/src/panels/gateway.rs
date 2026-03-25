@@ -3,7 +3,7 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_seconds;
 use crate::{
     GatewayStatusSnapshot, request_gateway_status, request_restart_gateway,
-    request_set_tailscale_mode,
+    request_set_tailscale_mode, request_start_gateway,
 };
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayConfig, TailscaleMode,
@@ -189,6 +189,7 @@ impl GatewayPanel {
         }) {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
+                self.refresh(notifications, false);
                 self.config_window_open = false;
                 let running = self.status.as_ref().map(|s| s.running).unwrap_or(false);
                 if running {
@@ -210,9 +211,28 @@ impl GatewayPanel {
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
+                self.refresh(notifications, false);
                 notifications.success("Config reloaded from disk");
             }
             Err(err) => notifications.error(format!("Reload failed: {err}")),
+        }
+    }
+
+    fn start(&mut self, notifications: &mut NotificationCenter) {
+        match request_start_gateway() {
+            Ok(status) => {
+                let message = status
+                    .info
+                    .as_ref()
+                    .map(|info| format!("Gateway started at {}", info.ws_url))
+                    .unwrap_or_else(|| "Gateway started".to_string());
+                self.status = Some(status);
+                notifications.success(message);
+            }
+            Err(err) => {
+                notifications.error(format!("Failed to start gateway: {err}"));
+                self.refresh(notifications, false);
+            }
         }
     }
 
@@ -374,6 +394,16 @@ impl PanelRenderer for GatewayPanel {
 
             if ui.button("Config").clicked() {
                 self.open_config_window();
+            }
+
+            if ui
+                .add_enabled(
+                    !status.transitioning && !status.running,
+                    egui::Button::new("Start"),
+                )
+                .clicked()
+            {
+                self.start(notifications);
             }
 
             if ui

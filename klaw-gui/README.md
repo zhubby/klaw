@@ -31,7 +31,7 @@
   - voice (config-bound voice settings + microphone transcription test)
   - cron (db-bound list + add/edit window)
   - heartbeat (db-backed heartbeat list + add/edit/delete/run-now)
-  - gateway (runtime-backed gateway status, enable/disable, restart, and base address display)
+- gateway (runtime-backed gateway status, disk-config reload sync, start, restart, and base address display)
   - webhook (db-backed webhook event list, filters, detail inspection, and `gateway.webhook` config editing)
   - mcp (config-bound list + add/edit window)
   - skill (installed skill management with list/detail/remove/sync actions)

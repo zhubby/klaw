@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-03-25
+
+### Fixed
+
+- `klaw gui` 的 gateway 状态查询现在会在返回前同步磁盘最新配置中的 `enabled` / `auth` / `tailscale` 元数据，避免 `Gateway` 面板在配置 reload 后继续显示旧状态
+- gateway runtime 的配置持久化 helper 现在统一走 `ConfigStore::update_config`，避免 stale snapshot 整体回写覆盖其他已落盘的配置修改
+
+### Added
+
+- GUI runtime 新增 `StartGateway` 命令，允许 `Gateway` 面板按当前磁盘配置直接启动 gateway，而不必先走 restart/enable 流程
+
 ## 2026-03-24
 
 ### Added

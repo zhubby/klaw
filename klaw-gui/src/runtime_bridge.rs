@@ -47,6 +47,9 @@ pub enum RuntimeCommand {
     GetGatewayStatus {
         response: mpsc::Sender<GatewayStatusSnapshot>,
     },
+    StartGateway {
+        response: mpsc::Sender<Result<GatewayStatusSnapshot, String>>,
+    },
     SetGatewayEnabled {
         enabled: bool,
         response: mpsc::Sender<Result<GatewayStatusSnapshot, String>>,
@@ -243,6 +246,24 @@ pub fn request_gateway_status() -> Result<GatewayStatusSnapshot, String> {
     response_rx
         .recv()
         .map_err(|_| "runtime command response channel closed".to_string())
+}
+
+pub fn request_start_gateway() -> Result<GatewayStatusSnapshot, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::StartGateway {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    response_rx
+        .recv()
+        .map_err(|_| "runtime command response channel closed".to_string())?
 }
 
 pub fn request_set_gateway_enabled(enabled: bool) -> Result<GatewayStatusSnapshot, String> {

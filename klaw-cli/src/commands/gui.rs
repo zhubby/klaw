@@ -192,7 +192,14 @@ impl GuiCommand {
                                                 let _ = response.send(env_check);
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetGatewayStatus { response }) => {
+                                                if let Err(err) = gateway_manager.refresh_from_store() {
+                                                    warn!(error = %err, "failed to refresh gateway config metadata");
+                                                }
                                                 let _ = response.send(gateway_manager.snapshot());
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::StartGateway { response }) => {
+                                                let result = gateway_manager.start_from_store().await;
+                                                let _ = response.send(result);
                                             }
                                             Some(klaw_gui::RuntimeCommand::SetGatewayEnabled { enabled, response }) => {
                                                 let result = gateway_manager.set_enabled(enabled).await;

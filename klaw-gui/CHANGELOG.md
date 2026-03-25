@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `Gateway` 面板的 `Reload` 现在会在重新加载磁盘配置后同步刷新运行时 gateway 状态摘要，避免 `Configured` / `Auth` / `Tailscale` 继续停留在旧快照
 - `Profile Prompt` 面板 `Workspace Markdown Files` 表格右键菜单新增橙色 `Reset` 操作，仅对内置模板文件显示，并在确认后将目标文件重置为默认模板并同步已打开的编辑/预览状态
 - `Provider`、`Memory`、`Gateway`、`Channel`、`MCP`、`Tool`、`Voice`、`Webhook`、`Skills Registry` 与 `Skills Manager` 面板现在都会基于磁盘最新配置做局部更新，避免 stale snapshot 在后续保存时把已落盘的 provider 或其他配置覆盖掉
 - `Model Provider` 面板表格现在在内容超出宽度时提供横向滚动、在可视高度不足时提供纵向滚动，避免长列内容被截断后难以浏览
@@ -19,6 +20,8 @@
 - GUI startup no longer runs remote retention cleanup when sync is enabled but automatic backup is disabled
 
 ### Added
+
+- `Gateway` 面板新增 `Start` 按钮，用于按当前磁盘配置启动 gateway；当服务已运行或正在过渡时按钮会自动禁用
 
 - `Profile Prompt` 面板新增只读 `System Prompt Preview` 区块，使用 markdown 高亮渲染当前 runtime system prompt，并以固定剩余高度显示、内容过长时在框内滚动
 
