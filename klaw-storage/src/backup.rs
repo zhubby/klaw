@@ -407,6 +407,14 @@ impl BackupService {
         Ok(items)
     }
 
+    pub async fn latest_remote_snapshot(&self) -> Result<Option<SnapshotListItem>, StorageError> {
+        self.reject_legacy_snapshot_layout().await?;
+        let Some(manifest) = self.load_latest_manifest().await? else {
+            return Ok(None);
+        };
+        Ok(Some(SnapshotListItem::from_manifest(&manifest)))
+    }
+
     pub async fn cleanup_remote_snapshots(&self, keep_last: u32) -> Result<(), StorageError> {
         self.reject_legacy_snapshot_layout().await?;
 
@@ -837,14 +845,19 @@ impl BackupService {
     }
 
     async fn load_all_remote_manifests(&self) -> Result<Vec<SyncManifest>, StorageError> {
-        let mut manifests = self
-            .list_remote_snapshots()
+        let manifest_ids = self
+            .store
+            .list_keys(&manifests_prefix())
             .await?
             .into_iter()
-            .map(|item| item.manifest_id)
+            .filter_map(|key| {
+                key.strip_prefix("manifests/")
+                    .and_then(|value| value.strip_suffix(".json"))
+                    .map(str::to_string)
+            })
             .collect::<Vec<_>>();
-        let mut out = Vec::with_capacity(manifests.len());
-        for manifest_id in manifests.drain(..) {
+        let mut out = Vec::with_capacity(manifest_ids.len());
+        for manifest_id in manifest_ids {
             out.push(self.load_manifest(&manifest_id).await?);
         }
         out.sort_by(|left, right| {
@@ -1554,6 +1567,18 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockStore {
         objects: Mutex<BTreeMap<String, Vec<u8>>>,
+        get_counts: Mutex<BTreeMap<String, usize>>,
+    }
+
+    impl MockStore {
+        fn get_count(&self, key: &str) -> usize {
+            self.get_counts
+                .lock()
+                .expect("get_counts lock")
+                .get(key)
+                .copied()
+                .unwrap_or(0)
+        }
     }
 
     #[async_trait]
@@ -1572,6 +1597,12 @@ mod tests {
         }
 
         async fn get_bytes(&self, key: &str) -> Result<Vec<u8>, StorageError> {
+            self.get_counts
+                .lock()
+                .expect("get_counts lock")
+                .entry(key.to_string())
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
             self.objects
                 .lock()
                 .expect("objects lock")
@@ -1621,6 +1652,21 @@ mod tests {
         BackupService::with_store(
             paths,
             Arc::new(MockStore::default()),
+            Arc::new(DefaultDatabaseSnapshotExporter),
+            device_id.to_string(),
+        )
+    }
+
+    async fn create_service_with_mock_store(
+        name: &str,
+        device_id: &str,
+        store: Arc<MockStore>,
+    ) -> BackupService {
+        let paths = StoragePaths::from_root(test_root(name));
+        paths.ensure_dirs().await.expect("ensure dirs");
+        BackupService::with_store(
+            paths,
+            store,
             Arc::new(DefaultDatabaseSnapshotExporter),
             device_id.to_string(),
         )
@@ -2085,5 +2131,113 @@ mod tests {
             .await
             .expect("sync after tombstone");
         assert!(!path_exists(&service.paths.skills_dir.join("note.txt")).await);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn latest_remote_snapshot_reads_only_latest_manifest() {
+        let store = Arc::new(MockStore::default());
+        let service =
+            create_service_with_mock_store("latest-remote", "device-a", store.clone()).await;
+        let older_manifest = SyncManifest {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            manifest_id: "manifest-older".to_string(),
+            parent_manifest_id: None,
+            created_at: 1_000,
+            device_id: "device-a".to_string(),
+            app_version: "test".to_string(),
+            mode: SnapshotMode::ManifestVersioned,
+            included_items: vec![BackupItem::Skills],
+            entries: Vec::new(),
+        };
+        let latest_manifest = SyncManifest {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            manifest_id: "manifest-latest".to_string(),
+            parent_manifest_id: Some("manifest-older".to_string()),
+            created_at: 2_000,
+            device_id: "device-b".to_string(),
+            app_version: "test".to_string(),
+            mode: SnapshotMode::ManifestVersioned,
+            included_items: vec![BackupItem::Skills],
+            entries: Vec::new(),
+        };
+        store
+            .put_bytes(
+                &manifest_object_key(&older_manifest.manifest_id),
+                serde_json::to_vec_pretty(&older_manifest).expect("older manifest json"),
+                "application/json",
+            )
+            .await
+            .expect("put older manifest");
+        store
+            .put_bytes(
+                &manifest_object_key(&latest_manifest.manifest_id),
+                serde_json::to_vec_pretty(&latest_manifest).expect("latest manifest json"),
+                "application/json",
+            )
+            .await
+            .expect("put latest manifest");
+        store
+            .put_bytes(
+                &latest_object_key(),
+                serde_json::to_vec_pretty(&LatestRef::from_manifest(&latest_manifest))
+                    .expect("latest ref json"),
+                "application/json",
+            )
+            .await
+            .expect("put latest ref");
+
+        let snapshot = service
+            .latest_remote_snapshot()
+            .await
+            .expect("latest snapshot should load")
+            .expect("latest snapshot should exist");
+
+        assert_eq!(snapshot.manifest_id, latest_manifest.manifest_id);
+        assert_eq!(store.get_count(&latest_object_key()), 1);
+        assert_eq!(
+            store.get_count(&manifest_object_key(&older_manifest.manifest_id)),
+            0
+        );
+        assert_eq!(
+            store.get_count(&manifest_object_key(&latest_manifest.manifest_id)),
+            1
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn load_all_remote_manifests_reads_each_manifest_once() {
+        let store = Arc::new(MockStore::default());
+        let service =
+            create_service_with_mock_store("load-all-manifests", "device-a", store.clone()).await;
+        for (manifest_id, created_at) in [("manifest-a", 1_000_i64), ("manifest-b", 2_000_i64)] {
+            let manifest = SyncManifest {
+                schema_version: MANIFEST_SCHEMA_VERSION,
+                manifest_id: manifest_id.to_string(),
+                parent_manifest_id: None,
+                created_at,
+                device_id: "device-a".to_string(),
+                app_version: "test".to_string(),
+                mode: SnapshotMode::ManifestVersioned,
+                included_items: vec![BackupItem::Skills],
+                entries: Vec::new(),
+            };
+            store
+                .put_bytes(
+                    &manifest_object_key(manifest_id),
+                    serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+                    "application/json",
+                )
+                .await
+                .expect("put manifest");
+        }
+
+        let manifests = service
+            .load_all_remote_manifests()
+            .await
+            .expect("manifests should load");
+
+        assert_eq!(manifests.len(), 2);
+        assert_eq!(store.get_count(&manifest_object_key("manifest-a")), 1);
+        assert_eq!(store.get_count(&manifest_object_key("manifest-b")), 1);
     }
 }

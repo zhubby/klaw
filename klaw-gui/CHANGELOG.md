@@ -8,6 +8,8 @@
 - `Profile Prompt` 面板的 `System Prompt Preview` 改为后台加载，避免首次打开或手动刷新时阻塞 GUI 渲染线程
 - `Profile Prompt` 面板的 `Workspace Markdown Files` 与 `System Prompt Preview` 区块现在会按分配高度填充，窗口变高时不再留下异常空隙
 - `Profile Prompt` 面板 `Workspace Markdown Files` 列表中的 `Modified` 时间现在复用 GUI 统一时间格式，显示为可读日期而不是 Unix 秒时间戳
+- GUI startup sync checks now read only the latest remote manifest needed for update detection instead of loading the full remote manifest history
+- GUI startup no longer runs remote retention cleanup when sync is enabled but automatic backup is disabled
 
 ### Added
 

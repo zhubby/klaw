@@ -40,7 +40,8 @@
 - `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`
 - `BackupService` stages managed SQLite/filesystem state into versioned manifests plus content-addressed blobs, uploads only missing blobs, and restores historical manifests after checksum verification
 - `BackupService` keeps `latest.json` as the current-manifest ref while preserving `manifests/<id>.json` history for restore and GC
+- `BackupService` now exposes a lightweight latest-manifest lookup for GUI startup checks so clients can detect remote updates without listing full manifest history
 - `BackupService` can emit progress updates for remote reconciliation, manifest preparation, blob upload, manifest publish, and retention cleanup so callers can surface live sync state
-- retention cleanup keeps only the configured latest manifest count, refreshes `latest.json`, and removes unreferenced blobs after pruning
+- retention cleanup keeps only the configured latest manifest count, refreshes `latest.json`, removes unreferenced blobs after pruning, and no longer reloads the same manifest set twice while building its cleanup view
 - S3 snapshot config accepts either direct credentials (`access_key`, `secret_key`, `session_token`) or environment-variable indirection, and empty device IDs normalize to the local hostname
 - custom S3 endpoints such as R2 must provide explicit credentials or credential env names instead of relying on AWS shared-profile discovery
