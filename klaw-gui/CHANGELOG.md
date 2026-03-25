@@ -6,6 +6,7 @@
 
 - `Gateway` 面板现在会独立显示本机 Tailscale 主机状态，包括连接状态、版本、backend state、DNS 名称与 tailnet URL，即使 gateway 尚未运行也能先做环境排查
 - `Voice` 面板新增 `TTS Test` 页签，支持输入文本走当前 TTS provider 生成语音，落盘到系统 tmp 目录，并在 GUI 内直接播放/停止生成音频
+- `Webhook` 面板新增 prompt 模板管理：支持在 `hooks/prompts` 下创建 Markdown 模板、固定高度列表检查全部模板、右键 `View` / `Trick` / 红色 `Delete`，以及基于当前 gateway/tailscale 运行态生成 `/webhook/agents` 请求地址
 
 ### Changed
 

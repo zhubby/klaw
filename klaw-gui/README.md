@@ -32,7 +32,7 @@
   - cron (db-bound list + add/edit window)
   - heartbeat (db-backed heartbeat list + add/edit/delete/run-now)
 - gateway (runtime-backed gateway status, disk-config reload sync, start, restart, base address display, independent Tailscale host status, background gateway/tailscale actions, explicit Tailscale mode apply flow, and Tailscale-only refresh/apply guards when the local service is unavailable)
-  - webhook (db-backed webhook event list, filters, detail inspection, and `gateway.webhook.events` / `gateway.webhook.agents` config editing)
+  - webhook (db-backed webhook event list, filters, detail inspection, `gateway.webhook.events` / `gateway.webhook.agents` config editing, local `hooks/prompts/*.md` template management, and generated `/webhook/agents` trick URLs based on current gateway/tailscale runtime state)
   - mcp (config-bound list + add/edit window)
   - skill (installed skill management with list/detail/remove/sync actions)
   - skills registry (config-bound list + add/edit window)
