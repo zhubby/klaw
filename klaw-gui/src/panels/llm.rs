@@ -259,7 +259,6 @@ impl PanelRenderer for LlmPanel {
                     .column(Column::auto().at_least(40.0))
                     .column(Column::auto().at_least(40.0))
                     .column(Column::auto().at_least(60.0))
-                    .column(Column::auto().at_least(100.0))
                     .column(Column::remainder().at_least(100.0))
                     .sense(egui::Sense::click())
                     .header(22.0, |mut header| {
@@ -289,12 +288,6 @@ impl PanelRenderer for LlmPanel {
                         });
                         header.col(|ui| {
                             ui.strong("Status");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Req ID");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Resp ID");
                         });
                     })
                     .body(|body| {
@@ -331,12 +324,6 @@ impl PanelRenderer for LlmPanel {
                                         .color(color)
                                         .strong(),
                                 );
-                            });
-                            row.col(|ui| {
-                                ui.label(item.provider_request_id.as_deref().unwrap_or(""));
-                            });
-                            row.col(|ui| {
-                                ui.label(item.provider_response_id.as_deref().unwrap_or(""));
                             });
 
                             let response = row.response();
