@@ -305,22 +305,18 @@ struct SyncSupervisor {
     last_poll_at: Option<Instant>,
     startup_check_completed: bool,
     startup_check_running: bool,
-    retention_check_completed: bool,
     task_rx: Option<Receiver<SyncSupervisorMessage>>,
 }
 
 enum SyncSupervisorMessage {
     StartupCheckFinished {
-        snapshots: Vec<SnapshotListItem>,
+        latest_snapshot: Option<SnapshotListItem>,
         local_last_id: Option<String>,
         local_last_at: Option<i64>,
     },
     AutoBackupFinished {
         manifest_id: String,
         created_at: i64,
-    },
-    RetentionCleanupFinished {
-        snapshots: Vec<SnapshotListItem>,
     },
     Failed {
         kind: SyncRuntimeTaskKind,
@@ -345,37 +341,32 @@ impl SyncSupervisor {
             settings.sync.last_manifest_id.clone(),
             settings.sync.last_sync_at,
         );
-        if !self.startup_check_completed
-            && !self.startup_check_running
-            && !self.task_in_progress()
-            && sync_ready(&settings)
-        {
-            self.startup_check_running = true;
-            self.spawn_task(SyncRuntimeTaskKind::StartupCheck, settings);
-            return;
-        }
-
-        if !self.retention_check_completed && !self.task_in_progress() && sync_ready(&settings) {
-            self.retention_check_completed = true;
-            self.spawn_task(SyncRuntimeTaskKind::RetentionCleanup, settings);
-            return;
-        }
-
-        if self.task_in_progress() || !sync_ready(&settings) || !settings.sync.schedule.auto_backup
-        {
-            return;
-        }
-
-        let interval_ms = i64::from(settings.sync.schedule.interval_minutes.max(1)) * 60 * 1000;
         let now_ms = OffsetDateTime::now_utc().unix_timestamp() * 1000;
+        if let Some(kind) = self.next_task(&settings, now_ms) {
+            if kind == SyncRuntimeTaskKind::StartupCheck {
+                self.startup_check_running = true;
+            }
+            self.spawn_task(kind, settings);
+        }
+    }
+
+    fn next_task(&self, settings: &AppSettings, now_ms: i64) -> Option<SyncRuntimeTaskKind> {
+        if self.task_in_progress() || !sync_ready(settings) {
+            return None;
+        }
+        if !self.startup_check_completed && !self.startup_check_running {
+            return Some(SyncRuntimeTaskKind::StartupCheck);
+        }
+        if !settings.sync.schedule.auto_backup {
+            return None;
+        }
+        let interval_ms = i64::from(settings.sync.schedule.interval_minutes.max(1)) * 60 * 1000;
         let should_backup = settings
             .sync
             .last_sync_at
             .map(|last| now_ms.saturating_sub(last) >= interval_ms)
             .unwrap_or(true);
-        if should_backup {
-            self.spawn_task(SyncRuntimeTaskKind::AutoBackup, settings);
-        }
+        should_backup.then_some(SyncRuntimeTaskKind::AutoBackup)
     }
 
     fn task_in_progress(&self) -> bool {
@@ -386,8 +377,8 @@ impl SyncSupervisor {
         let label = match kind {
             SyncRuntimeTaskKind::StartupCheck => "Checking remote manifests",
             SyncRuntimeTaskKind::AutoBackup => "Automatic manifest sync",
-            SyncRuntimeTaskKind::RetentionCleanup => "Cleaning up remote manifests",
             SyncRuntimeTaskKind::ManualBackup
+            | SyncRuntimeTaskKind::RetentionCleanup
             | SyncRuntimeTaskKind::RefreshRemoteSnapshots
             | SyncRuntimeTaskKind::RestoreSnapshot => return,
         };
@@ -400,8 +391,8 @@ impl SyncSupervisor {
             let result = match kind {
                 SyncRuntimeTaskKind::StartupCheck => run_startup_check_task(&settings),
                 SyncRuntimeTaskKind::AutoBackup => run_auto_backup_task(&settings),
-                SyncRuntimeTaskKind::RetentionCleanup => run_retention_cleanup_task(&settings),
                 SyncRuntimeTaskKind::ManualBackup
+                | SyncRuntimeTaskKind::RetentionCleanup
                 | SyncRuntimeTaskKind::RefreshRemoteSnapshots
                 | SyncRuntimeTaskKind::RestoreSnapshot => {
                     Err("unsupported sync supervisor task".to_string())
@@ -425,7 +416,6 @@ impl SyncSupervisor {
                 self.startup_check_running = false;
                 sync_runtime_finish_task(SyncRuntimeTaskKind::StartupCheck);
                 sync_runtime_finish_task(SyncRuntimeTaskKind::AutoBackup);
-                sync_runtime_finish_task(SyncRuntimeTaskKind::RetentionCleanup);
                 return;
             }
         };
@@ -433,16 +423,14 @@ impl SyncSupervisor {
 
         match message {
             SyncSupervisorMessage::StartupCheckFinished {
-                snapshots,
+                latest_snapshot,
                 local_last_id,
                 local_last_at,
             } => {
                 self.startup_check_running = false;
                 self.startup_check_completed = true;
                 sync_runtime_finish_task(SyncRuntimeTaskKind::StartupCheck);
-                sync_runtime_set_remote_snapshots(snapshots.clone());
-                let newest = snapshots.first().cloned();
-                if let Some(remote) = newest {
+                if let Some(remote) = latest_snapshot {
                     let remote_id = remote.manifest_id.clone();
                     let remote_at = remote.created_at;
                     let remote_is_newer = match local_last_at {
@@ -474,11 +462,6 @@ impl SyncSupervisor {
                 sync_runtime_set_last_snapshot(Some(manifest_id.clone()), Some(created_at));
                 sync_runtime_set_remote_update(None);
                 notifications.success(format!("Automatic manifest sync completed: {manifest_id}."));
-            }
-            SyncSupervisorMessage::RetentionCleanupFinished { snapshots } => {
-                sync_runtime_finish_task(SyncRuntimeTaskKind::RetentionCleanup);
-                sync_runtime_set_remote_snapshots(snapshots);
-                sync_runtime_set_remote_update(None);
             }
             SyncSupervisorMessage::Failed { kind, message } => {
                 sync_runtime_finish_task(kind);
@@ -550,12 +533,12 @@ fn run_startup_check_task(settings: &AppSettings) -> Result<SyncSupervisorMessag
         let service = BackupService::open_s3_default(config, device_id)
             .await
             .map_err(|err| err.to_string())?;
-        let snapshots = service
-            .list_remote_snapshots()
+        let latest_snapshot = service
+            .latest_remote_snapshot()
             .await
             .map_err(|err| err.to_string())?;
         Ok(SyncSupervisorMessage::StartupCheckFinished {
-            snapshots,
+            latest_snapshot,
             local_last_id,
             local_last_at,
         })
@@ -591,26 +574,49 @@ fn run_auto_backup_task(settings: &AppSettings) -> Result<SyncSupervisorMessage,
     })
 }
 
-fn run_retention_cleanup_task(settings: &AppSettings) -> Result<SyncSupervisorMessage, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| err.to_string())?;
-    let config = build_sync_store_config(settings);
-    let device_id = settings.sync.device_id.clone();
-    let keep_last = settings.sync.retention.keep_last;
-    runtime.block_on(async move {
-        let service = BackupService::open_s3_default(config, device_id)
-            .await
-            .map_err(|err| err.to_string())?;
-        service
-            .cleanup_remote_snapshots(keep_last)
-            .await
-            .map_err(|err| err.to_string())?;
-        let snapshots = service
-            .list_remote_snapshots()
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(SyncSupervisorMessage::RetentionCleanupFinished { snapshots })
-    })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ready_settings(auto_backup: bool, last_sync_at: Option<i64>) -> AppSettings {
+        let mut settings = AppSettings::default();
+        settings.sync.enabled = true;
+        settings.sync.schedule.auto_backup = auto_backup;
+        settings.sync.last_sync_at = last_sync_at;
+        settings.sync.s3.bucket = "demo".to_string();
+        settings.sync.s3.access_key = "ak".to_string();
+        settings.sync.s3.secret_key = "sk".to_string();
+        settings
+    }
+
+    #[test]
+    fn next_task_runs_startup_check_before_other_work() {
+        let supervisor = SyncSupervisor::default();
+
+        assert_eq!(
+            supervisor.next_task(&ready_settings(false, None), 0),
+            Some(SyncRuntimeTaskKind::StartupCheck)
+        );
+    }
+
+    #[test]
+    fn next_task_skips_startup_maintenance_when_auto_backup_is_disabled() {
+        let mut supervisor = SyncSupervisor::default();
+        supervisor.startup_check_completed = true;
+
+        assert_eq!(supervisor.next_task(&ready_settings(false, None), 0), None);
+    }
+
+    #[test]
+    fn next_task_runs_auto_backup_after_interval_elapses() {
+        let mut supervisor = SyncSupervisor::default();
+        supervisor.startup_check_completed = true;
+        let mut settings = ready_settings(true, Some(1_000));
+        settings.sync.schedule.interval_minutes = 1;
+
+        assert_eq!(
+            supervisor.next_task(&settings, 62_000),
+            Some(SyncRuntimeTaskKind::AutoBackup)
+        );
+    }
 }

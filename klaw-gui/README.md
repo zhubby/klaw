@@ -112,7 +112,7 @@
   - show a live progress bar plus stage/detail text while manual sync is reconciling, uploading blobs, publishing manifests, and pruning remote history
   - trigger manual retention cleanup against remote manifests
   - list remote manifests and manually restore a selected manifest version
-  - surface startup remote-update detection and shared sync task status in the Sync UI
+  - surface startup remote-update detection via a lightweight latest-manifest check, while full remote manifest history loads only on manual refresh or backup flows
   - validate custom S3 endpoint credentials up front so R2-style endpoints do not rely on AWS shared-profile discovery
 - Session panel features:
   - read indexed sessions via `klaw-session` manager abstraction

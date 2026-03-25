@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-25
+
+### Fixed
+- startup-oriented remote manifest lookups can now read `latest.json` plus the current manifest directly, avoiding full history listing when callers only need remote-update detection
+- remote retention cleanup no longer reloads the same manifest set twice while building its prune plan
+
 ## 2026-03-23
 
 ### Changed
