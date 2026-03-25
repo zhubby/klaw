@@ -31,6 +31,10 @@ impl GatewayManager {
         }
     }
 
+    fn refresh_tailscale_host_status(&mut self) {
+        self.tailscale_host = TailscaleManager::inspect_host();
+    }
+
     pub fn snapshot(&self) -> GatewayStatusSnapshot {
         let info = self.handle.as_ref().map(|handle| handle.info().clone());
         GatewayStatusSnapshot {
@@ -49,7 +53,6 @@ impl GatewayManager {
         self.configured_enabled = config.gateway.enabled;
         self.tailscale_mode = config.gateway.tailscale.mode;
         self.auth_configured = config.gateway.auth.is_enabled();
-        self.tailscale_host = TailscaleManager::inspect_host();
     }
 
     pub async fn start_from_config(
@@ -73,11 +76,13 @@ impl GatewayManager {
         match start_result {
             Ok(handle) => {
                 self.handle = Some(handle);
+                self.refresh_tailscale_host_status();
                 self.last_error = None;
                 Ok(self.snapshot())
             }
             Err(err) => {
                 let message = err.to_string();
+                self.refresh_tailscale_host_status();
                 self.last_error = Some(message.clone());
                 Err(message)
             }
@@ -94,10 +99,12 @@ impl GatewayManager {
 
         match stop_result {
             Ok(()) => {
+                self.refresh_tailscale_host_status();
                 self.last_error = None;
                 Ok(self.snapshot())
             }
             Err(err) => {
+                self.refresh_tailscale_host_status();
                 self.last_error = Some(err.clone());
                 Err(err)
             }
@@ -158,10 +165,12 @@ impl GatewayManager {
             match save_gateway_enabled(false) {
                 Ok(config) => {
                     self.configured_enabled = config.gateway.enabled;
+                    self.refresh_tailscale_host_status();
                     self.last_error = None;
                     Ok(self.snapshot())
                 }
                 Err(err) => {
+                    self.refresh_tailscale_host_status();
                     self.last_error = Some(err.clone());
                     Err(err)
                 }
@@ -201,14 +210,17 @@ impl GatewayManager {
                             );
                         }
                         self.tailscale_mode = previous_mode;
+                        self.refresh_tailscale_host_status();
                         self.last_error = Some(err.clone());
                         Err(err)
                     }
                 }
             } else {
+                self.refresh_tailscale_host_status();
                 Ok(self.snapshot())
             }
         } else {
+            self.refresh_tailscale_host_status();
             Ok(self.snapshot())
         }
     }
