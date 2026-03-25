@@ -46,11 +46,13 @@ key_path = "/path/to/privkey.pem"
 - `enabled`：是否启用 gateway 服务，默认 `false`。
 - `listen_ip`：监听 IP，默认 `127.0.0.1`。
 - `listen_port`：监听端口，默认 `0`，表示由系统分配随机可用端口。
-- `webhook.enabled`：是否注册 webhook 路由，默认 `false`。
-- `webhook.path`：webhook 路径，默认 `"/webhook/events"`。
-- `webhook.token`：固定 Bearer Token，可选。
-- `webhook.env_key`：读取 webhook token 的环境变量名，可选。
-- `webhook.max_body_bytes`：请求体大小限制，默认 `262144`。
+- `webhook.enabled`：是否启用 webhook 能力，默认 `false`。
+- `webhook.events.enabled`：是否注册结构化事件入口，默认 `true`。
+- `webhook.events.path`：结构化事件路径，默认 `"/webhook/events"`。
+- `webhook.events.max_body_bytes`：结构化事件请求体大小限制，默认 `262144`。
+- `webhook.agents.enabled`：是否注册模板驱动入口，默认 `false`。
+- `webhook.agents.path`：agent webhook 路径，默认 `"/webhook/agents"`。
+- `webhook.agents.max_body_bytes`：agent webhook 请求体大小限制，默认 `262144`。
 - `tls.enabled`：是否启用 TLS（当前版本仅保留配置结构，尚未启用 TLS 监听实现）。
 - `tls.cert_path`：TLS 证书路径（当 `tls.enabled=true` 时必填）。
 - `tls.key_path`：TLS 私钥路径（当 `tls.enabled=true` 时必填）。
@@ -61,9 +63,9 @@ key_path = "/path/to/privkey.pem"
 
 - `gateway.listen_ip` 必须能解析为合法 IP。
 - `gateway.listen_port` 允许为 `0` 或任意合法 `u16` 端口。
-- `gateway.webhook.path` 必须以 `/` 开头且不能为空。
-- `gateway.webhook.max_body_bytes` 必须大于 `0`。
-- `gateway.webhook.enabled=true` 时，`gateway.webhook.token` 和 `gateway.webhook.env_key` 至少需要配置一个。
+- `gateway.webhook.events.path` 与 `gateway.webhook.agents.path` 必须以 `/` 开头且不能为空。
+- `gateway.webhook.events.max_body_bytes` 与 `gateway.webhook.agents.max_body_bytes` 必须大于 `0`。
+- `gateway.webhook.events.path` 与 `gateway.webhook.agents.path` 不能相同。
 - `gateway.tls.enabled=true` 时：
   - `gateway.tls.cert_path` 不能为空字符串。
   - `gateway.tls.key_path` 不能为空字符串。
@@ -130,12 +132,11 @@ ws://127.0.0.1:18080/ws/chat?session_key=demo-room
 
 ### 路由与鉴权
 
-- 端点：`POST <gateway.webhook.path>`
+- 端点：`POST <gateway.webhook.events.path>` 与可选的 `POST <gateway.webhook.agents.path>`
 - 默认路径：`POST /webhook/events`
 - 认证方式：`Authorization: Bearer <token>`
 - token 解析顺序：
-  - 优先使用 `gateway.webhook.token`
-  - 若为空，再读取 `gateway.webhook.env_key` 指向的环境变量
+  - 由 gateway auth 统一控制
 
 缺少或错误的 Bearer Token 会返回 `401 Unauthorized`。
 
@@ -196,7 +197,7 @@ ws://127.0.0.1:18080/ws/chat?session_key=demo-room
 - TLS 仅有配置模型和校验，暂未接入证书加载与 HTTPS/WSS 监听。
 - 房间状态为进程内内存结构，重启后不保留。
 - WebSocket 连接仍不包含独立鉴权、限流、房间成员上限等策略。
-- webhook 仅支持单一事件入口，不支持 replay、重放映射或多端点模式。
+- webhook 现支持 `events` / `agents` 双入口；但仍不支持 replay 与重放映射。
 - 不包含跨实例共享房间（当前适用于单实例）。
 
 ## 后续演进建议

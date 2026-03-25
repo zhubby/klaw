@@ -53,8 +53,8 @@ impl GatewayConfigForm {
             auth_token: config.auth.token.clone().unwrap_or_default(),
             auth_env_key: config.auth.env_key.clone().unwrap_or_default(),
             webhook_enabled: config.webhook.enabled,
-            webhook_path: config.webhook.path.clone(),
-            webhook_max_body_bytes: config.webhook.max_body_bytes.to_string(),
+            webhook_path: config.webhook.events.path.clone(),
+            webhook_max_body_bytes: config.webhook.events.max_body_bytes.to_string(),
         }
     }
 
@@ -96,8 +96,8 @@ impl GatewayConfigForm {
             Some(self.auth_env_key.trim().to_string())
         };
         config.gateway.webhook.enabled = self.webhook_enabled;
-        config.gateway.webhook.path = webhook_path.to_string();
-        config.gateway.webhook.max_body_bytes = webhook_max_body_bytes;
+        config.gateway.webhook.events.path = webhook_path.to_string();
+        config.gateway.webhook.events.max_body_bytes = webhook_max_body_bytes;
 
         Ok(())
     }
@@ -349,14 +349,14 @@ impl GatewayPanel {
                         ui.checkbox(&mut self.config_form.webhook_enabled, "");
                         ui.end_row();
 
-                        ui.label("Path");
+                        ui.label("Events Path");
                         ui.add_sized(
                             [280.0, ui.spacing().interact_size.y],
                             egui::TextEdit::singleline(&mut self.config_form.webhook_path),
                         );
                         ui.end_row();
 
-                        ui.label("Max Body Bytes");
+                        ui.label("Events Max Body Bytes");
                         ui.add_sized(
                             [120.0, ui.spacing().interact_size.y],
                             egui::TextEdit::singleline(

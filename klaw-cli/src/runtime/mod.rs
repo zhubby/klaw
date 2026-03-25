@@ -23,7 +23,7 @@ use klaw_core::{
     SkillPromptEntry, Subscription, TransportError, build_runtime_system_prompt,
     ensure_workspace_prompt_templates,
 };
-use klaw_gateway::GatewayWebhookRequest;
+use klaw_gateway::{GatewayWebhookAgentRequest, GatewayWebhookRequest};
 use klaw_heartbeat::should_suppress_output;
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
 use klaw_mcp::{McpConfigSnapshot, McpInitHandle, McpManager, McpSyncResult};
@@ -2060,6 +2060,93 @@ pub async fn submit_webhook_event(
     .map_err(|err| err.to_string())
 }
 
+pub async fn submit_webhook_agent(
+    runtime: &RuntimeBundle,
+    request: &GatewayWebhookAgentRequest,
+    content: String,
+) -> Result<Option<AssistantOutput>, String> {
+    let route = resolve_session_route(runtime, "webhook", &request.session_key, &request.chat_id)
+        .await
+        .map_err(|err| err.to_string())?;
+    let (model_provider, model) = resolve_webhook_agent_model(
+        runtime,
+        &route.model_provider,
+        &route.model,
+        request.provider.as_deref(),
+        request.model.as_deref(),
+    )?;
+    let mut metadata = request.metadata.clone();
+    metadata.insert(
+        "webhook.agents.original_session_key".to_string(),
+        Value::String(request.session_key.clone()),
+    );
+    metadata.insert(
+        "webhook.agents.resolved_session_key".to_string(),
+        Value::String(route.active_session_key.clone()),
+    );
+    metadata.insert(
+        "webhook.agents.provider".to_string(),
+        Value::String(model_provider.clone()),
+    );
+    metadata.insert(
+        "webhook.agents.model".to_string(),
+        Value::String(model.clone()),
+    );
+    submit_and_get_output(
+        runtime,
+        "webhook".to_string(),
+        content,
+        route.active_session_key,
+        request.chat_id.clone(),
+        request.sender_id.clone(),
+        model_provider,
+        model,
+        Vec::new(),
+        metadata,
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
+fn resolve_webhook_agent_model(
+    runtime: &RuntimeBundle,
+    route_provider: &str,
+    route_model: &str,
+    request_provider: Option<&str>,
+    request_model: Option<&str>,
+) -> Result<(String, String), String> {
+    let requested_provider = request_provider
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let requested_model = request_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let provider = requested_provider
+        .clone()
+        .unwrap_or_else(|| route_provider.to_string());
+    if !runtime.provider_default_models.contains_key(&provider) {
+        let all = runtime
+            .provider_default_models
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "unknown provider `{provider}`, available providers: {all}"
+        ));
+    }
+    let model = requested_model.unwrap_or_else(|| {
+        if requested_provider.is_some() {
+            default_model_for_provider(runtime, &provider).to_string()
+        } else {
+            route_model.to_string()
+        }
+    });
+    Ok((provider, model))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn submit_and_stream_output(
     runtime: &RuntimeBundle,
@@ -3074,5 +3161,44 @@ A .docx file is a ZIP archive containing XML files.
                 .clone(),
             None
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn webhook_agent_model_override_uses_requested_provider_default_model() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let mut runtime = build_test_runtime(provider).await;
+        runtime
+            .provider_default_models
+            .insert("alt-provider".to_string(), "alt-default-model".to_string());
+
+        let (resolved_provider, resolved_model) = resolve_webhook_agent_model(
+            &runtime,
+            "test-provider",
+            "test-model",
+            Some("alt-provider"),
+            None,
+        )
+        .expect("provider override should resolve");
+
+        assert_eq!(resolved_provider, "alt-provider");
+        assert_eq!(resolved_model, "alt-default-model");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn webhook_agent_model_override_keeps_route_provider_when_only_model_is_requested() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+
+        let (resolved_provider, resolved_model) = resolve_webhook_agent_model(
+            &runtime,
+            "test-provider",
+            "test-model",
+            None,
+            Some("one-off-model"),
+        )
+        .expect("model override should resolve");
+
+        assert_eq!(resolved_provider, "test-provider");
+        assert_eq!(resolved_model, "one-off-model");
     }
 }

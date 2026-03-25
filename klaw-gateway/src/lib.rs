@@ -15,4 +15,7 @@ pub use runtime::{
 };
 pub use state::{GatewayHandle, GatewayRuntimeInfo};
 pub use tailscale::{TailscaleRuntimeInfo, TailscaleStatus};
-pub use webhook::{GatewayWebhookHandler, GatewayWebhookRequest, GatewayWebhookResponse};
+pub use webhook::{
+    GatewayWebhookAgentRequest, GatewayWebhookAgentResponse, GatewayWebhookHandler,
+    GatewayWebhookHandlerError, GatewayWebhookRequest, GatewayWebhookResponse,
+};

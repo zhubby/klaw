@@ -32,7 +32,7 @@
   - cron (db-bound list + add/edit window)
   - heartbeat (db-backed heartbeat list + add/edit/delete/run-now)
 - gateway (runtime-backed gateway status, disk-config reload sync, start, restart, and base address display)
-  - webhook (db-backed webhook event list, filters, detail inspection, and `gateway.webhook` config editing)
+  - webhook (db-backed webhook event list, filters, detail inspection, and `gateway.webhook.events` / `gateway.webhook.agents` config editing)
   - mcp (config-bound list + add/edit window)
   - skill (installed skill management with list/detail/remove/sync actions)
   - skills registry (config-bound list + add/edit window)

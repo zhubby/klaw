@@ -22,34 +22,55 @@ const PAGING_INPUT_WIDTH: f32 = 50.0;
 #[derive(Debug, Clone, Default)]
 struct WebhookConfigForm {
     enabled: bool,
-    path: String,
-    max_body_bytes: String,
+    events_enabled: bool,
+    events_path: String,
+    events_max_body_bytes: String,
+    agents_enabled: bool,
+    agents_path: String,
+    agents_max_body_bytes: String,
 }
 
 impl WebhookConfigForm {
     fn from_config(config: &GatewayWebhookConfig) -> Self {
         Self {
             enabled: config.enabled,
-            path: config.path.clone(),
-            max_body_bytes: config.max_body_bytes.to_string(),
+            events_enabled: config.events.enabled,
+            events_path: config.events.path.clone(),
+            events_max_body_bytes: config.events.max_body_bytes.to_string(),
+            agents_enabled: config.agents.enabled,
+            agents_path: config.agents.path.clone(),
+            agents_max_body_bytes: config.agents.max_body_bytes.to_string(),
         }
     }
 
     fn apply_to_config(&self, config: &mut AppConfig) -> Result<(), String> {
-        let path = self.path.trim();
-        if path.is_empty() {
-            return Err("webhook path cannot be empty".to_string());
+        let events_path = self.events_path.trim();
+        if events_path.is_empty() {
+            return Err("events path cannot be empty".to_string());
+        }
+        let agents_path = self.agents_path.trim();
+        if agents_path.is_empty() {
+            return Err("agents path cannot be empty".to_string());
         }
 
-        let max_body_bytes = self
-            .max_body_bytes
+        let events_max_body_bytes = self
+            .events_max_body_bytes
             .trim()
             .parse::<usize>()
-            .map_err(|_| "max_body_bytes must be a valid integer".to_string())?;
+            .map_err(|_| "events max_body_bytes must be a valid integer".to_string())?;
+        let agents_max_body_bytes = self
+            .agents_max_body_bytes
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| "agents max_body_bytes must be a valid integer".to_string())?;
 
         config.gateway.webhook.enabled = self.enabled;
-        config.gateway.webhook.path = path.to_string();
-        config.gateway.webhook.max_body_bytes = max_body_bytes;
+        config.gateway.webhook.events.enabled = self.events_enabled;
+        config.gateway.webhook.events.path = events_path.to_string();
+        config.gateway.webhook.events.max_body_bytes = events_max_body_bytes;
+        config.gateway.webhook.agents.enabled = self.agents_enabled;
+        config.gateway.webhook.agents.path = agents_path.to_string();
+        config.gateway.webhook.agents.max_body_bytes = agents_max_body_bytes;
         Ok(())
     }
 }
@@ -480,11 +501,18 @@ impl PanelRenderer for WebhookPanel {
                         ui.checkbox(&mut self.config_form.enabled, "");
                     });
 
+                    ui.separator();
+                    ui.strong("Events Endpoint");
+                    ui.horizontal(|ui| {
+                        ui.label("Enabled");
+                        ui.checkbox(&mut self.config_form.events_enabled, "");
+                    });
+
                     ui.horizontal(|ui| {
                         ui.label("Path");
                         ui.add_sized(
                             [320.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.path),
+                            egui::TextEdit::singleline(&mut self.config_form.events_path),
                         );
                     });
 
@@ -492,7 +520,30 @@ impl PanelRenderer for WebhookPanel {
                         ui.label("Max Body Bytes");
                         ui.add_sized(
                             [160.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.max_body_bytes),
+                            egui::TextEdit::singleline(&mut self.config_form.events_max_body_bytes),
+                        );
+                    });
+
+                    ui.separator();
+                    ui.strong("Agents Endpoint");
+                    ui.horizontal(|ui| {
+                        ui.label("Enabled");
+                        ui.checkbox(&mut self.config_form.agents_enabled, "");
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Path");
+                        ui.add_sized(
+                            [320.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.agents_path),
+                        );
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Max Body Bytes");
+                        ui.add_sized(
+                            [160.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.agents_max_body_bytes),
                         );
                     });
 
@@ -514,15 +565,18 @@ impl PanelRenderer for WebhookPanel {
 fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig, path: Option<&Path>) {
     let webhook = &config.gateway.webhook;
     let gateway_status = request_gateway_status().ok();
-    let runtime_url = gateway_status
-        .as_ref()
-        .and_then(|status| {
-            status
-                .info
-                .as_ref()
-                .map(|info| gateway_base_url(&info.ws_url))
-        })
-        .map(|base| format!("{base}{}", webhook.path));
+    let runtime_base_url = gateway_status.as_ref().and_then(|status| {
+        status
+            .info
+            .as_ref()
+            .map(|info| gateway_base_url(&info.ws_url))
+    });
+    let events_runtime_url = runtime_base_url
+        .clone()
+        .map(|base| format!("{base}{}", webhook.events.path));
+    let agents_runtime_url = runtime_base_url
+        .clone()
+        .map(|base| format!("{base}{}", webhook.agents.path));
     let auth_configured = gateway_status
         .as_ref()
         .map(|status| status.auth_configured)
@@ -540,24 +594,56 @@ fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig, path: Op
             });
             ui.end_row();
 
-            ui.label("Webhook Path");
-            ui.label(&webhook.path);
+            ui.label("Events Enabled");
+            ui.label(if webhook.events.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            });
             ui.end_row();
 
-            ui.label("Runtime URL");
-            if let Some(url) = runtime_url {
+            ui.label("Events Path");
+            ui.label(&webhook.events.path);
+            ui.end_row();
+
+            ui.label("Events Runtime URL");
+            if let Some(url) = events_runtime_url {
                 ui.hyperlink(url);
             } else {
                 ui.label("Gateway not running");
             }
             ui.end_row();
 
-            ui.label("Auth Source");
-            ui.label(webhook_auth_label(auth_configured));
+            ui.label("Events Max Body Bytes");
+            ui.label(webhook.events.max_body_bytes.to_string());
             ui.end_row();
 
-            ui.label("Max Body Bytes");
-            ui.label(webhook.max_body_bytes.to_string());
+            ui.label("Agents Enabled");
+            ui.label(if webhook.agents.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            });
+            ui.end_row();
+
+            ui.label("Agents Path");
+            ui.label(&webhook.agents.path);
+            ui.end_row();
+
+            ui.label("Agents Runtime URL");
+            if let Some(url) = agents_runtime_url {
+                ui.hyperlink(url);
+            } else {
+                ui.label("Gateway not running");
+            }
+            ui.end_row();
+
+            ui.label("Agents Max Body Bytes");
+            ui.label(webhook.agents.max_body_bytes.to_string());
+            ui.end_row();
+
+            ui.label("Auth Source");
+            ui.label(webhook_auth_label(auth_configured));
             ui.end_row();
 
             if let Some(path) = path {

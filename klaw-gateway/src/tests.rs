@@ -2,7 +2,10 @@
 mod tests {
     use crate::{
         spawn_gateway,
-        webhook::{GatewayWebhookPayload, normalize_webhook_request},
+        webhook::{
+            GatewayWebhookAgentPayload, GatewayWebhookPayload, normalize_webhook_agent_request,
+            normalize_webhook_request,
+        },
     };
     use klaw_config::GatewayConfig;
     use serde_json::json;
@@ -55,5 +58,29 @@ mod tests {
             request.metadata.get("trigger.kind"),
             Some(&json!("webhook"))
         );
+    }
+
+    #[test]
+    fn normalize_webhook_agent_request_applies_defaults() {
+        let request = normalize_webhook_agent_request(
+            GatewayWebhookAgentPayload {
+                hook_id: "order_sync".to_string(),
+                session_key: "dingtalk:acc:chat-1".to_string(),
+                chat_id: None,
+                sender_id: None,
+                provider: None,
+                model: None,
+                metadata: None,
+                body: json!({"order_id":"A123","status":"paid"}),
+            },
+            None,
+        )
+        .expect("payload should normalize");
+
+        assert_eq!(request.chat_id, "dingtalk:acc:chat-1");
+        assert_eq!(request.sender_id, "webhook-agent:order_sync");
+        assert_eq!(request.provider, None);
+        assert_eq!(request.model, None);
+        assert_eq!(request.metadata.get("webhook.kind"), Some(&json!("agents")));
     }
 }

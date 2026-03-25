@@ -1,14 +1,17 @@
 # Webhook 事件输入
 
-本文档说明 Gateway Webhook 端点的配置、请求格式、鉴权机制以及事件处理流程。
+本文档说明 Gateway Webhook 端点的配置、请求格式、鉴权机制以及处理流程。
 
 ## 功能概述
 
-Webhook 提供了一个 HTTP 事件输入端点，允许外部系统向 Klaw 推送事件。这些事件会被异步处理并注入到 Agent 运行时，实现外部事件驱动的 Agent 行为。
+Webhook 现在提供两类 HTTP 输入端点：
+
+- `POST /webhook/events`：结构化事件入口，适合已经完成归一化的外部事件
+- `POST /webhook/agents`：模板驱动入口，适合任意 JSON `body` 结合本地 markdown hook 模板直接注入 agent loop
 
 主要特性：
 
-- **HTTP POST 端点** - 标准的 REST API 接入
+- **双 HTTP POST 端点** - 覆盖事件归一化与模板驱动两类场景
 - **Bearer Token 鉴权** - 安全的访问控制
 - **异步处理** - 快速响应，后台执行
 - **持久化记录** - 请求历史可追溯
@@ -25,9 +28,15 @@ listen_port = 0
 
 [gateway.webhook]
 enabled = false
+
+[gateway.webhook.events]
+enabled = true
 path = "/webhook/events"
-token = "replace-me"
-env_key = "KLAW_GATEWAY_WEBHOOK_TOKEN"
+max_body_bytes = 262144
+
+[gateway.webhook.agents]
+enabled = false
+path = "/webhook/agents"
 max_body_bytes = 262144
 
 [gateway.tls]
@@ -40,38 +49,24 @@ key_path = "/path/to/privkey.pem"
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `enabled` | bool | `false` | 是否启用 webhook 端点 |
-| `path` | String | `/webhook/events` | Webhook 路径，必须以 `/` 开头 |
-| `token` | String | - | Bearer token（优先使用） |
-| `env_key` | String | `KLAW_GATEWAY_WEBHOOK_TOKEN` | 环境变量名（token 为空时使用） |
-| `max_body_bytes` | u64 | `262144` (256KB) | 最大请求体大小 |
+| `gateway.webhook.enabled` | bool | `false` | 是否启用 webhook 输入能力 |
+| `gateway.webhook.events.enabled` | bool | `true` | 是否启用结构化事件入口 |
+| `gateway.webhook.events.path` | String | `/webhook/events` | 结构化事件入口路径 |
+| `gateway.webhook.events.max_body_bytes` | u64 | `262144` | 结构化事件入口请求体大小限制 |
+| `gateway.webhook.agents.enabled` | bool | `false` | 是否启用模板驱动入口 |
+| `gateway.webhook.agents.path` | String | `/webhook/agents` | agent webhook 入口路径 |
+| `gateway.webhook.agents.max_body_bytes` | u64 | `262144` | agent webhook 入口请求体大小限制 |
 
 ### 配置校验规则
 
-- `path` 必须以 `/` 开头
-- `max_body_bytes` 必须大于 `0`
-- `enabled = true` 时，`token` 或 `env_key` 至少要配置一个
+- `events.path` 与 `agents.path` 都必须以 `/` 开头
+- `events.max_body_bytes` 与 `agents.max_body_bytes` 都必须大于 `0`
+- `events.path` 与 `agents.path` 不能相同
 - `tls.enabled = true` 时，`cert_path` 和 `key_path` 不能为空
-
-### Token 配置策略
-
-Token 获取顺序：
-
-1. 优先读取 `gateway.webhook.token`
-2. 如果为空，读取 `gateway.webhook.env_key` 指向的环境变量
-
-```bash
-# 方式 1: 配置文件
-[gateway.webhook]
-token = "my-secret-token"
-
-# 方式 2: 环境变量
-export KLAW_GATEWAY_WEBHOOK_TOKEN="my-secret-token"
-```
 
 ## 请求格式
 
-### HTTP 请求
+### `/webhook/events`
 
 ```
 POST /webhook/events HTTP/1.1
@@ -91,7 +86,7 @@ Content-Length: 234
 }
 ```
 
-### JSON Payload 结构
+### `/webhook/events` JSON Payload 结构
 
 ```json
 {
@@ -110,6 +105,31 @@ Content-Length: 234
 | `event_type` | String | 是 | 事件类型（如 "push", "issue.created"） |
 | `content` | String | 是 | 事件描述，会作为消息内容 |
 | `payload` | Object | 否 | 扩展数据，任意 JSON 对象 |
+
+### `/webhook/agents`
+
+```json
+{
+  "hook_id": "order",
+  "session_key": "dingtalk:acc:chat-1",
+  "provider": "openai",
+  "model": "gpt-4.1",
+  "body": {
+    "order_id": "A123",
+    "status": "paid"
+  }
+}
+```
+
+字段规则：
+
+- `hook_id`：必填，对应 `(<storage.root_dir 或 ~/.klaw>)/hooks/prompts/<hook_id>.md`
+- `session_key`：必填，建议传短 session key；运行时会先解析到 active session
+- `provider` / `model`：可选，仅作用于当前请求
+- `body`：必填，任意 JSON value
+- `chat_id` / `sender_id` / `metadata`：可选
+
+agent 请求会读取本地 markdown hook 模板，并在末尾统一追加 pretty-printed request JSON fenced code block，最终内容再注入 agent loop。
 
 ### 响应格式
 

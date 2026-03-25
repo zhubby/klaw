@@ -81,16 +81,19 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             ));
         }
     }
-    if config.gateway.webhook.path.trim().is_empty()
-        || !config.gateway.webhook.path.trim().starts_with('/')
-    {
+    validate_gateway_webhook_endpoint(
+        "gateway.webhook.events",
+        &config.gateway.webhook.events.path,
+        config.gateway.webhook.events.max_body_bytes,
+    )?;
+    validate_gateway_webhook_endpoint(
+        "gateway.webhook.agents",
+        &config.gateway.webhook.agents.path,
+        config.gateway.webhook.agents.max_body_bytes,
+    )?;
+    if config.gateway.webhook.events.path == config.gateway.webhook.agents.path {
         return Err(ConfigError::InvalidConfig(
-            "gateway.webhook.path must start with '/' and cannot be empty".to_string(),
-        ));
-    }
-    if config.gateway.webhook.max_body_bytes == 0 {
-        return Err(ConfigError::InvalidConfig(
-            "gateway.webhook.max_body_bytes must be greater than 0".to_string(),
+            "gateway.webhook.events.path and gateway.webhook.agents.path must differ".to_string(),
         ));
     }
 
@@ -345,6 +348,24 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     }
     validate_observability(config)?;
 
+    Ok(())
+}
+
+fn validate_gateway_webhook_endpoint(
+    field_prefix: &str,
+    path: &str,
+    max_body_bytes: usize,
+) -> Result<(), ConfigError> {
+    if path.trim().is_empty() || !path.trim().starts_with('/') {
+        return Err(ConfigError::InvalidConfig(format!(
+            "{field_prefix}.path must start with '/' and cannot be empty"
+        )));
+    }
+    if max_body_bytes == 0 {
+        return Err(ConfigError::InvalidConfig(format!(
+            "{field_prefix}.max_body_bytes must be greater than 0"
+        )));
+    }
     Ok(())
 }
 
