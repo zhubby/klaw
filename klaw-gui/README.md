@@ -54,11 +54,12 @@
   - global toast notifications for operation feedback
 - Profile Prompt panel features:
   - read markdown files directly under `~/.klaw/workspace`
-  - show workspace docs as cards with file summary, modified time, and path
+  - show workspace docs in a table with file summary, modified time, and path
   - render a read-only runtime system prompt preview that loads asynchronously and fills the remaining panel height
   - create a new workspace-root file from a popup with `file name` and `body`
   - edit a document in a fixed-height markdown-highlighted popup editor
-  - save, cancel, or reset in the editor footer
+  - save, cancel, reset-to-original, or reset-to-default in the editor footer
+  - expose row context actions for preview, edit, guarded reset-to-default, and delete
 - Provider panel features:
   - provider/channel editors already preserve the new streaming config fields in the config model, though the current GUI still leaves them at their default `false` values
   - read providers from `config.toml` (`model_provider` + `model_providers`)
