@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-03-25
+
+### Added
+
+- 为 `McpProxyTool` 增加回归测试，覆盖代理工具在创建后读取最新 hub 状态的调用路径
+
+### Fixed
+
+- 修复 MCP 代理工具持有 hub 快照导致的 `mcp server '<id>' not found` 问题
+- 调整 MCP client 插入与代理工具注册顺序，避免启动和热重载期间暴露过期路由状态
+
 ## 2026-03-23
 
 ### Added

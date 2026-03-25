@@ -477,6 +477,8 @@ impl McpManager {
         for ok in &oks {
             self.set_tools_list_detail(&ok.server_id, &ok.tools);
             let tool_names: Vec<String> = ok.tools.iter().map(|t| t.name.clone()).collect();
+            self.hub
+                .insert(ok.server_id.clone(), Arc::clone(&ok.client));
             for tool in &ok.tools {
                 let descriptor = McpToolDescriptor {
                     name: tool.name.clone(),
@@ -488,11 +490,9 @@ impl McpManager {
                 self.tools
                     .register_shared(Arc::new(crate::McpProxyTool::new(
                         descriptor,
-                        Arc::new(self.hub.clone()),
+                        self.hub.clone(),
                     )));
             }
-            self.hub
-                .insert(ok.server_id.clone(), Arc::clone(&ok.client));
             self.servers.insert(
                 McpServerKey::new(&ok.server_id),
                 McpServerHandle {
@@ -584,6 +584,7 @@ impl McpManager {
             Ok(Ok((client, tools))) => {
                 self.set_tools_list_detail(&config.id, &tools);
                 let tool_names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+                self.hub.insert(config.id.clone(), Arc::clone(&client));
 
                 for tool in &tools {
                     let descriptor = McpToolDescriptor {
@@ -596,11 +597,9 @@ impl McpManager {
                     self.tools
                         .register_shared(Arc::new(crate::McpProxyTool::new(
                             descriptor,
-                            Arc::new(self.hub.clone()),
+                            self.hub.clone(),
                         )));
                 }
-
-                self.hub.insert(config.id.clone(), Arc::clone(&client));
 
                 {
                     let mut guard = self.statuses.lock().unwrap_or_else(|err| err.into_inner());
