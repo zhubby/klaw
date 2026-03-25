@@ -125,6 +125,7 @@ impl GatewayManager {
     pub fn refresh_from_store(&mut self) -> Result<GatewayStatusSnapshot, String> {
         let config = load_config_from_store()?;
         self.sync_metadata_from_config(&config);
+        self.refresh_tailscale_host_status();
         Ok(self.snapshot())
     }
 
