@@ -343,6 +343,63 @@ pub struct WebhookEventQuery {
     pub sort_order: WebhookEventSortOrder,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookAgentRecord {
+    pub id: String,
+    pub hook_id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub sender_id: String,
+    pub content: String,
+    pub payload_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub status: WebhookEventStatus,
+    pub error_message: Option<String>,
+    pub response_summary: Option<String>,
+    pub received_at_ms: i64,
+    pub processed_at_ms: Option<i64>,
+    pub remote_addr: Option<String>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewWebhookAgentRecord {
+    pub id: String,
+    pub hook_id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub sender_id: String,
+    pub content: String,
+    pub payload_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub status: WebhookEventStatus,
+    pub error_message: Option<String>,
+    pub response_summary: Option<String>,
+    pub received_at_ms: i64,
+    pub processed_at_ms: Option<i64>,
+    pub remote_addr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateWebhookAgentResult {
+    pub status: WebhookEventStatus,
+    pub error_message: Option<String>,
+    pub response_summary: Option<String>,
+    pub processed_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct WebhookAgentQuery {
+    pub hook_id: Option<String>,
+    pub session_key: Option<String>,
+    pub status: Option<WebhookEventStatus>,
+    pub received_from_ms: Option<i64>,
+    pub received_to_ms: Option<i64>,
+    pub limit: i64,
+    pub offset: i64,
+    pub sort_order: WebhookEventSortOrder,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalStatus {

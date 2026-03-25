@@ -242,9 +242,10 @@ mod tests {
         ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
         CronTaskRun, CronTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
         LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord,
-        NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
-        SessionCompressionState, SessionIndex, SessionStorage, StorageError, UpdateCronJobPatch,
-        UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
+        NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookAgentRecord,
+        NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage, StorageError,
+        UpdateCronJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
+        WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
     };
     use std::{
         collections::BTreeMap,
@@ -743,6 +744,60 @@ mod tests {
             &self,
             _query: &WebhookEventQuery,
         ) -> Result<Vec<WebhookEventRecord>, StorageError> {
+            Ok(Vec::new())
+        }
+
+        async fn append_webhook_agent(
+            &self,
+            input: &NewWebhookAgentRecord,
+        ) -> Result<WebhookAgentRecord, StorageError> {
+            Ok(WebhookAgentRecord {
+                id: input.id.clone(),
+                hook_id: input.hook_id.clone(),
+                session_key: input.session_key.clone(),
+                chat_id: input.chat_id.clone(),
+                sender_id: input.sender_id.clone(),
+                content: input.content.clone(),
+                payload_json: input.payload_json.clone(),
+                metadata_json: input.metadata_json.clone(),
+                status: input.status,
+                error_message: input.error_message.clone(),
+                response_summary: input.response_summary.clone(),
+                received_at_ms: input.received_at_ms,
+                processed_at_ms: input.processed_at_ms,
+                remote_addr: input.remote_addr.clone(),
+                created_at_ms: now_ms(),
+            })
+        }
+
+        async fn update_webhook_agent_status(
+            &self,
+            event_id: &str,
+            update: &UpdateWebhookAgentResult,
+        ) -> Result<WebhookAgentRecord, StorageError> {
+            Ok(WebhookAgentRecord {
+                id: event_id.to_string(),
+                hook_id: String::new(),
+                session_key: String::new(),
+                chat_id: String::new(),
+                sender_id: String::new(),
+                content: String::new(),
+                payload_json: None,
+                metadata_json: None,
+                status: update.status,
+                error_message: update.error_message.clone(),
+                response_summary: update.response_summary.clone(),
+                received_at_ms: now_ms(),
+                processed_at_ms: update.processed_at_ms,
+                remote_addr: None,
+                created_at_ms: now_ms(),
+            })
+        }
+
+        async fn list_webhook_agents(
+            &self,
+            _query: &WebhookAgentQuery,
+        ) -> Result<Vec<WebhookAgentRecord>, StorageError> {
             Ok(Vec::new())
         }
 

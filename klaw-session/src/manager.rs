@@ -3,8 +3,9 @@ use async_trait::async_trait;
 use klaw_storage::{
     ChatRecord, DefaultSessionStore, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
     LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord,
-    NewLlmUsageRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-    SessionStorage, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
+    NewLlmUsageRecord, NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState,
+    SessionIndex, SessionStorage, UpdateWebhookAgentResult, UpdateWebhookEventResult,
+    WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
     open_default_store,
 };
 
@@ -162,6 +163,22 @@ pub trait SessionManager: Send + Sync {
         &self,
         query: &WebhookEventQuery,
     ) -> Result<Vec<WebhookEventRecord>, SessionError>;
+
+    async fn append_webhook_agent(
+        &self,
+        input: &NewWebhookAgentRecord,
+    ) -> Result<WebhookAgentRecord, SessionError>;
+
+    async fn update_webhook_agent_status(
+        &self,
+        event_id: &str,
+        update: &UpdateWebhookAgentResult,
+    ) -> Result<WebhookAgentRecord, SessionError>;
+
+    async fn list_webhook_agents(
+        &self,
+        query: &WebhookAgentQuery,
+    ) -> Result<Vec<WebhookAgentRecord>, SessionError>;
 }
 
 pub struct SqliteSessionManager {
@@ -408,6 +425,31 @@ impl SessionManager for SqliteSessionManager {
         query: &WebhookEventQuery,
     ) -> Result<Vec<WebhookEventRecord>, SessionError> {
         Ok(self.store.list_webhook_events(query).await?)
+    }
+
+    async fn append_webhook_agent(
+        &self,
+        input: &NewWebhookAgentRecord,
+    ) -> Result<WebhookAgentRecord, SessionError> {
+        Ok(self.store.append_webhook_agent(input).await?)
+    }
+
+    async fn update_webhook_agent_status(
+        &self,
+        event_id: &str,
+        update: &UpdateWebhookAgentResult,
+    ) -> Result<WebhookAgentRecord, SessionError> {
+        Ok(self
+            .store
+            .update_webhook_agent_status(event_id, update)
+            .await?)
+    }
+
+    async fn list_webhook_agents(
+        &self,
+        query: &WebhookAgentQuery,
+    ) -> Result<Vec<WebhookAgentRecord>, SessionError> {
+        Ok(self.store.list_webhook_agents(query).await?)
     }
 }
 

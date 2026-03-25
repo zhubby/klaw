@@ -5,8 +5,9 @@ pub use error::SessionError;
 pub use klaw_storage::{
     ChatRecord, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord,
     LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource, LlmUsageSummary,
-    NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord, SessionCompressionState,
-    SessionIndex, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
+    NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
+    SessionCompressionState, SessionIndex, UpdateWebhookAgentResult, UpdateWebhookEventResult,
+    WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
     WebhookEventSortOrder, WebhookEventStatus,
 };
 pub use manager::{SessionListQuery, SessionManager, SqliteSessionManager};

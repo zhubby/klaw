@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- runtime gateway webhook handler 现在会将 `/webhook/agents` 请求写入独立的 `webhook_agents` 存储链路，并单独更新 agent 状态，不再复用 `webhook_events` 表
+
 - `klaw gui` 的 gateway 状态查询现在会在返回前同步磁盘最新配置中的 `enabled` / `auth` / `tailscale` 元数据，避免 `Gateway` 面板在配置 reload 后继续显示旧状态
 - `klaw gui` 的 gateway 状态刷新现在也会重新探测本机 Tailscale host 状态，确保 `Refresh` / `Refresh Tailscale` 能拿到最新连接信息并正确驱动 `Apply` 按钮禁用态
 - gateway runtime 的配置持久化 helper 现在统一走 `ConfigStore::update_config`，避免 stale snapshot 整体回写覆盖其他已落盘的配置修改

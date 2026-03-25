@@ -5,6 +5,8 @@ use crate::{
     GatewayStatusSnapshot, request_gateway_status, request_restart_gateway,
     request_set_tailscale_mode, request_start_gateway,
 };
+use egui::Color32;
+use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayConfig, TailscaleMode,
 };
@@ -511,11 +513,7 @@ impl PanelRenderer for GatewayPanel {
             .spacing([16.0, 8.0])
             .show(ui, |ui| {
                 ui.label("Configured");
-                ui.label(if status.configured_enabled {
-                    "enabled"
-                } else {
-                    "disabled"
-                });
+                render_boolean_status(ui, status.configured_enabled, "Enabled", "Disabled");
                 ui.end_row();
 
                 ui.label("Runtime");
@@ -527,11 +525,7 @@ impl PanelRenderer for GatewayPanel {
                 ui.end_row();
 
                 ui.label("Auth");
-                ui.label(if status.auth_configured {
-                    "configured"
-                } else {
-                    "not configured"
-                });
+                render_boolean_status(ui, status.auth_configured, "Configured", "Not Configured");
                 ui.end_row();
 
                 if let Some(info) = &status.info {
@@ -721,6 +715,31 @@ fn gateway_base_url(ws_url: &str) -> String {
         .strip_suffix("/ws/chat")
         .unwrap_or(ws_url)
         .to_string()
+}
+
+fn render_boolean_status(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    enabled_label: &str,
+    disabled_label: &str,
+) {
+    let (icon, color, label) = if enabled {
+        (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(0x22, 0xC5, 0x5E),
+            enabled_label,
+        )
+    } else {
+        (
+            regular::X_CIRCLE,
+            ui.visuals().error_fg_color,
+            disabled_label,
+        )
+    };
+    ui.horizontal(|ui| {
+        ui.colored_label(color, icon);
+        ui.colored_label(color, label);
+    });
 }
 
 fn render_tailscale_status(ui: &mut egui::Ui, status: &TailscaleStatus) {

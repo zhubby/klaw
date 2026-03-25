@@ -12,8 +12,9 @@ use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayWebhookConfig, TailscaleMode,
 };
 use klaw_session::{
-    SessionError, SessionListQuery, SessionManager, SqliteSessionManager, WebhookEventQuery,
-    WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
+    SessionError, SessionListQuery, SessionManager, SqliteSessionManager, WebhookAgentQuery,
+    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
+    WebhookEventStatus,
 };
 use klaw_util::default_data_dir;
 use std::fs;
@@ -31,7 +32,41 @@ const PROMPT_TEXT_HEIGHT: f32 = 260.0;
 const PREVIEW_HEIGHT: f32 = 260.0;
 
 struct PendingWebhookRowsRequest {
-    receiver: Receiver<Result<Vec<WebhookEventRecord>, String>>,
+    receiver: Receiver<Result<Vec<WebhookListRow>, String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebhookQueryKind {
+    Events,
+    Agents,
+}
+
+#[derive(Debug, Clone)]
+enum WebhookListRow {
+    Event(WebhookEventRecord),
+    Agent(WebhookAgentRecord),
+}
+
+#[derive(Debug, Clone)]
+enum WebhookDetailRecord {
+    Event(WebhookEventRecord),
+    Agent(WebhookAgentRecord),
+}
+
+impl WebhookListRow {
+    fn id(&self) -> &str {
+        match self {
+            Self::Event(record) => &record.id,
+            Self::Agent(record) => &record.id,
+        }
+    }
+
+    fn received_at_ms(&self) -> i64 {
+        match self {
+            Self::Event(record) => record.received_at_ms,
+            Self::Agent(record) => record.received_at_ms,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +177,8 @@ pub struct WebhookPanel {
     config_form: WebhookConfigForm,
     config_window_open: bool,
     loaded: bool,
-    rows: Vec<WebhookEventRecord>,
+    query_kind: WebhookQueryKind,
+    rows: Vec<WebhookListRow>,
     rows_request: Option<PendingWebhookRowsRequest>,
     rows_refresh_queued: bool,
     gateway_status: Option<GatewayStatusSnapshot>,
@@ -157,7 +193,7 @@ pub struct WebhookPanel {
     size: i64,
     sort_order: WebhookEventSortOrder,
     selected_id: Option<String>,
-    detail_record: Option<WebhookEventRecord>,
+    detail_record: Option<WebhookDetailRecord>,
     prompt_dir: Option<PathBuf>,
     create_prompt_open: bool,
     create_prompt: CreatePromptState,
@@ -180,6 +216,7 @@ impl Default for WebhookPanel {
             config_form: WebhookConfigForm::default(),
             config_window_open: false,
             loaded: false,
+            query_kind: WebhookQueryKind::Events,
             rows: Vec::new(),
             rows_request: None,
             rows_refresh_queued: false,
@@ -245,26 +282,57 @@ impl WebhookPanel {
         let size = self.size.max(1);
         let page = self.page.max(1);
         let offset = (page - 1) * size;
-        let query = WebhookEventQuery {
-            source: normalize_filter(&self.source_filter),
-            event_type: normalize_filter(&self.event_type_filter),
-            session_key: normalize_filter(&self.session_filter),
-            status: parse_status_filter(&self.status_filter),
-            received_from_ms: self.start_date.and_then(date_start_ms),
-            received_to_ms: self.end_date.and_then(date_end_ms),
-            limit: size,
-            offset,
-            sort_order: self.sort_order,
-        };
         if self.rows_request.is_some() {
             self.rows_refresh_queued = true;
             return;
         }
 
+        let query_kind = self.query_kind;
+        let source_filter = self.source_filter.clone();
+        let event_type_filter = self.event_type_filter.clone();
+        let session_filter = self.session_filter.clone();
+        let status_filter = self.status_filter.clone();
+        let start_date = self.start_date;
+        let end_date = self.end_date;
+        let sort_order = self.sort_order;
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let result = run_session_task(move |manager| async move {
-                manager.list_webhook_events(&query).await
+                match query_kind {
+                    WebhookQueryKind::Events => {
+                        let query = WebhookEventQuery {
+                            source: normalize_filter(&source_filter),
+                            event_type: normalize_filter(&event_type_filter),
+                            session_key: normalize_filter(&session_filter),
+                            status: parse_status_filter(&status_filter),
+                            received_from_ms: start_date.and_then(date_start_ms),
+                            received_to_ms: end_date.and_then(date_end_ms),
+                            limit: size,
+                            offset,
+                            sort_order,
+                        };
+                        manager
+                            .list_webhook_events(&query)
+                            .await
+                            .map(|rows| rows.into_iter().map(WebhookListRow::Event).collect())
+                    }
+                    WebhookQueryKind::Agents => {
+                        let query = WebhookAgentQuery {
+                            hook_id: normalize_filter(&event_type_filter),
+                            session_key: normalize_filter(&session_filter),
+                            status: parse_status_filter(&status_filter),
+                            received_from_ms: start_date.and_then(date_start_ms),
+                            received_to_ms: end_date.and_then(date_end_ms),
+                            limit: size,
+                            offset,
+                            sort_order,
+                        };
+                        manager
+                            .list_webhook_agents(&query)
+                            .await
+                            .map(|rows| rows.into_iter().map(WebhookListRow::Agent).collect())
+                    }
+                }
             });
             let _ = tx.send(result);
         });
@@ -622,26 +690,42 @@ impl PanelRenderer for WebhookPanel {
         });
 
         ui.separator();
-        render_webhook_config_summary(
-            ui,
-            &self.config,
-            self.config_path.as_deref(),
-            self.gateway_status.as_ref(),
-        );
+        render_webhook_config_summary(ui, &self.config, self.gateway_status.as_ref());
         ui.separator();
         let mut need_refresh = false;
         ui.horizontal(|ui| {
-            ui.label("source");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.source_filter),
-                )
-                .changed()
-            {
+            ui.label("type");
+            let events_selected = self.query_kind == WebhookQueryKind::Events;
+            if ui.selectable_label(events_selected, "Events").clicked() && !events_selected {
+                self.query_kind = WebhookQueryKind::Events;
+                self.page = 1;
+                self.selected_id = None;
+                self.detail_record = None;
                 need_refresh = true;
             }
-            ui.label("event type");
+            let agents_selected = self.query_kind == WebhookQueryKind::Agents;
+            if ui.selectable_label(agents_selected, "Agents").clicked() && !agents_selected {
+                self.query_kind = WebhookQueryKind::Agents;
+                self.page = 1;
+                self.selected_id = None;
+                self.detail_record = None;
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            if self.query_kind == WebhookQueryKind::Events {
+                ui.label("source");
+                if ui
+                    .add_sized(
+                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut self.source_filter),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            }
+            ui.label(query_mode_primary_label(self.query_kind));
             if ui
                 .add_sized(
                     [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -712,7 +796,7 @@ impl PanelRenderer for WebhookPanel {
 
         ui.separator();
         let table_width = ui.available_width();
-        let mut open_detail: Option<WebhookEventRecord> = None;
+        let mut open_detail: Option<WebhookDetailRecord> = None;
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .max_width(table_width)
@@ -726,7 +810,7 @@ impl PanelRenderer for WebhookPanel {
                     .striped(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::auto().at_least(120.0))
-                    .column(Column::auto().at_least(100.0))
+                    .column(Column::auto().at_least(110.0))
                     .column(Column::auto().at_least(130.0))
                     .column(Column::auto().at_least(140.0))
                     .column(Column::auto().at_least(70.0))
@@ -741,60 +825,112 @@ impl PanelRenderer for WebhookPanel {
                             }
                         });
                         header.col(|ui| {
-                            ui.strong("Source");
+                            ui.strong(if self.query_kind == WebhookQueryKind::Events {
+                                "Source"
+                            } else {
+                                "Hook ID"
+                            });
                         });
                         header.col(|ui| {
-                            ui.strong("Event Type");
+                            ui.strong(if self.query_kind == WebhookQueryKind::Events {
+                                "Event Type"
+                            } else {
+                                "Session"
+                            });
                         });
                         header.col(|ui| {
-                            ui.strong("Session");
+                            ui.strong(if self.query_kind == WebhookQueryKind::Events {
+                                "Session"
+                            } else {
+                                "Status"
+                            });
                         });
                         header.col(|ui| {
-                            ui.strong("Status");
+                            ui.strong(if self.query_kind == WebhookQueryKind::Events {
+                                "Status"
+                            } else {
+                                "Sender"
+                            });
                         });
                         header.col(|ui| {
-                            ui.strong("Sender");
+                            ui.strong(if self.query_kind == WebhookQueryKind::Events {
+                                "Sender"
+                            } else {
+                                "Response Summary"
+                            });
                         });
                         header.col(|ui| {
-                            ui.strong("Response Summary");
+                            if self.query_kind == WebhookQueryKind::Events {
+                                ui.strong("Response Summary");
+                            }
                         });
                     })
                     .body(|body| {
                         body.rows(22.0, self.rows.len(), |mut row| {
                             let item = &self.rows[row.index()];
-                            let is_selected = self.selected_id.as_deref() == Some(&item.id);
+                            let is_selected = self.selected_id.as_deref() == Some(item.id());
                             row.set_selected(is_selected);
                             row.col(|ui| {
-                                ui.label(format_timestamp_millis(item.received_at_ms));
+                                ui.label(format_timestamp_millis(item.received_at_ms()));
                             });
                             row.col(|ui| {
-                                ui.label(&item.source);
+                                match item {
+                                    WebhookListRow::Event(record) => ui.label(&record.source),
+                                    WebhookListRow::Agent(record) => ui.label(&record.hook_id),
+                                };
                             });
                             row.col(|ui| {
-                                ui.label(&item.event_type);
+                                match item {
+                                    WebhookListRow::Event(record) => ui.label(&record.event_type),
+                                    WebhookListRow::Agent(record) => ui.label(&record.session_key),
+                                };
                             });
                             row.col(|ui| {
-                                ui.label(&item.session_key);
+                                match item {
+                                    WebhookListRow::Event(record) => ui.label(&record.session_key),
+                                    WebhookListRow::Agent(record) => {
+                                        ui.label(record.status.as_str())
+                                    }
+                                };
                             });
                             row.col(|ui| {
-                                ui.label(item.status.as_str());
+                                match item {
+                                    WebhookListRow::Event(record) => {
+                                        ui.label(record.status.as_str())
+                                    }
+                                    WebhookListRow::Agent(record) => ui.label(&record.sender_id),
+                                };
                             });
                             row.col(|ui| {
-                                ui.label(&item.sender_id);
+                                match item {
+                                    WebhookListRow::Event(record) => ui.label(&record.sender_id),
+                                    WebhookListRow::Agent(record) => {
+                                        ui.label(record.response_summary.as_deref().unwrap_or(""))
+                                    }
+                                };
                             });
                             row.col(|ui| {
-                                ui.label(item.response_summary.as_deref().unwrap_or(""));
+                                if let WebhookListRow::Event(record) = item {
+                                    ui.label(record.response_summary.as_deref().unwrap_or(""));
+                                }
                             });
                             let response = row.response();
                             if response.clicked() {
                                 self.selected_id = if is_selected {
                                     None
                                 } else {
-                                    Some(item.id.clone())
+                                    Some(item.id().to_string())
                                 };
                             }
                             if response.double_clicked() {
-                                open_detail = Some(item.clone());
+                                open_detail = Some(match item {
+                                    WebhookListRow::Event(record) => {
+                                        WebhookDetailRecord::Event(record.clone())
+                                    }
+                                    WebhookListRow::Agent(record) => {
+                                        WebhookDetailRecord::Agent(record.clone())
+                                    }
+                                });
                             }
                         });
                     });
@@ -811,42 +947,80 @@ impl PanelRenderer for WebhookPanel {
                 .resizable(true)
                 .default_width(860.0)
                 .default_height(520.0)
-                .show(ui.ctx(), |ui| {
-                    ui.label(format!("ID: {}", record.id));
-                    ui.label(format!(
-                        "Time: {}",
-                        format_timestamp_millis(record.received_at_ms)
-                    ));
-                    ui.label(format!("Source: {}", record.source));
-                    ui.label(format!("Event Type: {}", record.event_type));
-                    ui.label(format!("Session: {}", record.session_key));
-                    ui.label(format!("Chat ID: {}", record.chat_id));
-                    ui.label(format!("Sender: {}", record.sender_id));
-                    ui.label(format!("Status: {}", record.status.as_str()));
-                    if let Some(processed_at_ms) = record.processed_at_ms {
+                .show(ui.ctx(), |ui| match record {
+                    WebhookDetailRecord::Event(record) => {
+                        ui.label(format!("ID: {}", record.id));
                         ui.label(format!(
-                            "Processed At: {}",
-                            format_timestamp_millis(processed_at_ms)
+                            "Time: {}",
+                            format_timestamp_millis(record.received_at_ms)
                         ));
+                        ui.label(format!("Source: {}", record.source));
+                        ui.label(format!("Event Type: {}", record.event_type));
+                        ui.label(format!("Session: {}", record.session_key));
+                        ui.label(format!("Chat ID: {}", record.chat_id));
+                        ui.label(format!("Sender: {}", record.sender_id));
+                        ui.label(format!("Status: {}", record.status.as_str()));
+                        if let Some(processed_at_ms) = record.processed_at_ms {
+                            ui.label(format!(
+                                "Processed At: {}",
+                                format_timestamp_millis(processed_at_ms)
+                            ));
+                        }
+                        if let Some(remote_addr) = &record.remote_addr {
+                            ui.label(format!("Remote Addr: {remote_addr}"));
+                        }
+                        if let Some(error_message) = &record.error_message {
+                            ui.colored_label(
+                                ui.visuals().error_fg_color,
+                                format!("Error: {error_message}"),
+                            );
+                        }
+                        if let Some(summary) = &record.response_summary {
+                            ui.label(format!("Response Summary: {summary}"));
+                        }
+                        ui.separator();
+                        ui.strong("Payload");
+                        render_json_payload(ui, record.payload_json.as_deref().unwrap_or("{}"));
+                        ui.separator();
+                        ui.strong("Metadata");
+                        render_json_payload(ui, record.metadata_json.as_deref().unwrap_or("{}"));
                     }
-                    if let Some(remote_addr) = &record.remote_addr {
-                        ui.label(format!("Remote Addr: {remote_addr}"));
+                    WebhookDetailRecord::Agent(record) => {
+                        ui.label(format!("ID: {}", record.id));
+                        ui.label(format!(
+                            "Time: {}",
+                            format_timestamp_millis(record.received_at_ms)
+                        ));
+                        ui.label(format!("Hook ID: {}", record.hook_id));
+                        ui.label(format!("Session: {}", record.session_key));
+                        ui.label(format!("Chat ID: {}", record.chat_id));
+                        ui.label(format!("Sender: {}", record.sender_id));
+                        ui.label(format!("Status: {}", record.status.as_str()));
+                        if let Some(processed_at_ms) = record.processed_at_ms {
+                            ui.label(format!(
+                                "Processed At: {}",
+                                format_timestamp_millis(processed_at_ms)
+                            ));
+                        }
+                        if let Some(remote_addr) = &record.remote_addr {
+                            ui.label(format!("Remote Addr: {remote_addr}"));
+                        }
+                        if let Some(error_message) = &record.error_message {
+                            ui.colored_label(
+                                ui.visuals().error_fg_color,
+                                format!("Error: {error_message}"),
+                            );
+                        }
+                        if let Some(summary) = &record.response_summary {
+                            ui.label(format!("Response Summary: {summary}"));
+                        }
+                        ui.separator();
+                        ui.strong("Payload");
+                        render_json_payload(ui, record.payload_json.as_deref().unwrap_or("{}"));
+                        ui.separator();
+                        ui.strong("Metadata");
+                        render_json_payload(ui, record.metadata_json.as_deref().unwrap_or("{}"));
                     }
-                    if let Some(error_message) = &record.error_message {
-                        ui.colored_label(
-                            ui.visuals().error_fg_color,
-                            format!("Error: {error_message}"),
-                        );
-                    }
-                    if let Some(summary) = &record.response_summary {
-                        ui.label(format!("Response Summary: {summary}"));
-                    }
-                    ui.separator();
-                    ui.strong("Payload");
-                    render_json_payload(ui, record.payload_json.as_deref().unwrap_or("{}"));
-                    ui.separator();
-                    ui.strong("Metadata");
-                    render_json_payload(ui, record.metadata_json.as_deref().unwrap_or("{}"));
                 });
             if !open {
                 self.detail_record = None;
@@ -1302,10 +1476,7 @@ impl PanelRenderer for WebhookPanel {
                         ui.separator();
                         ui.horizontal(|ui| {
                             ui.label("Webhook URL");
-                            if ui
-                                .button(format!("{} Copy URL", regular::COPY))
-                                .clicked()
-                            {
+                            if ui.button(format!("{} Copy URL", regular::COPY)).clicked() {
                                 ui.ctx().output_mut(|output| {
                                     output
                                         .commands
@@ -1333,96 +1504,33 @@ impl PanelRenderer for WebhookPanel {
 fn render_webhook_config_summary(
     ui: &mut egui::Ui,
     config: &AppConfig,
-    path: Option<&Path>,
-    gateway_status: Option<&GatewayStatusSnapshot>,
+    _gateway_status: Option<&GatewayStatusSnapshot>,
 ) {
     let webhook = &config.gateway.webhook;
-    let runtime_base_url = gateway_status.as_ref().and_then(|status| {
-        status
-            .info
-            .as_ref()
-            .map(|info| gateway_base_url(&info.ws_url))
-    });
-    let events_runtime_url = runtime_base_url
-        .clone()
-        .map(|base| format!("{base}{}", webhook.events.path));
-    let agents_runtime_url = runtime_base_url
-        .clone()
-        .map(|base| format!("{base}{}", webhook.agents.path));
-    let auth_configured = gateway_status
-        .as_ref()
-        .map(|status| status.auth_configured)
-        .unwrap_or(false);
 
     egui::Grid::new("webhook-config-summary-grid")
         .num_columns(2)
         .spacing([16.0, 8.0])
         .show(ui, |ui| {
             ui.label("Webhook Enabled");
-            ui.label(if webhook.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            });
+            render_boolean_status(ui, webhook.enabled);
             ui.end_row();
 
             ui.label("Events Enabled");
-            ui.label(if webhook.events.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            });
+            render_boolean_status(ui, webhook.events.enabled);
             ui.end_row();
 
             ui.label("Events Path");
             ui.label(&webhook.events.path);
             ui.end_row();
 
-            ui.label("Events Runtime URL");
-            if let Some(url) = events_runtime_url {
-                ui.hyperlink(url);
-            } else {
-                ui.label("Gateway not running");
-            }
-            ui.end_row();
-
-            ui.label("Events Max Body Bytes");
-            ui.label(webhook.events.max_body_bytes.to_string());
-            ui.end_row();
-
             ui.label("Agents Enabled");
-            ui.label(if webhook.agents.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            });
+            render_boolean_status(ui, webhook.agents.enabled);
             ui.end_row();
 
             ui.label("Agents Path");
             ui.label(&webhook.agents.path);
             ui.end_row();
-
-            ui.label("Agents Runtime URL");
-            if let Some(url) = agents_runtime_url {
-                ui.hyperlink(url);
-            } else {
-                ui.label("Gateway not running");
-            }
-            ui.end_row();
-
-            ui.label("Agents Max Body Bytes");
-            ui.label(webhook.agents.max_body_bytes.to_string());
-            ui.end_row();
-
-            ui.label("Auth Source");
-            ui.label(webhook_auth_label(auth_configured));
-            ui.end_row();
-
-            if let Some(path) = path {
-                ui.label("Config Path");
-                ui.label(path.display().to_string());
-                ui.end_row();
-            }
         });
 }
 
@@ -1451,12 +1559,27 @@ fn normalize_filter(raw: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-fn webhook_auth_label(auth_configured: bool) -> &'static str {
-    if auth_configured {
-        "gateway auth"
-    } else {
-        "none"
+fn query_mode_primary_label(kind: WebhookQueryKind) -> &'static str {
+    match kind {
+        WebhookQueryKind::Events => "event type",
+        WebhookQueryKind::Agents => "hook id",
     }
+}
+
+fn render_boolean_status(ui: &mut egui::Ui, enabled: bool) {
+    let (icon, color, label) = if enabled {
+        (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(0x22, 0xC5, 0x5E),
+            "Enabled",
+        )
+    } else {
+        (regular::X_CIRCLE, ui.visuals().error_fg_color, "Disabled")
+    };
+    ui.horizontal(|ui| {
+        ui.colored_label(color, icon);
+        ui.colored_label(color, label);
+    });
 }
 
 fn gateway_base_url(ws_url: &str) -> String {
@@ -1800,9 +1923,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        PromptTemplateRecord, TrickPromptState, build_trick_url, default_webhook_model,
-        list_prompt_templates_in_dir, normalize_hook_id, percent_encode_query_value,
-        prompt_templates_dir_from_config, trick_base_url,
+        PromptTemplateRecord, TrickPromptState, WebhookPanel, WebhookQueryKind, build_trick_url,
+        default_webhook_model, list_prompt_templates_in_dir, normalize_hook_id,
+        percent_encode_query_value, prompt_templates_dir_from_config, query_mode_primary_label,
+        trick_base_url,
     };
     use crate::GatewayStatusSnapshot;
     use klaw_config::{AppConfig, TailscaleMode};
@@ -1848,6 +1972,19 @@ mod tests {
         );
         assert!(normalize_hook_id("../oops").is_err());
         assert!(normalize_hook_id("bad/name").is_err());
+    }
+
+    #[test]
+    fn webhook_panel_defaults_to_events_query_mode() {
+        assert_eq!(WebhookPanel::default().query_kind, WebhookQueryKind::Events);
+    }
+
+    #[test]
+    fn agent_query_mode_uses_hook_id_label() {
+        assert_eq!(
+            query_mode_primary_label(WebhookQueryKind::Agents),
+            "hook id"
+        );
     }
 
     #[test]

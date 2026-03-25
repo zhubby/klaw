@@ -2,6 +2,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use egui::Color32;
 use egui_extras::{Size, StripBuilder};
+use egui_phosphor::regular;
 use klaw_config::{ConfigStore, ObservabilityConfig};
 
 #[derive(Default)]
@@ -172,12 +173,8 @@ impl ObservabilityPanel {
         }
     }
 
-    fn status_indicator(&self) -> (String, Color32) {
-        if self.config.enabled {
-            ("Enabled".to_string(), Color32::LIGHT_GREEN)
-        } else {
-            ("Disabled".to_string(), Color32::GRAY)
-        }
+    fn status_indicator(&self) -> (bool, &'static str, &'static str) {
+        (self.config.enabled, "Enabled", "Disabled")
     }
 }
 
@@ -193,13 +190,13 @@ impl PanelRenderer for ObservabilityPanel {
 
         self.ensure_loaded(notifications);
 
-        let (status_text, status_color) = self.status_indicator();
+        let (status_enabled, enabled_label, disabled_label) = self.status_indicator();
 
-        let render_strip = |ui: &mut egui::Ui, this: &mut ObservabilityPanel| {
+        let mut render_strip = |ui: &mut egui::Ui, this: &mut ObservabilityPanel| {
             ui.heading(ctx.tab_title);
             ui.horizontal(|ui| {
                 ui.label("Status:");
-                ui.colored_label(status_color, status_text);
+                render_boolean_status(ui, status_enabled, enabled_label, disabled_label);
                 if this.is_dirty() {
                     ui.colored_label(Color32::YELLOW, "(unsaved changes)");
                 }
@@ -439,4 +436,29 @@ impl PanelRenderer for ObservabilityPanel {
             render_strip(ui, self);
         }
     }
+}
+
+fn render_boolean_status(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    enabled_label: &str,
+    disabled_label: &str,
+) {
+    let (icon, color, label) = if enabled {
+        (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(0x22, 0xC5, 0x5E),
+            enabled_label,
+        )
+    } else {
+        (
+            regular::X_CIRCLE,
+            ui.visuals().error_fg_color,
+            disabled_label,
+        )
+    };
+    ui.horizontal(|ui| {
+        ui.colored_label(color, icon);
+        ui.colored_label(color, label);
+    });
 }

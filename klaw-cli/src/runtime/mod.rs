@@ -2531,8 +2531,8 @@ mod tests {
         first_arg_token, format_approve_already_handled_message,
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, resolve_new_session_target_from_config, resolve_session_route,
-        should_emit_outbound, should_trigger_compression, spawn_llm_audit_writer,
-        trim_conversation_history,
+        resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
+        spawn_llm_audit_writer, trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_config::{AppConfig, ModelProviderConfig};

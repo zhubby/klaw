@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-25
+
+### Added
+
+- added `append_webhook_agent`, `update_webhook_agent_status`, and `list_webhook_agents` session-manager wrappers plus `WebhookAgent*` re-exports for GUI/runtime callers
+
 ## 2026-03-23
 
 ### Changed

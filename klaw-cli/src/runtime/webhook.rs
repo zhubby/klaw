@@ -6,8 +6,8 @@ use klaw_gateway::{
     GatewayWebhookHandlerError, GatewayWebhookRequest, GatewayWebhookResponse,
 };
 use klaw_session::{
-    NewWebhookEventRecord, SessionManager, SqliteSessionManager, UpdateWebhookEventResult,
-    WebhookEventStatus,
+    NewWebhookAgentRecord, NewWebhookEventRecord, SessionManager, SqliteSessionManager,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookEventStatus,
 };
 use klaw_util::default_data_dir;
 use serde_json::Value;
@@ -98,10 +98,9 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
             .await
             .map_err(|err| GatewayWebhookHandlerError::internal(err.to_string()))?;
         manager
-            .append_webhook_event(&NewWebhookEventRecord {
+            .append_webhook_agent(&NewWebhookAgentRecord {
                 id: request.request_id.clone(),
-                source: "webhook_agents".to_string(),
-                event_type: request.hook_id.clone(),
+                hook_id: request.hook_id.clone(),
                 session_key: request.session_key.clone(),
                 chat_id: request.chat_id.clone(),
                 sender_id: request.sender_id.clone(),
@@ -181,7 +180,7 @@ async fn process_webhook_agent(
     let manager = SqliteSessionManager::from_store(runtime.session_store.clone());
     let result = submit_webhook_agent(runtime.as_ref(), &request, content).await;
     let update = match result {
-        Ok(output) => UpdateWebhookEventResult {
+        Ok(output) => UpdateWebhookAgentResult {
             status: WebhookEventStatus::Processed,
             error_message: None,
             response_summary: output
@@ -189,7 +188,7 @@ async fn process_webhook_agent(
                 .map(|output| summarize_response(&output.content)),
             processed_at_ms: Some(now_ms()),
         },
-        Err(err) => UpdateWebhookEventResult {
+        Err(err) => UpdateWebhookAgentResult {
             status: WebhookEventStatus::Failed,
             error_message: Some(err.to_string()),
             response_summary: None,
@@ -198,7 +197,7 @@ async fn process_webhook_agent(
     };
 
     if let Err(err) = manager
-        .update_webhook_event_status(&request.request_id, &update)
+        .update_webhook_agent_status(&request.request_id, &update)
         .await
     {
         warn!(

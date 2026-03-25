@@ -2,6 +2,10 @@
 
 ## 2026-03-25
 
+### Added
+- added dedicated `webhook_agents` persistence models, queries, and CRUD APIs so template-driven agent webhook requests now store separately from `webhook_events`
+- both SQLx and Turso session stores now initialize and index a standalone `webhook_agents` table keyed by `hook_id`, `status`, `session_key`, and receive time
+
 ### Fixed
 - startup-oriented remote manifest lookups can now read `latest.json` plus the current manifest directly, avoiding full history listing when callers only need remote-update detection
 - remote retention cleanup no longer reloads the same manifest set twice while building its prune plan

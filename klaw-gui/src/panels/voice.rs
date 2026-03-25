@@ -978,11 +978,7 @@ impl PanelRenderer for VoicePanel {
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 ui.label("Enabled");
-                ui.label(if self.config.voice.enabled {
-                    "yes"
-                } else {
-                    "no"
-                });
+                render_boolean_status(ui, self.config.voice.enabled, "Enabled", "Disabled");
                 ui.end_row();
 
                 ui.label("STT Provider");
@@ -1148,6 +1144,31 @@ fn validate_tts_test_config(config: &AppConfig) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn render_boolean_status(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    enabled_label: &str,
+    disabled_label: &str,
+) {
+    let (icon, color, label) = if enabled {
+        (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(0x22, 0xC5, 0x5E),
+            enabled_label,
+        )
+    } else {
+        (
+            regular::X_CIRCLE,
+            ui.visuals().error_fg_color,
+            disabled_label,
+        )
+    };
+    ui.horizontal(|ui| {
+        ui.colored_label(color, icon);
+        ui.colored_label(color, label);
+    });
 }
 
 fn tts_file_extension_for_mime_type(mime_type: &str) -> &'static str {

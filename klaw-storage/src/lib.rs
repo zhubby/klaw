@@ -25,9 +25,10 @@ pub use types::{
     LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
     LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
     NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-    NewWebhookEventRecord, SessionCompressionState, SessionIndex, UpdateCronJobPatch,
-    UpdateHeartbeatJobPatch, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
-    WebhookEventSortOrder, WebhookEventStatus,
+    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
+    UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
+    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
+    WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -816,5 +817,66 @@ mod tests {
         assert_eq!(rows[0].id, "evt-1");
         assert_eq!(rows[0].status, WebhookEventStatus::Processed);
         assert_eq!(rows[0].response_summary.as_deref(), Some("processed"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn webhook_agent_supports_append_update_and_filtering() {
+        let store = create_store().await;
+        store
+            .touch_session("webhook:agent", "webhook:agent", "webhook")
+            .await
+            .expect("session should exist for webhook foreign key");
+
+        store
+            .append_webhook_agent(&NewWebhookAgentRecord {
+                id: "agent-1".to_string(),
+                hook_id: "order_sync".to_string(),
+                session_key: "webhook:agent".to_string(),
+                chat_id: "webhook:agent".to_string(),
+                sender_id: "webhook-agent:order_sync".to_string(),
+                content: "Prompt".to_string(),
+                payload_json: Some("{\"order\":1}".to_string()),
+                metadata_json: Some("{\"webhook.kind\":\"agents\"}".to_string()),
+                status: WebhookEventStatus::Accepted,
+                error_message: None,
+                response_summary: None,
+                received_at_ms: 3000,
+                processed_at_ms: None,
+                remote_addr: Some("127.0.0.1".to_string()),
+            })
+            .await
+            .expect("append webhook agent should succeed");
+
+        store
+            .update_webhook_agent_status(
+                "agent-1",
+                &UpdateWebhookAgentResult {
+                    status: WebhookEventStatus::Processed,
+                    error_message: None,
+                    response_summary: Some("agent processed".to_string()),
+                    processed_at_ms: Some(4000),
+                },
+            )
+            .await
+            .expect("update webhook agent should succeed");
+
+        let rows = store
+            .list_webhook_agents(&WebhookAgentQuery {
+                hook_id: Some("order_sync".to_string()),
+                session_key: Some("webhook:agent".to_string()),
+                status: Some(WebhookEventStatus::Processed),
+                received_from_ms: Some(2500),
+                received_to_ms: Some(3500),
+                limit: 10,
+                offset: 0,
+                sort_order: WebhookEventSortOrder::ReceivedAtDesc,
+            })
+            .await
+            .expect("list webhook agents should succeed");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "agent-1");
+        assert_eq!(rows[0].hook_id, "order_sync");
+        assert_eq!(rows[0].response_summary.as_deref(), Some("agent processed"));
     }
 }

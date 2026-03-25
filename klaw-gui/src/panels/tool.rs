@@ -1,5 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use egui::Color32;
+use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, ApplyPatchConfig, ConfigError, ConfigSnapshot, ConfigStore, MemoryToolConfig,
     ShellConfig, SubAgentConfig, WebFetchConfig, WebSearchConfig,
@@ -869,13 +871,7 @@ impl ToolPanel {
                 ui.horizontal(|ui| {
                     ui.strong(name);
                     ui.add_space(8.0);
-                    let status = if enabled { "enabled" } else { "disabled" };
-                    let color = if enabled {
-                        egui::Color32::LIGHT_GREEN
-                    } else {
-                        egui::Color32::LIGHT_RED
-                    };
-                    ui.colored_label(color, status);
+                    render_boolean_status(ui, enabled, "Enabled", "Disabled");
                 });
                 ui.add_space(4.0);
                 ui.label(description);
@@ -887,6 +883,31 @@ impl ToolPanel {
         });
         edit_clicked
     }
+}
+
+fn render_boolean_status(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    enabled_label: &str,
+    disabled_label: &str,
+) {
+    let (icon, color, label) = if enabled {
+        (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(0x22, 0xC5, 0x5E),
+            enabled_label,
+        )
+    } else {
+        (
+            regular::X_CIRCLE,
+            ui.visuals().error_fg_color,
+            disabled_label,
+        )
+    };
+    ui.horizontal(|ui| {
+        ui.colored_label(color, icon);
+        ui.colored_label(color, label);
+    });
 }
 
 impl PanelRenderer for ToolPanel {

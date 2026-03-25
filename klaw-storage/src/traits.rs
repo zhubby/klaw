@@ -3,8 +3,10 @@ use crate::{
     HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
     LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob,
     NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-    NewWebhookEventRecord, SessionCompressionState, SessionIndex, StorageError, UpdateCronJobPatch,
-    UpdateHeartbeatJobPatch, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
+    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
+    StorageError, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
+    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
+    WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -148,6 +150,22 @@ pub trait SessionStorage: Send + Sync {
         &self,
         query: &WebhookEventQuery,
     ) -> Result<Vec<WebhookEventRecord>, StorageError>;
+
+    async fn append_webhook_agent(
+        &self,
+        input: &NewWebhookAgentRecord,
+    ) -> Result<WebhookAgentRecord, StorageError>;
+
+    async fn update_webhook_agent_status(
+        &self,
+        event_id: &str,
+        update: &UpdateWebhookAgentResult,
+    ) -> Result<WebhookAgentRecord, StorageError>;
+
+    async fn list_webhook_agents(
+        &self,
+        query: &WebhookAgentQuery,
+    ) -> Result<Vec<WebhookAgentRecord>, StorageError>;
 
     async fn create_approval(
         &self,
