@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## 2026-03-25
+
+### Added
+
+- 新增 `POST /webhook/agents` 入口，请求可携带 `hook_id`、短 `session_key`、可选 `provider` / `model` 与任意 JSON `body`
+- 新增 webhook agent 请求/响应类型与归一化逻辑，并为 handler 提供可返回 HTTP 状态码的错误类型
+
+### Changed
+
+- `/webhook/agents` 现改为通过 URL query 接收 `hook_id` / `session_key` / `provider` / `model` 等控制参数，HTTP body 保持为原始 JSON 内容
+
+- gateway webhook 配置与路由注册现支持 `events` / `agents` 双 endpoint，各自拥有独立 path 与 body limit
+
 ## 2026-03-21
 
 ### Added

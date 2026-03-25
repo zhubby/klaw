@@ -2,6 +2,10 @@
 
 ## 2026-03-25
 
+### Changed
+
+- `Webhook` 面板配置编辑与摘要展示现支持 `gateway.webhook.events` / `gateway.webhook.agents` 双 endpoint；`Gateway` 面板中的 webhook 配置入口也会继续写入 `events` 子配置
+
 ### Fixed
 
 - `Gateway` 面板的 `Reload` 现在会在重新加载磁盘配置后同步刷新运行时 gateway 状态摘要，避免 `Configured` / `Auth` / `Tailscale` 继续停留在旧快照

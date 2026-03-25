@@ -211,64 +211,88 @@ listen_port = 0
 **默认值**: `false`
 **必填**: 否
 
-是否启用 gateway webhook 输入端点。启用后会注册 `POST <gateway.webhook.path>` 路由。
+是否启用 gateway webhook 输入能力。启用后会根据 endpoint 子配置分别注册 `POST <gateway.webhook.events.path>` 与 `POST <gateway.webhook.agents.path>`。
 
 ```toml
 [gateway.webhook]
 enabled = true
 ```
 
-### `gateway.webhook.path`
+### `gateway.webhook.events.enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用结构化事件入口。
+
+```toml
+[gateway.webhook.events]
+enabled = true
+```
+
+### `gateway.webhook.events.path`
 
 **类型**: `string`
 **默认值**: `"/webhook/events"`
 **必填**: 否
 
-webhook HTTP 路径，必须以 `/` 开头。
+结构化事件入口路径，必须以 `/` 开头。
 
 ```toml
-[gateway.webhook]
+[gateway.webhook.events]
 path = "/webhook/events"
 ```
 
-### `gateway.webhook.token`
-
-**类型**: `string` (可选)
-**默认值**: `null`
-**必填**: 条件必填
-
-固定 Bearer Token。`gateway.webhook.enabled = true` 时，`token` 和 `env_key` 至少需要配置一个。
-
-```toml
-[gateway.webhook]
-enabled = true
-token = "replace-me"
-```
-
-### `gateway.webhook.env_key`
-
-**类型**: `string` (可选)
-**默认值**: `null`
-**必填**: 条件必填
-
-用于读取 webhook Bearer Token 的环境变量名。仅当 `token` 为空时使用。
-
-```toml
-[gateway.webhook]
-enabled = true
-env_key = "KLAW_GATEWAY_WEBHOOK_TOKEN"
-```
-
-### `gateway.webhook.max_body_bytes`
+### `gateway.webhook.events.max_body_bytes`
 
 **类型**: `usize`
 **默认值**: `262144`
 **必填**: 否
 
-webhook 请求体大小限制，单位为字节，必须大于 `0`。
+结构化事件入口请求体大小限制，单位为字节，必须大于 `0`。
 
 ```toml
-[gateway.webhook]
+[gateway.webhook.events]
+max_body_bytes = 262144
+```
+
+### `gateway.webhook.agents.enabled`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否启用模板驱动的 agent webhook 入口。
+
+```toml
+[gateway.webhook.agents]
+enabled = true
+```
+
+### `gateway.webhook.agents.path`
+
+**类型**: `string`
+**默认值**: `"/webhook/agents"`
+**必填**: 否
+
+agent webhook 入口路径，必须以 `/` 开头。
+
+```toml
+[gateway.webhook.agents]
+path = "/webhook/agents"
+```
+
+### `gateway.webhook.agents.max_body_bytes`
+
+**类型**: `usize`
+**默认值**: `262144`
+**必填**: 否
+
+agent webhook 入口请求体大小限制，单位为字节，必须大于 `0`。
+
+```toml
+[gateway.webhook.agents]
 max_body_bytes = 262144
 ```
 

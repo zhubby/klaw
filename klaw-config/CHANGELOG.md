@@ -2,6 +2,10 @@
 
 ## 2026-03-25
 
+### Added
+
+- `gateway.webhook` 现支持独立的 `events` / `agents` 子配置，分别声明 endpoint 是否启用、路径与请求体大小限制
+
 ### Fixed
 
 - `ConfigStore` 新增基于磁盘最新 `config.toml` 的原子更新路径，避免多个 GUI 面板分别持有旧快照时把彼此已保存的配置整份覆盖掉

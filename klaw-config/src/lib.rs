@@ -1,5 +1,5 @@
 use klaw_util::system_timezone_name;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 use thiserror::Error;
 
@@ -559,13 +559,21 @@ impl Default for GatewayConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GatewayWebhookConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "default_gateway_webhook_path")]
+    #[serde(default = "default_gateway_webhook_events_config")]
+    pub events: GatewayWebhookEndpointConfig,
+    #[serde(default = "default_gateway_webhook_agents_config")]
+    pub agents: GatewayWebhookEndpointConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayWebhookEndpointConfig {
+    #[serde(default)]
+    pub enabled: bool,
     pub path: String,
-    #[serde(default = "default_gateway_webhook_max_body_bytes")]
     pub max_body_bytes: usize,
 }
 
@@ -573,9 +581,73 @@ impl Default for GatewayWebhookConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            path: default_gateway_webhook_path(),
-            max_body_bytes: default_gateway_webhook_max_body_bytes(),
+            events: default_gateway_webhook_events_config(),
+            agents: default_gateway_webhook_agents_config(),
         }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GatewayWebhookConfigCompat {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    max_body_bytes: Option<usize>,
+    #[serde(default)]
+    events: Option<GatewayWebhookEndpointConfigCompat>,
+    #[serde(default)]
+    agents: Option<GatewayWebhookEndpointConfigCompat>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GatewayWebhookEndpointConfigCompat {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    max_body_bytes: Option<usize>,
+}
+
+impl<'de> Deserialize<'de> for GatewayWebhookConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let compat = GatewayWebhookConfigCompat::deserialize(deserializer)?;
+        let mut config = GatewayWebhookConfig::default();
+        config.enabled = compat.enabled;
+        if let Some(events) = compat.events {
+            if let Some(enabled) = events.enabled {
+                config.events.enabled = enabled;
+            }
+            if let Some(path) = events.path {
+                config.events.path = path;
+            }
+            if let Some(max_body_bytes) = events.max_body_bytes {
+                config.events.max_body_bytes = max_body_bytes;
+            }
+        }
+        if let Some(agents) = compat.agents {
+            if let Some(enabled) = agents.enabled {
+                config.agents.enabled = enabled;
+            }
+            if let Some(path) = agents.path {
+                config.agents.path = path;
+            }
+            if let Some(max_body_bytes) = agents.max_body_bytes {
+                config.agents.max_body_bytes = max_body_bytes;
+            }
+        }
+        if let Some(path) = compat.path {
+            config.events.path = path;
+        }
+        if let Some(max_body_bytes) = compat.max_body_bytes {
+            config.events.max_body_bytes = max_body_bytes;
+        }
+        Ok(config)
     }
 }
 
@@ -597,12 +669,32 @@ fn default_gateway_listen_port() -> u16 {
     0
 }
 
-fn default_gateway_webhook_path() -> String {
+fn default_gateway_webhook_events_path() -> String {
     "/webhook/events".to_string()
+}
+
+fn default_gateway_webhook_agents_path() -> String {
+    "/webhook/agents".to_string()
 }
 
 fn default_gateway_webhook_max_body_bytes() -> usize {
     262_144
+}
+
+fn default_gateway_webhook_events_config() -> GatewayWebhookEndpointConfig {
+    GatewayWebhookEndpointConfig {
+        enabled: true,
+        path: default_gateway_webhook_events_path(),
+        max_body_bytes: default_gateway_webhook_max_body_bytes(),
+    }
+}
+
+fn default_gateway_webhook_agents_config() -> GatewayWebhookEndpointConfig {
+    GatewayWebhookEndpointConfig {
+        enabled: false,
+        path: default_gateway_webhook_agents_path(),
+        max_body_bytes: default_gateway_webhook_max_body_bytes(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -225,9 +225,11 @@ pub fn reset_to_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, C
 |------|------|
 | `listen_ip` | 必须是有效 IP 地址 |
 | `listen_port` | 允许为 `0` 或合法端口 |
-| `webhook.path` | 必须以 `/` 开头 |
-| `webhook.max_body_bytes` | 必须大于 `0` |
-| `webhook.enabled` | 启用时必须配置 `token` 或 `env_key` |
+| `webhook.events.path` | 必须以 `/` 开头 |
+| `webhook.events.max_body_bytes` | 必须大于 `0` |
+| `webhook.agents.path` | 必须以 `/` 开头 |
+| `webhook.agents.max_body_bytes` | 必须大于 `0` |
+| `webhook.events.path != webhook.agents.path` | 两个 endpoint 不能复用同一路径 |
 | `tls.enabled=true` 时 | `cert_path` 和 `key_path` 必填 |
 
 #### 3. 渠道验证

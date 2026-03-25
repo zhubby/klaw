@@ -2,6 +2,10 @@
 
 ## 2026-03-25
 
+### Added
+
+- runtime gateway webhook handler 现支持新的 `/webhook/agents` 流程：读取 `~/.klaw/hooks/prompts/<hook_id>.md`，在末尾追加 pretty-printed request JSON fenced block 后再提交到 agent loop
+
 ### Fixed
 
 - `klaw gui` 的 gateway 状态查询现在会在返回前同步磁盘最新配置中的 `enabled` / `auth` / `tailscale` 元数据，避免 `Gateway` 面板在配置 reload 后继续显示旧状态

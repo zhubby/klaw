@@ -4,7 +4,9 @@ use crate::{
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
     state::{GatewayHandle, GatewayRuntimeInfo, GatewayState},
     tailscale::{TailscaleError, TailscaleManager},
-    webhook::{GatewayWebhookHandler, build_webhook_state, webhook_handler},
+    webhook::{
+        GatewayWebhookHandler, build_webhook_state, webhook_agents_handler, webhook_handler,
+    },
     websocket::ws_chat_handler,
 };
 use axum::{
@@ -175,10 +177,18 @@ fn build_router(
         .route("/metrics", get(metrics_handler));
 
     if config.webhook.enabled {
-        let webhook_router = Router::new()
-            .route(&config.webhook.path, post(webhook_handler))
-            .layer(DefaultBodyLimit::max(config.webhook.max_body_bytes));
-        app = app.merge(webhook_router);
+        if config.webhook.events.enabled {
+            let events_router = Router::new()
+                .route(&config.webhook.events.path, post(webhook_handler))
+                .layer(DefaultBodyLimit::max(config.webhook.events.max_body_bytes));
+            app = app.merge(events_router);
+        }
+        if config.webhook.agents.enabled {
+            let agents_router = Router::new()
+                .route(&config.webhook.agents.path, post(webhook_agents_handler))
+                .layer(DefaultBodyLimit::max(config.webhook.agents.max_body_bytes));
+            app = app.merge(agents_router);
+        }
     }
 
     let app = app.with_state(state);

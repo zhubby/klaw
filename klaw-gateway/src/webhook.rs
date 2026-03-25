@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use axum::{
     Json,
     body::Bytes,
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -42,12 +42,64 @@ pub struct GatewayWebhookResponse {
     pub session_key: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayWebhookAgentRequest {
+    pub request_id: String,
+    pub hook_id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub sender_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub body: Value,
+    pub metadata: BTreeMap<String, Value>,
+    pub remote_addr: Option<String>,
+    pub received_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayWebhookAgentResponse {
+    pub request_id: String,
+    pub status: String,
+    pub hook_id: String,
+    pub session_key: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GatewayWebhookHandlerError {
+    pub status: StatusCode,
+    pub message: String,
+}
+
+impl GatewayWebhookHandlerError {
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.into(),
+        }
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+}
+
 #[async_trait]
 pub trait GatewayWebhookHandler: Send + Sync {
-    async fn handle(
+    async fn handle_event(
         &self,
         request: GatewayWebhookRequest,
-    ) -> Result<GatewayWebhookResponse, String>;
+    ) -> Result<GatewayWebhookResponse, GatewayWebhookHandlerError>;
+
+    async fn handle_agent(
+        &self,
+        request: GatewayWebhookAgentRequest,
+    ) -> Result<GatewayWebhookAgentResponse, GatewayWebhookHandlerError>;
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +117,20 @@ pub(crate) struct GatewayWebhookPayload {
     pub(crate) payload: Option<Value>,
     #[serde(default)]
     pub(crate) metadata: Option<BTreeMap<String, Value>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GatewayWebhookAgentQuery {
+    pub(crate) hook_id: String,
+    pub(crate) session_key: String,
+    #[serde(default)]
+    pub(crate) chat_id: Option<String>,
+    #[serde(default)]
+    pub(crate) sender_id: Option<String>,
+    #[serde(default)]
+    pub(crate) provider: Option<String>,
+    #[serde(default)]
+    pub(crate) model: Option<String>,
 }
 
 pub(crate) fn build_webhook_state(
@@ -95,9 +161,34 @@ pub(crate) async fn webhook_handler(
         Ok(request) => request,
         Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
     };
-    match webhook.handler.handle(request).await {
+    match webhook.handler.handle_event(request).await {
         Ok(response) => (StatusCode::ACCEPTED, Json(response)).into_response(),
-        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+        Err(err) => (err.status, err.message).into_response(),
+    }
+}
+
+pub(crate) async fn webhook_agents_handler(
+    State(state): State<Arc<GatewayState>>,
+    Query(query): Query<GatewayWebhookAgentQuery>,
+    body: Bytes,
+) -> Response {
+    let Some(webhook) = state.webhook.as_ref() else {
+        return (StatusCode::NOT_FOUND, "webhook is not enabled").into_response();
+    };
+
+    let raw_body: Value = match serde_json::from_slice(&body) {
+        Ok(payload) => payload,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, "invalid webhook agent payload").into_response();
+        }
+    };
+    let request = match normalize_webhook_agent_request(query, raw_body, None) {
+        Ok(request) => request,
+        Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
+    };
+    match webhook.handler.handle_agent(request).await {
+        Ok(response) => (StatusCode::ACCEPTED, Json(response)).into_response(),
+        Err(err) => (err.status, err.message).into_response(),
     }
 }
 
@@ -172,6 +263,92 @@ pub(crate) fn normalize_webhook_request(
         chat_id,
         sender_id,
         payload: payload.payload,
+        metadata,
+        remote_addr: remote_addr.map(|addr| addr.to_string()),
+        received_at_ms,
+    })
+}
+
+pub(crate) fn normalize_webhook_agent_request(
+    query: GatewayWebhookAgentQuery,
+    body: Value,
+    remote_addr: Option<SocketAddr>,
+) -> Result<GatewayWebhookAgentRequest, &'static str> {
+    let hook_id = query.hook_id.trim();
+    if hook_id.is_empty() {
+        return Err("hook_id is required");
+    }
+    if !hook_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Err("hook_id may only contain letters, numbers, '-' and '_'");
+    }
+
+    let session_key = query.session_key.trim();
+    if session_key.is_empty() {
+        return Err("session_key is required");
+    }
+
+    let chat_id = query
+        .chat_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| session_key.to_string());
+    let sender_id = query
+        .sender_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("webhook-agent:{hook_id}"));
+    let provider = query
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let model = query
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let received_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    let mut metadata = BTreeMap::new();
+    metadata.insert(
+        "trigger.kind".to_string(),
+        Value::String("webhook_agents".to_string()),
+    );
+    metadata.insert(
+        "webhook.kind".to_string(),
+        Value::String("agents".to_string()),
+    );
+    metadata.insert(
+        "webhook.agents.hook_id".to_string(),
+        Value::String(hook_id.to_string()),
+    );
+    metadata.insert(
+        "webhook.agents.request_id".to_string(),
+        Value::String(request_id.clone()),
+    );
+
+    Ok(GatewayWebhookAgentRequest {
+        request_id,
+        hook_id: hook_id.to_string(),
+        session_key: session_key.to_string(),
+        chat_id,
+        sender_id,
+        provider,
+        model,
+        body,
         metadata,
         remote_addr: remote_addr.map(|addr| addr.to_string()),
         received_at_ms,

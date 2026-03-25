@@ -5,7 +5,7 @@
 - 绑定配置中的监听地址和端口
 - 支持 `listen_port = 0` 时由系统分配随机可用端口
 - 暴露 `/ws/chat` WebSocket 入口
-- 可选暴露受 `Authorization: Bearer <token>` 保护的 webhook 事件入口
+- 可选暴露受 `Authorization: Bearer <token>` 保护的 `events` / `agents` 双 webhook 入口
 - 按 `session_key` 维护房间广播通道
 - 在启动成功后打印实际可连接的 WebSocket 地址
 - 提供可管理的 `GatewayHandle` / `GatewayRuntimeInfo`，以及可注入业务逻辑的 `GatewayWebhookHandler`
@@ -16,7 +16,7 @@
 - `runtime.rs`: gateway 启动、监听、路由装配与生命周期入口
 - `state.rs`: 运行态共享状态、`GatewayHandle` 与 `GatewayRuntimeInfo`
 - `websocket.rs`: `/ws/chat` WebSocket 连接与房间广播逻辑
-- `webhook.rs`: webhook 鉴权、payload 归一化与 handler 集成
+- `webhook.rs`: webhook 鉴权、`events` / `agents` payload 归一化与 handler 集成
 - `handlers.rs`: health / metrics HTTP handlers
 - `error.rs`: `GatewayError`
 
@@ -24,13 +24,17 @@
 
 - 当前仅支持非 TLS 监听
 - 启动成功后会输出实际监听地址对应的 `http://<listen_addr>/ws/chat`
-- webhook 路由是否注册由 `gateway.webhook.enabled` 决定，Bearer token 来自 `gateway.webhook.token` 或 `gateway.webhook.env_key`
+- webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 可分别启停并配置独立 path 与 body limit
 
 ## Examples
 
-- `examples/webhook_request.rs`: 使用 Rust 和 `reqwest` 向 gateway 的 webhook 端点发送一条测试事件
+- `examples/webhook_request.rs`: 使用 Rust 和 `reqwest` 向 `events` webhook 端点发送一条测试事件
+- `examples/webhook_agents_request.rs`: 使用 Rust 和 `reqwest` 向 `agents` webhook 端点发送 query + raw JSON body 请求
 
 ```bash
 cargo run -p klaw-gateway --example webhook_request
 WEBHOOK_TOKEN=replace-me BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gateway --example webhook_request
+
+cargo run -p klaw-gateway --example webhook_agents_request
+WEBHOOK_TOKEN=replace-me BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gateway --example webhook_agents_request
 ```
