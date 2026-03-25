@@ -62,8 +62,11 @@
 - Provider panel features:
   - provider/channel editors already preserve the new streaming config fields in the config model, though the current GUI still leaves them at their default `false` values
   - read providers from `config.toml` (`model_provider` + `model_providers`)
+  - render providers in a scrollable table that supports both horizontal and vertical overflow
+  - show the active provider with a green trailing check icon in the `ID` column
   - set active provider directly and clear any temporary runtime override so the running runtime immediately follows the saved global default again
   - add/edit provider via `egui::Window` form and persist back to config
+  - expose icon-based row actions for edit, set-active, copy-id, and guarded delete
 - Channel panel features:
   - read/write channel config from `config.toml` for `channels.dingtalk` and `channels.telegram`
   - add/edit current dingtalk and telegram channels via `egui::Window`
