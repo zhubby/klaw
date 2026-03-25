@@ -1,0 +1,22 @@
+---
+description: Prevent stale config snapshot overwrites
+alwaysApply: true
+---
+
+# Config Persistence Safety
+
+- Treat `~/.klaw/config.toml` as shared mutable state across GUI panels, helpers, and runtime-facing editors.
+- Never mutate a cached `AppConfig` snapshot and then write the whole file back later. That pattern causes last-writer-wins data loss.
+- For partial config edits, always follow `reload latest on-disk config -> mutate the target subsection -> validate -> persist`.
+- Prefer centralized `ConfigStore` update helpers over panel-local `toml::to_string_pretty(...) + save_raw_toml(...)` flows.
+- When changing config persistence logic, add a regression test that proves two stale editors saving different fields do not clobber each other.
+
+# Example
+
+```rust
+// Good: update from the latest on-disk config before saving.
+store.update_config(|config| {
+    config.memory.embedding.model = "text-embedding-v4".to_string();
+    Ok(())
+})?;
+```

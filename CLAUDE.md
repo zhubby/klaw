@@ -38,6 +38,14 @@ For tool and config changes, include enough tests for core and edge scenarios:
 
 After each modification, ensure the relevant crate/workspace tests pass before considering the task complete.
 
+## Config Persistence Safety
+
+- Treat `~/.klaw/config.toml` as shared mutable state. GUI panels, helpers, and runtime-facing editors must not assume their cached `AppConfig` remains current.
+- **Never** load config once, mutate that stale snapshot later, and write the entire file back. This causes last-writer-wins data loss across independent panels.
+- For partial config edits, always reload the latest on-disk config, apply a narrow mutation, validate, and then persist.
+- Prefer centralized `ConfigStore` update helpers for config writes so all editors follow the same reload-mutate-validate-save path.
+- When changing config persistence behavior, add a regression test that proves two stale editors saving different fields do not clobber each other.
+
 ## Architecture
 
 **Klaw** is a Rust-based AI agent.
