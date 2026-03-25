@@ -1,7 +1,8 @@
 use super::{RuntimeBundle, webhook};
-use klaw_config::{AppConfig, ConfigStore, TailscaleMode};
+use klaw_config::{AppConfig, ConfigError, ConfigStore, TailscaleMode};
 use klaw_gateway::{GatewayHandle, spawn_gateway_with_options};
 use klaw_gui::GatewayStatusSnapshot;
+use std::path::Path;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -41,13 +42,17 @@ impl GatewayManager {
         }
     }
 
+    fn sync_metadata_from_config(&mut self, config: &AppConfig) {
+        self.configured_enabled = config.gateway.enabled;
+        self.tailscale_mode = config.gateway.tailscale.mode;
+        self.auth_configured = config.gateway.auth.is_enabled();
+    }
+
     pub async fn start_from_config(
         &mut self,
         config: &AppConfig,
     ) -> Result<GatewayStatusSnapshot, String> {
-        self.configured_enabled = config.gateway.enabled;
-        self.tailscale_mode = config.gateway.tailscale.mode;
-        self.auth_configured = config.gateway.auth.is_enabled();
+        self.sync_metadata_from_config(config);
 
         if self.handle.is_some() {
             return Ok(self.snapshot());
@@ -99,18 +104,33 @@ impl GatewayManager {
         &mut self,
         config: &AppConfig,
     ) -> Result<GatewayStatusSnapshot, String> {
-        self.configured_enabled = config.gateway.enabled;
+        self.sync_metadata_from_config(config);
         if !config.gateway.enabled {
             return Ok(self.snapshot());
         }
         self.start_from_config(config).await
     }
 
+    pub fn refresh_from_store(&mut self) -> Result<GatewayStatusSnapshot, String> {
+        let config = load_config_from_store()?;
+        self.sync_metadata_from_config(&config);
+        Ok(self.snapshot())
+    }
+
+    pub async fn start_from_store(&mut self) -> Result<GatewayStatusSnapshot, String> {
+        let config = load_config_from_store()?;
+        self.sync_metadata_from_config(&config);
+        if !config.gateway.enabled {
+            let message = "gateway is disabled in config".to_string();
+            self.last_error = Some(message.clone());
+            return Err(message);
+        }
+        self.start_from_config(&config).await
+    }
+
     pub async fn restart_from_store(&mut self) -> Result<GatewayStatusSnapshot, String> {
         let config = load_config_from_store()?;
-        self.configured_enabled = config.gateway.enabled;
-        self.tailscale_mode = config.gateway.tailscale.mode;
-        self.auth_configured = config.gateway.auth.is_enabled();
+        self.sync_metadata_from_config(&config);
 
         if !config.gateway.enabled {
             let message = "gateway is disabled in config".to_string();
@@ -182,19 +202,152 @@ fn load_config_from_store() -> Result<AppConfig, String> {
 }
 
 fn save_gateway_enabled(enabled: bool) -> Result<AppConfig, String> {
-    let store = ConfigStore::open(None).map_err(|err| err.to_string())?;
-    let mut next = store.snapshot().config;
-    next.gateway.enabled = enabled;
-    let raw = toml::to_string_pretty(&next).map_err(|err| err.to_string())?;
-    let saved = store.save_raw_toml(&raw).map_err(|err| err.to_string())?;
-    Ok(saved.config)
+    update_gateway_config(None, |config| {
+        config.gateway.enabled = enabled;
+        Ok(())
+    })
 }
 
 fn save_tailscale_mode(mode: TailscaleMode) -> Result<AppConfig, String> {
-    let store = ConfigStore::open(None).map_err(|err| err.to_string())?;
-    let mut next = store.snapshot().config;
-    next.gateway.tailscale.mode = mode;
-    let raw = toml::to_string_pretty(&next).map_err(|err| err.to_string())?;
-    let saved = store.save_raw_toml(&raw).map_err(|err| err.to_string())?;
-    Ok(saved.config)
+    update_gateway_config(None, |config| {
+        config.gateway.tailscale.mode = mode;
+        Ok(())
+    })
+}
+
+fn update_gateway_config<F>(config_path: Option<&Path>, mutate: F) -> Result<AppConfig, String>
+where
+    F: FnOnce(&mut AppConfig) -> Result<(), String>,
+{
+    let store = ConfigStore::open(config_path).map_err(|err| err.to_string())?;
+    store
+        .update_config(|config| {
+            mutate(config).map_err(ConfigError::InvalidConfig)?;
+            Ok(())
+        })
+        .map(|(snapshot, ())| snapshot.config)
+        .map_err(|err| err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_gateway_config;
+    use klaw_config::{ConfigStore, TailscaleMode};
+    use std::env;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_config_path() -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        env::temp_dir()
+            .join(format!("klaw-gateway-manager-test-{suffix}"))
+            .join("config.toml")
+    }
+
+    fn write_gateway_config(path: &std::path::Path) {
+        let root = path.parent().expect("temp config should have a parent");
+        fs::create_dir_all(root).expect("should create temp root");
+        fs::write(
+            path,
+            r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[gateway]
+enabled = false
+listen_ip = "127.0.0.1"
+listen_port = 0
+
+[gateway.auth]
+enabled = true
+env_key = "KLAW_GATEWAY_TOKEN"
+
+[gateway.tailscale]
+mode = "off"
+reset_on_exit = false
+"#,
+        )
+        .expect("should write source config");
+    }
+
+    #[test]
+    fn gateway_helper_updates_enabled_without_clobbering_other_gateway_fields() {
+        let path = temp_config_path();
+        let root = path
+            .parent()
+            .expect("temp config path should have root directory")
+            .to_path_buf();
+        write_gateway_config(&path);
+
+        let stale_store = ConfigStore::open(Some(&path)).expect("stale store should open");
+        stale_store
+            .update_config(|config| {
+                config.gateway.auth.enabled = false;
+                config.gateway.auth.env_key = Some("UPDATED_GATEWAY_TOKEN".to_string());
+                Ok(())
+            })
+            .expect("stale store update should succeed");
+
+        let saved = update_gateway_config(Some(&path), |config| {
+            config.gateway.enabled = true;
+            Ok(())
+        })
+        .expect("gateway enabled update should succeed");
+
+        assert!(saved.gateway.enabled);
+        assert!(!saved.gateway.auth.enabled);
+        assert_eq!(
+            saved.gateway.auth.env_key.as_deref(),
+            Some("UPDATED_GATEWAY_TOKEN")
+        );
+
+        let disk_raw = fs::read_to_string(&path).expect("saved config should be readable");
+        assert!(disk_raw.contains("enabled = true"));
+        assert!(disk_raw.contains("env_key = \"UPDATED_GATEWAY_TOKEN\""));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn gateway_helper_updates_tailscale_mode_without_clobbering_auth_changes() {
+        let path = temp_config_path();
+        let root = path
+            .parent()
+            .expect("temp config path should have root directory")
+            .to_path_buf();
+        write_gateway_config(&path);
+
+        let stale_store = ConfigStore::open(Some(&path)).expect("stale store should open");
+        stale_store
+            .update_config(|config| {
+                config.gateway.auth.token = Some("secret-token".to_string());
+                Ok(())
+            })
+            .expect("stale store update should succeed");
+
+        let saved = update_gateway_config(Some(&path), |config| {
+            config.gateway.tailscale.mode = TailscaleMode::Serve;
+            Ok(())
+        })
+        .expect("tailscale mode update should succeed");
+
+        assert_eq!(saved.gateway.tailscale.mode, TailscaleMode::Serve);
+        assert_eq!(saved.gateway.auth.token.as_deref(), Some("secret-token"));
+
+        let disk_raw = fs::read_to_string(&path).expect("saved config should be readable");
+        assert!(disk_raw.contains("mode = \"serve\""));
+        assert!(disk_raw.contains("token = \"secret-token\""));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&root);
+    }
 }
