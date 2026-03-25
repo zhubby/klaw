@@ -6,13 +6,12 @@ use chrono::NaiveDate;
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
-use klaw_heartbeat::{
-    DEFAULT_SILENT_ACK_TOKEN, DEFAULT_TIMEZONE, HeartbeatInput, HeartbeatManager,
-};
+use klaw_heartbeat::{DEFAULT_SILENT_ACK_TOKEN, HeartbeatInput, HeartbeatManager};
 use klaw_storage::{
     DefaultSessionStore, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, SessionIndex,
     SessionStorage, open_default_store,
 };
+use klaw_util::system_timezone_name;
 use std::future::Future;
 use std::sync::Arc;
 use std::thread;
@@ -45,7 +44,7 @@ impl HeartbeatForm {
             every: "30m".to_string(),
             prompt: "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.".to_string(),
             silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
-            timezone: DEFAULT_TIMEZONE.to_string(),
+            timezone: defaults.timezone.clone(),
         }
     }
 
@@ -90,11 +89,15 @@ impl HeartbeatForm {
 #[derive(Debug, Clone)]
 struct HeartbeatDefaults {
     enabled: bool,
+    timezone: String,
 }
 
 impl Default for HeartbeatDefaults {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            timezone: system_timezone_name(),
+        }
     }
 }
 
@@ -828,4 +831,16 @@ fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heartbeat_defaults_to_system_timezone() {
+        let defaults = HeartbeatDefaults::default();
+        assert_eq!(defaults.timezone, system_timezone_name());
+        assert_eq!(HeartbeatForm::new(&defaults).timezone, defaults.timezone);
+    }
 }

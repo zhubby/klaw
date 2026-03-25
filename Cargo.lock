@@ -3957,6 +3957,7 @@ dependencies = [
 name = "klaw-util"
 version = "0.1.1"
 dependencies = [
+ "iana-time-zone",
  "serde",
  "time",
 ]

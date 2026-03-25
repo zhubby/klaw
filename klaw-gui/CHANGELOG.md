@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- GUI 统一时间格式现在按系统本地时区展示 `*_at_ms` / Unix 时间戳，而不再直接按 UTC 语义渲染
+- `Cron` 与 `Heartbeat` 新建表单的默认 timezone 改为系统探测值，不再硬编码 `UTC`
 - `Profile Prompt` 面板恢复旧的持久化 tab 状态时，现在会把历史标题 `Profile` 自动规范为 `Profile Prompt`
 - `Profile Prompt` 面板的 `System Prompt Preview` 改为后台加载，避免首次打开或手动刷新时阻塞 GUI 渲染线程
 - `Profile Prompt` 面板的 `Workspace Markdown Files` 与 `System Prompt Preview` 区块现在会按分配高度填充，窗口变高时不再留下异常空隙

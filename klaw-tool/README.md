@@ -22,6 +22,7 @@
 - the `shell` tool now supports two rule lists: `blocked_patterns` reject immediately, while `unsafe_patterns` require approval; commands that match neither execute directly
 - the `cron_manager` tool accepts planner-friendly schedule inputs such as 5-field cron (`0 8 * * *`), `every 24h`, and daily time shorthand (`8:00`), then normalizes them before persistence
 - the `cron_manager` tool also accepts either a JSON object or a JSON string for payloads, and tolerates common boolean strings like `"true"` / `"false"` for `enabled`
+- the `cron_manager` and `heartbeat_manager` tools now default `timezone` to the detected system timezone when callers omit it
 - the `cron_manager` tool supports a high-level `message` shortcut for scheduled prompts in the current conversation, auto-filling channel/chat/session defaults from tool context unless explicitly overridden
 - the `message` shortcut now defaults to an isolated cron session key like `cron:<job_id>` so scheduled runs do not silently accumulate the current chat's conversation history
 - the `heartbeat_manager` tool manages session-bound heartbeat jobs directly from storage, with session/channel/chat defaults inferred from current tool context when possible

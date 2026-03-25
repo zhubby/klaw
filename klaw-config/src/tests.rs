@@ -1,4 +1,5 @@
 use super::*;
+use klaw_util::system_timezone_name;
 use std::{
     env, fs,
     time::{SystemTime, UNIX_EPOCH},
@@ -37,6 +38,7 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.heartbeat_manager.enabled);
     assert!(parsed.tools.skills_registry.enabled);
     assert!(parsed.tools.skills_manager.enabled);
+    assert_eq!(parsed.heartbeat.defaults.timezone, system_timezone_name());
     assert!(parsed.tools.shell.workspace.is_none());
     assert!(parsed.tools.apply_patch.enabled);
     assert!(parsed.tools.apply_patch.workspace.is_none());
