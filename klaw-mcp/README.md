@@ -9,6 +9,7 @@
 - 缓存每个 MCP server 最近一次成功 `tools/list` 的响应，供 GUI/调试面板查看
 - 处理工具名冲突与 bootstrap 失败汇总
 - 支持动态启动/停止/重启 MCP 服务器（热重载）
+- 通过共享 hub 状态保证代理工具在启动后和热重载后都能路由到最新 client
 - 支持只读运行时快照查询，不触发额外 MCP 同步
 - 在 runtime 退出时关闭已连接的 MCP client
 

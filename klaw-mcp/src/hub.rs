@@ -1,6 +1,9 @@
 use crate::client::McpClient;
 use serde_json::Value;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+};
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -40,24 +43,38 @@ pub enum McpClientHubError {
 
 #[derive(Default, Clone)]
 pub struct McpClientHub {
-    clients: BTreeMap<String, Arc<dyn McpClient>>,
+    clients: Arc<RwLock<BTreeMap<String, Arc<dyn McpClient>>>>,
 }
 
 impl McpClientHub {
-    pub(crate) fn insert(&mut self, server_id: String, client: Arc<dyn McpClient>) {
-        self.clients.insert(server_id, client);
+    pub(crate) fn insert(&self, server_id: String, client: Arc<dyn McpClient>) {
+        self.clients
+            .write()
+            .unwrap_or_else(|err| err.into_inner())
+            .insert(server_id, client);
     }
 
-    pub fn remove(&mut self, server_id: &str) {
-        self.clients.remove(server_id);
+    pub fn remove(&self, server_id: &str) {
+        self.clients
+            .write()
+            .unwrap_or_else(|err| err.into_inner())
+            .remove(server_id);
     }
 
     pub fn server_ids(&self) -> Vec<String> {
-        self.clients.keys().cloned().collect()
+        self.clients
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .keys()
+            .cloned()
+            .collect()
     }
 
     pub fn contains(&self, server_id: &str) -> bool {
-        self.clients.contains_key(server_id)
+        self.clients
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .contains_key(server_id)
     }
 
     pub async fn call_tool(
@@ -66,7 +83,11 @@ impl McpClientHub {
         tool_name: &str,
         arguments: Value,
     ) -> Result<Value, McpClientHubError> {
-        let Some(client) = self.clients.get(server_id) else {
+        let client = {
+            let guard = self.clients.read().unwrap_or_else(|err| err.into_inner());
+            guard.get(server_id).cloned()
+        };
+        let Some(client) = client else {
             return Err(McpClientHubError::ServerNotFound(server_id.to_string()));
         };
         client
@@ -76,7 +97,14 @@ impl McpClientHub {
     }
 
     pub async fn shutdown_all(&self) -> Result<(), McpClientHubError> {
-        for (server_id, client) in &self.clients {
+        let clients: Vec<(String, Arc<dyn McpClient>)> = self
+            .clients
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .iter()
+            .map(|(server_id, client)| (server_id.clone(), Arc::clone(client)))
+            .collect();
+        for (server_id, client) in clients {
             client
                 .shutdown()
                 .await
