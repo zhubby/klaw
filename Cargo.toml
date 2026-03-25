@@ -93,6 +93,7 @@ prometheus = "0.13"
 tracing-opentelemetry = "0.28"
 cpal = "0.16"
 hound = "3.5"
+rodio = "0.20"
 
 klaw-core = { path = "klaw-core" }
 klaw-approval = { path = "klaw-approval" }

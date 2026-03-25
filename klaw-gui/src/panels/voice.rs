@@ -1,18 +1,26 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::voice_test::{RecordingCapture, RecordingHandle};
+use egui::{Color32, RichText};
+use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, AssemblyAiVoiceConfig, ConfigError, ConfigSnapshot, ConfigStore,
     DeepgramVoiceConfig, ElevenLabsVoiceConfig, SttProviderKind, TtsProviderKind, VoiceConfig,
 };
-use klaw_voice::{SttInput, VoiceService};
+use klaw_voice::{SttInput, TtsInput, VoiceService};
+use rodio::{Decoder, OutputStream, Sink};
+use std::fs;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Builder;
+use uuid::Uuid;
 
 const VOICE_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const TTS_INPUT_ROWS: usize = 6;
 
 #[derive(Debug, Clone)]
 struct VoiceConfigForm {
@@ -158,8 +166,30 @@ impl VoiceConfigForm {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VoiceTestMode {
+    Stt,
+    Tts,
+}
+
+impl VoiceTestMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Stt => "STT Test",
+            Self::Tts => "TTS Test",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Stt => regular::MICROPHONE,
+            Self::Tts => regular::SPEAKER_HIGH,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-struct VoiceTestResult {
+struct SttTestResult {
     transcript: String,
     provider_name: String,
     language: Option<String>,
@@ -173,7 +203,7 @@ struct VoiceTestResult {
 }
 
 #[derive(Debug, Clone)]
-enum VoiceTestState {
+enum SttTestState {
     Idle,
     Recording {
         started_at: Instant,
@@ -185,8 +215,32 @@ enum VoiceTestState {
         started_at: Instant,
         capture_duration_ms: u64,
     },
-    Completed(VoiceTestResult),
+    Completed(SttTestResult),
     Failed(String),
+}
+
+#[derive(Debug, Clone)]
+struct TtsTestResult {
+    provider_name: String,
+    mime_type: String,
+    duration_ms: Option<u64>,
+    output_path: PathBuf,
+    output_size_bytes: usize,
+    requested_voice_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum TtsTestState {
+    Idle,
+    Synthesizing { started_at: Instant },
+    Completed(TtsTestResult),
+    Failed(String),
+}
+
+struct PlaybackHandle {
+    _stream: OutputStream,
+    sink: Sink,
+    path: PathBuf,
 }
 
 pub struct VoicePanel {
@@ -195,9 +249,15 @@ pub struct VoicePanel {
     config: AppConfig,
     config_form: VoiceConfigForm,
     config_window_open: bool,
+    test_mode: VoiceTestMode,
     recording: Option<RecordingHandle>,
-    test_state: VoiceTestState,
-    test_result_rx: Option<Receiver<Result<VoiceTestResult, String>>>,
+    stt_state: SttTestState,
+    stt_result_rx: Option<Receiver<Result<SttTestResult, String>>>,
+    tts_input_text: String,
+    tts_voice_id: String,
+    tts_state: TtsTestState,
+    tts_result_rx: Option<Receiver<Result<TtsTestResult, String>>>,
+    playback: Option<PlaybackHandle>,
 }
 
 impl Default for VoicePanel {
@@ -208,9 +268,15 @@ impl Default for VoicePanel {
             config: AppConfig::default(),
             config_form: VoiceConfigForm::default(),
             config_window_open: false,
+            test_mode: VoiceTestMode::Stt,
             recording: None,
-            test_state: VoiceTestState::Idle,
-            test_result_rx: None,
+            stt_state: SttTestState::Idle,
+            stt_result_rx: None,
+            tts_input_text: String::new(),
+            tts_voice_id: String::new(),
+            tts_state: TtsTestState::Idle,
+            tts_result_rx: None,
+            playback: None,
         }
     }
 }
@@ -277,26 +343,54 @@ impl VoicePanel {
         }
     }
 
-    fn poll_test_result(&mut self, notifications: &mut NotificationCenter) {
-        let Some(rx) = self.test_result_rx.as_ref() else {
+    fn poll_stt_result(&mut self, notifications: &mut NotificationCenter) {
+        let Some(rx) = self.stt_result_rx.as_ref() else {
             return;
         };
         match rx.try_recv() {
             Ok(Ok(result)) => {
-                self.test_result_rx = None;
-                self.test_state = VoiceTestState::Completed(result);
+                self.stt_result_rx = None;
+                self.stt_state = SttTestState::Completed(result);
                 notifications.success("Voice transcription test completed");
             }
             Ok(Err(err)) => {
-                self.test_result_rx = None;
-                self.test_state = VoiceTestState::Failed(err.clone());
+                self.stt_result_rx = None;
+                self.stt_state = SttTestState::Failed(err.clone());
                 notifications.error(err);
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.test_result_rx = None;
-                let message = "Voice test worker disconnected unexpectedly".to_string();
-                self.test_state = VoiceTestState::Failed(message.clone());
+                self.stt_result_rx = None;
+                let message = "Voice STT test worker disconnected unexpectedly".to_string();
+                self.stt_state = SttTestState::Failed(message.clone());
+                notifications.error(message);
+            }
+        }
+    }
+
+    fn poll_tts_result(&mut self, notifications: &mut NotificationCenter) {
+        let Some(rx) = self.tts_result_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                self.tts_result_rx = None;
+                self.tts_state = TtsTestState::Completed(result.clone());
+                notifications.success(format!(
+                    "Voice synthesis completed and saved to {}",
+                    result.output_path.display()
+                ));
+            }
+            Ok(Err(err)) => {
+                self.tts_result_rx = None;
+                self.tts_state = TtsTestState::Failed(err.clone());
+                notifications.error(err);
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.tts_result_rx = None;
+                let message = "Voice TTS test worker disconnected unexpectedly".to_string();
+                self.tts_state = TtsTestState::Failed(message.clone());
                 notifications.error(message);
             }
         }
@@ -307,13 +401,13 @@ impl VoicePanel {
             notifications.info("Recording is already in progress");
             return;
         }
-        if self.test_result_rx.is_some() {
+        if self.stt_result_rx.is_some() {
             notifications.info("Transcription is still running");
             return;
         }
         match RecordingHandle::start_default() {
             Ok(handle) => {
-                self.test_state = VoiceTestState::Recording {
+                self.stt_state = SttTestState::Recording {
                     started_at: Instant::now(),
                     device_name: handle.device_name().to_string(),
                     sample_rate_hz: handle.sample_rate_hz(),
@@ -323,7 +417,7 @@ impl VoicePanel {
                 self.recording = Some(handle);
             }
             Err(err) => {
-                self.test_state = VoiceTestState::Failed(err.clone());
+                self.stt_state = SttTestState::Failed(err.clone());
                 notifications.error(err);
             }
         }
@@ -338,14 +432,14 @@ impl VoicePanel {
         let capture = match handle.finish() {
             Ok(capture) => capture,
             Err(err) => {
-                self.test_state = VoiceTestState::Failed(err.clone());
+                self.stt_state = SttTestState::Failed(err.clone());
                 notifications.error(err);
                 return;
             }
         };
 
-        if let Err(err) = validate_test_config(&self.config) {
-            self.test_state = VoiceTestState::Failed(err.clone());
+        if let Err(err) = validate_stt_test_config(&self.config) {
+            self.stt_state = SttTestState::Failed(err.clone());
             notifications.error(err);
             return;
         }
@@ -353,17 +447,114 @@ impl VoicePanel {
         let voice_config = self.config.voice.clone();
         let (tx, rx) = mpsc::channel();
         let capture_duration_ms = capture.duration_ms;
-        self.test_state = VoiceTestState::Transcribing {
+        self.stt_state = SttTestState::Transcribing {
             started_at: Instant::now(),
             capture_duration_ms,
         };
-        self.test_result_rx = Some(rx);
+        self.stt_result_rx = Some(rx);
 
         thread::spawn(move || {
             let outcome = run_transcription_test(capture, voice_config);
             let _ = tx.send(outcome);
         });
         notifications.info("Recording stopped. Uploading audio for transcription...");
+    }
+
+    fn start_tts_generation(&mut self, notifications: &mut NotificationCenter) {
+        if self.tts_result_rx.is_some() {
+            notifications.info("Synthesis is still running");
+            return;
+        }
+        let text = self.tts_input_text.trim().to_string();
+        if text.is_empty() {
+            self.tts_state = TtsTestState::Failed("TTS input cannot be empty".to_string());
+            notifications.error("TTS input cannot be empty");
+            return;
+        }
+        if let Err(err) = validate_tts_test_config(&self.config) {
+            self.tts_state = TtsTestState::Failed(err.clone());
+            notifications.error(err);
+            return;
+        }
+
+        self.stop_playback();
+        let voice_config = self.config.voice.clone();
+        let requested_voice_id = normalize_optional(&self.tts_voice_id);
+        let (tx, rx) = mpsc::channel();
+        self.tts_state = TtsTestState::Synthesizing {
+            started_at: Instant::now(),
+        };
+        self.tts_result_rx = Some(rx);
+
+        thread::spawn(move || {
+            let outcome = run_tts_test(text, requested_voice_id, voice_config);
+            let _ = tx.send(outcome);
+        });
+        notifications.info("Submitting text to the configured TTS provider...");
+    }
+
+    fn play_tts_output(&mut self, notifications: &mut NotificationCenter) {
+        let TtsTestState::Completed(result) = &self.tts_state else {
+            notifications.info("Generate TTS audio before playback");
+            return;
+        };
+        let result = result.clone();
+
+        self.stop_playback();
+
+        let file = match File::open(&result.output_path) {
+            Ok(file) => file,
+            Err(err) => {
+                notifications.error(format!("Failed to open generated audio: {err}"));
+                return;
+            }
+        };
+        let stream = match OutputStream::try_default() {
+            Ok(stream) => stream,
+            Err(err) => {
+                notifications.error(format!("Failed to open audio output device: {err}"));
+                return;
+            }
+        };
+        let sink = match Sink::try_new(&stream.1) {
+            Ok(sink) => sink,
+            Err(err) => {
+                notifications.error(format!("Failed to create playback sink: {err}"));
+                return;
+            }
+        };
+        let decoder = match Decoder::new(BufReader::new(file)) {
+            Ok(decoder) => decoder,
+            Err(err) => {
+                notifications.error(format!("Failed to decode generated audio: {err}"));
+                return;
+            }
+        };
+
+        sink.append(decoder);
+        sink.play();
+        self.playback = Some(PlaybackHandle {
+            _stream: stream.0,
+            sink,
+            path: result.output_path.clone(),
+        });
+        notifications.success("Playing generated audio");
+    }
+
+    fn stop_playback(&mut self) {
+        if let Some(playback) = self.playback.take() {
+            playback.sink.stop();
+        }
+    }
+
+    fn poll_playback(&mut self) {
+        if self
+            .playback
+            .as_ref()
+            .is_some_and(|playback| playback.sink.empty())
+        {
+            self.playback = None;
+        }
     }
 
     fn render_config_window(
@@ -487,42 +678,72 @@ impl VoicePanel {
         self.config_window_open = open;
     }
 
-    fn render_test_section(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+    fn render_test_mode_tabs(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            for mode in [VoiceTestMode::Stt, VoiceTestMode::Tts] {
+                let selected = self.test_mode == mode;
+                let label = format!("{} {}", mode.icon(), mode.label());
+                if ui.selectable_label(selected, label).clicked() {
+                    self.test_mode = mode;
+                }
+            }
+        });
+    }
+
+    fn render_stt_test_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+    ) {
+        ui.label("Capture live microphone audio and send it to the configured STT provider.");
+        ui.add_space(6.0);
+
         ui.horizontal(|ui| {
             let recording = self.recording.is_some();
             if ui
                 .add_enabled(
-                    !recording && self.test_result_rx.is_none(),
-                    egui::Button::new("Start Recording"),
+                    !recording && self.stt_result_rx.is_none(),
+                    egui::Button::new(format!("{} Start Recording", regular::MICROPHONE)),
                 )
                 .clicked()
             {
                 self.start_recording(notifications);
             }
             if ui
-                .add_enabled(recording, egui::Button::new("Stop Recording"))
+                .add_enabled(
+                    recording,
+                    egui::Button::new(format!("{} Stop Recording", regular::STOP)),
+                )
                 .clicked()
             {
                 self.stop_recording(notifications);
             }
         });
 
-        match &self.test_state {
-            VoiceTestState::Idle => {
-                ui.label("Press Start Recording to capture microphone audio and send it to the configured STT provider.");
+        match &self.stt_state {
+            SttTestState::Idle => {
+                ui.label("Press Start Recording to begin a microphone-to-transcript test.");
             }
-            VoiceTestState::Recording {
+            SttTestState::Recording {
                 started_at,
                 device_name,
                 sample_rate_hz,
                 channels,
             } => {
+                ui.horizontal(|ui| {
+                    ui.colored_label(Color32::from_rgb(220, 38, 38), "●");
+                    ui.label(
+                        RichText::new("Recording")
+                            .color(Color32::from_rgb(220, 38, 38))
+                            .strong(),
+                    );
+                });
                 let elapsed_ms = started_at.elapsed().as_millis() as u64;
                 ui.label(format!(
                     "Recording from {device_name} at {sample_rate_hz} Hz / {channels} ch for {elapsed_ms} ms"
                 ));
             }
-            VoiceTestState::Transcribing {
+            SttTestState::Transcribing {
                 started_at,
                 capture_duration_ms,
             } => {
@@ -531,8 +752,8 @@ impl VoicePanel {
                     started_at.elapsed().as_millis()
                 ));
             }
-            VoiceTestState::Completed(result) => {
-                egui::Grid::new("voice-test-result-grid")
+            SttTestState::Completed(result) => {
+                egui::Grid::new("voice-stt-result-grid")
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
@@ -586,7 +807,131 @@ impl VoicePanel {
                         .interactive(false),
                 );
             }
-            VoiceTestState::Failed(err) => {
+            SttTestState::Failed(err) => {
+                ui.colored_label(ui.visuals().error_fg_color, err);
+            }
+        }
+    }
+
+    fn render_tts_test_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+    ) {
+        ui.label("Enter text, synthesize it through the configured TTS provider, save it into tmp, and play it back inside the GUI.");
+        ui.add_space(6.0);
+
+        ui.label("Text");
+        ui.add(
+            egui::TextEdit::multiline(&mut self.tts_input_text)
+                .desired_rows(TTS_INPUT_ROWS)
+                .hint_text("Type text to synthesize into speech..."),
+        );
+        ui.add_space(6.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Voice ID");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.tts_voice_id)
+                    .hint_text("Optional override; otherwise config default is used"),
+            );
+        });
+        ui.add_space(6.0);
+
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    self.tts_result_rx.is_none(),
+                    egui::Button::new(format!("{} Generate Audio", regular::WAVEFORM)),
+                )
+                .clicked()
+            {
+                self.start_tts_generation(notifications);
+            }
+
+            let can_play = matches!(self.tts_state, TtsTestState::Completed(_));
+            if ui
+                .add_enabled(
+                    can_play,
+                    egui::Button::new(format!("{} Play", regular::PLAY)),
+                )
+                .clicked()
+            {
+                self.play_tts_output(notifications);
+            }
+
+            let playing = self.playback.is_some();
+            if ui
+                .add_enabled(
+                    playing,
+                    egui::Button::new(format!("{} Stop", regular::STOP)),
+                )
+                .clicked()
+            {
+                self.stop_playback();
+                notifications.info("Stopped generated audio playback");
+            }
+        });
+
+        match &self.tts_state {
+            TtsTestState::Idle => {
+                ui.label("Generate audio to save a tmp file and enable in-app playback.");
+            }
+            TtsTestState::Synthesizing { started_at } => {
+                ui.label(format!(
+                    "Synthesizing audio... queued for {} ms",
+                    started_at.elapsed().as_millis()
+                ));
+            }
+            TtsTestState::Completed(result) => {
+                egui::Grid::new("voice-tts-result-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Provider");
+                        ui.monospace(&result.provider_name);
+                        ui.end_row();
+
+                        ui.label("MIME Type");
+                        ui.monospace(&result.mime_type);
+                        ui.end_row();
+
+                        ui.label("Output Size");
+                        ui.label(format!("{} bytes", result.output_size_bytes));
+                        ui.end_row();
+
+                        ui.label("Provider Duration");
+                        ui.label(
+                            result
+                                .duration_ms
+                                .map(|value| format!("{value} ms"))
+                                .unwrap_or_else(|| "-".to_string()),
+                        );
+                        ui.end_row();
+
+                        ui.label("Voice ID");
+                        ui.label(
+                            result
+                                .requested_voice_id
+                                .as_deref()
+                                .unwrap_or("(config default)"),
+                        );
+                        ui.end_row();
+
+                        ui.label("Saved To");
+                        ui.monospace(result.output_path.display().to_string());
+                        ui.end_row();
+
+                        ui.label("Playback");
+                        if let Some(playback) = self.playback.as_ref() {
+                            ui.label(format!("Playing {}", playback.path.display()));
+                        } else {
+                            ui.label("Idle");
+                        }
+                        ui.end_row();
+                    });
+            }
+            TtsTestState::Failed(err) => {
                 ui.colored_label(ui.visuals().error_fg_color, err);
             }
         }
@@ -608,11 +953,13 @@ impl PanelRenderer for VoicePanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
-        self.poll_test_result(notifications);
+        self.poll_stt_result(notifications);
+        self.poll_tts_result(notifications);
+        self.poll_playback();
 
         ui.heading(ctx.tab_title);
         ui.label(Self::status_label(self.config_path.as_deref()));
-        ui.label("Manage voice providers and run microphone transcription tests.");
+        ui.label("Manage voice providers and run split STT/TTS voice tests.");
         ui.separator();
 
         ui.horizontal(|ui| {
@@ -677,13 +1024,21 @@ impl PanelRenderer for VoicePanel {
             });
 
         ui.separator();
-        ui.strong("Microphone Test");
-        self.render_test_section(ui, notifications);
+        ui.strong("Voice Tests");
+        self.render_test_mode_tabs(ui);
+        ui.add_space(8.0);
+
+        match self.test_mode {
+            VoiceTestMode::Stt => self.render_stt_test_section(ui, notifications),
+            VoiceTestMode::Tts => self.render_tts_test_section(ui, notifications),
+        }
 
         if matches!(
-            self.test_state,
-            VoiceTestState::Recording { .. } | VoiceTestState::Transcribing { .. }
-        ) {
+            self.stt_state,
+            SttTestState::Recording { .. } | SttTestState::Transcribing { .. }
+        ) || matches!(self.tts_state, TtsTestState::Synthesizing { .. })
+            || self.playback.is_some()
+        {
             ui.ctx().request_repaint_after(VOICE_POLL_INTERVAL);
         }
 
@@ -752,7 +1107,7 @@ fn key_source_label(direct_key: Option<&str>, env_key: &str) -> String {
     }
 }
 
-fn validate_test_config(config: &AppConfig) -> Result<(), String> {
+fn validate_stt_test_config(config: &AppConfig) -> Result<(), String> {
     if !config.voice.enabled {
         return Err("Voice test requires voice.enabled=true in config.toml".to_string());
     }
@@ -774,10 +1129,48 @@ fn validate_test_config(config: &AppConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_tts_test_config(config: &AppConfig) -> Result<(), String> {
+    if !config.voice.enabled {
+        return Err("Voice test requires voice.enabled=true in config.toml".to_string());
+    }
+    let tts_has_key = match config.voice.tts_provider {
+        TtsProviderKind::Elevenlabs => config
+            .voice
+            .providers
+            .elevenlabs
+            .resolve_api_key()
+            .is_some(),
+    };
+    if !tts_has_key {
+        return Err(format!(
+            "Selected TTS provider '{}' is missing api_key or api_key_env",
+            config.voice.tts_provider.as_str()
+        ));
+    }
+    Ok(())
+}
+
+fn tts_file_extension_for_mime_type(mime_type: &str) -> &'static str {
+    let normalized = mime_type.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/wav" | "audio/x-wav" | "audio/wave" => "wav",
+        "audio/ogg" => "ogg",
+        "audio/mp4" | "audio/m4a" | "audio/x-m4a" => "m4a",
+        "audio/aac" => "aac",
+        _ => "bin",
+    }
+}
+
+fn build_tts_temp_path(mime_type: &str) -> PathBuf {
+    let extension = tts_file_extension_for_mime_type(mime_type);
+    std::env::temp_dir().join(format!("klaw-voice-tts-{}.{}", Uuid::new_v4(), extension))
+}
+
 fn run_transcription_test(
     capture: RecordingCapture,
     voice_config: VoiceConfig,
-) -> Result<VoiceTestResult, String> {
+) -> Result<SttTestResult, String> {
     let provider_name = voice_config.stt_provider.as_str().to_string();
     let device_name = capture.device_name.clone();
     let capture_duration_ms = capture.duration_ms;
@@ -805,7 +1198,7 @@ fn run_transcription_test(
             .await
             .map_err(|err| format!("Voice transcription failed: {err}"))?;
 
-        Ok(VoiceTestResult {
+        Ok(SttTestResult {
             transcript: result.text,
             provider_name,
             language: result.language,
@@ -820,9 +1213,52 @@ fn run_transcription_test(
     })
 }
 
+fn run_tts_test(
+    text: String,
+    requested_voice_id: Option<String>,
+    voice_config: VoiceConfig,
+) -> Result<TtsTestResult, String> {
+    let provider_name = voice_config.tts_provider.as_str().to_string();
+
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("Failed to build voice test runtime: {err}"))?;
+
+    runtime.block_on(async move {
+        let service = VoiceService::from_config(&voice_config)
+            .map_err(|err| format!("Voice config error: {err}"))?;
+        let output = service
+            .synthesize(TtsInput {
+                text,
+                voice_id: requested_voice_id.clone(),
+                language: None,
+                speed: None,
+            })
+            .await
+            .map_err(|err| format!("Voice synthesis failed: {err}"))?;
+
+        let output_path = build_tts_temp_path(&output.mime_type);
+        fs::write(&output_path, &output.audio_bytes)
+            .map_err(|err| format!("Failed to write generated audio to tmp: {err}"))?;
+
+        Ok(TtsTestResult {
+            provider_name,
+            mime_type: output.mime_type,
+            duration_ms: output.duration_ms,
+            output_size_bytes: output.audio_bytes.len(),
+            output_path,
+            requested_voice_id,
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{VoiceConfigForm, normalize_optional, validate_test_config};
+    use super::{
+        VoiceConfigForm, build_tts_temp_path, normalize_optional, tts_file_extension_for_mime_type,
+        validate_stt_test_config, validate_tts_test_config,
+    };
     use klaw_config::{AppConfig, SttProviderKind, TtsProviderKind, VoiceConfig};
 
     fn sample_app_config() -> AppConfig {
@@ -912,19 +1348,60 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_rejects_disabled_voice() {
+    fn stt_validation_rejects_disabled_voice() {
         let mut config = sample_app_config();
         config.voice.enabled = false;
-        let err = validate_test_config(&config).expect_err("disabled voice should fail");
+        let err = validate_stt_test_config(&config).expect_err("disabled voice should fail");
         assert!(err.contains("voice.enabled=true"));
     }
 
     #[test]
-    fn test_validation_rejects_missing_selected_provider_key() {
+    fn stt_validation_rejects_missing_selected_provider_key() {
         let mut config = sample_app_config();
         config.voice.providers.deepgram.api_key = None;
         config.voice.providers.deepgram.api_key_env.clear();
-        let err = validate_test_config(&config).expect_err("missing stt key should fail");
+        let err = validate_stt_test_config(&config).expect_err("missing stt key should fail");
         assert!(err.contains("missing api_key or api_key_env"));
+    }
+
+    #[test]
+    fn tts_validation_rejects_disabled_voice() {
+        let mut config = sample_app_config();
+        config.voice.enabled = false;
+        let err = validate_tts_test_config(&config).expect_err("disabled voice should fail");
+        assert!(err.contains("voice.enabled=true"));
+    }
+
+    #[test]
+    fn tts_validation_rejects_missing_selected_provider_key() {
+        let mut config = sample_app_config();
+        config.voice.providers.elevenlabs.api_key = None;
+        config.voice.providers.elevenlabs.api_key_env.clear();
+        let err = validate_tts_test_config(&config).expect_err("missing tts key should fail");
+        assert!(err.contains("missing api_key or api_key_env"));
+    }
+
+    #[test]
+    fn mime_type_maps_to_expected_tts_extension() {
+        assert_eq!(tts_file_extension_for_mime_type("audio/mpeg"), "mp3");
+        assert_eq!(tts_file_extension_for_mime_type("audio/wav"), "wav");
+        assert_eq!(tts_file_extension_for_mime_type("audio/ogg"), "ogg");
+        assert_eq!(tts_file_extension_for_mime_type("audio/mp4"), "m4a");
+        assert_eq!(
+            tts_file_extension_for_mime_type("application/octet-stream"),
+            "bin"
+        );
+    }
+
+    #[test]
+    fn tts_temp_path_uses_expected_prefix_and_extension() {
+        let path = build_tts_temp_path("audio/mpeg");
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        assert!(path.starts_with(std::env::temp_dir()));
+        assert!(name.starts_with("klaw-voice-tts-"));
+        assert!(name.ends_with(".mp3"));
     }
 }

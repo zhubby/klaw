@@ -8,7 +8,7 @@
 - Left navigation groups sidebar menus by domain and sorts items alphabetically within each group
 - Workbench sidebar now includes `System` and `Settings`
 - Workbench sidebar now includes dedicated `Gateway` and `Webhook` panels
-- Workbench sidebar now includes a dedicated `Voice` panel for voice config editing and microphone-to-STT testing
+- Workbench sidebar now includes a dedicated `Voice` panel for voice config editing and split STT/TTS testing
 - Top menu bar (File/View/Window/Help)
   - File menu includes `Force Persist Layout` to immediately flush layout state to disk
 - Bottom status bar with version and theme-mode switcher
@@ -28,7 +28,7 @@
   - configuration
   - model provider (config-bound list + add/edit window)
   - channel (config-bound list + add/edit window)
-  - voice (config-bound voice settings + microphone transcription test)
+  - voice (config-bound voice settings + split STT/TTS test workspace)
   - cron (db-bound list + add/edit window)
   - heartbeat (db-backed heartbeat list + add/edit/delete/run-now)
 - gateway (runtime-backed gateway status, disk-config reload sync, start, restart, base address display, independent Tailscale host status, background gateway/tailscale actions, explicit Tailscale mode apply flow, and Tailscale-only refresh/apply guards when the local service is unavailable)
@@ -78,8 +78,12 @@
 - Voice panel features:
   - read/write `voice.enabled`, default language/voice, and provider-specific Deepgram/AssemblyAI/ElevenLabs fields
   - show configured key source per provider (`api_key` vs `api_key_env`) without exposing secret values in the summary view
+  - switch between `STT Test` and `TTS Test` tabs inside the same panel
   - capture microphone audio from the system default input device, encode it as WAV, and send it to the configured STT provider for a full-chain transcription test
-  - surface recording/transcribing progress plus transcript, language, confidence, device, and audio format metadata in the panel
+  - show explicit icon-based STT controls plus a prominent red-dot recording indicator while recording is active
+  - synthesize typed text through the configured TTS provider, save generated audio into the host tmp directory, and show the resulting output path and metadata
+  - play and stop generated TTS audio directly inside the GUI after synthesis completes
+  - surface recording/transcribing/synthesizing progress plus transcript, device, audio format, tmp output path, and playback status in the panel
 - MCP panel features:
   - read/write `mcp.enabled`, `mcp.startup_timeout_seconds`, `mcp.servers`
   - add/edit MCP servers via `egui::Window`

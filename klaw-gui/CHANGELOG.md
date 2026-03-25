@@ -5,10 +5,12 @@
 ### Added
 
 - `Gateway` 面板现在会独立显示本机 Tailscale 主机状态，包括连接状态、版本、backend state、DNS 名称与 tailnet URL，即使 gateway 尚未运行也能先做环境排查
+- `Voice` 面板新增 `TTS Test` 页签，支持输入文本走当前 TTS provider 生成语音，落盘到系统 tmp 目录，并在 GUI 内直接播放/停止生成音频
 
 ### Changed
 
 - `Webhook` 面板配置编辑与摘要展示现支持 `gateway.webhook.events` / `gateway.webhook.agents` 双 endpoint；`Gateway` 面板不再重复暴露 webhook 配置入口，避免与独立 `Webhook` 菜单重叠
+- `Voice` 面板的原 `Microphone Test` 区块改为 `STT Test / TTS Test` 双页签布局；STT 页签保留现有麦克风转写链路，但按钮改为带图标样式，并在录音中显示明显红点状态
 - `Gateway` 面板中的 Tailscale 模式切换改为持久化待应用选择，并通过显式 `Apply` 按钮提交，避免下拉选择在下一帧渲染时回退
 - `Gateway` 面板不再持久显示 `Last Error` 行，错误改为只通过 toast 等即时反馈通道展示，避免长错误文本破坏状态区布局
 - `Gateway` 面板中的 Tailscale `Apply` 失败后会保留用户选中的目标模式，便于修正环境问题后直接重试，而不会被立即锁回已生效配置
