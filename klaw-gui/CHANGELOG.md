@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `Model Provider` 面板表格现在在内容超出宽度时提供横向滚动、在可视高度不足时提供纵向滚动，避免长列内容被截断后难以浏览
+- `Model Provider` 面板 `ID` 列中的 active provider 现在在文字尾部显示绿色勾选图标，右键菜单也补充了带图标的 `Edit` / `Set Active` / `Copy ID` / 红色 `Delete`
+- `Model Provider` 面板新增删除确认流程，并阻止删除当前 active provider 或正被 memory embedding 使用的 provider，避免写出无效配置
 - GUI 统一时间格式现在按系统本地时区展示 `*_at_ms` / Unix 时间戳，而不再直接按 UTC 语义渲染
 - `Cron` 与 `Heartbeat` 新建表单的默认 timezone 改为系统探测值，不再硬编码 `UTC`
 - `Profile Prompt` 面板恢复旧的持久化 tab 状态时，现在会把历史标题 `Profile` 自动规范为 `Profile Prompt`

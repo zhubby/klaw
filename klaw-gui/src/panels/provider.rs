@@ -1,7 +1,9 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::request_set_provider_override;
+use egui::RichText;
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, ModelProviderConfig};
 use klaw_llm::OpenAiWireApi;
 use std::path::{Path, PathBuf};
@@ -97,6 +99,7 @@ pub struct ProviderPanel {
     config: AppConfig,
     form: Option<ProviderForm>,
     selected_provider: Option<String>,
+    delete_confirm: Option<String>,
 }
 
 impl ProviderPanel {
@@ -220,6 +223,30 @@ impl ProviderPanel {
         }
     }
 
+    fn delete_provider(&mut self, provider_id: &str, notifications: &mut NotificationCenter) {
+        let Some(store) = self.store.as_ref() else {
+            notifications.error("Configuration store is not available");
+            return;
+        };
+
+        match Self::remove_provider(self.config.clone(), provider_id) {
+            Ok(next_config) => match toml::to_string_pretty(&next_config) {
+                Ok(raw) => match store.save_raw_toml(&raw) {
+                    Ok(snapshot) => {
+                        self.apply_snapshot(snapshot);
+                        if self.selected_provider.as_deref() == Some(provider_id) {
+                            self.selected_provider = None;
+                        }
+                        notifications.success(format!("Deleted provider '{provider_id}'"));
+                    }
+                    Err(err) => notifications.error(format!("Save failed: {err}")),
+                },
+                Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+            },
+            Err(err) => notifications.error(err),
+        }
+    }
+
     fn apply_form(mut config: AppConfig, form: &ProviderForm) -> Result<AppConfig, String> {
         let provider_id = form.normalized_id();
         if provider_id.is_empty() {
@@ -264,6 +291,25 @@ impl ProviderPanel {
             config.model_provider = provider_id;
         }
 
+        Ok(config)
+    }
+
+    fn remove_provider(mut config: AppConfig, provider_id: &str) -> Result<AppConfig, String> {
+        if !config.model_providers.contains_key(provider_id) {
+            return Err(format!("Provider '{provider_id}' not found"));
+        }
+        if config.model_provider == provider_id {
+            return Err(format!(
+                "Cannot delete active provider '{provider_id}'. Set another provider active first."
+            ));
+        }
+        if config.memory.embedding.enabled && config.memory.embedding.provider == provider_id {
+            return Err(format!(
+                "Cannot delete provider '{provider_id}' because memory embedding uses it."
+            ));
+        }
+
+        config.model_providers.remove(provider_id);
         Ok(config)
     }
 
@@ -358,6 +404,59 @@ impl ProviderPanel {
             self.form = None;
         }
     }
+
+    fn render_delete_confirm_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some(provider_id) = self.delete_confirm.clone() else {
+            return;
+        };
+
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        egui::Window::new("Delete Provider")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "Are you sure you want to delete provider '{provider_id}'?"
+                    ))
+                    .strong(),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    "This removes the provider from config.toml. Active or in-use providers cannot be deleted.",
+                );
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(egui::Button::new(
+                            RichText::new(format!("{} Delete", regular::TRASH))
+                                .color(ui.visuals().warn_fg_color),
+                        ))
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            self.delete_provider(&provider_id, notifications);
+            self.delete_confirm = None;
+        }
+        if cancelled {
+            self.delete_confirm = None;
+        }
+    }
 }
 
 impl PanelRenderer for ProviderPanel {
@@ -396,6 +495,7 @@ impl PanelRenderer for ProviderPanel {
         } else {
             let mut edit_provider_id: Option<String> = None;
             let mut set_active_provider_id: Option<String> = None;
+            let mut delete_provider_id: Option<String> = None;
 
             let provider_ids = self
                 .config
@@ -405,132 +505,169 @@ impl PanelRenderer for ProviderPanel {
                 .collect::<Vec<_>>();
 
             let available_height = ui.available_height();
-            TableBuilder::new(ui)
-                .striped(true)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::auto().at_least(100.0))
-                .column(Column::auto().at_least(80.0))
-                .column(Column::auto().at_least(180.0))
-                .column(Column::auto().at_least(80.0))
-                .column(Column::auto().at_least(140.0))
-                .column(Column::auto().at_least(70.0))
-                .column(Column::auto().at_least(100.0))
-                .column(Column::remainder().at_least(80.0))
-                .min_scrolled_height(0.0)
-                .max_scroll_height(available_height)
-                .sense(egui::Sense::click())
-                .header(20.0, |mut header| {
-                    header.col(|ui| {
-                        ui.strong("ID");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Name");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Base URL");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Wire API");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Default Model");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Stream");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Tokenizer");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Auth");
-                    });
-                })
-                .body(|body| {
-                    body.rows(20.0, provider_ids.len(), |mut row| {
-                        let idx = row.index();
-                        let provider_id = &provider_ids[idx];
-                        let Some(provider) = self.config.model_providers.get(provider_id) else {
-                            return;
-                        };
+            let table_width = ui.available_width();
+            egui::ScrollArea::both()
+                .id_salt("provider-table-scroll")
+                .auto_shrink([false, false])
+                .max_width(table_width)
+                .max_height(available_height)
+                .show(ui, |ui| {
+                    ui.set_min_width(table_width);
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::auto().at_least(100.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(180.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(140.0))
+                        .column(Column::auto().at_least(70.0))
+                        .column(Column::auto().at_least(100.0))
+                        .column(Column::remainder().at_least(80.0))
+                        .min_scrolled_height(0.0)
+                        .max_scroll_height(available_height)
+                        .sense(egui::Sense::click())
+                        .header(20.0, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("ID");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Name");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Base URL");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Wire API");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Default Model");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Stream");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Tokenizer");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Auth");
+                            });
+                        })
+                        .body(|body| {
+                            body.rows(20.0, provider_ids.len(), |mut row| {
+                                let idx = row.index();
+                                let provider_id = &provider_ids[idx];
+                                let Some(provider) = self.config.model_providers.get(provider_id)
+                                else {
+                                    return;
+                                };
 
-                        let is_selected = self.selected_provider.as_deref() == Some(provider_id);
-                        row.set_selected(is_selected);
+                                let is_selected =
+                                    self.selected_provider.as_deref() == Some(provider_id);
+                                row.set_selected(is_selected);
 
-                        let mut id_label = provider_id.clone();
-                        if provider_id == &self.config.model_provider {
-                            id_label.push_str(" (active)");
-                        }
+                                let is_current_active = provider_id == &self.config.model_provider;
+                                let auth =
+                                    if provider.api_key.as_deref().is_some_and(|v| !v.is_empty()) {
+                                        "api_key".to_string()
+                                    } else {
+                                        provider
+                                            .env_key
+                                            .as_deref()
+                                            .filter(|v| !v.is_empty())
+                                            .map(|v| format!("env:{v}"))
+                                            .unwrap_or_else(|| "none".to_string())
+                                    };
 
-                        let auth = if provider.api_key.as_deref().is_some_and(|v| !v.is_empty()) {
-                            "api_key".to_string()
-                        } else {
-                            provider
-                                .env_key
-                                .as_deref()
-                                .filter(|v| !v.is_empty())
-                                .map(|v| format!("env:{v}"))
-                                .unwrap_or_else(|| "none".to_string())
-                        };
-
-                        row.col(|ui| {
-                            ui.label(&id_label);
-                        });
-                        row.col(|ui| {
-                            ui.label(provider.name.as_deref().unwrap_or("-"));
-                        });
-                        row.col(|ui| {
-                            ui.label(&provider.base_url);
-                        });
-                        row.col(|ui| {
-                            ui.label(&provider.wire_api);
-                        });
-                        row.col(|ui| {
-                            ui.label(&provider.default_model);
-                        });
-                        row.col(|ui| {
-                            ui.label(if provider.stream { "yes" } else { "no" });
-                        });
-                        row.col(|ui| {
-                            ui.label(provider.tokenizer_path.as_deref().unwrap_or("-"));
-                        });
-                        row.col(|ui| {
-                            ui.label(auth);
-                        });
-
-                        let response = row.response();
-
-                        if response.clicked() {
-                            self.selected_provider = if is_selected {
-                                None
-                            } else {
-                                Some(provider_id.clone())
-                            };
-                        }
-
-                        let provider_id_clone = provider_id.clone();
-                        let is_current_active = provider_id == &self.config.model_provider;
-                        response.context_menu(|ui| {
-                            if ui.button("Edit").clicked() {
-                                edit_provider_id = Some(provider_id_clone.clone());
-                                ui.close();
-                            }
-                            if ui
-                                .add_enabled(!is_current_active, egui::Button::new("Set Active"))
-                                .clicked()
-                            {
-                                set_active_provider_id = Some(provider_id_clone);
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Copy ID").clicked() {
-                                ui.ctx().output_mut(|o| {
-                                    o.commands
-                                        .push(egui::OutputCommand::CopyText(provider_id.clone()));
+                                row.col(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(provider_id);
+                                        if is_current_active {
+                                            ui.label(
+                                                RichText::new(regular::CHECK_CIRCLE).color(
+                                                    egui::Color32::from_rgb(0x22, 0xC5, 0x5E),
+                                                ),
+                                            );
+                                        }
+                                    });
                                 });
-                                ui.close();
-                            }
+                                row.col(|ui| {
+                                    ui.label(provider.name.as_deref().unwrap_or("-"));
+                                });
+                                row.col(|ui| {
+                                    ui.label(&provider.base_url);
+                                });
+                                row.col(|ui| {
+                                    ui.label(&provider.wire_api);
+                                });
+                                row.col(|ui| {
+                                    ui.label(&provider.default_model);
+                                });
+                                row.col(|ui| {
+                                    ui.label(if provider.stream { "yes" } else { "no" });
+                                });
+                                row.col(|ui| {
+                                    ui.label(provider.tokenizer_path.as_deref().unwrap_or("-"));
+                                });
+                                row.col(|ui| {
+                                    ui.label(auth);
+                                });
+
+                                let response = row.response();
+
+                                if response.clicked() {
+                                    self.selected_provider = if is_selected {
+                                        None
+                                    } else {
+                                        Some(provider_id.clone())
+                                    };
+                                }
+
+                                let provider_id_clone = provider_id.clone();
+                                response.context_menu(|ui| {
+                                    if ui
+                                        .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                        .clicked()
+                                    {
+                                        edit_provider_id = Some(provider_id_clone.clone());
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            !is_current_active,
+                                            egui::Button::new(format!(
+                                                "{} Set Active",
+                                                regular::CHECK_CIRCLE
+                                            )),
+                                        )
+                                        .clicked()
+                                    {
+                                        set_active_provider_id = Some(provider_id_clone.clone());
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                    if ui
+                                        .add(egui::Button::new(
+                                            RichText::new(format!("{} Delete", regular::TRASH))
+                                                .color(ui.visuals().warn_fg_color),
+                                        ))
+                                        .clicked()
+                                    {
+                                        delete_provider_id = Some(provider_id_clone.clone());
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                    if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                        ui.ctx().output_mut(|o| {
+                                            o.commands.push(egui::OutputCommand::CopyText(
+                                                provider_id.clone(),
+                                            ));
+                                        });
+                                        ui.close();
+                                    }
+                                });
+                            });
                         });
-                    });
                 });
 
             if let Some(id) = edit_provider_id {
@@ -539,9 +676,13 @@ impl PanelRenderer for ProviderPanel {
             if let Some(id) = set_active_provider_id {
                 self.set_active_provider(&id, notifications);
             }
+            if let Some(id) = delete_provider_id {
+                self.delete_confirm = Some(id);
+            }
         }
 
         self.render_form_window(ui, notifications);
+        self.render_delete_confirm_dialog(ui.ctx(), notifications);
     }
 }
 
@@ -616,5 +757,56 @@ mod tests {
         let err = ProviderPanel::apply_form(config, &form).expect_err("duplicate id should fail");
 
         assert!(err.contains("already exists"));
+    }
+
+    #[test]
+    fn remove_provider_deletes_non_active_provider() {
+        let mut config = AppConfig::default();
+        config.model_providers.insert(
+            "anthropic".to_string(),
+            ModelProviderConfig {
+                base_url: "https://api.anthropic.com/v1".to_string(),
+                wire_api: "responses".to_string(),
+                default_model: "claude-sonnet-4".to_string(),
+                ..ModelProviderConfig::default()
+            },
+        );
+
+        let updated =
+            ProviderPanel::remove_provider(config, "anthropic").expect("delete should succeed");
+
+        assert!(!updated.model_providers.contains_key("anthropic"));
+        assert!(updated.model_providers.contains_key("openai"));
+    }
+
+    #[test]
+    fn remove_provider_rejects_active_provider() {
+        let config = AppConfig::default();
+
+        let err = ProviderPanel::remove_provider(config, "openai")
+            .expect_err("active delete should fail");
+
+        assert!(err.contains("Cannot delete active provider"));
+    }
+
+    #[test]
+    fn remove_provider_rejects_memory_embedding_provider() {
+        let mut config = AppConfig::default();
+        config.model_providers.insert(
+            "anthropic".to_string(),
+            ModelProviderConfig {
+                base_url: "https://api.anthropic.com/v1".to_string(),
+                wire_api: "responses".to_string(),
+                default_model: "claude-sonnet-4".to_string(),
+                ..ModelProviderConfig::default()
+            },
+        );
+        config.memory.embedding.enabled = true;
+        config.memory.embedding.provider = "anthropic".to_string();
+
+        let err = ProviderPanel::remove_provider(config, "anthropic")
+            .expect_err("embedding provider delete should fail");
+
+        assert!(err.contains("memory embedding uses it"));
     }
 }
