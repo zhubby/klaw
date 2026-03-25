@@ -54,7 +54,7 @@
 - Profile Prompt panel features:
   - read markdown files directly under `~/.klaw/workspace`
   - show workspace docs as cards with file summary, modified time, and path
-  - render a read-only runtime system prompt preview that fills the remaining panel height
+  - render a read-only runtime system prompt preview that loads asynchronously and fills the remaining panel height
   - create a new workspace-root file from a popup with `file name` and `body`
   - edit a document in a fixed-height markdown-highlighted popup editor
   - save, cancel, or reset in the editor footer

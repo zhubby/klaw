@@ -12,15 +12,17 @@ use klaw_skill::{
 use klaw_util::default_workspace_dir;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
 use std::thread;
+use std::time::Duration;
 use std::time::UNIX_EPOCH;
 use tokio::runtime::Builder;
 
 const MIN_EDITOR_HEIGHT: f32 = 320.0;
 const FOOTER_HEIGHT: f32 = 48.0;
 const DOCS_SECTION_MIN_HEIGHT: f32 = 180.0;
-const DOCS_SECTION_MAX_HEIGHT: f32 = 320.0;
 const SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT: f32 = 260.0;
+const PREVIEW_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkspaceMarkdownDoc {
@@ -61,6 +63,8 @@ pub struct ProfilePanel {
     docs: Vec<WorkspaceMarkdownDoc>,
     selected_doc: Option<String>,
     system_prompt_preview: String,
+    system_prompt_preview_loading: bool,
+    system_prompt_preview_rx: Option<Receiver<String>>,
     editor: Option<WorkspaceMarkdownEditor>,
     preview: Option<WorkspaceMarkdownPreview>,
     create_form: WorkspaceFileCreateForm,
@@ -87,12 +91,63 @@ impl ProfilePanel {
                 {
                     self.selected_doc = None;
                 }
-                self.system_prompt_preview = load_system_prompt_preview();
                 self.loaded = true;
+                self.refresh_system_prompt_preview();
             }
             Err(err) => {
                 notifications.error(format!("Failed to load workspace markdown files: {err}"))
             }
+        }
+    }
+
+    fn refresh_system_prompt_preview(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        self.system_prompt_preview_loading = true;
+        self.system_prompt_preview_rx = Some(rx);
+        if self.system_prompt_preview.is_empty() {
+            self.system_prompt_preview = "Loading system prompt preview...".to_string();
+        }
+        thread::spawn(move || {
+            let _ = tx.send(load_system_prompt_preview());
+        });
+    }
+
+    fn poll_system_prompt_preview(&mut self, notifications: &mut NotificationCenter) {
+        let Some(rx) = self.system_prompt_preview_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(preview) => {
+                self.system_prompt_preview = preview;
+                self.system_prompt_preview_loading = false;
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.system_prompt_preview_rx = Some(rx);
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.system_prompt_preview_loading = false;
+                self.system_prompt_preview =
+                    "# System Prompt Preview Unavailable\n\nBackground preview task disconnected."
+                        .to_string();
+                notifications.warning("System prompt preview loader disconnected");
+            }
+        }
+    }
+
+    fn docs_section_height(available_height: f32) -> f32 {
+        let max_docs_height =
+            (available_height - SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT).max(DOCS_SECTION_MIN_HEIGHT);
+        (available_height * 0.38).clamp(DOCS_SECTION_MIN_HEIGHT, max_docs_height)
+    }
+
+    #[cfg(test)]
+    fn card_column_count(available_width: f32) -> usize {
+        if available_width >= 960.0 {
+            3
+        } else if available_width >= 560.0 {
+            2
+        } else {
+            1
         }
     }
 
@@ -133,6 +188,7 @@ impl ProfilePanel {
         let mut edit_target = None;
         let mut preview_target = None;
         egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_min_height(ui.available_height());
             ui.horizontal(|ui| {
                 ui.strong("Workspace Markdown Files");
                 ui.label(format!("({})", self.docs.len()));
@@ -244,7 +300,14 @@ impl ProfilePanel {
 
     fn render_system_prompt_preview(&self, ui: &mut egui::Ui) {
         egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.strong("System Prompt Preview");
+            ui.set_min_height(ui.available_height());
+            ui.horizontal(|ui| {
+                ui.strong("System Prompt Preview");
+                if self.system_prompt_preview_loading {
+                    ui.add(egui::Spinner::new());
+                    ui.small("Loading...");
+                }
+            });
             ui.small("Rendered from current workspace prompt docs and installed skills.");
             ui.add_space(6.0);
 
@@ -617,6 +680,10 @@ impl PanelRenderer for ProfilePanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_loaded(notifications);
+        self.poll_system_prompt_preview(notifications);
+        if self.system_prompt_preview_loading {
+            ui.ctx().request_repaint_after(PREVIEW_POLL_INTERVAL);
+        }
 
         ui.heading(ctx.tab_title);
         match self.workspace_dir.as_deref() {
@@ -633,8 +700,7 @@ impl PanelRenderer for ProfilePanel {
             }
         });
         ui.separator();
-        let docs_height =
-            (ui.available_height() * 0.38).clamp(DOCS_SECTION_MIN_HEIGHT, DOCS_SECTION_MAX_HEIGHT);
+        let docs_height = Self::docs_section_height(ui.available_height());
         StripBuilder::new(ui)
             .size(Size::exact(docs_height))
             .size(Size::remainder().at_least(SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT))
@@ -818,40 +884,33 @@ fn load_system_prompt_preview() -> String {
 }
 
 fn load_runtime_skill_prompt_entries(config: AppConfig) -> Result<Vec<SkillPromptEntry>, String> {
-    let join = thread::spawn(move || {
-        let store = open_default_skills_manager()
-            .map_err(|err| format!("failed to open skills manager: {err}"))?;
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|err| format!("failed to build runtime: {err}"))?;
-        runtime.block_on(async move {
-            sync_registry_installed_skills(&store, &config).await;
+    let store = open_default_skills_manager()
+        .map_err(|err| format!("failed to open skills manager: {err}"))?;
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to build runtime: {err}"))?;
+    runtime.block_on(async move {
+        sync_registry_installed_skills(&store, &config).await;
 
-            let skills = store
-                .load_all_installed_skill_markdowns()
-                .await
-                .map_err(|err| format!("failed to load installed skills: {err}"))?;
-            Ok(skills
-                .into_iter()
-                .map(|skill| SkillPromptEntry {
-                    name: skill.name,
-                    path: skill.local_path.display().to_string(),
-                    description: extract_skill_short_description(&skill.content),
-                    source: format_skill_source(
-                        &skill.source_kind,
-                        skill.registry.as_deref(),
-                        skill.stale,
-                    ),
-                })
-                .collect())
-        })
-    });
-
-    match join.join() {
-        Ok(result) => result,
-        Err(_) => Err("skill prompt loader thread panicked".to_string()),
-    }
+        let skills = store
+            .load_all_installed_skill_markdowns()
+            .await
+            .map_err(|err| format!("failed to load installed skills: {err}"))?;
+        Ok(skills
+            .into_iter()
+            .map(|skill| SkillPromptEntry {
+                name: skill.name,
+                path: skill.local_path.display().to_string(),
+                description: extract_skill_short_description(&skill.content),
+                source: format_skill_source(
+                    &skill.source_kind,
+                    skill.registry.as_deref(),
+                    skill.stale,
+                ),
+            })
+            .collect())
+    })
 }
 
 async fn sync_registry_installed_skills(
@@ -1213,6 +1272,16 @@ mod tests {
         assert_eq!(ProfilePanel::card_column_count(200.0), 1);
         assert_eq!(ProfilePanel::card_column_count(700.0), 2);
         assert_eq!(ProfilePanel::card_column_count(1100.0), 3);
+    }
+
+    #[test]
+    fn docs_section_height_preserves_preview_space_and_grows_with_window() {
+        assert_eq!(
+            ProfilePanel::docs_section_height(360.0),
+            DOCS_SECTION_MIN_HEIGHT
+        );
+        assert!(ProfilePanel::docs_section_height(1200.0) > 320.0);
+        assert!(ProfilePanel::docs_section_height(520.0) <= 260.0);
     }
 
     #[test]
