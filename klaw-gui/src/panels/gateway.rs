@@ -285,71 +285,86 @@ impl GatewayPanel {
             .default_width(520.0)
             .show(ctx, |ui| {
                 ui.heading("Basic");
-                ui.horizontal(|ui| {
-                    ui.label("Enabled");
-                    ui.checkbox(&mut self.config_form.enabled, "");
-                });
+                egui::Grid::new("gateway-config-basic-grid")
+                    .num_columns(2)
+                    .spacing([16.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Enabled");
+                        ui.checkbox(&mut self.config_form.enabled, "");
+                        ui.end_row();
 
-                ui.horizontal(|ui| {
-                    ui.label("Listen IP");
-                    ui.add_sized(
-                        [200.0, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.config_form.listen_ip),
-                    );
-                });
+                        ui.label("Listen IP");
+                        ui.add_sized(
+                            [240.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.listen_ip),
+                        );
+                        ui.end_row();
 
-                ui.horizontal(|ui| {
-                    ui.label("Listen Port");
-                    ui.add_sized(
-                        [100.0, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.config_form.listen_port),
-                    );
-                    ui.label("(0 = auto)");
-                });
+                        ui.label("Listen Port");
+                        ui.horizontal(|ui| {
+                            ui.add_sized(
+                                [100.0, ui.spacing().interact_size.y],
+                                egui::TextEdit::singleline(&mut self.config_form.listen_port),
+                            );
+                            ui.label("(0 = auto)");
+                        });
+                        ui.end_row();
+                    });
 
                 ui.add_space(8.0);
                 ui.separator();
                 ui.heading("Auth");
-                ui.horizontal(|ui| {
-                    ui.label("Enabled");
-                    ui.checkbox(&mut self.config_form.auth_enabled, "");
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Token");
-                    ui.add_sized(
-                        [280.0, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.config_form.auth_token).password(true),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Env Key");
-                    ui.add_sized(
-                        [200.0, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.config_form.auth_env_key),
-                    );
-                });
+                egui::Grid::new("gateway-config-auth-grid")
+                    .num_columns(2)
+                    .spacing([16.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Enabled");
+                        ui.checkbox(&mut self.config_form.auth_enabled, "");
+                        ui.end_row();
+
+                        ui.label("Token");
+                        ui.add_sized(
+                            [280.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.auth_token)
+                                .password(true),
+                        );
+                        ui.end_row();
+
+                        ui.label("Env Key");
+                        ui.add_sized(
+                            [240.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.auth_env_key),
+                        );
+                        ui.end_row();
+                    });
 
                 ui.add_space(8.0);
                 ui.separator();
                 ui.heading("Webhook");
-                ui.horizontal(|ui| {
-                    ui.label("Enabled");
-                    ui.checkbox(&mut self.config_form.webhook_enabled, "");
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Path");
-                    ui.add_sized(
-                        [280.0, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.config_form.webhook_path),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Max Body Bytes");
-                    ui.add_sized(
-                        [120.0, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.config_form.webhook_max_body_bytes),
-                    );
-                });
+                egui::Grid::new("gateway-config-webhook-grid")
+                    .num_columns(2)
+                    .spacing([16.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Enabled");
+                        ui.checkbox(&mut self.config_form.webhook_enabled, "");
+                        ui.end_row();
+
+                        ui.label("Path");
+                        ui.add_sized(
+                            [280.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.config_form.webhook_path),
+                        );
+                        ui.end_row();
+
+                        ui.label("Max Body Bytes");
+                        ui.add_sized(
+                            [120.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(
+                                &mut self.config_form.webhook_max_body_bytes,
+                            ),
+                        );
+                        ui.end_row();
+                    });
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
