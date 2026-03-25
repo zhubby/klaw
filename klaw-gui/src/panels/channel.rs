@@ -7,8 +7,8 @@ use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_channel::{ChannelInstanceStatus, ChannelKind};
 use klaw_config::{
-    AppConfig, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig, TelegramConfig,
-    TelegramProxyConfig,
+    AppConfig, ConfigError, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig,
+    TelegramConfig, TelegramProxyConfig,
 };
 use std::{
     collections::BTreeMap,
@@ -357,26 +357,30 @@ impl ChannelPanel {
             .collect();
     }
 
-    fn save_config(
+    fn save_config<F>(
         &mut self,
-        next: AppConfig,
         notifications: &mut NotificationCenter,
         success_message: &str,
-    ) {
+        mutate: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut AppConfig) -> Result<(), String>,
+    {
         let Some(store) = self.store.as_ref() else {
             notifications.error("Configuration store is not available");
-            return;
+            return false;
         };
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    notifications.success(success_message);
-                    self.sync_channels_runtime(notifications, true);
-                }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
-            },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+        match store.update_config(|config| mutate(config).map_err(ConfigError::InvalidConfig)) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                notifications.success(success_message);
+                self.sync_channels_runtime(notifications, true);
+                true
+            }
+            Err(err) => {
+                notifications.error(format!("Save failed: {err}"));
+                false
+            }
         }
     }
 
@@ -432,9 +436,15 @@ impl ChannelPanel {
     }
 
     fn save_disable_session_commands(&mut self, notifications: &mut NotificationCenter) {
-        let mut next = self.config.clone();
-        next.channels.disable_session_commands_for = self.disable_session_commands_input.to_vec();
-        self.save_config(next, notifications, "Updated disable_session_commands_for");
+        let values = self.disable_session_commands_input.to_vec();
+        self.save_config(
+            notifications,
+            "Updated disable_session_commands_for",
+            move |config| {
+                config.channels.disable_session_commands_for = values;
+                Ok(())
+            },
+        );
     }
 
     fn delete_channel(
@@ -443,15 +453,19 @@ impl ChannelPanel {
         id: &str,
         notifications: &mut NotificationCenter,
     ) {
-        let mut next = self.config.clone();
+        let id = id.to_string();
         match kind {
             ChannelKind::Dingtalk => {
-                next.channels.dingtalk.retain(|item| item.id != id);
-                self.save_config(next, notifications, "Dingtalk channel deleted");
+                self.save_config(notifications, "Dingtalk channel deleted", move |config| {
+                    config.channels.dingtalk.retain(|item| item.id != id);
+                    Ok(())
+                });
             }
             ChannelKind::Telegram => {
-                next.channels.telegram.retain(|item| item.id != id);
-                self.save_config(next, notifications, "Telegram channel deleted");
+                self.save_config(notifications, "Telegram channel deleted", move |config| {
+                    config.channels.telegram.retain(|item| item.id != id);
+                    Ok(())
+                });
             }
             ChannelKind::Feishu => {}
         }
@@ -464,53 +478,66 @@ impl ChannelPanel {
         enable: bool,
         notifications: &mut NotificationCenter,
     ) {
-        let mut next = self.config.clone();
+        let id = id.to_string();
         match kind {
             ChannelKind::Dingtalk => {
-                if let Some(channel) = next.channels.dingtalk.iter_mut().find(|item| item.id == id)
-                {
-                    channel.enabled = enable;
-                    let msg = if enable {
-                        "Dingtalk channel enabled"
-                    } else {
-                        "Dingtalk channel disabled"
-                    };
-                    self.save_config(next, notifications, msg);
-                }
+                let msg = if enable {
+                    "Dingtalk channel enabled"
+                } else {
+                    "Dingtalk channel disabled"
+                };
+                self.save_config(notifications, msg, move |config| {
+                    if let Some(channel) = config
+                        .channels
+                        .dingtalk
+                        .iter_mut()
+                        .find(|item| item.id == id)
+                    {
+                        channel.enabled = enable;
+                    }
+                    Ok(())
+                });
             }
             ChannelKind::Telegram => {
-                if let Some(channel) = next.channels.telegram.iter_mut().find(|item| item.id == id)
-                {
-                    channel.enabled = enable;
-                    let msg = if enable {
-                        "Telegram channel enabled"
-                    } else {
-                        "Telegram channel disabled"
-                    };
-                    self.save_config(next, notifications, msg);
-                }
+                let msg = if enable {
+                    "Telegram channel enabled"
+                } else {
+                    "Telegram channel disabled"
+                };
+                self.save_config(notifications, msg, move |config| {
+                    if let Some(channel) = config
+                        .channels
+                        .telegram
+                        .iter_mut()
+                        .find(|item| item.id == id)
+                    {
+                        channel.enabled = enable;
+                    }
+                    Ok(())
+                });
             }
             ChannelKind::Feishu => {}
         }
     }
 
     fn save_form(&mut self, notifications: &mut NotificationCenter) {
-        let Some(form) = self.form.as_ref() else {
+        let Some(form) = self.form.clone() else {
             return;
         };
-        let result = match form {
-            ChannelForm::Dingtalk(form) => Self::apply_dingtalk_form(self.config.clone(), form)
-                .map(|next| (next, "Dingtalk channel saved")),
-            ChannelForm::Telegram(form) => Self::apply_telegram_form(self.config.clone(), form)
-                .map(|next| (next, "Telegram channel saved")),
+        let message = match &form {
+            ChannelForm::Dingtalk(_) => "Dingtalk channel saved",
+            ChannelForm::Telegram(_) => "Telegram channel saved",
         };
 
-        match result {
-            Ok((next, message)) => {
-                self.save_config(next, notifications, message);
-                self.form = None;
-            }
-            Err(err) => notifications.error(err),
+        if self.save_config(notifications, message, move |config| {
+            let next = match &form {
+                ChannelForm::Dingtalk(form) => Self::apply_dingtalk_form(config.clone(), form),
+                ChannelForm::Telegram(form) => Self::apply_telegram_form(config.clone(), form),
+            }?;
+            *config = next;
+            Ok(())
+        }) {
+            self.form = None;
         }
     }
 

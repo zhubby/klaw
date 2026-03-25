@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `Provider`、`Memory`、`Gateway`、`Channel`、`MCP`、`Tool`、`Voice`、`Webhook`、`Skills Registry` 与 `Skills Manager` 面板现在都会基于磁盘最新配置做局部更新，避免 stale snapshot 在后续保存时把已落盘的 provider 或其他配置覆盖掉
 - `Model Provider` 面板表格现在在内容超出宽度时提供横向滚动、在可视高度不足时提供纵向滚动，避免长列内容被截断后难以浏览
 - `Model Provider` 面板 `ID` 列中的 active provider 现在在文字尾部显示绿色勾选图标，右键菜单也补充了带图标的 `Edit` / `Set Active` / `Copy ID` / 红色 `Delete`
 - `Model Provider` 面板新增删除确认流程，并阻止删除当前 active provider 或正被 memory embedding 使用的 provider，避免写出无效配置

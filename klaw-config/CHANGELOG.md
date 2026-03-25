@@ -2,6 +2,11 @@
 
 ## 2026-03-25
 
+### Fixed
+
+- `ConfigStore` 新增基于磁盘最新 `config.toml` 的原子更新路径，避免多个 GUI 面板分别持有旧快照时把彼此已保存的配置整份覆盖掉
+- `save_observability_config()` 现在复用统一更新逻辑，并补充 stale snapshot 回归测试，确保跨面板保存不会抹掉新增 provider 等其他已落盘字段
+
 ### Changed
 
 - `heartbeat.defaults.timezone` 的默认值改为启动时探测到的系统 timezone，不再硬编码为 `UTC`

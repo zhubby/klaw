@@ -5,7 +5,7 @@ use crate::time_format::format_timestamp_millis;
 use crate::widgets::show_json_tree;
 use chrono::{Datelike, Local, NaiveDate};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
-use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, GatewayWebhookConfig};
+use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayWebhookConfig};
 use klaw_session::{
     SessionError, SessionManager, SqliteSessionManager, WebhookEventQuery, WebhookEventRecord,
     WebhookEventSortOrder, WebhookEventStatus,
@@ -180,31 +180,27 @@ impl WebhookPanel {
             return;
         };
 
-        let mut next = self.config.clone();
-        if let Err(err) = self.config_form.apply_to_config(&mut next) {
-            notifications.error(err);
-            return;
-        }
-
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    self.config_window_open = false;
-                    let running = request_gateway_status()
-                        .map(|status| status.running)
-                        .unwrap_or(false);
-                    if running {
-                        notifications.success(
-                            "Webhook config saved. Restart gateway to apply runtime changes.",
-                        );
-                    } else {
-                        notifications.success("Webhook config saved");
-                    }
+        let config_form = self.config_form.clone();
+        match store.update_config(|config| {
+            config_form
+                .apply_to_config(config)
+                .map_err(ConfigError::InvalidConfig)?;
+            Ok(())
+        }) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                self.config_window_open = false;
+                let running = request_gateway_status()
+                    .map(|status| status.running)
+                    .unwrap_or(false);
+                if running {
+                    notifications
+                        .success("Webhook config saved. Restart gateway to apply runtime changes.");
+                } else {
+                    notifications.success("Webhook config saved");
                 }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
-            },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+            }
+            Err(err) => notifications.error(format!("Save failed: {err}")),
         }
     }
 

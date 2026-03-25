@@ -1437,6 +1437,72 @@ env_key = "OPENAI_API_KEY"
 }
 
 #[test]
+fn config_store_update_config_merges_changes_from_stale_store_snapshots() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let path = root.join("config.toml");
+
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[memory.embedding]
+enabled = true
+provider = "openai"
+model = "text-embedding-3-small"
+"#;
+    fs::create_dir_all(&root).expect("should create temp root");
+    fs::write(&path, raw).expect("should write source config");
+
+    let store_a = ConfigStore::open(Some(&path)).expect("first store should open");
+    let store_b = ConfigStore::open(Some(&path)).expect("second store should open");
+
+    store_a
+        .update_config(|config| {
+            config.model_providers.insert(
+                "anthropic".to_string(),
+                ModelProviderConfig {
+                    name: Some("Anthropic".to_string()),
+                    base_url: "https://api.anthropic.com/v1".to_string(),
+                    wire_api: "responses".to_string(),
+                    default_model: "claude-sonnet-4".to_string(),
+                    ..ModelProviderConfig::default()
+                },
+            );
+            Ok(())
+        })
+        .expect("provider update should succeed");
+
+    let saved = store_b
+        .update_config(|config| {
+            config.memory.embedding.provider = "anthropic".to_string();
+            config.memory.embedding.model = "text-embedding-v4".to_string();
+            Ok(())
+        })
+        .expect("stale store update should merge on latest disk config")
+        .0;
+
+    assert!(saved.config.model_providers.contains_key("anthropic"));
+    assert_eq!(saved.config.memory.embedding.provider, "anthropic");
+    assert_eq!(saved.config.memory.embedding.model, "text-embedding-v4");
+
+    let disk_raw = fs::read_to_string(&path).expect("saved config should be readable");
+    assert!(disk_raw.contains("[model_providers.anthropic]"));
+    assert!(disk_raw.contains("provider = \"anthropic\""));
+
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn config_store_reset_and_migrate_refresh_snapshot_from_disk() {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1569,6 +1635,21 @@ env_key = "OPENAI_API_KEY"
     .expect("should write source config");
 
     let store = ConfigStore::open(Some(&path)).expect("store should open");
+    store
+        .update_config(|config| {
+            config.model_providers.insert(
+                "anthropic".to_string(),
+                ModelProviderConfig {
+                    name: Some("Anthropic".to_string()),
+                    base_url: "https://api.anthropic.com/v1".to_string(),
+                    wire_api: "responses".to_string(),
+                    default_model: "claude-sonnet-4".to_string(),
+                    ..ModelProviderConfig::default()
+                },
+            );
+            Ok(())
+        })
+        .expect("provider update should succeed");
     let mut observability = store.snapshot().config.observability;
     observability.enabled = true;
     observability.service_name = "klaw-gui".to_string();
@@ -1589,6 +1670,7 @@ env_key = "OPENAI_API_KEY"
     assert!(saved.config.observability.prometheus.enabled);
     assert_eq!(saved.config.observability.prometheus.listen_port, 9100);
     assert_eq!(saved.config.observability.local_store.retention_days, 14);
+    assert!(saved.config.model_providers.contains_key("anthropic"));
     assert_eq!(
         saved
             .config
@@ -1605,6 +1687,7 @@ env_key = "OPENAI_API_KEY"
     assert!(disk_raw.contains("sample_rate = 0.25"));
     assert!(disk_raw.contains("[observability.local_store]"));
     assert!(disk_raw.contains("retention_days = 14"));
+    assert!(disk_raw.contains("[model_providers.anthropic]"));
 
     let _ = fs::remove_file(&path);
     let _ = fs::remove_dir_all(&root);

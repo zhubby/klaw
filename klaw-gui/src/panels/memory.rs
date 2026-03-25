@@ -1,7 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
-use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, EmbeddingConfig};
+use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, EmbeddingConfig};
 use klaw_memory::{MemoryError, MemoryStats, SqliteMemoryStatsService};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -136,23 +136,22 @@ impl MemoryPanel {
             notifications.error("Configuration store is not available");
             return;
         };
-        let Some(form) = self.form.as_ref() else {
+        let Some(form) = self.form.clone() else {
             return;
         };
 
-        match Self::apply_form(self.config.clone(), form) {
-            Ok(next) => match toml::to_string_pretty(&next) {
-                Ok(raw) => match store.save_raw_toml(&raw) {
-                    Ok(snapshot) => {
-                        self.apply_snapshot(snapshot);
-                        self.form = None;
-                        notifications.success("Memory config saved");
-                    }
-                    Err(err) => notifications.error(format!("Save failed: {err}")),
-                },
-                Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
-            },
-            Err(err) => notifications.error(err),
+        match store.update_config(|config| {
+            let next =
+                Self::apply_form(config.clone(), &form).map_err(ConfigError::InvalidConfig)?;
+            *config = next;
+            Ok(())
+        }) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                self.form = None;
+                notifications.success("Memory config saved");
+            }
+            Err(err) => notifications.error(format!("Save failed: {err}")),
         }
     }
 

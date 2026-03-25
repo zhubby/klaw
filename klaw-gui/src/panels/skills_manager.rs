@@ -225,32 +225,33 @@ impl SkillsManagerPanel {
             return;
         };
 
-        let (next_config, changed) =
-            Self::add_skill_to_config(self.config.clone(), registry_name, skill_id);
-        if !changed {
-            notifications.info(format!("`{skill_id}` is already installed"));
-            return;
-        }
-
-        let raw = match toml::to_string_pretty(&next_config) {
-            Ok(raw) => raw,
-            Err(err) => {
-                notifications.error(format!("Failed to render config TOML: {err}"));
-                return;
+        let registry_name = registry_name.to_string();
+        let skill_id = skill_id.to_string();
+        let changed = match store.update_config(|config| {
+            let (next_config, changed) =
+                Self::add_skill_to_config(config.clone(), &registry_name, &skill_id);
+            if changed {
+                *config = next_config;
             }
-        };
-
-        match store.save_raw_toml(&raw) {
-            Ok(snapshot) => self.apply_snapshot(snapshot),
+            Ok(changed)
+        }) {
+            Ok((snapshot, changed)) => {
+                self.apply_snapshot(snapshot);
+                changed
+            }
             Err(err) => {
                 notifications.error(format!(
                     "Failed to save installed skill `{skill_id}` to config: {err}"
                 ));
                 return;
             }
+        };
+        if !changed {
+            notifications.info(format!("`{skill_id}` is already installed"));
+            return;
         }
 
-        match install_from_registry_in_store(registry_name.to_string(), skill_id.to_string()) {
+        match install_from_registry_in_store(registry_name.clone(), skill_id.clone()) {
             Ok((_record, _already_installed)) => {
                 self.load_items(notifications, false);
                 if let Some(mut window) = self.install_window.take() {
@@ -282,34 +283,35 @@ impl SkillsManagerPanel {
             return;
         };
 
-        let (next_config, changed) =
-            Self::remove_skill_from_config(self.config.clone(), registry_name, skill_id);
-        if !changed {
-            notifications.info(format!("`{skill_id}` is not installed"));
-            return;
-        }
-
-        let raw = match toml::to_string_pretty(&next_config) {
-            Ok(raw) => raw,
-            Err(err) => {
-                notifications.error(format!("Failed to render config TOML: {err}"));
-                return;
+        let registry_name = registry_name.to_string();
+        let skill_id = skill_id.to_string();
+        let changed = match store.update_config(|config| {
+            let (next_config, changed) =
+                Self::remove_skill_from_config(config.clone(), &registry_name, &skill_id);
+            if changed {
+                *config = next_config;
             }
-        };
-
-        match store.save_raw_toml(&raw) {
-            Ok(snapshot) => self.apply_snapshot(snapshot),
+            Ok(changed)
+        }) {
+            Ok((snapshot, changed)) => {
+                self.apply_snapshot(snapshot);
+                changed
+            }
             Err(err) => {
                 notifications.error(format!(
                     "Failed to update config while uninstalling `{skill_id}`: {err}"
                 ));
                 return;
             }
+        };
+        if !changed {
+            notifications.info(format!("`{skill_id}` is not installed"));
+            return;
         }
 
-        match uninstall_from_registry_in_store(registry_name.to_string(), skill_id.to_string()) {
+        match uninstall_from_registry_in_store(registry_name.clone(), skill_id.clone()) {
             Ok(()) => {
-                if self.detail_name.as_deref() == Some(skill_id) {
+                if self.detail_name.as_deref() == Some(skill_id.as_str()) {
                     self.detail_name = None;
                     self.detail_record = None;
                     self.detail_window_open = false;
@@ -346,27 +348,24 @@ impl SkillsManagerPanel {
 
         let mut config_updated = false;
         if let Some(registry_name) = registry {
-            let (next_config, changed) =
-                Self::remove_skill_from_config(self.config.clone(), registry_name, skill_name);
-            if changed {
-                let raw = match toml::to_string_pretty(&next_config) {
-                    Ok(raw) => raw,
-                    Err(err) => {
-                        notifications.error(format!("Failed to render config TOML: {err}"));
-                        return;
-                    }
-                };
-                match store.save_raw_toml(&raw) {
-                    Ok(snapshot) => {
-                        self.apply_snapshot(snapshot);
-                        config_updated = true;
-                    }
-                    Err(err) => {
-                        notifications.error(format!(
-                            "Failed to remove `{skill_name}` from registry config: {err}"
-                        ));
-                        return;
-                    }
+            let registry_name = registry_name.to_string();
+            match store.update_config(|config| {
+                let (next_config, changed) =
+                    Self::remove_skill_from_config(config.clone(), &registry_name, skill_name);
+                if changed {
+                    *config = next_config;
+                }
+                Ok(changed)
+            }) {
+                Ok((snapshot, changed)) => {
+                    self.apply_snapshot(snapshot);
+                    config_updated = changed;
+                }
+                Err(err) => {
+                    notifications.error(format!(
+                        "Failed to remove `{skill_name}` from registry config: {err}"
+                    ));
+                    return;
                 }
             }
         }

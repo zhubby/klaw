@@ -5,7 +5,7 @@ use crate::widgets::ArrayEditor;
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
-use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, SkillsRegistryConfig};
+use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, SkillsRegistryConfig};
 use klaw_skill::{
     FileSystemSkillStore, InstalledSkill, RegistrySource, open_default_skills_manager,
 };
@@ -118,26 +118,30 @@ impl SkillsRegistryPanel {
         }
     }
 
-    fn save_config(
+    fn save_config<F>(
         &mut self,
-        next: AppConfig,
         notifications: &mut NotificationCenter,
         success_message: &str,
-    ) {
+        mutate: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut AppConfig) -> Result<(), String>,
+    {
         let Some(store) = self.store.as_ref() else {
             notifications.error("Configuration store is not available");
-            return;
+            return false;
         };
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    notifications.success(success_message);
-                    Self::request_runtime_skills_reload(notifications);
-                }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
-            },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+        match store.update_config(|config| mutate(config).map_err(ConfigError::InvalidConfig)) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                notifications.success(success_message);
+                Self::request_runtime_skills_reload(notifications);
+                true
+            }
+            Err(err) => {
+                notifications.error(format!("Save failed: {err}"));
+                false
+            }
         }
     }
 
@@ -192,9 +196,10 @@ impl SkillsRegistryPanel {
             }
         };
 
-        let mut next = self.config.clone();
-        next.skills.sync_timeout = timeout;
-        self.save_config(next, notifications, "skills.sync_timeout saved");
+        self.save_config(notifications, "skills.sync_timeout saved", move |config| {
+            config.skills.sync_timeout = timeout;
+            Ok(())
+        });
     }
 
     fn sync_registry(&mut self, registry_name: &str, notifications: &mut NotificationCenter) {
@@ -291,31 +296,23 @@ impl SkillsRegistryPanel {
     }
 
     fn delete_registry(&mut self, name: &str, notifications: &mut NotificationCenter) {
-        let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
-            return;
-        };
-
         if !self.config.skills.registries.contains_key(name) {
             notifications.error(format!("Skills registry `{name}` not found"));
             return;
         }
 
-        let mut next = self.config.clone();
-        next.skills.registries.remove(name);
-
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    self.selected_registry = None;
-                    notifications.success(format!("Skills registry `{name}` deleted"));
-                    Self::request_runtime_skills_reload(notifications);
-                    self.cleanup_registry_manifest(name, notifications);
-                }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
+        let name = name.to_string();
+        let name_for_config = name.clone();
+        if self.save_config(
+            notifications,
+            &format!("Skills registry `{name}` deleted"),
+            move |config| {
+                config.skills.registries.remove(&name_for_config);
+                Ok(())
             },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+        ) {
+            self.selected_registry = None;
+            self.cleanup_registry_manifest(&name, notifications);
         }
     }
 
@@ -340,16 +337,16 @@ impl SkillsRegistryPanel {
     }
 
     fn save_form(&mut self, notifications: &mut NotificationCenter) {
-        let Some(form) = self.form.as_ref() else {
+        let Some(form) = self.form.clone() else {
             return;
         };
 
-        match Self::apply_form(self.config.clone(), form) {
-            Ok(next) => {
-                self.save_config(next, notifications, "Skills registry saved");
-                self.form = None;
-            }
-            Err(err) => notifications.error(err),
+        if self.save_config(notifications, "Skills registry saved", move |config| {
+            let next = Self::apply_form(config.clone(), &form)?;
+            *config = next;
+            Ok(())
+        }) {
+            self.form = None;
         }
     }
 

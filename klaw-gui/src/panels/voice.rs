@@ -2,8 +2,8 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::voice_test::{RecordingCapture, RecordingHandle};
 use klaw_config::{
-    AppConfig, AssemblyAiVoiceConfig, ConfigSnapshot, ConfigStore, DeepgramVoiceConfig,
-    ElevenLabsVoiceConfig, SttProviderKind, TtsProviderKind, VoiceConfig,
+    AppConfig, AssemblyAiVoiceConfig, ConfigError, ConfigSnapshot, ConfigStore,
+    DeepgramVoiceConfig, ElevenLabsVoiceConfig, SttProviderKind, TtsProviderKind, VoiceConfig,
 };
 use klaw_voice::{SttInput, VoiceService};
 use std::path::{Path, PathBuf};
@@ -247,22 +247,19 @@ impl VoicePanel {
             return;
         };
 
-        let mut next = self.config.clone();
-        if let Err(err) = self.config_form.apply_to_config(&mut next) {
-            notifications.error(err);
-            return;
-        }
-
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    self.config_window_open = false;
-                    notifications.success("Voice config saved");
-                }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
-            },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+        let config_form = self.config_form.clone();
+        match store.update_config(|config| {
+            config_form
+                .apply_to_config(config)
+                .map_err(ConfigError::InvalidConfig)?;
+            Ok(())
+        }) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                self.config_window_open = false;
+                notifications.success("Voice config saved");
+            }
+            Err(err) => notifications.error(format!("Save failed: {err}")),
         }
     }
 
