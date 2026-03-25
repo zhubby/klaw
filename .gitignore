@@ -3,3 +3,5 @@
 /dist
 .DS_Store
 .crush/
+__pycache__/
+*.py[cod]
