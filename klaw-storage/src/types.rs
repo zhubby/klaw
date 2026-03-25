@@ -229,6 +229,18 @@ pub struct LlmAuditQuery {
     pub sort_order: LlmAuditSortOrder,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct LlmAuditFilterOptionsQuery {
+    pub requested_from_ms: Option<i64>,
+    pub requested_to_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct LlmAuditFilterOptions {
+    pub session_keys: Vec<String>,
+    pub providers: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WebhookEventStatus {

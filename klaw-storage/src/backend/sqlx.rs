@@ -1,12 +1,13 @@
 use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
     CronTaskRun, CronTaskStatus, HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun,
-    HeartbeatTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
-    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-    NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage, StorageError,
-    StoragePaths, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookEventResult,
-    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus, jsonl,
+    HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery,
+    LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource,
+    LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
+    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
+    SessionCompressionState, SessionIndex, SessionStorage, StorageError, StoragePaths,
+    UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookEventResult, WebhookEventQuery,
+    WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus, jsonl,
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
 };
@@ -1572,6 +1573,40 @@ impl SessionStorage for SqlxSessionStore {
         .await
         .map_err(StorageError::backend)?;
         rows.into_iter().map(LlmAuditRecord::try_from).collect()
+    }
+
+    async fn list_llm_audit_filter_options(
+        &self,
+        query: &LlmAuditFilterOptionsQuery,
+    ) -> Result<LlmAuditFilterOptions, StorageError> {
+        let session_keys = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT session_key
+             FROM llm_audit
+             WHERE (?1 IS NULL OR requested_at_ms >= ?1)
+               AND (?2 IS NULL OR requested_at_ms <= ?2)
+             ORDER BY session_key ASC",
+        )
+        .bind(query.requested_from_ms)
+        .bind(query.requested_to_ms)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        let providers = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT provider
+             FROM llm_audit
+             WHERE (?1 IS NULL OR requested_at_ms >= ?1)
+               AND (?2 IS NULL OR requested_at_ms <= ?2)
+             ORDER BY provider ASC",
+        )
+        .bind(query.requested_from_ms)
+        .bind(query.requested_to_ms)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(LlmAuditFilterOptions {
+            session_keys,
+            providers,
+        })
     }
 
     async fn append_webhook_event(

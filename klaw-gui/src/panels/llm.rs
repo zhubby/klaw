@@ -7,8 +7,8 @@ use egui::Color32;
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_session::{
-    LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, SessionError, SessionManager,
-    SqliteSessionManager,
+    LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
+    SessionError, SessionManager, SqliteSessionManager,
 };
 use std::future::Future;
 use std::thread;
@@ -28,8 +28,10 @@ enum DetailTab {
 pub struct LlmPanel {
     loaded: bool,
     rows: Vec<LlmAuditRecord>,
-    session_filter: String,
-    provider_filter: String,
+    session_options: Vec<String>,
+    provider_options: Vec<String>,
+    session_filter: Option<String>,
+    provider_filter: Option<String>,
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
     page: i64,
@@ -47,8 +49,10 @@ impl Default for LlmPanel {
         Self {
             loaded: false,
             rows: Vec::new(),
-            session_filter: String::new(),
-            provider_filter: String::new(),
+            session_options: Vec::new(),
+            provider_options: Vec::new(),
+            session_filter: None,
+            provider_filter: None,
             start_date: Some(one_year_ago),
             end_date: Some(today),
             page: 1,
@@ -73,17 +77,27 @@ impl LlmPanel {
         let size = self.size.max(1);
         let page = self.page.max(1);
         let offset = (page - 1) * size;
-        let query = LlmAuditQuery {
-            session_key: normalize_filter(&self.session_filter),
-            provider: normalize_filter(&self.provider_filter),
+        let filter_query = LlmAuditFilterOptionsQuery {
             requested_from_ms: self.start_date.and_then(date_start_ms),
             requested_to_ms: self.end_date.and_then(date_end_ms),
+        };
+        let query = LlmAuditQuery {
+            session_key: self.session_filter.clone(),
+            provider: self.provider_filter.clone(),
+            requested_from_ms: filter_query.requested_from_ms,
+            requested_to_ms: filter_query.requested_to_ms,
             limit: size,
             offset,
             sort_order: self.sort_order,
         };
-        match run_session_task(move |manager| async move { manager.list_llm_audit(&query).await }) {
-            Ok(rows) => {
+        match run_session_task(move |manager| async move {
+            let filter_options = manager.list_llm_audit_filter_options(&filter_query).await?;
+            let rows = manager.list_llm_audit(&query).await?;
+            Ok((filter_options, rows))
+        }) {
+            Ok((filter_options, rows)) => {
+                self.session_options = filter_options.session_keys;
+                self.provider_options = filter_options.providers;
                 self.rows = rows;
                 self.loaded = true;
             }
@@ -127,23 +141,61 @@ impl PanelRenderer for LlmPanel {
         let mut need_refresh = false;
         ui.horizontal(|ui| {
             ui.label("session");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.session_filter),
-                )
-                .changed()
-            {
+            let combo_resp = egui::ComboBox::from_id_salt("llm-audit-session-filter")
+                .selected_text(self.session_filter.as_deref().unwrap_or("All"))
+                .width(FILTER_INPUT_WIDTH)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui
+                        .selectable_value(&mut self.session_filter, None, "All")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    for session_key in &self.session_options {
+                        if ui
+                            .selectable_value(
+                                &mut self.session_filter,
+                                Some(session_key.clone()),
+                                session_key,
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if combo_resp.inner.unwrap_or(false) {
                 need_refresh = true;
             }
             ui.label("provider");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.provider_filter),
-                )
-                .changed()
-            {
+            let combo_resp = egui::ComboBox::from_id_salt("llm-audit-provider-filter")
+                .selected_text(self.provider_filter.as_deref().unwrap_or("All"))
+                .width(FILTER_INPUT_WIDTH)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui
+                        .selectable_value(&mut self.provider_filter, None, "All")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    for provider in &self.provider_options {
+                        if ui
+                            .selectable_value(
+                                &mut self.provider_filter,
+                                Some(provider.clone()),
+                                provider,
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if combo_resp.inner.unwrap_or(false) {
                 need_refresh = true;
             }
         });
@@ -415,11 +467,6 @@ fn render_json_payload(ui: &mut egui::Ui, raw: &str) {
                 }
             }
         });
-}
-
-fn normalize_filter(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) -> bool {

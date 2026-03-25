@@ -1,9 +1,9 @@
 use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus, HeartbeatJob,
-    HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmUsageRecord,
-    LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
-    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
-    SessionCompressionState, SessionIndex, StorageError, UpdateCronJobPatch,
+    HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
+    LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob,
+    NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    NewWebhookEventRecord, SessionCompressionState, SessionIndex, StorageError, UpdateCronJobPatch,
     UpdateHeartbeatJobPatch, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
 };
 use async_trait::async_trait;
@@ -127,6 +127,11 @@ pub trait SessionStorage: Send + Sync {
         &self,
         query: &LlmAuditQuery,
     ) -> Result<Vec<LlmAuditRecord>, StorageError>;
+
+    async fn list_llm_audit_filter_options(
+        &self,
+        query: &LlmAuditFilterOptionsQuery,
+    ) -> Result<LlmAuditFilterOptions, StorageError>;
 
     async fn append_webhook_event(
         &self,

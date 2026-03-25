@@ -1,10 +1,11 @@
 use crate::SessionError;
 use async_trait::async_trait;
 use klaw_storage::{
-    ChatRecord, DefaultSessionStore, LlmAuditQuery, LlmAuditRecord, LlmUsageRecord,
-    LlmUsageSummary, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
-    SessionCompressionState, SessionIndex, SessionStorage, UpdateWebhookEventResult,
-    WebhookEventQuery, WebhookEventRecord, open_default_store,
+    ChatRecord, DefaultSessionStore, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
+    LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord,
+    NewLlmUsageRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
+    SessionStorage, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
+    open_default_store,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -140,6 +141,11 @@ pub trait SessionManager: Send + Sync {
         &self,
         query: &LlmAuditQuery,
     ) -> Result<Vec<LlmAuditRecord>, SessionError>;
+
+    async fn list_llm_audit_filter_options(
+        &self,
+        query: &LlmAuditFilterOptionsQuery,
+    ) -> Result<LlmAuditFilterOptions, SessionError>;
 
     async fn append_webhook_event(
         &self,
@@ -370,6 +376,13 @@ impl SessionManager for SqliteSessionManager {
         query: &LlmAuditQuery,
     ) -> Result<Vec<LlmAuditRecord>, SessionError> {
         Ok(self.store.list_llm_audit(query).await?)
+    }
+
+    async fn list_llm_audit_filter_options(
+        &self,
+        query: &LlmAuditFilterOptionsQuery,
+    ) -> Result<LlmAuditFilterOptions, SessionError> {
+        Ok(self.store.list_llm_audit_filter_options(query).await?)
     }
 
     async fn append_webhook_event(
