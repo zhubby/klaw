@@ -29,8 +29,12 @@
 ## Examples
 
 - `examples/webhook_request.rs`: 使用 Rust 和 `reqwest` 向 `events` webhook 端点发送一条测试事件
+- `examples/webhook_agents_request.rs`: 使用 Rust 和 `reqwest` 向 `agents` webhook 端点发送 query + raw JSON body 请求
 
 ```bash
 cargo run -p klaw-gateway --example webhook_request
 WEBHOOK_TOKEN=replace-me BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gateway --example webhook_request
+
+cargo run -p klaw-gateway --example webhook_agents_request
+WEBHOOK_TOKEN=replace-me BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gateway --example webhook_agents_request
 ```

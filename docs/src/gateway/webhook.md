@@ -393,15 +393,25 @@ async fn send_webhook_event() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-完整示例代码位于 `klaw-gateway/examples/webhook_request.rs`：
+完整示例代码位于：
+
+- `klaw-gateway/examples/webhook_request.rs`
+- `klaw-gateway/examples/webhook_agents_request.rs`
 
 ```bash
-# 使用默认配置
+# events 示例：使用默认配置
 cargo run -p klaw-gateway --example webhook_request
 
-# 使用自定义配置
+# events 示例：使用自定义配置
 WEBHOOK_TOKEN=my-token BASE_URL=http://127.0.0.1:18080 \
   cargo run -p klaw-gateway --example webhook_request
+
+# agents 示例：使用默认配置
+cargo run -p klaw-gateway --example webhook_agents_request
+
+# agents 示例：使用自定义配置
+WEBHOOK_TOKEN=my-token BASE_URL=http://127.0.0.1:18080 \
+  cargo run -p klaw-gateway --example webhook_agents_request
 ```
 
 ## 安全注意事项
