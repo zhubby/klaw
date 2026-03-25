@@ -105,6 +105,7 @@ impl GatewayConfigForm {
 
 pub struct GatewayPanel {
     status: Option<GatewayStatusSnapshot>,
+    load_error: Option<String>,
     loaded: bool,
     store: Option<ConfigStore>,
     config_path: Option<PathBuf>,
@@ -118,6 +119,7 @@ impl Default for GatewayPanel {
     fn default() -> Self {
         Self {
             status: None,
+            load_error: None,
             loaded: false,
             store: None,
             config_path: None,
@@ -162,6 +164,7 @@ impl GatewayPanel {
 
     fn apply_status(&mut self, status: GatewayStatusSnapshot) {
         self.selected_tailscale_mode = status.tailscale_mode;
+        self.load_error = None;
         self.status = Some(status);
     }
 
@@ -173,7 +176,10 @@ impl GatewayPanel {
                     notifications.success("Gateway status refreshed");
                 }
             }
-            Err(err) => notifications.error(format!("Failed to load gateway status: {err}")),
+            Err(err) => {
+                self.load_error = Some(err.clone());
+                notifications.error(format!("Failed to load gateway status: {err}"));
+            }
         }
     }
 
@@ -403,7 +409,18 @@ impl PanelRenderer for GatewayPanel {
         ui.separator();
 
         let Some(status) = self.status.clone() else {
-            ui.label("Loading...");
+            if let Some(err) = &self.load_error {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    format!("Gateway status unavailable: {err}"),
+                );
+                ui.add_space(8.0);
+                if ui.button("Retry").clicked() {
+                    self.refresh(notifications, true);
+                }
+            } else {
+                ui.label("Loading...");
+            }
             return;
         };
 
