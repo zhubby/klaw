@@ -1,3 +1,4 @@
+use crate::GatewayStatusSnapshot;
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::request_gateway_status;
@@ -12,12 +13,17 @@ use klaw_session::{
 };
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
 
 const FILTER_INPUT_WIDTH: f32 = 220.0;
 const PAGING_INPUT_WIDTH: f32 = 50.0;
+
+struct PendingWebhookRowsRequest {
+    receiver: Receiver<Result<Vec<WebhookEventRecord>, String>>,
+}
 
 #[derive(Debug, Clone, Default)]
 struct WebhookConfigForm {
@@ -84,6 +90,10 @@ pub struct WebhookPanel {
     config_window_open: bool,
     loaded: bool,
     rows: Vec<WebhookEventRecord>,
+    rows_request: Option<PendingWebhookRowsRequest>,
+    rows_refresh_queued: bool,
+    gateway_status: Option<GatewayStatusSnapshot>,
+    gateway_status_request: Option<Receiver<Result<GatewayStatusSnapshot, String>>>,
     source_filter: String,
     event_type_filter: String,
     session_filter: String,
@@ -110,6 +120,10 @@ impl Default for WebhookPanel {
             config_window_open: false,
             loaded: false,
             rows: Vec::new(),
+            rows_request: None,
+            rows_refresh_queued: false,
+            gateway_status: None,
+            gateway_status_request: None,
             source_filter: String::new(),
             event_type_filter: String::new(),
             session_filter: String::new(),
@@ -131,6 +145,7 @@ impl WebhookPanel {
         if self.loaded {
             return;
         }
+        self.refresh_gateway_status();
         self.refresh(notifications);
     }
 
@@ -156,6 +171,7 @@ impl WebhookPanel {
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
+        let _ = notifications;
         let size = self.size.max(1);
         let page = self.page.max(1);
         let offset = (page - 1) * size;
@@ -170,14 +186,85 @@ impl WebhookPanel {
             offset,
             sort_order: self.sort_order,
         };
-        match run_session_task(
-            move |manager| async move { manager.list_webhook_events(&query).await },
-        ) {
-            Ok(rows) => {
-                self.rows = rows;
-                self.loaded = true;
+        if self.rows_request.is_some() {
+            self.rows_refresh_queued = true;
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let result = run_session_task(move |manager| async move {
+                manager.list_webhook_events(&query).await
+            });
+            let _ = tx.send(result);
+        });
+        self.rows_request = Some(PendingWebhookRowsRequest { receiver: rx });
+    }
+
+    fn poll_rows_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.rows_request.take() else {
+            return;
+        };
+
+        match request.receiver.try_recv() {
+            Ok(result) => match result {
+                Ok(rows) => {
+                    self.rows = rows;
+                    self.loaded = true;
+                    if self.rows_refresh_queued {
+                        self.rows_refresh_queued = false;
+                        self.refresh(notifications);
+                    }
+                }
+                Err(err) => {
+                    notifications.error(format!("Failed to load webhook rows: {err}"));
+                    if self.rows_refresh_queued {
+                        self.rows_refresh_queued = false;
+                        self.refresh(notifications);
+                    }
+                }
+            },
+            Err(TryRecvError::Empty) => {
+                self.rows_request = Some(request);
             }
-            Err(err) => notifications.error(format!("Failed to load webhook rows: {err}")),
+            Err(TryRecvError::Disconnected) => {
+                notifications.error("Webhook rows worker closed unexpectedly");
+            }
+        }
+    }
+
+    fn refresh_gateway_status(&mut self) {
+        if self.gateway_status_request.is_some() {
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(request_gateway_status());
+        });
+        self.gateway_status_request = Some(rx);
+    }
+
+    fn poll_gateway_status(&mut self, notifications: &mut NotificationCenter) {
+        let Some(receiver) = self.gateway_status_request.take() else {
+            return;
+        };
+
+        match receiver.try_recv() {
+            Ok(result) => match result {
+                Ok(status) => {
+                    self.gateway_status = Some(status);
+                }
+                Err(err) => {
+                    notifications.error(format!("Failed to load gateway status: {err}"));
+                }
+            },
+            Err(TryRecvError::Empty) => {
+                self.gateway_status_request = Some(receiver);
+            }
+            Err(TryRecvError::Disconnected) => {
+                notifications.error("Gateway status worker closed unexpectedly");
+            }
         }
     }
 
@@ -211,7 +298,10 @@ impl WebhookPanel {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
                 self.config_window_open = false;
-                let running = request_gateway_status()
+                self.refresh_gateway_status();
+                let running = self
+                    .gateway_status
+                    .as_ref()
                     .map(|status| status.running)
                     .unwrap_or(false);
                 if running {
@@ -233,6 +323,7 @@ impl WebhookPanel {
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
+                self.refresh_gateway_status();
                 notifications.success("Webhook config reloaded from disk");
             }
             Err(err) => notifications.error(format!("Reload failed: {err}")),
@@ -248,10 +339,16 @@ impl PanelRenderer for WebhookPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_loaded(notifications);
+        self.poll_rows_request(notifications);
+        self.poll_gateway_status(notifications);
+        if self.gateway_status_request.is_some() || self.rows_request.is_some() {
+            ui.ctx().request_repaint();
+        }
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
+                self.refresh_gateway_status();
                 self.refresh(notifications);
             }
             if ui.button("Config").clicked() {
@@ -262,7 +359,12 @@ impl PanelRenderer for WebhookPanel {
         });
 
         ui.separator();
-        render_webhook_config_summary(ui, &self.config, self.config_path.as_deref());
+        render_webhook_config_summary(
+            ui,
+            &self.config,
+            self.config_path.as_deref(),
+            self.gateway_status.as_ref(),
+        );
         ui.separator();
         let mut need_refresh = false;
         ui.horizontal(|ui| {
@@ -562,9 +664,13 @@ impl PanelRenderer for WebhookPanel {
     }
 }
 
-fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig, path: Option<&Path>) {
+fn render_webhook_config_summary(
+    ui: &mut egui::Ui,
+    config: &AppConfig,
+    path: Option<&Path>,
+    gateway_status: Option<&GatewayStatusSnapshot>,
+) {
     let webhook = &config.gateway.webhook;
-    let gateway_status = request_gateway_status().ok();
     let runtime_base_url = gateway_status.as_ref().and_then(|status| {
         status
             .info

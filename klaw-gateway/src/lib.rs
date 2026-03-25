@@ -14,7 +14,7 @@ pub use runtime::{
     spawn_gateway_with_options,
 };
 pub use state::{GatewayHandle, GatewayRuntimeInfo};
-pub use tailscale::{TailscaleRuntimeInfo, TailscaleStatus};
+pub use tailscale::{TailscaleHostInfo, TailscaleManager, TailscaleRuntimeInfo, TailscaleStatus};
 pub use webhook::{
     GatewayWebhookAgentRequest, GatewayWebhookAgentResponse, GatewayWebhookHandler,
     GatewayWebhookHandlerError, GatewayWebhookRequest, GatewayWebhookResponse,

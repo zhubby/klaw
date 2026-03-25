@@ -25,6 +25,8 @@
 - 当前仅支持非 TLS 监听
 - 启动成功后会输出实际监听地址对应的 `http://<listen_addr>/ws/chat`
 - webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 可分别启停并配置独立 path 与 body limit
+- `TailscaleManager::inspect_host()` 可独立读取本机 Tailscale 状态，供 GUI 在 gateway 未运行时展示主机连接信息
+- Tailscale Serve/Funnel 会在 gateway 绑定完成后使用实际监听端口做反向代理，并在 setup 后回读 `tailscale serve status --json` / `tailscale funnel status --json` 确认配置是否生效
 
 ## Examples
 

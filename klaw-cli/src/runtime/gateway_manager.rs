@@ -1,6 +1,6 @@
 use super::{RuntimeBundle, webhook};
 use klaw_config::{AppConfig, ConfigError, ConfigStore, TailscaleMode};
-use klaw_gateway::{GatewayHandle, spawn_gateway_with_options};
+use klaw_gateway::{GatewayHandle, TailscaleManager, spawn_gateway_with_options};
 use klaw_gui::GatewayStatusSnapshot;
 use std::path::Path;
 use std::sync::Arc;
@@ -13,6 +13,7 @@ pub struct GatewayManager {
     transitioning: bool,
     last_error: Option<String>,
     tailscale_mode: TailscaleMode,
+    tailscale_host: klaw_gateway::TailscaleHostInfo,
     auth_configured: bool,
 }
 
@@ -25,8 +26,13 @@ impl GatewayManager {
             transitioning: false,
             last_error: None,
             tailscale_mode: config.gateway.tailscale.mode,
+            tailscale_host: Default::default(),
             auth_configured: config.gateway.auth.is_enabled(),
         }
+    }
+
+    fn refresh_tailscale_host_status(&mut self) {
+        self.tailscale_host = TailscaleManager::inspect_host();
     }
 
     pub fn snapshot(&self) -> GatewayStatusSnapshot {
@@ -36,6 +42,7 @@ impl GatewayManager {
             running: self.handle.is_some(),
             transitioning: self.transitioning,
             info,
+            tailscale_host: self.tailscale_host.clone(),
             last_error: self.last_error.clone(),
             auth_configured: self.auth_configured,
             tailscale_mode: self.tailscale_mode,
@@ -69,11 +76,13 @@ impl GatewayManager {
         match start_result {
             Ok(handle) => {
                 self.handle = Some(handle);
+                self.refresh_tailscale_host_status();
                 self.last_error = None;
                 Ok(self.snapshot())
             }
             Err(err) => {
                 let message = err.to_string();
+                self.refresh_tailscale_host_status();
                 self.last_error = Some(message.clone());
                 Err(message)
             }
@@ -90,10 +99,12 @@ impl GatewayManager {
 
         match stop_result {
             Ok(()) => {
+                self.refresh_tailscale_host_status();
                 self.last_error = None;
                 Ok(self.snapshot())
             }
             Err(err) => {
+                self.refresh_tailscale_host_status();
                 self.last_error = Some(err.clone());
                 Err(err)
             }
@@ -114,6 +125,7 @@ impl GatewayManager {
     pub fn refresh_from_store(&mut self) -> Result<GatewayStatusSnapshot, String> {
         let config = load_config_from_store()?;
         self.sync_metadata_from_config(&config);
+        self.refresh_tailscale_host_status();
         Ok(self.snapshot())
     }
 
@@ -154,10 +166,12 @@ impl GatewayManager {
             match save_gateway_enabled(false) {
                 Ok(config) => {
                     self.configured_enabled = config.gateway.enabled;
+                    self.refresh_tailscale_host_status();
                     self.last_error = None;
                     Ok(self.snapshot())
                 }
                 Err(err) => {
+                    self.refresh_tailscale_host_status();
                     self.last_error = Some(err.clone());
                     Err(err)
                 }
@@ -176,6 +190,7 @@ impl GatewayManager {
             return Err(message);
         }
 
+        let previous_mode = self.tailscale_mode;
         let config = save_tailscale_mode(mode)?;
         self.tailscale_mode = mode;
         self.auth_configured = config.gateway.auth.is_enabled();
@@ -185,11 +200,28 @@ impl GatewayManager {
                 warn!(error = %err, "failed to stop gateway before tailscale mode change");
             }
             if config.gateway.enabled {
-                self.start_from_config(&config).await
+                match self.start_from_config(&config).await {
+                    Ok(status) => Ok(status),
+                    Err(err) => {
+                        if let Err(revert_err) = save_tailscale_mode(previous_mode) {
+                            warn!(
+                                error = %revert_err,
+                                previous_mode = ?previous_mode,
+                                "failed to revert tailscale mode after start failure"
+                            );
+                        }
+                        self.tailscale_mode = previous_mode;
+                        self.refresh_tailscale_host_status();
+                        self.last_error = Some(err.clone());
+                        Err(err)
+                    }
+                }
             } else {
+                self.refresh_tailscale_host_status();
                 Ok(self.snapshot())
             }
         } else {
+            self.refresh_tailscale_host_status();
             Ok(self.snapshot())
         }
     }
