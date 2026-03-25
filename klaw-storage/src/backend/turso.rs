@@ -1,12 +1,13 @@
 use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
     CronTaskRun, CronTaskStatus, HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun,
-    HeartbeatTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
-    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-    NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage, StorageError,
-    StoragePaths, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookEventResult,
-    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus, jsonl,
+    HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery,
+    LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource,
+    LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
+    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
+    SessionCompressionState, SessionIndex, SessionStorage, StorageError, StoragePaths,
+    UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookEventResult, WebhookEventQuery,
+    WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus, jsonl,
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
 };
@@ -1108,6 +1109,55 @@ impl SessionStorage for TursoSessionStore {
             out.push(row_to_llm_audit(&row)?);
         }
         Ok(out)
+    }
+
+    async fn list_llm_audit_filter_options(
+        &self,
+        query: &LlmAuditFilterOptionsQuery,
+    ) -> Result<LlmAuditFilterOptions, StorageError> {
+        let where_clause =
+            llm_audit_requested_range_where(query.requested_from_ms, query.requested_to_ms);
+        let conn = self.connection().await?;
+        let mut session_rows = conn
+            .query(
+                &format!(
+                    "SELECT DISTINCT session_key
+                     FROM llm_audit
+                     {where_clause}
+                     ORDER BY session_key ASC"
+                ),
+                (),
+            )
+            .await
+            .map_err(StorageError::backend)?;
+        let mut session_keys = Vec::new();
+        while let Some(row) = session_rows.next().await.map_err(StorageError::backend)? {
+            let value = row.get_value(0).map_err(StorageError::backend)?;
+            session_keys.push(value_to_string(value)?);
+        }
+
+        let mut provider_rows = conn
+            .query(
+                &format!(
+                    "SELECT DISTINCT provider
+                     FROM llm_audit
+                     {where_clause}
+                     ORDER BY provider ASC"
+                ),
+                (),
+            )
+            .await
+            .map_err(StorageError::backend)?;
+        let mut providers = Vec::new();
+        while let Some(row) = provider_rows.next().await.map_err(StorageError::backend)? {
+            let value = row.get_value(0).map_err(StorageError::backend)?;
+            providers.push(value_to_string(value)?);
+        }
+
+        Ok(LlmAuditFilterOptions {
+            session_keys,
+            providers,
+        })
     }
 
     async fn append_webhook_event(
@@ -2368,6 +2418,24 @@ fn value_to_opt_i64(value: Value) -> Result<Option<i64>, StorageError> {
     match value {
         Value::Null => Ok(None),
         other => value_to_i64(other).map(Some),
+    }
+}
+
+fn llm_audit_requested_range_where(
+    requested_from_ms: Option<i64>,
+    requested_to_ms: Option<i64>,
+) -> String {
+    let mut conditions = Vec::new();
+    if let Some(from_ms) = requested_from_ms {
+        conditions.push(format!("requested_at_ms >= {from_ms}"));
+    }
+    if let Some(to_ms) = requested_to_ms {
+        conditions.push(format!("requested_at_ms <= {to_ms}"));
+    }
+    if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
     }
 }
 

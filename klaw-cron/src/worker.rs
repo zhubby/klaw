@@ -240,11 +240,11 @@ mod tests {
     use klaw_core::{InMemoryTransport, InboundMessage};
     use klaw_storage::{
         ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-        CronTaskRun, CronTaskStatus, LlmAuditQuery, LlmAuditRecord, LlmUsageRecord,
-        LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmAuditRecord,
-        NewLlmUsageRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-        SessionStorage, StorageError, UpdateCronJobPatch, UpdateWebhookEventResult,
-        WebhookEventQuery, WebhookEventRecord,
+        CronTaskRun, CronTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
+        LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord,
+        NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
+        SessionCompressionState, SessionIndex, SessionStorage, StorageError, UpdateCronJobPatch,
+        UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
     };
     use std::{
         collections::BTreeMap,
@@ -681,6 +681,13 @@ mod tests {
             _query: &LlmAuditQuery,
         ) -> Result<Vec<LlmAuditRecord>, StorageError> {
             Ok(Vec::new())
+        }
+
+        async fn list_llm_audit_filter_options(
+            &self,
+            _query: &LlmAuditFilterOptionsQuery,
+        ) -> Result<LlmAuditFilterOptions, StorageError> {
+            Ok(LlmAuditFilterOptions::default())
         }
 
         async fn append_webhook_event(

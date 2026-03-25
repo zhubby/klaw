@@ -21,13 +21,13 @@ pub use paths::StoragePaths;
 pub use traits::{CronStorage, HeartbeatStorage, SessionStorage};
 pub use types::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronTaskRun,
-    CronTaskStatus, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditQuery,
-    LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource,
-    LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
-    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookEventRecord,
-    SessionCompressionState, SessionIndex, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
-    UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
-    WebhookEventStatus,
+    CronTaskStatus, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions,
+    LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
+    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    NewWebhookEventRecord, SessionCompressionState, SessionIndex, UpdateCronJobPatch,
+    UpdateHeartbeatJobPatch, UpdateWebhookEventResult, WebhookEventQuery, WebhookEventRecord,
+    WebhookEventSortOrder, WebhookEventStatus,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -409,6 +409,102 @@ mod tests {
         assert_eq!(descending.len(), 2);
         assert_eq!(descending[0].id, "audit-2");
         assert_eq!(descending[1].id, "audit-1");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn llm_audit_filter_options_are_aggregated_and_sorted() {
+        let store = create_store().await;
+        store
+            .touch_session("stdio:audit-a", "chat-audit-a", "stdio")
+            .await
+            .expect("first session should exist");
+        store
+            .touch_session("stdio:audit-b", "chat-audit-b", "stdio")
+            .await
+            .expect("second session should exist");
+
+        store
+            .append_llm_audit(&NewLlmAuditRecord {
+                id: "audit-filter-1".to_string(),
+                session_key: "stdio:audit-b".to_string(),
+                chat_id: "chat-audit-b".to_string(),
+                turn_index: 0,
+                request_seq: 1,
+                provider: "openai".to_string(),
+                model: "gpt-4.1-mini".to_string(),
+                wire_api: "responses".to_string(),
+                status: LlmAuditStatus::Success,
+                error_code: None,
+                error_message: None,
+                provider_request_id: None,
+                provider_response_id: None,
+                request_body_json: "{}".to_string(),
+                response_body_json: Some("{}".to_string()),
+                requested_at_ms: 1_000,
+                responded_at_ms: Some(1_100),
+            })
+            .await
+            .expect("first audit should append");
+        store
+            .append_llm_audit(&NewLlmAuditRecord {
+                id: "audit-filter-2".to_string(),
+                session_key: "stdio:audit-a".to_string(),
+                chat_id: "chat-audit-a".to_string(),
+                turn_index: 0,
+                request_seq: 1,
+                provider: "anthropic".to_string(),
+                model: "claude-opus-4".to_string(),
+                wire_api: "messages".to_string(),
+                status: LlmAuditStatus::Success,
+                error_code: None,
+                error_message: None,
+                provider_request_id: None,
+                provider_response_id: None,
+                request_body_json: "{}".to_string(),
+                response_body_json: Some("{}".to_string()),
+                requested_at_ms: 2_000,
+                responded_at_ms: Some(2_100),
+            })
+            .await
+            .expect("second audit should append");
+        store
+            .append_llm_audit(&NewLlmAuditRecord {
+                id: "audit-filter-3".to_string(),
+                session_key: "stdio:audit-a".to_string(),
+                chat_id: "chat-audit-a".to_string(),
+                turn_index: 1,
+                request_seq: 2,
+                provider: "openai".to_string(),
+                model: "gpt-4.1-mini".to_string(),
+                wire_api: "responses".to_string(),
+                status: LlmAuditStatus::Failed,
+                error_code: Some("rate_limit".to_string()),
+                error_message: Some("retry".to_string()),
+                provider_request_id: None,
+                provider_response_id: None,
+                request_body_json: "{}".to_string(),
+                response_body_json: None,
+                requested_at_ms: 3_000,
+                responded_at_ms: Some(3_100),
+            })
+            .await
+            .expect("third audit should append");
+
+        let options = store
+            .list_llm_audit_filter_options(&LlmAuditFilterOptionsQuery {
+                requested_from_ms: Some(1_500),
+                requested_to_ms: Some(3_500),
+            })
+            .await
+            .expect("filter options should aggregate");
+
+        assert_eq!(
+            options,
+            LlmAuditFilterOptions {
+                session_keys: vec!["stdio:audit-a".to_string()],
+                providers: vec!["anthropic".to_string(), "openai".to_string()],
+            }
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
