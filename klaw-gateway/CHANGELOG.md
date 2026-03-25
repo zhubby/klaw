@@ -9,6 +9,8 @@
 
 ### Changed
 
+- `/webhook/agents` 现改为通过 URL query 接收 `hook_id` / `session_key` / `provider` / `model` 等控制参数，HTTP body 保持为原始 JSON 内容
+
 - gateway webhook 配置与路由注册现支持 `events` / `agents` 双 endpoint，各自拥有独立 path 与 body limit
 
 ## 2026-03-21

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use axum::{
     Json,
     body::Bytes,
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -120,7 +120,7 @@ pub(crate) struct GatewayWebhookPayload {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct GatewayWebhookAgentPayload {
+pub(crate) struct GatewayWebhookAgentQuery {
     pub(crate) hook_id: String,
     pub(crate) session_key: String,
     #[serde(default)]
@@ -131,9 +131,6 @@ pub(crate) struct GatewayWebhookAgentPayload {
     pub(crate) provider: Option<String>,
     #[serde(default)]
     pub(crate) model: Option<String>,
-    #[serde(default)]
-    pub(crate) metadata: Option<BTreeMap<String, Value>>,
-    pub(crate) body: Value,
 }
 
 pub(crate) fn build_webhook_state(
@@ -172,19 +169,20 @@ pub(crate) async fn webhook_handler(
 
 pub(crate) async fn webhook_agents_handler(
     State(state): State<Arc<GatewayState>>,
+    Query(query): Query<GatewayWebhookAgentQuery>,
     body: Bytes,
 ) -> Response {
     let Some(webhook) = state.webhook.as_ref() else {
         return (StatusCode::NOT_FOUND, "webhook is not enabled").into_response();
     };
 
-    let payload: GatewayWebhookAgentPayload = match serde_json::from_slice(&body) {
+    let raw_body: Value = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {
             return (StatusCode::BAD_REQUEST, "invalid webhook agent payload").into_response();
         }
     };
-    let request = match normalize_webhook_agent_request(payload, None) {
+    let request = match normalize_webhook_agent_request(query, raw_body, None) {
         Ok(request) => request,
         Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
     };
@@ -272,10 +270,11 @@ pub(crate) fn normalize_webhook_request(
 }
 
 pub(crate) fn normalize_webhook_agent_request(
-    payload: GatewayWebhookAgentPayload,
+    query: GatewayWebhookAgentQuery,
+    body: Value,
     remote_addr: Option<SocketAddr>,
 ) -> Result<GatewayWebhookAgentRequest, &'static str> {
-    let hook_id = payload.hook_id.trim();
+    let hook_id = query.hook_id.trim();
     if hook_id.is_empty() {
         return Err("hook_id is required");
     }
@@ -286,32 +285,32 @@ pub(crate) fn normalize_webhook_agent_request(
         return Err("hook_id may only contain letters, numbers, '-' and '_'");
     }
 
-    let session_key = payload.session_key.trim();
+    let session_key = query.session_key.trim();
     if session_key.is_empty() {
         return Err("session_key is required");
     }
 
-    let chat_id = payload
+    let chat_id = query
         .chat_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(|| session_key.to_string());
-    let sender_id = payload
+    let sender_id = query
         .sender_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(|| format!("webhook-agent:{hook_id}"));
-    let provider = payload
+    let provider = query
         .provider
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
-    let model = payload
+    let model = query
         .model
         .as_deref()
         .map(str::trim)
@@ -323,7 +322,7 @@ pub(crate) fn normalize_webhook_agent_request(
         .unwrap_or_default()
         .as_millis() as i64;
 
-    let mut metadata = payload.metadata.unwrap_or_default();
+    let mut metadata = BTreeMap::new();
     metadata.insert(
         "trigger.kind".to_string(),
         Value::String("webhook_agents".to_string()),
@@ -349,7 +348,7 @@ pub(crate) fn normalize_webhook_agent_request(
         sender_id,
         provider,
         model,
-        body: payload.body,
+        body,
         metadata,
         remote_addr: remote_addr.map(|addr| addr.to_string()),
         received_at_ms,

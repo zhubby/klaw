@@ -3,7 +3,7 @@ mod tests {
     use crate::{
         spawn_gateway,
         webhook::{
-            GatewayWebhookAgentPayload, GatewayWebhookPayload, normalize_webhook_agent_request,
+            GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
             normalize_webhook_request,
         },
     };
@@ -63,16 +63,15 @@ mod tests {
     #[test]
     fn normalize_webhook_agent_request_applies_defaults() {
         let request = normalize_webhook_agent_request(
-            GatewayWebhookAgentPayload {
+            GatewayWebhookAgentQuery {
                 hook_id: "order_sync".to_string(),
                 session_key: "dingtalk:acc:chat-1".to_string(),
                 chat_id: None,
                 sender_id: None,
                 provider: None,
                 model: None,
-                metadata: None,
-                body: json!({"order_id":"A123","status":"paid"}),
             },
+            json!({"order_id":"A123","status":"paid"}),
             None,
         )
         .expect("payload should normalize");

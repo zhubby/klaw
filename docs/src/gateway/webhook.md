@@ -108,26 +108,26 @@ Content-Length: 234
 
 ### `/webhook/agents`
 
-```json
+```http
+POST /webhook/agents?hook_id=order&session_key=dingtalk%3Aacc%3Achat-1&provider=openai&model=gpt-4.1 HTTP/1.1
+Authorization: Bearer <token>
+Content-Type: application/json
+
 {
-  "hook_id": "order",
-  "session_key": "dingtalk:acc:chat-1",
-  "provider": "openai",
-  "model": "gpt-4.1",
-  "body": {
-    "order_id": "A123",
-    "status": "paid"
-  }
+  "order_id": "A123",
+  "status": "paid"
 }
 ```
 
 字段规则：
 
-- `hook_id`：必填，对应 `(<storage.root_dir 或 ~/.klaw>)/hooks/prompts/<hook_id>.md`
-- `session_key`：必填，建议传短 session key；运行时会先解析到 active session
-- `provider` / `model`：可选，仅作用于当前请求
-- `body`：必填，任意 JSON value
-- `chat_id` / `sender_id` / `metadata`：可选
+- URL query:
+  - `hook_id`：必填，对应 `(<storage.root_dir 或 ~/.klaw>)/hooks/prompts/<hook_id>.md`
+  - `session_key`：必填，建议传短 session key；运行时会先解析到 active session
+  - `provider` / `model`：可选，仅作用于当前请求
+  - `chat_id` / `sender_id`：可选
+- HTTP body:
+  - 原封不动接受任意 JSON value，并作为 request JSON 追加到模板后面
 
 agent 请求会读取本地 markdown hook 模板，并在末尾统一追加 pretty-printed request JSON fenced code block，最终内容再注入 agent loop。
 
