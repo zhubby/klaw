@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::time_format::format_timestamp_seconds;
 use egui::{Color32, FontId, RichText, TextFormat, text::LayoutJob};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
@@ -15,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
-use std::time::UNIX_EPOCH;
 use tokio::runtime::Builder;
 
 const MIN_EDITOR_HEIGHT: f32 = 320.0;
@@ -860,10 +860,10 @@ fn format_modified_time(value: Option<std::time::SystemTime>) -> String {
     let Some(value) = value else {
         return "unknown".to_string();
     };
-    let Ok(duration) = value.duration_since(UNIX_EPOCH) else {
+    let Ok(duration) = value.duration_since(std::time::UNIX_EPOCH) else {
         return "unknown".to_string();
     };
-    format!("{}", duration.as_secs())
+    format_timestamp_seconds(duration.as_secs())
 }
 
 fn load_system_prompt_preview() -> String {
@@ -1265,6 +1265,12 @@ mod tests {
     fn truncate_text_adds_ellipsis_when_needed() {
         assert_eq!(truncate_text("abcdef", 3), "abc...");
         assert_eq!(truncate_text("abc", 3), "abc");
+    }
+
+    #[test]
+    fn format_modified_time_uses_gui_readable_datetime_format() {
+        let value = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_710_000_000);
+        assert_eq!(format_modified_time(Some(value)), "2024/03/09 16:00:00");
     }
 
     #[test]
