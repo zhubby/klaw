@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-25
+
+### Fixed
+- OpenAI-compatible `chat_completions` requests now serialize and send `tool_choice`, matching the existing Responses API behavior so runtime-enforced tool requirements actually reach chat-completions providers
+
 ## 2026-03-21
 
 ### Added
