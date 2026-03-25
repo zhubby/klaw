@@ -1,6 +1,6 @@
 use super::{RuntimeBundle, webhook};
 use klaw_config::{AppConfig, ConfigError, ConfigStore, TailscaleMode};
-use klaw_gateway::{GatewayHandle, spawn_gateway_with_options};
+use klaw_gateway::{GatewayHandle, TailscaleManager, spawn_gateway_with_options};
 use klaw_gui::GatewayStatusSnapshot;
 use std::path::Path;
 use std::sync::Arc;
@@ -13,6 +13,7 @@ pub struct GatewayManager {
     transitioning: bool,
     last_error: Option<String>,
     tailscale_mode: TailscaleMode,
+    tailscale_host: klaw_gateway::TailscaleHostInfo,
     auth_configured: bool,
 }
 
@@ -25,6 +26,7 @@ impl GatewayManager {
             transitioning: false,
             last_error: None,
             tailscale_mode: config.gateway.tailscale.mode,
+            tailscale_host: TailscaleManager::inspect_host(),
             auth_configured: config.gateway.auth.is_enabled(),
         }
     }
@@ -36,6 +38,7 @@ impl GatewayManager {
             running: self.handle.is_some(),
             transitioning: self.transitioning,
             info,
+            tailscale_host: self.tailscale_host.clone(),
             last_error: self.last_error.clone(),
             auth_configured: self.auth_configured,
             tailscale_mode: self.tailscale_mode,
@@ -46,6 +49,7 @@ impl GatewayManager {
         self.configured_enabled = config.gateway.enabled;
         self.tailscale_mode = config.gateway.tailscale.mode;
         self.auth_configured = config.gateway.auth.is_enabled();
+        self.tailscale_host = TailscaleManager::inspect_host();
     }
 
     pub async fn start_from_config(

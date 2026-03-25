@@ -26,6 +26,22 @@ pub enum TailscaleStatus {
     Error(String),
 }
 
+impl Default for TailscaleStatus {
+    fn default() -> Self {
+        Self::Disconnected
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TailscaleHostInfo {
+    pub status: TailscaleStatus,
+    pub backend_state: Option<String>,
+    pub dns_name: Option<String>,
+    pub public_url: Option<String>,
+    pub version: Option<String>,
+    pub message: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TailscaleRuntimeInfo {
     pub mode: TailscaleMode,
@@ -76,6 +92,109 @@ impl TailscaleManager {
         }
 
         Ok(())
+    }
+
+    #[must_use]
+    pub fn inspect_host() -> TailscaleHostInfo {
+        let version_output = match Command::new("tailscale").arg("version").output() {
+            Ok(output) if output.status.success() => output,
+            Ok(_) | Err(_) => {
+                return TailscaleHostInfo {
+                    status: TailscaleStatus::Error("tailscale CLI not found".to_string()),
+                    message: Some(
+                        "Install Tailscale and ensure the `tailscale` CLI is on PATH.".to_string(),
+                    ),
+                    ..TailscaleHostInfo::default()
+                };
+            }
+        };
+
+        let version = String::from_utf8_lossy(&version_output.stdout)
+            .lines()
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+
+        let status_output = match Command::new("tailscale")
+            .args(["status", "--json"])
+            .output()
+        {
+            Ok(output) => output,
+            Err(err) => {
+                return TailscaleHostInfo {
+                    status: TailscaleStatus::Error(format!(
+                        "failed to get tailscale status: {err}"
+                    )),
+                    version,
+                    message: Some("Unable to query local Tailscale status.".to_string()),
+                    ..TailscaleHostInfo::default()
+                };
+            }
+        };
+
+        if !status_output.status.success() {
+            return TailscaleHostInfo {
+                status: TailscaleStatus::Disconnected,
+                version,
+                message: Some("Tailscale is installed but not logged in.".to_string()),
+                ..TailscaleHostInfo::default()
+            };
+        }
+
+        let status: serde_json::Value = match serde_json::from_slice(&status_output.stdout) {
+            Ok(status) => status,
+            Err(err) => {
+                return TailscaleHostInfo {
+                    status: TailscaleStatus::Error(format!(
+                        "failed to parse tailscale status: {err}"
+                    )),
+                    version,
+                    message: Some("Tailscale returned an unreadable status payload.".to_string()),
+                    ..TailscaleHostInfo::default()
+                };
+            }
+        };
+
+        let backend_state = status["BackendState"]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let dns_name = status["Self"]["DNSName"]
+            .as_str()
+            .map(str::trim)
+            .map(|value| value.trim_end_matches('.'))
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let public_url = dns_name
+            .as_ref()
+            .map(|dns_name| format!("https://{dns_name}/"));
+
+        let status_kind = match backend_state.as_deref() {
+            Some("Running") => TailscaleStatus::Connected,
+            Some(_) => TailscaleStatus::Disconnected,
+            None => TailscaleStatus::Error("tailscale status missing BackendState".to_string()),
+        };
+        let message = match &status_kind {
+            TailscaleStatus::Connected => {
+                Some("Tailscale is connected on this machine.".to_string())
+            }
+            TailscaleStatus::Disconnected => Some(match backend_state.as_deref() {
+                Some(other) => format!("Tailscale backend state: {other}"),
+                None => "Tailscale is not connected.".to_string(),
+            }),
+            TailscaleStatus::Error(err) => Some(err.clone()),
+        };
+
+        TailscaleHostInfo {
+            status: status_kind,
+            backend_state,
+            dns_name,
+            public_url,
+            version,
+            message,
+        }
     }
 
     pub fn setup(&self) -> Result<TailscaleRuntimeInfo, TailscaleError> {

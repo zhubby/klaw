@@ -2,9 +2,14 @@
 
 ## 2026-03-25
 
+### Added
+
+- `Gateway` 面板现在会独立显示本机 Tailscale 主机状态，包括连接状态、版本、backend state、DNS 名称与 tailnet URL，即使 gateway 尚未运行也能先做环境排查
+
 ### Changed
 
 - `Webhook` 面板配置编辑与摘要展示现支持 `gateway.webhook.events` / `gateway.webhook.agents` 双 endpoint；`Gateway` 面板中的 webhook 配置入口也会继续写入 `events` 子配置
+- `Gateway` 面板中的 Tailscale 模式切换改为持久化待应用选择，并通过显式 `Apply` 按钮提交，避免下拉选择在下一帧渲染时回退
 
 ### Fixed
 

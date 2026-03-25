@@ -111,6 +111,7 @@ pub struct GatewayPanel {
     config: AppConfig,
     config_form: GatewayConfigForm,
     config_window_open: bool,
+    selected_tailscale_mode: TailscaleMode,
 }
 
 impl Default for GatewayPanel {
@@ -123,6 +124,7 @@ impl Default for GatewayPanel {
             config: AppConfig::default(),
             config_form: GatewayConfigForm::default(),
             config_window_open: false,
+            selected_tailscale_mode: TailscaleMode::Off,
         }
     }
 }
@@ -155,12 +157,18 @@ impl GatewayPanel {
         self.config_path = Some(snapshot.path);
         self.config = snapshot.config;
         self.config_form = GatewayConfigForm::from_config(&self.config.gateway);
+        self.selected_tailscale_mode = self.config.gateway.tailscale.mode;
+    }
+
+    fn apply_status(&mut self, status: GatewayStatusSnapshot) {
+        self.selected_tailscale_mode = status.tailscale_mode;
+        self.status = Some(status);
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter, announce: bool) {
         match request_gateway_status() {
             Ok(status) => {
-                self.status = Some(status);
+                self.apply_status(status);
                 if announce {
                     notifications.success("Gateway status refreshed");
                 }
@@ -226,7 +234,7 @@ impl GatewayPanel {
                     .as_ref()
                     .map(|info| format!("Gateway started at {}", info.ws_url))
                     .unwrap_or_else(|| "Gateway started".to_string());
-                self.status = Some(status);
+                self.apply_status(status);
                 notifications.success(message);
             }
             Err(err) => {
@@ -244,7 +252,7 @@ impl GatewayPanel {
                     .as_ref()
                     .map(|info| format!("Gateway restarted at {}", info.ws_url))
                     .unwrap_or_else(|| "Gateway restarted".to_string());
-                self.status = Some(status);
+                self.apply_status(status);
                 notifications.success(message);
             }
             Err(err) => {
@@ -262,7 +270,7 @@ impl GatewayPanel {
                     TailscaleMode::Serve => "serve (tailnet only)",
                     TailscaleMode::Funnel => "funnel (public)",
                 };
-                self.status = Some(status);
+                self.apply_status(status);
                 notifications.success(format!("Tailscale mode set to {}", mode_str));
             }
             Err(err) => {
@@ -500,36 +508,85 @@ impl PanelRenderer for GatewayPanel {
         ui.add_space(8.0);
 
         let current_mode = status.tailscale_mode;
-        let mut selected_mode = current_mode;
 
         ui.horizontal(|ui| {
             ui.label("Mode");
             egui::ComboBox::from_id_salt("tailscale-mode")
-                .selected_text(mode_display(current_mode))
+                .selected_text(mode_display(self.selected_tailscale_mode))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut selected_mode, TailscaleMode::Off, "Off");
                     ui.selectable_value(
-                        &mut selected_mode,
+                        &mut self.selected_tailscale_mode,
+                        TailscaleMode::Off,
+                        "Off",
+                    );
+                    ui.selectable_value(
+                        &mut self.selected_tailscale_mode,
                         TailscaleMode::Serve,
                         "Serve (tailnet)",
                     );
                     ui.selectable_value(
-                        &mut selected_mode,
+                        &mut self.selected_tailscale_mode,
                         TailscaleMode::Funnel,
                         "Funnel (public)",
                     );
                 });
+            let apply_enabled = self.selected_tailscale_mode != current_mode;
+            if ui
+                .add_enabled(apply_enabled, egui::Button::new("Apply"))
+                .clicked()
+            {
+                if self.selected_tailscale_mode == TailscaleMode::Funnel && !status.auth_configured
+                {
+                    notifications.error(
+                        "Funnel mode requires authentication. Please configure gateway.auth first.",
+                    );
+                    self.selected_tailscale_mode = current_mode;
+                } else {
+                    self.set_tailscale_mode(self.selected_tailscale_mode, notifications);
+                }
+            }
         });
 
-        if selected_mode != current_mode {
-            if selected_mode == TailscaleMode::Funnel && !status.auth_configured {
-                notifications.error(
-                    "Funnel mode requires authentication. Please configure gateway.auth first.",
-                );
-            } else if ui.button("Apply").clicked() {
-                self.set_tailscale_mode(selected_mode, notifications);
-            }
-        }
+        ui.add_space(8.0);
+        ui.label("Host Status");
+        egui::Grid::new("gateway-panel-tailscale-host-grid")
+            .num_columns(2)
+            .spacing([16.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Status");
+                render_tailscale_status(ui, &status.tailscale_host.status);
+                ui.end_row();
+
+                if let Some(version) = &status.tailscale_host.version {
+                    ui.label("Version");
+                    ui.label(version);
+                    ui.end_row();
+                }
+
+                if let Some(backend_state) = &status.tailscale_host.backend_state {
+                    ui.label("Backend State");
+                    ui.label(backend_state);
+                    ui.end_row();
+                }
+
+                if let Some(dns_name) = &status.tailscale_host.dns_name {
+                    ui.label("DNS Name");
+                    ui.label(dns_name);
+                    ui.end_row();
+                }
+
+                if let Some(url) = &status.tailscale_host.public_url {
+                    ui.label("Tailnet URL");
+                    ui.hyperlink(url);
+                    ui.end_row();
+                }
+
+                if let Some(message) = &status.tailscale_host.message {
+                    ui.label("Host Message");
+                    ui.label(message);
+                    ui.end_row();
+                }
+            });
 
         if let Some(info) = &status.info {
             if let Some(ts) = &info.tailscale {
@@ -538,22 +595,12 @@ impl PanelRenderer for GatewayPanel {
                     .num_columns(2)
                     .spacing([16.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Status");
-                        match &ts.status {
-                            TailscaleStatus::Connected => {
-                                ui.colored_label(egui::Color32::from_rgb(0, 180, 0), "Connected");
-                            }
-                            TailscaleStatus::Disconnected => {
-                                ui.label("Disconnected");
-                            }
-                            TailscaleStatus::Error(msg) => {
-                                ui.colored_label(ui.visuals().error_fg_color, msg);
-                            }
-                        }
+                        ui.label("Gateway Exposure");
+                        render_tailscale_status(ui, &ts.status);
                         ui.end_row();
 
                         if let Some(url) = &ts.public_url {
-                            ui.label("Public URL");
+                            ui.label("Gateway URL");
                             ui.hyperlink(url);
                             ui.end_row();
                         }
@@ -594,4 +641,52 @@ fn gateway_base_url(ws_url: &str) -> String {
         .strip_suffix("/ws/chat")
         .unwrap_or(ws_url)
         .to_string()
+}
+
+fn render_tailscale_status(ui: &mut egui::Ui, status: &TailscaleStatus) {
+    match status {
+        TailscaleStatus::Connected => {
+            ui.colored_label(egui::Color32::from_rgb(0, 180, 0), "Connected");
+        }
+        TailscaleStatus::Disconnected => {
+            ui.label("Disconnected");
+        }
+        TailscaleStatus::Error(message) => {
+            ui.colored_label(ui.visuals().error_fg_color, message);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_snapshot_syncs_selected_tailscale_mode() {
+        let mut panel = GatewayPanel::default();
+        let mut config = AppConfig::default();
+        config.gateway.tailscale.mode = TailscaleMode::Serve;
+
+        panel.apply_snapshot(ConfigSnapshot {
+            path: PathBuf::from("/tmp/klaw-config.toml"),
+            config,
+            raw_toml: String::new(),
+            revision: 1,
+        });
+
+        assert_eq!(panel.selected_tailscale_mode, TailscaleMode::Serve);
+    }
+
+    #[test]
+    fn apply_status_syncs_selected_tailscale_mode() {
+        let mut panel = GatewayPanel::default();
+        panel.selected_tailscale_mode = TailscaleMode::Serve;
+
+        panel.apply_status(GatewayStatusSnapshot {
+            tailscale_mode: TailscaleMode::Funnel,
+            ..GatewayStatusSnapshot::default()
+        });
+
+        assert_eq!(panel.selected_tailscale_mode, TailscaleMode::Funnel);
+    }
 }

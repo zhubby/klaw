@@ -1,6 +1,6 @@
 use klaw_channel::ChannelSyncResult;
 use klaw_config::TailscaleMode;
-use klaw_gateway::GatewayRuntimeInfo;
+use klaw_gateway::{GatewayRuntimeInfo, TailscaleHostInfo};
 use klaw_mcp::{McpRuntimeSnapshot, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
 use std::sync::{Mutex, OnceLock, mpsc};
@@ -12,6 +12,7 @@ pub struct GatewayStatusSnapshot {
     pub running: bool,
     pub transitioning: bool,
     pub info: Option<GatewayRuntimeInfo>,
+    pub tailscale_host: TailscaleHostInfo,
     pub last_error: Option<String>,
     pub auth_configured: bool,
     pub tailscale_mode: TailscaleMode,
