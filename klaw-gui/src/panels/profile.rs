@@ -23,6 +23,7 @@ const FOOTER_HEIGHT: f32 = 48.0;
 const DOCS_SECTION_MIN_HEIGHT: f32 = 180.0;
 const SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT: f32 = 260.0;
 const PREVIEW_POLL_INTERVAL: Duration = Duration::from_millis(150);
+const RESET_BUTTON_COLOR: Color32 = Color32::from_rgb(255, 149, 0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkspaceMarkdownDoc {
@@ -57,6 +58,18 @@ struct WorkspaceFileCreateForm {
     open: bool,
 }
 
+#[derive(Debug, Clone)]
+enum DefaultResetTarget {
+    Editor,
+    File(PathBuf),
+}
+
+#[derive(Debug, Clone)]
+struct PendingDefaultReset {
+    file_name: String,
+    target: DefaultResetTarget,
+}
+
 #[derive(Default)]
 pub struct ProfilePanel {
     workspace_dir: Option<PathBuf>,
@@ -69,7 +82,7 @@ pub struct ProfilePanel {
     preview: Option<WorkspaceMarkdownPreview>,
     create_form: WorkspaceFileCreateForm,
     loaded: bool,
-    pending_default_confirm: Option<String>,
+    pending_default_confirm: Option<PendingDefaultReset>,
     pending_delete_doc: Option<WorkspaceMarkdownDoc>,
 }
 
@@ -184,6 +197,21 @@ impl ProfilePanel {
         }
     }
 
+    fn sync_open_views_with_content(&mut self, path: &Path, content: &str) {
+        if let Some(editor) = self.editor.as_mut()
+            && editor.path == path
+        {
+            editor.original_raw = content.to_string();
+            editor.editor_raw = content.to_string();
+        }
+
+        if let Some(preview) = self.preview.as_mut()
+            && preview.path == path
+        {
+            preview.content = content.to_string();
+        }
+    }
+
     fn render_docs_section(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         let mut edit_target = None;
         let mut preview_target = None;
@@ -262,6 +290,8 @@ impl ProfilePanel {
                         }
 
                         let doc_clone = doc.clone();
+                        let has_default_template =
+                            klaw_core::get_default_template_content(&doc.file_name).is_some();
                         response.context_menu(|ui| {
                             if ui.button(format!("{} Preview", regular::EYE)).clicked() {
                                 preview_target = Some(doc_clone.clone());
@@ -272,6 +302,23 @@ impl ProfilePanel {
                                 .clicked()
                             {
                                 edit_target = Some(doc_clone.clone());
+                                ui.close();
+                            }
+                            if has_default_template
+                                && ui
+                                    .add(egui::Button::new(
+                                        RichText::new(format!(
+                                            "{} Reset",
+                                            regular::ARROW_COUNTER_CLOCKWISE
+                                        ))
+                                        .color(RESET_BUTTON_COLOR),
+                                    ))
+                                    .clicked()
+                            {
+                                self.pending_default_confirm = Some(PendingDefaultReset {
+                                    file_name: doc_clone.file_name.clone(),
+                                    target: DefaultResetTarget::File(doc_clone.path.clone()),
+                                });
                                 ui.close();
                             }
                             ui.separator();
@@ -422,7 +469,10 @@ impl ProfilePanel {
         }
 
         if default_clicked {
-            self.pending_default_confirm = Some(editor.file_name.clone());
+            self.pending_default_confirm = Some(PendingDefaultReset {
+                file_name: editor.file_name.clone(),
+                target: DefaultResetTarget::Editor,
+            });
         }
 
         if save_clicked {
@@ -453,22 +503,35 @@ impl ProfilePanel {
         ctx: &egui::Context,
         notifications: &mut NotificationCenter,
     ) {
-        let Some(file_name) = self.pending_default_confirm.clone() else {
+        let Some(pending_reset) = self.pending_default_confirm.clone() else {
             return;
         };
         let mut confirmed = false;
         let mut cancelled = false;
+        let description = match &pending_reset.target {
+            DefaultResetTarget::Editor => format!(
+                "Reset {} to the built-in default template? This will replace the current editor content.",
+                pending_reset.file_name
+            ),
+            DefaultResetTarget::File(path) => format!(
+                "Reset {} to the built-in default template? This will overwrite {} after confirmation.",
+                pending_reset.file_name,
+                path.display()
+            ),
+        };
         egui::Window::new("Reset to default template")
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "Reset {} to the built-in default template? This will replace the current editor content.",
-                    file_name
-                ));
+                ui.label(description);
                 ui.horizontal(|ui| {
-                    if ui.button("Reset to default").clicked() {
+                    if ui
+                        .add(egui::Button::new(
+                            RichText::new("Reset to default").color(RESET_BUTTON_COLOR),
+                        ))
+                        .clicked()
+                    {
                         confirmed = true;
                     }
                     if ui.button("Cancel").clicked() {
@@ -478,10 +541,31 @@ impl ProfilePanel {
             });
 
         if confirmed {
-            if let Some(default_content) = klaw_core::get_default_template_content(&file_name) {
-                if let Some(editor) = self.editor.as_mut() {
-                    editor.editor_raw = default_content.to_string();
-                    notifications.success(format!("Reset {} to default template", file_name));
+            if let Some(default_content) =
+                klaw_core::get_default_template_content(&pending_reset.file_name)
+            {
+                match &pending_reset.target {
+                    DefaultResetTarget::Editor => {
+                        if let Some(editor) = self.editor.as_mut() {
+                            editor.editor_raw = default_content.to_string();
+                            notifications.success(format!(
+                                "Reset {} to default template",
+                                pending_reset.file_name
+                            ));
+                        }
+                    }
+                    DefaultResetTarget::File(path) => match fs::write(path, default_content) {
+                        Ok(()) => {
+                            self.sync_open_views_with_content(path, default_content);
+                            notifications.success(format!(
+                                "Reset {} to default template",
+                                pending_reset.file_name
+                            ));
+                            self.reload(notifications);
+                        }
+                        Err(err) => notifications
+                            .error(format!("Failed to reset {}: {err}", path.display())),
+                    },
                 }
             }
             self.pending_default_confirm = None;
@@ -1290,6 +1374,13 @@ mod tests {
     }
 
     #[test]
+    fn built_in_template_availability_matches_expected_workspace_files() {
+        assert!(klaw_core::get_default_template_content("AGENTS.md").is_some());
+        assert!(klaw_core::get_default_template_content("USER.md").is_some());
+        assert!(klaw_core::get_default_template_content("NOTES.md").is_none());
+    }
+
+    #[test]
     fn docs_section_height_preserves_preview_space_and_grows_with_window() {
         assert_eq!(
             ProfilePanel::docs_section_height(360.0),
@@ -1337,6 +1428,36 @@ mod tests {
         assert!(err.contains("already exists"));
 
         let _ = fs::remove_dir_all(workspace_dir);
+    }
+
+    #[test]
+    fn sync_open_views_updates_matching_editor_and_preview() {
+        let path = PathBuf::from("/tmp/AGENTS.md");
+        let mut panel = ProfilePanel {
+            editor: Some(WorkspaceMarkdownEditor {
+                file_name: "AGENTS.md".to_string(),
+                path: path.clone(),
+                original_raw: "old".to_string(),
+                editor_raw: "dirty".to_string(),
+                open: true,
+            }),
+            preview: Some(WorkspaceMarkdownPreview {
+                file_name: "AGENTS.md".to_string(),
+                path: path.clone(),
+                content: "stale".to_string(),
+                open: true,
+            }),
+            ..ProfilePanel::default()
+        };
+
+        panel.sync_open_views_with_content(&path, "new");
+
+        let editor = panel.editor.as_ref().expect("editor should remain open");
+        assert_eq!(editor.original_raw, "new");
+        assert_eq!(editor.editor_raw, "new");
+
+        let preview = panel.preview.as_ref().expect("preview should remain open");
+        assert_eq!(preview.content, "new");
     }
 }
 
