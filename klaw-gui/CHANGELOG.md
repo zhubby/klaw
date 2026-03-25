@@ -2,6 +2,13 @@
 
 ## 2026-03-25
 
+### Fixed
+
+- `Profile Prompt` 面板恢复旧的持久化 tab 状态时，现在会把历史标题 `Profile` 自动规范为 `Profile Prompt`
+- `Profile Prompt` 面板的 `System Prompt Preview` 改为后台加载，避免首次打开或手动刷新时阻塞 GUI 渲染线程
+- `Profile Prompt` 面板的 `Workspace Markdown Files` 与 `System Prompt Preview` 区块现在会按分配高度填充，窗口变高时不再留下异常空隙
+- `Profile Prompt` 面板 `Workspace Markdown Files` 列表中的 `Modified` 时间现在复用 GUI 统一时间格式，显示为可读日期而不是 Unix 秒时间戳
+
 ### Added
 
 - `Profile Prompt` 面板新增只读 `System Prompt Preview` 区块，使用 markdown 高亮渲染当前 runtime system prompt，并以固定剩余高度显示、内容过长时在框内滚动

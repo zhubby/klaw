@@ -48,7 +48,9 @@ fn load_ui_state_from_path(path: &Path) -> io::Result<UiState> {
             "unsupported ui state schema version",
         ));
     }
-    Ok(persisted.state)
+    let mut state = persisted.state;
+    state.workbench.normalize_titles();
+    Ok(state)
 }
 
 fn save_ui_state_to_path(path: &Path, state: &UiState) -> io::Result<()> {
@@ -100,6 +102,20 @@ mod tests {
         assert_eq!(restored.theme_mode, ThemeMode::Dark);
         assert_eq!(restored.workbench.active_tab, state.workbench.active_tab);
         assert_eq!(restored.workbench.tabs.len(), state.workbench.tabs.len());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_ui_state_normalizes_persisted_tab_titles() {
+        let path = unique_test_path();
+        let mut state = UiState::default();
+        state.workbench.tabs[0].title = "Profile".to_string();
+
+        save_ui_state_to_path(&path, &state).expect("save ui state");
+        let restored = load_ui_state_from_path(&path).expect("load ui state");
+
+        assert_eq!(restored.workbench.tabs[0].title, "Profile Prompt");
 
         let _ = fs::remove_file(path);
     }

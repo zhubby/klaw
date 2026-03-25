@@ -47,6 +47,12 @@ impl WorkbenchState {
         }
     }
 
+    pub fn normalize_titles(&mut self) {
+        for tab in &mut self.tabs {
+            tab.title = tab.menu.default_tab_title().to_string();
+        }
+    }
+
     pub fn apply(&mut self, action: UiAction) {
         match action {
             UiAction::OpenMenu(menu) => self.open_or_activate(menu),
