@@ -1193,6 +1193,7 @@ fn fmt_md_quote() -> TextFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1269,8 +1270,16 @@ mod tests {
 
     #[test]
     fn format_modified_time_uses_gui_readable_datetime_format() {
-        let value = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_710_000_000);
-        assert_eq!(format_modified_time(Some(value)), "2024/03/09 16:00:00");
+        let timestamp_secs = 1_710_000_000_i64;
+        let value = std::time::UNIX_EPOCH
+            + std::time::Duration::from_secs(timestamp_secs.try_into().expect("valid timestamp"));
+        let expected = chrono::Local
+            .timestamp_opt(timestamp_secs, 0)
+            .single()
+            .expect("test timestamp should be valid")
+            .format("%Y/%m/%d %H:%M:%S")
+            .to_string();
+        assert_eq!(format_modified_time(Some(value)), expected);
     }
 
     #[test]

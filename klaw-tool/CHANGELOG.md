@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-25
+
+### Changed
+- changed `cron_manager` and `heartbeat_manager` timezone defaults to use the detected system timezone when callers omit `timezone`
+
 ## 2026-03-24
 
 ### Added

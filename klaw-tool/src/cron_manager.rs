@@ -4,6 +4,7 @@ use klaw_storage::{
     CronJob, CronScheduleKind, CronStorage, CronTaskRun, DefaultSessionStore, NewCronJob,
     StorageError, UpdateCronJobPatch, open_default_store,
 };
+use klaw_util::system_timezone_name;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -208,7 +209,7 @@ impl CronManagerTool {
         let default_session_key = format!("cron:{id}");
         let payload_json = Self::parse_payload_json(args, ctx, Some(&default_session_key))?;
         let enabled = Self::optional_bool(args, "enabled")?.unwrap_or(true);
-        let timezone = Self::optional_str(args, "timezone")?.unwrap_or_else(|| "UTC".to_string());
+        let timezone = Self::optional_str(args, "timezone")?.unwrap_or_else(system_timezone_name);
         let next_run_at_ms = match Self::optional_i64(args, "next_run_at_ms")? {
             Some(v) => v,
             None => Self::compute_next_run_ms(schedule_kind, &schedule_expr, now_ms())?,
@@ -429,7 +430,7 @@ impl Tool for CronManagerTool {
                         "session_key": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to an isolated cron session such as `cron:<job_id>`." },
                         "metadata": { "type": "object", "description": "Optional metadata object used only with `message` shortcut. Defaults to `{}`." },
                         "enabled": { "description": "Whether the cron starts enabled. Defaults to true. Prefer a boolean; string values like `\"true\"` and `\"false\"` are also accepted.", "oneOf": [{ "type": "boolean" }, { "type": "string" }] },
-                        "timezone": { "type": "string", "description": "Timezone label. Defaults to UTC." },
+                        "timezone": { "type": "string", "description": "Timezone label. Defaults to the detected system timezone." },
                         "next_run_at_ms": { "type": "integer", "description": "Optional explicit next run timestamp in ms." }
                     },
                     "required": ["action", "name", "schedule_expr"],
@@ -1120,7 +1121,7 @@ mod tests {
     #[tokio::test]
     async fn create_and_get_cron_job() {
         let storage = Arc::new(MockCronStorage::default());
-        let tool = CronManagerTool::from_storage(storage);
+        let tool = CronManagerTool::from_storage(storage.clone());
 
         let create = tool
             .execute(
@@ -1150,6 +1151,9 @@ mod tests {
             .await
             .expect("get should succeed");
         assert!(get.content_for_model.contains("\"id\": \"job-1\""));
+
+        let job = storage.get_cron("job-1").await.expect("job should exist");
+        assert_eq!(job.timezone, system_timezone_name());
     }
 
     #[tokio::test]

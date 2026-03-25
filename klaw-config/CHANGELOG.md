@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-25
+
+### Changed
+
+- `heartbeat.defaults.timezone` 的默认值改为启动时探测到的系统 timezone，不再硬编码为 `UTC`
+
 ## 2026-03-24
 
 ### Added

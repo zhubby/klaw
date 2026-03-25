@@ -1,6 +1,6 @@
 # klaw-util
 
-`klaw-util` contains shared Klaw constants and filesystem path helpers for the default data directory layout.
+`klaw-util` contains shared Klaw constants, filesystem path helpers for the default data directory layout, and lightweight runtime environment helpers such as system timezone detection.
 
 It centralizes fixed names such as:
 
@@ -11,4 +11,4 @@ It centralizes fixed names such as:
 - `skills-registry/`
 - `tokenizers/`
 
-Use this crate when a module needs to derive default local paths without pulling in higher-level storage or config abstractions.
+Use this crate when a module needs to derive default local paths or reuse host-level defaults like the detected system timezone without pulling in higher-level storage or config abstractions.

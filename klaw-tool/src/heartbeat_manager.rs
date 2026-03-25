@@ -3,6 +3,7 @@ use klaw_storage::{
     DefaultSessionStore, HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun, NewHeartbeatJob,
     UpdateHeartbeatJobPatch, open_default_store,
 };
+use klaw_util::system_timezone_name;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -137,7 +138,7 @@ impl HeartbeatManagerTool {
             Self::require_str(args, "prompt")?,
             Self::optional_str(args, "silent_ack_token")?
                 .unwrap_or_else(|| "HEARTBEAT_OK".to_string()),
-            Self::optional_str(args, "timezone")?.unwrap_or_else(|| "UTC".to_string()),
+            Self::optional_str(args, "timezone")?.unwrap_or_else(system_timezone_name),
         ))
     }
 
@@ -310,7 +311,7 @@ impl Tool for HeartbeatManagerTool {
                         "every": { "type": "string", "description": "Repeat interval such as `10m`, `1h`, or `24h`." },
                         "prompt": { "type": "string", "description": "Prompt injected into the bound session on each heartbeat." },
                         "silent_ack_token": { "type": "string", "description": "Exact token used to suppress no-op heartbeat output. Defaults to HEARTBEAT_OK." },
-                        "timezone": { "type": "string", "description": "Timezone label. Defaults to UTC." }
+                        "timezone": { "type": "string", "description": "Timezone label. Defaults to the detected system timezone." }
                     },
                     "required": ["action", "every", "prompt"],
                     "additionalProperties": false
@@ -476,4 +477,57 @@ fn heartbeat_task_run_to_json(run: HeartbeatTaskRun) -> Value {
         "published_message_id": run.published_message_id,
         "created_at_ms": run.created_at_ms
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use klaw_storage::StoragePaths;
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    async fn test_tool() -> HeartbeatManagerTool {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let root =
+            std::env::temp_dir().join(format!("klaw-heartbeat-tool-test-{}-{suffix}", now_ms()));
+        let store = DefaultSessionStore::open(StoragePaths::from_root(root))
+            .await
+            .expect("store should open");
+        HeartbeatManagerTool::with_store(store)
+    }
+
+    fn ctx() -> ToolContext {
+        ToolContext {
+            session_key: "stdio:test".to_string(),
+            metadata: BTreeMap::from([
+                ("channel".to_string(), json!("stdio")),
+                ("chat_id".to_string(), json!("chat-1")),
+            ]),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_defaults_to_system_timezone() {
+        let tool = test_tool().await;
+        let output = tool
+            .execute(
+                json!({
+                    "action": "create",
+                    "id": "hb-1",
+                    "every": "30m",
+                    "prompt": "review session"
+                }),
+                &ctx(),
+            )
+            .await
+            .expect("create should succeed");
+
+        assert!(
+            output
+                .content_for_model
+                .contains(&format!("\"timezone\": \"{}\"", system_timezone_name()))
+        );
+    }
 }

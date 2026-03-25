@@ -6,4 +6,5 @@ license.workspace = true
 
 [dependencies]
 serde = { workspace = true }
+iana-time-zone = { workspace = true }
 time = { workspace = true, features = ["serde"] }

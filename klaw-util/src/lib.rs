@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub const KLAW_DIR_NAME: &str = ".klaw";
+pub const UTC_TIMEZONE_NAME: &str = "UTC";
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 pub const GUI_STATE_FILE_NAME: &str = "gui_state.json";
@@ -31,6 +32,14 @@ pub fn data_dir_in_home(home: impl AsRef<Path>) -> PathBuf {
 
 pub fn default_data_dir() -> Option<PathBuf> {
     home_dir().map(data_dir_in_home)
+}
+
+pub fn system_timezone_name() -> String {
+    iana_time_zone::get_timezone()
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| UTC_TIMEZONE_NAME.to_string())
 }
 
 pub fn config_path(root_dir: impl AsRef<Path>) -> PathBuf {
@@ -167,5 +176,10 @@ mod tests {
             observability_db_path(root),
             PathBuf::from("/tmp/demo/observability.db")
         );
+    }
+
+    #[test]
+    fn system_timezone_name_is_non_empty() {
+        assert!(!system_timezone_name().trim().is_empty());
     }
 }

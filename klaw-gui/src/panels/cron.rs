@@ -10,6 +10,7 @@ use klaw_cron::{
     SqliteCronManager, UpdateCronJobPatch,
 };
 use klaw_storage::CronTaskStatus;
+use klaw_util::system_timezone_name;
 use std::future::Future;
 use std::thread;
 use tokio::runtime::Builder;
@@ -36,7 +37,7 @@ impl CronForm {
             schedule_kind: CronScheduleKind::Every,
             schedule_expr: "5m".to_string(),
             payload_json: "{}".to_string(),
-            timezone: "UTC".to_string(),
+            timezone: system_timezone_name(),
             enabled: true,
         }
     }
@@ -724,5 +725,15 @@ fn require_string_field(
         Some(serde_json::Value::String(_)) => Err(format!("`{key}` cannot be empty")),
         Some(_) => Err(format!("`{key}` must be a string")),
         None => Err(format!("missing required field `{key}`")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_cron_form_defaults_to_system_timezone() {
+        assert_eq!(CronForm::new().timezone, system_timezone_name());
     }
 }

@@ -1,3 +1,4 @@
+use klaw_util::system_timezone_name;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 use thiserror::Error;
@@ -474,7 +475,7 @@ fn default_heartbeat_silent_ack_token() -> String {
 }
 
 fn default_heartbeat_timezone() -> String {
-    "UTC".to_string()
+    system_timezone_name()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
