@@ -5,7 +5,9 @@ use crate::{
     GatewayStatusSnapshot, request_gateway_status, request_restart_gateway,
     request_set_tailscale_mode,
 };
-use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, GatewayConfig, TailscaleMode};
+use klaw_config::{
+    AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayConfig, TailscaleMode,
+};
 use klaw_gateway::TailscaleStatus;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -178,28 +180,25 @@ impl GatewayPanel {
             return;
         };
 
-        let mut next = self.config.clone();
-        if let Err(err) = self.config_form.apply_to_config(&mut next) {
-            notifications.error(err);
-            return;
-        }
-
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    self.config_window_open = false;
-                    let running = self.status.as_ref().map(|s| s.running).unwrap_or(false);
-                    if running {
-                        notifications
-                            .success("Gateway config saved. Restart gateway to apply changes.");
-                    } else {
-                        notifications.success("Gateway config saved");
-                    }
+        let config_form = self.config_form.clone();
+        match store.update_config(|config| {
+            config_form
+                .apply_to_config(config)
+                .map_err(ConfigError::InvalidConfig)?;
+            Ok(())
+        }) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                self.config_window_open = false;
+                let running = self.status.as_ref().map(|s| s.running).unwrap_or(false);
+                if running {
+                    notifications
+                        .success("Gateway config saved. Restart gateway to apply changes.");
+                } else {
+                    notifications.success("Gateway config saved");
                 }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
-            },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+            }
+            Err(err) => notifications.error(format!("Save failed: {err}")),
         }
     }
 

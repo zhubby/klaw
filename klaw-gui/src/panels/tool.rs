@@ -1,8 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use klaw_config::{
-    AppConfig, ApplyPatchConfig, ConfigSnapshot, ConfigStore, MemoryToolConfig, ShellConfig,
-    SubAgentConfig, WebFetchConfig, WebSearchConfig,
+    AppConfig, ApplyPatchConfig, ConfigError, ConfigSnapshot, ConfigStore, MemoryToolConfig,
+    ShellConfig, SubAgentConfig, WebFetchConfig, WebSearchConfig,
 };
 use std::path::{Path, PathBuf};
 
@@ -390,25 +390,29 @@ impl ToolPanel {
         }
     }
 
-    fn save_config(
+    fn save_config<F>(
         &mut self,
-        next: AppConfig,
         notifications: &mut NotificationCenter,
         success_message: &str,
-    ) {
+        mutate: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut AppConfig) -> Result<(), String>,
+    {
         let Some(store) = self.store.as_ref() else {
             notifications.error("Configuration store is not available");
-            return;
+            return false;
         };
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    notifications.success(success_message);
-                }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
-            },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+        match store.update_config(|config| mutate(config).map_err(ConfigError::InvalidConfig)) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                notifications.success(success_message);
+                true
+            }
+            Err(err) => {
+                notifications.error(format!("Save failed: {err}"));
+                false
+            }
         }
     }
 
@@ -481,89 +485,74 @@ impl ToolPanel {
         let Some(form) = self.form.clone() else {
             return;
         };
-        let mut next = self.config.clone();
 
-        let apply_result = match form {
-            ToolForm::ApplyPatch(form) => {
-                next.tools.apply_patch = form.to_config();
-                Ok(())
-            }
-            ToolForm::Shell(form) => match form.to_config() {
-                Ok(value) => {
-                    next.tools.shell = value;
+        if self.save_config(
+            notifications,
+            "Tool config saved",
+            move |config| match form {
+                ToolForm::ApplyPatch(form) => {
+                    config.tools.apply_patch = form.to_config();
                     Ok(())
                 }
-                Err(err) => Err(err),
-            },
-            ToolForm::Archive(form) => {
-                next.tools.archive.enabled = form.enabled;
-                Ok(())
-            }
-            ToolForm::Voice(form) => {
-                next.tools.voice.enabled = form.enabled;
-                Ok(())
-            }
-            ToolForm::Approval(form) => {
-                next.tools.approval.enabled = form.enabled;
-                Ok(())
-            }
-            ToolForm::LocalSearch(form) => {
-                next.tools.local_search.enabled = form.enabled;
-                Ok(())
-            }
-            ToolForm::TerminalMultiplexers(form) => {
-                next.tools.terminal_multiplexers.enabled = form.enabled;
-                Ok(())
-            }
-            ToolForm::CronManager(form) => {
-                next.tools.cron_manager.enabled = form.enabled;
-                Ok(())
-            }
-            ToolForm::HeartbeatManager(form) => {
-                next.tools.heartbeat_manager.enabled = form.enabled;
-                Ok(())
-            }
-            ToolForm::SkillsRegistry(form) => {
-                next.tools.skills_registry.enabled = form.enabled;
-                Ok(())
-            }
-            ToolForm::SkillsManager(form) => {
-                next.tools.skills_manager.enabled = form.enabled;
-                Ok(())
-            }
-            ToolForm::Memory(form) => match form.to_config() {
-                Ok(value) => {
-                    next.tools.memory = value;
+                ToolForm::Shell(form) => {
+                    config.tools.shell = form.to_config()?;
                     Ok(())
                 }
-                Err(err) => Err(err),
-            },
-            ToolForm::WebFetch(form) => match form.to_config() {
-                Ok(value) => {
-                    next.tools.web_fetch = value;
+                ToolForm::Archive(form) => {
+                    config.tools.archive.enabled = form.enabled;
                     Ok(())
                 }
-                Err(err) => Err(err),
-            },
-            ToolForm::WebSearch(form) => {
-                form.apply_to(&mut next.tools.web_search);
-                Ok(())
-            }
-            ToolForm::SubAgent(form) => match form.to_config() {
-                Ok(value) => {
-                    next.tools.sub_agent = value;
+                ToolForm::Voice(form) => {
+                    config.tools.voice.enabled = form.enabled;
                     Ok(())
                 }
-                Err(err) => Err(err),
+                ToolForm::Approval(form) => {
+                    config.tools.approval.enabled = form.enabled;
+                    Ok(())
+                }
+                ToolForm::LocalSearch(form) => {
+                    config.tools.local_search.enabled = form.enabled;
+                    Ok(())
+                }
+                ToolForm::TerminalMultiplexers(form) => {
+                    config.tools.terminal_multiplexers.enabled = form.enabled;
+                    Ok(())
+                }
+                ToolForm::CronManager(form) => {
+                    config.tools.cron_manager.enabled = form.enabled;
+                    Ok(())
+                }
+                ToolForm::HeartbeatManager(form) => {
+                    config.tools.heartbeat_manager.enabled = form.enabled;
+                    Ok(())
+                }
+                ToolForm::SkillsRegistry(form) => {
+                    config.tools.skills_registry.enabled = form.enabled;
+                    Ok(())
+                }
+                ToolForm::SkillsManager(form) => {
+                    config.tools.skills_manager.enabled = form.enabled;
+                    Ok(())
+                }
+                ToolForm::Memory(form) => {
+                    config.tools.memory = form.to_config()?;
+                    Ok(())
+                }
+                ToolForm::WebFetch(form) => {
+                    config.tools.web_fetch = form.to_config()?;
+                    Ok(())
+                }
+                ToolForm::WebSearch(form) => {
+                    form.apply_to(&mut config.tools.web_search);
+                    Ok(())
+                }
+                ToolForm::SubAgent(form) => {
+                    config.tools.sub_agent = form.to_config()?;
+                    Ok(())
+                }
             },
-        };
-
-        match apply_result {
-            Ok(()) => {
-                self.save_config(next, notifications, "Tool config saved");
-                self.form = None;
-            }
-            Err(err) => notifications.error(err),
+        ) {
+            self.form = None;
         }
     }
 

@@ -5,7 +5,9 @@ use crate::widgets::{ArrayEditor, KeyValueEditor};
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
-use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode};
+use klaw_config::{
+    AppConfig, ConfigError, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode,
+};
 use klaw_mcp::{McpRuntimeSnapshot, McpServerDetail, McpSyncResult};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -295,26 +297,30 @@ impl McpPanel {
         }
     }
 
-    fn save_config(
+    fn save_config<F>(
         &mut self,
-        next: AppConfig,
         notifications: &mut NotificationCenter,
         success_message: &str,
-    ) {
+        mutate: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut AppConfig) -> Result<(), String>,
+    {
         let Some(store) = self.store.as_ref() else {
             notifications.error("Configuration store is not available");
-            return;
+            return false;
         };
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    self.schedule_manager_sync(false);
-                    notifications.success(success_message);
-                }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
-            },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+        match store.update_config(|config| mutate(config).map_err(ConfigError::InvalidConfig)) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                self.schedule_manager_sync(false);
+                notifications.success(success_message);
+                true
+            }
+            Err(err) => {
+                notifications.error(format!("Save failed: {err}"));
+                false
+            }
         }
     }
 
@@ -344,26 +350,33 @@ impl McpPanel {
     }
 
     fn delete_server(&mut self, id: &str, notifications: &mut NotificationCenter) {
-        let mut next = self.config.clone();
-        next.mcp.servers.retain(|s| s.id != id);
-        self.save_config(next, notifications, &format!("MCP server '{id}' deleted"));
-        self.server_statuses.remove(id);
-        self.server_details.remove(id);
-        if self.selected_server.as_deref() == Some(id) {
+        let id = id.to_string();
+        let id_for_config = id.clone();
+        self.save_config(
+            notifications,
+            &format!("MCP server '{id}' deleted"),
+            move |config| {
+                config.mcp.servers.retain(|s| s.id != id_for_config);
+                Ok(())
+            },
+        );
+        self.server_statuses.remove(&id);
+        self.server_details.remove(&id);
+        if self.selected_server.as_deref() == Some(id.as_str()) {
             self.selected_server = None;
         }
     }
 
     fn save_form(&mut self, notifications: &mut NotificationCenter) {
-        let Some(form) = self.form.as_ref() else {
+        let Some(form) = self.form.clone() else {
             return;
         };
-        match Self::apply_form(self.config.clone(), form) {
-            Ok(next) => {
-                self.save_config(next, notifications, "MCP server saved");
-                self.form = None;
-            }
-            Err(err) => notifications.error(err),
+        if self.save_config(notifications, "MCP server saved", move |config| {
+            let next = Self::apply_form(config.clone(), &form)?;
+            *config = next;
+            Ok(())
+        }) {
+            self.form = None;
         }
     }
 
@@ -556,11 +569,14 @@ impl McpPanel {
                 }
             };
 
-            let mut next = self.config.clone();
-            next.mcp.enabled = *enabled;
-            next.mcp.startup_timeout_seconds = timeout;
-            self.save_config(next, notifications, "MCP settings saved");
-            self.global_settings_form = None;
+            let enabled = *enabled;
+            if self.save_config(notifications, "MCP settings saved", move |config| {
+                config.mcp.enabled = enabled;
+                config.mcp.startup_timeout_seconds = timeout;
+                Ok(())
+            }) {
+                self.global_settings_form = None;
+            }
         }
         if close {
             self.global_settings_form = None;

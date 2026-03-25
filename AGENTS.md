@@ -92,6 +92,13 @@ Name tests by behavior, e.g., `validate_fails_when_active_provider_missing`. Add
 
 For tool and config changes, include enough test cases to cover core paths and edge cases (arg validation, provider/config routing, formatting, and error handling when applicable). Every modification should keep the relevant crate/workspace tests passing before completion.
 
+## Config Persistence Safety
+- Treat `~/.klaw/config.toml` as a shared source of truth across GUI panels and runtime helpers.
+- **Never** persist config changes by mutating a stale in-memory `AppConfig` snapshot and writing the whole file back.
+- When editing one config subsection, reload the latest on-disk config first, apply a targeted mutation, validate, then write the updated config.
+- Prefer shared `ConfigStore` update APIs over panel-local `toml::to_string_pretty(...) + save_raw_toml(...)` flows so multiple editors do not clobber each other's saves.
+- Add regression tests for cross-panel or cross-store save ordering whenever changing config persistence logic. At minimum, cover the case where two stale editors save different fields and both changes must survive.
+
 ## Documentation Guidelines (mdBook)
 When adding or updating docs under `docs/src`, ensure they satisfy mdBook structure and rendering requirements:
 - Every new page must be linked from `docs/src/SUMMARY.md` using a relative path.

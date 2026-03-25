@@ -4,7 +4,7 @@ use crate::runtime_bridge::request_set_provider_override;
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
-use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore, ModelProviderConfig};
+use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, ModelProviderConfig};
 use klaw_llm::OpenAiWireApi;
 use std::path::{Path, PathBuf};
 
@@ -161,23 +161,24 @@ impl ProviderPanel {
             return;
         }
 
-        let mut next = self.config.clone();
-        next.model_provider = provider_id.to_string();
-        match toml::to_string_pretty(&next) {
-            Ok(raw) => match store.save_raw_toml(&raw) {
-                Ok(snapshot) => {
-                    self.apply_snapshot(snapshot);
-                    match request_set_provider_override(None) {
-                        Ok(_) => notifications
-                            .success(format!("Set active provider to '{provider_id}'")),
-                        Err(err) => notifications.error(format!(
-                            "Saved active provider to '{provider_id}', but failed to sync running runtime: {err}"
-                        )),
+        let provider_id = provider_id.to_string();
+        match store.update_config(|config| {
+            config.model_provider = provider_id.clone();
+            Ok(())
+        }) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                match request_set_provider_override(None) {
+                    Ok(_) => {
+                        notifications.success(format!("Set active provider to '{}'", provider_id))
                     }
+                    Err(err) => notifications.error(format!(
+                        "Saved active provider to '{}', but failed to sync running runtime: {err}",
+                        provider_id
+                    )),
                 }
-                Err(err) => notifications.error(format!("Save failed: {err}")),
-            },
-            Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
+            }
+            Err(err) => notifications.error(format!("Save failed: {err}")),
         }
     }
 
@@ -203,23 +204,22 @@ impl ProviderPanel {
             notifications.error("Configuration store is not available");
             return;
         };
-        let Some(form) = self.form.as_ref() else {
+        let Some(form) = self.form.clone() else {
             return;
         };
 
-        match Self::apply_form(self.config.clone(), form) {
-            Ok(next_config) => match toml::to_string_pretty(&next_config) {
-                Ok(raw) => match store.save_raw_toml(&raw) {
-                    Ok(snapshot) => {
-                        self.apply_snapshot(snapshot);
-                        self.form = None;
-                        notifications.success("Provider configuration saved");
-                    }
-                    Err(err) => notifications.error(format!("Save failed: {err}")),
-                },
-                Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
-            },
-            Err(err) => notifications.error(err),
+        match store.update_config(|config| {
+            let next_config =
+                Self::apply_form(config.clone(), &form).map_err(ConfigError::InvalidConfig)?;
+            *config = next_config;
+            Ok(())
+        }) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                self.form = None;
+                notifications.success("Provider configuration saved");
+            }
+            Err(err) => notifications.error(format!("Save failed: {err}")),
         }
     }
 
@@ -229,21 +229,21 @@ impl ProviderPanel {
             return;
         };
 
-        match Self::remove_provider(self.config.clone(), provider_id) {
-            Ok(next_config) => match toml::to_string_pretty(&next_config) {
-                Ok(raw) => match store.save_raw_toml(&raw) {
-                    Ok(snapshot) => {
-                        self.apply_snapshot(snapshot);
-                        if self.selected_provider.as_deref() == Some(provider_id) {
-                            self.selected_provider = None;
-                        }
-                        notifications.success(format!("Deleted provider '{provider_id}'"));
-                    }
-                    Err(err) => notifications.error(format!("Save failed: {err}")),
-                },
-                Err(err) => notifications.error(format!("Failed to render config TOML: {err}")),
-            },
-            Err(err) => notifications.error(err),
+        let provider_id = provider_id.to_string();
+        match store.update_config(|config| {
+            let next_config = Self::remove_provider(config.clone(), &provider_id)
+                .map_err(ConfigError::InvalidConfig)?;
+            *config = next_config;
+            Ok(())
+        }) {
+            Ok((snapshot, ())) => {
+                self.apply_snapshot(snapshot);
+                if self.selected_provider.as_deref() == Some(provider_id.as_str()) {
+                    self.selected_provider = None;
+                }
+                notifications.success(format!("Deleted provider '{}'", provider_id));
+            }
+            Err(err) => notifications.error(format!("Save failed: {err}")),
         }
     }
 

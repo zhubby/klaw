@@ -81,6 +81,35 @@ impl ConfigStore {
         Ok(guard.clone())
     }
 
+    pub fn update_config<F, T>(&self, mutate: F) -> Result<(ConfigSnapshot, T), ConfigError>
+    where
+        F: FnOnce(&mut AppConfig) -> Result<T, ConfigError>,
+    {
+        let mut guard = self.inner.write().unwrap_or_else(|err| err.into_inner());
+        let path = guard.path.clone();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(ConfigError::CreateDir)?;
+        }
+
+        let raw_toml = read_raw_toml(&path)?;
+        let mut config = parse_and_validate_config(&path, &raw_toml)?;
+        let result = mutate(&mut config)?;
+        validate(&config)?;
+
+        let raw_toml = toml::to_string_pretty(&config)
+            .map_err(|err| ConfigError::SerializeConfig(err.to_string()))?;
+        fs::write(&path, &raw_toml).map_err(ConfigError::WriteConfig)?;
+
+        let next_revision = guard.revision.saturating_add(1);
+        *guard = ConfigSnapshot {
+            path,
+            config,
+            raw_toml,
+            revision: next_revision,
+        };
+        Ok((guard.clone(), result))
+    }
+
     pub fn validate_raw_toml(&self, raw: &str) -> Result<(), ConfigError> {
         let path = self
             .inner
@@ -95,10 +124,7 @@ impl ConfigStore {
     pub fn reload(&self) -> Result<ConfigSnapshot, ConfigError> {
         let mut guard = self.inner.write().unwrap_or_else(|err| err.into_inner());
         let path = guard.path.clone();
-        let raw_toml = fs::read_to_string(&path).map_err(|source| ConfigError::ReadConfig {
-            path: path.clone(),
-            source,
-        })?;
+        let raw_toml = read_raw_toml(&path)?;
         let config = parse_and_validate_config(&path, &raw_toml)?;
         let next_revision = guard.revision.saturating_add(1);
         *guard = ConfigSnapshot {
@@ -136,22 +162,11 @@ impl ConfigStore {
         &self,
         observability: &crate::ObservabilityConfig,
     ) -> Result<ConfigSnapshot, ConfigError> {
-        let mut guard = self.inner.write().unwrap_or_else(|err| err.into_inner());
-        let path = guard.path.clone();
-        let mut config = guard.config.clone();
-        config.observability = observability.clone();
-        validate(&config)?;
-        let raw_toml = toml::to_string_pretty(&config)
-            .map_err(|err| ConfigError::SerializeConfig(err.to_string()))?;
-        fs::write(&path, &raw_toml).map_err(ConfigError::WriteConfig)?;
-        let next_revision = guard.revision.saturating_add(1);
-        *guard = ConfigSnapshot {
-            path,
-            config,
-            raw_toml,
-            revision: next_revision,
-        };
-        Ok(guard.clone())
+        self.update_config(|config| {
+            config.observability = observability.clone();
+            Ok(())
+        })
+        .map(|(snapshot, ())| snapshot)
     }
 }
 
@@ -245,6 +260,13 @@ fn write_default_config(path: &Path) -> Result<(), ConfigError> {
     }
     fs::write(path, default_config_template()).map_err(ConfigError::WriteConfig)?;
     Ok(())
+}
+
+fn read_raw_toml(path: &Path) -> Result<String, ConfigError> {
+    fs::read_to_string(path).map_err(|source| ConfigError::ReadConfig {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 pub(crate) fn migrate_path_with_defaults(path: &Path) -> Result<MigratedConfig, ConfigError> {
