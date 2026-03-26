@@ -966,7 +966,6 @@ impl PanelRenderer for VoicePanel {
 
         ui.add_space(8.0);
         ui.strong("Current Config");
-        ui.label("`voice.enabled` 已废弃，运行时和测试工具都会忽略该字段。");
         egui::Grid::new("voice-summary-grid")
             .num_columns(2)
             .spacing([12.0, 8.0])
