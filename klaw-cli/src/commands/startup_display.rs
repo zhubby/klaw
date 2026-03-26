@@ -36,11 +36,11 @@ fn format_mcp_status(config: &AppConfig, report: &StartupReport) -> String {
         .iter()
         .filter(|server| server.enabled)
         .collect();
-    if !config.mcp.enabled {
-        return "disabled".to_string();
-    }
     if configured_servers.is_empty() {
-        return "enabled, no servers configured".to_string();
+        return match &report.mcp_summary {
+            Some(_) => "ready, no servers configured".to_string(),
+            None => "bootstrapping, no servers configured".to_string(),
+        };
     }
 
     let stdio_count = configured_servers

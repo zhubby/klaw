@@ -14,7 +14,7 @@ use std::{
 use thiserror::Error;
 use tokio::{
     sync::{Mutex, watch},
-    task::{JoinHandle, JoinSet},
+    task::JoinHandle,
     time::timeout,
 };
 use tracing::{info, warn};
@@ -110,7 +110,6 @@ impl McpServerStatus {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct McpConfigSnapshot {
-    pub enabled: bool,
     pub startup_timeout_seconds: u64,
     pub servers: Vec<McpServerConfig>,
 }
@@ -118,7 +117,6 @@ pub struct McpConfigSnapshot {
 impl McpConfigSnapshot {
     pub fn from_mcp_config(config: &McpConfig) -> Self {
         Self {
-            enabled: config.enabled,
             startup_timeout_seconds: config.startup_timeout_seconds,
             servers: config.servers.clone(),
         }
@@ -142,18 +140,6 @@ pub enum McpBootstrapError {
     Timeout { timeout_seconds: u64 },
     #[error("{0}")]
     Other(String),
-}
-
-struct ServerStartOk {
-    server_id: String,
-    mode: McpServerMode,
-    client: Arc<dyn McpClient>,
-    tools: Vec<McpRemoteTool>,
-}
-
-struct ServerStartErr {
-    reason: String,
-    stderr_tail: Option<String>,
 }
 
 struct McpServerHandle {
@@ -252,6 +238,7 @@ impl McpManager {
             .map(|(key, handle)| (key.clone(), handle.config.clone()))
             .collect::<BTreeMap<_, _>>();
         let plan = plan_server_updates(&current, &snapshot);
+        self.config = snapshot.clone();
 
         for key in &plan.stop {
             self.stop_server(key).await;
@@ -265,7 +252,6 @@ impl McpManager {
             self.start_server(config.clone()).await;
         }
 
-        self.config = snapshot.clone();
         self.reconcile_statuses(&snapshot);
 
         let active_servers: Vec<String> = self
@@ -333,224 +319,7 @@ impl McpManager {
     }
 
     async fn do_init(&mut self, config: &McpConfigSnapshot) -> McpSyncResult {
-        self.config = config.clone();
-        if !config.enabled {
-            return McpSyncResult::default();
-        }
-
-        let enabled_servers: Vec<McpServerConfig> = config
-            .servers
-            .iter()
-            .filter(|server| server.enabled)
-            .cloned()
-            .collect();
-
-        let mut join_set = JoinSet::new();
-        for server in enabled_servers {
-            let timeout_seconds = config.startup_timeout_seconds;
-            let server_id = server.id.clone();
-            let mode = server.mode.clone();
-            info!(
-                server = %server_id,
-                mode = ?mode,
-                timeout_seconds,
-                status = "pending",
-                "starting mcp server"
-            );
-            join_set.spawn(async move {
-                let fut = async {
-                    let client = match create_client(&server).await {
-                        Ok(client) => client,
-                        Err(err) => {
-                            return Err(ServerStartErr {
-                                reason: err.to_string(),
-                                stderr_tail: None,
-                            });
-                        }
-                    };
-                    if let Err(err) = client.initialize().await {
-                        return Err(ServerStartErr {
-                            reason: err.to_string(),
-                            stderr_tail: client.stderr_tail().await,
-                        });
-                    }
-                    match client.list_tools().await {
-                        Ok(tools) => Ok(ServerStartOk {
-                            server_id: server.id.clone(),
-                            mode: server.mode,
-                            client,
-                            tools,
-                        }),
-                        Err(err) => Err(ServerStartErr {
-                            reason: err.to_string(),
-                            stderr_tail: client.stderr_tail().await,
-                        }),
-                    }
-                };
-                match timeout(Duration::from_secs(timeout_seconds), fut).await {
-                    Ok(outcome) => (server_id, outcome),
-                    Err(_) => (
-                        server_id,
-                        Err(ServerStartErr {
-                            reason: McpBootstrapError::Timeout { timeout_seconds }.to_string(),
-                            stderr_tail: None,
-                        }),
-                    ),
-                }
-            });
-        }
-
-        let mut oks = Vec::new();
-        let mut failures = Vec::new();
-        let mut seen_tool_names = BTreeSet::new();
-
-        while let Some(joined) = join_set.join_next().await {
-            match joined {
-                Ok((_server_id, Ok(ok))) => {
-                    let has_conflict = ok
-                        .tools
-                        .iter()
-                        .any(|tool| seen_tool_names.contains(&tool.name));
-                    if has_conflict {
-                        warn!(
-                            server = %ok.server_id,
-                            status = "failed",
-                            reason = "tool name conflicts with another MCP server",
-                            "mcp server rejected after discovery"
-                        );
-                        failures.push(McpServerStatus::from_config(
-                            &McpServerConfig {
-                                id: ok.server_id.clone(),
-                                mode: ok.mode,
-                                ..Default::default()
-                            },
-                            McpLifecycleState::Failed,
-                            Some("tool name conflicts with another MCP server".to_string()),
-                            0,
-                        ));
-                        continue;
-                    }
-
-                    info!(
-                        server = %ok.server_id,
-                        mode = ?ok.mode,
-                        tool_count = ok.tools.len(),
-                        status = "ready",
-                        "mcp server started"
-                    );
-
-                    for tool in &ok.tools {
-                        seen_tool_names.insert(tool.name.clone());
-                    }
-                    oks.push(ok);
-                }
-                Ok((server_id, Err(err))) => {
-                    let reason = format_failure_reason(&err.reason, err.stderr_tail.as_deref());
-                    warn!(
-                        server = %server_id,
-                        reason = %reason,
-                        stderr_tail = err.stderr_tail.as_deref().unwrap_or(""),
-                        status = "failed",
-                        "mcp server failed to start"
-                    );
-                    failures.push(McpServerStatus::from_config(
-                        &McpServerConfig {
-                            id: server_id.clone(),
-                            ..Default::default()
-                        },
-                        McpLifecycleState::Failed,
-                        Some(reason),
-                        0,
-                    ));
-                }
-                Err(err) => {
-                    warn!(
-                        server = "<join-task>",
-                        reason = %err,
-                        status = "failed",
-                        "mcp server join failed"
-                    );
-                }
-            }
-        }
-
-        for ok in &oks {
-            self.set_tools_list_detail(&ok.server_id, &ok.tools);
-            let tool_names: Vec<String> = ok.tools.iter().map(|t| t.name.clone()).collect();
-            self.hub
-                .insert(ok.server_id.clone(), Arc::clone(&ok.client));
-            for tool in &ok.tools {
-                let descriptor = McpToolDescriptor {
-                    name: tool.name.clone(),
-                    description: tool.description.clone(),
-                    parameters: tool.parameters.clone(),
-                    server_id: ok.server_id.clone(),
-                    tool_name: tool.name.clone(),
-                };
-                self.tools
-                    .register_shared(Arc::new(crate::McpProxyTool::new(
-                        descriptor,
-                        self.hub.clone(),
-                    )));
-            }
-            self.servers.insert(
-                McpServerKey::new(&ok.server_id),
-                McpServerHandle {
-                    config: McpServerConfig {
-                        id: ok.server_id.clone(),
-                        mode: ok.mode.clone(),
-                        enabled: true,
-                        ..Default::default()
-                    },
-                    client: Arc::clone(&ok.client),
-                    tool_names,
-                },
-            );
-        }
-
-        {
-            let mut guard = self.statuses.lock().unwrap_or_else(|err| err.into_inner());
-            for ok in &oks {
-                guard.insert(
-                    McpServerKey::new(&ok.server_id),
-                    McpServerStatus::from_config(
-                        &McpServerConfig {
-                            id: ok.server_id.clone(),
-                            mode: ok.mode.clone(),
-                            enabled: true,
-                            ..Default::default()
-                        },
-                        McpLifecycleState::Running,
-                        None,
-                        ok.tools.len(),
-                    ),
-                );
-            }
-            for failure in &failures {
-                self.clear_tools_list_detail(failure.key.as_str());
-                guard.insert(failure.key.clone(), failure.clone());
-            }
-        }
-
-        let mut result = McpSyncResult::default();
-        for ok in &oks {
-            result.start.push(McpServerKey::new(&ok.server_id));
-            result.active_servers.push(ok.server_id.clone());
-            result.tool_count += ok.tools.len();
-            result.statuses.push(McpServerStatus::from_config(
-                &McpServerConfig {
-                    id: ok.server_id.clone(),
-                    mode: ok.mode.clone(),
-                    enabled: true,
-                    ..Default::default()
-                },
-                McpLifecycleState::Running,
-                None,
-                ok.tools.len(),
-            ));
-        }
-        result.statuses.extend(failures);
-        result
+        self.sync(config.clone()).await
     }
 
     async fn start_server(&mut self, config: McpServerConfig) {
@@ -805,12 +574,14 @@ async fn create_client(server: &McpServerConfig) -> Result<Arc<dyn McpClient>, M
             let client = StdioMcpClient::new(server)
                 .await
                 .map_err(|err| McpBootstrapError::Other(err.to_string()))?;
-            Ok(Arc::new(client))
+            let client: Arc<dyn McpClient> = Arc::new(client);
+            Ok(client)
         }
         McpServerMode::Sse => {
             let client = SseMcpClient::new(server)
                 .map_err(|err| McpBootstrapError::Other(err.to_string()))?;
-            Ok(Arc::new(client))
+            let client: Arc<dyn McpClient> = Arc::new(client);
+            Ok(client)
         }
     }
 }
@@ -914,12 +685,10 @@ mod tests {
     #[test]
     fn mcp_config_snapshot_from_config() {
         let config = McpConfig {
-            enabled: true,
             startup_timeout_seconds: 30,
             servers: vec![server("test", McpServerMode::Stdio, true)],
         };
         let snapshot = McpConfigSnapshot::from_mcp_config(&config);
-        assert!(snapshot.enabled);
         assert_eq!(snapshot.startup_timeout_seconds, 30);
         assert_eq!(snapshot.servers.len(), 1);
     }
@@ -939,7 +708,6 @@ mod tests {
     fn plan_updates_starts_new_servers() {
         let current = BTreeMap::new();
         let desired = McpConfigSnapshot {
-            enabled: true,
             startup_timeout_seconds: 30,
             servers: vec![server("new", McpServerMode::Stdio, true)],
         };
@@ -973,7 +741,6 @@ mod tests {
             server("test", McpServerMode::Stdio, true),
         );
         let desired = McpConfigSnapshot {
-            enabled: true,
             startup_timeout_seconds: 30,
             servers: vec![server("test", McpServerMode::Sse, true)],
         };
@@ -990,7 +757,6 @@ mod tests {
         let mut current = BTreeMap::new();
         current.insert(McpServerKey::new("test"), config.clone());
         let desired = McpConfigSnapshot {
-            enabled: true,
             startup_timeout_seconds: 30,
             servers: vec![config],
         };
@@ -1005,11 +771,39 @@ mod tests {
     fn plan_updates_ignores_disabled_servers() {
         let current = BTreeMap::new();
         let desired = McpConfigSnapshot {
-            enabled: true,
             startup_timeout_seconds: 30,
             servers: vec![server("disabled", McpServerMode::Stdio, false)],
         };
         let plan = plan_server_updates(&current, &desired);
         assert!(plan.start.is_empty());
+    }
+
+    #[tokio::test]
+    async fn initial_sync_uses_snapshot_timeout_for_fresh_manager() {
+        let mut manager = McpManager::new(ToolRegistry::default());
+        let snapshot = McpConfigSnapshot {
+            startup_timeout_seconds: 1,
+            servers: vec![McpServerConfig {
+                id: "sleepy".to_string(),
+                enabled: true,
+                mode: McpServerMode::Stdio,
+                command: Some("sleep".to_string()),
+                args: vec!["2".to_string()],
+                env: BTreeMap::new(),
+                cwd: None,
+                url: None,
+                headers: BTreeMap::new(),
+            }],
+        };
+
+        let result = manager.sync(snapshot).await;
+        let status = result
+            .statuses
+            .into_iter()
+            .find(|status| status.key.as_str() == "sleepy")
+            .expect("sync should report sleepy status");
+
+        assert_eq!(status.state, McpLifecycleState::Failed);
+        assert_eq!(status.last_error.as_deref(), Some("timeout after 1s"));
     }
 }

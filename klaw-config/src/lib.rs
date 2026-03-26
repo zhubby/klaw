@@ -699,8 +699,6 @@ fn default_gateway_webhook_agents_config() -> GatewayWebhookEndpointConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpConfig {
-    #[serde(default = "default_mcp_enabled")]
-    pub enabled: bool,
     #[serde(default = "default_mcp_startup_timeout_seconds")]
     pub startup_timeout_seconds: u64,
     #[serde(default)]
@@ -710,7 +708,6 @@ pub struct McpConfig {
 impl Default for McpConfig {
     fn default() -> Self {
         Self {
-            enabled: default_mcp_enabled(),
             startup_timeout_seconds: default_mcp_startup_timeout_seconds(),
             servers: Vec::new(),
         }
@@ -758,10 +755,6 @@ impl Default for McpServerConfig {
             headers: BTreeMap::new(),
         }
     }
-}
-
-fn default_mcp_enabled() -> bool {
-    true
 }
 
 fn default_mcp_startup_timeout_seconds() -> u64 {

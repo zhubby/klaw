@@ -84,7 +84,6 @@ prompt = "Review the session state..."
 
 # MCP 配置
 [mcp]
-enabled = true
 startup_timeout_seconds = 60
 
 [[mcp.servers]]

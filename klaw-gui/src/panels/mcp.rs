@@ -114,7 +114,7 @@ pub struct McpPanel {
     revision: Option<u64>,
     config: AppConfig,
     form: Option<McpServerForm>,
-    global_settings_form: Option<(bool, String)>,
+    global_settings_form: Option<String>,
     selected_server: Option<String>,
     server_statuses: BTreeMap<String, ServerRuntimeStatus>,
     server_details: BTreeMap<String, McpServerDetail>,
@@ -151,10 +151,7 @@ impl McpPanel {
     }
 
     fn open_global_settings(&mut self) {
-        self.global_settings_form = Some((
-            self.config.mcp.enabled,
-            self.config.mcp.startup_timeout_seconds.to_string(),
-        ));
+        self.global_settings_form = Some(self.config.mcp.startup_timeout_seconds.to_string());
     }
 
     fn schedule_status_refresh(&mut self, announce: bool) {
@@ -530,7 +527,7 @@ impl McpPanel {
         ui: &mut egui::Ui,
         notifications: &mut NotificationCenter,
     ) {
-        let Some((ref mut enabled, ref mut timeout_text)) = self.global_settings_form else {
+        let Some(ref mut timeout_text) = self.global_settings_form else {
             return;
         };
 
@@ -543,7 +540,6 @@ impl McpPanel {
             .resizable(false)
             .show(ui.ctx(), |ui| {
                 ui.set_width(320.0);
-                ui.checkbox(enabled, "MCP Enabled");
                 ui.horizontal(|ui| {
                     ui.label("startup_timeout_seconds:");
                     ui.add(egui::TextEdit::singleline(timeout_text).desired_width(80.0));
@@ -569,9 +565,7 @@ impl McpPanel {
                 }
             };
 
-            let enabled = *enabled;
             if self.save_config(notifications, "MCP settings saved", move |config| {
-                config.mcp.enabled = enabled;
                 config.mcp.startup_timeout_seconds = timeout;
                 Ok(())
             }) {

@@ -2,6 +2,10 @@
 
 ## 2026-03-26
 
+### Changed
+
+- runtime 现在总是启动一个空的 `McpManager`，不再依赖 `mcp.enabled` 或启动时已有 server，允许 GUI 在零配置启动后直接热加载新增 MCP server
+
 ### Added
 
 - runtime environment check 现在会额外报告可选的 `docker` 与 Apple `container` CLI 可用性，便于在 GUI/System 面板中快速判断本机容器工具链状态

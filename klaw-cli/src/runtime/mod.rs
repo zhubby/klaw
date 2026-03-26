@@ -14,7 +14,7 @@ use klaw_channel::{
     ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
     ChannelStreamWriter, DefaultChannelDriverFactory,
 };
-use klaw_config::{AppConfig, ConfigStore, ToolEnabled};
+use klaw_config::{AppConfig, ConfigStore, McpConfig, ToolEnabled};
 use klaw_core::{
     AgentLoop, AgentRuntimeError, AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage,
     DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
@@ -84,7 +84,7 @@ pub struct RuntimeBundle {
     pub circuit_breaker: InMemoryCircuitBreaker,
     pub subscription: Subscription,
     pub session_store: DefaultSessionStore,
-    pub mcp_init: Option<Mutex<McpInitHandle>>,
+    pub mcp_init: Mutex<McpInitHandle>,
     pub startup_report: StartupReport,
     pub observability: Option<ObservabilityHandle>,
     pub conversation_history_limit: usize,
@@ -753,6 +753,11 @@ fn normalize_runtime_provider_override(
     Ok((next, active_provider))
 }
 
+fn spawn_mcp_init(tools: &ToolRegistry, config: &McpConfig) -> Mutex<McpInitHandle> {
+    let snapshot = McpConfigSnapshot::from_mcp_config(config);
+    Mutex::new(McpManager::spawn_init(tools.clone(), snapshot))
+}
+
 fn default_model_for_provider<'a>(runtime: &'a RuntimeBundle, provider_id: &str) -> &'a str {
     runtime
         .provider_default_models
@@ -1382,7 +1387,6 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         .filter(|server| server.enabled)
         .count();
     info!(
-        enabled = config.mcp.enabled,
         configured_servers = configured_mcp_servers,
         startup_timeout_seconds = config.mcp.startup_timeout_seconds,
         "bootstrapping mcp servers"
@@ -1392,12 +1396,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
     }
 
-    let mcp_init = if config.mcp.enabled && configured_mcp_servers > 0 {
-        let snapshot = McpConfigSnapshot::from_mcp_config(&config.mcp);
-        Some(Mutex::new(McpManager::spawn_init(tools.clone(), snapshot)))
-    } else {
-        None
-    };
+    let mcp_init = spawn_mcp_init(&tools, &config.mcp);
 
     ensure_workspace_prompt_templates_if_possible().await;
     let loaded_skills = load_skills_system_prompt(config).await;
@@ -1523,20 +1522,18 @@ fn spawn_llm_audit_writer(
 }
 
 pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<dyn Error>> {
-    if let Some(handle) = &runtime.mcp_init {
-        info!("shutting down runtime mcp servers");
-        let guard = handle.lock().await;
-        let manager = guard.manager();
-        let mut manager_guard = manager.lock().await;
-        let shutdown_deadline = Duration::from_secs(2);
-        match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
-            Ok(()) => {}
-            Err(_) => {
-                warn!(
-                    timeout_seconds = shutdown_deadline.as_secs(),
-                    "mcp shutdown timed out; continuing process exit"
-                );
-            }
+    info!("shutting down runtime mcp servers");
+    let guard = runtime.mcp_init.lock().await;
+    let manager = guard.manager();
+    let mut manager_guard = manager.lock().await;
+    let shutdown_deadline = Duration::from_secs(2);
+    match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
+        Ok(()) => {}
+        Err(_) => {
+            warn!(
+                timeout_seconds = shutdown_deadline.as_secs(),
+                "mcp shutdown timed out; continuing process exit"
+            );
         }
     }
 
@@ -2496,21 +2493,18 @@ async fn init_observability_from_config(config: &AppConfig) -> Option<Observabil
 pub async fn finalize_startup_report(
     runtime: &mut RuntimeBundle,
 ) -> Result<StartupReport, Box<dyn Error>> {
-    let mcp_summary = match &runtime.mcp_init {
-        Some(handle) => {
-            let mut guard = handle.lock().await;
-            if guard.is_ready() {
-                Some(
-                    guard
-                        .wait_until_ready()
-                        .await
-                        .map_err(|err| config_err(format!("mcp init failed: {err}")))?,
-                )
-            } else {
-                None
-            }
+    let mcp_summary = {
+        let mut guard = runtime.mcp_init.lock().await;
+        if guard.is_ready() {
+            Some(
+                guard
+                    .wait_until_ready()
+                    .await
+                    .map_err(|err| config_err(format!("mcp init failed: {err}")))?,
+            )
+        } else {
+            None
         }
-        None => None,
     };
 
     runtime.startup_report.tool_names = runtime.runtime.tools.list();
@@ -2532,10 +2526,10 @@ mod tests {
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, resolve_new_session_target_from_config, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        spawn_llm_audit_writer, trim_conversation_history,
+        spawn_llm_audit_writer, spawn_mcp_init, trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
-    use klaw_config::{AppConfig, ModelProviderConfig};
+    use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
     use klaw_core::{
         CircuitBreakerPolicy, DeadLetterPolicy, Envelope, EnvelopeHeader,
         ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker, InMemoryIdempotencyStore,
@@ -2667,7 +2661,7 @@ mod tests {
                 visibility_timeout: Duration::from_secs(5),
             },
             session_store: session_store.clone(),
-            mcp_init: None,
+            mcp_init: spawn_mcp_init(&ToolRegistry::default(), &McpConfig::default()),
             startup_report: StartupReport::default(),
             observability: None,
             conversation_history_limit: 16,
@@ -2677,6 +2671,19 @@ mod tests {
                 checked_at: OffsetDateTime::UNIX_EPOCH,
             },
         }
+    }
+
+    #[tokio::test]
+    async fn spawn_mcp_init_creates_manager_for_empty_config() {
+        let handle = spawn_mcp_init(&ToolRegistry::default(), &McpConfig::default());
+        let mut guard = handle.lock().await;
+        let summary = guard
+            .wait_until_ready()
+            .await
+            .expect("empty mcp init should succeed");
+        assert!(summary.active_servers.is_empty());
+        assert!(summary.statuses.is_empty());
+        assert_eq!(summary.tool_count, 0);
     }
 
     fn test_session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {

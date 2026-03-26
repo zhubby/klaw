@@ -1524,19 +1524,6 @@ timezone = "Asia/Shanghai"
 
 ## MCP 配置
 
-### `mcp.enabled`
-
-**类型**: `boolean`
-**默认值**: `true`
-**必填**: 否
-
-是否启用 MCP。
-
-```toml
-[mcp]
-enabled = false
-```
-
 ### `mcp.startup_timeout_seconds`
 
 **类型**: `u64`

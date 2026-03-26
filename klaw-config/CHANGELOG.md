@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-26
+
+### Changed
+
+- 删除 `mcp.enabled` 配置项，MCP runtime 现在始终可用；配置仅保留 `mcp.startup_timeout_seconds` 与 `mcp.servers`
+
 ## 2026-03-25
 
 ### Added

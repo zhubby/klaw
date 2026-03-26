@@ -115,7 +115,6 @@ fn parse_default_template_succeeds() {
         parsed.tools.sub_agent.exclude_tools,
         vec!["sub_agent".to_string()]
     );
-    assert!(parsed.mcp.enabled);
     assert_eq!(parsed.mcp.startup_timeout_seconds, 60);
     assert!(parsed.mcp.servers.is_empty());
     assert!(!parsed.gateway.enabled);
@@ -487,7 +486,6 @@ Authorization = "Bearer test"
 "#;
 
     let parsed: AppConfig = toml::from_str(raw).expect("custom config should parse");
-    assert!(parsed.mcp.enabled);
     assert_eq!(parsed.mcp.startup_timeout_seconds, 30);
     assert_eq!(parsed.mcp.servers.len(), 2);
     assert_eq!(parsed.mcp.servers[0].mode, McpServerMode::Stdio);

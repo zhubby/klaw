@@ -83,7 +83,10 @@ impl GuiCommand {
                                 ChannelManager::with_factory(Arc::clone(&adapter), channel_factory);
                             channel_manager.sync(channel_snapshot).await;
 
-                            let mcp_manager = runtime.mcp_init.as_ref().and_then(|h| h.try_lock().ok().map(|g| g.manager()));
+                            let mcp_manager = {
+                                let guard = runtime.mcp_init.lock().await;
+                                guard.manager()
+                            };
 
                             let shutdown_by_signal = loop {
                                 tokio::select! {
@@ -125,43 +128,31 @@ impl GuiCommand {
                                                 let _ = response.send(result);
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncMcp { response }) => {
-                                                match &mcp_manager {
-                                                    Some(manager) => {
-                                                        let manager = Arc::clone(manager);
-                                                        tokio::task::spawn_local(async move {
-                                                            let result = match ConfigStore::open(None) {
-                                                                Ok(store) => {
-                                                                    let snapshot = store.snapshot();
-                                                                    let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
-                                                                    let mut guard = manager.lock().await;
-                                                                    Ok(guard.sync(mcp_snapshot).await)
-                                                                }
-                                                                Err(err) => Err(err.to_string()),
-                                                            };
-                                                            let _ = response.send(result);
-                                                        });
-                                                    }
-                                                    None => {
-                                                        let _ = response.send(Err("mcp manager not initialized".to_string()));
-                                                    }
-                                                };
+                                                let manager = Arc::clone(&mcp_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
+                                                            let mut guard = manager.lock().await;
+                                                            Ok(guard.sync(mcp_snapshot).await)
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetMcpStatus { response }) => {
-                                                let result = match &mcp_manager {
-                                                    Some(manager) => {
-                                                        match ConfigStore::open(None) {
-                                                            Ok(store) => {
-                                                                let snapshot = store.snapshot();
-                                                                let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
-                                                                match manager.try_lock() {
-                                                                    Ok(guard) => Ok(guard.runtime_snapshot(&mcp_snapshot)),
-                                                                    Err(_) => Err("mcp manager is busy".to_string()),
-                                                                }
-                                                            }
-                                                            Err(err) => Err(err.to_string()),
+                                                let result = match ConfigStore::open(None) {
+                                                    Ok(store) => {
+                                                        let snapshot = store.snapshot();
+                                                        let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
+                                                        match mcp_manager.try_lock() {
+                                                            Ok(guard) => Ok(guard.runtime_snapshot(&mcp_snapshot)),
+                                                            Err(_) => Err("mcp manager is busy".to_string()),
                                                         }
                                                     }
-                                                    None => Err("mcp manager not initialized".to_string()),
+                                                    Err(err) => Err(err.to_string()),
                                                 };
                                                 let _ = response.send(result);
                                             }

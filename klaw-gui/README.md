@@ -85,7 +85,7 @@
   - play and stop generated TTS audio directly inside the GUI after synthesis completes
   - surface recording/transcribing/synthesizing progress plus transcript, device, audio format, tmp output path, and playback status in the panel
 - MCP panel features:
-  - read/write `mcp.enabled`, `mcp.startup_timeout_seconds`, `mcp.servers`
+  - read/write `mcp.startup_timeout_seconds` and `mcp.servers`
   - add/edit MCP servers via `egui::Window`
 - Skills Registry panel features:
   - read/write `skills.sync_timeout` and registries
