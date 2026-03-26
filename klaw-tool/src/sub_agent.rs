@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use klaw_agent::{
-    AgentExecutionError, AgentExecutionInput, AgentExecutionLimits, ToolExecutor,
-    ToolInvocationResult, ToolInvocationSignal, build_provider_from_config, run_agent_execution,
+    AgentExecutionError, AgentExecutionInput, AgentExecutionLimits, AgentExecutionOutput,
+    ToolExecutor, ToolInvocationResult, ToolInvocationSignal, build_provider_from_config,
+    run_agent_execution,
 };
 use klaw_config::{AppConfig, SubAgentConfig};
 use klaw_llm::ToolDefinition;
@@ -10,8 +11,9 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::{debug, info};
+use uuid::Uuid;
 
-use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolRegistry};
+use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolRegistry, ToolSignal};
 
 const META_PROVIDER_KEY: &str = "agent.provider_id";
 const META_MODEL_KEY: &str = "agent.model";
@@ -29,7 +31,8 @@ pub struct SubAgentTool {
 #[serde(deny_unknown_fields)]
 struct SubAgentRequest {
     task: String,
-    context: Value,
+    #[serde(default)]
+    context: Option<Value>,
 }
 
 impl SubAgentTool {
@@ -47,21 +50,13 @@ impl SubAgentTool {
         if request.task.trim().is_empty() {
             return Err(ToolError::InvalidArgs("`task` cannot be empty".to_string()));
         }
-        if !request.context.is_object() {
-            return Err(ToolError::InvalidArgs(
-                "`context` must be an object".to_string(),
-            ));
-        }
         if request
             .context
-            .get("session")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_none()
+            .as_ref()
+            .is_some_and(|context| !context.is_object())
         {
             return Err(ToolError::InvalidArgs(
-                "`context.session` is required and must be a non-empty string".to_string(),
+                "`context` must be an object".to_string(),
             ));
         }
         Ok(request)
@@ -113,6 +108,81 @@ impl SubAgentTool {
             }
         }
         registry
+    }
+
+    fn resolve_parent_session(ctx: &ToolContext) -> Result<String, ToolError> {
+        let session_key = ctx.session_key.trim();
+        if session_key.is_empty() {
+            return Err(ToolError::ExecutionFailed(
+                "missing parent session key in tool context".to_string(),
+            ));
+        }
+        Ok(session_key.to_string())
+    }
+
+    fn build_child_session_key(parent_session: &str) -> String {
+        format!("{parent_session}:subagent:{}", Uuid::new_v4())
+    }
+
+    fn finalize_output(output: AgentExecutionOutput) -> Result<ToolOutput, ToolError> {
+        if output.tool_signals.is_empty() {
+            return Ok(ToolOutput {
+                content_for_model: output.content.clone(),
+                content_for_user: Some(output.content),
+            });
+        }
+
+        let signal_kind = output
+            .tool_signals
+            .first()
+            .map(|signal| signal.kind.as_str())
+            .unwrap_or("sub_agent_signal");
+        let (code, retryable, fallback_message) = match signal_kind {
+            "approval_required" => (
+                "approval_required",
+                true,
+                "sub-agent requested approval".to_string(),
+            ),
+            "stop" => (
+                "stop_requested",
+                false,
+                "sub-agent requested stop".to_string(),
+            ),
+            _ => (
+                "sub_agent_signaled",
+                false,
+                "sub-agent emitted tool signals".to_string(),
+            ),
+        };
+        let message = if output.content.trim().is_empty() {
+            fallback_message
+        } else {
+            output.content.clone()
+        };
+        let signal_kinds = output
+            .tool_signals
+            .iter()
+            .map(|signal| signal.kind.clone())
+            .collect::<Vec<_>>();
+        let signals = output
+            .tool_signals
+            .into_iter()
+            .map(|signal| ToolSignal {
+                kind: signal.kind,
+                payload: signal.payload,
+            })
+            .collect::<Vec<_>>();
+
+        Err(ToolError::structured_execution_failed(
+            message,
+            code,
+            Some(json!({
+                "signal_kinds": signal_kinds,
+                "sub_agent_output": output.content,
+            })),
+            retryable,
+            signals,
+        ))
     }
 }
 
@@ -227,17 +297,11 @@ impl Tool for SubAgentTool {
                 },
                 "context": {
                     "type": "object",
-                    "description": "Required context object. Must include `session` for parent session lookup/inheritance.",
-                    "properties": {
-                        "session": {
-                            "type": "string",
-                            "description": "Parent session identifier used to inherit model provider/model."
-                        }
-                    },
-                    "required": ["session"]
+                    "description": "Optional supplemental context object stored in child metadata as `sub_agent.context`. Do not include runtime session identifiers here.",
+                    "additionalProperties": true
                 }
             },
-            "required": ["task", "context"],
+            "required": ["task"],
             "additionalProperties": false
         })
     }
@@ -249,19 +313,14 @@ impl Tool for SubAgentTool {
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let request = Self::parse_request(args)?;
         let (provider_id, model) = self.resolve_provider_model(ctx)?;
+        let parent_session = Self::resolve_parent_session(ctx)?;
         let provider_instance = build_provider_from_config(self.config.as_ref(), &provider_id)
             .map_err(|err| ToolError::ExecutionFailed(format!("build provider failed: {err}")))?;
         let child_tools = self.build_child_registry();
         let executor = RegistryToolExecutor {
             tools: &child_tools,
         };
-        let parent_session = request
-            .context
-            .get("session")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .unwrap_or_default()
-            .to_string();
+        let child_context = request.context.unwrap_or_else(|| json!({}));
 
         let mut child_metadata = ctx.metadata.clone();
         child_metadata.insert(
@@ -270,7 +329,7 @@ impl Tool for SubAgentTool {
         );
         child_metadata.insert(META_PROVIDER_KEY.to_string(), Value::String(provider_id));
         child_metadata.insert(META_MODEL_KEY.to_string(), Value::String(model.clone()));
-        child_metadata.insert(META_CONTEXT_KEY.to_string(), request.context);
+        child_metadata.insert(META_CONTEXT_KEY.to_string(), child_context);
 
         let output = run_agent_execution(
             provider_instance.provider.as_ref(),
@@ -279,7 +338,7 @@ impl Tool for SubAgentTool {
                 user_content: request.task,
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
-                session_key: format!("{}:subagent", parent_session),
+                session_key: Self::build_child_session_key(&parent_session),
                 tool_metadata: child_metadata,
                 model: Some(model),
             },
@@ -303,10 +362,7 @@ impl Tool for SubAgentTool {
             }
         })?;
 
-        Ok(ToolOutput {
-            content_for_model: output.content.clone(),
-            content_for_user: Some(output.content),
-        })
+        Self::finalize_output(output)
     }
 }
 
@@ -355,12 +411,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_request_requires_context() {
-        let err = SubAgentTool::parse_request(json!({
+    fn parse_request_allows_missing_context() {
+        let request = SubAgentTool::parse_request(json!({
             "task": "hello"
         }))
-        .expect_err("must fail");
-        assert!(format!("{err}").contains("missing field"));
+        .expect("should parse without context");
+        assert!(request.context.is_none());
     }
 
     #[test]
@@ -374,13 +430,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_request_requires_context_session() {
-        let err = SubAgentTool::parse_request(json!({
-            "task": "hello",
-            "context": {}
-        }))
-        .expect_err("must fail");
-        assert!(format!("{err}").contains("`context.session`"));
+    fn resolve_parent_session_uses_tool_context_session() {
+        let ctx = ToolContext {
+            session_key: "s1".to_string(),
+            metadata: BTreeMap::new(),
+        };
+
+        let session = SubAgentTool::resolve_parent_session(&ctx).expect("should resolve session");
+        assert_eq!(session, "s1");
     }
 
     #[test]
@@ -426,5 +483,71 @@ mod tests {
 
         let err = tool.resolve_provider_model(&ctx).expect_err("must fail");
         assert!(format!("{err}").contains("missing parent provider"));
+    }
+
+    #[test]
+    fn build_child_session_key_creates_unique_child_scope() {
+        let first = SubAgentTool::build_child_session_key("s1");
+        let second = SubAgentTool::build_child_session_key("s1");
+        assert!(first.starts_with("s1:subagent:"));
+        assert!(second.starts_with("s1:subagent:"));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn finalize_output_returns_plain_content_without_signals() {
+        let output = AgentExecutionOutput {
+            content: "done".to_string(),
+            reasoning: None,
+            tool_signals: Vec::new(),
+            request_usages: Vec::new(),
+            request_audits: Vec::new(),
+        };
+
+        let tool_output = SubAgentTool::finalize_output(output).expect("should succeed");
+        assert_eq!(tool_output.content_for_model, "done");
+        assert_eq!(tool_output.content_for_user.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn finalize_output_propagates_approval_signal() {
+        let output = AgentExecutionOutput {
+            content: "waiting for approval".to_string(),
+            reasoning: None,
+            tool_signals: vec![ToolInvocationSignal {
+                kind: "approval_required".to_string(),
+                payload: json!({ "approval_id": "appr_123" }),
+            }],
+            request_usages: Vec::new(),
+            request_audits: Vec::new(),
+        };
+
+        let err = SubAgentTool::finalize_output(output).expect_err("signals should surface");
+        assert_eq!(err.code(), "approval_required");
+        assert!(err.retryable());
+        assert!(
+            err.signals()
+                .iter()
+                .any(|signal| signal.kind == "approval_required")
+        );
+    }
+
+    #[test]
+    fn finalize_output_propagates_stop_signal() {
+        let output = AgentExecutionOutput {
+            content: String::new(),
+            reasoning: None,
+            tool_signals: vec![ToolInvocationSignal {
+                kind: "stop".to_string(),
+                payload: json!({}),
+            }],
+            request_usages: Vec::new(),
+            request_audits: Vec::new(),
+        };
+
+        let err = SubAgentTool::finalize_output(output).expect_err("signals should surface");
+        assert_eq!(err.code(), "stop_requested");
+        assert!(!err.retryable());
+        assert!(err.signals().iter().any(|signal| signal.kind == "stop"));
     }
 }

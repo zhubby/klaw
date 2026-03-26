@@ -2,8 +2,12 @@
 
 ## 2026-03-26
 
+### Changed
+- `sub_agent` no longer requires planner-provided `context.session`; it now binds child execution to the current tool session, generates a unique delegated child session key per run, and keeps optional `context` as supplemental metadata only
+
 ### Fixed
 - `shell`、`local_search` 与 `terminal_multiplexer` 在按命令名启动 `sh`/`rg`/`grep`/`tmux` 时现在会统一注入共享增强后的 PATH，改善 macOS GUI 启动下的外部命令发现能力
+- `sub_agent` now re-surfaces delegated `approval_required` / `stop` signals to the parent agent instead of swallowing them at the tool boundary
 
 ## 2026-03-25
 
