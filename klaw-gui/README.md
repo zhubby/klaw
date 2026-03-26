@@ -38,7 +38,7 @@
   - skills registry (config-bound list + add/edit window)
   - memory
   - archive (db-bound query + detail view)
-  - tool
+  - tool (remaining-height sortable table with right-click `Edit` / `Inspect`, runtime schema parameter summary, and inspect popup sourced from live tool definitions)
   - analyze dashboard
   - system (tmp directory usage and cleanup)
   - setting (general/network plus versioned manifest sync, retention, and restore)

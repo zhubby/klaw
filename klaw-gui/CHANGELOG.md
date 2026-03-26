@@ -12,10 +12,12 @@
 - `Provider` 面板现在会并排显示 `Config default` 与 `Runtime active`，表格中的 provider 标记也会区分配置默认与运行时当前 provider，避免把状态栏临时 override 误读成配置已切换
 - GUI 底部状态栏的主题切换从循环点击改为显式 `Theme Mode` 下拉框，并会结合已保存的 Light/Dark 预设应用实际配色且在重启后恢复
 - `MCP` 面板的全局设置弹窗移除了 `enabled` 开关，仅保留 `startup_timeout_seconds`；运行时现在默认总是持有可热重载的 MCP manager
+- `Tool` 面板从卡片网格改为占满剩余高度的可滚动表格，并按工具名首字母排序展示每个 tool 的状态、描述和运行时 schema 参数数量
 
 ### Fixed
 
 - `Tool` 面板保存后现在会立即触发 runtime tool sync，行为与 `Provider` / `Channel` / `MCP` 面板保持一致，避免 tool 开关修改后还需要重启 GUI runtime 才能生效
+- `Tool` 面板列表现在支持右键菜单 `Edit` / `Inspect`；`Inspect` 弹窗改为展示运行时 tool trait 实际暴露的 `description()` 与 `parameters()` schema，并提取参数描述而不是复用 GUI 配置字段
 - `Voice` 面板的 STT/TTS 测试不再额外依赖 `voice.enabled=true`，只要当前选中的 provider 密钥配置完整即可直接验证实际语音链路
 - `Provider` 面板新增/编辑/删除 provider 以及切换 active provider 后，现在都会统一触发 runtime provider sync，避免 GUI 配置态、底部切换和实际运行路由继续分叉
 - Archive 面板调用系统 `qlmanage` 生成 Quick Look 预览时现在也会复用共享增强后的 PATH，避免 GUI 启动环境遗漏标准外部命令搜索目录

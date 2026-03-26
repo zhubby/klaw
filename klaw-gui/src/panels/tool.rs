@@ -1,12 +1,14 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::request_sync_tools;
-use egui::Color32;
+use crate::{request_sync_tools, request_tool_definitions};
+use egui::{Color32, FontId, TextFormat, text::LayoutJob};
+use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, ApplyPatchConfig, ConfigError, ConfigSnapshot, ConfigStore, MemoryToolConfig,
     ShellConfig, SubAgentConfig, WebFetchConfig, WebSearchConfig,
 };
+use klaw_llm::ToolDefinition;
 use std::path::{Path, PathBuf};
 
 #[derive(Default)]
@@ -16,6 +18,8 @@ pub struct ToolPanel {
     revision: Option<u64>,
     config: AppConfig,
     form: Option<ToolForm>,
+    runtime_definitions: Vec<ToolDefinition>,
+    inspect_key: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +117,19 @@ struct SubAgentForm {
     inherit_parent_tools: bool,
     exclude_tools_text: String,
 }
+
+#[derive(Clone, Copy)]
+struct ToolDescriptor {
+    key: &'static str,
+    name: &'static str,
+    description: &'static str,
+    enabled: bool,
+}
+
+const INSPECT_WINDOW_WIDTH: f32 = 760.0;
+const INSPECT_WINDOW_MIN_HEIGHT: f32 = 520.0;
+const INSPECT_WINDOW_MAX_HEIGHT: f32 = 760.0;
+const INSPECT_SCHEMA_HEIGHT: f32 = 260.0;
 
 impl ApplyPatchForm {
     fn from_config(config: &ApplyPatchConfig) -> Self {
@@ -374,6 +391,7 @@ impl ToolPanel {
                 let snapshot = store.snapshot();
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
+                self.refresh_runtime_tool_definitions(notifications, false);
                 notifications.success("Tool config loaded from disk");
             }
             Err(err) => notifications.error(format!("Failed to load config: {err}")),
@@ -427,9 +445,182 @@ impl ToolPanel {
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
+                self.refresh_runtime_tool_definitions(notifications, false);
                 notifications.success("Configuration reloaded from disk");
             }
             Err(err) => notifications.error(format!("Reload failed: {err}")),
+        }
+    }
+
+    fn refresh_runtime_tool_definitions(
+        &mut self,
+        notifications: &mut NotificationCenter,
+        notify_on_error: bool,
+    ) {
+        match request_tool_definitions() {
+            Ok(definitions) => {
+                self.runtime_definitions = definitions;
+            }
+            Err(err) if notify_on_error => {
+                notifications.error(format!("Failed to load runtime tool metadata: {err}"));
+            }
+            Err(_) => {}
+        }
+    }
+
+    fn tools(&self) -> Vec<ToolDescriptor> {
+        let mut tools = vec![
+            ToolDescriptor {
+                key: "apply_patch",
+                name: "apply_patch",
+                description: "Patch workspace files with constrained path policy.",
+                enabled: self.config.tools.apply_patch.enabled,
+            },
+            ToolDescriptor {
+                key: "shell",
+                name: "shell",
+                description: "Execute local shell commands with approval policy.",
+                enabled: self.config.tools.shell.enabled,
+            },
+            ToolDescriptor {
+                key: "archive",
+                name: "archive",
+                description: "Manage archived attachments from conversations.",
+                enabled: self.config.tools.archive.enabled,
+            },
+            ToolDescriptor {
+                key: "voice",
+                name: "voice",
+                description: "Transcribe audio and synthesize text into speech.",
+                enabled: self.config.tools.voice.enabled,
+            },
+            ToolDescriptor {
+                key: "approval",
+                name: "approval",
+                description: "Manage approval lifecycle for high-risk actions.",
+                enabled: self.config.tools.approval.enabled,
+            },
+            ToolDescriptor {
+                key: "local_search",
+                name: "local_search",
+                description: "Search local workspace files and snippets.",
+                enabled: self.config.tools.local_search.enabled,
+            },
+            ToolDescriptor {
+                key: "terminal_multiplexers",
+                name: "terminal_multiplexers",
+                description: "Operate tmux/zellij sessions for long-running tasks.",
+                enabled: self.config.tools.terminal_multiplexers.enabled,
+            },
+            ToolDescriptor {
+                key: "cron_manager",
+                name: "cron_manager",
+                description: "Create and control scheduled cron jobs.",
+                enabled: self.config.tools.cron_manager.enabled,
+            },
+            ToolDescriptor {
+                key: "heartbeat_manager",
+                name: "heartbeat_manager",
+                description: "Manage session-bound heartbeat jobs.",
+                enabled: self.config.tools.heartbeat_manager.enabled,
+            },
+            ToolDescriptor {
+                key: "skills_registry",
+                name: "skills_registry",
+                description: "Browse and inspect read-only registry catalogs.",
+                enabled: self.config.tools.skills_registry.enabled,
+            },
+            ToolDescriptor {
+                key: "skills_manager",
+                name: "skills_manager",
+                description: "Install, uninstall, and load installed skills.",
+                enabled: self.config.tools.skills_manager.enabled,
+            },
+            ToolDescriptor {
+                key: "memory",
+                name: "memory",
+                description: "Persist and retrieve long-term memory records.",
+                enabled: self.config.tools.memory.enabled,
+            },
+            ToolDescriptor {
+                key: "web_fetch",
+                name: "web_fetch",
+                description: "Fetch and extract web page content safely.",
+                enabled: self.config.tools.web_fetch.enabled,
+            },
+            ToolDescriptor {
+                key: "web_search",
+                name: "web_search",
+                description: "Search web results via configured provider.",
+                enabled: self.config.tools.web_search.enabled,
+            },
+            ToolDescriptor {
+                key: "sub_agent",
+                name: "sub_agent",
+                description: "Delegate focused tasks to a bounded child agent.",
+                enabled: self.config.tools.sub_agent.enabled,
+            },
+        ];
+        tools.sort_unstable_by(|left, right| left.name.cmp(right.name));
+        tools
+    }
+
+    fn runtime_definition(&self, key: &str) -> Option<&ToolDefinition> {
+        self.runtime_definitions.iter().find(|item| item.name == key)
+    }
+
+    fn open_editor(&mut self, key: &str) {
+        match key {
+            "apply_patch" => self.open_apply_patch(),
+            "shell" => self.open_shell(),
+            "archive" => self.open_toggle(
+                "archive",
+                "Edit Tool: archive",
+                self.config.tools.archive.enabled,
+            ),
+            "voice" => {
+                self.open_toggle("voice", "Edit Tool: voice", self.config.tools.voice.enabled)
+            }
+            "approval" => self.open_toggle(
+                "approval",
+                "Edit Tool: approval",
+                self.config.tools.approval.enabled,
+            ),
+            "local_search" => self.open_toggle(
+                "local_search",
+                "Edit Tool: local_search",
+                self.config.tools.local_search.enabled,
+            ),
+            "terminal_multiplexers" => self.open_toggle(
+                "terminal_multiplexers",
+                "Edit Tool: terminal_multiplexers",
+                self.config.tools.terminal_multiplexers.enabled,
+            ),
+            "cron_manager" => self.open_toggle(
+                "cron_manager",
+                "Edit Tool: cron_manager",
+                self.config.tools.cron_manager.enabled,
+            ),
+            "heartbeat_manager" => self.open_toggle(
+                "heartbeat_manager",
+                "Edit Tool: heartbeat_manager",
+                self.config.tools.heartbeat_manager.enabled,
+            ),
+            "skills_registry" => self.open_toggle(
+                "skills_registry",
+                "Edit Tool: skills_registry",
+                self.config.tools.skills_registry.enabled,
+            ),
+            "skills_manager" => self.open_toggle(
+                "skills_manager",
+                "Edit Tool: skills_manager",
+                self.config.tools.skills_manager.enabled,
+            ),
+            "memory" => self.open_memory(),
+            "web_fetch" => self.open_web_fetch(),
+            "web_search" => self.open_web_search(),
+            "sub_agent" => self.open_sub_agent(),
+            _ => {}
         }
     }
 
@@ -564,6 +755,7 @@ impl ToolPanel {
                     "Tool config saved, but failed to sync running runtime: {err}"
                 )),
             }
+            self.refresh_runtime_tool_definitions(notifications, true);
             self.form = None;
         }
     }
@@ -873,25 +1065,85 @@ impl ToolPanel {
         }
     }
 
-    fn render_tool_card(ui: &mut egui::Ui, name: &str, description: &str, enabled: bool) -> bool {
-        let mut edit_clicked = false;
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_min_width(320.0);
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.strong(name);
-                    ui.add_space(8.0);
-                    render_boolean_status(ui, enabled, "Enabled", "Disabled");
-                });
-                ui.add_space(4.0);
-                ui.label(description);
-                ui.add_space(8.0);
-                if ui.button("Edit").clicked() {
-                    edit_clicked = true;
-                }
-            });
+    fn render_inspect_window(&mut self, ui: &mut egui::Ui) {
+        let Some(tool) = self
+            .inspect_key
+            .and_then(|key| self.tools().into_iter().find(|item| item.key == key))
+        else {
+            self.inspect_key = None;
+            return;
+        };
+        let definition = self.runtime_definition(tool.key);
+        let mut schema_json = definition
+            .map(|item| serde_json::to_string_pretty(&item.parameters).unwrap_or_default())
+            .unwrap_or_default();
+        let mut json_layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+            let mut job = json_syntax_highlight_job(text.as_str());
+            job.wrap.max_width = wrap_width;
+            ui.fonts_mut(|fonts| fonts.layout_job(job))
+        };
+        let viewport_height = ui.ctx().input(|input| {
+            input
+                .viewport()
+                .inner_rect
+                .map(|rect| rect.height())
+                .unwrap_or(760.0)
         });
-        edit_clicked
+        let window_height =
+            (viewport_height - 96.0).clamp(INSPECT_WINDOW_MIN_HEIGHT, INSPECT_WINDOW_MAX_HEIGHT);
+
+        let mut open = true;
+        egui::Window::new(format!("Inspect Tool: {}", tool.name))
+            .id(egui::Id::new(("tool-inspect", tool.key)))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .default_width(INSPECT_WINDOW_WIDTH)
+            .min_width(INSPECT_WINDOW_WIDTH)
+            .max_width(INSPECT_WINDOW_WIDTH)
+            .default_height(window_height)
+            .min_height(window_height)
+            .max_height(window_height)
+            .show(ui.ctx(), |ui| {
+                let description = definition
+                    .map(|item| item.description.as_str())
+                    .unwrap_or(tool.description);
+                StripBuilder::new(ui)
+                    .size(Size::exact(72.0))
+                    .size(Size::exact(INSPECT_SCHEMA_HEIGHT + 28.0))
+                    .vertical(|mut strip| {
+                        strip.cell(|ui| {
+                            ui.strong("Description");
+                            ui.add_space(4.0);
+                            ui.label(description);
+                        });
+
+                        strip.cell(|ui| {
+                            ui.separator();
+                            ui.strong("Schema");
+                            ui.add_space(6.0);
+                            if definition.is_none() {
+                                ui.label("Runtime metadata unavailable for this tool.");
+                                return;
+                            }
+                            let editor_width = ui.available_width().max(1.0);
+                            ui.add_sized(
+                                [editor_width, INSPECT_SCHEMA_HEIGHT],
+                                egui::TextEdit::multiline(&mut schema_json)
+                                    .desired_width(f32::INFINITY)
+                                    .font(egui::TextStyle::Monospace)
+                                    .code_editor()
+                                    .layouter(&mut json_layouter)
+                                    .interactive(false),
+                            );
+                        });
+                    });
+            });
+
+        if !open {
+            self.inspect_key = None;
+        }
     }
 }
 
@@ -940,179 +1192,238 @@ impl PanelRenderer for ToolPanel {
         });
         ui.separator();
 
+        let tools = self.tools();
         let mut edit_key: Option<&'static str> = None;
+        let mut inspect_key: Option<&'static str> = None;
+        let table_width = ui.available_width();
+        let table_height = ui.available_height();
+        let row_height = ui.spacing().interact_size.y;
 
-        egui::ScrollArea::vertical()
-            .id_salt("tool-card-scroll")
+        egui::ScrollArea::both()
+            .id_salt("tool-table-scroll")
+            .auto_shrink([false, false])
+            .max_width(table_width)
+            .max_height(table_height)
             .show(ui, |ui| {
-                let cards: [(&str, &str, bool, &str); 15] = [
-                    (
-                        "apply_patch",
-                        "Patch workspace files with constrained path policy.",
-                        self.config.tools.apply_patch.enabled,
-                        "apply_patch",
-                    ),
-                    (
-                        "shell",
-                        "Execute local shell commands with approval policy.",
-                        self.config.tools.shell.enabled,
-                        "shell",
-                    ),
-                    (
-                        "archive",
-                        "Manage archived attachments from conversations.",
-                        self.config.tools.archive.enabled,
-                        "archive",
-                    ),
-                    (
-                        "voice",
-                        "Transcribe audio and synthesize text into speech.",
-                        self.config.tools.voice.enabled,
-                        "voice",
-                    ),
-                    (
-                        "approval",
-                        "Manage approval lifecycle for high-risk actions.",
-                        self.config.tools.approval.enabled,
-                        "approval",
-                    ),
-                    (
-                        "local_search",
-                        "Search local workspace files and snippets.",
-                        self.config.tools.local_search.enabled,
-                        "local_search",
-                    ),
-                    (
-                        "terminal_multiplexers",
-                        "Operate tmux/zellij sessions for long-running tasks.",
-                        self.config.tools.terminal_multiplexers.enabled,
-                        "terminal_multiplexers",
-                    ),
-                    (
-                        "cron_manager",
-                        "Create and control scheduled cron jobs.",
-                        self.config.tools.cron_manager.enabled,
-                        "cron_manager",
-                    ),
-                    (
-                        "heartbeat_manager",
-                        "Manage session-bound heartbeat jobs.",
-                        self.config.tools.heartbeat_manager.enabled,
-                        "heartbeat_manager",
-                    ),
-                    (
-                        "skills_registry",
-                        "Browse and inspect read-only registry catalogs.",
-                        self.config.tools.skills_registry.enabled,
-                        "skills_registry",
-                    ),
-                    (
-                        "skills_manager",
-                        "Install, uninstall, and load installed skills.",
-                        self.config.tools.skills_manager.enabled,
-                        "skills_manager",
-                    ),
-                    (
-                        "memory",
-                        "Persist and retrieve long-term memory records.",
-                        self.config.tools.memory.enabled,
-                        "memory",
-                    ),
-                    (
-                        "web_fetch",
-                        "Fetch and extract web page content safely.",
-                        self.config.tools.web_fetch.enabled,
-                        "web_fetch",
-                    ),
-                    (
-                        "web_search",
-                        "Search web results via configured provider.",
-                        self.config.tools.web_search.enabled,
-                        "web_search",
-                    ),
-                    (
-                        "sub_agent",
-                        "Delegate focused tasks to a bounded child agent.",
-                        self.config.tools.sub_agent.enabled,
-                        "sub_agent",
-                    ),
-                ];
+                ui.set_min_width(table_width);
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::auto().at_least(150.0))
+                    .column(Column::auto().at_least(90.0))
+                    .column(Column::auto().at_least(70.0))
+                    .column(Column::remainder().at_least(320.0))
+                    .min_scrolled_height(table_height)
+                    .max_scroll_height(table_height)
+                    .sense(egui::Sense::click())
+                    .header(24.0, |mut header| {
+                        header.col(|ui| {
+                            ui.strong("Tool");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Status");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Params");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Description");
+                        });
+                    })
+                    .body(|body| {
+                        body.rows(row_height, tools.len(), |mut row| {
+                            let tool = tools[row.index()];
+                            let parameter_count = self
+                                .runtime_definition(tool.key)
+                                .and_then(|item| {
+                                    item.parameters
+                                        .get("properties")
+                                        .and_then(serde_json::Value::as_object)
+                                        .map(|properties| properties.len())
+                                })
+                                .unwrap_or(0);
 
-                let min_card_width = 340.0_f32;
-                let available_width = ui.available_width().max(min_card_width);
-                let columns = (available_width / min_card_width).floor().max(1.0) as usize;
-                egui::Grid::new("tool-card-grid")
-                    .num_columns(columns)
-                    .spacing([12.0, 12.0])
-                    .show(ui, |ui| {
-                        for (idx, (name, description, enabled, key)) in cards.iter().enumerate() {
-                            if Self::render_tool_card(ui, name, description, *enabled) {
-                                edit_key = Some(key);
-                            }
-                            let is_row_end = (idx + 1) % columns == 0;
-                            let is_last = idx + 1 == cards.len();
-                            if is_row_end || is_last {
-                                ui.end_row();
-                            }
-                        }
+                            row.col(|ui| {
+                                ui.monospace(tool.name);
+                            });
+                            row.col(|ui| {
+                                render_boolean_status(ui, tool.enabled, "Enabled", "Disabled");
+                            });
+                            row.col(|ui| {
+                                ui.label(parameter_count.to_string());
+                            });
+                            row.col(|ui| {
+                                ui.label(
+                                    self.runtime_definition(tool.key)
+                                        .map(|item| item.description.as_str())
+                                        .unwrap_or(tool.description),
+                                );
+                            });
+
+                            let response = row.response();
+                            response.context_menu(|ui| {
+                                if ui
+                                    .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                    .clicked()
+                                {
+                                    edit_key = Some(tool.key);
+                                    ui.close();
+                                }
+                                if ui.button(format!("{} Inspect", regular::EYE)).clicked() {
+                                    inspect_key = Some(tool.key);
+                                    ui.close();
+                                }
+                            });
+                        });
                     });
             });
 
-        match edit_key {
-            Some("apply_patch") => self.open_apply_patch(),
-            Some("shell") => self.open_shell(),
-            Some("archive") => self.open_toggle(
-                "archive",
-                "Edit Tool: archive",
-                self.config.tools.archive.enabled,
-            ),
-            Some("voice") => {
-                self.open_toggle("voice", "Edit Tool: voice", self.config.tools.voice.enabled)
-            }
-            Some("approval") => self.open_toggle(
-                "approval",
-                "Edit Tool: approval",
-                self.config.tools.approval.enabled,
-            ),
-            Some("local_search") => self.open_toggle(
-                "local_search",
-                "Edit Tool: local_search",
-                self.config.tools.local_search.enabled,
-            ),
-            Some("terminal_multiplexers") => self.open_toggle(
-                "terminal_multiplexers",
-                "Edit Tool: terminal_multiplexers",
-                self.config.tools.terminal_multiplexers.enabled,
-            ),
-            Some("cron_manager") => self.open_toggle(
-                "cron_manager",
-                "Edit Tool: cron_manager",
-                self.config.tools.cron_manager.enabled,
-            ),
-            Some("heartbeat_manager") => self.open_toggle(
-                "heartbeat_manager",
-                "Edit Tool: heartbeat_manager",
-                self.config.tools.heartbeat_manager.enabled,
-            ),
-            Some("skills_registry") => self.open_toggle(
-                "skills_registry",
-                "Edit Tool: skills_registry",
-                self.config.tools.skills_registry.enabled,
-            ),
-            Some("skills_manager") => self.open_toggle(
-                "skills_manager",
-                "Edit Tool: skills_manager",
-                self.config.tools.skills_manager.enabled,
-            ),
-            Some("memory") => self.open_memory(),
-            Some("web_fetch") => self.open_web_fetch(),
-            Some("web_search") => self.open_web_search(),
-            Some("sub_agent") => self.open_sub_agent(),
-            _ => {}
+        if let Some(key) = edit_key {
+            self.open_editor(key);
+        }
+        if let Some(key) = inspect_key {
+            self.inspect_key = Some(key);
         }
 
         self.render_form_window(ui, notifications);
+        self.render_inspect_window(ui);
     }
+}
+
+fn json_syntax_highlight_job(code: &str) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let bytes_len = code.len();
+    let mut idx = 0;
+
+    while idx < bytes_len {
+        let ch = code[idx..].chars().next().unwrap_or_default();
+
+        if ch.is_whitespace() {
+            let start = idx;
+            idx += ch.len_utf8();
+            while idx < bytes_len {
+                let next = code[idx..].chars().next().unwrap_or_default();
+                if !next.is_whitespace() {
+                    break;
+                }
+                idx += next.len_utf8();
+            }
+            job.append(&code[start..idx], 0.0, json_fmt_default());
+            continue;
+        }
+
+        if ch == '"' {
+            let start = idx;
+            idx += ch.len_utf8();
+            let mut escaped = false;
+            while idx < bytes_len {
+                let next = code[idx..].chars().next().unwrap_or_default();
+                idx += next.len_utf8();
+                if next == '\\' && !escaped {
+                    escaped = true;
+                    continue;
+                }
+                if next == '"' && !escaped {
+                    break;
+                }
+                escaped = false;
+            }
+
+            let token = &code[start..idx];
+            let mut lookahead = idx;
+            while lookahead < bytes_len {
+                let next = code[lookahead..].chars().next().unwrap_or_default();
+                if next.is_whitespace() {
+                    lookahead += next.len_utf8();
+                    continue;
+                }
+                break;
+            }
+            let fmt = if lookahead < bytes_len && code[lookahead..].starts_with(':') {
+                json_fmt_key()
+            } else {
+                json_fmt_string()
+            };
+            job.append(token, 0.0, fmt);
+            continue;
+        }
+
+        if ch.is_ascii_digit() || ch == '-' {
+            let start = idx;
+            idx += ch.len_utf8();
+            while idx < bytes_len {
+                let next = code[idx..].chars().next().unwrap_or_default();
+                if !(next.is_ascii_digit() || matches!(next, '.' | 'e' | 'E' | '+' | '-')) {
+                    break;
+                }
+                idx += next.len_utf8();
+            }
+            job.append(&code[start..idx], 0.0, json_fmt_number());
+            continue;
+        }
+
+        if ch.is_ascii_alphabetic() {
+            let start = idx;
+            idx += ch.len_utf8();
+            while idx < bytes_len {
+                let next = code[idx..].chars().next().unwrap_or_default();
+                if !next.is_ascii_alphabetic() {
+                    break;
+                }
+                idx += next.len_utf8();
+            }
+            let token = &code[start..idx];
+            let fmt = match token {
+                "true" | "false" => json_fmt_bool(),
+                "null" => json_fmt_null(),
+                _ => json_fmt_default(),
+            };
+            job.append(token, 0.0, fmt);
+            continue;
+        }
+
+        let next_idx = idx + ch.len_utf8();
+        let fmt = match ch {
+            '{' | '}' | '[' | ']' | ':' | ',' => json_fmt_punct(),
+            _ => json_fmt_default(),
+        };
+        job.append(&code[idx..next_idx], 0.0, fmt);
+        idx = next_idx;
+    }
+
+    if code.is_empty() {
+        job.append("", 0.0, json_fmt_default());
+    }
+
+    job
+}
+
+fn json_fmt_default() -> TextFormat {
+    TextFormat::simple(FontId::monospace(13.0), Color32::LIGHT_GRAY)
+}
+
+fn json_fmt_key() -> TextFormat {
+    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(242, 201, 76))
+}
+
+fn json_fmt_string() -> TextFormat {
+    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(158, 212, 158))
+}
+
+fn json_fmt_number() -> TextFormat {
+    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(255, 170, 120))
+}
+
+fn json_fmt_bool() -> TextFormat {
+    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(214, 154, 255))
+}
+
+fn json_fmt_null() -> TextFormat {
+    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(125, 174, 241))
+}
+
+fn json_fmt_punct() -> TextFormat {
+    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(210, 210, 210))
 }
 
 fn parse_lines(value: &str) -> Vec<String> {
@@ -1172,5 +1483,15 @@ mod tests {
             config.exclude_tools,
             vec!["sub_agent".to_string(), "web_search".to_string()]
         );
+    }
+
+    #[test]
+    fn tool_descriptors_are_sorted_alphabetically() {
+        let panel = ToolPanel::default();
+        let tools = panel.tools();
+        let names = tools.iter().map(|tool| tool.name).collect::<Vec<_>>();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted);
     }
 }

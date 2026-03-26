@@ -1,6 +1,7 @@
 use clap::Args;
 use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
+use klaw_llm::ToolDefinition;
 use klaw_mcp::McpConfigSnapshot;
 use std::{io, sync::Arc};
 use tokio::sync::watch;
@@ -41,6 +42,23 @@ fn provider_runtime_snapshot(
         active_provider_id,
         active_model,
     }
+}
+
+fn tool_definitions(runtime: &crate::runtime::RuntimeBundle) -> Vec<ToolDefinition> {
+    let mut definitions = runtime
+        .runtime
+        .tools
+        .list()
+        .into_iter()
+        .filter_map(|name| runtime.runtime.tools.get(&name))
+        .map(|tool| ToolDefinition {
+            name: tool.name().to_string(),
+            description: tool.description().to_string(),
+            parameters: tool.parameters(),
+        })
+        .collect::<Vec<_>>();
+    definitions.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+    definitions
 }
 
 #[derive(Debug, Args)]
@@ -194,6 +212,9 @@ impl GuiCommand {
                                                     Err(err) => Err(err.to_string()),
                                                 };
                                                 let _ = response.send(result);
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::GetToolDefinitions { response }) => {
+                                                let _ = response.send(Ok(tool_definitions(runtime.as_ref())));
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetMcpStatus { response }) => {
                                                 let result = match ConfigStore::open(None) {
