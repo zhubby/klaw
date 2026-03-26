@@ -1,5 +1,5 @@
 ---
-name: github-issue-to-pr-workflow
+name: github-workflow
 description: Turn a reported bug or feature request into a tracked GitHub delivery flow: investigate the codebase, confirm scope, create or update a GitHub issue, branch from the repository default branch, implement the change, commit with repository conventions, push, and open a pull request. Use when the user wants an end-to-end issue-to-PR workflow, asks to file an issue and then implement it, or needs a structured GitHub workflow for bugs or features.
 ---
 
