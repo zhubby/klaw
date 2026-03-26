@@ -64,7 +64,8 @@
   - provider/channel editors already preserve the new streaming config fields in the config model, though the current GUI still leaves them at their default `false` values
   - read providers from `config.toml` (`model_provider` + `model_providers`)
   - render providers in a scrollable table that supports both horizontal and vertical overflow
-  - show the active provider with a green trailing check icon in the `ID` column
+  - show `Config default` and `Runtime active` provider summaries separately so runtime overrides do not masquerade as config changes
+  - distinguish config-default and runtime-active providers in the `ID` column with separate badges
   - set active provider directly and sync the running runtime provider registry/default route so the app follows the saved global default without restart
   - add/edit provider via `egui::Window` form, persist back to config, and immediately sync live runtime provider state
   - expose icon-based row actions for edit, set-active, copy-id, and guarded delete

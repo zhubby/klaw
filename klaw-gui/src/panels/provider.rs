@@ -1,12 +1,15 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::runtime_bridge::request_sync_providers;
+use crate::runtime_bridge::{
+    ProviderRuntimeSnapshot, request_provider_status, request_sync_providers,
+};
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, ModelProviderConfig};
 use klaw_llm::OpenAiWireApi;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 struct ProviderForm {
@@ -97,12 +100,27 @@ pub struct ProviderPanel {
     config_path: Option<PathBuf>,
     revision: Option<u64>,
     config: AppConfig,
+    runtime_status: Option<ProviderRuntimeSnapshot>,
+    last_runtime_status_at: Option<Instant>,
     form: Option<ProviderForm>,
     selected_provider: Option<String>,
     delete_confirm: Option<String>,
 }
 
 impl ProviderPanel {
+    fn refresh_runtime_status(&mut self) {
+        let should_refresh = self
+            .last_runtime_status_at
+            .is_none_or(|last| last.elapsed() >= Duration::from_secs(2));
+        if !should_refresh {
+            return;
+        }
+        self.last_runtime_status_at = Some(Instant::now());
+        if let Ok(snapshot) = request_provider_status() {
+            self.runtime_status = Some(snapshot);
+        }
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -484,6 +502,7 @@ impl PanelRenderer for ProviderPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
+        self.refresh_runtime_status();
 
         ui.heading(ctx.tab_title);
         ui.label(Self::status_label(self.config_path.as_deref()));
@@ -491,8 +510,15 @@ impl PanelRenderer for ProviderPanel {
             ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.colored_label(
                 egui::Color32::LIGHT_GREEN,
-                format!("Active provider: {}", self.config.model_provider),
+                format!("Config default: {}", self.config.model_provider),
             );
+            if let Some(runtime_status) = &self.runtime_status {
+                ui.separator();
+                ui.colored_label(
+                    egui::Color32::from_rgb(0x60, 0xA5, 0xFA),
+                    format!("Runtime active: {}", runtime_status.active_provider_id),
+                );
+            }
         });
         ui.separator();
 
@@ -583,7 +609,11 @@ impl PanelRenderer for ProviderPanel {
                                     self.selected_provider.as_deref() == Some(provider_id);
                                 row.set_selected(is_selected);
 
-                                let is_current_active = provider_id == &self.config.model_provider;
+                                let is_config_default = provider_id == &self.config.model_provider;
+                                let is_runtime_active =
+                                    self.runtime_status.as_ref().is_some_and(|status| {
+                                        provider_id == &status.active_provider_id
+                                    });
                                 let auth =
                                     if provider.api_key.as_deref().is_some_and(|v| !v.is_empty()) {
                                         "api_key".to_string()
@@ -599,10 +629,27 @@ impl PanelRenderer for ProviderPanel {
                                 row.col(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(provider_id);
-                                        if is_current_active {
+                                        if is_config_default {
                                             ui.label(
                                                 RichText::new(regular::CHECK_CIRCLE).color(
                                                     egui::Color32::from_rgb(0x22, 0xC5, 0x5E),
+                                                ),
+                                            );
+                                            ui.label(
+                                                RichText::new("config").small().color(
+                                                    egui::Color32::from_rgb(0x22, 0xC5, 0x5E),
+                                                ),
+                                            );
+                                        }
+                                        if is_runtime_active {
+                                            ui.label(
+                                                RichText::new(regular::PLAY_CIRCLE).color(
+                                                    egui::Color32::from_rgb(0x60, 0xA5, 0xFA),
+                                                ),
+                                            );
+                                            ui.label(
+                                                RichText::new("runtime").small().color(
+                                                    egui::Color32::from_rgb(0x60, 0xA5, 0xFA),
                                                 ),
                                             );
                                         }
@@ -651,9 +698,9 @@ impl PanelRenderer for ProviderPanel {
                                     }
                                     if ui
                                         .add_enabled(
-                                            !is_current_active,
+                                            !is_config_default,
                                             egui::Button::new(format!(
-                                                "{} Set Active",
+                                                "{} Set Config Default",
                                                 regular::CHECK_CIRCLE
                                             )),
                                         )

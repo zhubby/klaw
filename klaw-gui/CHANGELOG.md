@@ -9,6 +9,7 @@
 ### Changed
 
 - GUI 底部状态栏的 provider 下拉现在读取 live runtime provider snapshot，而不是直接轮询 `config.toml`，因此只会展示当前 runtime 真正可切换的 provider/default model
+- `Provider` 面板现在会并排显示 `Config default` 与 `Runtime active`，表格中的 provider 标记也会区分配置默认与运行时当前 provider，避免把状态栏临时 override 误读成配置已切换
 - GUI 底部状态栏的主题切换从循环点击改为显式 `Theme Mode` 下拉框，并会结合已保存的 Light/Dark 预设应用实际配色且在重启后恢复
 - `MCP` 面板的全局设置弹窗移除了 `enabled` 开关，仅保留 `startup_timeout_seconds`；运行时现在默认总是持有可热重载的 MCP manager
 
