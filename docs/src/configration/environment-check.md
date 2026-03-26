@@ -7,31 +7,36 @@ Klaw 在启动时会自动检查外部二进制依赖的可用性，并在日志
 | 依赖 | 描述 | 必需性 | 用途 |
 |------|------|--------|------|
 | `git` | Skills registry 同步 | 必需 | 用于从远程仓库同步 Skills |
-| `rg` (ripgrep) | 本地文件内容搜索（首选后端） | 必需 | `local_search` 的首选后端；缺失时会降级到 `grep` fallback |
+| `rg` (ripgrep) | 本地文件内容搜索（首选后端） | 首选 | `local_search` 的首选后端；缺失时会降级到 `grep` fallback |
+| `tailscale` | Gateway 公网暴露（serve/funnel） | 可选 | 用于本机 gateway 的公网暴露能力 |
 | `zellij` | 终端复用器 (首选) | 可选 | `terminal_multiplexer` 工具的首选后端 |
 | `tmux` | 终端复用器 (备选) | 可选 | `terminal_multiplexer` 工具的备选后端 |
+| `docker` | 容器 CLI 与镜像工具链 | 可选 | 用于发现本机 Docker CLI 是否可用 |
+| `container` | Apple container CLI | 可选 | 用于发现 macOS 原生 Apple container 工具是否可用 |
 
 ### 依赖说明
 
 - **必需依赖**: 如果缺失，会在日志中输出 `WARN` 级别警告，相关功能将不可用
-- **可选依赖**: `zellij` 和 `tmux` 是互斥备选关系，只需其中一个可用即可
+- **首选依赖**: 缺失不会阻塞启动，但会提示仍在使用降级路径
+- **可选依赖**: `zellij` 和 `tmux` 是互斥备选关系，只需其中一个可用即可；`tailscale`、`docker`、`container` 仅做可用性报告
 
 ## 启动日志示例
 
 ```
-INFO klaw::env_check: Checking environment dependencies...
-INFO klaw::env_check: git: available (2.43.0)
-INFO klaw::env_check: rg: available (14.1.0)
-INFO klaw::env_check: zellij: available (0.40.0)
-INFO klaw::env_check: tmux: not found (optional)
-INFO klaw::env_check: Environment check completed: all dependencies available
+INFO klaw::runtime::env_check: Checking environment dependencies...
+INFO klaw::runtime::env_check: git: available (2.43.0)
+INFO klaw::runtime::env_check: rg: available (14.1.0)
+INFO klaw::runtime::env_check: zellij: available (0.40.0)
+INFO klaw::runtime::env_check: docker: available (28.0.1)
+INFO klaw::runtime::env_check: container: not found (optional)
+INFO klaw::runtime::env_check: Environment check completed: all dependencies available
 ```
 
 如果缺少必需依赖:
 
 ```
-WARN klaw::env_check: git: NOT FOUND (required)
-WARN klaw::env_check: Environment check completed: some required dependencies missing
+WARN klaw::runtime::env_check: git: NOT FOUND (required)
+WARN klaw::runtime::env_check: Environment check completed: some required dependencies missing
 ```
 
 ## 安装依赖
@@ -43,6 +48,8 @@ WARN klaw::env_check: Environment check completed: some required dependencies mi
 brew install git
 brew install ripgrep
 brew install zellij
+brew install docker
+# Apple container CLI 需按 Apple 官方安装说明单独安装
 # 或
 brew install tmux
 ```
@@ -53,16 +60,19 @@ brew install tmux
 # Debian/Ubuntu
 sudo apt install git ripgrep
 sudo apt install zellij
+sudo apt install docker.io
 # 或
 sudo apt install tmux
 
 # Arch Linux
 sudo pacman -S git ripgrep zellij
+sudo pacman -S docker
 # 或
 sudo pacman -S git ripgrep tmux
 
 # Fedora
 sudo dnf install git ripgrep zellij
+sudo dnf install docker
 # 或
 sudo dnf install git ripgrep tmux
 ```
@@ -88,14 +98,20 @@ Environment Dependencies
 ✓ git      2.43.0    Required
   Skills registry synchronization
 
-✓ rg       14.1.0    Required
+✓ rg       14.1.0    Preferred
   Local file content search (ripgrep)
 
 ✓ zellij   0.40.0    Optional
   Terminal multiplexer (preferred)
 
+✓ docker   28.0.1    Optional
+  Container CLI and image tooling
+
 ✗ tmux     not found Optional
   Terminal multiplexer (fallback)
+
+✗ container not found Optional
+  Apple container CLI for macOS-native containers
 
 All dependencies available
 ```
@@ -164,6 +180,7 @@ pub struct DependencyStatus {
 
 pub enum DependencyCategory {
     Required,
+    Preferred,
     OptionalWithFallback,
 }
 ```
@@ -173,7 +190,7 @@ pub enum DependencyCategory {
 ### git 未找到
 
 ```
-WARN klaw::env_check: git: NOT FOUND (required)
+WARN klaw::runtime::env_check: git: NOT FOUND (required)
 ```
 
 **解决**: 安装 git 并确保在 PATH 中:
@@ -186,7 +203,7 @@ git --version
 ### ripgrep 未找到
 
 ```
-WARN klaw::env_check: rg: NOT FOUND (required)
+WARN klaw::runtime::env_check: rg: not found (preferred)
 ```
 
 `local_search` 仍可使用系统 `grep` 继续工作，但会失去 `rg` 的首选执行路径，环境检查也会继续提示缺少首选依赖。
@@ -201,7 +218,7 @@ rg --version
 ### 终端复用器不可用
 
 ```
-INFO klaw::env_check: Note: Terminal multiplexer (zellij/tmux) not available
+INFO klaw::runtime::env_check: Note: Terminal multiplexer (zellij/tmux) not available
 ```
 
 **解决**: 安装 zellij 或 tmux 其中之一:
@@ -211,6 +228,15 @@ brew install zellij  # macOS
 # 或安装 tmux
 brew install tmux    # macOS
 ```
+
+### 容器 CLI 不可用
+
+```
+INFO klaw::runtime::env_check: docker: not found (optional)
+INFO klaw::runtime::env_check: container: not found (optional)
+```
+
+**说明**: 这两项仅作可选环境报告，不会阻止 runtime 或 GUI 启动。
 
 ## 相关文档
 

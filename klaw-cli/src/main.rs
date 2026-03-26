@@ -1,5 +1,4 @@
 mod commands;
-mod env_check;
 mod runtime;
 
 use clap::{Parser, Subcommand, ValueEnum};
