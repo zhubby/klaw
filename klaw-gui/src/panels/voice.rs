@@ -1104,9 +1104,6 @@ fn key_source_label(direct_key: Option<&str>, env_key: &str) -> String {
 }
 
 fn validate_stt_test_config(config: &AppConfig) -> Result<(), String> {
-    if !config.voice.enabled {
-        return Err("Voice test requires voice.enabled=true in config.toml".to_string());
-    }
     let stt_has_key = match config.voice.stt_provider {
         SttProviderKind::Deepgram => config.voice.providers.deepgram.resolve_api_key().is_some(),
         SttProviderKind::Assemblyai => config
@@ -1126,9 +1123,6 @@ fn validate_stt_test_config(config: &AppConfig) -> Result<(), String> {
 }
 
 fn validate_tts_test_config(config: &AppConfig) -> Result<(), String> {
-    if !config.voice.enabled {
-        return Err("Voice test requires voice.enabled=true in config.toml".to_string());
-    }
     let tts_has_key = match config.voice.tts_provider {
         TtsProviderKind::Elevenlabs => config
             .voice
@@ -1190,7 +1184,7 @@ fn build_tts_temp_path(mime_type: &str) -> PathBuf {
 
 fn run_transcription_test(
     capture: RecordingCapture,
-    voice_config: VoiceConfig,
+    mut voice_config: VoiceConfig,
 ) -> Result<SttTestResult, String> {
     let provider_name = voice_config.stt_provider.as_str().to_string();
     let device_name = capture.device_name.clone();
@@ -1206,6 +1200,7 @@ fn run_transcription_test(
         .map_err(|err| format!("Failed to build voice test runtime: {err}"))?;
 
     runtime.block_on(async move {
+        voice_config.enabled = true;
         let language = (!voice_config.default_language.trim().is_empty())
             .then(|| voice_config.default_language.clone());
         let service = VoiceService::from_config(&voice_config)
@@ -1237,7 +1232,7 @@ fn run_transcription_test(
 fn run_tts_test(
     text: String,
     requested_voice_id: Option<String>,
-    voice_config: VoiceConfig,
+    mut voice_config: VoiceConfig,
 ) -> Result<TtsTestResult, String> {
     let provider_name = voice_config.tts_provider.as_str().to_string();
 
@@ -1247,6 +1242,7 @@ fn run_tts_test(
         .map_err(|err| format!("Failed to build voice test runtime: {err}"))?;
 
     runtime.block_on(async move {
+        voice_config.enabled = true;
         let service = VoiceService::from_config(&voice_config)
             .map_err(|err| format!("Voice config error: {err}"))?;
         let output = service
@@ -1369,11 +1365,10 @@ mod tests {
     }
 
     #[test]
-    fn stt_validation_rejects_disabled_voice() {
+    fn stt_validation_allows_disabled_voice_when_provider_key_exists() {
         let mut config = sample_app_config();
         config.voice.enabled = false;
-        let err = validate_stt_test_config(&config).expect_err("disabled voice should fail");
-        assert!(err.contains("voice.enabled=true"));
+        validate_stt_test_config(&config).expect("disabled voice flag should not block tests");
     }
 
     #[test]
@@ -1386,11 +1381,10 @@ mod tests {
     }
 
     #[test]
-    fn tts_validation_rejects_disabled_voice() {
+    fn tts_validation_allows_disabled_voice_when_provider_key_exists() {
         let mut config = sample_app_config();
         config.voice.enabled = false;
-        let err = validate_tts_test_config(&config).expect_err("disabled voice should fail");
-        assert!(err.contains("voice.enabled=true"));
+        validate_tts_test_config(&config).expect("disabled voice flag should not block tests");
     }
 
     #[test]

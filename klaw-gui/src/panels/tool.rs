@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::request_sync_tools;
 use egui::Color32;
 use egui_phosphor::regular;
 use klaw_config::{
@@ -554,6 +555,15 @@ impl ToolPanel {
                 }
             },
         ) {
+            match request_sync_tools() {
+                Ok(tool_names) => notifications.success(format!(
+                    "Tool config saved and runtime synced ({} tools active)",
+                    tool_names.len()
+                )),
+                Err(err) => notifications.error(format!(
+                    "Tool config saved, but failed to sync running runtime: {err}"
+                )),
+            }
             self.form = None;
         }
     }

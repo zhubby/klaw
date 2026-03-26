@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- `Tool` 面板保存后现在会立即触发 runtime tool sync，行为与 `Provider` / `Channel` / `MCP` 面板保持一致，避免 tool 开关修改后还需要重启 GUI runtime 才能生效
+- `Voice` 面板的 STT/TTS 测试不再额外依赖 `voice.enabled=true`，只要当前选中的 provider 密钥配置完整即可直接验证实际语音链路
 - `Provider` 面板新增/编辑/删除 provider 以及切换 active provider 后，现在都会统一触发 runtime provider sync，避免 GUI 配置态、底部切换和实际运行路由继续分叉
 - Archive 面板调用系统 `qlmanage` 生成 Quick Look 预览时现在也会复用共享增强后的 PATH，避免 GUI 启动环境遗漏标准外部命令搜索目录
 
