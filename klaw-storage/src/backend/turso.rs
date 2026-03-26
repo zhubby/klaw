@@ -71,6 +71,7 @@ impl TursoSessionStore {
                     active_session_key TEXT,
                     model_provider TEXT,
                     model TEXT,
+                    delivery_metadata_json TEXT,
                     compression_last_len INTEGER NOT NULL DEFAULT 0,
                     compression_summary_json TEXT,
                     created_at_ms INTEGER NOT NULL,
@@ -285,6 +286,8 @@ impl TursoSessionStore {
             .await?;
         self.ensure_session_column("model_provider", "TEXT").await?;
         self.ensure_session_column("model", "TEXT").await?;
+        self.ensure_session_column("delivery_metadata_json", "TEXT")
+            .await?;
         self.ensure_session_column("compression_last_len", "INTEGER NOT NULL DEFAULT 0")
             .await?;
         self.ensure_session_column("compression_summary_json", "TEXT")
@@ -518,8 +521,8 @@ impl SessionStorage for TursoSessionStore {
         let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
         let sql = format!(
             "INSERT INTO sessions (
-                session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-             ) VALUES ('{}', '{}', '{}', NULL, NULL, NULL, {}, {}, {}, 0, '{}')
+                session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+             ) VALUES ('{}', '{}', '{}', NULL, NULL, NULL, NULL, {}, {}, {}, 0, '{}')
              ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
@@ -578,8 +581,8 @@ impl SessionStorage for TursoSessionStore {
             if affected == 0 {
                 let insert_sql = format!(
                     "INSERT INTO sessions (
-                        session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-                    ) VALUES ('{}', '{}', '{}', NULL, NULL, NULL, {}, {}, {}, 1, '{}')",
+                        session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+                    ) VALUES ('{}', '{}', '{}', NULL, NULL, NULL, NULL, {}, {}, {}, 1, '{}')",
                     escape_sql_text(session_key),
                     escape_sql_text(chat_id),
                     escape_sql_text(channel),
@@ -610,7 +613,7 @@ impl SessionStorage for TursoSessionStore {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let sql = format!(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              WHERE session_key = '{}'
              LIMIT 1",
@@ -639,8 +642,8 @@ impl SessionStorage for TursoSessionStore {
         let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
         let sql = format!(
             "INSERT INTO sessions (
-                session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-             ) VALUES ('{}', '{}', '{}', '{}', NULL, NULL, {}, {}, {}, 0, '{}')
+                session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+             ) VALUES ('{}', '{}', '{}', '{}', NULL, NULL, NULL, {}, {}, {}, 0, '{}')
              ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
@@ -773,6 +776,41 @@ impl SessionStorage for TursoSessionStore {
         self.get_session(session_key).await
     }
 
+    async fn set_delivery_metadata(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        delivery_metadata_json: Option<&str>,
+    ) -> Result<SessionIndex, StorageError> {
+        let sql = format!(
+            "UPDATE sessions
+             SET chat_id = '{}',
+                 channel = '{}',
+                 updated_at_ms = {},
+                 delivery_metadata_json = {}
+             WHERE session_key = '{}'",
+            escape_sql_text(chat_id),
+            escape_sql_text(channel),
+            now_ms(),
+            opt_sql_text(delivery_metadata_json),
+            escape_sql_text(session_key)
+        );
+        {
+            let conn = self.connection().await?;
+            let affected = conn
+                .execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+            if affected == 0 {
+                return Err(StorageError::backend(format!(
+                    "session '{session_key}' not found when setting delivery_metadata"
+                )));
+            }
+        }
+        self.get_session(session_key).await
+    }
+
     async fn clear_model_routing_override(
         &self,
         session_key: &str,
@@ -869,7 +907,7 @@ impl SessionStorage for TursoSessionStore {
         updated_to_ms: Option<i64>,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let mut sql = String::from(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions WHERE 1=1",
         );
         if let Some(from) = updated_from_ms {
@@ -2383,11 +2421,14 @@ fn row_to_session_index(row: &Row) -> Result<SessionIndex, StorageError> {
         active_session_key: value_to_opt_string(row.get_value(3).map_err(StorageError::backend)?),
         model_provider: value_to_opt_string(row.get_value(4).map_err(StorageError::backend)?),
         model: value_to_opt_string(row.get_value(5).map_err(StorageError::backend)?),
-        created_at_ms: value_to_i64(row.get_value(6).map_err(StorageError::backend)?)?,
-        updated_at_ms: value_to_i64(row.get_value(7).map_err(StorageError::backend)?)?,
-        last_message_at_ms: value_to_i64(row.get_value(8).map_err(StorageError::backend)?)?,
-        turn_count: value_to_i64(row.get_value(9).map_err(StorageError::backend)?)?,
-        jsonl_path: value_to_string(row.get_value(10).map_err(StorageError::backend)?)?,
+        delivery_metadata_json: value_to_opt_string(
+            row.get_value(6).map_err(StorageError::backend)?,
+        ),
+        created_at_ms: value_to_i64(row.get_value(7).map_err(StorageError::backend)?)?,
+        updated_at_ms: value_to_i64(row.get_value(8).map_err(StorageError::backend)?)?,
+        last_message_at_ms: value_to_i64(row.get_value(9).map_err(StorageError::backend)?)?,
+        turn_count: value_to_i64(row.get_value(10).map_err(StorageError::backend)?)?,
+        jsonl_path: value_to_string(row.get_value(11).map_err(StorageError::backend)?)?,
     })
 }
 

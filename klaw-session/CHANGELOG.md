@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-26
+
+### Added
+
+- added `set_delivery_metadata` session-manager wrappers so runtimes can persist refreshable channel reply metadata on active sessions
+
 ## 2026-03-25
 
 ### Added

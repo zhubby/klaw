@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-26
+
+### Added
+- added persisted `delivery_metadata_json` session state so runtimes can retain channel-specific reply metadata such as the latest DingTalk `session_webhook`
+
 ## 2026-03-25
 
 ### Added

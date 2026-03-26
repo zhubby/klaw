@@ -71,6 +71,14 @@ pub trait SessionStorage: Send + Sync {
         model: &str,
     ) -> Result<SessionIndex, StorageError>;
 
+    async fn set_delivery_metadata(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        delivery_metadata_json: Option<&str>,
+    ) -> Result<SessionIndex, StorageError>;
+
     async fn clear_model_routing_override(
         &self,
         session_key: &str,
