@@ -201,12 +201,22 @@ impl ShellUi {
                     ThemeMode::Dark => regular::MOON,
                 };
 
-                let response = ui
-                    .add(egui::Label::new(theme_icon).sense(egui::Sense::click()))
-                    .on_hover_text("Theme: System -> Light -> Dark");
-                if response.clicked() {
-                    actions.push(UiAction::CycleTheme);
-                }
+                ui.label(theme_icon);
+                ui.label("Theme Mode:");
+                egui::ComboBox::from_id_salt("status-theme-mode")
+                    .width(110.0)
+                    .selected_text(state.theme_mode.label())
+                    .show_ui(ui, |ui| {
+                        for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
+                            if ui
+                                .selectable_label(state.theme_mode == mode, mode.label())
+                                .clicked()
+                            {
+                                actions.push(UiAction::SetThemeMode(mode));
+                                ui.close();
+                            }
+                        }
+                    });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let version_label = format!("{} v{}", regular::INFO, env!("CARGO_PKG_VERSION"));

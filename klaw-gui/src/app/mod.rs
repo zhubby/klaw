@@ -37,7 +37,7 @@ impl KlawGuiApp {
             last_state_save_at: Instant::now(),
         };
         theme::install_fonts(&creation_ctx.egui_ctx);
-        theme::apply_theme(&creation_ctx.egui_ctx, app.state.theme_mode);
+        theme::apply_theme(&creation_ctx.egui_ctx, &app.state);
         creation_ctx
             .egui_ctx
             .send_viewport_cmd(egui::ViewportCommand::Fullscreen(app.state.fullscreen));
@@ -66,6 +66,12 @@ impl KlawGuiApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.state.fullscreen));
                 self.mark_state_dirty();
             }
+            UiAction::SetThemeMode(theme_mode) => {
+                self.sync_theme_presets_from_disk();
+                self.state.apply(UiAction::SetThemeMode(theme_mode));
+                theme::apply_theme(ctx, &self.state);
+                self.save_state_now();
+            }
             UiAction::MinimizeWindow => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
@@ -74,11 +80,6 @@ impl KlawGuiApp {
             }
             UiAction::StartWindowDrag => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-            }
-            UiAction::CycleTheme => {
-                self.state.apply(action);
-                theme::apply_theme(ctx, self.state.theme_mode);
-                self.mark_state_dirty();
             }
             UiAction::SetRuntimeProviderOverride(provider_id) => {
                 match request_set_provider_override(provider_id.clone()) {
@@ -112,10 +113,17 @@ impl KlawGuiApp {
     }
 
     fn save_state_now(&mut self) {
+        self.sync_theme_presets_from_disk();
         if persistence::save_ui_state(&self.state).is_ok() {
             self.state_dirty = false;
             self.last_state_save_at = Instant::now();
         }
+    }
+
+    fn sync_theme_presets_from_disk(&mut self) {
+        let disk_state = persistence::load_ui_state();
+        self.state.light_theme = disk_state.light_theme;
+        self.state.dark_theme = disk_state.dark_theme;
     }
 
     fn handle_tray_command(&mut self, ctx: &egui::Context, command: TrayCommand) {
@@ -190,7 +198,6 @@ impl eframe::App for KlawGuiApp {
         self.drain_tray_commands(ctx);
         self.sync_fullscreen_from_viewport(ctx);
         self.sync_window_size_from_viewport(ctx);
-        theme::apply_theme(ctx, self.state.theme_mode);
         let actions = self.shell.render(ctx, &self.state);
         for action in actions {
             self.handle_action(ctx, action);

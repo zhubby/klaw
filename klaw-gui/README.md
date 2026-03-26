@@ -11,13 +11,13 @@
 - Workbench sidebar now includes a dedicated `Voice` panel for voice config editing and split STT/TTS testing
 - Top menu bar (File/View/Window/Help)
   - File menu includes `Force Persist Layout` to immediately flush layout state to disk
-- Bottom status bar with version and theme-mode switcher
+- Bottom status bar with version and theme-mode dropdown
   - Runtime provider override dropdown on the right (select from `model_providers` without editing config; applies immediately to the running runtime's default provider for new routes and `/new`)
 - System tray / macOS menu bar icon loaded from embedded PNG assets at runtime
   - tray menu includes `Open Klaw`, `Settings`, `About`, and `Quit Klaw`
   - `Settings` opens the in-app settings workbench
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
-  - includes tabs/theme/fullscreen and window size
+  - includes tabs/theme mode/light-dark theme presets/fullscreen and window size
 - macOS app icon is loaded from embedded image bytes at startup, so both `.app` bundles and standalone binaries keep the custom icon
 - System CJK font fallback via `fontdb` to avoid Chinese text missing-glyph rendering
 - Strongly typed menu model for workspace modules
@@ -116,6 +116,7 @@
   - show per-server runtime state and discovered tool counts directly in the table
   - open a detail popup that renders the cached MCP `tools/list` response for the selected server
 - Settings panel features:
+  - configure GUI theme presets in `General`, with `Default`/`Latte` for light mode and `Default`/`Frappé`/`Macchiato`/`Mocha` for dark mode
   - persist sync settings in `settings.json`, including S3 endpoint/region/bucket/prefix, backup scope, retention, schedule, hostname-based device ID, and both direct or env-backed credentials
   - trigger manual manifest sync runs against the remote blob store
   - show a live progress bar plus stage/detail text while manual sync is reconciling, uploading blobs, publishing manifests, and pruning remote history
@@ -154,8 +155,7 @@
   - includes `logs` panel backed by a non-blocking runtime log chunk bridge
 - `widgets/`: shared reusable UI widgets
 - `theme.rs`: centralized theme setup
-  - system-follow default
-  - light/dark/system cycling
+  - system-follow mode selection plus configurable light/dark theme presets
 - `state/persistence.rs`: local UI state load/save with schema versioning and atomic writes
 
 ## Running
