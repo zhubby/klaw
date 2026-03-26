@@ -5,6 +5,9 @@
 ### Added
 - added shared command-PATH augmentation helpers so macOS GUI launches can reuse one standard binary search path policy across crates
 
+### Changed
+- split `lib.rs` into focused `paths`, `environment`, and `command_path` modules while keeping the public `klaw-util` API re-exported from the crate root
+
 ## 2026-03-25
 
 ### Added
