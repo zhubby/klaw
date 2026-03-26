@@ -20,6 +20,10 @@
 - `Provider` 面板新增/编辑/删除 provider 以及切换 active provider 后，现在都会统一触发 runtime provider sync，避免 GUI 配置态、底部切换和实际运行路由继续分叉
 - Archive 面板调用系统 `qlmanage` 生成 Quick Look 预览时现在也会复用共享增强后的 PATH，避免 GUI 启动环境遗漏标准外部命令搜索目录
 
+### Changed
+
+- `Voice` 面板移除了旧的 `voice.enabled` 开关，并在摘要区明确标注该字段已废弃；当前面板只维护实际生效的 provider 与默认语音参数
+
 ## 2026-03-25
 
 ### Added

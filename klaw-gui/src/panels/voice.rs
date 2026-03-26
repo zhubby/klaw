@@ -24,7 +24,6 @@ const TTS_INPUT_ROWS: usize = 6;
 
 #[derive(Debug, Clone)]
 struct VoiceConfigForm {
-    enabled: bool,
     stt_provider: SttProviderKind,
     tts_provider: TtsProviderKind,
     default_language: String,
@@ -56,7 +55,6 @@ impl Default for VoiceConfigForm {
 impl VoiceConfigForm {
     fn from_config(config: &VoiceConfig) -> Self {
         Self {
-            enabled: config.enabled,
             stt_provider: config.stt_provider,
             tts_provider: config.tts_provider,
             default_language: config.default_language.clone(),
@@ -102,8 +100,8 @@ impl VoiceConfigForm {
 
     fn apply_to_config(&self, config: &mut AppConfig) -> Result<(), String> {
         let default_language = self.default_language.trim();
-        if self.enabled && default_language.is_empty() {
-            return Err("default language cannot be empty when voice is enabled".to_string());
+        if default_language.is_empty() {
+            return Err("default language cannot be empty".to_string());
         }
 
         for (label, value) in [
@@ -134,7 +132,6 @@ impl VoiceConfigForm {
             }
         }
 
-        config.voice.enabled = self.enabled;
         config.voice.stt_provider = self.stt_provider;
         config.voice.tts_provider = self.tts_provider;
         config.voice.default_language = default_language.to_string();
@@ -577,10 +574,6 @@ impl VoicePanel {
                         .num_columns(2)
                         .spacing([12.0, 8.0])
                         .show(ui, |ui| {
-                            ui.label("Voice Enabled");
-                            ui.checkbox(&mut self.config_form.enabled, "");
-                            ui.end_row();
-
                             ui.label("Default Language");
                             ui.text_edit_singleline(&mut self.config_form.default_language);
                             ui.end_row();
@@ -973,14 +966,11 @@ impl PanelRenderer for VoicePanel {
 
         ui.add_space(8.0);
         ui.strong("Current Config");
+        ui.label("`voice.enabled` 已废弃，运行时和测试工具都会忽略该字段。");
         egui::Grid::new("voice-summary-grid")
             .num_columns(2)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
-                ui.label("Enabled");
-                render_boolean_status(ui, self.config.voice.enabled, "Enabled", "Disabled");
-                ui.end_row();
-
                 ui.label("STT Provider");
                 ui.monospace(self.config.voice.stt_provider.as_str());
                 ui.end_row();
@@ -1140,31 +1130,6 @@ fn validate_tts_test_config(config: &AppConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn render_boolean_status(
-    ui: &mut egui::Ui,
-    enabled: bool,
-    enabled_label: &str,
-    disabled_label: &str,
-) {
-    let (icon, color, label) = if enabled {
-        (
-            regular::CHECK_CIRCLE,
-            Color32::from_rgb(0x22, 0xC5, 0x5E),
-            enabled_label,
-        )
-    } else {
-        (
-            regular::X_CIRCLE,
-            ui.visuals().error_fg_color,
-            disabled_label,
-        )
-    };
-    ui.horizontal(|ui| {
-        ui.colored_label(color, icon);
-        ui.colored_label(color, label);
-    });
-}
-
 fn tts_file_extension_for_mime_type(mime_type: &str) -> &'static str {
     let normalized = mime_type.trim().to_ascii_lowercase();
     match normalized.as_str() {
@@ -1184,7 +1149,7 @@ fn build_tts_temp_path(mime_type: &str) -> PathBuf {
 
 fn run_transcription_test(
     capture: RecordingCapture,
-    mut voice_config: VoiceConfig,
+    voice_config: VoiceConfig,
 ) -> Result<SttTestResult, String> {
     let provider_name = voice_config.stt_provider.as_str().to_string();
     let device_name = capture.device_name.clone();
@@ -1200,7 +1165,6 @@ fn run_transcription_test(
         .map_err(|err| format!("Failed to build voice test runtime: {err}"))?;
 
     runtime.block_on(async move {
-        voice_config.enabled = true;
         let language = (!voice_config.default_language.trim().is_empty())
             .then(|| voice_config.default_language.clone());
         let service = VoiceService::from_config(&voice_config)
@@ -1232,7 +1196,7 @@ fn run_transcription_test(
 fn run_tts_test(
     text: String,
     requested_voice_id: Option<String>,
-    mut voice_config: VoiceConfig,
+    voice_config: VoiceConfig,
 ) -> Result<TtsTestResult, String> {
     let provider_name = voice_config.tts_provider.as_str().to_string();
 
@@ -1242,7 +1206,6 @@ fn run_tts_test(
         .map_err(|err| format!("Failed to build voice test runtime: {err}"))?;
 
     runtime.block_on(async move {
-        voice_config.enabled = true;
         let service = VoiceService::from_config(&voice_config)
             .map_err(|err| format!("Voice config error: {err}"))?;
         let output = service
@@ -1298,7 +1261,6 @@ mod tests {
     fn form_maps_back_to_voice_config() {
         let mut config = AppConfig::default();
         let form = VoiceConfigForm {
-            enabled: true,
             stt_provider: SttProviderKind::Assemblyai,
             tts_provider: TtsProviderKind::Elevenlabs,
             default_language: "en-US".to_string(),
@@ -1323,7 +1285,6 @@ mod tests {
 
         form.apply_to_config(&mut config)
             .expect("form should apply");
-        assert!(config.voice.enabled);
         assert_eq!(config.voice.stt_provider, SttProviderKind::Assemblyai);
         assert_eq!(config.voice.default_language, "en-US");
         assert_eq!(config.voice.default_voice_id.as_deref(), Some("voice-42"));

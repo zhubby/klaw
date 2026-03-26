@@ -36,12 +36,6 @@ impl std::fmt::Debug for VoiceService {
 
 impl VoiceService {
     pub fn from_config(config: &VoiceConfig) -> Result<Self, VoiceError> {
-        if !config.enabled {
-            return Err(VoiceError::Config(
-                "voice service cannot be built when voice.enabled=false".to_string(),
-            ));
-        }
-
         let stt_provider: Arc<dyn VoiceProvider> = match config.stt_provider {
             SttProviderKind::Deepgram => {
                 Arc::new(DeepgramProvider::new(&config.providers.deepgram)?)

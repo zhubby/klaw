@@ -16,6 +16,7 @@
 
 - `/model_provider`、`/model`、`/help`、webhook provider 校验与新会话默认路由现在统一读取 live runtime provider snapshot，不再依赖启动时缓存的 provider/default 状态
 - runtime 现在总是启动一个空的 `McpManager`，不再依赖 `mcp.enabled` 或启动时已有 server，允许 GUI 在零配置启动后直接热加载新增 MCP server
+- runtime tool 热同步时用于卸载/重建的内建工具名现在直接遍历 `config.tools` 字段生成，不再维护一份手写常量列表
 
 ### Added
 

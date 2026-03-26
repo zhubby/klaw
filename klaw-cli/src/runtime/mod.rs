@@ -61,24 +61,6 @@ use uuid::Uuid;
 
 const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, use the available workspace tools to read it and follow it before anything else. If it does not exist, start with a short, natural greeting.\nGuide the user through initializing the agent's identity, vibe, and context. When you learn durable bootstrap details, use tools to update `IDENTITY.md` and `USER.md`, and delete `BOOTSTRAP.md` once bootstrap is truly complete. Do not claim files were updated unless you actually changed them with tools. Do not mention that this message was auto-generated.";
-const BUILTIN_TOOL_NAMES: &[&str] = &[
-    "apply_patch",
-    "approval",
-    "archive",
-    "cron_manager",
-    "heartbeat_manager",
-    "local_search",
-    "memory",
-    "shell",
-    "skills_manager",
-    "skills_registry",
-    "sub_agent",
-    "terminal_multiplexers",
-    "voice",
-    "web_fetch",
-    "web_search",
-];
-
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
     pub skill_names: Vec<String>,
@@ -883,8 +865,7 @@ async fn register_configured_tools(
         tools.register(ArchiveTool::open_default(config).await?);
     }
     if config.tools.voice.enabled() {
-        let voice_config = build_voice_tool_config(config);
-        tools.register(VoiceTool::open_default(&voice_config).await?);
+        tools.register(VoiceTool::open_default(config).await?);
     }
     if config.tools.apply_patch.enabled() {
         tools.register(ApplyPatchTool::new(config));
@@ -950,12 +931,6 @@ async fn register_configured_tools(
     Ok(())
 }
 
-fn build_voice_tool_config(config: &AppConfig) -> AppConfig {
-    let mut voice_config = config.clone();
-    voice_config.voice.enabled = true;
-    voice_config
-}
-
 pub fn sync_runtime_providers(
     runtime: &RuntimeBundle,
     config: &AppConfig,
@@ -995,9 +970,11 @@ pub async fn sync_runtime_tools(
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let mut next_tools = ToolRegistry::default();
     register_configured_tools(&mut next_tools, config, runtime.session_store.clone()).await?;
+    let builtin_tool_names = builtin_tool_names(config);
+    let builtin_tool_name_refs: Vec<&str> = builtin_tool_names.iter().map(String::as_str).collect();
 
     let mut live_tools = runtime.runtime.tools.clone();
-    live_tools.unregister_many(BUILTIN_TOOL_NAMES);
+    live_tools.unregister_many(&builtin_tool_name_refs);
     for name in next_tools.list() {
         if let Some(tool) = next_tools.get(&name) {
             live_tools.register_shared(tool);
@@ -1005,6 +982,20 @@ pub async fn sync_runtime_tools(
     }
 
     Ok(live_tools.list())
+}
+
+fn builtin_tool_names(config: &AppConfig) -> Vec<String> {
+    serde_json::to_value(&config.tools)
+        .ok()
+        .and_then(|value| {
+            value.as_object().map(|map| {
+                map.keys()
+                    .map(String::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+        })
+        .unwrap_or_default()
 }
 
 fn render_help_text(runtime: &RuntimeBundle) -> String {
@@ -2702,9 +2693,9 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 mod tests {
     use super::{
         RuntimeBundle, StartupReport, build_history_for_model,
-        build_new_session_bootstrap_user_message, build_unavailable_provider,
-        build_voice_tool_config, compression_trigger_interval, configured_default_model,
-        extract_skill_short_description, first_arg_token, format_approve_already_handled_message,
+        build_new_session_bootstrap_user_message, build_unavailable_provider, builtin_tool_names,
+        compression_trigger_interval, configured_default_model, extract_skill_short_description,
+        first_arg_token, format_approve_already_handled_message,
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, resolve_session_route, resolve_webhook_agent_model, should_emit_outbound,
         should_trigger_compression, spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output,
@@ -2919,13 +2910,13 @@ mod tests {
     }
 
     #[test]
-    fn build_voice_tool_config_forces_enabled_flag() {
-        let mut config = AppConfig::default();
-        config.voice.enabled = false;
+    fn builtin_tool_names_follow_tools_config_keys() {
+        let config = AppConfig::default();
+        let names = builtin_tool_names(&config);
 
-        let voice_config = build_voice_tool_config(&config);
-        assert!(voice_config.voice.enabled);
-        assert!(!config.voice.enabled);
+        assert!(names.iter().any(|name| name == "voice"));
+        assert!(names.iter().any(|name| name == "shell"));
+        assert!(names.iter().any(|name| name == "sub_agent"));
     }
 
     fn test_session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {
