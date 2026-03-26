@@ -2,6 +2,10 @@
 
 ## 2026-03-26
 
+### Fixed
+
+- runtime 现在会把入站 DingTalk 的最新 `session_webhook` / `bot_title` 持久化到 active session，供 cron/后台流程后续复用当前会话回复出口
+
 ### Changed
 
 - runtime 现在总是启动一个空的 `McpManager`，不再依赖 `mcp.enabled` 或启动时已有 server，允许 GUI 在零配置启动后直接热加载新增 MCP server

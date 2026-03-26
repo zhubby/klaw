@@ -92,6 +92,8 @@ where
             .resolve_active_session_key(&payload)
             .await?
             .unwrap_or_else(|| original_session_key.clone());
+        self.refresh_session_delivery_metadata(&mut payload, &resolved_session_key)
+            .await?;
         payload.metadata.insert(
             "cron_id".to_string(),
             serde_json::Value::String(job.id.clone()),
@@ -116,6 +118,25 @@ where
             .publish(MessageTopic::Inbound.as_str(), envelope)
             .await?;
         Ok(message_id)
+    }
+
+    async fn refresh_session_delivery_metadata(
+        &self,
+        payload: &mut InboundMessage,
+        session_key: &str,
+    ) -> Result<(), CronError> {
+        let Ok(session) = self.storage.get_session(session_key).await else {
+            return Ok(());
+        };
+        let Some(raw) = session.delivery_metadata_json.as_deref() else {
+            return Ok(());
+        };
+        let Ok(metadata) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(raw)
+        else {
+            return Ok(());
+        };
+        payload.metadata.extend(metadata.into_iter());
+        Ok(())
     }
 
     async fn execute_job_run(
@@ -472,6 +493,7 @@ mod tests {
                 active_session_key: Some(session_key.to_string()),
                 model_provider: None,
                 model: None,
+                delivery_metadata_json: None,
                 created_at_ms: now_ms(),
                 updated_at_ms: now_ms(),
                 last_message_at_ms: now_ms(),
@@ -562,6 +584,18 @@ mod tests {
         ) -> Result<SessionIndex, StorageError> {
             let mut session = self.touch_session(session_key, chat_id, channel).await?;
             session.model = Some(model.to_string());
+            Ok(self.upsert_session(session))
+        }
+
+        async fn set_delivery_metadata(
+            &self,
+            session_key: &str,
+            chat_id: &str,
+            channel: &str,
+            delivery_metadata_json: Option<&str>,
+        ) -> Result<SessionIndex, StorageError> {
+            let mut session = self.touch_session(session_key, chat_id, channel).await?;
+            session.delivery_metadata_json = delivery_metadata_json.map(ToString::to_string);
             Ok(self.upsert_session(session))
         }
 
@@ -1009,12 +1043,23 @@ mod tests {
             )
             .await
             .expect("session route should exist");
+        storage
+            .set_delivery_metadata(
+                "dingtalk:acc:chat1:child",
+                "chat1",
+                "dingtalk",
+                Some(
+                    "{\"channel.dingtalk.session_webhook\":\"https://example/new-session\",\"channel.dingtalk.bot_title\":\"Klaw\"}",
+                ),
+            )
+            .await
+            .expect("delivery metadata should be stored");
         insert_due_job(
             &storage,
             "job-dingtalk",
             "dingtalk",
             "cron:job-dingtalk",
-            "{\"cron.base_session_key\":\"dingtalk:acc:chat1\"}",
+            "{\"cron.base_session_key\":\"dingtalk:acc:chat1\",\"channel.dingtalk.session_webhook\":\"https://example/stale-session\"}",
         )
         .await;
 
@@ -1040,6 +1085,14 @@ mod tests {
                 .get("cron.resolved_session_key")
                 .and_then(|value| value.as_str()),
             Some("dingtalk:acc:chat1:child")
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .metadata
+                .get("channel.dingtalk.session_webhook")
+                .and_then(|value| value.as_str()),
+            Some("https://example/new-session")
         );
     }
 

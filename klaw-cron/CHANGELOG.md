@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-26
+
+### Fixed
+
+- `CronWorker` 现在会在跟随 active session 路由后刷新持久化的会话回复元数据，避免 DingTalk cron 继续使用创建任务时保存的旧 `session_webhook`
+
 ## 2026-03-21
 
 ### Changed

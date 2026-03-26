@@ -88,6 +88,14 @@ pub trait SessionManager: Send + Sync {
         model: &str,
     ) -> Result<SessionIndex, SessionError>;
 
+    async fn set_delivery_metadata(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        delivery_metadata_json: Option<&str>,
+    ) -> Result<SessionIndex, SessionError>;
+
     async fn clear_model_routing_override(
         &self,
         session_key: &str,
@@ -295,6 +303,19 @@ impl SessionManager for SqliteSessionManager {
         Ok(self
             .store
             .set_model(session_key, chat_id, channel, model)
+            .await?)
+    }
+
+    async fn set_delivery_metadata(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        delivery_metadata_json: Option<&str>,
+    ) -> Result<SessionIndex, SessionError> {
+        Ok(self
+            .store
+            .set_delivery_metadata(session_key, chat_id, channel, delivery_metadata_json)
             .await?)
     }
 

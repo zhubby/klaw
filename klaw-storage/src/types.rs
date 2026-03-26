@@ -35,6 +35,8 @@ pub struct SessionIndex {
     pub model_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_metadata_json: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub last_message_at_ms: i64,

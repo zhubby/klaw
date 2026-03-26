@@ -250,6 +250,42 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn session_route_state_persists_delivery_metadata() {
+        let store = create_store().await;
+        store
+            .touch_session("dingtalk:acc:chat-meta", "chat-meta", "dingtalk")
+            .await
+            .expect("session should exist");
+
+        let updated = store
+            .set_delivery_metadata(
+                "dingtalk:acc:chat-meta",
+                "chat-meta",
+                "dingtalk",
+                Some(
+                    "{\"channel.dingtalk.session_webhook\":\"https://example/latest\",\"channel.dingtalk.bot_title\":\"Klaw\"}",
+                ),
+            )
+            .await
+            .expect("delivery metadata should persist");
+        assert_eq!(
+            updated.delivery_metadata_json.as_deref(),
+            Some(
+                "{\"channel.dingtalk.session_webhook\":\"https://example/latest\",\"channel.dingtalk.bot_title\":\"Klaw\"}",
+            )
+        );
+
+        let reloaded = store
+            .get_session("dingtalk:acc:chat-meta")
+            .await
+            .expect("session should reload");
+        assert_eq!(
+            reloaded.delivery_metadata_json,
+            updated.delivery_metadata_json
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn llm_usage_is_aggregated_by_session_and_turn() {
         let store = create_store().await;
         store

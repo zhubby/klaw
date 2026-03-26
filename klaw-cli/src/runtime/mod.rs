@@ -848,6 +848,46 @@ fn session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {
     SqliteSessionManager::from_store(runtime.session_store.clone())
 }
 
+fn persistable_session_delivery_metadata_json(
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> Option<String> {
+    let delivery_metadata = metadata
+        .iter()
+        .filter_map(|(key, value)| match key.as_str() {
+            "channel.dingtalk.session_webhook" | "channel.dingtalk.bot_title" => {
+                Some((key.clone(), value.clone()))
+            }
+            _ => None,
+        })
+        .collect::<serde_json::Map<String, serde_json::Value>>();
+    if delivery_metadata.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&delivery_metadata).ok()
+}
+
+async fn persist_session_delivery_metadata(
+    sessions: &SqliteSessionManager,
+    session_key: &str,
+    chat_id: &str,
+    channel: &str,
+    request_metadata: &BTreeMap<String, serde_json::Value>,
+) -> Result<(), Box<dyn Error>> {
+    let delivery_metadata_json = persistable_session_delivery_metadata_json(request_metadata);
+    if delivery_metadata_json.is_none() {
+        return Ok(());
+    }
+    sessions
+        .set_delivery_metadata(
+            session_key,
+            chat_id,
+            channel,
+            delivery_metadata_json.as_deref(),
+        )
+        .await?;
+    Ok(())
+}
+
 async fn handle_im_command(
     runtime: &RuntimeBundle,
     channel: String,
@@ -1955,6 +1995,14 @@ pub async fn submit_and_get_output(
     let session_state = sessions
         .touch_session(&session_key, &chat_id, &channel)
         .await?;
+    persist_session_delivery_metadata(
+        &sessions,
+        &session_key,
+        &chat_id,
+        &channel,
+        &request_metadata,
+    )
+    .await?;
 
     let inbound_payload = InboundMessage {
         channel: channel.to_string(),
@@ -2180,6 +2228,14 @@ pub async fn submit_and_stream_output(
     let session_state = sessions
         .touch_session(&session_key, &chat_id, &channel)
         .await?;
+    persist_session_delivery_metadata(
+        &sessions,
+        &session_key,
+        &chat_id,
+        &channel,
+        &request_metadata,
+    )
+    .await?;
 
     let inbound_payload = InboundMessage {
         channel: channel.to_string(),
@@ -2526,7 +2582,7 @@ mod tests {
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, resolve_new_session_target_from_config, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        spawn_llm_audit_writer, spawn_mcp_init, trim_conversation_history,
+        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
@@ -3167,6 +3223,76 @@ A .docx file is a ZIP archive containing XML files.
                 .unwrap_or_else(|err| err.into_inner())
                 .clone(),
             None
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_and_get_output_persists_dingtalk_delivery_metadata_on_active_session() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+        sessions
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1:child",
+                "chat-1",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("child session should exist");
+        sessions
+            .set_active_session(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "dingtalk:acc:chat-1:child",
+            )
+            .await
+            .expect("active session should switch");
+
+        let output = submit_and_get_output(
+            &runtime,
+            "dingtalk".to_string(),
+            "hello".to_string(),
+            "dingtalk:acc:chat-1:child".to_string(),
+            "chat-1".to_string(),
+            "local-user".to_string(),
+            "test-provider".to_string(),
+            "test-model".to_string(),
+            Vec::new(),
+            BTreeMap::from([
+                (
+                    "channel.dingtalk.session_webhook".to_string(),
+                    json!("https://example/session-latest"),
+                ),
+                ("channel.dingtalk.bot_title".to_string(), json!("Klaw")),
+                ("channel.delivery_mode".to_string(), json!("direct_reply")),
+            ]),
+        )
+        .await
+        .expect("submit should succeed");
+        assert!(output.is_some());
+
+        let updated = sessions
+            .get_session("dingtalk:acc:chat-1:child")
+            .await
+            .expect("active session should reload");
+        assert_eq!(
+            updated.delivery_metadata_json.as_deref(),
+            Some(
+                "{\"channel.dingtalk.bot_title\":\"Klaw\",\"channel.dingtalk.session_webhook\":\"https://example/session-latest\"}",
+            )
         );
     }
 

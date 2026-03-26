@@ -44,6 +44,7 @@ struct SessionIndexRow {
     active_session_key: Option<String>,
     model_provider: Option<String>,
     model: Option<String>,
+    delivery_metadata_json: Option<String>,
     created_at_ms: i64,
     updated_at_ms: i64,
     last_message_at_ms: i64,
@@ -231,6 +232,7 @@ impl From<SessionIndexRow> for SessionIndex {
             active_session_key: value.active_session_key,
             model_provider: value.model_provider,
             model: value.model,
+            delivery_metadata_json: value.delivery_metadata_json,
             created_at_ms: value.created_at_ms,
             updated_at_ms: value.updated_at_ms,
             last_message_at_ms: value.last_message_at_ms,
@@ -512,6 +514,7 @@ impl SqlxSessionStore {
                 active_session_key TEXT,
                 model_provider TEXT,
                 model TEXT,
+                delivery_metadata_json TEXT,
                 compression_last_len INTEGER NOT NULL DEFAULT 0,
                 compression_summary_json TEXT,
                 created_at_ms INTEGER NOT NULL,
@@ -536,6 +539,11 @@ impl SqlxSessionStore {
         .await?;
         self.ensure_session_column("model", "ALTER TABLE sessions ADD COLUMN model TEXT")
             .await?;
+        self.ensure_session_column(
+            "delivery_metadata_json",
+            "ALTER TABLE sessions ADD COLUMN delivery_metadata_json TEXT",
+        )
+        .await?;
         self.ensure_session_column(
             "compression_last_len",
             "ALTER TABLE sessions ADD COLUMN compression_last_len INTEGER NOT NULL DEFAULT 0",
@@ -1131,8 +1139,8 @@ impl SessionStorage for SqlxSessionStore {
         let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
         sqlx::query(
             "INSERT INTO sessions (
-                session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-            ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4, ?5, ?6, 0, ?7)
+                session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, ?4, ?5, ?6, 0, ?7)
             ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
@@ -1186,8 +1194,8 @@ impl SessionStorage for SqlxSessionStore {
         if updated.rows_affected() == 0 {
             sqlx::query(
                 "INSERT INTO sessions (
-                    session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-                ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4, ?5, ?6, 1, ?7)",
+                    session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+                ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, ?4, ?5, ?6, 1, ?7)",
             )
             .bind(session_key)
             .bind(chat_id)
@@ -1218,7 +1226,7 @@ impl SessionStorage for SqlxSessionStore {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let row = sqlx::query_as::<_, SessionIndexRow>(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              WHERE session_key = ?1",
         )
@@ -1242,8 +1250,8 @@ impl SessionStorage for SqlxSessionStore {
         let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
         sqlx::query(
             "INSERT INTO sessions (
-                session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-            ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?6, ?7, 0, ?8)
+                session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, ?5, ?6, ?7, 0, ?8)
             ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
@@ -1364,6 +1372,38 @@ impl SessionStorage for SqlxSessionStore {
         self.get_session(session_key).await
     }
 
+    async fn set_delivery_metadata(
+        &self,
+        session_key: &str,
+        chat_id: &str,
+        channel: &str,
+        delivery_metadata_json: Option<&str>,
+    ) -> Result<SessionIndex, StorageError> {
+        let now = now_ms();
+        let updated = sqlx::query(
+            "UPDATE sessions
+             SET chat_id = ?1,
+                 channel = ?2,
+                 updated_at_ms = ?3,
+                 delivery_metadata_json = ?4
+             WHERE session_key = ?5",
+        )
+        .bind(chat_id)
+        .bind(channel)
+        .bind(now)
+        .bind(delivery_metadata_json)
+        .bind(session_key)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting delivery_metadata"
+            )));
+        }
+        self.get_session(session_key).await
+    }
+
     async fn clear_model_routing_override(
         &self,
         session_key: &str,
@@ -1451,7 +1491,7 @@ impl SessionStorage for SqlxSessionStore {
         updated_to_ms: Option<i64>,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let mut query = String::from(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions WHERE 1=1",
         );
         if updated_from_ms.is_some() {
