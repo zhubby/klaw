@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-26
+
+### Fixed
+
+- Archive 面板调用系统 `qlmanage` 生成 Quick Look 预览时现在也会复用共享增强后的 PATH，避免 GUI 启动环境遗漏标准外部命令搜索目录
+
 ## 2026-03-25
 
 ### Added

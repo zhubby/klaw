@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-26
+
+### Added
+- added shared command-PATH augmentation helpers so macOS GUI launches can reuse one standard binary search path policy across crates
+
 ## 2026-03-25
 
 ### Added

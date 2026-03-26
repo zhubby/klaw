@@ -113,7 +113,7 @@ pub fn check_environment() -> EnvironmentCheckReport {
 }
 
 fn check_dependency(dep: &BinaryDependency) -> DependencyStatus {
-    let output = Command::new(dep.name).args(dep.version_args).output();
+    let output = dependency_command(dep.name).args(dep.version_args).output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -167,6 +167,14 @@ fn check_dependency(dep: &BinaryDependency) -> DependencyStatus {
             }
         }
     }
+}
+
+fn dependency_command(binary: &str) -> Command {
+    let mut command = Command::new(binary);
+    if let Some(path) = klaw_util::command_search_path() {
+        command.env("PATH", path);
+    }
+    command
 }
 
 fn log_dependency_status(status: &DependencyStatus) {

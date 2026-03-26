@@ -1,4 +1,5 @@
 use klaw_config::TailscaleMode;
+use klaw_util::command_search_path;
 use std::process::Command;
 use thiserror::Error;
 use tracing::{info, warn};
@@ -66,7 +67,7 @@ impl TailscaleManager {
     }
 
     pub fn check_prerequisites() -> Result<(), TailscaleError> {
-        let output = Command::new("tailscale")
+        let output = tailscale_command()
             .arg("version")
             .output()
             .map_err(|_| TailscaleError::CliNotFound)?;
@@ -75,7 +76,7 @@ impl TailscaleManager {
             return Err(TailscaleError::CliNotFound);
         }
 
-        let status_output = Command::new("tailscale")
+        let status_output = tailscale_command()
             .args(["status", "--json"])
             .output()
             .map_err(|e| TailscaleError::StatusFailed(e.to_string()))?;
@@ -96,7 +97,7 @@ impl TailscaleManager {
 
     #[must_use]
     pub fn inspect_host() -> TailscaleHostInfo {
-        let version_output = match Command::new("tailscale").arg("version").output() {
+        let version_output = match tailscale_command().arg("version").output() {
             Ok(output) if output.status.success() => output,
             Ok(_) | Err(_) => {
                 return TailscaleHostInfo {
@@ -116,10 +117,7 @@ impl TailscaleManager {
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
 
-        let status_output = match Command::new("tailscale")
-            .args(["status", "--json"])
-            .output()
-        {
+        let status_output = match tailscale_command().args(["status", "--json"]).output() {
             Ok(output) => output,
             Err(err) => {
                 return TailscaleHostInfo {
@@ -236,7 +234,7 @@ impl TailscaleManager {
     }
 
     fn run_funnel(&self, backend: &str) -> Result<(), TailscaleError> {
-        let output = Command::new("tailscale")
+        let output = tailscale_command()
             .args(["funnel", "--bg", backend])
             .output()
             .map_err(|e| TailscaleError::SetupFailed(e.to_string()))?;
@@ -253,7 +251,7 @@ impl TailscaleManager {
     }
 
     fn run_serve(&self, backend: &str) -> Result<(), TailscaleError> {
-        let output = Command::new("tailscale")
+        let output = tailscale_command()
             .args(["serve", "--bg", backend])
             .output()
             .map_err(|e| TailscaleError::SetupFailed(e.to_string()))?;
@@ -271,7 +269,7 @@ impl TailscaleManager {
             TailscaleMode::Serve => "serve",
             TailscaleMode::Off => return Ok(()),
         };
-        let output = Command::new("tailscale")
+        let output = tailscale_command()
             .args([subcommand, "status", "--json"])
             .output()
             .map_err(|e| TailscaleError::StatusFailed(e.to_string()))?;
@@ -304,7 +302,7 @@ impl TailscaleManager {
     }
 
     fn get_public_url(&self) -> Result<String, TailscaleError> {
-        let output = Command::new("tailscale")
+        let output = tailscale_command()
             .args(["status", "--json"])
             .output()
             .map_err(|e| TailscaleError::StatusFailed(e.to_string()))?;
@@ -340,7 +338,7 @@ impl TailscaleManager {
     }
 
     fn reset_funnel(&self) -> Result<(), TailscaleError> {
-        let output = Command::new("tailscale")
+        let output = tailscale_command()
             .args(["funnel", "reset"])
             .output()
             .map_err(|e| TailscaleError::ResetFailed(e.to_string()))?;
@@ -353,7 +351,7 @@ impl TailscaleManager {
     }
 
     fn reset_serve(&self) -> Result<(), TailscaleError> {
-        let output = Command::new("tailscale")
+        let output = tailscale_command()
             .args(["serve", "reset"])
             .output()
             .map_err(|e| TailscaleError::ResetFailed(e.to_string()))?;
@@ -370,6 +368,14 @@ impl Drop for TailscaleManager {
     fn drop(&mut self) {
         self.teardown();
     }
+}
+
+fn tailscale_command() -> Command {
+    let mut command = Command::new("tailscale");
+    if let Some(path) = command_search_path() {
+        command.env("PATH", path);
+    }
+    command
 }
 
 fn command_error_output(output: &std::process::Output) -> String {

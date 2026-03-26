@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-26
+
+### Fixed
+- filesystem skill-store git subprocesses now reuse the shared augmented PATH so registry sync still finds git when launched from macOS GUI environments
+
 ## 2026-03-24
 
 ### Added

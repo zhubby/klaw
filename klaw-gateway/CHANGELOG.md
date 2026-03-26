@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-26
+
+### Fixed
+
+- Tailscale runtime checks and serve/funnel CLI invocations now reuse the shared augmented PATH so GUI/macOS launches can still discover a Homebrew-installed `tailscale` binary
+
 ## 2026-03-25
 
 ### Added

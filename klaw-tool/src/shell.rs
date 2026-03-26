@@ -2,7 +2,7 @@ use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolSignal};
 use async_trait::async_trait;
 use klaw_approval::{ApprovalCreateInput, ApprovalManager, SqliteApprovalManager};
 use klaw_config::AppConfig;
-use klaw_util::{default_data_dir, workspace_dir};
+use klaw_util::{command_search_path, default_data_dir, workspace_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -481,6 +481,9 @@ impl Tool for ShellTool {
         command.stderr(Stdio::piped());
         command.kill_on_drop(true);
         command.env("KLAW_SESSION_KEY", &ctx.session_key);
+        if let Some(path) = command_search_path() {
+            command.env("PATH", path);
+        }
 
         let output = timeout(Duration::from_millis(timeout_ms), command.output())
             .await

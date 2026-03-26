@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-26
+
+### Fixed
+
+- stdio MCP server launches now inherit the shared augmented PATH so GUI/macOS sessions can resolve configured server commands from Homebrew/MacPorts install locations
+
 ## 2026-03-25
 
 ### Added
