@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Issue to PR Workflow"
+  short_description: "End-to-end GitHub issue and PR workflow"
+  default_prompt: "Use $github-issue-to-pr-workflow to turn this bug or feature request into a tracked GitHub issue, implementation branch, and pull request."

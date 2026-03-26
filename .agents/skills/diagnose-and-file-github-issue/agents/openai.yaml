@@ -1,0 +1,4 @@
+interface:
+  display_name: "Diagnose and File GitHub Issue"
+  short_description: "Diagnose system issues and file a GitHub issue"
+  default_prompt: "Use $diagnose-and-file-github-issue to investigate this system problem through a short diagnostic dialogue and create a GitHub issue with the findings."
