@@ -19,9 +19,9 @@ use klaw_core::{
     AgentLoop, AgentRuntimeError, AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage,
     DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
     InMemoryCircuitBreaker, InMemoryIdempotencyStore, InMemoryTransport, InboundMessage,
-    MediaReference, OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
-    SkillPromptEntry, Subscription, TransportError, build_runtime_system_prompt,
-    ensure_workspace_prompt_templates,
+    MediaReference, OutboundMessage, ProviderRuntimeSnapshot, QueueStrategy, RunLimits,
+    SessionSchedulingPolicy, SkillPromptEntry, Subscription, TransportError,
+    build_runtime_system_prompt, ensure_workspace_prompt_templates,
 };
 use klaw_gateway::{GatewayWebhookAgentRequest, GatewayWebhookRequest};
 use klaw_heartbeat::should_suppress_output;
@@ -71,8 +71,6 @@ pub struct StartupReport {
 
 pub struct RuntimeBundle {
     pub runtime: AgentLoop,
-    pub default_provider_id: String,
-    pub provider_default_models: BTreeMap<String, String>,
     pub runtime_provider_override: Arc<RwLock<Option<String>>>,
     pub disable_session_commands_for: BTreeSet<String>,
     pub inbound_transport: InMemoryTransport<InboundMessage>,
@@ -578,7 +576,7 @@ async fn resolve_session_route(
         if model_provider == default_provider_id {
             default_model.clone()
         } else {
-            default_model_for_provider(runtime, &model_provider).to_string()
+            default_model_for_provider(runtime, &model_provider)
         }
     });
     Ok(SessionRoute {
@@ -635,23 +633,25 @@ fn format_new_session_started_message(
     }
 }
 
+fn provider_runtime_snapshot(runtime: &RuntimeBundle) -> ProviderRuntimeSnapshot {
+    runtime.runtime.provider_runtime_snapshot()
+}
+
 fn runtime_default_route(runtime: &RuntimeBundle) -> (String, String) {
+    let snapshot = provider_runtime_snapshot(runtime);
     if let Some(provider_id) = runtime_provider_override(runtime) {
-        return (
-            provider_id.clone(),
-            default_model_for_provider(runtime, &provider_id).to_string(),
-        );
+        let model = snapshot
+            .provider_default_models
+            .get(&provider_id)
+            .cloned()
+            .unwrap_or_else(|| snapshot.default_model.clone());
+        return (provider_id, model);
     }
 
-    ConfigStore::open(None)
-        .and_then(|store| store.reload())
-        .map(|snapshot| resolve_new_session_target_from_config(&snapshot.config))
-        .unwrap_or_else(|_| {
-            (
-                runtime.default_provider_id.clone(),
-                default_model_for_provider(runtime, &runtime.default_provider_id).to_string(),
-            )
-        })
+    (
+        snapshot.default_provider_id.clone(),
+        snapshot.default_model.clone(),
+    )
 }
 
 fn runtime_provider_override(runtime: &RuntimeBundle) -> Option<String> {
@@ -671,6 +671,7 @@ async fn normalize_session_route_state(
     global_model: &str,
 ) -> Result<SessionIndex, Box<dyn Error>> {
     let sessions = session_manager(runtime);
+    let provider_runtime = provider_runtime_snapshot(runtime);
     let self_routed = session
         .active_session_key
         .as_deref()
@@ -703,6 +704,16 @@ async fn normalize_session_route_state(
         return Ok(session);
     }
 
+    if session.model_provider.as_deref().is_some_and(|provider| {
+        !provider_runtime
+            .provider_default_models
+            .contains_key(provider)
+    }) {
+        return Ok(sessions
+            .clear_model_routing_override(&session.session_key, chat_id, channel)
+            .await?);
+    }
+
     if session.model_provider.as_deref() == Some(global_provider) {
         let resolved_model = session.model.as_deref().unwrap_or(global_model);
         if resolved_model == global_model {
@@ -725,9 +736,10 @@ pub fn set_runtime_provider_override(
     runtime: &RuntimeBundle,
     provider_id: Option<&str>,
 ) -> Result<(String, String), Box<dyn Error>> {
+    let snapshot = provider_runtime_snapshot(runtime);
     let (next, active_provider) = normalize_runtime_provider_override(
-        &runtime.provider_default_models,
-        &runtime.default_provider_id,
+        &snapshot.provider_default_models,
+        &snapshot.default_provider_id,
         provider_id,
     )?;
 
@@ -738,7 +750,7 @@ pub fn set_runtime_provider_override(
     *guard = next;
     drop(guard);
 
-    let active_model = default_model_for_provider(runtime, &active_provider).to_string();
+    let active_model = default_model_for_provider(runtime, &active_provider);
     Ok((active_provider, active_model))
 }
 
@@ -774,15 +786,110 @@ fn spawn_mcp_init(tools: &ToolRegistry, config: &McpConfig) -> Mutex<McpInitHand
     Mutex::new(McpManager::spawn_init(tools.clone(), snapshot))
 }
 
-fn default_model_for_provider<'a>(runtime: &'a RuntimeBundle, provider_id: &str) -> &'a str {
-    runtime
+fn default_model_for_provider(runtime: &RuntimeBundle, provider_id: &str) -> String {
+    let snapshot = provider_runtime_snapshot(runtime);
+    snapshot
         .provider_default_models
         .get(provider_id)
-        .map(String::as_str)
-        .unwrap_or(runtime.runtime.active_model.as_str())
+        .cloned()
+        .unwrap_or(snapshot.default_model)
+}
+
+fn build_provider_runtime_snapshot(
+    config: &AppConfig,
+) -> Result<ProviderRuntimeSnapshot, Box<dyn Error>> {
+    let mut provider_registry = BTreeMap::new();
+    let mut provider_default_models = BTreeMap::new();
+    for provider_id in config.model_providers.keys() {
+        let default_model = configured_default_model(config, provider_id);
+        match build_provider_from_config(config, provider_id) {
+            Ok(instance) => {
+                provider_default_models.insert(provider_id.clone(), instance.default_model.clone());
+                provider_registry.insert(provider_id.clone(), instance.provider);
+            }
+            Err(err) => {
+                warn!(
+                    provider_id = provider_id.as_str(),
+                    error = %err,
+                    "provider is configured but unavailable at startup; using unavailable placeholder"
+                );
+                provider_default_models.insert(provider_id.clone(), default_model.clone());
+                provider_registry.insert(
+                    provider_id.clone(),
+                    Arc::new(build_unavailable_provider(
+                        config,
+                        provider_id,
+                        default_model,
+                        err.to_string(),
+                    )),
+                );
+            }
+        }
+    }
+
+    let default_provider = provider_registry
+        .get(&config.model_provider)
+        .cloned()
+        .ok_or_else(|| {
+            config_err(format!(
+                "default provider '{}' is missing",
+                config.model_provider
+            ))
+        })?;
+    let default_model = provider_default_models
+        .get(&config.model_provider)
+        .cloned()
+        .ok_or_else(|| {
+            config_err(format!(
+                "default model for provider '{}' is missing",
+                config.model_provider
+            ))
+        })?;
+
+    Ok(ProviderRuntimeSnapshot {
+        default_provider,
+        provider_registry,
+        default_provider_id: config.model_provider.clone(),
+        default_model,
+        provider_default_models,
+    })
+}
+
+pub fn sync_runtime_providers(
+    runtime: &RuntimeBundle,
+    config: &AppConfig,
+) -> Result<(String, String), Box<dyn Error>> {
+    let provider_runtime = build_provider_runtime_snapshot(config)?;
+    runtime
+        .runtime
+        .set_provider_runtime_snapshot(provider_runtime.clone());
+
+    let next_override = runtime_provider_override(runtime).and_then(|provider_id| {
+        provider_runtime
+            .provider_default_models
+            .contains_key(&provider_id)
+            .then_some(provider_id)
+    });
+    let active_provider = next_override
+        .clone()
+        .unwrap_or_else(|| provider_runtime.default_provider_id.clone());
+    let mut guard = runtime
+        .runtime_provider_override
+        .write()
+        .unwrap_or_else(|err| err.into_inner());
+    *guard = next_override;
+    drop(guard);
+
+    let active_model = provider_runtime
+        .provider_default_models
+        .get(&active_provider)
+        .cloned()
+        .unwrap_or_else(|| provider_runtime.default_model.clone());
+    Ok((active_provider, active_model))
 }
 
 fn render_help_text(runtime: &RuntimeBundle) -> String {
+    let provider_runtime = provider_runtime_snapshot(runtime);
     let mut lines = vec![
         "📘 **Command Center**".to_string(),
         String::new(),
@@ -794,7 +901,7 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
         "{:<24}{}",
         "/stop", "Stop the current turn without calling the agent"
     ));
-    if runtime.provider_default_models.len() > 1 {
+    if provider_runtime.provider_default_models.len() > 1 {
         lines.push(format!(
             "{:<24}{}",
             "/model_provider", "List available providers"
@@ -818,8 +925,8 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
         "/reject <approval_id>", "Reject a pending tool action"
     ));
     lines.push("```".to_string());
-    if runtime.provider_default_models.len() > 1 {
-        let providers = runtime
+    if provider_runtime.provider_default_models.len() > 1 {
+        let providers = provider_runtime
             .provider_default_models
             .keys()
             .cloned()
@@ -995,7 +1102,8 @@ async fn handle_im_command(
             }
         }
         "model_provider" => {
-            if runtime.provider_default_models.len() <= 1 && arg.is_none() {
+            let provider_runtime = provider_runtime_snapshot(runtime);
+            if provider_runtime.provider_default_models.len() <= 1 && arg.is_none() {
                 return Ok(Some(ChannelResponse {
                     content: "ℹ️ Only one provider is configured, so switching is not required."
                         .to_string(),
@@ -1004,8 +1112,9 @@ async fn handle_im_command(
                 }));
             }
             if let Some(provider_id) = first_arg_token(arg) {
-                let Some(default_model) = runtime.provider_default_models.get(provider_id) else {
-                    let all = runtime
+                let Some(default_model) = provider_runtime.provider_default_models.get(provider_id)
+                else {
+                    let all = provider_runtime
                         .provider_default_models
                         .keys()
                         .cloned()
@@ -1044,7 +1153,7 @@ async fn handle_im_command(
                     metadata: BTreeMap::new(),
                 }
             } else {
-                let lines = runtime
+                let lines = provider_runtime
                     .provider_default_models
                     .iter()
                     .map(|(id, model)| {
@@ -1064,7 +1173,7 @@ async fn handle_im_command(
             }
         }
         "model" => {
-            if let Some(model) = first_arg_token(arg) {
+            if let Some(model) = arg.map(str::trim).filter(|value| !value.is_empty()) {
                 if model.trim().is_empty() {
                     return Ok(Some(ChannelResponse {
                         content: "❌ Model name cannot be empty.".to_string(),
@@ -1319,52 +1428,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         provider = %config.model_provider,
         "building runtime bundle"
     );
-    let mut provider_registry = BTreeMap::new();
-    let mut provider_default_models = BTreeMap::new();
-    for provider_id in config.model_providers.keys() {
-        let default_model = configured_default_model(config, provider_id);
-        match build_provider_from_config(config, provider_id) {
-            Ok(instance) => {
-                provider_default_models.insert(provider_id.clone(), instance.default_model.clone());
-                provider_registry.insert(provider_id.clone(), instance.provider);
-            }
-            Err(err) => {
-                warn!(
-                    provider_id = provider_id.as_str(),
-                    error = %err,
-                    "provider is configured but unavailable at startup; using unavailable placeholder"
-                );
-                provider_default_models.insert(provider_id.clone(), default_model.clone());
-                provider_registry.insert(
-                    provider_id.clone(),
-                    Arc::new(build_unavailable_provider(
-                        config,
-                        provider_id,
-                        default_model,
-                        err.to_string(),
-                    )),
-                );
-            }
-        }
-    }
-    let default_provider = provider_registry
-        .get(&config.model_provider)
-        .cloned()
-        .ok_or_else(|| {
-            config_err(format!(
-                "default provider '{}' is missing",
-                config.model_provider
-            ))
-        })?;
-    let default_model = provider_default_models
-        .get(&config.model_provider)
-        .cloned()
-        .ok_or_else(|| {
-            config_err(format!(
-                "default model for provider '{}' is missing",
-                config.model_provider
-            ))
-        })?;
+    let provider_runtime = build_provider_runtime_snapshot(config)?;
+    let default_provider = Arc::clone(&provider_runtime.default_provider);
+    let default_model = provider_runtime.default_model.clone();
     let session_store = open_default_store().await?;
     let mut tools = ToolRegistry::default();
     if config.tools.archive.enabled() {
@@ -1480,12 +1546,14 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
             lock_ttl: Duration::from_secs(15),
         },
         default_provider,
-        config.model_provider.clone(),
+        provider_runtime.default_provider_id.clone(),
         default_model,
         tools,
     )
-    .with_provider_registry(provider_registry)
+    .with_provider_registry(provider_runtime.provider_registry.clone())
     .with_system_prompt(system_prompt);
+
+    runtime.set_provider_runtime_snapshot(provider_runtime);
 
     if let Some(ref tel) = telemetry {
         runtime = runtime.with_telemetry(Arc::clone(tel));
@@ -1500,8 +1568,6 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     );
 
     Ok(RuntimeBundle {
-        default_provider_id: config.model_provider.clone(),
-        provider_default_models,
         runtime_provider_override: Arc::new(RwLock::new(None)),
         disable_session_commands_for: config
             .channels
@@ -1951,10 +2017,11 @@ async fn maybe_refresh_summary(
 
     let provider = runtime
         .runtime
+        .provider_runtime_snapshot()
         .provider_registry
         .get(model_provider)
         .cloned()
-        .unwrap_or_else(|| Arc::clone(&runtime.runtime.provider));
+        .unwrap_or_else(|| provider_runtime_snapshot(runtime).default_provider);
     let model_output =
         run_structured_compression(provider, model, latest_summary.as_ref(), &new_messages).await;
     let next_summary = model_output
@@ -2188,8 +2255,12 @@ fn resolve_webhook_agent_model(
     let provider = requested_provider
         .clone()
         .unwrap_or_else(|| route_provider.to_string());
-    if !runtime.provider_default_models.contains_key(&provider) {
-        let all = runtime
+    let provider_runtime = provider_runtime_snapshot(runtime);
+    if !provider_runtime
+        .provider_default_models
+        .contains_key(&provider)
+    {
+        let all = provider_runtime
             .provider_default_models
             .keys()
             .cloned()
@@ -2201,7 +2272,7 @@ fn resolve_webhook_agent_model(
     }
     let model = requested_model.unwrap_or_else(|| {
         if requested_provider.is_some() {
-            default_model_for_provider(runtime, &provider).to_string()
+            default_model_for_provider(runtime, &provider)
         } else {
             route_model.to_string()
         }
@@ -2599,7 +2670,8 @@ mod tests {
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, resolve_new_session_target_from_config, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, trim_conversation_history,
+        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, sync_runtime_providers,
+        trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
@@ -2701,11 +2773,6 @@ mod tests {
         .with_provider_registry(BTreeMap::from([("test-provider".to_string(), provider)]));
         RuntimeBundle {
             runtime,
-            default_provider_id: "test-provider".to_string(),
-            provider_default_models: BTreeMap::from([(
-                "test-provider".to_string(),
-                "test-model".to_string(),
-            )]),
             runtime_provider_override: Arc::new(RwLock::new(None)),
             disable_session_commands_for: BTreeSet::new(),
             inbound_transport: InMemoryTransport::new(),
@@ -2743,6 +2810,15 @@ mod tests {
                 checks: Vec::new(),
                 checked_at: OffsetDateTime::UNIX_EPOCH,
             },
+        }
+    }
+
+    fn test_provider_config(default_model: &str) -> ModelProviderConfig {
+        ModelProviderConfig {
+            default_model: default_model.to_string(),
+            api_key: Some("test-key".to_string()),
+            env_key: None,
+            ..ModelProviderConfig::default()
         }
     }
 
@@ -2998,6 +3074,115 @@ A .docx file is a ZIP archive containing XML files.
         let err = normalize_runtime_provider_override(&providers, "openai", Some("missing"))
             .expect_err("unknown provider should fail");
         assert!(err.to_string().contains("unknown runtime provider"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_runtime_providers_refreshes_live_snapshot_and_clears_invalid_override() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+        *runtime
+            .runtime_provider_override
+            .write()
+            .unwrap_or_else(|err| err.into_inner()) = Some("missing-provider".to_string());
+
+        let mut config = AppConfig::default();
+        config.model_provider = "fresh".to_string();
+        config.model = None;
+        config.model_providers = BTreeMap::from([
+            ("backup".to_string(), test_provider_config("backup-model")),
+            ("fresh".to_string(), test_provider_config("fresh-model")),
+        ]);
+
+        let (active_provider, active_model) =
+            sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
+        let provider_runtime = runtime.runtime.provider_runtime_snapshot();
+
+        assert_eq!(active_provider, "fresh");
+        assert_eq!(active_model, "fresh-model");
+        assert_eq!(provider_runtime.default_provider_id, "fresh");
+        assert_eq!(provider_runtime.default_model, "fresh-model");
+        assert_eq!(
+            provider_runtime.provider_default_models.get("backup"),
+            Some(&"backup-model".to_string())
+        );
+        assert_eq!(
+            runtime
+                .runtime_provider_override
+                .read()
+                .unwrap_or_else(|err| err.into_inner())
+                .clone(),
+            None
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn model_provider_command_lists_live_runtime_providers_after_sync() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+
+        let mut config = AppConfig::default();
+        config.model_provider = "fresh".to_string();
+        config.model_providers = BTreeMap::from([
+            ("backup".to_string(), test_provider_config("backup-model")),
+            ("fresh".to_string(), test_provider_config("fresh-model")),
+        ]);
+        sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
+
+        let response = handle_im_command(
+            &runtime,
+            "stdio".to_string(),
+            "stdio:test".to_string(),
+            "chat-1".to_string(),
+            "/model_provider".to_string(),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("command should succeed")
+        .expect("command should produce a response");
+
+        assert!(response.content.contains("fresh"));
+        assert!(response.content.contains("backup"));
+        assert!(!response.content.contains("test-provider"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resolve_session_route_clears_invalid_provider_override_after_sync() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "stdio:test",
+                "chat-1",
+                "stdio",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("session should exist");
+        sessions
+            .set_model_provider(
+                "stdio:test",
+                "chat-1",
+                "stdio",
+                "legacy-provider",
+                "legacy-model",
+            )
+            .await
+            .expect("override should persist");
+
+        let mut config = AppConfig::default();
+        config.model_provider = "fresh".to_string();
+        config.model_providers =
+            BTreeMap::from([("fresh".to_string(), test_provider_config("fresh-model"))]);
+        sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
+
+        let route = resolve_session_route(&runtime, "stdio", "stdio:test", "chat-1")
+            .await
+            .expect("route should resolve");
+
+        assert_eq!(route.model_provider, "fresh");
+        assert_eq!(route.model, "fresh-model");
     }
 
     #[test]
@@ -3372,10 +3557,14 @@ A .docx file is a ZIP archive containing XML files.
     #[tokio::test(flavor = "current_thread")]
     async fn webhook_agent_model_override_uses_requested_provider_default_model() {
         let provider = Arc::new(BootstrapCaptureProvider::default());
-        let mut runtime = build_test_runtime(provider).await;
-        runtime
+        let runtime = build_test_runtime(provider).await;
+        let mut provider_runtime = runtime.runtime.provider_runtime_snapshot();
+        provider_runtime
             .provider_default_models
             .insert("alt-provider".to_string(), "alt-default-model".to_string());
+        runtime
+            .runtime
+            .set_provider_runtime_snapshot(provider_runtime);
 
         let (resolved_provider, resolved_model) = resolve_webhook_agent_model(
             &runtime,

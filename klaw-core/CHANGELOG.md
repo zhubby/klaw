@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-26
+
+### Changed
+- `AgentLoop` 现在将默认 provider、provider registry 与 provider default model 收敛到一份可热替换的 `ProviderRuntimeSnapshot`，避免 runtime/GUI/命令层继续各自缓存一份 provider 真相源
+
 ## 2026-03-24
 
 ### Changed

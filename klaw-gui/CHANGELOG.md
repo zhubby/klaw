@@ -8,11 +8,13 @@
 
 ### Changed
 
+- GUI 底部状态栏的 provider 下拉现在读取 live runtime provider snapshot，而不是直接轮询 `config.toml`，因此只会展示当前 runtime 真正可切换的 provider/default model
 - GUI 底部状态栏的主题切换从循环点击改为显式 `Theme Mode` 下拉框，并会结合已保存的 Light/Dark 预设应用实际配色且在重启后恢复
 - `MCP` 面板的全局设置弹窗移除了 `enabled` 开关，仅保留 `startup_timeout_seconds`；运行时现在默认总是持有可热重载的 MCP manager
 
 ### Fixed
 
+- `Provider` 面板新增/编辑/删除 provider 以及切换 active provider 后，现在都会统一触发 runtime provider sync，避免 GUI 配置态、底部切换和实际运行路由继续分叉
 - Archive 面板调用系统 `qlmanage` 生成 Quick Look 预览时现在也会复用共享增强后的 PATH，避免 GUI 启动环境遗漏标准外部命令搜索目录
 
 ## 2026-03-25

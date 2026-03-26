@@ -4,11 +4,13 @@
 
 ### Fixed
 
+- provider config 热更新现在会同步刷新 running runtime 的 live provider registry/default route，并在 provider 被删除或替换后自动清理失效的 runtime override，避免新增 provider 后底部切换报 `unknown runtime provider` 或必须重启才生效
 - runtime 现在会把入站 DingTalk 的最新 `session_webhook` / `bot_title` 持久化到 active session，供 cron/后台流程后续复用当前会话回复出口
 - `/new` 创建的 DingTalk 子 session 现在会继承当前会话的回复元数据，避免切到新 session 后 cron 仍回落到旧 `session_webhook`
 
 ### Changed
 
+- `/model_provider`、`/model`、`/help`、webhook provider 校验与新会话默认路由现在统一读取 live runtime provider snapshot，不再依赖启动时缓存的 provider/default 状态
 - runtime 现在总是启动一个空的 `McpManager`，不再依赖 `mcp.enabled` 或启动时已有 server，允许 GUI 在零配置启动后直接热加载新增 MCP server
 
 ### Added

@@ -22,8 +22,8 @@ pub mod scheduler;
 pub mod transport;
 
 pub use agent_loop::{
-    AgentLoop, AgentRunState, AgentRuntimeError, ProcessOutcome, QueueStrategy, RunLimits,
-    SessionSchedulingPolicy, StateTransitionEvent,
+    AgentLoop, AgentRunState, AgentRuntimeError, ProcessOutcome, ProviderRuntimeSnapshot,
+    QueueStrategy, RunLimits, SessionSchedulingPolicy, StateTransitionEvent,
 };
 pub use domain::{DeadLetterMessage, InboundMessage, OutboundMessage, SessionKey};
 pub use klaw_util::WORKSPACE_DIR_NAME;

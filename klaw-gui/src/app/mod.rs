@@ -84,6 +84,8 @@ impl KlawGuiApp {
             UiAction::SetRuntimeProviderOverride(provider_id) => {
                 match request_set_provider_override(provider_id.clone()) {
                     Ok((active_provider, active_model)) => {
+                        self.shell
+                            .set_runtime_provider_override(provider_id.clone());
                         self.state
                             .apply(UiAction::SetRuntimeProviderOverride(provider_id));
                         self.shell.show_info(format!(

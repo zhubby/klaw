@@ -1,6 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::runtime_bridge::request_set_provider_override;
+use crate::runtime_bridge::request_sync_providers;
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
@@ -168,10 +168,11 @@ impl ProviderPanel {
         }) {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
-                match request_set_provider_override(None) {
-                    Ok(_) => {
-                        notifications.success(format!("Set active provider to '{}'", provider_id))
-                    }
+                match request_sync_providers() {
+                    Ok(_) => notifications.success(format!(
+                        "Set active provider to '{}' and synced running runtime",
+                        provider_id
+                    )),
                     Err(err) => notifications.error(format!(
                         "Saved active provider to '{}', but failed to sync running runtime: {err}",
                         provider_id
@@ -217,7 +218,14 @@ impl ProviderPanel {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
                 self.form = None;
-                notifications.success("Provider configuration saved");
+                match request_sync_providers() {
+                    Ok(_) => {
+                        notifications.success("Provider configuration saved and runtime synced")
+                    }
+                    Err(err) => notifications.error(format!(
+                        "Provider configuration saved, but failed to sync running runtime: {err}"
+                    )),
+                }
             }
             Err(err) => notifications.error(format!("Save failed: {err}")),
         }
@@ -241,7 +249,16 @@ impl ProviderPanel {
                 if self.selected_provider.as_deref() == Some(provider_id.as_str()) {
                     self.selected_provider = None;
                 }
-                notifications.success(format!("Deleted provider '{}'", provider_id));
+                match request_sync_providers() {
+                    Ok(_) => notifications.success(format!(
+                        "Deleted provider '{}' and synced runtime",
+                        provider_id
+                    )),
+                    Err(err) => notifications.error(format!(
+                        "Deleted provider '{}', but failed to sync running runtime: {err}",
+                        provider_id
+                    )),
+                }
             }
             Err(err) => notifications.error(format!("Save failed: {err}")),
         }

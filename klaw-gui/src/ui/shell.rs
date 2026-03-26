@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::PanelRegistry;
+use crate::runtime_bridge::{ProviderRuntimeSnapshot, request_provider_status};
 use crate::settings::{AppSettings, SyncMode, load_settings, save_settings};
 use crate::state::{ThemeMode, UiAction, UiState};
 use crate::sync_runtime::{
@@ -9,7 +10,6 @@ use crate::sync_runtime::{
 };
 use crate::ui::{sidebar, workbench};
 use egui_phosphor::regular;
-use klaw_config::{ConfigSnapshot, ConfigStore};
 use klaw_storage::{
     BackupItem, BackupPlan, BackupService, S3SnapshotStoreConfig, SnapshotListItem, SnapshotMode,
 };
@@ -22,10 +22,10 @@ use time::OffsetDateTime;
 pub struct ShellUi {
     panels: PanelRegistry,
     notifications: NotificationCenter,
-    provider_store: Option<ConfigStore>,
     provider_ids: Vec<String>,
     config_default_provider: String,
     provider_default_models: BTreeMap<String, String>,
+    runtime_provider_override: Option<String>,
     last_provider_sync_at: Instant,
     sync_supervisor: SyncSupervisor,
 }
@@ -38,10 +38,10 @@ impl Default for ShellUi {
         Self {
             panels: PanelRegistry::default(),
             notifications: NotificationCenter::default(),
-            provider_store: None,
             provider_ids: Vec::new(),
             config_default_provider: String::new(),
             provider_default_models: BTreeMap::new(),
+            runtime_provider_override: None,
             last_provider_sync_at: Instant::now() - PROVIDER_SYNC_INTERVAL,
             sync_supervisor: SyncSupervisor::default(),
         }
@@ -57,48 +57,40 @@ impl ShellUi {
         self.notifications.error(message);
     }
 
+    pub fn set_runtime_provider_override(&mut self, provider_id: Option<String>) {
+        self.runtime_provider_override = provider_id;
+    }
+
     fn sync_provider_choices(&mut self) {
         if self.last_provider_sync_at.elapsed() < PROVIDER_SYNC_INTERVAL {
             return;
         }
         self.last_provider_sync_at = Instant::now();
-
-        match self.provider_store.as_ref() {
-            Some(store) => {
-                if let Ok(snapshot) = store.reload() {
-                    self.apply_provider_snapshot(snapshot);
-                }
-            }
-            None => {
-                if let Ok(store) = ConfigStore::open(None) {
-                    let snapshot = store.snapshot();
-                    self.provider_store = Some(store);
-                    self.apply_provider_snapshot(snapshot);
-                }
-            }
+        if let Ok(snapshot) = request_provider_status() {
+            self.apply_provider_snapshot(snapshot);
         }
     }
 
-    fn apply_provider_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.config_default_provider = snapshot.config.model_provider;
+    fn apply_provider_snapshot(&mut self, snapshot: ProviderRuntimeSnapshot) {
+        self.config_default_provider = snapshot.default_provider_id;
+        self.runtime_provider_override = snapshot.runtime_provider_override;
         self.provider_ids = snapshot
-            .config
-            .model_providers
+            .provider_default_models
             .keys()
             .cloned()
             .collect::<Vec<_>>();
         self.provider_ids.sort();
-        self.provider_default_models = snapshot
-            .config
-            .model_providers
-            .into_iter()
-            .map(|(provider_id, provider)| (provider_id, provider.default_model))
-            .collect();
+        self.provider_default_models = snapshot.provider_default_models;
     }
 
     pub fn render(&mut self, ctx: &egui::Context, state: &UiState) -> Vec<UiAction> {
         let mut actions = Vec::new();
         self.sync_provider_choices();
+        if self.runtime_provider_override != state.runtime_provider_override {
+            actions.push(UiAction::SetRuntimeProviderOverride(
+                self.runtime_provider_override.clone(),
+            ));
+        }
         self.sync_supervisor.tick(&mut self.notifications);
         ctx.request_repaint_after(SYNC_POLL_INTERVAL);
 

@@ -3,6 +3,7 @@ use klaw_config::TailscaleMode;
 use klaw_gateway::{GatewayRuntimeInfo, TailscaleHostInfo};
 use klaw_mcp::{McpRuntimeSnapshot, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
+use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, mpsc};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
@@ -19,12 +20,27 @@ pub struct GatewayStatusSnapshot {
     pub tailscale_mode: TailscaleMode,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ProviderRuntimeSnapshot {
+    pub default_provider_id: String,
+    pub provider_default_models: BTreeMap<String, String>,
+    pub runtime_provider_override: Option<String>,
+    pub active_provider_id: String,
+    pub active_model: String,
+}
+
 #[derive(Debug)]
 pub enum RuntimeCommand {
     ReloadSkillsPrompt,
     SetProviderOverride {
         provider_id: Option<String>,
         response: mpsc::Sender<Result<(String, String), String>>,
+    },
+    SyncProviders {
+        response: mpsc::Sender<Result<ProviderRuntimeSnapshot, String>>,
+    },
+    GetProviderStatus {
+        response: mpsc::Sender<Result<ProviderRuntimeSnapshot, String>>,
     },
     SyncChannels {
         response: mpsc::Sender<Result<ChannelSyncResult, String>>,
@@ -205,6 +221,42 @@ pub fn request_sync_channels() -> Result<ChannelSyncResult, String> {
     let (response_tx, response_rx) = mpsc::channel();
     sender
         .send(RuntimeCommand::SyncChannels {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    response_rx
+        .recv()
+        .map_err(|_| "runtime command response channel closed".to_string())?
+}
+
+pub fn request_sync_providers() -> Result<ProviderRuntimeSnapshot, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::SyncProviders {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    response_rx
+        .recv()
+        .map_err(|_| "runtime command response channel closed".to_string())?
+}
+
+pub fn request_provider_status() -> Result<ProviderRuntimeSnapshot, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::GetProviderStatus {
             response: response_tx,
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
