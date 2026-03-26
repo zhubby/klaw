@@ -734,12 +734,6 @@ async fn normalize_session_route_state(
     Ok(session)
 }
 
-fn resolve_new_session_target_from_config(config: &AppConfig) -> (String, String) {
-    let provider_id = config.model_provider.clone();
-    let model = configured_default_model(config, &provider_id);
-    (provider_id, model)
-}
-
 pub fn set_runtime_provider_override(
     runtime: &RuntimeBundle,
     provider_id: Option<&str>,
@@ -2549,17 +2543,9 @@ fn config_err(message: String) -> Box<dyn Error> {
 
 fn configured_default_model(config: &AppConfig, provider_id: &str) -> String {
     config
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .map(ToString::to_string)
-        .or_else(|| {
-            config
-                .model_providers
-                .get(provider_id)
-                .map(|provider| provider.default_model.clone())
-        })
+        .model_providers
+        .get(provider_id)
+        .map(|provider| provider.default_model.clone())
         .unwrap_or_else(|| "default".to_string())
 }
 
@@ -2676,10 +2662,9 @@ mod tests {
         compression_trigger_interval, configured_default_model, extract_skill_short_description,
         first_arg_token, format_approve_already_handled_message,
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
-        parse_im_command, resolve_new_session_target_from_config, resolve_session_route,
-        resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, sync_runtime_providers,
-        trim_conversation_history,
+        parse_im_command, resolve_session_route, resolve_webhook_agent_model, should_emit_outbound,
+        should_trigger_compression, spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output,
+        sync_runtime_providers, trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
@@ -3032,13 +3017,15 @@ A .docx file is a ZIP archive containing XML files.
             },
         );
 
-        let (provider_id, model) = resolve_new_session_target_from_config(&config);
-        assert_eq!(provider_id, "anthropic");
-        assert_eq!(model, "claude-sonnet-4-5");
+        assert_eq!(config.model_provider, "anthropic");
+        assert_eq!(
+            configured_default_model(&config, &config.model_provider),
+            "claude-sonnet-4-5"
+        );
     }
 
     #[test]
-    fn resolve_new_session_target_prefers_root_model_override() {
+    fn resolve_new_session_target_uses_provider_default_model_even_with_root_model() {
         let mut config = AppConfig::default();
         config.model_provider = "anthropic".to_string();
         config.model = Some("claude-opus-4-1".to_string());
@@ -3050,9 +3037,11 @@ A .docx file is a ZIP archive containing XML files.
             },
         );
 
-        let (provider_id, model) = resolve_new_session_target_from_config(&config);
-        assert_eq!(provider_id, "anthropic");
-        assert_eq!(model, "claude-opus-4-1");
+        assert_eq!(config.model_provider, "anthropic");
+        assert_eq!(
+            configured_default_model(&config, &config.model_provider),
+            "claude-sonnet-4-5"
+        );
     }
 
     #[test]
@@ -3120,6 +3109,33 @@ A .docx file is a ZIP archive containing XML files.
                 .unwrap_or_else(|err| err.into_inner())
                 .clone(),
             None
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_runtime_providers_ignores_legacy_root_model_field() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+
+        let mut config = AppConfig::default();
+        config.model_provider = "fresh".to_string();
+        config.model = Some("root-override-should-be-ignored".to_string());
+        config.model_providers = BTreeMap::from([
+            ("backup".to_string(), test_provider_config("backup-model")),
+            ("fresh".to_string(), test_provider_config("fresh-model")),
+        ]);
+
+        let (active_provider, active_model) =
+            sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
+        let provider_runtime = runtime.runtime.provider_runtime_snapshot();
+
+        assert_eq!(active_provider, "fresh");
+        assert_eq!(active_model, "fresh-model");
+        assert_eq!(provider_runtime.default_provider_id, "fresh");
+        assert_eq!(provider_runtime.default_model, "fresh-model");
+        assert_eq!(
+            provider_runtime.provider_default_models.get("fresh"),
+            Some(&"fresh-model".to_string())
         );
     }
 
@@ -3350,9 +3366,14 @@ A .docx file is a ZIP archive containing XML files.
     }
 
     #[test]
-    fn configured_default_model_prefers_global_override() {
+    fn configured_default_model_uses_provider_default_model() {
         let mut config = AppConfig::default();
-        config.model = Some("gpt-4.1".to_string());
+        config
+            .model_providers
+            .get_mut("openai")
+            .expect("openai provider should exist")
+            .default_model = "gpt-4.1".to_string();
+        config.model = Some("root-override-should-be-ignored".to_string());
 
         assert_eq!(configured_default_model(&config, "openai"), "gpt-4.1");
     }

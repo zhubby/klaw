@@ -6,6 +6,11 @@ use thiserror::Error;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub model_provider: String,
+    /// Legacy compatibility field parsed from older configs.
+    ///
+    /// Default provider/model routing ignores this value. Use
+    /// `model_providers.<id>.default_model` for provider defaults and `/model`
+    /// for explicit per-session overrides.
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default = "default_conversation_history_limit")]

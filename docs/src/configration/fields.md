@@ -37,9 +37,12 @@ model_provider = "openai"
 **默认值**: `null`
 **必填**: 否
 
-覆盖 Provider 的 `default_model`。如不配置则使用 Provider 的默认模型。
+兼容旧配置的遗留字段。当前 runtime 默认路由不会再使用它来覆盖 Provider 的 `default_model`。
+
+未显式执行 `/model` 的会话，默认模型始终跟随当前 Provider 的 `default_model` 变化。只有会话级显式 model override 才会脱离 Provider 默认值。
 
 ```toml
+# legacy compatibility field; default routing ignores this value
 model = "gpt-4-turbo"
 ```
 

@@ -5,6 +5,7 @@
 ### Changed
 
 - 删除 `mcp.enabled` 配置项，MCP runtime 现在始终可用；配置仅保留 `mcp.startup_timeout_seconds` 与 `mcp.servers`
+- 根级 `model` 现明确标记为 legacy 兼容字段；默认 provider/model 路由不再读取它，实际默认模型始终来自 `model_providers.<id>.default_model`
 
 ## 2026-03-25
 

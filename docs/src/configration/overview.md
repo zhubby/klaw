@@ -29,7 +29,7 @@
 ```toml
 # 模型 Provider 配置
 model_provider = "openai"
-model = "gpt-4o-mini"  # 可选，覆盖 provider 的 default_model
+# model = "gpt-4o-mini"  # legacy 兼容字段；默认路由不会用它覆盖 provider default_model
 
 [model_providers.openai]
 base_url = "https://api.openai.com/v1"
@@ -211,7 +211,7 @@ pub fn reset_to_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, C
 | 规则 | 描述 |
 |------|------|
 | `model_provider` | 不能为空 |
-| `model` | 如配置则不能为空 |
+| `model` | legacy 兼容字段；如配置则不能为空 |
 | `model_providers.<name>` | 必须存在于映射中 |
 | `base_url` | 不能为空 |
 | `default_model` | 不能为空 |
