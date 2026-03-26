@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+catppuccin-egui = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui-file-dialog = { workspace = true }

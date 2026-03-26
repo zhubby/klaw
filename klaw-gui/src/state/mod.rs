@@ -11,6 +11,7 @@ pub enum UiAction {
     ActivateTab(TabId),
     CloseTab(TabId),
     SetRuntimeProviderOverride(Option<String>),
+    SetThemeMode(ThemeMode),
     CloseWindow,
     ForcePersistLayout,
     ToggleFullscreen,
@@ -19,22 +20,61 @@ pub enum UiAction {
     StartWindowDrag,
     ShowAbout,
     HideAbout,
-    CycleTheme,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
+    #[default]
     System,
     Light,
     Dark,
 }
 
 impl ThemeMode {
-    pub fn next(self) -> Self {
+    pub const fn label(self) -> &'static str {
         match self {
-            ThemeMode::System => ThemeMode::Light,
-            ThemeMode::Light => ThemeMode::Dark,
-            ThemeMode::Dark => ThemeMode::System,
+            ThemeMode::System => "System",
+            ThemeMode::Light => "Light",
+            ThemeMode::Dark => "Dark",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LightThemePreset {
+    #[default]
+    Default,
+    Latte,
+}
+
+impl LightThemePreset {
+    pub const fn label(self) -> &'static str {
+        match self {
+            LightThemePreset::Default => "Default",
+            LightThemePreset::Latte => "Latte",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DarkThemePreset {
+    #[default]
+    Default,
+    Frappe,
+    Macchiato,
+    Mocha,
+}
+
+impl DarkThemePreset {
+    pub const fn label(self) -> &'static str {
+        match self {
+            DarkThemePreset::Default => "Default",
+            DarkThemePreset::Frappe => "Frappé",
+            DarkThemePreset::Macchiato => "Macchiato",
+            DarkThemePreset::Mocha => "Mocha",
         }
     }
 }
@@ -42,7 +82,12 @@ impl ThemeMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
     pub workbench: workbench::WorkbenchState,
+    #[serde(default)]
     pub theme_mode: ThemeMode,
+    #[serde(default)]
+    pub light_theme: LightThemePreset,
+    #[serde(default)]
+    pub dark_theme: DarkThemePreset,
     pub fullscreen: bool,
     #[serde(default)]
     pub runtime_provider_override: Option<String>,
@@ -62,6 +107,8 @@ impl Default for UiState {
         Self {
             workbench: workbench::WorkbenchState::new_with_default(WorkbenchMenu::Profile),
             theme_mode: ThemeMode::System,
+            light_theme: LightThemePreset::Default,
+            dark_theme: DarkThemePreset::Default,
             fullscreen: false,
             runtime_provider_override: None,
             window_size: None,
@@ -79,6 +126,9 @@ impl UiState {
             UiAction::SetRuntimeProviderOverride(provider_id) => {
                 self.runtime_provider_override = provider_id;
             }
+            UiAction::SetThemeMode(theme_mode) => {
+                self.theme_mode = theme_mode;
+            }
             UiAction::ToggleFullscreen => {
                 self.fullscreen = !self.fullscreen;
             }
@@ -87,9 +137,6 @@ impl UiState {
             }
             UiAction::HideAbout => {
                 self.show_about = false;
-            }
-            UiAction::CycleTheme => {
-                self.theme_mode = self.theme_mode.next();
             }
             UiAction::CloseWindow
             | UiAction::ForcePersistLayout
@@ -102,13 +149,24 @@ impl UiState {
 
 #[cfg(test)]
 mod tests {
-    use super::{ThemeMode, UiAction, UiState};
+    use super::{DarkThemePreset, LightThemePreset, ThemeMode, UiAction, UiState};
 
     #[test]
-    fn theme_mode_cycles_system_light_dark() {
-        assert_eq!(ThemeMode::System.next(), ThemeMode::Light);
-        assert_eq!(ThemeMode::Light.next(), ThemeMode::Dark);
-        assert_eq!(ThemeMode::Dark.next(), ThemeMode::System);
+    fn ui_state_defaults_to_default_theme_presets() {
+        let state = UiState::default();
+
+        assert_eq!(state.theme_mode, ThemeMode::System);
+        assert_eq!(state.light_theme, LightThemePreset::Default);
+        assert_eq!(state.dark_theme, DarkThemePreset::Default);
+    }
+
+    #[test]
+    fn theme_mode_can_be_set_explicitly() {
+        let mut state = UiState::default();
+
+        state.apply(UiAction::SetThemeMode(ThemeMode::Dark));
+
+        assert_eq!(state.theme_mode, ThemeMode::Dark);
     }
 
     #[test]

@@ -59,6 +59,7 @@ impl WorkbenchState {
             UiAction::ActivateTab(tab_id) => self.activate(tab_id),
             UiAction::CloseTab(tab_id) => self.close(tab_id),
             UiAction::SetRuntimeProviderOverride(_)
+            | UiAction::SetThemeMode(_)
             | UiAction::CloseWindow
             | UiAction::ForcePersistLayout
             | UiAction::ToggleFullscreen
@@ -66,8 +67,7 @@ impl WorkbenchState {
             | UiAction::ZoomWindow
             | UiAction::StartWindowDrag
             | UiAction::ShowAbout
-            | UiAction::HideAbout
-            | UiAction::CycleTheme => {}
+            | UiAction::HideAbout => {}
         }
     }
 

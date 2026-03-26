@@ -4,12 +4,15 @@ use crate::settings::{
     AppSettings, ProxyMode, S3SyncConfig, SyncItem, SyncMode, SyncProvider, load_settings,
     save_settings,
 };
+use crate::state::persistence;
+use crate::state::{DarkThemePreset, LightThemePreset, UiState};
 use crate::sync_runtime::{
     SyncRuntimeProgress, SyncRuntimeSnapshot, SyncRuntimeTaskKind, sync_runtime_finish_task,
     sync_runtime_set_last_snapshot, sync_runtime_set_remote_snapshots,
     sync_runtime_set_remote_update, sync_runtime_set_task_progress, sync_runtime_snapshot,
     sync_runtime_sync_from_settings, sync_runtime_try_start_task,
 };
+use crate::theme;
 use crate::time_format::format_optional_timestamp_millis;
 use egui_extras::{Size, StripBuilder};
 use klaw_storage::{
@@ -68,6 +71,7 @@ enum SyncTaskMessage {
 
 pub struct SettingPanel {
     settings: AppSettings,
+    theme_state: UiState,
     active_section: SettingsSection,
     save_error: Option<String>,
     sync_task_rx: Option<Receiver<SyncTaskMessage>>,
@@ -80,6 +84,7 @@ impl Default for SettingPanel {
         let settings = load_settings();
         Self {
             settings,
+            theme_state: persistence::load_ui_state(),
             active_section: SettingsSection::General,
             save_error: None,
             sync_task_rx: None,
@@ -189,6 +194,29 @@ impl PanelRenderer for SettingPanel {
 }
 
 impl SettingPanel {
+    fn sync_theme_state(&mut self) {
+        let persisted = persistence::load_ui_state();
+        self.theme_state.theme_mode = persisted.theme_mode;
+        self.theme_state.light_theme = persisted.light_theme;
+        self.theme_state.dark_theme = persisted.dark_theme;
+    }
+
+    fn save_theme_state(&mut self, ctx: &egui::Context) {
+        match persistence::update_ui_state(|state| {
+            state.light_theme = self.theme_state.light_theme;
+            state.dark_theme = self.theme_state.dark_theme;
+        }) {
+            Ok(state) => {
+                self.theme_state = state;
+                theme::apply_theme(ctx, &self.theme_state);
+                self.save_error = None;
+            }
+            Err(err) => {
+                self.save_error = Some(err.to_string());
+            }
+        }
+    }
+
     fn try_save(&mut self) -> bool {
         match save_settings(&self.settings) {
             Ok(()) => {
@@ -476,6 +504,7 @@ impl SettingPanel {
     }
 
     fn render_general_section(&mut self, ui: &mut egui::Ui) {
+        self.sync_theme_state();
         ui.strong("General Settings");
         ui.add_space(8.0);
 
@@ -494,6 +523,75 @@ impl SettingPanel {
 
         ui.add_space(8.0);
         ui.label("Automatically start Klaw when you log in to your computer.");
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(12.0);
+        ui.label(format!(
+            "Current theme mode: {} (change from the bottom status bar).",
+            self.theme_state.theme_mode.label()
+        ));
+        ui.add_space(8.0);
+
+        let mut theme_changed = false;
+        egui::Grid::new("general-theme-grid")
+            .num_columns(2)
+            .spacing([8.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Light Theme:");
+                egui::ComboBox::from_id_salt("settings-light-theme")
+                    .width(160.0)
+                    .selected_text(self.theme_state.light_theme.label())
+                    .show_ui(ui, |ui| {
+                        for preset in [LightThemePreset::Default, LightThemePreset::Latte] {
+                            if ui
+                                .selectable_label(
+                                    self.theme_state.light_theme == preset,
+                                    preset.label(),
+                                )
+                                .clicked()
+                            {
+                                self.theme_state.light_theme = preset;
+                                theme_changed = true;
+                                ui.close();
+                            }
+                        }
+                    });
+                ui.end_row();
+
+                ui.label("Dark Theme:");
+                egui::ComboBox::from_id_salt("settings-dark-theme")
+                    .width(160.0)
+                    .selected_text(self.theme_state.dark_theme.label())
+                    .show_ui(ui, |ui| {
+                        for preset in [
+                            DarkThemePreset::Default,
+                            DarkThemePreset::Frappe,
+                            DarkThemePreset::Macchiato,
+                            DarkThemePreset::Mocha,
+                        ] {
+                            if ui
+                                .selectable_label(
+                                    self.theme_state.dark_theme == preset,
+                                    preset.label(),
+                                )
+                                .clicked()
+                            {
+                                self.theme_state.dark_theme = preset;
+                                theme_changed = true;
+                                ui.close();
+                            }
+                        }
+                    });
+                ui.end_row();
+            });
+
+        ui.add_space(8.0);
+        ui.small("Default keeps the existing egui light/dark visuals.");
+
+        if theme_changed {
+            self.save_theme_state(ui.ctx());
+        }
     }
 
     fn render_privacy_section(&mut self, ui: &mut egui::Ui) {

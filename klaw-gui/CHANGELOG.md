@@ -2,8 +2,13 @@
 
 ## 2026-03-26
 
+### Added
+
+- `Settings > General` 新增 Light/Dark 主题预设下拉框，支持在保留默认 egui 主题的基础上为 light 模式选择 `Latte`，为 dark 模式选择 `Frappé`、`Macchiato`、`Mocha`
+
 ### Changed
 
+- GUI 底部状态栏的主题切换从循环点击改为显式 `Theme Mode` 下拉框，并会结合已保存的 Light/Dark 预设应用实际配色且在重启后恢复
 - `MCP` 面板的全局设置弹窗移除了 `enabled` 开关，仅保留 `startup_timeout_seconds`；运行时现在默认总是持有可热重载的 MCP manager
 
 ### Fixed

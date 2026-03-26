@@ -1,4 +1,4 @@
-use crate::state::ThemeMode;
+use crate::state::{DarkThemePreset, LightThemePreset, ThemeMode, UiState};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -17,13 +17,42 @@ pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-pub fn apply_theme(ctx: &egui::Context, theme_mode: ThemeMode) {
-    let preference = match theme_mode {
+pub fn apply_theme(ctx: &egui::Context, state: &UiState) {
+    let preference = match state.theme_mode {
         ThemeMode::System => egui::ThemePreference::System,
         ThemeMode::Light => egui::ThemePreference::Light,
         ThemeMode::Dark => egui::ThemePreference::Dark,
     };
     ctx.set_theme(preference);
+    ctx.set_visuals_of(egui::Theme::Light, light_visuals(state.light_theme));
+    ctx.set_visuals_of(egui::Theme::Dark, dark_visuals(state.dark_theme));
+}
+
+fn light_visuals(preset: LightThemePreset) -> egui::Visuals {
+    match preset {
+        LightThemePreset::Default => egui::Visuals::light(),
+        LightThemePreset::Latte => catppuccin_visuals(catppuccin_egui::LATTE, false),
+    }
+}
+
+fn dark_visuals(preset: DarkThemePreset) -> egui::Visuals {
+    match preset {
+        DarkThemePreset::Default => egui::Visuals::dark(),
+        DarkThemePreset::Frappe => catppuccin_visuals(catppuccin_egui::FRAPPE, true),
+        DarkThemePreset::Macchiato => catppuccin_visuals(catppuccin_egui::MACCHIATO, true),
+        DarkThemePreset::Mocha => catppuccin_visuals(catppuccin_egui::MOCHA, true),
+    }
+}
+
+fn catppuccin_visuals(theme: catppuccin_egui::Theme, dark_mode: bool) -> egui::Visuals {
+    let mut style = egui::Style::default();
+    style.visuals = if dark_mode {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
+    catppuccin_egui::set_style_theme(&mut style, theme);
+    style.visuals
 }
 
 fn install_system_cjk_fallbacks(fonts: &mut egui::FontDefinitions) {
@@ -146,9 +175,10 @@ fn is_preferred_cjk_family(family_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        LXGW_WENKAI_MONOSPACE_NAME, LXGW_WENKAI_PROPORTIONAL_NAME,
-        install_embedded_preferred_fonts, is_preferred_cjk_family,
+        LXGW_WENKAI_MONOSPACE_NAME, LXGW_WENKAI_PROPORTIONAL_NAME, dark_visuals,
+        install_embedded_preferred_fonts, is_preferred_cjk_family, light_visuals,
     };
+    use crate::state::{DarkThemePreset, LightThemePreset};
 
     #[test]
     fn preferred_cjk_family_match_is_case_insensitive() {
@@ -172,5 +202,16 @@ mod tests {
             fonts.families[&egui::FontFamily::Monospace].first(),
             Some(&LXGW_WENKAI_MONOSPACE_NAME.to_string())
         );
+    }
+
+    #[test]
+    fn non_default_theme_presets_override_base_visuals() {
+        let default_light = light_visuals(LightThemePreset::Default);
+        let latte = light_visuals(LightThemePreset::Latte);
+        let default_dark = dark_visuals(DarkThemePreset::Default);
+        let mocha = dark_visuals(DarkThemePreset::Mocha);
+
+        assert_ne!(latte.panel_fill, default_light.panel_fill);
+        assert_ne!(mocha.panel_fill, default_dark.panel_fill);
     }
 }
