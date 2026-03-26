@@ -154,6 +154,7 @@ impl ChannelRuntime for SharedChannelRuntime {
                 request.session_key.clone(),
                 request.chat_id.clone(),
                 request.input.clone(),
+                request.metadata.clone(),
             )
             .await?
             {
@@ -203,6 +204,7 @@ impl ChannelRuntime for SharedChannelRuntime {
                 request.session_key.clone(),
                 request.chat_id.clone(),
                 request.input.clone(),
+                request.metadata.clone(),
             )
             .await?
             {
@@ -594,11 +596,25 @@ fn build_new_session_bootstrap_user_message() -> String {
     NEW_SESSION_BOOTSTRAP_USER_MESSAGE.to_string()
 }
 
-fn build_new_session_bootstrap_request_metadata() -> BTreeMap<String, Value> {
-    BTreeMap::from([(
+fn inherited_channel_runtime_metadata(
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> BTreeMap<String, serde_json::Value> {
+    metadata
+        .iter()
+        .filter(|(key, _)| key.starts_with("channel."))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn build_new_session_bootstrap_request_metadata(
+    request_metadata: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    let mut metadata = inherited_channel_runtime_metadata(request_metadata);
+    metadata.insert(
         META_TOOL_CHOICE_KEY.to_string(),
         Value::String("required".to_string()),
-    )])
+    );
+    metadata
 }
 
 fn format_new_session_started_message(
@@ -894,6 +910,7 @@ async fn handle_im_command(
     base_session_key: String,
     chat_id: String,
     input: String,
+    request_metadata: BTreeMap<String, Value>,
 ) -> Result<Option<ChannelResponse>, Box<dyn Error>> {
     let Some((command, arg)) = parse_im_command(&input) else {
         return Ok(None);
@@ -937,7 +954,7 @@ async fn handle_im_command(
                 new_session_provider.clone(),
                 new_session_model.clone(),
                 Vec::new(),
-                build_new_session_bootstrap_request_metadata(),
+                build_new_session_bootstrap_request_metadata(&request_metadata),
             )
             .await
             {
@@ -3136,6 +3153,7 @@ A .docx file is a ZIP archive containing XML files.
             base_session_key.clone(),
             chat_id.clone(),
             "/new".to_string(),
+            BTreeMap::new(),
         )
         .await
         .expect("new command should succeed")
@@ -3183,6 +3201,60 @@ A .docx file is a ZIP archive containing XML files.
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn new_command_copies_dingtalk_delivery_metadata_to_new_session() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+        let channel = "dingtalk".to_string();
+        let base_session_key = "dingtalk:acc:chat-1".to_string();
+        let chat_id = "chat-1".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &base_session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+
+        let response = handle_im_command(
+            &runtime,
+            channel.clone(),
+            base_session_key.clone(),
+            chat_id.clone(),
+            "/new".to_string(),
+            BTreeMap::from([
+                (
+                    "channel.dingtalk.session_webhook".to_string(),
+                    json!("https://example/session-new"),
+                ),
+                ("channel.dingtalk.bot_title".to_string(), json!("Klaw")),
+                ("channel.delivery_mode".to_string(), json!("direct_reply")),
+            ]),
+        )
+        .await
+        .expect("new command should succeed")
+        .expect("new command should return a response");
+        assert!(response.content.contains("New session started"));
+
+        let route = resolve_session_route(&runtime, &channel, &base_session_key, &chat_id)
+            .await
+            .expect("new session route should resolve");
+        let child = sessions
+            .get_session(&route.active_session_key)
+            .await
+            .expect("child session should reload");
+        assert_eq!(
+            child.delivery_metadata_json.as_deref(),
+            Some(
+                "{\"channel.dingtalk.bot_title\":\"Klaw\",\"channel.dingtalk.session_webhook\":\"https://example/session-new\"}",
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn stop_command_returns_stopped_response_without_running_agent() {
         let provider = Arc::new(BootstrapCaptureProvider::default());
         let runtime = build_test_runtime(provider.clone()).await;
@@ -3196,6 +3268,7 @@ A .docx file is a ZIP archive containing XML files.
             base_session_key,
             chat_id,
             "/stop".to_string(),
+            BTreeMap::new(),
         )
         .await
         .expect("stop command should succeed")

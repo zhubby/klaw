@@ -5,6 +5,7 @@
 ### Fixed
 
 - runtime 现在会把入站 DingTalk 的最新 `session_webhook` / `bot_title` 持久化到 active session，供 cron/后台流程后续复用当前会话回复出口
+- `/new` 创建的 DingTalk 子 session 现在会继承当前会话的回复元数据，避免切到新 session 后 cron 仍回落到旧 `session_webhook`
 
 ### Changed
 
