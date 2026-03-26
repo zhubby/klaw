@@ -3,6 +3,7 @@
 ## 2026-03-26
 
 ### Added
+- added `tool_audit` persistence models, queries, filter options, and SQLx/Turso storage APIs for structured tool-call diagnostics
 - added persisted `delivery_metadata_json` session state so runtimes can retain channel-specific reply metadata such as the latest DingTalk `session_webhook`
 - added persisted session-route explicitness flags so runtimes can distinguish user-chosen provider/model overrides from legacy default-route residue during routing normalization
 - added optional `metadata_json` on `llm_audit` records so runtimes can annotate persisted model requests with execution-context details such as delegated sub-agent lineage

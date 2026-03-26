@@ -3,10 +3,11 @@ use async_trait::async_trait;
 use klaw_storage::{
     ChatRecord, DefaultSessionStore, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
     LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord,
-    NewLlmUsageRecord, NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState,
-    SessionIndex, SessionStorage, UpdateWebhookAgentResult, UpdateWebhookEventResult,
-    WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
-    open_default_store,
+    NewLlmUsageRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
+    SessionCompressionState, SessionIndex, SessionStorage, ToolAuditFilterOptions,
+    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateWebhookAgentResult,
+    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
+    WebhookEventRecord, open_default_store,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -155,6 +156,21 @@ pub trait SessionManager: Send + Sync {
         &self,
         query: &LlmAuditFilterOptionsQuery,
     ) -> Result<LlmAuditFilterOptions, SessionError>;
+
+    async fn append_tool_audit(
+        &self,
+        input: &NewToolAuditRecord,
+    ) -> Result<ToolAuditRecord, SessionError>;
+
+    async fn list_tool_audit(
+        &self,
+        query: &ToolAuditQuery,
+    ) -> Result<Vec<ToolAuditRecord>, SessionError>;
+
+    async fn list_tool_audit_filter_options(
+        &self,
+        query: &ToolAuditFilterOptionsQuery,
+    ) -> Result<ToolAuditFilterOptions, SessionError>;
 
     async fn append_webhook_event(
         &self,
@@ -421,6 +437,27 @@ impl SessionManager for SqliteSessionManager {
         query: &LlmAuditFilterOptionsQuery,
     ) -> Result<LlmAuditFilterOptions, SessionError> {
         Ok(self.store.list_llm_audit_filter_options(query).await?)
+    }
+
+    async fn append_tool_audit(
+        &self,
+        input: &NewToolAuditRecord,
+    ) -> Result<ToolAuditRecord, SessionError> {
+        Ok(self.store.append_tool_audit(input).await?)
+    }
+
+    async fn list_tool_audit(
+        &self,
+        query: &ToolAuditQuery,
+    ) -> Result<Vec<ToolAuditRecord>, SessionError> {
+        Ok(self.store.list_tool_audit(query).await?)
+    }
+
+    async fn list_tool_audit_filter_options(
+        &self,
+        query: &ToolAuditFilterOptionsQuery,
+    ) -> Result<ToolAuditFilterOptions, SessionError> {
+        Ok(self.store.list_tool_audit_filter_options(query).await?)
     }
 
     async fn append_webhook_event(

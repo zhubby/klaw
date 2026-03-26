@@ -3,7 +3,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::request_gateway_status;
 use crate::time_format::format_timestamp_millis;
-use crate::widgets::show_json_tree;
+use crate::widgets::show_json_tree_with_id;
 use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
@@ -1540,7 +1540,7 @@ fn render_json_payload(ui: &mut egui::Ui, raw: &str) {
         .auto_shrink([false, true])
         .show(ui, |ui| {
             match serde_json::from_str::<serde_json::Value>(raw) {
-                Ok(value) => show_json_tree(ui, &value),
+                Ok(value) => show_json_tree_with_id(ui, &value, &format!("webhook-json:{raw}")),
                 Err(_) => {
                     let mut text = raw.to_string();
                     ui.add(

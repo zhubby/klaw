@@ -24,11 +24,12 @@ pub use types::{
     CronTaskStatus, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions,
     LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
     LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
     NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-    UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
-    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
-    WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
+    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
+    ToolAuditSortOrder, ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
+    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -559,6 +560,94 @@ mod tests {
                 providers: vec!["anthropic".to_string(), "openai".to_string()],
             }
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tool_audit_supports_filtering_and_sorting() {
+        let store = create_store().await;
+        store
+            .touch_session("stdio:tool-audit", "chat-tool-audit", "stdio")
+            .await
+            .expect("session should exist");
+
+        store
+            .append_tool_audit(&NewToolAuditRecord {
+                id: "tool-audit-1".to_string(),
+                session_key: "stdio:tool-audit".to_string(),
+                chat_id: "chat-tool-audit".to_string(),
+                turn_index: 0,
+                request_seq: 1,
+                tool_call_seq: 1,
+                tool_name: "shell".to_string(),
+                status: ToolAuditStatus::Success,
+                error_code: None,
+                error_message: None,
+                retryable: None,
+                approval_required: false,
+                arguments_json: "{\"command\":\"pwd\"}".to_string(),
+                result_content: "/tmp".to_string(),
+                error_details_json: None,
+                signals_json: Some("[]".to_string()),
+                metadata_json: Some("{\"tool_call_id\":\"call_1\"}".to_string()),
+                started_at_ms: 1_000,
+                finished_at_ms: 1_050,
+            })
+            .await
+            .expect("first tool audit should append");
+        store
+            .append_tool_audit(&NewToolAuditRecord {
+                id: "tool-audit-2".to_string(),
+                session_key: "stdio:tool-audit".to_string(),
+                chat_id: "chat-tool-audit".to_string(),
+                turn_index: 0,
+                request_seq: 1,
+                tool_call_seq: 2,
+                tool_name: "shell".to_string(),
+                status: ToolAuditStatus::Failed,
+                error_code: Some("approval_required".to_string()),
+                error_message: Some("approval requested".to_string()),
+                retryable: Some(true),
+                approval_required: true,
+                arguments_json: "{\"command\":\"rm -rf /tmp/demo\"}".to_string(),
+                result_content: "approval requested".to_string(),
+                error_details_json: Some("{\"risk\":\"high\"}".to_string()),
+                signals_json: Some(
+                    "[{\"kind\":\"approval_required\",\"payload\":{\"approval_id\":\"appr_1\"}}]"
+                        .to_string(),
+                ),
+                metadata_json: Some("{\"tool_call_id\":\"call_2\"}".to_string()),
+                started_at_ms: 2_000,
+                finished_at_ms: 2_100,
+            })
+            .await
+            .expect("second tool audit should append");
+
+        let rows = store
+            .list_tool_audit(&ToolAuditQuery {
+                session_key: Some("stdio:tool-audit".to_string()),
+                tool_name: Some("shell".to_string()),
+                started_from_ms: Some(1_500),
+                started_to_ms: Some(2_500),
+                limit: 10,
+                offset: 0,
+                sort_order: ToolAuditSortOrder::StartedAtDesc,
+            })
+            .await
+            .expect("tool audit rows should load");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "tool-audit-2");
+        assert!(rows[0].approval_required);
+        assert_eq!(rows[0].retryable, Some(true));
+
+        let options = store
+            .list_tool_audit_filter_options(&ToolAuditFilterOptionsQuery {
+                started_from_ms: Some(500),
+                started_to_ms: Some(2_500),
+            })
+            .await
+            .expect("tool audit filters should load");
+        assert_eq!(options.session_keys, vec!["stdio:tool-audit".to_string()]);
+        assert_eq!(options.tool_names, vec!["shell".to_string()]);
     }
 
     #[tokio::test(flavor = "current_thread")]

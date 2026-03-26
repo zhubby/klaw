@@ -3,7 +3,7 @@
 ## 2026-03-26
 
 ### Added
-
+- `Tool` 面板右键菜单新增 `Logs` 入口，可按工具查看最近结构化 `tool_audit` 历史并展开单次调用的完整参数、结果、signals 与 metadata
 - `Settings > General` 新增 Light/Dark 主题预设下拉框，支持在保留默认 egui 主题的基础上为 light 模式选择 `Latte`，为 dark 模式选择 `Frappé`、`Macchiato`、`Mocha`
 
 ### Changed
@@ -13,6 +13,7 @@
 - GUI 底部状态栏的主题切换从循环点击改为显式 `Theme Mode` 下拉框，并会结合已保存的 Light/Dark 预设应用实际配色且在重启后恢复
 - `MCP` 面板的全局设置弹窗移除了 `enabled` 开关，仅保留 `startup_timeout_seconds`；运行时现在默认总是持有可热重载的 MCP manager
 - `Tool` 面板从卡片网格改为占满剩余高度的可滚动表格，并按工具名首字母排序展示每个 tool 的状态、描述和运行时 schema 参数数量
+- `Skills Registry` 面板将 `skills.sync_timeout` 的输入与 `Save Timeout` 动作收进独立 `Config` 弹窗，主工具栏原位置改为 `Config` 按钮，和其他配置面板保持一致
 
 ### Fixed
 

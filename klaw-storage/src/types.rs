@@ -252,6 +252,125 @@ pub struct LlmAuditFilterOptions {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ToolAuditStatus {
+    Success,
+    Failed,
+}
+
+impl ToolAuditStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "success" => Some(Self::Success),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolAuditSortOrder {
+    StartedAtAsc,
+    StartedAtDesc,
+}
+
+impl Default for ToolAuditSortOrder {
+    fn default() -> Self {
+        Self::StartedAtDesc
+    }
+}
+
+impl ToolAuditSortOrder {
+    #[must_use]
+    pub fn sql_order_by(self) -> &'static str {
+        match self {
+            Self::StartedAtAsc => "started_at_ms ASC, created_at_ms ASC",
+            Self::StartedAtDesc => "started_at_ms DESC, created_at_ms DESC",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolAuditRecord {
+    pub id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub turn_index: i64,
+    pub request_seq: i64,
+    pub tool_call_seq: i64,
+    pub tool_name: String,
+    pub status: ToolAuditStatus,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub retryable: Option<bool>,
+    pub approval_required: bool,
+    pub arguments_json: String,
+    pub result_content: String,
+    pub error_details_json: Option<String>,
+    pub signals_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub started_at_ms: i64,
+    pub finished_at_ms: i64,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewToolAuditRecord {
+    pub id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub turn_index: i64,
+    pub request_seq: i64,
+    pub tool_call_seq: i64,
+    pub tool_name: String,
+    pub status: ToolAuditStatus,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub retryable: Option<bool>,
+    pub approval_required: bool,
+    pub arguments_json: String,
+    pub result_content: String,
+    pub error_details_json: Option<String>,
+    pub signals_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub started_at_ms: i64,
+    pub finished_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ToolAuditQuery {
+    pub session_key: Option<String>,
+    pub tool_name: Option<String>,
+    pub started_from_ms: Option<i64>,
+    pub started_to_ms: Option<i64>,
+    pub limit: i64,
+    pub offset: i64,
+    pub sort_order: ToolAuditSortOrder,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ToolAuditFilterOptionsQuery {
+    pub started_from_ms: Option<i64>,
+    pub started_to_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ToolAuditFilterOptions {
+    pub session_keys: Vec<String>,
+    pub tool_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum WebhookEventStatus {
     Accepted,
     Processed,

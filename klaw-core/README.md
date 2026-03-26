@@ -12,6 +12,7 @@
 - expose both final-response and streaming-snapshot execution paths for channel-facing runtimes
 - route per-message provider/model selection from inbound metadata (`agent.provider_id`, `agent.model`)
 - emit model-request, model-attributed tool, and turn-level observability records through `AgentTelemetry`
+- surface per-turn `tool_audits` and `llm_audits` in runtime outcomes for persistence/UI inspection
 - support runtime system-prompt hot reload through `AgentLoop::set_system_prompt`
 - backfill standard workspace prompt templates under `~/.klaw/workspace` on demand, while creating `BOOTSTRAP.md` only on first initialization
 - compose runtime prompts by inlining core workspace docs (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `TOOLS.md`) ahead of the runtime sections, while keeping remaining workspace docs and skills lazy-loaded

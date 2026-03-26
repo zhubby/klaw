@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
 use thiserror::Error;
+use time::OffsetDateTime;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tracing::{trace, warn};
 
@@ -57,6 +58,7 @@ pub struct AgentExecutionOutput {
     pub tool_signals: Vec<ToolInvocationSignal>,
     pub request_usages: Vec<AgentRequestUsage>,
     pub request_audits: Vec<AgentRequestAudit>,
+    pub tool_audits: Vec<AgentToolAudit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +81,18 @@ pub struct AgentRequestUsage {
 pub struct AgentRequestAudit {
     pub request_seq: i64,
     pub payload: LlmAuditPayload,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentToolAudit {
+    pub request_seq: i64,
+    pub tool_call_seq: i64,
+    pub tool_call_id: Option<String>,
+    pub tool_name: String,
+    pub arguments: Value,
+    pub result: ToolInvocationResult,
+    pub started_at_ms: i64,
+    pub finished_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -275,6 +289,7 @@ pub async fn run_agent_execution(
     let mut tool_signals = Vec::new();
     let mut request_usages = Vec::new();
     let mut request_audits = Vec::new();
+    let mut tool_audits = Vec::new();
     let mut tokens_used = 0u64;
 
     let max_tool_iterations = limits.max_tool_iterations;
@@ -380,6 +395,7 @@ pub async fn run_agent_execution(
                 tool_signals,
                 request_usages,
                 request_audits,
+                tool_audits,
             });
         }
         if let Some(stream) = &stream {
@@ -404,6 +420,8 @@ pub async fn run_agent_execution(
             &mut tool_calls_used,
             limits.max_tool_calls,
             &mut tool_signals,
+            request_seq,
+            &mut tool_audits,
         )
         .await?
         {
@@ -427,6 +445,7 @@ pub async fn run_agent_execution(
                 tool_signals,
                 request_usages,
                 request_audits,
+                tool_audits,
             });
         }
     }
@@ -470,8 +489,10 @@ async fn apply_tool_calls(
     tool_calls_used: &mut u32,
     max_tool_calls: u32,
     collected_signals: &mut Vec<ToolInvocationSignal>,
+    request_seq: i64,
+    collected_audits: &mut Vec<AgentToolAudit>,
 ) -> Result<Option<ToolInvocationResult>, AgentExecutionError> {
-    for call in tool_calls {
+    for (tool_call_index, call) in tool_calls.into_iter().enumerate() {
         *tool_calls_used += 1;
         if max_tool_calls > 0 && *tool_calls_used > max_tool_calls {
             warn!(
@@ -480,9 +501,22 @@ async fn apply_tool_calls(
             );
             return Err(AgentExecutionError::ToolLoopExhausted);
         }
+        let arguments = call.arguments.clone();
+        let started_at_ms = now_ms();
         let result = tools
-            .execute(&call.name, call.arguments, session_key, tool_metadata)
+            .execute(&call.name, arguments.clone(), session_key, tool_metadata)
             .await;
+        let finished_at_ms = now_ms();
+        collected_audits.push(AgentToolAudit {
+            request_seq,
+            tool_call_seq: (tool_call_index as i64) + 1,
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            arguments,
+            result: result.clone(),
+            started_at_ms,
+            finished_at_ms,
+        });
         let approval_required = result
             .signals
             .iter()
@@ -505,6 +539,10 @@ async fn apply_tool_calls(
     }
 
     Ok(None)
+}
+
+fn now_ms() -> i64 {
+    (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
 }
 
 pub fn resolve_api_key(provider: &ModelProviderConfig) -> Option<String> {
@@ -650,6 +688,14 @@ mod tests {
         assert_eq!(output.content, "done");
         assert_eq!(output.reasoning.as_deref(), Some("inner chain"));
         assert_eq!(output.request_usages.len(), 2);
+        assert_eq!(output.tool_audits.len(), 1);
+        assert_eq!(output.tool_audits[0].request_seq, 1);
+        assert_eq!(output.tool_audits[0].tool_call_seq, 1);
+        assert_eq!(output.tool_audits[0].tool_name, "echo_tool");
+        assert_eq!(
+            output.tool_audits[0].result.content_for_model,
+            "tool-result"
+        );
         assert_eq!(output.request_usages[0].request_seq, 1);
         assert_eq!(output.request_usages[0].usage.total_tokens, 11);
         assert_eq!(output.request_usages[1].request_seq, 2);

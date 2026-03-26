@@ -38,7 +38,7 @@
   - skills registry (config-bound list + add/edit window)
   - memory
   - archive (db-bound query + detail view)
-  - tool (remaining-height sortable table with right-click `Edit` / `Inspect`, runtime schema parameter summary, and inspect popup sourced from live tool definitions)
+  - tool (remaining-height sortable table with right-click `Edit` / `Inspect` / `Logs`, runtime schema parameter summary, inspect popup sourced from live tool definitions, and per-tool audit history/detail viewer)
   - analyze dashboard
   - system (tmp directory usage and cleanup)
   - setting (general/network plus versioned manifest sync, retention, and restore)
@@ -93,6 +93,7 @@
   - add/edit MCP servers via `egui::Window`
 - Skills Registry panel features:
   - read/write `skills.sync_timeout` and registries
+  - manage `skills.sync_timeout` through a `Config` popup instead of inline controls
   - add/edit registries via `egui::Window`
   - sync a registry's installed skills directly from the registry list actions
   - request a runtime skills-prompt reload after registry config/save and sync actions

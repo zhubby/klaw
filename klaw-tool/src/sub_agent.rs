@@ -537,6 +537,7 @@ mod tests {
             tool_signals: Vec::new(),
             request_usages: Vec::new(),
             request_audits: Vec::new(),
+            tool_audits: Vec::new(),
         };
 
         let tool_output = SubAgentTool::finalize_output(output).expect("should succeed");
@@ -555,6 +556,7 @@ mod tests {
             }],
             request_usages: Vec::new(),
             request_audits: Vec::new(),
+            tool_audits: Vec::new(),
         };
 
         let err = SubAgentTool::finalize_output(output).expect_err("signals should surface");
@@ -578,6 +580,7 @@ mod tests {
             }],
             request_usages: Vec::new(),
             request_audits: Vec::new(),
+            tool_audits: Vec::new(),
         };
 
         let err = SubAgentTool::finalize_output(output).expect_err("signals should surface");

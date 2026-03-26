@@ -66,6 +66,7 @@
 - runtime 对 `approval_required` 工具结果会直接透传审批提示，不再包装成通用的 tool failure 文案
 - runtime 对 `stop` 工具信号会立即结束当前轮次，并在 outbound metadata 中写入 `turn.stopped` / `turn.stop_signal`
 - runtime 现在会把 `sub_agent` 的 LLM 审计按父 session 持久化，并在审计记录 metadata 中附带 parent/child session 关联信息
+- runtime 现在会异步写入 `tool_audit`，持久化每次工具调用的完整参数、结果/失败详情、signals 与 tool call metadata，并让 `sub_agent` 的工具调用回写到父 session
 - runtime 和 `klaw session` 命令的会话状态/历史操作统一通过 `klaw-session` manager 层处理
 - 普通消息默认按 Base Session -> Active Session 路由；全局默认 provider/model 从当前配置实时解析，session 里的 `model_provider` / `model` 只表示显式 override，不再在建会话时复制默认值
 - gateway runtime 现同时支持结构化 `POST /webhook/events` 与模板驱动的 `POST /webhook/agents`；后者通过 URL query 接收 `hook_id` / `session_key` / `provider` / `model` 等控制参数，HTTP body 则保持原始 JSON 并在模板尾部追加为 request JSON 代码块

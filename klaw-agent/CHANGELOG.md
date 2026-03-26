@@ -2,6 +2,9 @@
 
 ## 2026-03-26
 
+### Added
+- `run_agent_execution` now returns per-tool `tool_audits` with arguments, full tool results, signals, timing, and tool-call sequencing for downstream persistence
+
 ### Fixed
 - `build_provider_from_config` 现在始终使用当前 provider 自己的 `default_model` 构建实例，不再读取根级 `config.model` 作为跨 provider 的全局覆盖，避免切换 provider 后默认模型仍停留在旧值
 

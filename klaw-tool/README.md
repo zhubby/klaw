@@ -27,6 +27,7 @@
 - the `message` shortcut now defaults to an isolated cron session key like `cron:<job_id>` so scheduled runs do not silently accumulate the current chat's conversation history
 - the `heartbeat_manager` tool manages session-bound heartbeat jobs directly from storage, with session/channel/chat defaults inferred from current tool context when possible
 - sub-agent execution currently opts out of live streaming, inherits parent provider/model/system prompt and live tool availability, auto-generates an isolated child session key, re-surfaces delegated `approval_required` / `stop` signals back to the parent agent, and can forward delegated LLM audits through a runtime-provided sink
+- delegated sub-agent execution now also carries structured tool audit records in `AgentExecutionOutput`, allowing runtimes to persist child tool-call diagnostics against the parent session
 - `skills_registry` now manages registry sources end to end: `add` persists `[skills.<source>]` into config, `sync` refreshes local mirrors, `delete` removes config + local clone + manifest state, and `list/show/search` browse synced registry skills
 - `skills_manager` owns installed-skill lifecycle actions, including `install_from_registry`
 - `local_search` uses `rg` first and falls back to BSD-compatible `grep` when ripgrep is not installed, while still honoring `include_pattern` and the default `.git` / `node_modules` exclusions

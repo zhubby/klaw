@@ -73,6 +73,7 @@ pub struct SkillsRegistryPanel {
     revision: Option<u64>,
     config: AppConfig,
     form: Option<SkillsRegistryForm>,
+    config_window_open: bool,
     sync_timeout_text: String,
     syncing_registry: Option<String>,
     sync_result_rx: Option<Receiver<(String, Result<RegistrySyncReport, String>)>>,
@@ -187,19 +188,69 @@ impl SkillsRegistryPanel {
         }
     }
 
-    fn save_sync_timeout(&mut self, notifications: &mut NotificationCenter) {
+    fn save_sync_timeout(&mut self, notifications: &mut NotificationCenter) -> bool {
         let timeout = match self.sync_timeout_text.trim().parse::<u64>() {
             Ok(value) => value,
             Err(_) => {
                 notifications.error("skills.sync_timeout must be a positive integer");
-                return;
+                return false;
             }
         };
 
         self.save_config(notifications, "skills.sync_timeout saved", move |config| {
             config.skills.sync_timeout = timeout;
             Ok(())
-        });
+        })
+    }
+
+    fn render_config_window(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        if !self.config_window_open {
+            return;
+        }
+
+        let mut save_clicked = false;
+        let mut cancel_clicked = false;
+
+        egui::Window::new("Skills Registry Config")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.set_min_width(360.0);
+                egui::Grid::new("skills-registry-config-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("sync_timeout (seconds)");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.sync_timeout_text)
+                                .desired_width(120.0),
+                        );
+                        ui.end_row();
+                    });
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Save Timeout").clicked() {
+                        save_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                });
+            });
+
+        if save_clicked && self.save_sync_timeout(notifications) {
+            self.config_window_open = false;
+        }
+        if cancel_clicked {
+            self.sync_timeout_text = self.config.skills.sync_timeout.to_string();
+            self.config_window_open = false;
+        }
     }
 
     fn sync_registry(&mut self, registry_name: &str, notifications: &mut NotificationCenter) {
@@ -504,10 +555,9 @@ impl PanelRenderer for SkillsRegistryPanel {
         ui.separator();
 
         ui.horizontal(|ui| {
-            ui.label("sync_timeout (seconds)");
-            ui.add(egui::TextEdit::singleline(&mut self.sync_timeout_text).desired_width(120.0));
-            if ui.button("Save Timeout").clicked() {
-                self.save_sync_timeout(notifications);
+            if ui.button("Config").clicked() {
+                self.sync_timeout_text = self.config.skills.sync_timeout.to_string();
+                self.config_window_open = true;
             }
             if ui.button("Reload").clicked() {
                 self.reload(notifications);
@@ -699,6 +749,7 @@ impl PanelRenderer for SkillsRegistryPanel {
         }
 
         self.render_delete_confirm_dialog(ui.ctx(), notifications);
+        self.render_config_window(ui.ctx(), notifications);
         self.render_form_window(ui, notifications);
     }
 }

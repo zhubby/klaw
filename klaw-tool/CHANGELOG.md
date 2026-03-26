@@ -3,6 +3,11 @@
 ## 2026-03-26
 
 ### Changed
+- test fixtures and delegated audit flows now account for `AgentExecutionOutput.tool_audits`, keeping `sub_agent` diagnostics aligned with runtime tool-audit persistence
+
+## 2026-03-26
+
+### Changed
 - `sub_agent` no longer requires planner-provided `context.session`; it now binds child execution to the current tool session, generates a unique delegated child session key per run, and keeps optional `context` as supplemental metadata only
 
 ### Fixed

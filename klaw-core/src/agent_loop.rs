@@ -14,7 +14,7 @@ use crate::{
 use async_trait::async_trait;
 use klaw_agent::{
     AgentExecutionError, AgentExecutionInput, AgentExecutionLimits, AgentExecutionStreamEvent,
-    ConversationMessage, ToolExecutor, ToolInvocationResult, ToolInvocationSignal,
+    AgentToolAudit, ConversationMessage, ToolExecutor, ToolInvocationResult, ToolInvocationSignal,
     run_agent_execution,
 };
 use klaw_llm::{LlmAuditPayload, LlmError, LlmMedia, LlmProvider, ToolDefinition};
@@ -99,6 +99,7 @@ pub struct ProcessOutcome {
     pub error_code: Option<ErrorCode>,
     pub final_state: AgentRunState,
     pub llm_audits: Vec<LlmAuditPayload>,
+    pub tool_audits: Vec<AgentToolAudit>,
     pub audit_message_id: Option<uuid::Uuid>,
     pub audit_session_key: Option<String>,
     pub audit_chat_id: Option<String>,
@@ -714,6 +715,7 @@ impl AgentLoop {
                 error_code: Some(ErrorCode::ValidationFailed),
                 final_state: AgentRunState::Failed,
                 llm_audits: Vec::new(),
+                tool_audits: Vec::new(),
                 audit_message_id: Some(msg.header.message_id),
                 audit_session_key: Some(msg.payload.session_key.clone()),
                 audit_chat_id: Some(msg.payload.chat_id.clone()),
@@ -1026,6 +1028,7 @@ impl AgentLoop {
                         .into_iter()
                         .map(|record| record.payload)
                         .collect(),
+                    tool_audits: output.tool_audits,
                     audit_message_id: Some(msg.header.message_id),
                     audit_session_key: Some(msg.payload.session_key.clone()),
                     audit_chat_id: Some(msg.payload.chat_id.clone()),
@@ -1095,6 +1098,7 @@ impl AgentLoop {
                     error_code: Some(map_llm_error_to_code(&err)),
                     final_state: AgentRunState::Degraded,
                     llm_audits: audits,
+                    tool_audits: Vec::new(),
                     audit_message_id: Some(msg.header.message_id),
                     audit_session_key: Some(msg.payload.session_key.clone()),
                     audit_chat_id: Some(msg.payload.chat_id.clone()),
@@ -1132,6 +1136,7 @@ impl AgentLoop {
                     error_code: Some(ErrorCode::RetryExhausted),
                     final_state: AgentRunState::Failed,
                     llm_audits: Vec::new(),
+                    tool_audits: Vec::new(),
                     audit_message_id: Some(msg.header.message_id),
                     audit_session_key: Some(msg.payload.session_key.clone()),
                     audit_chat_id: Some(msg.payload.chat_id.clone()),
@@ -1173,6 +1178,7 @@ impl AgentLoop {
                     error_code: Some(ErrorCode::BudgetExceeded),
                     final_state: AgentRunState::Failed,
                     llm_audits: Vec::new(),
+                    tool_audits: Vec::new(),
                     audit_message_id: Some(msg.header.message_id),
                     audit_session_key: Some(msg.payload.session_key.clone()),
                     audit_chat_id: Some(msg.payload.chat_id.clone()),
@@ -1206,6 +1212,7 @@ impl AgentLoop {
                 error_code: Some(ErrorCode::DuplicateMessage),
                 final_state: AgentRunState::Completed,
                 llm_audits: Vec::new(),
+                tool_audits: Vec::new(),
                 audit_message_id: Some(inbound.payload.header.message_id),
                 audit_session_key: Some(inbound.payload.header.session_key.clone()),
                 audit_chat_id: Some(inbound.payload.payload.chat_id.clone()),
@@ -1261,6 +1268,7 @@ impl AgentLoop {
                 error_code: Some(ErrorCode::DuplicateMessage),
                 final_state: AgentRunState::Completed,
                 llm_audits: Vec::new(),
+                tool_audits: Vec::new(),
                 audit_message_id: Some(inbound.payload.header.message_id),
                 audit_session_key: Some(inbound.payload.header.session_key.clone()),
                 audit_chat_id: Some(inbound.payload.payload.chat_id.clone()),
@@ -1410,6 +1418,7 @@ impl AgentLoop {
                     error_code: Some(ErrorCode::RetryExhausted),
                     final_state: AgentRunState::Failed,
                     llm_audits: Vec::new(),
+                    tool_audits: Vec::new(),
                     audit_message_id: Some(inbound_payload.header.message_id),
                     audit_session_key: Some(inbound_payload.header.session_key.clone()),
                     audit_chat_id: Some(inbound_payload.payload.chat_id.clone()),
@@ -1457,6 +1466,7 @@ impl AgentLoop {
                     error_code: Some(ErrorCode::SentToDeadLetter),
                     final_state: AgentRunState::Failed,
                     llm_audits: Vec::new(),
+                    tool_audits: Vec::new(),
                     audit_message_id: Some(inbound_payload.header.message_id),
                     audit_session_key: Some(inbound_payload.header.session_key.clone()),
                     audit_chat_id: Some(inbound_payload.payload.chat_id.clone()),

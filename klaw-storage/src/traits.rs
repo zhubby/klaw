@@ -3,10 +3,11 @@ use crate::{
     HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
     LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob,
     NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-    StorageError, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
-    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
-    WebhookEventRecord,
+    NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState,
+    SessionIndex, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
+    ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
+    WebhookEventQuery, WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -142,6 +143,21 @@ pub trait SessionStorage: Send + Sync {
         &self,
         query: &LlmAuditFilterOptionsQuery,
     ) -> Result<LlmAuditFilterOptions, StorageError>;
+
+    async fn append_tool_audit(
+        &self,
+        input: &NewToolAuditRecord,
+    ) -> Result<ToolAuditRecord, StorageError>;
+
+    async fn list_tool_audit(
+        &self,
+        query: &ToolAuditQuery,
+    ) -> Result<Vec<ToolAuditRecord>, StorageError>;
+
+    async fn list_tool_audit_filter_options(
+        &self,
+        query: &ToolAuditFilterOptionsQuery,
+    ) -> Result<ToolAuditFilterOptions, StorageError>;
 
     async fn append_webhook_event(
         &self,

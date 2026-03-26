@@ -4,9 +4,11 @@ use crate::{
     HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery,
     LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource,
     LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
-    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookAgentRecord,
-    NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage, StorageError,
-    StoragePaths, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
+    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
+    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
+    SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
+    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, ToolAuditSortOrder,
+    ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
     UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
     WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus, jsonl,
     memory_db::{DbRow, DbValue, MemoryDb},
@@ -184,6 +186,30 @@ struct LlmAuditRow {
     metadata_json: Option<String>,
     requested_at_ms: i64,
     responded_at_ms: Option<i64>,
+    created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct ToolAuditRow {
+    id: String,
+    session_key: String,
+    chat_id: String,
+    turn_index: i64,
+    request_seq: i64,
+    tool_call_seq: i64,
+    tool_name: String,
+    status: String,
+    error_code: Option<String>,
+    error_message: Option<String>,
+    retryable: Option<i64>,
+    approval_required: i64,
+    arguments_json: String,
+    result_content: String,
+    error_details_json: Option<String>,
+    signals_json: Option<String>,
+    metadata_json: Option<String>,
+    started_at_ms: i64,
+    finished_at_ms: i64,
     created_at_ms: i64,
 }
 
@@ -436,6 +462,38 @@ impl TryFrom<LlmAuditRow> for LlmAuditRecord {
     }
 }
 
+impl TryFrom<ToolAuditRow> for ToolAuditRecord {
+    type Error = StorageError;
+
+    fn try_from(value: ToolAuditRow) -> Result<Self, Self::Error> {
+        let status = ToolAuditStatus::parse(&value.status).ok_or_else(|| {
+            StorageError::backend(format!("invalid tool audit status: {}", value.status))
+        })?;
+        Ok(Self {
+            id: value.id,
+            session_key: value.session_key,
+            chat_id: value.chat_id,
+            turn_index: value.turn_index,
+            request_seq: value.request_seq,
+            tool_call_seq: value.tool_call_seq,
+            tool_name: value.tool_name,
+            status,
+            error_code: value.error_code,
+            error_message: value.error_message,
+            retryable: value.retryable.map(|flag| flag != 0),
+            approval_required: value.approval_required != 0,
+            arguments_json: value.arguments_json,
+            result_content: value.result_content,
+            error_details_json: value.error_details_json,
+            signals_json: value.signals_json,
+            metadata_json: value.metadata_json,
+            started_at_ms: value.started_at_ms,
+            finished_at_ms: value.finished_at_ms,
+            created_at_ms: value.created_at_ms,
+        })
+    }
+}
+
 impl TryFrom<WebhookEventRow> for WebhookEventRecord {
     type Error = StorageError;
 
@@ -681,6 +739,55 @@ impl SqlxSessionStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_llm_audit_session_turn
              ON llm_audit(session_key, turn_index, request_seq)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS tool_audit (
+                id TEXT PRIMARY KEY,
+                session_key TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                turn_index INTEGER NOT NULL,
+                request_seq INTEGER NOT NULL,
+                tool_call_seq INTEGER NOT NULL,
+                tool_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error_code TEXT,
+                error_message TEXT,
+                retryable INTEGER,
+                approval_required INTEGER NOT NULL,
+                arguments_json TEXT NOT NULL,
+                result_content TEXT NOT NULL,
+                error_details_json TEXT,
+                signals_json TEXT,
+                metadata_json TEXT,
+                started_at_ms INTEGER NOT NULL,
+                finished_at_ms INTEGER NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_tool_audit_tool_started
+             ON tool_audit(tool_name, started_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_tool_audit_session_started
+             ON tool_audit(session_key, started_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_tool_audit_session_turn
+             ON tool_audit(session_key, turn_index, request_seq, tool_call_seq)",
         )
         .execute(&self.pool)
         .await
@@ -1790,6 +1897,121 @@ impl SessionStorage for SqlxSessionStore {
         Ok(LlmAuditFilterOptions {
             session_keys,
             providers,
+        })
+    }
+
+    async fn append_tool_audit(
+        &self,
+        input: &NewToolAuditRecord,
+    ) -> Result<ToolAuditRecord, StorageError> {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO tool_audit (
+                id, session_key, chat_id, turn_index, request_seq, tool_call_seq, tool_name,
+                status, error_code, error_message, retryable, approval_required, arguments_json,
+                result_content, error_details_json, signals_json, metadata_json, started_at_ms,
+                finished_at_ms, created_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+        )
+        .bind(&input.id)
+        .bind(&input.session_key)
+        .bind(&input.chat_id)
+        .bind(input.turn_index)
+        .bind(input.request_seq)
+        .bind(input.tool_call_seq)
+        .bind(&input.tool_name)
+        .bind(input.status.as_str())
+        .bind(&input.error_code)
+        .bind(&input.error_message)
+        .bind(input.retryable.map(|flag| if flag { 1_i64 } else { 0_i64 }))
+        .bind(if input.approval_required { 1_i64 } else { 0_i64 })
+        .bind(&input.arguments_json)
+        .bind(&input.result_content)
+        .bind(&input.error_details_json)
+        .bind(&input.signals_json)
+        .bind(&input.metadata_json)
+        .bind(input.started_at_ms)
+        .bind(input.finished_at_ms)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        let row = sqlx::query_as::<_, ToolAuditRow>(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, tool_call_seq, tool_name,
+                    status, error_code, error_message, retryable, approval_required,
+                    arguments_json, result_content, error_details_json, signals_json,
+                    metadata_json, started_at_ms, finished_at_ms, created_at_ms
+             FROM tool_audit
+             WHERE id = ?1",
+        )
+        .bind(&input.id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        ToolAuditRecord::try_from(row)
+    }
+
+    async fn list_tool_audit(
+        &self,
+        query: &ToolAuditQuery,
+    ) -> Result<Vec<ToolAuditRecord>, StorageError> {
+        let rows = sqlx::query_as::<_, ToolAuditRow>(&format!(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, tool_call_seq, tool_name,
+                    status, error_code, error_message, retryable, approval_required,
+                    arguments_json, result_content, error_details_json, signals_json,
+                    metadata_json, started_at_ms, finished_at_ms, created_at_ms
+             FROM tool_audit
+             WHERE (?1 IS NULL OR session_key = ?1)
+               AND (?2 IS NULL OR tool_name = ?2)
+               AND (?3 IS NULL OR started_at_ms >= ?3)
+               AND (?4 IS NULL OR started_at_ms <= ?4)
+             ORDER BY {}
+             LIMIT ?5 OFFSET ?6",
+            query.sort_order.sql_order_by()
+        ))
+        .bind(query.session_key.as_deref())
+        .bind(query.tool_name.as_deref())
+        .bind(query.started_from_ms)
+        .bind(query.started_to_ms)
+        .bind(query.limit.max(1))
+        .bind(query.offset.max(0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        rows.into_iter().map(ToolAuditRecord::try_from).collect()
+    }
+
+    async fn list_tool_audit_filter_options(
+        &self,
+        query: &ToolAuditFilterOptionsQuery,
+    ) -> Result<ToolAuditFilterOptions, StorageError> {
+        let session_keys = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT session_key
+             FROM tool_audit
+             WHERE (?1 IS NULL OR started_at_ms >= ?1)
+               AND (?2 IS NULL OR started_at_ms <= ?2)
+             ORDER BY session_key ASC",
+        )
+        .bind(query.started_from_ms)
+        .bind(query.started_to_ms)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        let tool_names = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT tool_name
+             FROM tool_audit
+             WHERE (?1 IS NULL OR started_at_ms >= ?1)
+               AND (?2 IS NULL OR started_at_ms <= ?2)
+             ORDER BY tool_name ASC",
+        )
+        .bind(query.started_from_ms)
+        .bind(query.started_to_ms)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(ToolAuditFilterOptions {
+            session_keys,
+            tool_names,
         })
     }
 

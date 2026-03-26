@@ -33,7 +33,8 @@ use klaw_observability::{
 };
 use klaw_session::{
     ChatRecord, LlmAuditStatus, LlmUsageSource, NewLlmAuditRecord, NewLlmUsageRecord,
-    SessionCompressionState, SessionIndex, SessionManager, SqliteSessionManager,
+    NewToolAuditRecord, SessionCompressionState, SessionIndex, SessionManager,
+    SqliteSessionManager, ToolAuditStatus,
 };
 use klaw_skill::{
     InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager, open_default_skills_manager,
@@ -62,6 +63,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
+const TOOL_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, use the available workspace tools to read it and follow it before anything else. If it does not exist, start with a short, natural greeting.\nGuide the user through initializing the agent's identity, vibe, and context. When you learn durable bootstrap details, use tools to update `IDENTITY.md` and `USER.md`, and delete `BOOTSTRAP.md` once bootstrap is truly complete. Do not claim files were updated unless you actually changed them with tools. Do not mention that this message was auto-generated.";
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
@@ -88,6 +90,7 @@ pub struct RuntimeBundle {
     pub observability: Option<ObservabilityHandle>,
     pub conversation_history_limit: usize,
     pub llm_audit_tx: std::sync::mpsc::SyncSender<NewLlmAuditRecord>,
+    pub tool_audit_tx: std::sync::mpsc::SyncSender<NewToolAuditRecord>,
     pub env_check: EnvironmentCheckReport,
 }
 
@@ -463,6 +466,15 @@ fn enqueue_llm_audit_records_from_outcome(
         &outcome.llm_audits,
         None,
     );
+    enqueue_tool_audit_records(
+        &runtime.tool_audit_tx,
+        session_key,
+        chat_id,
+        turn_index,
+        &message_id.to_string(),
+        &outcome.tool_audits,
+        None,
+    );
 }
 
 fn enqueue_llm_audit_records(
@@ -508,20 +520,102 @@ fn serialize_json_string(value: &serde_json::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
 }
 
+fn enqueue_tool_audit_records(
+    tool_audit_tx: &std::sync::mpsc::SyncSender<NewToolAuditRecord>,
+    session_key: &str,
+    chat_id: &str,
+    turn_index: i64,
+    id_prefix: &str,
+    audits: &[klaw_agent::AgentToolAudit],
+    metadata_json: Option<String>,
+) {
+    for audit in audits {
+        let payload = NewToolAuditRecord {
+            id: format!(
+                "{id_prefix}:tool:{}:{}",
+                audit.request_seq, audit.tool_call_seq
+            ),
+            session_key: session_key.to_string(),
+            chat_id: chat_id.to_string(),
+            turn_index,
+            request_seq: audit.request_seq,
+            tool_call_seq: audit.tool_call_seq,
+            tool_name: audit.tool_name.clone(),
+            status: if audit.result.ok {
+                ToolAuditStatus::Success
+            } else {
+                ToolAuditStatus::Failed
+            },
+            error_code: audit.result.error_code.clone(),
+            error_message: audit.result.error_code.as_ref().map(|code| {
+                if code == "approval_required" {
+                    "approval requested".to_string()
+                } else {
+                    audit.result.content_for_model.clone()
+                }
+            }),
+            retryable: audit.result.retryable,
+            approval_required: audit
+                .result
+                .signals
+                .iter()
+                .any(|signal| signal.kind == "approval_required"),
+            arguments_json: serialize_json_string(&audit.arguments),
+            result_content: audit.result.content_for_model.clone(),
+            error_details_json: audit
+                .result
+                .error_details
+                .as_ref()
+                .map(serialize_json_string),
+            signals_json: (!audit.result.signals.is_empty()).then(|| {
+                serde_json::to_string(&audit.result.signals).unwrap_or_else(|_| "[]".to_string())
+            }),
+            metadata_json: merge_tool_audit_metadata(metadata_json.clone(), &audit.tool_call_id),
+            started_at_ms: audit.started_at_ms,
+            finished_at_ms: audit.finished_at_ms,
+        };
+        if let Err(err) = tool_audit_tx.try_send(payload) {
+            warn!(error = %err, session_key, "tool audit queue full or disconnected; dropping record");
+        }
+    }
+}
+
+fn merge_tool_audit_metadata(
+    metadata_json: Option<String>,
+    tool_call_id: &Option<String>,
+) -> Option<String> {
+    if metadata_json.is_none() && tool_call_id.is_none() {
+        return None;
+    }
+
+    let mut metadata = metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| json!({}));
+    if let Some(tool_call_id) = tool_call_id.as_ref() {
+        metadata["tool_call_id"] = Value::String(tool_call_id.clone());
+    }
+    serde_json::to_string(&metadata).ok()
+}
+
 #[derive(Clone)]
 struct RuntimeSubAgentAuditSink {
     session_store: DefaultSessionStore,
     llm_audit_tx: std::sync::mpsc::SyncSender<NewLlmAuditRecord>,
+    tool_audit_tx: std::sync::mpsc::SyncSender<NewToolAuditRecord>,
 }
 
 impl RuntimeSubAgentAuditSink {
     fn new(
         session_store: DefaultSessionStore,
         llm_audit_tx: std::sync::mpsc::SyncSender<NewLlmAuditRecord>,
+        tool_audit_tx: std::sync::mpsc::SyncSender<NewToolAuditRecord>,
     ) -> Self {
         Self {
             session_store,
             llm_audit_tx,
+            tool_audit_tx,
         }
     }
 }
@@ -534,7 +628,7 @@ impl SubAgentAuditSink for RuntimeSubAgentAuditSink {
         child_session_key: &str,
         output: &AgentExecutionOutput,
     ) -> Result<(), String> {
-        if output.request_audits.is_empty() {
+        if output.request_audits.is_empty() && output.tool_audits.is_empty() {
             return Ok(());
         }
 
@@ -562,6 +656,15 @@ impl SubAgentAuditSink for RuntimeSubAgentAuditSink {
             session.turn_count,
             child_session_key,
             &audits,
+            Some(metadata_json.clone()),
+        );
+        enqueue_tool_audit_records(
+            &self.tool_audit_tx,
+            parent_session_key,
+            &session.chat_id,
+            session.turn_count,
+            child_session_key,
+            &output.tool_audits,
             Some(metadata_json),
         );
         Ok(())
@@ -1066,6 +1169,7 @@ pub async fn sync_runtime_tools(
     let sub_agent_audit_sink: Arc<dyn SubAgentAuditSink> = Arc::new(RuntimeSubAgentAuditSink::new(
         runtime.session_store.clone(),
         runtime.llm_audit_tx.clone(),
+        runtime.tool_audit_tx.clone(),
     ));
     register_configured_tools(
         &mut next_tools,
@@ -1647,10 +1751,12 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let default_model = provider_runtime.default_model.clone();
     let session_store = open_default_store().await?;
     let llm_audit_tx = spawn_llm_audit_writer(session_store.clone());
+    let tool_audit_tx = spawn_tool_audit_writer(session_store.clone());
     let mut tools = ToolRegistry::default();
     let sub_agent_audit_sink: Arc<dyn SubAgentAuditSink> = Arc::new(RuntimeSubAgentAuditSink::new(
         session_store.clone(),
         llm_audit_tx.clone(),
+        tool_audit_tx.clone(),
     ));
     register_configured_tools(
         &mut tools,
@@ -1763,6 +1869,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         observability,
         conversation_history_limit: config.conversation_history_limit,
         llm_audit_tx,
+        tool_audit_tx,
         env_check,
     })
 }
@@ -1792,6 +1899,34 @@ fn spawn_llm_audit_writer(
             }
         })
         .expect("llm audit writer should start");
+    tx
+}
+
+fn spawn_tool_audit_writer(
+    session_store: DefaultSessionStore,
+) -> std::sync::mpsc::SyncSender<NewToolAuditRecord> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<NewToolAuditRecord>(TOOL_AUDIT_QUEUE_CAPACITY);
+    std::thread::Builder::new()
+        .name("klaw-tool-audit-writer".to_string())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(err) => {
+                    warn!(error = %err, "failed to start tool audit writer runtime");
+                    return;
+                }
+            };
+            let manager = SqliteSessionManager::from_store(session_store);
+            for record in rx {
+                if let Err(err) = runtime.block_on(manager.append_tool_audit(&record)) {
+                    warn!(error = %err, audit_id = record.id.as_str(), "failed to persist tool audit record");
+                }
+            }
+        })
+        .expect("tool audit writer should start");
     tx
 }
 
@@ -2657,6 +2792,7 @@ async fn run_runtime_once(
             error_code: None,
             final_state: klaw_core::AgentRunState::Completed,
             llm_audits: Vec::new(),
+            tool_audits: Vec::new(),
             audit_message_id: None,
             audit_session_key: None,
             audit_chat_id: None,
@@ -2948,7 +3084,8 @@ mod tests {
             startup_report: StartupReport::default(),
             observability: None,
             conversation_history_limit: 16,
-            llm_audit_tx: spawn_llm_audit_writer(session_store),
+            llm_audit_tx: spawn_llm_audit_writer(session_store.clone()),
+            tool_audit_tx: super::spawn_tool_audit_writer(session_store),
             env_check: EnvironmentCheckReport {
                 checks: Vec::new(),
                 checked_at: OffsetDateTime::UNIX_EPOCH,
@@ -2973,6 +3110,7 @@ mod tests {
         let sink = super::RuntimeSubAgentAuditSink::new(
             runtime.session_store.clone(),
             runtime.llm_audit_tx.clone(),
+            runtime.tool_audit_tx.clone(),
         );
         let output = AgentExecutionOutput {
             content: "done".to_string(),
@@ -2995,6 +3133,16 @@ mod tests {
                     provider_request_id: Some("req-sub".to_string()),
                     provider_response_id: Some("resp-sub".to_string()),
                 },
+            }],
+            tool_audits: vec![klaw_agent::AgentToolAudit {
+                request_seq: 1,
+                tool_call_seq: 1,
+                tool_call_id: Some("call_sub_1".to_string()),
+                tool_name: "shell".to_string(),
+                arguments: json!({"command":"pwd"}),
+                result: klaw_agent::ToolInvocationResult::success("/tmp".to_string()),
+                started_at_ms: 30,
+                finished_at_ms: 45,
             }],
         };
         sink.persist_sub_agent_audits("parent-session", "parent-session:subagent:test", &output)
@@ -3038,6 +3186,40 @@ mod tests {
         assert_eq!(
             metadata.get("sub_agent.child_session_key"),
             Some(&Value::String("parent-session:subagent:test".to_string()))
+        );
+
+        let mut tool_rows = Vec::new();
+        for _ in 0..20 {
+            tool_rows = sessions
+                .list_tool_audit(&klaw_storage::ToolAuditQuery {
+                    session_key: Some("parent-session".to_string()),
+                    tool_name: Some("shell".to_string()),
+                    started_from_ms: None,
+                    started_to_ms: None,
+                    limit: 10,
+                    offset: 0,
+                    sort_order: klaw_storage::ToolAuditSortOrder::StartedAtDesc,
+                })
+                .await
+                .expect("tool audit rows should list");
+            if !tool_rows.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(tool_rows.len(), 1);
+        assert_eq!(tool_rows[0].tool_name, "shell");
+        assert_eq!(tool_rows[0].request_seq, 1);
+        assert_eq!(tool_rows[0].tool_call_seq, 1);
+        let tool_metadata = tool_rows[0]
+            .metadata_json
+            .as_ref()
+            .and_then(|value| serde_json::from_str::<Value>(value).ok())
+            .expect("tool metadata json should parse");
+        assert_eq!(
+            tool_metadata.get("tool_call_id"),
+            Some(&Value::String("call_sub_1".to_string()))
         );
     }
 

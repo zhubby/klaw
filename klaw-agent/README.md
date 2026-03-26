@@ -8,6 +8,7 @@
 - 组装系统提示词、历史会话与当前用户输入。
 - 支持当前用户轮次同时携带媒体输入（`AgentExecutionInput.user_media`）。
 - 执行工具调用循环，并将工具结果回填给模型。
+- 为每次工具调用生成结构化 `tool_audits`，包含参数、结果/错误、signals、tool_call_id 与耗时。
 - 当工具发出 `approval_required` 信号时立即停止当前工具循环，避免单轮对话重复堆积审批单。
 - 当工具发出 `stop` 信号时立即停止当前工具循环，并返回统一的“当前轮次已停止”用户文案。
 - 在 `approval_required` 短路时保留模型原始审批提示文案，同时继续返回工具信号与请求级 usage/audit 记录。

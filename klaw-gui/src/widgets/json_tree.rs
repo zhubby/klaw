@@ -1,5 +1,9 @@
 pub fn show_json_tree(ui: &mut egui::Ui, value: &serde_json::Value) {
-    show_json_value(ui, "root", value, "$");
+    show_json_tree_with_id(ui, value, "$");
+}
+
+pub fn show_json_tree_with_id(ui: &mut egui::Ui, value: &serde_json::Value, root_id: &str) {
+    show_json_value(ui, "root", value, root_id);
 }
 
 fn show_json_value(ui: &mut egui::Ui, label: &str, value: &serde_json::Value, path: &str) {
