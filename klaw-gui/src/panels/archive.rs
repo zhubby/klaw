@@ -8,6 +8,7 @@ use klaw_archive::{
     ArchiveBlob, ArchiveError, ArchiveMediaKind, ArchiveQuery, ArchiveRecord, ArchiveService,
     ArchiveSourceKind, SqliteArchiveService, open_default_archive_service,
 };
+use klaw_util::command_search_path;
 use std::ffi::OsStr;
 use std::fs;
 use std::future::Future;
@@ -770,7 +771,11 @@ fn load_quick_look_thumbnail(path: &Path) -> Result<Vec<u8>, String> {
     fs::create_dir_all(&output_dir)
         .map_err(|err| format!("failed to create preview temp dir: {err}"))?;
 
-    let result = Command::new("qlmanage")
+    let mut command = Command::new("qlmanage");
+    if let Some(path) = command_search_path() {
+        command.env("PATH", path);
+    }
+    let result = command
         .arg("-t")
         .arg("-s")
         .arg("1600")

@@ -8,8 +8,8 @@ use commands::{
     gateway::GatewayCommand, gui::GuiCommand, session::SessionCommand, stdio::StdioCommand,
 };
 use klaw_storage::StoragePaths;
+use klaw_util::augment_current_process_command_path;
 use std::{
-    env,
     fs::{self, OpenOptions},
     io::{self, Write},
     path::PathBuf,
@@ -127,85 +127,12 @@ fn is_pre_runtime_command(command: &Commands) -> bool {
     matches!(command, Commands::Config(_) | Commands::Daemon(_))
 }
 
-#[derive(Debug)]
-struct PathUpdate {
-    added_paths: Vec<PathBuf>,
-}
-
-fn initialize_gui_process_environment(command: &Commands) -> Option<PathUpdate> {
+fn initialize_gui_process_environment(command: &Commands) -> Option<klaw_util::CommandPathUpdate> {
     if !matches!(command, Commands::Gui(_)) {
         return None;
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        return augment_path_for_macos_gui();
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn augment_path_for_macos_gui() -> Option<PathUpdate> {
-    const MACOS_GUI_PATHS: &[&str] = &[
-        "/opt/homebrew/bin",
-        "/opt/homebrew/sbin",
-        "/usr/local/bin",
-        "/usr/local/sbin",
-        "/opt/local/bin",
-        "/opt/local/sbin",
-    ];
-
-    let current_path = env::var_os("PATH");
-    let installed_candidates = MACOS_GUI_PATHS
-        .iter()
-        .map(PathBuf::from)
-        .filter(|candidate| candidate.exists())
-        .collect::<Vec<_>>();
-    let (merged_paths, added_paths) =
-        compute_augmented_path_entries(current_path, installed_candidates);
-
-    if added_paths.is_empty() {
-        return None;
-    }
-
-    if let Ok(joined) = env::join_paths(&merged_paths) {
-        // SAFETY: This runs during CLI startup before we spawn any additional tasks or threads
-        // that might concurrently read or mutate the process environment.
-        unsafe {
-            env::set_var("PATH", joined);
-        }
-        return Some(PathUpdate { added_paths });
-    }
-
-    None
-}
-
-fn compute_augmented_path_entries(
-    current_path: Option<std::ffi::OsString>,
-    installed_candidates: Vec<PathBuf>,
-) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    let mut merged_paths: Vec<PathBuf> = current_path
-        .as_deref()
-        .map(env::split_paths)
-        .into_iter()
-        .flatten()
-        .collect();
-    let mut added_paths = Vec::new();
-
-    for candidate in installed_candidates.into_iter().rev() {
-        if merged_paths.iter().any(|existing| existing == &candidate) {
-            continue;
-        }
-        merged_paths.insert(0, candidate.clone());
-        added_paths.push(candidate);
-    }
-
-    added_paths.reverse();
-    (merged_paths, added_paths)
+    augment_current_process_command_path()
 }
 
 fn init_tracing(
@@ -480,51 +407,5 @@ mod tests {
         assert_eq!(written, 12);
         writer.flush().expect("flush should succeed");
         let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn compute_augmented_path_entries_prepends_missing_candidates_once() {
-        let existing = env::join_paths([
-            PathBuf::from("/usr/bin"),
-            PathBuf::from("/bin"),
-            PathBuf::from("/usr/local/bin"),
-        ])
-        .expect("join test PATH");
-        let candidates = vec![
-            PathBuf::from("/opt/homebrew/bin"),
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/opt/local/bin"),
-        ];
-
-        let (merged_paths, added_paths) =
-            compute_augmented_path_entries(Some(existing), candidates);
-
-        assert_eq!(
-            merged_paths,
-            vec![
-                PathBuf::from("/opt/homebrew/bin"),
-                PathBuf::from("/opt/local/bin"),
-                PathBuf::from("/usr/bin"),
-                PathBuf::from("/bin"),
-                PathBuf::from("/usr/local/bin"),
-            ]
-        );
-        assert_eq!(
-            added_paths,
-            vec![
-                PathBuf::from("/opt/homebrew/bin"),
-                PathBuf::from("/opt/local/bin"),
-            ]
-        );
-    }
-
-    #[test]
-    fn compute_augmented_path_entries_handles_empty_path() {
-        let candidates = vec![PathBuf::from("/opt/homebrew/bin")];
-
-        let (merged_paths, added_paths) = compute_augmented_path_entries(None, candidates);
-
-        assert_eq!(merged_paths, vec![PathBuf::from("/opt/homebrew/bin")]);
-        assert_eq!(added_paths, vec![PathBuf::from("/opt/homebrew/bin")]);
     }
 }

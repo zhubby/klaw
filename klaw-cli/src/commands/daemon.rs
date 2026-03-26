@@ -1,6 +1,7 @@
 use clap::{Args, Subcommand};
 use klaw_config::default_config_path;
 use klaw_storage::StoragePaths;
+use klaw_util::command_search_path;
 use std::{
     env, fmt, fs,
     path::{Path, PathBuf},
@@ -617,21 +618,23 @@ fn run_command_allow_failure<const N: usize>(
     command: &'static str,
     args: [&str; N],
 ) -> Result<CommandOutput, DaemonError> {
-    let output = Command::new(command)
-        .args(args)
-        .output()
-        .map_err(|source| {
-            if source.kind() == std::io::ErrorKind::NotFound {
-                DaemonError::CommandNotFound { command }
-            } else {
-                DaemonError::CommandFailed {
-                    command: format!("{command} {}", args.join(" ")),
-                    exit_code: -1,
-                    stdout: String::new(),
-                    stderr: source.to_string(),
-                }
+    let mut child = Command::new(command);
+    child.args(args);
+    if let Some(path) = command_search_path() {
+        child.env("PATH", path);
+    }
+    let output = child.output().map_err(|source| {
+        if source.kind() == std::io::ErrorKind::NotFound {
+            DaemonError::CommandNotFound { command }
+        } else {
+            DaemonError::CommandFailed {
+                command: format!("{command} {}", args.join(" ")),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: source.to_string(),
             }
-        })?;
+        }
+    })?;
     Ok(CommandOutput {
         exit_code: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),

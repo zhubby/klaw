@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use klaw_util::{
-    SKILLS_REGISTRY_MANIFEST_FILE_NAME, default_data_dir, skills_dir, skills_registry_dir,
-    skills_registry_manifest_path,
+    SKILLS_REGISTRY_MANIFEST_FILE_NAME, command_search_path, default_data_dir, skills_dir,
+    skills_registry_dir, skills_registry_manifest_path,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1495,6 +1495,9 @@ async fn run_git_capture_once(
 ) -> Result<String, SkillError> {
     tokio::task::spawn_blocking(move || {
         let mut command = Command::new("git");
+        if let Some(path) = command_search_path() {
+            command.env("PATH", path);
+        }
         command.args(&args);
         if let Some(dir) = cwd {
             command.current_dir(dir);

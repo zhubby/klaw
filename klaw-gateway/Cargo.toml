@@ -10,6 +10,7 @@ axum = { workspace = true }
 futures-util = { workspace = true }
 klaw-config = { workspace = true }
 klaw-observability = { workspace = true }
+klaw-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

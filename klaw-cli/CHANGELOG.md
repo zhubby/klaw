@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-03-26
+
+### Changed
+
+- `klaw gui` 启动时的外部命令 PATH 增强逻辑现改为复用 `klaw-util` 的共享 helper，避免 CLI 入口继续维护一份独立实现
+
+### Fixed
+
+- `env_check` 与 daemon 子命令现在在启动外部命令时也会注入统一增强后的 PATH，避免 GUI/macOS 环境下误判缺少 `git`、`rg`、`tmux`、`tailscale` 等二进制
+
 ## 2026-03-25
 
 ### Added

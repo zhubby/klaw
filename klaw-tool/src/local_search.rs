@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use globset::{Glob, GlobMatcher};
+use klaw_util::command_search_path;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -151,7 +152,7 @@ impl LocalSearchTool {
         search_path: &str,
         ctx: &ToolContext,
     ) -> Command {
-        let mut command = Command::new("rg");
+        let mut command = binary_command("rg");
         command.args([
             "--files-with-matches",
             "--hidden",
@@ -278,7 +279,7 @@ impl LocalSearchTool {
 
         let mut matches = BTreeSet::new();
         for chunk in candidates.chunks(GREP_BATCH_SIZE) {
-            let mut command = Command::new("grep");
+            let mut command = binary_command("grep");
             command.args(["-R", "-l", "-E", &request.query]);
             command.args(chunk.iter().map(|path| path.as_os_str()));
             command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -335,6 +336,14 @@ impl LocalSearchTool {
             .map(ToString::to_string)
             .collect()
     }
+}
+
+fn binary_command(binary: &str) -> Command {
+    let mut command = Command::new(binary);
+    if let Some(path) = command_search_path() {
+        command.env("PATH", path);
+    }
+    command
 }
 
 struct SearchPaths {

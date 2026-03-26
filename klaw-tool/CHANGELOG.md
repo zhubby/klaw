@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-26
+
+### Fixed
+- `shell`、`local_search` 与 `terminal_multiplexer` 在按命令名启动 `sh`/`rg`/`grep`/`tmux` 时现在会统一注入共享增强后的 PATH，改善 macOS GUI 启动下的外部命令发现能力
+
 ## 2026-03-25
 
 ### Changed

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use klaw_util::command_search_path;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -465,7 +466,7 @@ impl TerminalMultiplexerTool {
         timeout_secs: u64,
         ctx: &ToolContext,
     ) -> Result<(), ToolError> {
-        let mut cmd = Command::new("tmux");
+        let mut cmd = tmux_command();
         cmd.arg("-V");
         cmd.stdout(Stdio::null());
         cmd.stderr(Stdio::null());
@@ -487,7 +488,7 @@ impl TerminalMultiplexerTool {
         timeout_secs: u64,
         ctx: &ToolContext,
     ) -> Result<std::process::Output, ToolError> {
-        let mut cmd = Command::new("tmux");
+        let mut cmd = tmux_command();
         cmd.arg("-S").arg(&layout.socket_path);
         cmd.args(args);
         cmd.stdout(Stdio::piped());
@@ -1266,6 +1267,14 @@ impl TerminalMultiplexerTool {
             content_for_user: Some(rendered),
         })
     }
+}
+
+fn tmux_command() -> Command {
+    let mut cmd = Command::new("tmux");
+    if let Some(path) = command_search_path() {
+        cmd.env("PATH", path);
+    }
+    cmd
 }
 
 impl Default for TerminalMultiplexerTool {

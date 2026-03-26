@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use klaw_config::McpServerConfig;
+use klaw_util::command_search_path;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
 use std::{
@@ -78,6 +79,9 @@ impl StdioMcpClient {
     pub(crate) async fn new(server: &McpServerConfig) -> Result<Self, McpClientError> {
         let command = server.command.clone().unwrap_or_default();
         let mut cmd = Command::new(command.trim());
+        if let Some(path) = command_search_path() {
+            cmd.env("PATH", path);
+        }
         cmd.kill_on_drop(true);
         cmd.args(server.args.clone());
         if let Some(cwd) = &server.cwd {
