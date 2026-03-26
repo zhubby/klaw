@@ -1,8 +1,8 @@
+pub mod env_check;
 pub mod gateway_manager;
 pub mod service_loop;
 pub mod webhook;
 
-use crate::env_check;
 use klaw_agent::{
     AgentExecutionStreamEvent, ConversationMessage, ConversationSummary, build_compression_prompt,
     build_provider_from_config, merge_or_reset_summary, parse_conversation_summary,

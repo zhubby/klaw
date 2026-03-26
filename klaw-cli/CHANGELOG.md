@@ -2,9 +2,14 @@
 
 ## 2026-03-26
 
+### Added
+
+- runtime environment check 现在会额外报告可选的 `docker` 与 Apple `container` CLI 可用性，便于在 GUI/System 面板中快速判断本机容器工具链状态
+
 ### Changed
 
 - `klaw gui` 启动时的外部命令 PATH 增强逻辑现改为复用 `klaw-util` 的共享 helper，避免 CLI 入口继续维护一份独立实现
+- `env_check` 实现已从 `klaw-cli/src/env_check.rs` 挪到 `klaw-cli/src/runtime/env_check.rs`，使运行时启动逻辑与环境探测代码保持同一模块边界
 
 ### Fixed
 

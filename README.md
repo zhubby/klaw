@@ -58,6 +58,10 @@ Artifacts are written to `dist/macos/`:
 - `dist/macos/Klaw.app`
 - `dist/macos/Klaw-<version>-aarch64-apple-darwin.dmg`
 
+Run skip quarantine
+
+`xattr -rd com.apple.quarantine /Applications/Klaw.app`
+
 See `docs/` for architecture details.
 
 ## License

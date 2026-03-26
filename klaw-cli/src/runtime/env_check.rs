@@ -58,6 +58,24 @@ const DEPENDENCIES: &[BinaryDependency] = &[
         category: DependencyCategory::OptionalWithFallback,
         version_parser: parse_tmux_version,
     },
+    BinaryDependency {
+        name: "docker",
+        description: "Container CLI and image tooling",
+        project_url: Some("https://www.docker.com"),
+        version_args: &["--version"],
+        required: false,
+        category: DependencyCategory::OptionalWithFallback,
+        version_parser: parse_docker_version,
+    },
+    BinaryDependency {
+        name: "container",
+        description: "Apple container CLI for macOS-native containers",
+        project_url: Some("https://github.com/apple/container"),
+        version_args: &["--version"],
+        required: false,
+        category: DependencyCategory::OptionalWithFallback,
+        version_parser: parse_container_version,
+    },
 ];
 
 pub fn check_environment() -> EnvironmentCheckReport {
@@ -255,6 +273,31 @@ fn parse_tailscale_version(output: &str) -> Option<String> {
     output.lines().next().map(|v| v.trim().to_string())
 }
 
+fn parse_docker_version(output: &str) -> Option<String> {
+    output
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("Docker version "))
+        .map(|line| line.split(',').next().unwrap_or(line).trim().to_string())
+}
+
+fn parse_container_version(output: &str) -> Option<String> {
+    let line = output.lines().next()?.trim();
+    if line.is_empty() {
+        return None;
+    }
+
+    if let Some(version) = line.strip_prefix("container version ") {
+        return Some(version.trim().to_string());
+    }
+
+    if let Some(version) = line.strip_prefix("container ") {
+        return Some(version.trim().to_string());
+    }
+
+    Some(line.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,6 +324,24 @@ mod tests {
     fn parse_tmux_version_extracts_version() {
         let output = "tmux 3.4\n";
         assert_eq!(parse_tmux_version(output), Some("3.4".to_string()));
+    }
+
+    #[test]
+    fn parse_docker_version_extracts_semver() {
+        let output = "Docker version 28.0.1, build 068a01e\n";
+        assert_eq!(parse_docker_version(output), Some("28.0.1".to_string()));
+    }
+
+    #[test]
+    fn parse_container_version_extracts_prefixed_version() {
+        let output = "container 0.10.0\n";
+        assert_eq!(parse_container_version(output), Some("0.10.0".to_string()));
+    }
+
+    #[test]
+    fn parse_container_version_keeps_plain_version() {
+        let output = "0.10.0\n";
+        assert_eq!(parse_container_version(output), Some("0.10.0".to_string()));
     }
 
     #[test]
@@ -311,6 +372,22 @@ mod tests {
             DependencyCategory::OptionalWithFallback
         ));
         assert_eq!(ts.project_url, Some("https://tailscale.com"));
+    }
+
+    #[test]
+    fn docker_and_container_are_optional() {
+        for name in ["docker", "container"] {
+            let dep = DEPENDENCIES
+                .iter()
+                .find(|dep| dep.name == name)
+                .expect("container dependency should exist");
+
+            assert!(!dep.required);
+            assert!(matches!(
+                dep.category,
+                DependencyCategory::OptionalWithFallback
+            ));
+        }
     }
 
     #[test]
