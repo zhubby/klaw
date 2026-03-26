@@ -25,7 +25,7 @@
 - `model_providers.<id>.default_model`：provider 默认模型。
 - `model_providers.<id>.stream`：是否启用 provider 原生 stream API。
 - `channels.telegram[].stream_output` / `channels.dingtalk[].stream_output`：是否允许 channel 侧尝试增量输出。
-- `voice.enabled`：是否启用语音能力。
+- `voice.enabled`：是否启用 voice runtime 能力；只有它与 `tools.voice.enabled` 同时为 `true` 时，模型侧 `voice` tool 才会注册。
 - `voice.stt_provider`：当前 STT provider，支持 `deepgram` / `assemblyai`。
 - `voice.tts_provider`：当前 TTS provider，当前支持 `elevenlabs`。
 - `voice.default_language` / `voice.default_voice_id`：语音默认语言与默认音色。

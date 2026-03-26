@@ -24,6 +24,7 @@ const TTS_INPUT_ROWS: usize = 6;
 
 #[derive(Debug, Clone)]
 struct VoiceConfigForm {
+    enabled: bool,
     stt_provider: SttProviderKind,
     tts_provider: TtsProviderKind,
     default_language: String,
@@ -55,6 +56,7 @@ impl Default for VoiceConfigForm {
 impl VoiceConfigForm {
     fn from_config(config: &VoiceConfig) -> Self {
         Self {
+            enabled: config.enabled,
             stt_provider: config.stt_provider,
             tts_provider: config.tts_provider,
             default_language: config.default_language.clone(),
@@ -132,6 +134,7 @@ impl VoiceConfigForm {
             }
         }
 
+        config.voice.enabled = self.enabled;
         config.voice.stt_provider = self.stt_provider;
         config.voice.tts_provider = self.tts_provider;
         config.voice.default_language = default_language.to_string();
@@ -574,6 +577,10 @@ impl VoicePanel {
                         .num_columns(2)
                         .spacing([12.0, 8.0])
                         .show(ui, |ui| {
+                            ui.label("Enabled");
+                            ui.checkbox(&mut self.config_form.enabled, "Enable voice runtime");
+                            ui.end_row();
+
                             ui.label("Default Language");
                             ui.text_edit_singleline(&mut self.config_form.default_language);
                             ui.end_row();
@@ -970,6 +977,14 @@ impl PanelRenderer for VoicePanel {
             .num_columns(2)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
+                ui.label("Enabled");
+                ui.label(if self.config.voice.enabled {
+                    "true"
+                } else {
+                    "false"
+                });
+                ui.end_row();
+
                 ui.label("STT Provider");
                 ui.monospace(self.config.voice.stt_provider.as_str());
                 ui.end_row();
@@ -1260,6 +1275,7 @@ mod tests {
     fn form_maps_back_to_voice_config() {
         let mut config = AppConfig::default();
         let form = VoiceConfigForm {
+            enabled: true,
             stt_provider: SttProviderKind::Assemblyai,
             tts_provider: TtsProviderKind::Elevenlabs,
             default_language: "en-US".to_string(),
@@ -1284,6 +1300,7 @@ mod tests {
 
         form.apply_to_config(&mut config)
             .expect("form should apply");
+        assert!(config.voice.enabled);
         assert_eq!(config.voice.stt_provider, SttProviderKind::Assemblyai);
         assert_eq!(config.voice.default_language, "en-US");
         assert_eq!(config.voice.default_voice_id.as_deref(), Some("voice-42"));

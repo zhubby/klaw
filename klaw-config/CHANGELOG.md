@@ -6,7 +6,7 @@
 
 - 删除 `mcp.enabled` 配置项，MCP runtime 现在始终可用；配置仅保留 `mcp.startup_timeout_seconds` 与 `mcp.servers`
 - 根级 `model` 现明确标记为 legacy 兼容字段；默认 provider/model 路由不再读取它，实际默认模型始终来自 `model_providers.<id>.default_model`
-- `voice.enabled` 现明确标记为兼容保留字段；新逻辑应以 provider 配置与 `tools.voice.enabled` 为准，而不是依赖该开关决定 runtime 行为
+- `voice.enabled` 重新恢复为 voice runtime 的正式开关；`voice` tool 现在要求它与 `tools.voice.enabled` 同时开启才会注册
 
 ## 2026-03-25
 

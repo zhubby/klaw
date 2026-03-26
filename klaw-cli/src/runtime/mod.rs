@@ -948,8 +948,10 @@ async fn register_configured_tools(
     if config.tools.archive.enabled() {
         tools.register(ArchiveTool::open_default(config).await?);
     }
-    if config.tools.voice.enabled() {
+    if voice_tool_is_enabled(config) {
         tools.register(VoiceTool::open_default(config).await?);
+    } else if config.tools.voice.enabled() && !config.voice.enabled {
+        info!("voice tool disabled because voice.enabled=false");
     }
     if config.tools.apply_patch.enabled() {
         tools.register(ApplyPatchTool::new(config));
@@ -1017,6 +1019,10 @@ async fn register_configured_tools(
         ));
     }
     Ok(())
+}
+
+fn voice_tool_is_enabled(config: &AppConfig) -> bool {
+    config.tools.voice.enabled() && config.voice.enabled
 }
 
 pub fn sync_runtime_providers(
@@ -2808,6 +2814,7 @@ mod tests {
         parse_im_command, resolve_session_route, resolve_webhook_agent_model, should_emit_outbound,
         should_trigger_compression, spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output,
         sync_runtime_providers, sync_runtime_tools, trim_conversation_history,
+        voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
@@ -3100,6 +3107,21 @@ mod tests {
         assert!(!tool_names.iter().any(|name| name == "shell"));
         assert!(tool_names.iter().any(|name| name == "local_search"));
         assert!(tool_names.iter().any(|name| name == "sub_agent"));
+    }
+
+    #[test]
+    fn voice_tool_requires_voice_and_tool_flags() {
+        let mut config = AppConfig::default();
+        assert!(!voice_tool_is_enabled(&config));
+
+        config.tools.voice.enabled = true;
+        assert!(!voice_tool_is_enabled(&config));
+
+        config.voice.enabled = true;
+        assert!(voice_tool_is_enabled(&config));
+
+        config.tools.voice.enabled = false;
+        assert!(!voice_tool_is_enabled(&config));
     }
 
     #[test]
