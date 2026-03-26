@@ -34,7 +34,7 @@
 - the default Turso-backed session store serializes access through one shared connection to avoid driver-level concurrent-use failures
 - `tmp/` is the dedicated temporary data directory under the Klaw data root
 - session records support Base Session -> Active Session routing
-- `model_provider` / `model` now represent explicit per-session overrides only; global defaults are resolved at runtime and are no longer copied into every session row
+- `model_provider` / `model` now represent per-session routing state, and the persisted explicitness flags let runtimes distinguish user-chosen overrides from legacy default-route residue during normalization
 - heartbeat records keep session-bound autonomous wakeups separate from isolated cron jobs
 - `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`
 - `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`

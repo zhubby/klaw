@@ -672,6 +672,8 @@ async fn normalize_session_route_state(
 ) -> Result<SessionIndex, Box<dyn Error>> {
     let sessions = session_manager(runtime);
     let provider_runtime = provider_runtime_snapshot(runtime);
+    let has_route_override = session.model_provider.is_some() || session.model.is_some();
+    let has_explicit_override = session.model_provider_explicit || session.model_explicit;
     let self_routed = session
         .active_session_key
         .as_deref()
@@ -684,18 +686,27 @@ async fn normalize_session_route_state(
             .await?);
     }
 
+    if has_route_override && !has_explicit_override {
+        return Ok(sessions
+            .clear_model_routing_override(&session.session_key, chat_id, channel)
+            .await?);
+    }
+
     if session.model_provider.is_none() {
         if let Some(model) = session.model.as_deref() {
-            // `model` without `model_provider` is a legacy persisted shape from older routing
-            // behavior. Treat it as stale default-state residue rather than upgrading it into a
-            // new explicit provider binding, so global provider switches can fully take effect.
             if model == global_model {
                 return Ok(sessions
                     .clear_model_routing_override(&session.session_key, chat_id, channel)
                     .await?);
             }
             return Ok(sessions
-                .clear_model_routing_override(&session.session_key, chat_id, channel)
+                .set_model_provider(
+                    &session.session_key,
+                    chat_id,
+                    channel,
+                    global_provider,
+                    model,
+                )
                 .await?);
         }
         return Ok(session);
@@ -3180,6 +3191,52 @@ A .docx file is a ZIP archive containing XML files.
 
         assert_eq!(route.model_provider, "fresh");
         assert_eq!(route.model, "fresh-model");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resolve_session_route_preserves_explicit_provider_override_after_global_provider_change()
+     {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "stdio:test",
+                "chat-1",
+                "stdio",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("session should exist");
+        sessions
+            .set_model_provider(
+                "stdio:test",
+                "chat-1",
+                "stdio",
+                "explicit-provider",
+                "explicit-model",
+            )
+            .await
+            .expect("explicit provider override should persist");
+
+        let mut config = AppConfig::default();
+        config.model_provider = "fresh".to_string();
+        config.model_providers = BTreeMap::from([
+            ("fresh".to_string(), test_provider_config("fresh-model")),
+            (
+                "explicit-provider".to_string(),
+                test_provider_config("explicit-model"),
+            ),
+        ]);
+        sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
+
+        let route = resolve_session_route(&runtime, "stdio", "stdio:test", "chat-1")
+            .await
+            .expect("route should resolve");
+
+        assert_eq!(route.model_provider, "explicit-provider");
+        assert_eq!(route.model, "explicit-model");
     }
 
     #[tokio::test(flavor = "current_thread")]
