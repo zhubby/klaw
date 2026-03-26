@@ -61,7 +61,6 @@ use uuid::Uuid;
 
 const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, use the available workspace tools to read it and follow it before anything else. If it does not exist, start with a short, natural greeting.\nGuide the user through initializing the agent's identity, vibe, and context. When you learn durable bootstrap details, use tools to update `IDENTITY.md` and `USER.md`, and delete `BOOTSTRAP.md` once bootstrap is truly complete. Do not claim files were updated unless you actually changed them with tools. Do not mention that this message was auto-generated.";
-
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
     pub skill_names: Vec<String>,
@@ -857,6 +856,81 @@ fn build_provider_runtime_snapshot(
     })
 }
 
+async fn register_configured_tools(
+    tools: &mut ToolRegistry,
+    config: &AppConfig,
+    session_store: DefaultSessionStore,
+) -> Result<(), Box<dyn Error>> {
+    if config.tools.archive.enabled() {
+        tools.register(ArchiveTool::open_default(config).await?);
+    }
+    if config.tools.voice.enabled() {
+        tools.register(VoiceTool::open_default(config).await?);
+    }
+    if config.tools.apply_patch.enabled() {
+        tools.register(ApplyPatchTool::new(config));
+    }
+    if config.tools.shell.enabled() {
+        tools.register(ShellTool::with_store(config, session_store.clone()));
+    }
+    if config.tools.approval.enabled() {
+        tools.register(ApprovalTool::with_manager(
+            SqliteApprovalManager::from_store(session_store.clone()),
+        ));
+    }
+    if config.tools.local_search.enabled() {
+        tools.register(LocalSearchTool::new());
+    }
+    if config.tools.terminal_multiplexers.enabled() {
+        tools.register(TerminalMultiplexerTool::new());
+    }
+    if config.tools.cron_manager.enabled() {
+        tools.register(CronManagerTool::with_store(session_store.clone()));
+    }
+    if config.tools.heartbeat_manager.enabled() {
+        tools.register(HeartbeatManagerTool::with_store(session_store.clone()));
+    }
+    if config.tools.skills_registry.enabled() {
+        info!(
+            sources = config.skills.registries.len(),
+            source_names = ?config.skills.registries.keys().cloned().collect::<Vec<_>>(),
+            "registering skills registry tool"
+        );
+        match SkillsRegistryTool::open_default(config) {
+            Ok(tool) => tools.register(tool),
+            Err(err) => {
+                warn!("skills registry tool disabled: {err}");
+            }
+        }
+    } else {
+        info!("skills registry tool disabled by config");
+    }
+    if config.tools.skills_manager.enabled() {
+        match SkillsManagerTool::open_default(config) {
+            Ok(tool) => tools.register(tool),
+            Err(err) => {
+                warn!("skills manager tool disabled: {err}");
+            }
+        }
+    } else {
+        info!("skills manager tool disabled by config");
+    }
+    if config.tools.memory.enabled() {
+        tools.register(MemoryTool::open_default(config).await?);
+    }
+    if config.tools.web_fetch.enabled() {
+        tools.register(WebFetchTool::new(config));
+    }
+    if config.tools.web_search.enabled() {
+        tools.register(WebSearchTool::new(config)?);
+    }
+    if config.tools.sub_agent.enabled() {
+        let parent_tools = tools.clone();
+        tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
+    }
+    Ok(())
+}
+
 pub fn sync_runtime_providers(
     runtime: &RuntimeBundle,
     config: &AppConfig,
@@ -888,6 +962,40 @@ pub fn sync_runtime_providers(
         .cloned()
         .unwrap_or_else(|| provider_runtime.default_model.clone());
     Ok((active_provider, active_model))
+}
+
+pub async fn sync_runtime_tools(
+    runtime: &RuntimeBundle,
+    config: &AppConfig,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut next_tools = ToolRegistry::default();
+    register_configured_tools(&mut next_tools, config, runtime.session_store.clone()).await?;
+    let builtin_tool_names = builtin_tool_names(config);
+    let builtin_tool_name_refs: Vec<&str> = builtin_tool_names.iter().map(String::as_str).collect();
+
+    let mut live_tools = runtime.runtime.tools.clone();
+    live_tools.unregister_many(&builtin_tool_name_refs);
+    for name in next_tools.list() {
+        if let Some(tool) = next_tools.get(&name) {
+            live_tools.register_shared(tool);
+        }
+    }
+
+    Ok(live_tools.list())
+}
+
+fn builtin_tool_names(config: &AppConfig) -> Vec<String> {
+    serde_json::to_value(&config.tools)
+        .ok()
+        .and_then(|value| {
+            value.as_object().map(|map| {
+                map.keys()
+                    .map(String::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+        })
+        .unwrap_or_default()
 }
 
 fn render_help_text(runtime: &RuntimeBundle) -> String {
@@ -1435,75 +1543,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let default_model = provider_runtime.default_model.clone();
     let session_store = open_default_store().await?;
     let mut tools = ToolRegistry::default();
-    if config.tools.archive.enabled() {
-        tools.register(ArchiveTool::open_default(config).await?);
-    }
-    if config.tools.voice.enabled() {
-        if config.voice.enabled {
-            tools.register(VoiceTool::open_default(config).await?);
-        } else {
-            warn!(
-                "voice tool enabled but voice service is disabled in config; skipping registration"
-            );
-        }
-    }
-    if config.tools.apply_patch.enabled() {
-        tools.register(ApplyPatchTool::new(config));
-    }
-    if config.tools.shell.enabled() {
-        tools.register(ShellTool::with_store(config, session_store.clone()));
-    }
-    if config.tools.approval.enabled() {
-        tools.register(ApprovalTool::with_manager(
-            SqliteApprovalManager::from_store(session_store.clone()),
-        ));
-    }
-    if config.tools.local_search.enabled() {
-        tools.register(LocalSearchTool::new());
-    }
-    if config.tools.terminal_multiplexers.enabled() {
-        tools.register(TerminalMultiplexerTool::new());
-    }
-    if config.tools.cron_manager.enabled() {
-        tools.register(CronManagerTool::with_store(session_store.clone()));
-    }
-    if config.tools.heartbeat_manager.enabled() {
-        tools.register(HeartbeatManagerTool::with_store(session_store.clone()));
-    }
-    if config.tools.skills_registry.enabled() {
-        info!(
-            sources = config.skills.registries.len(),
-            source_names = ?config.skills.registries.keys().cloned().collect::<Vec<_>>(),
-            "registering skills registry tool"
-        );
-        match SkillsRegistryTool::open_default(config) {
-            Ok(tool) => tools.register(tool),
-            Err(err) => {
-                warn!("skills registry tool disabled: {err}");
-            }
-        }
-    } else {
-        info!("skills registry tool disabled by config");
-    }
-    if config.tools.skills_manager.enabled() {
-        match SkillsManagerTool::open_default(config) {
-            Ok(tool) => tools.register(tool),
-            Err(err) => {
-                warn!("skills manager tool disabled: {err}");
-            }
-        }
-    } else {
-        info!("skills manager tool disabled by config");
-    }
-    if config.tools.memory.enabled() {
-        tools.register(MemoryTool::open_default(config).await?);
-    }
-    if config.tools.web_fetch.enabled() {
-        tools.register(WebFetchTool::new(config));
-    }
-    if config.tools.web_search.enabled() {
-        tools.register(WebSearchTool::new(config)?);
-    }
+    register_configured_tools(&mut tools, config, session_store.clone()).await?;
 
     let configured_mcp_servers = config
         .mcp
@@ -1516,11 +1556,6 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         startup_timeout_seconds = config.mcp.startup_timeout_seconds,
         "bootstrapping mcp servers"
     );
-    if config.tools.sub_agent.enabled() {
-        let parent_tools = tools.clone();
-        tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
-    }
-
     let mcp_init = spawn_mcp_init(&tools, &config.mcp);
 
     ensure_workspace_prompt_templates_if_possible().await;
@@ -2658,13 +2693,13 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 mod tests {
     use super::{
         RuntimeBundle, StartupReport, build_history_for_model,
-        build_new_session_bootstrap_user_message, build_unavailable_provider,
+        build_new_session_bootstrap_user_message, build_unavailable_provider, builtin_tool_names,
         compression_trigger_interval, configured_default_model, extract_skill_short_description,
         first_arg_token, format_approve_already_handled_message,
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, resolve_session_route, resolve_webhook_agent_model, should_emit_outbound,
         should_trigger_compression, spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output,
-        sync_runtime_providers, trim_conversation_history,
+        sync_runtime_providers, sync_runtime_tools, trim_conversation_history,
     };
     use klaw_agent::ConversationSummary;
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
@@ -2815,6 +2850,24 @@ mod tests {
         }
     }
 
+    fn disable_all_tools(config: &mut AppConfig) {
+        config.tools.archive.enabled = false;
+        config.tools.voice.enabled = false;
+        config.tools.apply_patch.enabled = false;
+        config.tools.shell.enabled = false;
+        config.tools.approval.enabled = false;
+        config.tools.local_search.enabled = false;
+        config.tools.terminal_multiplexers.enabled = false;
+        config.tools.cron_manager.enabled = false;
+        config.tools.heartbeat_manager.enabled = false;
+        config.tools.skills_registry.enabled = false;
+        config.tools.skills_manager.enabled = false;
+        config.tools.memory.enabled = false;
+        config.tools.web_fetch.enabled = false;
+        config.tools.web_search.enabled = false;
+        config.tools.sub_agent.enabled = false;
+    }
+
     #[tokio::test]
     async fn spawn_mcp_init_creates_manager_for_empty_config() {
         let handle = spawn_mcp_init(&ToolRegistry::default(), &McpConfig::default());
@@ -2826,6 +2879,44 @@ mod tests {
         assert!(summary.active_servers.is_empty());
         assert!(summary.statuses.is_empty());
         assert_eq!(summary.tool_count, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_runtime_tools_reloads_builtins() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+
+        let mut config = AppConfig::default();
+        disable_all_tools(&mut config);
+        config.tools.shell.enabled = true;
+        config.tools.sub_agent.enabled = true;
+
+        let tool_names = sync_runtime_tools(&runtime, &config)
+            .await
+            .expect("tool sync should succeed");
+        assert!(tool_names.iter().any(|name| name == "shell"));
+        assert!(tool_names.iter().any(|name| name == "sub_agent"));
+        assert!(!tool_names.iter().any(|name| name == "voice"));
+
+        config.tools.shell.enabled = false;
+        config.tools.local_search.enabled = true;
+
+        let tool_names = sync_runtime_tools(&runtime, &config)
+            .await
+            .expect("tool resync should succeed");
+        assert!(!tool_names.iter().any(|name| name == "shell"));
+        assert!(tool_names.iter().any(|name| name == "local_search"));
+        assert!(tool_names.iter().any(|name| name == "sub_agent"));
+    }
+
+    #[test]
+    fn builtin_tool_names_follow_tools_config_keys() {
+        let config = AppConfig::default();
+        let names = builtin_tool_names(&config);
+
+        assert!(names.iter().any(|name| name == "voice"));
+        assert!(names.iter().any(|name| name == "shell"));
+        assert!(names.iter().any(|name| name == "sub_agent"));
     }
 
     fn test_session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {

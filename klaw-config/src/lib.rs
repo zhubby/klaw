@@ -71,6 +71,10 @@ fn default_conversation_history_limit() -> usize {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceConfig {
+    /// Deprecated compatibility field.
+    ///
+    /// Runtime voice features no longer gate on this flag. Keep provider settings configured and
+    /// use `tools.voice.enabled` to expose the model-facing voice tool.
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]

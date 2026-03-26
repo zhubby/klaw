@@ -5,7 +5,8 @@
 ### Fixed
 
 - runtime 默认路由与状态栏 `Default Model` 现在只读取当前 provider 自己的 `default_model`；根级 `model` 不再把所有 provider 的默认模型钉成同一个值，因此未显式 `/model` 的会话会随 provider 切换一起更新默认模型
-
+- runtime 新增 tool 热同步路径，GUI 保存 `tools.*` 配置后会按最新磁盘配置重建内建工具集合，并保留现有 MCP 注入工具，避免 tool 开关必须重启后才生效
+- `voice` tool 的注册不再被 `voice.enabled` 额外拦截；只要 `tools.voice.enabled=true` 且 provider 配置完整，runtime 就会按一致语义暴露该工具
 - runtime 现在会利用持久化的 session-route explicitness 标记区分用户显式 `/model` / `/model_provider` 绑定与历史默认路由残留，因此底部切换 provider/default model 后，未显式绑定的旧会话会正确跟随新的 default model
 - provider config 热更新现在会同步刷新 running runtime 的 live provider registry/default route，并在 provider 被删除或替换后自动清理失效的 runtime override，避免新增 provider 后底部切换报 `unknown runtime provider` 或必须重启才生效
 - runtime 现在会把入站 DingTalk 的最新 `session_webhook` / `bot_title` 持久化到 active session，供 cron/后台流程后续复用当前会话回复出口
@@ -15,6 +16,7 @@
 
 - `/model_provider`、`/model`、`/help`、webhook provider 校验与新会话默认路由现在统一读取 live runtime provider snapshot，不再依赖启动时缓存的 provider/default 状态
 - runtime 现在总是启动一个空的 `McpManager`，不再依赖 `mcp.enabled` 或启动时已有 server，允许 GUI 在零配置启动后直接热加载新增 MCP server
+- runtime tool 热同步时用于卸载/重建的内建工具名现在直接遍历 `config.tools` 字段生成，不再维护一份手写常量列表
 
 ### Added
 

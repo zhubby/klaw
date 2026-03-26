@@ -12,7 +12,7 @@ use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
     SharedChannelRuntime, build_channel_driver_factory, build_runtime_bundle,
     finalize_startup_report, reload_runtime_skills_prompt, set_runtime_provider_override,
-    shutdown_runtime_bundle, sync_runtime_providers,
+    shutdown_runtime_bundle, sync_runtime_providers, sync_runtime_tools,
 };
 use klaw_config::ConfigStore;
 use tracing::{info, warn};
@@ -182,6 +182,18 @@ impl GuiCommand {
                                                     };
                                                     let _ = response.send(result);
                                                 });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::SyncTools { response }) => {
+                                                let result = match ConfigStore::open(None) {
+                                                    Ok(store) => {
+                                                        let snapshot = store.snapshot();
+                                                        sync_runtime_tools(runtime.as_ref(), &snapshot.config)
+                                                            .await
+                                                            .map_err(|err| err.to_string())
+                                                    }
+                                                    Err(err) => Err(err.to_string()),
+                                                };
+                                                let _ = response.send(result);
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetMcpStatus { response }) => {
                                                 let result = match ConfigStore::open(None) {

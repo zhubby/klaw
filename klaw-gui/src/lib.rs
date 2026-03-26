@@ -23,6 +23,7 @@ pub use runtime_bridge::{
     request_provider_status, request_restart_gateway, request_run_cron_now,
     request_run_heartbeat_now, request_set_gateway_enabled, request_set_tailscale_mode,
     request_start_gateway, request_sync_channels, request_sync_mcp, request_sync_providers,
+    request_sync_tools,
 };
 pub use state::UiAction;
 pub use state::workbench::{TabId, WorkbenchState, WorkbenchTab};

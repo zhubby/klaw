@@ -24,7 +24,6 @@ const TTS_INPUT_ROWS: usize = 6;
 
 #[derive(Debug, Clone)]
 struct VoiceConfigForm {
-    enabled: bool,
     stt_provider: SttProviderKind,
     tts_provider: TtsProviderKind,
     default_language: String,
@@ -56,7 +55,6 @@ impl Default for VoiceConfigForm {
 impl VoiceConfigForm {
     fn from_config(config: &VoiceConfig) -> Self {
         Self {
-            enabled: config.enabled,
             stt_provider: config.stt_provider,
             tts_provider: config.tts_provider,
             default_language: config.default_language.clone(),
@@ -102,8 +100,8 @@ impl VoiceConfigForm {
 
     fn apply_to_config(&self, config: &mut AppConfig) -> Result<(), String> {
         let default_language = self.default_language.trim();
-        if self.enabled && default_language.is_empty() {
-            return Err("default language cannot be empty when voice is enabled".to_string());
+        if default_language.is_empty() {
+            return Err("default language cannot be empty".to_string());
         }
 
         for (label, value) in [
@@ -134,7 +132,6 @@ impl VoiceConfigForm {
             }
         }
 
-        config.voice.enabled = self.enabled;
         config.voice.stt_provider = self.stt_provider;
         config.voice.tts_provider = self.tts_provider;
         config.voice.default_language = default_language.to_string();
@@ -577,10 +574,6 @@ impl VoicePanel {
                         .num_columns(2)
                         .spacing([12.0, 8.0])
                         .show(ui, |ui| {
-                            ui.label("Voice Enabled");
-                            ui.checkbox(&mut self.config_form.enabled, "");
-                            ui.end_row();
-
                             ui.label("Default Language");
                             ui.text_edit_singleline(&mut self.config_form.default_language);
                             ui.end_row();
@@ -977,10 +970,6 @@ impl PanelRenderer for VoicePanel {
             .num_columns(2)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
-                ui.label("Enabled");
-                render_boolean_status(ui, self.config.voice.enabled, "Enabled", "Disabled");
-                ui.end_row();
-
                 ui.label("STT Provider");
                 ui.monospace(self.config.voice.stt_provider.as_str());
                 ui.end_row();
@@ -1104,9 +1093,6 @@ fn key_source_label(direct_key: Option<&str>, env_key: &str) -> String {
 }
 
 fn validate_stt_test_config(config: &AppConfig) -> Result<(), String> {
-    if !config.voice.enabled {
-        return Err("Voice test requires voice.enabled=true in config.toml".to_string());
-    }
     let stt_has_key = match config.voice.stt_provider {
         SttProviderKind::Deepgram => config.voice.providers.deepgram.resolve_api_key().is_some(),
         SttProviderKind::Assemblyai => config
@@ -1126,9 +1112,6 @@ fn validate_stt_test_config(config: &AppConfig) -> Result<(), String> {
 }
 
 fn validate_tts_test_config(config: &AppConfig) -> Result<(), String> {
-    if !config.voice.enabled {
-        return Err("Voice test requires voice.enabled=true in config.toml".to_string());
-    }
     let tts_has_key = match config.voice.tts_provider {
         TtsProviderKind::Elevenlabs => config
             .voice
@@ -1144,31 +1127,6 @@ fn validate_tts_test_config(config: &AppConfig) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-fn render_boolean_status(
-    ui: &mut egui::Ui,
-    enabled: bool,
-    enabled_label: &str,
-    disabled_label: &str,
-) {
-    let (icon, color, label) = if enabled {
-        (
-            regular::CHECK_CIRCLE,
-            Color32::from_rgb(0x22, 0xC5, 0x5E),
-            enabled_label,
-        )
-    } else {
-        (
-            regular::X_CIRCLE,
-            ui.visuals().error_fg_color,
-            disabled_label,
-        )
-    };
-    ui.horizontal(|ui| {
-        ui.colored_label(color, icon);
-        ui.colored_label(color, label);
-    });
 }
 
 fn tts_file_extension_for_mime_type(mime_type: &str) -> &'static str {
@@ -1302,7 +1260,6 @@ mod tests {
     fn form_maps_back_to_voice_config() {
         let mut config = AppConfig::default();
         let form = VoiceConfigForm {
-            enabled: true,
             stt_provider: SttProviderKind::Assemblyai,
             tts_provider: TtsProviderKind::Elevenlabs,
             default_language: "en-US".to_string(),
@@ -1327,7 +1284,6 @@ mod tests {
 
         form.apply_to_config(&mut config)
             .expect("form should apply");
-        assert!(config.voice.enabled);
         assert_eq!(config.voice.stt_provider, SttProviderKind::Assemblyai);
         assert_eq!(config.voice.default_language, "en-US");
         assert_eq!(config.voice.default_voice_id.as_deref(), Some("voice-42"));
@@ -1369,11 +1325,10 @@ mod tests {
     }
 
     #[test]
-    fn stt_validation_rejects_disabled_voice() {
+    fn stt_validation_allows_disabled_voice_when_provider_key_exists() {
         let mut config = sample_app_config();
         config.voice.enabled = false;
-        let err = validate_stt_test_config(&config).expect_err("disabled voice should fail");
-        assert!(err.contains("voice.enabled=true"));
+        validate_stt_test_config(&config).expect("disabled voice flag should not block tests");
     }
 
     #[test]
@@ -1386,11 +1341,10 @@ mod tests {
     }
 
     #[test]
-    fn tts_validation_rejects_disabled_voice() {
+    fn tts_validation_allows_disabled_voice_when_provider_key_exists() {
         let mut config = sample_app_config();
         config.voice.enabled = false;
-        let err = validate_tts_test_config(&config).expect_err("disabled voice should fail");
-        assert!(err.contains("voice.enabled=true"));
+        validate_tts_test_config(&config).expect("disabled voice flag should not block tests");
     }
 
     #[test]
