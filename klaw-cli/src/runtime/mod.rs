@@ -686,19 +686,16 @@ async fn normalize_session_route_state(
 
     if session.model_provider.is_none() {
         if let Some(model) = session.model.as_deref() {
+            // `model` without `model_provider` is a legacy persisted shape from older routing
+            // behavior. Treat it as stale default-state residue rather than upgrading it into a
+            // new explicit provider binding, so global provider switches can fully take effect.
             if model == global_model {
                 return Ok(sessions
                     .clear_model_routing_override(&session.session_key, chat_id, channel)
                     .await?);
             }
             return Ok(sessions
-                .set_model_provider(
-                    &session.session_key,
-                    chat_id,
-                    channel,
-                    global_provider,
-                    model,
-                )
+                .clear_model_routing_override(&session.session_key, chat_id, channel)
                 .await?);
         }
         return Ok(session);
@@ -3170,6 +3167,41 @@ A .docx file is a ZIP archive containing XML files.
             )
             .await
             .expect("override should persist");
+
+        let mut config = AppConfig::default();
+        config.model_provider = "fresh".to_string();
+        config.model_providers =
+            BTreeMap::from([("fresh".to_string(), test_provider_config("fresh-model"))]);
+        sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
+
+        let route = resolve_session_route(&runtime, "stdio", "stdio:test", "chat-1")
+            .await
+            .expect("route should resolve");
+
+        assert_eq!(route.model_provider, "fresh");
+        assert_eq!(route.model, "fresh-model");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resolve_session_route_clears_legacy_model_only_override_after_global_provider_change()
+    {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "stdio:test",
+                "chat-1",
+                "stdio",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("session should exist");
+        sessions
+            .set_model("stdio:test", "chat-1", "stdio", "legacy-model")
+            .await
+            .expect("legacy model-only override should persist");
 
         let mut config = AppConfig::default();
         config.model_provider = "fresh".to_string();
