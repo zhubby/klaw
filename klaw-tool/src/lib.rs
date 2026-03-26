@@ -30,7 +30,7 @@ pub use memory::MemoryTool;
 pub use shell::ShellTool;
 pub use skills_manager::SkillsManagerTool;
 pub use skills_registry::SkillsRegistryTool;
-pub use sub_agent::SubAgentTool;
+pub use sub_agent::{SubAgentAuditSink, SubAgentTool};
 pub use terminal_multiplexers::TerminalMultiplexerTool;
 pub use voice::VoiceTool;
 pub use web_fetch::WebFetchTool;

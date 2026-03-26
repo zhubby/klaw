@@ -27,10 +27,10 @@
 
 ## 参数模型
 
-`sub_agent` 当前参数非常严格：
+`sub_agent` 当前参数模型聚焦在委托任务本身：
 
 - `task`：必填，子代理任务文本。
-- `context`：必填对象，且必须包含 `session`（非空字符串）。
+- `context`：可选对象，用于补充委托元数据；会原样写入子执行 `metadata["sub_agent.context"]`。
 
 不允许模型传入以下字段：
 
@@ -39,7 +39,7 @@
 - `max_iterations`
 - `max_tool_calls`
 
-实现上使用 `#[serde(deny_unknown_fields)]` 强制拒绝多余参数，避免模型绕过约束。
+实现上使用 `#[serde(deny_unknown_fields)]` 强制拒绝顶层多余参数，避免模型绕过约束；但不再要求模型传入运行时 `session` 标识。
 
 ## 继承策略
 
@@ -85,7 +85,9 @@ exclude_tools = ["sub_agent"]
 - `sub_agent.context`（完整 context 对象）
 - 继承后的 `agent.provider_id` / `agent.model`
 
-子会话键格式为：`{context.session}:subagent`。
+父会话键来自当前 `ToolContext.session_key`，不要求模型传参。
+
+子会话键格式为：`{parent_session}:subagent:{uuid}`，每次委托执行都会生成新的唯一子会话作用域。
 
 ## 运行时接入
 
@@ -107,16 +109,27 @@ exclude_tools = ["sub_agent"]
 - 缺失父模型元信息：`ToolError::ExecutionFailed`
 - 子代理循环耗尽：`ToolError::ExecutionFailed`
 - Provider 调用失败：`ToolError::ExecutionFailed`
+- 子代理触发 `approval_required` / `stop`：通过结构化错误把信号继续透传给父 Agent，而不是在 `sub_agent` 边界吞掉
+
+## 审计持久化
+
+- 子代理执行仍然直接复用 `run_agent_execution`，因此会生成 `request_audits` / `request_usages`。
+- 当 runtime 为 `sub_agent` 注入审计 sink 时，子代理产生的 LLM 审计会按父 session 落库。
+- 落库记录的 `llm_audit.metadata_json` 会包含：
+  - `sub_agent = true`
+  - `sub_agent.parent_session_key`
+  - `sub_agent.child_session_key`
 
 ## 测试覆盖
 
 `sub_agent` 单测已覆盖：
 
-- `context` 必填与类型约束
-- `context.session` 必填约束
+- `context` 可选与类型约束
 - 拒绝 legacy/未知字段
 - 父模型元信息继承
 - 缺失父元信息报错
+- child session key 唯一化
+- 子执行信号透传
 
 配置测试已覆盖：
 

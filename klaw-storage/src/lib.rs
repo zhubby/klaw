@@ -394,6 +394,7 @@ mod tests {
                 provider_response_id: Some("resp-1".to_string()),
                 request_body_json: "{\"input\":\"hello\"}".to_string(),
                 response_body_json: Some("{\"output\":\"world\"}".to_string()),
+                metadata_json: Some("{\"sub_agent\":true}".to_string()),
                 requested_at_ms: 1_000,
                 responded_at_ms: Some(1_100),
             })
@@ -416,6 +417,7 @@ mod tests {
                 provider_response_id: None,
                 request_body_json: "{\"input\":\"retry\"}".to_string(),
                 response_body_json: None,
+                metadata_json: None,
                 requested_at_ms: 2_000,
                 responded_at_ms: Some(2_050),
             })
@@ -437,6 +439,7 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, "audit-2");
         assert_eq!(filtered[0].status, LlmAuditStatus::Failed);
+        assert_eq!(filtered[0].metadata_json, None);
 
         let descending = store
             .list_llm_audit(&LlmAuditQuery {
@@ -453,6 +456,10 @@ mod tests {
         assert_eq!(descending.len(), 2);
         assert_eq!(descending[0].id, "audit-2");
         assert_eq!(descending[1].id, "audit-1");
+        assert_eq!(
+            descending[1].metadata_json.as_deref(),
+            Some("{\"sub_agent\":true}")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -484,6 +491,7 @@ mod tests {
                 provider_response_id: None,
                 request_body_json: "{}".to_string(),
                 response_body_json: Some("{}".to_string()),
+                metadata_json: None,
                 requested_at_ms: 1_000,
                 responded_at_ms: Some(1_100),
             })
@@ -506,6 +514,7 @@ mod tests {
                 provider_response_id: None,
                 request_body_json: "{}".to_string(),
                 response_body_json: Some("{}".to_string()),
+                metadata_json: None,
                 requested_at_ms: 2_000,
                 responded_at_ms: Some(2_100),
             })
@@ -528,6 +537,7 @@ mod tests {
                 provider_response_id: None,
                 request_body_json: "{}".to_string(),
                 response_body_json: None,
+                metadata_json: None,
                 requested_at_ms: 3_000,
                 responded_at_ms: Some(3_100),
             })

@@ -181,6 +181,7 @@ struct LlmAuditRow {
     provider_response_id: Option<String>,
     request_body_json: String,
     response_body_json: Option<String>,
+    metadata_json: Option<String>,
     requested_at_ms: i64,
     responded_at_ms: Option<i64>,
     created_at_ms: i64,
@@ -427,6 +428,7 @@ impl TryFrom<LlmAuditRow> for LlmAuditRecord {
             provider_response_id: value.provider_response_id,
             request_body_json: value.request_body_json,
             response_body_json: value.response_body_json,
+            metadata_json: value.metadata_json,
             requested_at_ms: value.requested_at_ms,
             responded_at_ms: value.responded_at_ms,
             created_at_ms: value.created_at_ms,
@@ -640,6 +642,7 @@ impl SqlxSessionStore {
                 provider_response_id TEXT,
                 request_body_json TEXT NOT NULL,
                 response_body_json TEXT,
+                metadata_json TEXT,
                 requested_at_ms INTEGER NOT NULL,
                 responded_at_ms INTEGER,
                 created_at_ms INTEGER NOT NULL,
@@ -649,6 +652,11 @@ impl SqlxSessionStore {
         .execute(&self.pool)
         .await
         .map_err(StorageError::backend)?;
+        self.ensure_llm_audit_column(
+            "metadata_json",
+            "ALTER TABLE llm_audit ADD COLUMN metadata_json TEXT",
+        )
+        .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_llm_audit_session_requested
              ON llm_audit(session_key, requested_at_ms DESC)",
@@ -968,6 +976,22 @@ impl SqlxSessionStore {
                 }
                 Err(StorageError::backend(format!(
                     "failed to ensure approvals.{column} column: {message}"
+                )))
+            }
+        }
+    }
+
+    async fn ensure_llm_audit_column(&self, column: &str, sql: &str) -> Result<(), StorageError> {
+        let result = sqlx::query(sql).execute(&self.pool).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("duplicate column name") {
+                    return Ok(());
+                }
+                Err(StorageError::backend(format!(
+                    "failed to ensure llm_audit.{column} column: {message}"
                 )))
             }
         }
@@ -1664,8 +1688,8 @@ impl SessionStorage for SqlxSessionStore {
             "INSERT INTO llm_audit (
                 id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
                 status, error_code, error_message, provider_request_id, provider_response_id,
-                request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                request_body_json, response_body_json, metadata_json, requested_at_ms, responded_at_ms, created_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         )
         .bind(&input.id)
         .bind(&input.session_key)
@@ -1682,6 +1706,7 @@ impl SessionStorage for SqlxSessionStore {
         .bind(&input.provider_response_id)
         .bind(&input.request_body_json)
         .bind(&input.response_body_json)
+        .bind(&input.metadata_json)
         .bind(input.requested_at_ms)
         .bind(input.responded_at_ms)
         .bind(now)
@@ -1691,7 +1716,7 @@ impl SessionStorage for SqlxSessionStore {
         let row = sqlx::query_as::<_, LlmAuditRow>(
             "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
                     status, error_code, error_message, provider_request_id, provider_response_id,
-                    request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+                    request_body_json, response_body_json, metadata_json, requested_at_ms, responded_at_ms, created_at_ms
              FROM llm_audit
              WHERE id = ?1",
         )
@@ -1713,7 +1738,7 @@ impl SessionStorage for SqlxSessionStore {
         let rows = sqlx::query_as::<_, LlmAuditRow>(&format!(
             "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
                     status, error_code, error_message, provider_request_id, provider_response_id,
-                    request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+                    request_body_json, response_body_json, metadata_json, requested_at_ms, responded_at_ms, created_at_ms
              FROM llm_audit
              WHERE (?1 IS NULL OR session_key = ?1)
                AND (?2 IS NULL OR provider = ?2)

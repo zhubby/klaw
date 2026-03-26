@@ -198,6 +198,8 @@ pub struct LlmAuditRecord {
     pub provider_response_id: Option<String>,
     pub request_body_json: String,
     pub response_body_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_json: Option<String>,
     pub requested_at_ms: i64,
     pub responded_at_ms: Option<i64>,
     pub created_at_ms: i64,
@@ -220,6 +222,7 @@ pub struct NewLlmAuditRecord {
     pub provider_response_id: Option<String>,
     pub request_body_json: String,
     pub response_body_json: Option<String>,
+    pub metadata_json: Option<String>,
     pub requested_at_ms: i64,
     pub responded_at_ms: Option<i64>,
 }

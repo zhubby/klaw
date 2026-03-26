@@ -35,6 +35,7 @@
 - `tmp/` is the dedicated temporary data directory under the Klaw data root
 - session records support Base Session -> Active Session routing
 - `model_provider` / `model` now represent per-session routing state, and the persisted explicitness flags let runtimes distinguish user-chosen overrides from legacy default-route residue during normalization
+- `llm_audit` records support optional `metadata_json`, which runtimes can use to annotate model requests with delegated execution context such as sub-agent parent/child session lineage
 - heartbeat records keep session-bound autonomous wakeups separate from isolated cron jobs
 - `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`
 - `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`
