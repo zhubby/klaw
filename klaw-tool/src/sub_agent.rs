@@ -25,6 +25,17 @@ pub struct SubAgentTool {
     config: Arc<AppConfig>,
     parent_tools: ToolRegistry,
     sub_config: SubAgentConfig,
+    audit_sink: Option<Arc<dyn SubAgentAuditSink>>,
+}
+
+#[async_trait]
+pub trait SubAgentAuditSink: Send + Sync {
+    async fn persist_sub_agent_audits(
+        &self,
+        parent_session_key: &str,
+        child_session_key: &str,
+        output: &AgentExecutionOutput,
+    ) -> Result<(), String>;
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,10 +48,19 @@ struct SubAgentRequest {
 
 impl SubAgentTool {
     pub fn new(config: Arc<AppConfig>, parent_tools: ToolRegistry) -> Self {
+        Self::with_audit_sink(config, parent_tools, None)
+    }
+
+    pub fn with_audit_sink(
+        config: Arc<AppConfig>,
+        parent_tools: ToolRegistry,
+        audit_sink: Option<Arc<dyn SubAgentAuditSink>>,
+    ) -> Self {
         Self {
             sub_config: config.tools.sub_agent.clone(),
             config,
             parent_tools,
+            audit_sink,
         }
     }
 
@@ -321,6 +341,7 @@ impl Tool for SubAgentTool {
             tools: &child_tools,
         };
         let child_context = request.context.unwrap_or_else(|| json!({}));
+        let child_session_key = Self::build_child_session_key(&parent_session);
 
         let mut child_metadata = ctx.metadata.clone();
         child_metadata.insert(
@@ -338,7 +359,7 @@ impl Tool for SubAgentTool {
                 user_content: request.task,
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
-                session_key: Self::build_child_session_key(&parent_session),
+                session_key: child_session_key.clone(),
                 tool_metadata: child_metadata,
                 model: Some(model),
             },
@@ -361,6 +382,20 @@ impl Tool for SubAgentTool {
                 ToolError::ExecutionFailed("sub-agent exceeded token budget".to_string())
             }
         })?;
+
+        if let Some(audit_sink) = &self.audit_sink {
+            if let Err(err) = audit_sink
+                .persist_sub_agent_audits(&parent_session, &child_session_key, &output)
+                .await
+            {
+                debug!(
+                    parent_session = parent_session,
+                    child_session = child_session_key,
+                    error = %err,
+                    "failed to persist sub-agent audit records"
+                );
+            }
+        }
 
         Self::finalize_output(output)
     }

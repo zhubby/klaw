@@ -126,6 +126,7 @@ impl TursoSessionStore {
                     provider_response_id TEXT,
                     request_body_json TEXT NOT NULL,
                     response_body_json TEXT,
+                    metadata_json TEXT,
                     requested_at_ms INTEGER NOT NULL,
                     responded_at_ms INTEGER,
                     created_at_ms INTEGER NOT NULL,
@@ -294,6 +295,8 @@ impl TursoSessionStore {
             .await?;
         self.ensure_session_column("delivery_metadata_json", "TEXT")
             .await?;
+        self.ensure_llm_audit_column("metadata_json", "TEXT")
+            .await?;
         self.ensure_session_column("compression_last_len", "INTEGER NOT NULL DEFAULT 0")
             .await?;
         self.ensure_session_column("compression_summary_json", "TEXT")
@@ -349,6 +352,32 @@ impl TursoSessionStore {
                 }
                 Err(StorageError::backend(format!(
                     "failed to ensure approvals.{column} column: {message}"
+                )))
+            }
+        }
+    }
+
+    async fn ensure_llm_audit_column(
+        &self,
+        column: &str,
+        column_type: &str,
+    ) -> Result<(), StorageError> {
+        let sql = format!("ALTER TABLE llm_audit ADD COLUMN {column} {column_type}");
+        let conn = self.connection().await?;
+        let result = conn.execute(&sql, ()).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("duplicate column name")
+                    || message.contains("already exists")
+                    || message.contains("duplicate")
+                    || message.contains("no such table")
+                {
+                    return Ok(());
+                }
+                Err(StorageError::backend(format!(
+                    "failed to ensure llm_audit.{column} column: {message}"
                 )))
             }
         }
@@ -1085,8 +1114,8 @@ impl SessionStorage for TursoSessionStore {
             "INSERT INTO llm_audit (
                 id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
                 status, error_code, error_message, provider_request_id, provider_response_id,
-                request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
-            ) VALUES ('{}', '{}', '{}', {}, {}, '{}', '{}', '{}', '{}', {}, {}, {}, {}, '{}', {}, {}, {}, {})",
+                request_body_json, response_body_json, metadata_json, requested_at_ms, responded_at_ms, created_at_ms
+            ) VALUES ('{}', '{}', '{}', {}, {}, '{}', '{}', '{}', '{}', {}, {}, {}, {}, '{}', {}, {}, {}, {}, {})",
             escape_sql_text(&input.id),
             escape_sql_text(&input.session_key),
             escape_sql_text(&input.chat_id),
@@ -1102,6 +1131,7 @@ impl SessionStorage for TursoSessionStore {
             opt_string_sql(input.provider_response_id.as_deref()),
             escape_sql_text(&input.request_body_json),
             opt_string_sql(input.response_body_json.as_deref()),
+            opt_sql_text(input.metadata_json.as_deref()),
             input.requested_at_ms,
             opt_i64_sql(input.responded_at_ms),
             now
@@ -1113,7 +1143,7 @@ impl SessionStorage for TursoSessionStore {
         let query_sql = format!(
             "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
                     status, error_code, error_message, provider_request_id, provider_response_id,
-                    request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+                    request_body_json, response_body_json, metadata_json, requested_at_ms, responded_at_ms, created_at_ms
              FROM llm_audit
              WHERE id = '{}'
              LIMIT 1",
@@ -1170,7 +1200,7 @@ impl SessionStorage for TursoSessionStore {
         let sql = format!(
             "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
                     status, error_code, error_message, provider_request_id, provider_response_id,
-                    request_body_json, response_body_json, requested_at_ms, responded_at_ms, created_at_ms
+                    request_body_json, response_body_json, metadata_json, requested_at_ms, responded_at_ms, created_at_ms
              FROM llm_audit
              {where_clause}
              ORDER BY {sort_order}
@@ -2603,9 +2633,10 @@ fn row_to_llm_audit(row: &Row) -> Result<LlmAuditRecord, StorageError> {
         ),
         request_body_json: value_to_string(row.get_value(13).map_err(StorageError::backend)?)?,
         response_body_json: value_to_opt_string(row.get_value(14).map_err(StorageError::backend)?),
-        requested_at_ms: value_to_i64(row.get_value(15).map_err(StorageError::backend)?)?,
-        responded_at_ms: value_to_opt_i64(row.get_value(16).map_err(StorageError::backend)?)?,
-        created_at_ms: value_to_i64(row.get_value(17).map_err(StorageError::backend)?)?,
+        metadata_json: value_to_opt_string(row.get_value(15).map_err(StorageError::backend)?),
+        requested_at_ms: value_to_i64(row.get_value(16).map_err(StorageError::backend)?)?,
+        responded_at_ms: value_to_opt_i64(row.get_value(17).map_err(StorageError::backend)?)?,
+        created_at_ms: value_to_i64(row.get_value(18).map_err(StorageError::backend)?)?,
     })
 }
 

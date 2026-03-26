@@ -8,6 +8,7 @@
 ### Fixed
 - `shell`、`local_search` 与 `terminal_multiplexer` 在按命令名启动 `sh`/`rg`/`grep`/`tmux` 时现在会统一注入共享增强后的 PATH，改善 macOS GUI 启动下的外部命令发现能力
 - `sub_agent` now re-surfaces delegated `approval_required` / `stop` signals to the parent agent instead of swallowing them at the tool boundary
+- `sub_agent` now forwards delegated LLM audit payloads to the runtime audit sink so parent-session observability can include child agent model requests
 
 ## 2026-03-25
 

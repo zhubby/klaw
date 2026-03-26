@@ -111,6 +111,15 @@ exclude_tools = ["sub_agent"]
 - Provider 调用失败：`ToolError::ExecutionFailed`
 - 子代理触发 `approval_required` / `stop`：通过结构化错误把信号继续透传给父 Agent，而不是在 `sub_agent` 边界吞掉
 
+## 审计持久化
+
+- 子代理执行仍然直接复用 `run_agent_execution`，因此会生成 `request_audits` / `request_usages`。
+- 当 runtime 为 `sub_agent` 注入审计 sink 时，子代理产生的 LLM 审计会按父 session 落库。
+- 落库记录的 `llm_audit.metadata_json` 会包含：
+  - `sub_agent = true`
+  - `sub_agent.parent_session_key`
+  - `sub_agent.child_session_key`
+
 ## 测试覆盖
 
 `sub_agent` 单测已覆盖：

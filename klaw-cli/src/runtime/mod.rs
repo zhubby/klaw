@@ -4,8 +4,9 @@ pub mod service_loop;
 pub mod webhook;
 
 use klaw_agent::{
-    AgentExecutionStreamEvent, ConversationMessage, ConversationSummary, build_compression_prompt,
-    build_provider_from_config, merge_or_reset_summary, parse_conversation_summary,
+    AgentExecutionOutput, AgentExecutionStreamEvent, ConversationMessage, ConversationSummary,
+    build_compression_prompt, build_provider_from_config, merge_or_reset_summary,
+    parse_conversation_summary,
 };
 use klaw_approval::{
     ApprovalManager, ApprovalResolveDecision, ApprovalStatus, SqliteApprovalManager,
@@ -40,8 +41,9 @@ use klaw_skill::{
 use klaw_storage::{DefaultSessionStore, open_default_store};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, ArchiveTool, CronManagerTool, HeartbeatManagerTool,
-    LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool, SkillsRegistryTool, SubAgentTool,
-    TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool, WebFetchTool, WebSearchTool,
+    LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool, SkillsRegistryTool,
+    SubAgentAuditSink, SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool,
+    WebFetchTool, WebSearchTool,
 };
 use klaw_util::EnvironmentCheckReport;
 use serde_json::{Value, json};
@@ -452,9 +454,29 @@ fn enqueue_llm_audit_records_from_outcome(
     ) else {
         return;
     };
-    for (index, record) in outcome.llm_audits.iter().enumerate() {
+    enqueue_llm_audit_records(
+        &runtime.llm_audit_tx,
+        session_key,
+        chat_id,
+        turn_index,
+        &message_id.to_string(),
+        &outcome.llm_audits,
+        None,
+    );
+}
+
+fn enqueue_llm_audit_records(
+    llm_audit_tx: &std::sync::mpsc::SyncSender<NewLlmAuditRecord>,
+    session_key: &str,
+    chat_id: &str,
+    turn_index: i64,
+    id_prefix: &str,
+    audits: &[klaw_llm::LlmAuditPayload],
+    metadata_json: Option<String>,
+) {
+    for (index, record) in audits.iter().enumerate() {
         let payload = NewLlmAuditRecord {
-            id: format!("{message_id}:audit:{}", index + 1),
+            id: format!("{id_prefix}:audit:{}", index + 1),
             session_key: session_key.to_string(),
             chat_id: chat_id.to_string(),
             turn_index,
@@ -472,10 +494,11 @@ fn enqueue_llm_audit_records_from_outcome(
             provider_response_id: record.provider_response_id.clone(),
             request_body_json: serialize_json_string(&record.request_body),
             response_body_json: record.response_body.as_ref().map(serialize_json_string),
+            metadata_json: metadata_json.clone(),
             requested_at_ms: record.requested_at_ms,
             responded_at_ms: record.responded_at_ms,
         };
-        if let Err(err) = runtime.llm_audit_tx.try_send(payload) {
+        if let Err(err) = llm_audit_tx.try_send(payload) {
             warn!(error = %err, session_key, "llm audit queue full or disconnected; dropping record");
         }
     }
@@ -483,6 +506,66 @@ fn enqueue_llm_audit_records_from_outcome(
 
 fn serialize_json_string(value: &serde_json::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+}
+
+#[derive(Clone)]
+struct RuntimeSubAgentAuditSink {
+    session_store: DefaultSessionStore,
+    llm_audit_tx: std::sync::mpsc::SyncSender<NewLlmAuditRecord>,
+}
+
+impl RuntimeSubAgentAuditSink {
+    fn new(
+        session_store: DefaultSessionStore,
+        llm_audit_tx: std::sync::mpsc::SyncSender<NewLlmAuditRecord>,
+    ) -> Self {
+        Self {
+            session_store,
+            llm_audit_tx,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SubAgentAuditSink for RuntimeSubAgentAuditSink {
+    async fn persist_sub_agent_audits(
+        &self,
+        parent_session_key: &str,
+        child_session_key: &str,
+        output: &AgentExecutionOutput,
+    ) -> Result<(), String> {
+        if output.request_audits.is_empty() {
+            return Ok(());
+        }
+
+        let sessions = SqliteSessionManager::from_store(self.session_store.clone());
+        let session = sessions
+            .get_session(parent_session_key)
+            .await
+            .map_err(|err| format!("load parent session failed: {err}"))?;
+        let metadata_json = serde_json::to_string(&json!({
+            "sub_agent": true,
+            "sub_agent.parent_session_key": parent_session_key,
+            "sub_agent.child_session_key": child_session_key,
+            "sub_agent.source_tool": "sub_agent",
+        }))
+        .map_err(|err| format!("serialize sub-agent audit metadata failed: {err}"))?;
+        let audits = output
+            .request_audits
+            .iter()
+            .map(|record| record.payload.clone())
+            .collect::<Vec<_>>();
+        enqueue_llm_audit_records(
+            &self.llm_audit_tx,
+            parent_session_key,
+            &session.chat_id,
+            session.turn_count,
+            child_session_key,
+            &audits,
+            Some(metadata_json),
+        );
+        Ok(())
+    }
 }
 
 async fn execute_approved_shell(
@@ -860,6 +943,7 @@ async fn register_configured_tools(
     tools: &mut ToolRegistry,
     config: &AppConfig,
     session_store: DefaultSessionStore,
+    sub_agent_audit_sink: Option<Arc<dyn SubAgentAuditSink>>,
 ) -> Result<(), Box<dyn Error>> {
     if config.tools.archive.enabled() {
         tools.register(ArchiveTool::open_default(config).await?);
@@ -926,7 +1010,11 @@ async fn register_configured_tools(
     }
     if config.tools.sub_agent.enabled() {
         let parent_tools = tools.clone();
-        tools.register(SubAgentTool::new(Arc::new(config.clone()), parent_tools));
+        tools.register(SubAgentTool::with_audit_sink(
+            Arc::new(config.clone()),
+            parent_tools,
+            sub_agent_audit_sink,
+        ));
     }
     Ok(())
 }
@@ -969,7 +1057,17 @@ pub async fn sync_runtime_tools(
     config: &AppConfig,
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let mut next_tools = ToolRegistry::default();
-    register_configured_tools(&mut next_tools, config, runtime.session_store.clone()).await?;
+    let sub_agent_audit_sink: Arc<dyn SubAgentAuditSink> = Arc::new(RuntimeSubAgentAuditSink::new(
+        runtime.session_store.clone(),
+        runtime.llm_audit_tx.clone(),
+    ));
+    register_configured_tools(
+        &mut next_tools,
+        config,
+        runtime.session_store.clone(),
+        Some(sub_agent_audit_sink),
+    )
+    .await?;
     let builtin_tool_names = builtin_tool_names(config);
     let builtin_tool_name_refs: Vec<&str> = builtin_tool_names.iter().map(String::as_str).collect();
 
@@ -1542,8 +1640,19 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let default_provider = Arc::clone(&provider_runtime.default_provider);
     let default_model = provider_runtime.default_model.clone();
     let session_store = open_default_store().await?;
+    let llm_audit_tx = spawn_llm_audit_writer(session_store.clone());
     let mut tools = ToolRegistry::default();
-    register_configured_tools(&mut tools, config, session_store.clone()).await?;
+    let sub_agent_audit_sink: Arc<dyn SubAgentAuditSink> = Arc::new(RuntimeSubAgentAuditSink::new(
+        session_store.clone(),
+        llm_audit_tx.clone(),
+    ));
+    register_configured_tools(
+        &mut tools,
+        config,
+        session_store.clone(),
+        Some(sub_agent_audit_sink),
+    )
+    .await?;
 
     let configured_mcp_servers = config
         .mcp
@@ -1564,7 +1673,6 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let system_prompt = build_runtime_system_prompt(loaded_skills.skill_entries);
 
     let observability = init_observability_from_config(config).await;
-    let llm_audit_tx = spawn_llm_audit_writer(session_store.clone());
     let telemetry: Option<Arc<dyn AgentTelemetry>> = observability.as_ref().map(|handle| {
         Arc::new(OtelAgentTelemetry::from_handle(handle, "klaw")) as Arc<dyn AgentTelemetry>
     });
@@ -2701,7 +2809,7 @@ mod tests {
         should_trigger_compression, spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output,
         sync_runtime_providers, sync_runtime_tools, trim_conversation_history,
     };
-    use klaw_agent::ConversationSummary;
+    use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
     use klaw_core::{
         CircuitBreakerPolicy, DeadLetterPolicy, Envelope, EnvelopeHeader,
@@ -2709,11 +2817,11 @@ mod tests {
         InMemoryTransport, OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
         Subscription,
     };
-    use klaw_llm::{ChatOptions, LlmError, LlmProvider};
+    use klaw_llm::{ChatOptions, LlmAuditPayload, LlmError, LlmProvider};
     use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
     use klaw_storage::ApprovalStatus;
     use klaw_storage::{DefaultSessionStore, StoragePaths};
-    use klaw_tool::ToolRegistry;
+    use klaw_tool::{SubAgentAuditSink, ToolRegistry};
     use klaw_util::EnvironmentCheckReport;
     use serde_json::{Value, json};
     use std::{
@@ -2839,6 +2947,91 @@ mod tests {
                 checked_at: OffsetDateTime::UNIX_EPOCH,
             },
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn runtime_sub_agent_audit_sink_persists_audits_on_parent_session() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+        let sessions = super::session_manager(&runtime);
+        sessions
+            .touch_session("parent-session", "chat-parent", "stdio")
+            .await
+            .expect("parent session should exist");
+        sessions
+            .complete_turn("parent-session", "chat-parent", "stdio")
+            .await
+            .expect("turn count should increment");
+
+        let sink = super::RuntimeSubAgentAuditSink::new(
+            runtime.session_store.clone(),
+            runtime.llm_audit_tx.clone(),
+        );
+        let output = AgentExecutionOutput {
+            content: "done".to_string(),
+            reasoning: None,
+            tool_signals: Vec::new(),
+            request_usages: Vec::new(),
+            request_audits: vec![AgentRequestAudit {
+                request_seq: 1,
+                payload: LlmAuditPayload {
+                    provider: "openai".to_string(),
+                    model: "gpt-4.1-mini".to_string(),
+                    wire_api: "responses".to_string(),
+                    status: klaw_llm::LlmAuditStatus::Success,
+                    error_code: None,
+                    error_message: None,
+                    request_body: json!({"input":"delegate"}),
+                    response_body: Some(json!({"output":"done"})),
+                    requested_at_ms: 10,
+                    responded_at_ms: Some(20),
+                    provider_request_id: Some("req-sub".to_string()),
+                    provider_response_id: Some("resp-sub".to_string()),
+                },
+            }],
+        };
+        sink.persist_sub_agent_audits("parent-session", "parent-session:subagent:test", &output)
+            .await
+            .expect("sink should persist audits");
+
+        let mut rows = Vec::new();
+        for _ in 0..20 {
+            rows = sessions
+                .list_llm_audit(&klaw_storage::LlmAuditQuery {
+                    session_key: Some("parent-session".to_string()),
+                    provider: None,
+                    requested_from_ms: None,
+                    requested_to_ms: None,
+                    limit: 10,
+                    offset: 0,
+                    sort_order: klaw_storage::LlmAuditSortOrder::RequestedAtDesc,
+                })
+                .await
+                .expect("audit rows should list");
+            if !rows.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].session_key, "parent-session");
+        assert_eq!(rows[0].chat_id, "chat-parent");
+        assert_eq!(rows[0].turn_index, 1);
+        let metadata = rows[0]
+            .metadata_json
+            .as_ref()
+            .and_then(|value| serde_json::from_str::<Value>(value).ok())
+            .expect("metadata json should parse");
+        assert_eq!(metadata.get("sub_agent"), Some(&Value::Bool(true)));
+        assert_eq!(
+            metadata.get("sub_agent.parent_session_key"),
+            Some(&Value::String("parent-session".to_string()))
+        );
+        assert_eq!(
+            metadata.get("sub_agent.child_session_key"),
+            Some(&Value::String("parent-session:subagent:test".to_string()))
+        );
     }
 
     fn test_provider_config(default_model: &str) -> ModelProviderConfig {

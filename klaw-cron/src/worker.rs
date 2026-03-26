@@ -707,6 +707,7 @@ mod tests {
                 provider_response_id: input.provider_response_id.clone(),
                 request_body_json: input.request_body_json.clone(),
                 response_body_json: input.response_body_json.clone(),
+                metadata_json: input.metadata_json.clone(),
                 requested_at_ms: input.requested_at_ms,
                 responded_at_ms: input.responded_at_ms,
                 created_at_ms: now_ms(),
