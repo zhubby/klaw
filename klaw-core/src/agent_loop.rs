@@ -110,13 +110,19 @@ pub enum AgentRuntimeError {
     Transport(#[from] TransportError),
 }
 
+#[derive(Clone)]
+pub struct ProviderRuntimeSnapshot {
+    pub default_provider: Arc<dyn LlmProvider>,
+    pub provider_registry: BTreeMap<String, Arc<dyn LlmProvider>>,
+    pub default_provider_id: String,
+    pub default_model: String,
+    pub provider_default_models: BTreeMap<String, String>,
+}
+
 pub struct AgentLoop {
     pub limits: RunLimits,
     pub scheduling: SessionSchedulingPolicy,
-    pub provider: Arc<dyn LlmProvider>,
-    pub provider_registry: BTreeMap<String, Arc<dyn LlmProvider>>,
-    pub active_provider_id: String,
-    pub active_model: String,
+    pub provider_runtime: std::sync::RwLock<ProviderRuntimeSnapshot>,
     pub tools: ToolRegistry,
     pub system_prompt: std::sync::RwLock<Option<String>>,
     pub telemetry: Option<Arc<dyn AgentTelemetry>>,
@@ -514,10 +520,16 @@ impl AgentLoop {
         Self {
             limits,
             scheduling,
-            provider: provider.clone(),
-            provider_registry: BTreeMap::from([("default".to_string(), provider)]),
-            active_provider_id: "default".to_string(),
-            active_model: "default".to_string(),
+            provider_runtime: std::sync::RwLock::new(ProviderRuntimeSnapshot {
+                default_provider: provider.clone(),
+                provider_registry: BTreeMap::from([("default".to_string(), provider)]),
+                default_provider_id: "default".to_string(),
+                default_model: "default".to_string(),
+                provider_default_models: BTreeMap::from([(
+                    "default".to_string(),
+                    "default".to_string(),
+                )]),
+            }),
             tools,
             system_prompt: std::sync::RwLock::new(None),
             telemetry: None,
@@ -535,10 +547,13 @@ impl AgentLoop {
         Self {
             limits,
             scheduling,
-            provider: provider.clone(),
-            provider_registry: BTreeMap::from([(active_provider_id.clone(), provider)]),
-            active_provider_id,
-            active_model,
+            provider_runtime: std::sync::RwLock::new(ProviderRuntimeSnapshot {
+                default_provider: provider.clone(),
+                provider_registry: BTreeMap::from([(active_provider_id.clone(), provider)]),
+                default_provider_id: active_provider_id.clone(),
+                default_model: active_model.clone(),
+                provider_default_models: BTreeMap::from([(active_provider_id, active_model)]),
+            }),
             tools,
             system_prompt: std::sync::RwLock::new(None),
             telemetry: None,
@@ -546,11 +561,38 @@ impl AgentLoop {
     }
 
     pub fn with_provider_registry(
-        mut self,
+        self,
         provider_registry: BTreeMap<String, Arc<dyn LlmProvider>>,
     ) -> Self {
-        self.provider_registry = provider_registry;
+        let provider_default_models = provider_registry
+            .iter()
+            .map(|(provider_id, provider)| {
+                (provider_id.clone(), provider.default_model().to_string())
+            })
+            .collect();
+        let mut guard = self
+            .provider_runtime
+            .write()
+            .unwrap_or_else(|err| err.into_inner());
+        guard.provider_registry = provider_registry;
+        guard.provider_default_models = provider_default_models;
+        drop(guard);
         self
+    }
+
+    pub fn provider_runtime_snapshot(&self) -> ProviderRuntimeSnapshot {
+        self.provider_runtime
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone()
+    }
+
+    pub fn set_provider_runtime_snapshot(&self, provider_runtime: ProviderRuntimeSnapshot) {
+        let mut guard = self
+            .provider_runtime
+            .write()
+            .unwrap_or_else(|err| err.into_inner());
+        *guard = provider_runtime;
     }
 
     pub fn with_system_prompt(self, system_prompt: Option<String>) -> Self {
@@ -626,12 +668,13 @@ impl AgentLoop {
     ) -> ProcessOutcome {
         let start = Instant::now();
         let session_key = msg.payload.session_key.as_str();
+        let provider_runtime = self.provider_runtime_snapshot();
         let provider_id = msg
             .payload
             .metadata
             .get("agent.provider_id")
             .and_then(serde_json::Value::as_str)
-            .unwrap_or(&self.active_provider_id);
+            .unwrap_or(provider_runtime.default_provider_id.as_str());
 
         info!(message_id = %msg.header.message_id, "process message");
 
@@ -706,18 +749,23 @@ impl AgentLoop {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string)
-            .unwrap_or_else(|| self.active_provider_id.clone());
-        let (resolved_provider_id, provider) =
-            if let Some(provider) = self.provider_registry.get(&requested_provider_id) {
-                (requested_provider_id, Arc::clone(provider))
-            } else {
-                warn!(
-                    requested_provider = requested_provider_id.as_str(),
-                    fallback_provider = self.active_provider_id.as_str(),
-                    "provider override not found, falling back to active provider"
-                );
-                (self.active_provider_id.clone(), Arc::clone(&self.provider))
-            };
+            .unwrap_or_else(|| provider_runtime.default_provider_id.clone());
+        let (resolved_provider_id, provider) = if let Some(provider) = provider_runtime
+            .provider_registry
+            .get(&requested_provider_id)
+        {
+            (requested_provider_id, Arc::clone(provider))
+        } else {
+            warn!(
+                requested_provider = requested_provider_id.as_str(),
+                fallback_provider = provider_runtime.default_provider_id.as_str(),
+                "provider override not found, falling back to active provider"
+            );
+            (
+                provider_runtime.default_provider_id.clone(),
+                Arc::clone(&provider_runtime.default_provider),
+            )
+        };
         let resolved_model = msg
             .payload
             .metadata
@@ -726,7 +774,7 @@ impl AgentLoop {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string)
-            .unwrap_or_else(|| self.active_model.clone());
+            .unwrap_or_else(|| provider_runtime.default_model.clone());
 
         let mut tool_metadata = msg.payload.metadata.clone();
         tool_metadata.remove(META_CONVERSATION_HISTORY_KEY);

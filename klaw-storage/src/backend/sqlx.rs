@@ -43,7 +43,9 @@ struct SessionIndexRow {
     channel: String,
     active_session_key: Option<String>,
     model_provider: Option<String>,
+    model_provider_explicit: i64,
     model: Option<String>,
+    model_explicit: i64,
     delivery_metadata_json: Option<String>,
     created_at_ms: i64,
     updated_at_ms: i64,
@@ -231,7 +233,9 @@ impl From<SessionIndexRow> for SessionIndex {
             channel: value.channel,
             active_session_key: value.active_session_key,
             model_provider: value.model_provider,
+            model_provider_explicit: value.model_provider_explicit != 0,
             model: value.model,
+            model_explicit: value.model_explicit != 0,
             delivery_metadata_json: value.delivery_metadata_json,
             created_at_ms: value.created_at_ms,
             updated_at_ms: value.updated_at_ms,
@@ -513,7 +517,9 @@ impl SqlxSessionStore {
                 channel TEXT NOT NULL,
                 active_session_key TEXT,
                 model_provider TEXT,
+                model_provider_explicit INTEGER NOT NULL DEFAULT 0,
                 model TEXT,
+                model_explicit INTEGER NOT NULL DEFAULT 0,
                 delivery_metadata_json TEXT,
                 compression_last_len INTEGER NOT NULL DEFAULT 0,
                 compression_summary_json TEXT,
@@ -537,8 +543,18 @@ impl SqlxSessionStore {
             "ALTER TABLE sessions ADD COLUMN model_provider TEXT",
         )
         .await?;
+        self.ensure_session_column(
+            "model_provider_explicit",
+            "ALTER TABLE sessions ADD COLUMN model_provider_explicit INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
         self.ensure_session_column("model", "ALTER TABLE sessions ADD COLUMN model TEXT")
             .await?;
+        self.ensure_session_column(
+            "model_explicit",
+            "ALTER TABLE sessions ADD COLUMN model_explicit INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
         self.ensure_session_column(
             "delivery_metadata_json",
             "ALTER TABLE sessions ADD COLUMN delivery_metadata_json TEXT",
@@ -1139,8 +1155,8 @@ impl SessionStorage for SqlxSessionStore {
         let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
         sqlx::query(
             "INSERT INTO sessions (
-                session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-            ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, ?4, ?5, ?6, 0, ?7)
+                session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            ) VALUES (?1, ?2, ?3, NULL, NULL, 0, NULL, 0, NULL, ?4, ?5, ?6, 0, ?7)
             ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
@@ -1194,8 +1210,8 @@ impl SessionStorage for SqlxSessionStore {
         if updated.rows_affected() == 0 {
             sqlx::query(
                 "INSERT INTO sessions (
-                    session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-                ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, ?4, ?5, ?6, 1, ?7)",
+                    session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+                ) VALUES (?1, ?2, ?3, NULL, NULL, 0, NULL, 0, NULL, ?4, ?5, ?6, 1, ?7)",
             )
             .bind(session_key)
             .bind(chat_id)
@@ -1226,7 +1242,7 @@ impl SessionStorage for SqlxSessionStore {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let row = sqlx::query_as::<_, SessionIndexRow>(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              WHERE session_key = ?1",
         )
@@ -1250,8 +1266,8 @@ impl SessionStorage for SqlxSessionStore {
         let jsonl_path_str = relative_or_absolute_jsonl(&self.paths.root_dir, &jsonl_path);
         sqlx::query(
             "INSERT INTO sessions (
-                session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-            ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, ?5, ?6, ?7, 0, ?8)
+                session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            ) VALUES (?1, ?2, ?3, ?4, NULL, 0, NULL, 0, NULL, ?5, ?6, ?7, 0, ?8)
             ON CONFLICT(session_key) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 channel=excluded.channel,
@@ -1320,7 +1336,9 @@ impl SessionStorage for SqlxSessionStore {
                  channel = ?2,
                  updated_at_ms = ?3,
                  model_provider = ?4,
-                 model = ?5
+                 model_provider_explicit = 1,
+                 model = ?5,
+                 model_explicit = 1
              WHERE session_key = ?6",
         )
         .bind(chat_id)
@@ -1353,7 +1371,8 @@ impl SessionStorage for SqlxSessionStore {
              SET chat_id = ?1,
                  channel = ?2,
                  updated_at_ms = ?3,
-                 model = ?4
+                 model = ?4,
+                 model_explicit = 0
              WHERE session_key = ?5",
         )
         .bind(chat_id)
@@ -1417,7 +1436,9 @@ impl SessionStorage for SqlxSessionStore {
                  channel = ?2,
                  updated_at_ms = ?3,
                  model_provider = NULL,
-                 model = NULL
+                 model_provider_explicit = 0,
+                 model = NULL,
+                 model_explicit = 0
              WHERE session_key = ?4",
         )
         .bind(chat_id)
@@ -1491,7 +1512,7 @@ impl SessionStorage for SqlxSessionStore {
         updated_to_ms: Option<i64>,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let mut query = String::from(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions WHERE 1=1",
         );
         if updated_from_ms.is_some() {

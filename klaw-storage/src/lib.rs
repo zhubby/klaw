@@ -191,7 +191,9 @@ mod tests {
             Some("dingtalk:acc:chat-1")
         );
         assert_eq!(base.model_provider, None);
+        assert!(!base.model_provider_explicit);
         assert_eq!(base.model, None);
+        assert!(!base.model_explicit);
 
         let _new_active = store
             .get_or_create_session_state(
@@ -228,7 +230,9 @@ mod tests {
             .await
             .expect("provider should be updated");
         assert_eq!(switched.model_provider.as_deref(), Some("anthropic"));
+        assert!(switched.model_provider_explicit);
         assert_eq!(switched.model.as_deref(), Some("claude-3-7-sonnet"));
+        assert!(switched.model_explicit);
 
         let updated_model = store
             .set_model(
@@ -240,13 +244,16 @@ mod tests {
             .await
             .expect("model should be updated");
         assert_eq!(updated_model.model.as_deref(), Some("claude-opus-4"));
+        assert!(!updated_model.model_explicit);
 
         let cleared = store
             .clear_model_routing_override("dingtalk:acc:chat-1:child", "chat-1", "dingtalk")
             .await
             .expect("routing override should clear");
         assert_eq!(cleared.model_provider, None);
+        assert!(!cleared.model_provider_explicit);
         assert_eq!(cleared.model, None);
+        assert!(!cleared.model_explicit);
     }
 
     #[tokio::test(flavor = "current_thread")]

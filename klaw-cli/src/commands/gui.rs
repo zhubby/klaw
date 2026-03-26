@@ -12,10 +12,36 @@ use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
 use crate::runtime::{
     SharedChannelRuntime, build_channel_driver_factory, build_runtime_bundle,
     finalize_startup_report, reload_runtime_skills_prompt, set_runtime_provider_override,
-    shutdown_runtime_bundle,
+    shutdown_runtime_bundle, sync_runtime_providers,
 };
 use klaw_config::ConfigStore;
 use tracing::{info, warn};
+
+fn provider_runtime_snapshot(
+    runtime: &crate::runtime::RuntimeBundle,
+) -> klaw_gui::ProviderRuntimeSnapshot {
+    let provider_runtime = runtime.runtime.provider_runtime_snapshot();
+    let runtime_provider_override = runtime
+        .runtime_provider_override
+        .read()
+        .unwrap_or_else(|err| err.into_inner())
+        .clone();
+    let active_provider_id = runtime_provider_override
+        .clone()
+        .unwrap_or_else(|| provider_runtime.default_provider_id.clone());
+    let active_model = provider_runtime
+        .provider_default_models
+        .get(&active_provider_id)
+        .cloned()
+        .unwrap_or_else(|| provider_runtime.default_model.clone());
+    klaw_gui::ProviderRuntimeSnapshot {
+        default_provider_id: provider_runtime.default_provider_id,
+        provider_default_models: provider_runtime.provider_default_models,
+        runtime_provider_override,
+        active_provider_id,
+        active_model,
+    }
+}
 
 #[derive(Debug, Args)]
 pub struct GuiCommand {}
@@ -113,6 +139,21 @@ impl GuiCommand {
                                                 )
                                                 .map_err(|err| err.to_string());
                                                 let _ = response.send(result);
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::SyncProviders { response }) => {
+                                                let result = match ConfigStore::open(None) {
+                                                    Ok(store) => {
+                                                        let snapshot = store.snapshot();
+                                                        sync_runtime_providers(runtime.as_ref(), &snapshot.config)
+                                                            .map(|_| provider_runtime_snapshot(runtime.as_ref()))
+                                                            .map_err(|err| err.to_string())
+                                                    }
+                                                    Err(err) => Err(err.to_string()),
+                                                };
+                                                let _ = response.send(result);
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::GetProviderStatus { response }) => {
+                                                let _ = response.send(Ok(provider_runtime_snapshot(runtime.as_ref())));
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncChannels { response }) => {
                                                 let result = match ConfigStore::open(None) {

@@ -230,7 +230,7 @@ fn validate_voice_enabled_requires_selected_provider_keys() {
 }
 
 #[test]
-fn parse_root_model_override_succeeds() {
+fn parse_legacy_root_model_field_succeeds() {
     let raw = r#"
 model_provider = "openai"
 model = "gpt-4.1-mini"

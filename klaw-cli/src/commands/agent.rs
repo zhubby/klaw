@@ -19,6 +19,7 @@ pub struct AgentCommand {
 impl AgentCommand {
     pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
         let runtime = build_runtime_bundle(config.as_ref()).await?;
+        let provider_runtime = runtime.runtime.provider_runtime_snapshot();
         let session_key = self
             .session_key
             .unwrap_or_else(|| format!("stdio:{}", Uuid::new_v4()));
@@ -31,8 +32,8 @@ impl AgentCommand {
             session_key,
             chat_id,
             "local-user".to_string(),
-            runtime.default_provider_id.clone(),
-            runtime.runtime.active_model.clone(),
+            provider_runtime.default_provider_id,
+            provider_runtime.default_model,
             Vec::new(),
             BTreeMap::new(),
         )

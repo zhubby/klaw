@@ -4,6 +4,7 @@
 
 ### Added
 - added persisted `delivery_metadata_json` session state so runtimes can retain channel-specific reply metadata such as the latest DingTalk `session_webhook`
+- added persisted session-route explicitness flags so runtimes can distinguish user-chosen provider/model overrides from legacy default-route residue during routing normalization
 
 ## 2026-03-25
 

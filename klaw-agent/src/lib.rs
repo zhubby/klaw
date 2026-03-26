@@ -212,13 +212,7 @@ pub fn build_provider_from_config(
 
     let api_key = resolve_api_key(provider)
         .ok_or_else(|| ProviderBuildError::MissingApiKey(provider_id.to_string()))?;
-    let default_model = config
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .unwrap_or(provider.default_model.as_str())
-        .to_string();
+    let default_model = provider.default_model.clone();
 
     Ok(ProviderInstance {
         provider: Arc::new(OpenAiCompatibleProvider::new(OpenAiCompatibleConfig {
@@ -1190,7 +1184,7 @@ mod tests {
     }
 
     #[test]
-    fn build_provider_from_config_prefers_root_model_override() {
+    fn build_provider_from_config_uses_provider_default_model() {
         let mut config = AppConfig::default();
         let provider = config
             .model_providers
@@ -1199,11 +1193,10 @@ mod tests {
         provider.default_model = "gpt-4o-mini".to_string();
         provider.api_key = Some("test-key".to_string());
         provider.env_key = None;
-        config.model = Some("gpt-4.1-mini".to_string());
 
         let built = build_provider_from_config(&config, &config.model_provider)
             .expect("provider should build");
-        assert_eq!(built.default_model, "gpt-4.1-mini");
-        assert_eq!(built.provider.default_model(), "gpt-4.1-mini");
+        assert_eq!(built.default_model, "gpt-4o-mini");
+        assert_eq!(built.provider.default_model(), "gpt-4o-mini");
     }
 }
