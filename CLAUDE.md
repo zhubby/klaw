@@ -48,7 +48,7 @@ After each modification, ensure the relevant crate/workspace tests pass before c
 
 ## Architecture
 
-**Klaw** is a Crab ❤️ Claw.
+**Klaw** Crab ❤️ Claw.
 
 ## Rust Style and Idioms
 
