@@ -7,16 +7,19 @@ use egui::Color32;
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_session::{
-    LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
-    SessionError, SessionManager, SqliteSessionManager,
+    LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord,
+    LlmAuditSortOrder, LlmAuditStatus, SessionError, SessionManager, SqliteSessionManager,
 };
 use std::future::Future;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
+use std::time::Duration;
 use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
 
 const FILTER_INPUT_WIDTH: f32 = 220.0;
 const PAGING_INPUT_WIDTH: f32 = 50.0;
+const LLM_AUDIT_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum DetailTab {
@@ -25,8 +28,18 @@ enum DetailTab {
     Response,
 }
 
+struct LlmAuditLoad {
+    filter_options: LlmAuditFilterOptions,
+    rows: Vec<LlmAuditRecord>,
+}
+
+struct PendingLlmAuditLoad {
+    receiver: Receiver<Result<LlmAuditLoad, String>>,
+}
+
 pub struct LlmPanel {
     loaded: bool,
+    loading: bool,
     rows: Vec<LlmAuditRecord>,
     session_options: Vec<String>,
     provider_options: Vec<String>,
@@ -40,6 +53,8 @@ pub struct LlmPanel {
     selected_id: Option<String>,
     detail_record: Option<LlmAuditRecord>,
     detail_tab: DetailTab,
+    load_request: Option<PendingLlmAuditLoad>,
+    refresh_queued: bool,
 }
 
 impl Default for LlmPanel {
@@ -48,6 +63,7 @@ impl Default for LlmPanel {
         let one_year_ago = today - chrono::Duration::days(365);
         Self {
             loaded: false,
+            loading: false,
             rows: Vec::new(),
             session_options: Vec::new(),
             provider_options: Vec::new(),
@@ -61,19 +77,26 @@ impl Default for LlmPanel {
             selected_id: None,
             detail_record: None,
             detail_tab: DetailTab::default(),
+            load_request: None,
+            refresh_queued: false,
         }
     }
 }
 
 impl LlmPanel {
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
-        if self.loaded {
+        if self.loaded || self.load_request.is_some() {
             return;
         }
         self.refresh(notifications);
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
+        let _ = notifications;
+        if self.load_request.is_some() {
+            self.refresh_queued = true;
+            return;
+        }
         let size = self.size.max(1);
         let page = self.page.max(1);
         let offset = (page - 1) * size;
@@ -90,18 +113,53 @@ impl LlmPanel {
             offset,
             sort_order: self.sort_order,
         };
-        match run_session_task(move |manager| async move {
-            let filter_options = manager.list_llm_audit_filter_options(&filter_query).await?;
-            let rows = manager.list_llm_audit(&query).await?;
-            Ok((filter_options, rows))
-        }) {
-            Ok((filter_options, rows)) => {
-                self.session_options = filter_options.session_keys;
-                self.provider_options = filter_options.providers;
-                self.rows = rows;
-                self.loaded = true;
+        self.loading = true;
+        self.load_request = Some(PendingLlmAuditLoad {
+            receiver: spawn_session_task(move |manager| async move {
+                let filter_options = manager.list_llm_audit_filter_options(&filter_query).await?;
+                let rows = manager.list_llm_audit(&query).await?;
+                Ok(LlmAuditLoad {
+                    filter_options,
+                    rows,
+                })
+            }),
+        });
+    }
+
+    fn poll_load_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.load_request.take() else {
+            return;
+        };
+
+        match request.receiver.try_recv() {
+            Ok(result) => match result {
+                Ok(load) => {
+                    self.session_options = load.filter_options.session_keys;
+                    self.provider_options = load.filter_options.providers;
+                    self.rows = load.rows;
+                    self.loaded = true;
+                    self.loading = false;
+                    if self.refresh_queued {
+                        self.refresh_queued = false;
+                        self.refresh(notifications);
+                    }
+                }
+                Err(err) => {
+                    self.loading = false;
+                    notifications.error(format!("Failed to load LLM audit rows: {err}"));
+                    if self.refresh_queued {
+                        self.refresh_queued = false;
+                        self.refresh(notifications);
+                    }
+                }
+            },
+            Err(TryRecvError::Empty) => {
+                self.load_request = Some(request);
             }
-            Err(err) => notifications.error(format!("Failed to load LLM audit rows: {err}")),
+            Err(TryRecvError::Disconnected) => {
+                self.loading = false;
+                notifications.error("LLM audit loader closed unexpectedly");
+            }
         }
     }
 
@@ -128,6 +186,10 @@ impl PanelRenderer for LlmPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_loaded(notifications);
+        self.poll_load_request(notifications);
+        if self.load_request.is_some() {
+            ui.ctx().request_repaint_after(LLM_AUDIT_POLL_INTERVAL);
+        }
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
@@ -135,6 +197,10 @@ impl PanelRenderer for LlmPanel {
                 self.refresh(notifications);
             }
             ui.label(format!("Rows: {}", self.rows.len()));
+            if self.loading {
+                ui.add(egui::Spinner::new());
+                ui.small("Loading...");
+            }
         });
 
         ui.separator();
@@ -243,6 +309,14 @@ impl PanelRenderer for LlmPanel {
             .max_width(table_width)
             .show(ui, |ui| {
                 ui.set_min_width(table_width);
+                if self.loading && !self.loaded {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(16.0);
+                        ui.add(egui::Spinner::new());
+                        ui.label("Loading LLM audit rows...");
+                    });
+                    return;
+                }
                 if self.rows.is_empty() {
                     ui.label("No LLM audit rows found.");
                     return;
@@ -495,32 +569,102 @@ fn offset_to_ms(datetime: OffsetDateTime) -> i64 {
     datetime.unix_timestamp_nanos().saturating_div(1_000_000) as i64
 }
 
-fn run_session_task<T, F, Fut>(op: F) -> Result<T, String>
+fn spawn_session_task<T, F, Fut>(op: F) -> Receiver<Result<T, String>>
 where
     T: Send + 'static,
     F: FnOnce(Box<dyn SessionManager>) -> Fut + Send + 'static,
     Fut: Future<Output = Result<T, SessionError>> + Send + 'static,
 {
-    let join = thread::spawn(move || {
-        let runtime = Builder::new_current_thread()
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|err| format!("failed to build runtime: {err}"))?;
-
-        runtime.block_on(async move {
-            let manager: Box<dyn SessionManager> = Box::new(
-                SqliteSessionManager::open_default()
-                    .await
-                    .map_err(|err| format!("failed to open session manager: {err}"))?,
-            );
-            op(manager)
-                .await
-                .map_err(|err| format!("session operation failed: {err}"))
-        })
+            .map_err(|err| format!("failed to build runtime: {err}"))
+            .and_then(|runtime| {
+                runtime.block_on(async move {
+                    let manager: Box<dyn SessionManager> = Box::new(
+                        SqliteSessionManager::open_default()
+                            .await
+                            .map_err(|err| format!("failed to open session manager: {err}"))?,
+                    );
+                    op(manager)
+                        .await
+                        .map_err(|err| format!("session operation failed: {err}"))
+                })
+            });
+        let _ = tx.send(result);
     });
+    rx
+}
 
-    match join.join() {
-        Ok(result) => result,
-        Err(_) => Err("session operation thread panicked".to_string()),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_record() -> LlmAuditRecord {
+        LlmAuditRecord {
+            id: "audit-1".to_string(),
+            session_key: "session-1".to_string(),
+            chat_id: "chat-1".to_string(),
+            turn_index: 1,
+            request_seq: 1,
+            provider: "openai".to_string(),
+            model: "gpt-5".to_string(),
+            wire_api: "responses".to_string(),
+            status: LlmAuditStatus::Success,
+            error_code: None,
+            error_message: None,
+            provider_request_id: Some("req-1".to_string()),
+            provider_response_id: Some("resp-1".to_string()),
+            request_body_json: "{}".to_string(),
+            response_body_json: Some("{}".to_string()),
+            metadata_json: None,
+            requested_at_ms: 1_700_000_000_000,
+            responded_at_ms: Some(1_700_000_000_100),
+            created_at_ms: 1_700_000_000_000,
+        }
+    }
+
+    #[test]
+    fn refresh_queues_when_request_is_in_flight() {
+        let (_tx, rx) = mpsc::channel();
+        let mut panel = LlmPanel {
+            loading: true,
+            load_request: Some(PendingLlmAuditLoad { receiver: rx }),
+            ..LlmPanel::default()
+        };
+
+        panel.refresh(&mut NotificationCenter::default());
+
+        assert!(panel.refresh_queued);
+        assert!(panel.load_request.is_some());
+    }
+
+    #[test]
+    fn poll_load_request_applies_loaded_rows() {
+        let (tx, rx) = mpsc::channel();
+        let mut panel = LlmPanel {
+            loading: true,
+            load_request: Some(PendingLlmAuditLoad { receiver: rx }),
+            ..LlmPanel::default()
+        };
+        tx.send(Ok(LlmAuditLoad {
+            filter_options: LlmAuditFilterOptions {
+                session_keys: vec!["session-1".to_string()],
+                providers: vec!["openai".to_string()],
+            },
+            rows: vec![sample_record()],
+        }))
+        .expect("send load result");
+
+        panel.poll_load_request(&mut NotificationCenter::default());
+
+        assert!(panel.loaded);
+        assert!(!panel.loading);
+        assert_eq!(panel.rows.len(), 1);
+        assert_eq!(panel.session_options, vec!["session-1".to_string()]);
+        assert_eq!(panel.provider_options, vec!["openai".to_string()]);
+        assert!(panel.load_request.is_none());
     }
 }
