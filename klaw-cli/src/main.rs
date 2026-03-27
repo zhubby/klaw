@@ -202,7 +202,7 @@ fn create_gui_log_sender_for_command(command: &Commands) -> Option<mpsc::SyncSen
 
 fn build_env_filter(command: &Commands, log_level: Option<LogLevel>) -> EnvFilter {
     let effective_level = if matches!(command, Commands::Gui(_)) {
-        Some(LogLevel::Trace)
+        log_level.or(Some(LogLevel::Debug))
     } else {
         log_level
     };
@@ -368,10 +368,19 @@ mod tests {
     }
 
     #[test]
-    fn build_env_filter_for_gui_forces_trace_collection() {
+    fn build_env_filter_for_gui_defaults_to_debug() {
+        let filter = build_env_filter(&Commands::Gui(GuiCommand {}), None);
+        let rendered = filter.to_string();
+        assert!(rendered.contains("debug"));
+        assert!(rendered.contains("sqlx=warn"));
+        assert!(rendered.contains("turso=warn"));
+    }
+
+    #[test]
+    fn build_env_filter_for_gui_respects_explicit_log_level() {
         let filter = build_env_filter(&Commands::Gui(GuiCommand {}), Some(LogLevel::Error));
         let rendered = filter.to_string();
-        assert!(rendered.contains("trace"));
+        assert!(rendered.contains("error"));
         assert!(rendered.contains("sqlx=warn"));
         assert!(rendered.contains("turso=warn"));
     }
