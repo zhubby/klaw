@@ -85,6 +85,7 @@ impl ShellUi {
 
     pub fn render(&mut self, ctx: &egui::Context, state: &UiState) -> Vec<UiAction> {
         let mut actions = Vec::new();
+        self.panels.tick(ctx);
         self.sync_provider_choices();
         if self.runtime_provider_override != state.runtime_provider_override {
             actions.push(UiAction::SetRuntimeProviderOverride(

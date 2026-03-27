@@ -69,6 +69,10 @@ pub struct PanelRegistry {
 }
 
 impl PanelRegistry {
+    pub fn tick(&mut self, ctx: &egui::Context) {
+        self.logs.tick(ctx);
+    }
+
     pub fn render_for(
         &mut self,
         ui: &mut egui::Ui,

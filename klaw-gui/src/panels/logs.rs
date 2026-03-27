@@ -10,6 +10,7 @@ use std::time::Duration;
 
 const LOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const LOG_DRAIN_BATCH: usize = 512;
+const LOG_BACKGROUND_DRAIN_BATCH: usize = LOG_DRAIN_BATCH / 4;
 const DEFAULT_MAX_LINES: usize = 5000;
 const MIN_MAX_LINES: usize = 100;
 const MAX_MAX_LINES: usize = 100_000;
@@ -84,6 +85,7 @@ impl LevelFilter {
 #[derive(Default)]
 pub struct LogsPanel {
     entries: VecDeque<LogEntry>,
+    filtered_indices: Vec<usize>,
     pending_fragment: String,
     dropped_lines: usize,
     max_lines: usize,
@@ -94,6 +96,7 @@ pub struct LogsPanel {
     paused: bool,
     export_path: String,
     prefs_loaded: bool,
+    visible_cache_dirty: bool,
 }
 
 impl LogsPanel {
@@ -117,8 +120,16 @@ impl LogsPanel {
         }
     }
 
-    fn drain_runtime_logs(&mut self) {
-        let chunks = runtime_bridge::drain_log_chunks(LOG_DRAIN_BATCH);
+    pub fn tick(&mut self, ctx: &egui::Context) {
+        self.ensure_defaults();
+        if !self.paused {
+            self.drain_runtime_logs(LOG_BACKGROUND_DRAIN_BATCH);
+        }
+        ctx.request_repaint_after(LOG_POLL_INTERVAL);
+    }
+
+    fn drain_runtime_logs(&mut self, max_batch: usize) {
+        let chunks = runtime_bridge::drain_log_chunks(max_batch);
         for chunk in chunks {
             self.absorb_chunk(&chunk);
         }
@@ -150,9 +161,11 @@ impl LogsPanel {
             line: clean_line,
         };
         self.entries.push_back(entry);
+        self.visible_cache_dirty = true;
         while self.entries.len() > self.max_lines {
             self.entries.pop_front();
             self.dropped_lines = self.dropped_lines.saturating_add(1);
+            self.visible_cache_dirty = true;
         }
     }
 
@@ -172,13 +185,16 @@ impl LogsPanel {
             self.entries.pop_front();
             self.dropped_lines = self.dropped_lines.saturating_add(1);
         }
+        self.visible_cache_dirty = true;
         Ok(())
     }
 
     fn clear(&mut self) {
         self.entries.clear();
+        self.filtered_indices.clear();
         self.pending_fragment.clear();
         self.dropped_lines = 0;
+        self.visible_cache_dirty = true;
     }
 
     fn export_all(&self) -> Result<PathBuf, String> {
@@ -207,6 +223,15 @@ impl LogsPanel {
         .map(|_| ())
         .map_err(|err| format!("failed to save log filter preferences: {err}"))
     }
+
+    fn refresh_visible_cache(&mut self) {
+        if !self.visible_cache_dirty {
+            return;
+        }
+
+        self.filtered_indices = filtered_entry_indices(&self.entries, &self.level_filter, &self.search_text);
+        self.visible_cache_dirty = false;
+    }
 }
 
 impl PanelRenderer for LogsPanel {
@@ -217,9 +242,6 @@ impl PanelRenderer for LogsPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_defaults();
-        if !self.paused {
-            self.drain_runtime_logs();
-        }
         ui.ctx().request_repaint_after(LOG_POLL_INTERVAL);
 
         ui.heading(ctx.tab_title);
@@ -245,6 +267,9 @@ impl PanelRenderer for LogsPanel {
                 || ui
                     .checkbox(&mut self.level_filter.unknown, unknown_label)
                     .changed();
+            if changed {
+                self.visible_cache_dirty = true;
+            }
             if changed && let Err(err) = self.persist_level_filter() {
                 notifications.error(err);
             }
@@ -252,7 +277,11 @@ impl PanelRenderer for LogsPanel {
 
         ui.horizontal(|ui| {
             ui.label("Search");
-            ui.add(egui::TextEdit::singleline(&mut self.search_text).desired_width(220.0));
+            let search_response =
+                ui.add(egui::TextEdit::singleline(&mut self.search_text).desired_width(220.0));
+            if search_response.changed() {
+                self.visible_cache_dirty = true;
+            }
             ui.checkbox(&mut self.paused, "Pause stream");
             ui.checkbox(&mut self.auto_scroll, "Auto-scroll");
             if ui.button("Clear").clicked() {
@@ -283,21 +312,28 @@ impl PanelRenderer for LogsPanel {
             }
         });
 
-        let visible = visible_entries(&self.entries, &self.level_filter, &self.search_text);
+        self.refresh_visible_cache();
         ui.label(format!(
             "Buffered: {} | Visible: {} | Dropped: {}",
             self.entries.len(),
-            visible.len(),
+            self.filtered_indices.len(),
             self.dropped_lines
         ));
         ui.separator();
 
+        let row_height = ui.text_style_height(&egui::TextStyle::Monospace).max(1.0);
         egui::ScrollArea::vertical()
             .id_salt("logs-panel-scroll")
             .auto_shrink([false, false])
             .stick_to_bottom(self.auto_scroll && !self.paused)
-            .show(ui, |ui| {
-                for entry in visible {
+            .show_rows(ui, row_height, self.filtered_indices.len(), |ui, row_range| {
+                for row in row_range {
+                    let Some(entry_idx) = self.filtered_indices.get(row).copied() else {
+                        continue;
+                    };
+                    let Some(entry) = self.entries.get(entry_idx) else {
+                        continue;
+                    };
                     let color = level_color(entry.level, ui);
                     ui.label(egui::RichText::new(&entry.line).monospace().color(color));
                 }
@@ -316,21 +352,23 @@ fn level_color(level: ParsedLevel, ui: &egui::Ui) -> Color32 {
     }
 }
 
-fn visible_entries<'a>(
-    entries: &'a VecDeque<LogEntry>,
+fn filtered_entry_indices(
+    entries: &VecDeque<LogEntry>,
     filter: &LevelFilter,
     search_text: &str,
-) -> Vec<&'a LogEntry> {
+) -> Vec<usize> {
     let search = search_text.trim().to_ascii_lowercase();
     entries
         .iter()
-        .filter(|entry| filter.matches(entry.level))
-        .filter(|entry| {
+        .enumerate()
+        .filter(|(_, entry)| filter.matches(entry.level))
+        .filter(|(_, entry)| {
             if search.is_empty() {
                 return true;
             }
             entry.line.to_ascii_lowercase().contains(&search)
         })
+        .map(|(idx, _)| idx)
         .collect()
 }
 
@@ -456,9 +494,8 @@ mod tests {
             ..LevelFilter::default()
         };
 
-        let visible = visible_entries(&entries, &filter, "network");
-        assert_eq!(visible.len(), 1);
-        assert_eq!(visible[0].level, ParsedLevel::Error);
+        let visible = filtered_entry_indices(&entries, &filter, "network");
+        assert_eq!(visible, vec![1]);
     }
 
     #[test]
