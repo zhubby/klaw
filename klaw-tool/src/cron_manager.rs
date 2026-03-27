@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::Utc;
+use chrono_tz::Tz;
 use klaw_storage::{
     CronJob, CronScheduleKind, CronStorage, CronTaskRun, DefaultSessionStore, NewCronJob,
     StorageError, UpdateCronJobPatch, open_default_store,
@@ -173,6 +174,15 @@ impl CronManagerTool {
     fn compute_next_run_ms(
         kind: CronScheduleKind,
         expr: &str,
+        timezone: &str,
+    ) -> Result<i64, ToolError> {
+        Self::compute_next_run_ms_from(kind, expr, timezone, now_ms())
+    }
+
+    fn compute_next_run_ms_from(
+        kind: CronScheduleKind,
+        expr: &str,
+        timezone: &str,
         from_ms: i64,
     ) -> Result<i64, ToolError> {
         match kind {
@@ -189,9 +199,15 @@ impl CronManagerTool {
             CronScheduleKind::Cron => {
                 let schedule = cron::Schedule::from_str(expr)
                     .map_err(|err| ToolError::InvalidArgs(format!("invalid schedule: {err}")))?;
+                let timezone = timezone.parse::<Tz>().map_err(|_| {
+                    ToolError::InvalidArgs(format!(
+                        "invalid schedule: invalid timezone: {timezone}"
+                    ))
+                })?;
                 let after =
                     chrono::DateTime::<Utc>::from_timestamp_millis(from_ms.saturating_add(1))
-                        .unwrap_or_else(Utc::now);
+                        .unwrap_or_else(Utc::now)
+                        .with_timezone(&timezone);
                 let next = schedule.after(&after).next().ok_or_else(|| {
                     ToolError::InvalidArgs(
                         "invalid schedule: cron expression has no next run".to_string(),
@@ -212,7 +228,7 @@ impl CronManagerTool {
         let timezone = Self::optional_str(args, "timezone")?.unwrap_or_else(system_timezone_name);
         let next_run_at_ms = match Self::optional_i64(args, "next_run_at_ms")? {
             Some(v) => v,
-            None => Self::compute_next_run_ms(schedule_kind, &schedule_expr, now_ms())?,
+            None => Self::compute_next_run_ms(schedule_kind, &schedule_expr, &timezone)?,
         };
 
         let job = self
@@ -275,10 +291,11 @@ impl CronManagerTool {
                 .schedule_expr
                 .as_deref()
                 .unwrap_or(&current.schedule_expr);
+            let effective_timezone = patch.timezone.as_deref().unwrap_or(&current.timezone);
             patch.next_run_at_ms = Some(Self::compute_next_run_ms(
                 effective_kind,
                 effective_expr,
-                now_ms(),
+                effective_timezone,
             )?);
         }
 
@@ -1116,6 +1133,30 @@ mod tests {
             session_key: "s1".to_string(),
             metadata: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn compute_next_run_honors_timezone_for_cron() {
+        let next = CronManagerTool::compute_next_run_ms_from(
+            CronScheduleKind::Cron,
+            "0 0 9 * * *",
+            "Asia/Shanghai",
+            0,
+        )
+        .expect("next run should be computed");
+        assert_eq!(next, 3_600_000);
+    }
+
+    #[test]
+    fn compute_next_run_rejects_invalid_timezone() {
+        let err = CronManagerTool::compute_next_run_ms_from(
+            CronScheduleKind::Cron,
+            "0 0 9 * * *",
+            "Mars/Olympus",
+            0,
+        )
+        .expect_err("timezone should be rejected");
+        assert!(err.to_string().contains("invalid timezone"));
     }
 
     #[tokio::test]

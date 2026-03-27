@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-27
+
+### Fixed
+- `cron_manager` 现在会在创建 / 更新 `cron` 类型任务时按传入的 `timezone` 重算 `next_run_at_ms`，并对无效 IANA 时区返回参数校验错误
+
 ## 2026-03-26
 
 ### Changed

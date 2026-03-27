@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-27
+
+### Fixed
+
+- `CronWorker` 和 `SqliteCronManager` 现在会在推进 / 重算 `cron` 任务的 `next_run_at_ms` 时使用任务自身的 IANA `timezone`，不再固定按 UTC 解释 cron 表达式
+
 ## 2026-03-26
 
 ### Fixed

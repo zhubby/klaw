@@ -75,9 +75,13 @@ impl SqliteCronManager {
         Ok(self.store.delete_cron(cron_id).await?)
     }
 
-    pub fn compute_next_run_at_ms(kind: CronScheduleKind, expr: &str) -> Result<i64, CronError> {
+    pub fn compute_next_run_at_ms(
+        kind: CronScheduleKind,
+        expr: &str,
+        timezone: &str,
+    ) -> Result<i64, CronError> {
         let schedule = ScheduleSpec::from_kind_expr(kind, expr)?;
-        schedule.next_run_after_ms(now_ms())
+        schedule.next_run_after_ms_in_timezone(now_ms(), timezone)
     }
 }
 

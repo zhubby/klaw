@@ -175,7 +175,8 @@ impl CronPanel {
         }
 
         let kind = form.schedule_kind;
-        let next_run_at_ms = match SqliteCronManager::compute_next_run_at_ms(kind, &expr) {
+        let next_run_at_ms = match SqliteCronManager::compute_next_run_at_ms(kind, &expr, &timezone)
+        {
             Ok(next) => next,
             Err(err) => {
                 notifications.error(format!("Invalid schedule: {err}"));

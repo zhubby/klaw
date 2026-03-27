@@ -77,6 +77,7 @@ objc2 = "0.5.2"
 humantime = "2"
 url = "2"
 chrono = "0.4"
+chrono-tz = "0.10"
 cron = "0.15"
 ipnet = "2"
 globset = "0.4"
@@ -116,3 +117,10 @@ klaw-gateway = { path = "klaw-gateway" }
 klaw-channel = { path = "klaw-channel" }
 klaw-gui = { path = "klaw-gui" }
 klaw-observability = { path = "klaw-observability" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
