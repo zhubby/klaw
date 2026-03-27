@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-27
+
+### Added
+
+- runtime 现在会按 `tools.geo.enabled` 注册 `geo` 工具，并把它纳入内建 tool 热同步/禁用测试覆盖
+
 ## 2026-03-26
 
 ### Fixed

@@ -13,6 +13,7 @@
   - [Archive](./tools/built-in/archive.md)
   - [Shell](./tools/built-in/shell.md)
   - [Apply Patch](./tools/built-in/apply_patch.md)
+  - [Geo](./tools/built-in/geo.md)
   - [本地搜索](./tools/built-in/local_search.md)
   - [记忆](./tools/built-in/memory.md)
   - [Web Fetch](./tools/web/web_fetch.md)

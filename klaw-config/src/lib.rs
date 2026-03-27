@@ -856,6 +856,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub approval: ApprovalToolConfig,
     #[serde(default)]
+    pub geo: GeoToolConfig,
+    #[serde(default)]
     pub local_search: LocalSearchConfig,
     #[serde(default)]
     pub terminal_multiplexers: TerminalMultiplexersConfig,
@@ -987,6 +989,30 @@ impl ToolEnabled for ApprovalToolConfig {
 }
 
 fn default_approval_tool_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoToolConfig {
+    #[serde(default = "default_geo_tool_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for GeoToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_geo_tool_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for GeoToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_geo_tool_enabled() -> bool {
     true
 }
 

@@ -19,6 +19,7 @@ use klaw_storage::{
     BackupItem, BackupPlan, BackupProgress, BackupService, S3SnapshotStoreConfig, SnapshotListItem,
     SnapshotMode,
 };
+use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use tokio::runtime::Builder;
@@ -158,7 +159,7 @@ impl PanelRenderer for SettingPanel {
                                                 this.render_general_section(ui)
                                             }
                                             SettingsSection::Privacy => {
-                                                this.render_privacy_section(ui)
+                                                this.render_privacy_section(ui, notifications)
                                             }
                                             SettingsSection::Security => {
                                                 this.render_security_section(ui)
@@ -594,15 +595,40 @@ impl SettingPanel {
         }
     }
 
-    fn render_privacy_section(&mut self, ui: &mut egui::Ui) {
+    fn render_privacy_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+    ) {
         ui.strong("Privacy Settings");
         ui.add_space(8.0);
-        ui.label("Privacy settings are not yet configured.");
-        ui.add_space(8.0);
-        ui.label("Future options may include:");
-        ui.label("\u{2022} Data collection preferences");
-        ui.label("\u{2022} Analytics opt-out");
-        ui.label("\u{2022} Crash reporting");
+
+        let location_status = current_location_status();
+        ui.group(|ui| {
+            ui.strong("Location Services");
+            ui.add_space(6.0);
+            ui.label(format!(
+                "System location services: {}",
+                bool_status_label(location_status.services_enabled)
+            ));
+            ui.label(format!(
+                "App authorization: {}",
+                location_status.authorization_label()
+            ));
+            if let Some(detail) = location_status.detail_message() {
+                ui.add_space(4.0);
+                ui.small(detail);
+            }
+            ui.add_space(8.0);
+            if ui.button("Open Location Settings").clicked() {
+                match open_location_settings() {
+                    Ok(()) => notifications.info("Opened macOS Location Services settings."),
+                    Err(err) => notifications.error(format!(
+                        "Failed to open macOS Location Services settings: {err}"
+                    )),
+                }
+            }
+        });
     }
 
     fn render_security_section(&mut self, ui: &mut egui::Ui) {
@@ -1032,6 +1058,120 @@ impl SettingPanel {
             }
         }
     }
+}
+
+fn bool_status_label(enabled: bool) -> &'static str {
+    if enabled { "enabled" } else { "disabled" }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocationAuthorizationState {
+    NotDetermined,
+    Restricted,
+    Denied,
+    AuthorizedAlways,
+    AuthorizedWhenInUse,
+    #[cfg(not(target_os = "macos"))]
+    UnsupportedPlatform,
+    Unknown(i32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LocationStatus {
+    services_enabled: bool,
+    authorization: LocationAuthorizationState,
+}
+
+impl LocationStatus {
+    fn authorization_label(self) -> &'static str {
+        match self.authorization {
+            LocationAuthorizationState::NotDetermined => "not determined",
+            LocationAuthorizationState::Restricted => "restricted",
+            LocationAuthorizationState::Denied => "denied",
+            LocationAuthorizationState::AuthorizedAlways => "authorized always",
+            LocationAuthorizationState::AuthorizedWhenInUse => "authorized when in use",
+            #[cfg(not(target_os = "macos"))]
+            LocationAuthorizationState::UnsupportedPlatform => "unsupported on this platform",
+            LocationAuthorizationState::Unknown(_) => "unknown",
+        }
+    }
+
+    fn detail_message(self) -> Option<&'static str> {
+        match self.authorization {
+            LocationAuthorizationState::NotDetermined => Some(
+                "Authorization has not been granted yet. Open system settings to review Location Services access.",
+            ),
+            LocationAuthorizationState::Restricted => Some(
+                "Location access is restricted by system policy or parental controls.",
+            ),
+            LocationAuthorizationState::Denied => Some(
+                "Location access is currently denied for this app context. Open system settings to allow it.",
+            ),
+            LocationAuthorizationState::AuthorizedAlways
+            | LocationAuthorizationState::AuthorizedWhenInUse => {
+                (!self.services_enabled).then_some(
+                    "Authorization exists, but system-wide Location Services are currently disabled.",
+                )
+            }
+            #[cfg(not(target_os = "macos"))]
+            LocationAuthorizationState::UnsupportedPlatform => Some(
+                "Location Services privacy integration is currently implemented for macOS only.",
+            ),
+            LocationAuthorizationState::Unknown(_) => Some(
+                "The system returned an unknown authorization state.",
+            ),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn current_location_status() -> LocationStatus {
+    use objc2_core_location::{CLAuthorizationStatus, CLLocationManager};
+
+    let services_enabled = unsafe { CLLocationManager::locationServicesEnabled_class() };
+    let status = unsafe { CLLocationManager::new().authorizationStatus() };
+    let authorization = if status == CLAuthorizationStatus::kCLAuthorizationStatusNotDetermined {
+        LocationAuthorizationState::NotDetermined
+    } else if status == CLAuthorizationStatus::kCLAuthorizationStatusRestricted {
+        LocationAuthorizationState::Restricted
+    } else if status == CLAuthorizationStatus::kCLAuthorizationStatusDenied {
+        LocationAuthorizationState::Denied
+    } else if status == CLAuthorizationStatus::kCLAuthorizationStatusAuthorizedAlways {
+        LocationAuthorizationState::AuthorizedAlways
+    } else if status == CLAuthorizationStatus::kCLAuthorizationStatusAuthorizedWhenInUse {
+        LocationAuthorizationState::AuthorizedWhenInUse
+    } else {
+        LocationAuthorizationState::Unknown(status.0)
+    };
+
+    LocationStatus {
+        services_enabled,
+        authorization,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_location_status() -> LocationStatus {
+    LocationStatus {
+        services_enabled: false,
+        authorization: LocationAuthorizationState::UnsupportedPlatform,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_location_settings() -> std::io::Result<()> {
+    Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices")
+        .spawn()?
+        .wait()?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_location_settings() -> std::io::Result<()> {
+    Err(std::io::Error::other(
+        "opening location settings is only supported on macOS",
+    ))
 }
 
 fn sync_item_to_backup_item(item: SyncItem) -> Option<BackupItem> {

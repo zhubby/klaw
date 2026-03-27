@@ -32,6 +32,7 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.voice.enabled);
     assert!(parsed.tools.shell.enabled);
     assert!(parsed.tools.approval.enabled);
+    assert!(parsed.tools.geo.enabled);
     assert!(parsed.tools.local_search.enabled);
     assert!(parsed.tools.terminal_multiplexers.enabled);
     assert!(parsed.tools.cron_manager.enabled);

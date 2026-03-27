@@ -771,6 +771,28 @@ tools.apply_patch.allowed_roots = ["/path/to/project", "/tmp"]
 tools.approval.enabled = false
 ```
 
+### `tools.geo`
+
+地理位置工具配置。
+
+#### `tools.geo.enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用 `geo` 工具。
+
+该工具用于：
+
+- 通过系统定位服务获取当前环境坐标
+- 返回经纬度、精度和定位时间戳
+- 在权限被拒或定位失败时返回明确错误
+
+```toml
+tools.geo.enabled = true
+```
+
 ### `tools.local_search`
 
 本地搜索工具配置。

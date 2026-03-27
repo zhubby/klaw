@@ -63,6 +63,7 @@ enum ToolForm {
     Archive(ToggleForm),
     Voice(ToggleForm),
     Approval(ToggleForm),
+    Geo(ToggleForm),
     LocalSearch(ToggleForm),
     TerminalMultiplexers(ToggleForm),
     CronManager(ToggleForm),
@@ -433,6 +434,7 @@ impl ToolForm {
             ToolForm::Archive(form)
             | ToolForm::Voice(form)
             | ToolForm::Approval(form)
+            | ToolForm::Geo(form)
             | ToolForm::LocalSearch(form)
             | ToolForm::TerminalMultiplexers(form)
             | ToolForm::CronManager(form)
@@ -567,6 +569,12 @@ impl ToolPanel {
                 enabled: self.config.tools.approval.enabled,
             },
             ToolDescriptor {
+                key: "geo",
+                name: "geo",
+                description: "Get current coordinates from available system location services.",
+                enabled: self.config.tools.geo.enabled,
+            },
+            ToolDescriptor {
                 key: "local_search",
                 name: "local_search",
                 description: "Search local workspace files and snippets.",
@@ -654,6 +662,7 @@ impl ToolPanel {
                 "Edit Tool: approval",
                 self.config.tools.approval.enabled,
             ),
+            "geo" => self.open_toggle("geo", "Edit Tool: geo", self.config.tools.geo.enabled),
             "local_search" => self.open_toggle(
                 "local_search",
                 "Edit Tool: local_search",
@@ -710,6 +719,7 @@ impl ToolPanel {
             "archive" => ToolForm::Archive(form),
             "voice" => ToolForm::Voice(form),
             "approval" => ToolForm::Approval(form),
+            "geo" => ToolForm::Geo(form),
             "local_search" => ToolForm::LocalSearch(form),
             "terminal_multiplexers" => ToolForm::TerminalMultiplexers(form),
             "cron_manager" => ToolForm::CronManager(form),
@@ -770,6 +780,10 @@ impl ToolPanel {
                 }
                 ToolForm::Approval(form) => {
                     config.tools.approval.enabled = form.enabled;
+                    Ok(())
+                }
+                ToolForm::Geo(form) => {
+                    config.tools.geo.enabled = form.enabled;
                     Ok(())
                 }
                 ToolForm::LocalSearch(form) => {
@@ -913,6 +927,7 @@ impl ToolPanel {
                     ToolForm::Archive(form)
                     | ToolForm::Voice(form)
                     | ToolForm::Approval(form)
+                    | ToolForm::Geo(form)
                     | ToolForm::LocalSearch(form)
                     | ToolForm::TerminalMultiplexers(form)
                     | ToolForm::CronManager(form)

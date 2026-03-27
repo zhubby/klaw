@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-27
+
+### Added
+
+- 新增 `tools.geo.enabled` 配置项，默认值为 `true`，用于控制 macOS `geo` 定位工具是否向 runtime 暴露
+
 ## 2026-03-26
 
 ### Changed

@@ -35,3 +35,6 @@ time.workspace = true
 globset.workspace = true
 walkdir.workspace = true
 regex.workspace = true
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true, features = ["NSArray", "NSDate", "NSError", "NSObject", "NSRunLoop", "NSString", "NSThread", "dispatch"] }
+objc2-core-location = { workspace = true, features = ["CLError", "CLLocation", "CLLocationManager", "CLLocationManagerDelegate"] }

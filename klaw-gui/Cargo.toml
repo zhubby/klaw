@@ -52,6 +52,7 @@ image = { workspace = true, features = ["png", "jpeg", "webp", "gif", "bmp", "ic
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true, features = ["NSApplication", "NSImage"] }
 objc2-foundation = { workspace = true, features = ["NSData", "NSString"] }
+objc2-core-location = { workspace = true, features = ["CLLocationManager"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 image = { workspace = true, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }

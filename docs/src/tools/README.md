@@ -22,6 +22,7 @@ pub trait Tool: Send + Sync {
 - [Archive](./built-in/archive.md) - 读取当前消息附件的 archive 句柄、只读读取归档文件、复制到 workspace
 - [Shell](./built-in/shell.md) - 可控的 shell 执行，支持阻断模式和工作区边界控制
 - [Apply Patch](./built-in/apply_patch.md) - 批量文件编辑（添加、更新、删除、移动）
+- [Geo](./built-in/geo.md) - 通过系统定位服务获取当前环境坐标
 - [本地搜索](./built-in/local_search.md) - `rg` 优先、`grep` fallback 的代码检索
 - [记忆](./built-in/memory.md) - 长期记忆存储与检索
 - [审批](./built-in/approval.md) - 高风险操作的审批记录管理（请求、查询、决议）
@@ -46,6 +47,9 @@ pub trait Tool: Send + Sync {
 
 ```toml
 [tools.archive]
+enabled = true
+
+[tools.geo]
 enabled = true
 
 [tools.shell]

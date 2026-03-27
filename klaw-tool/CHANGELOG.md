@@ -2,6 +2,11 @@
 
 ## 2026-03-27
 
+### Added
+- 新增 `geo` 工具：在 macOS 上通过系统 `CoreLocation` 请求当前设备坐标，并在权限被拒、服务关闭或定位超时时返回明确错误
+
+## 2026-03-27
+
 ### Fixed
 - `cron_manager` 现在会在创建 / 更新 `cron` 类型任务时按传入的 `timezone` 重算 `next_run_at_ms`，并对无效 IANA 时区返回参数校验错误
 

@@ -41,7 +41,7 @@ use klaw_skill::{
 };
 use klaw_storage::{DefaultSessionStore, open_default_store};
 use klaw_tool::{
-    ApplyPatchTool, ApprovalTool, ArchiveTool, CronManagerTool, HeartbeatManagerTool,
+    ApplyPatchTool, ApprovalTool, ArchiveTool, CronManagerTool, GeoTool, HeartbeatManagerTool,
     LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool, SkillsRegistryTool,
     SubAgentAuditSink, SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool,
     WebFetchTool, WebSearchTool,
@@ -1066,6 +1066,9 @@ async fn register_configured_tools(
         tools.register(ApprovalTool::with_manager(
             SqliteApprovalManager::from_store(session_store.clone()),
         ));
+    }
+    if config.tools.geo.enabled() {
+        tools.register(GeoTool::new());
     }
     if config.tools.local_search.enabled() {
         tools.register(LocalSearchTool::new());
@@ -3238,6 +3241,7 @@ mod tests {
         config.tools.apply_patch.enabled = false;
         config.tools.shell.enabled = false;
         config.tools.approval.enabled = false;
+        config.tools.geo.enabled = false;
         config.tools.local_search.enabled = false;
         config.tools.terminal_multiplexers.enabled = false;
         config.tools.cron_manager.enabled = false;
@@ -3270,23 +3274,23 @@ mod tests {
 
         let mut config = AppConfig::default();
         disable_all_tools(&mut config);
-        config.tools.shell.enabled = true;
+        config.tools.geo.enabled = true;
         config.tools.sub_agent.enabled = true;
 
         let tool_names = sync_runtime_tools(&runtime, &config)
             .await
             .expect("tool sync should succeed");
-        assert!(tool_names.iter().any(|name| name == "shell"));
+        assert!(tool_names.iter().any(|name| name == "geo"));
         assert!(tool_names.iter().any(|name| name == "sub_agent"));
         assert!(!tool_names.iter().any(|name| name == "voice"));
 
-        config.tools.shell.enabled = false;
+        config.tools.geo.enabled = false;
         config.tools.local_search.enabled = true;
 
         let tool_names = sync_runtime_tools(&runtime, &config)
             .await
             .expect("tool resync should succeed");
-        assert!(!tool_names.iter().any(|name| name == "shell"));
+        assert!(!tool_names.iter().any(|name| name == "geo"));
         assert!(tool_names.iter().any(|name| name == "local_search"));
         assert!(tool_names.iter().any(|name| name == "sub_agent"));
     }
