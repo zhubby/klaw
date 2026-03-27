@@ -8,8 +8,6 @@
 
 ```
 User Input → InboundMessage → AgentLoop → OutboundMessage
-                              ↓
-                         DeadLetterQueue
 ```
 
 ### Key Components
