@@ -49,7 +49,8 @@ where
 
         for job in due_jobs {
             let schedule = ScheduleSpec::from_job(&job)?;
-            let next_run_at_ms = schedule.next_run_after_ms(job.next_run_at_ms)?;
+            let next_run_at_ms =
+                schedule.next_run_after_ms_in_timezone(job.next_run_at_ms, &job.timezone)?;
             let claimed = self
                 .storage
                 .claim_next_run(&job.id, job.next_run_at_ms, next_run_at_ms, now)
@@ -1031,6 +1032,31 @@ mod tests {
         let runs = storage.list_task_runs("job-1", 10, 0).await.expect("runs");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status, CronTaskStatus::Success);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_tick_advances_next_run_using_job_timezone() {
+        let storage = Arc::new(FakeStorage::default());
+        let transport = Arc::new(InMemoryTransport::new());
+        storage
+            .create_cron(&NewCronJob {
+                id: "job-tz".to_string(),
+                name: "job".to_string(),
+                schedule_kind: CronScheduleKind::Cron,
+                schedule_expr: "0 0 9 * * *".to_string(),
+                payload_json: cron_payload_json("cron", "cron:chat1", "{}"),
+                enabled: true,
+                timezone: "Asia/Shanghai".to_string(),
+                next_run_at_ms: 0,
+            })
+            .await
+            .expect("create job");
+
+        let worker = test_worker(&storage, &transport);
+        worker.run_tick().await.expect("tick");
+
+        let job = storage.get_cron("job-tz").await.expect("job");
+        assert_eq!(job.next_run_at_ms, 3_600_000);
     }
 
     #[tokio::test(flavor = "current_thread")]

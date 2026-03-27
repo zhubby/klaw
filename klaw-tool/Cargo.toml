@@ -25,6 +25,7 @@ uuid = { workspace = true }
 cron = { workspace = true }
 humantime = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 toml = { workspace = true }
 reqwest.workspace = true
 ipnet = { workspace = true }
