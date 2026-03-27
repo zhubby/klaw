@@ -610,16 +610,18 @@ impl SkillsManagerPanel {
                                 ui.end_row();
 
                                 for skill in &window.skills {
+                                    let skill_selector =
+                                        registry_skill_selector(skill, &selected_registry);
                                     let installed = selected_installed
                                         .iter()
-                                        .any(|name| name == &skill.id || name == &skill.name);
+                                        .any(|name| name == &skill_selector || name == &skill.name);
                                     if ui
                                         .button(if installed { "Uninstall" } else { "Install" })
                                         .clicked()
                                     {
                                         toggle_action = Some((
                                             selected_registry.clone(),
-                                            skill.id.clone(),
+                                            skill_selector,
                                             installed,
                                         ));
                                     }
@@ -887,6 +889,20 @@ fn load_installed_skill_detail(skill_name: String) -> Result<SkillRecord, String
 
 fn load_source_catalog(registry_name: String) -> Result<Vec<RegistrySkillSummary>, String> {
     run_skill_task(move |store| async move { store.list_source_skills(&registry_name).await })
+}
+
+fn registry_skill_selector(skill: &RegistrySkillSummary, registry_name: &str) -> String {
+    let selector = skill.id.trim();
+    if !selector.is_empty() {
+        return selector.to_string();
+    }
+
+    let parsed_name = skill.name.trim();
+    if !parsed_name.is_empty() {
+        return parsed_name.to_string();
+    }
+
+    registry_name.trim().to_string()
 }
 
 fn install_from_registry_in_store(
@@ -1179,6 +1195,30 @@ mod tests {
             parse_skill_name_from_markdown("name: helper_skill\n\n# title"),
             Some("helper_skill".to_string())
         );
+    }
+
+    #[test]
+    fn registry_skill_selector_prefers_non_empty_id_then_name_then_registry() {
+        let skill = RegistrySkillSummary {
+            id: "tools/amap".to_string(),
+            name: "amap-lbs-skill".to_string(),
+            local_path: PathBuf::from("/tmp/SKILL.md"),
+        };
+        assert_eq!(registry_skill_selector(&skill, "amap"), "tools/amap");
+
+        let skill = RegistrySkillSummary {
+            id: String::new(),
+            name: "amap-lbs-skill".to_string(),
+            local_path: PathBuf::from("/tmp/SKILL.md"),
+        };
+        assert_eq!(registry_skill_selector(&skill, "amap"), "amap-lbs-skill");
+
+        let skill = RegistrySkillSummary {
+            id: " ".to_string(),
+            name: " ".to_string(),
+            local_path: PathBuf::from("/tmp/SKILL.md"),
+        };
+        assert_eq!(registry_skill_selector(&skill, "amap"), "amap");
     }
 
     #[test]

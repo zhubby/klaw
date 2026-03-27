@@ -57,6 +57,7 @@ installed = ["brainstorming"]
 - `skills.<registry>.address` 非空。
 - `skills.<registry>.installed` 可选，元素非空，且在同一个 registry 内不可重复。
 - `installed` 条目优先按 `skills/<name>` 目录匹配；若未命中，会回退按 `SKILL.md` 中解析出的名称匹配。
+- registry catalog 的展示 `id` 默认取 `SKILL.md` 所在目录相对仓库根的路径（去掉 `skills/` 前缀）；若 `SKILL.md` 就在仓库根目录，则会回退到 markdown 里的解析名，再回退到 registry 名。
 
 ## Registry 同步与安装
 

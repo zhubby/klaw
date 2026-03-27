@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-27
+
+### Fixed
+- registry skill discovery now gives root-level `SKILL.md` entries a stable non-empty id by falling back from relative path to parsed markdown `name`, then to the registry name when metadata is absent
+- added regression coverage for listing and installing root-level registry skills so GUI/config flows no longer receive empty managed skill selectors
+
 ## 2026-03-26
 
 ### Fixed
