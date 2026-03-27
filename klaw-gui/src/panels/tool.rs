@@ -33,11 +33,13 @@ pub struct ToolPanel {
     logs_key: Option<&'static str>,
     log_rows: Vec<ToolAuditRecord>,
     log_selected_id: Option<String>,
+    log_summary_id: Option<String>,
     log_session_options: Vec<String>,
     log_session_filter: Option<String>,
     log_start_date: Option<NaiveDate>,
     log_end_date: Option<NaiveDate>,
     log_status_filter: LogStatusFilter,
+    log_sort_order: ToolLogSortOrder,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -45,6 +47,13 @@ enum LogStatusFilter {
     #[default]
     All,
     FailedOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ToolLogSortOrder {
+    StartedAtAsc,
+    #[default]
+    StartedAtDesc,
 }
 
 #[derive(Debug, Clone)]
@@ -155,9 +164,11 @@ const INSPECT_WINDOW_WIDTH: f32 = 760.0;
 const INSPECT_WINDOW_MIN_HEIGHT: f32 = 520.0;
 const INSPECT_WINDOW_MAX_HEIGHT: f32 = 760.0;
 const INSPECT_SCHEMA_HEIGHT: f32 = 260.0;
-const LOGS_WINDOW_WIDTH: f32 = 1120.0;
-const LOGS_WINDOW_MIN_HEIGHT: f32 = 620.0;
-const LOGS_WINDOW_MAX_HEIGHT: f32 = 760.0;
+const LOGS_WINDOW_VIEWPORT_RATIO: f32 = 2.0 / 3.0;
+const LOGS_SUMMARY_WINDOW_WIDTH: f32 = 860.0;
+const LOGS_SUMMARY_WINDOW_HEIGHT: f32 = 720.0;
+const LOG_WINDOW_VIEWPORT_MARGIN: f32 = 48.0;
+const LOG_DETAIL_SECTION_HEIGHT: f32 = 220.0;
 const TOOL_LOG_PAGE_SIZE: i64 = 100;
 
 impl Default for ToolPanel {
@@ -175,11 +186,13 @@ impl Default for ToolPanel {
             logs_key: None,
             log_rows: Vec::new(),
             log_selected_id: None,
+            log_summary_id: None,
             log_session_options: Vec::new(),
             log_session_filter: None,
             log_start_date: Some(one_month_ago),
             log_end_date: Some(today),
             log_status_filter: LogStatusFilter::All,
+            log_sort_order: ToolLogSortOrder::StartedAtDesc,
         }
     }
 }
@@ -1213,7 +1226,10 @@ impl ToolPanel {
             started_to_ms: filter_query.started_to_ms,
             limit: TOOL_LOG_PAGE_SIZE,
             offset: 0,
-            sort_order: ToolAuditSortOrder::StartedAtDesc,
+            sort_order: match self.log_sort_order {
+                ToolLogSortOrder::StartedAtAsc => ToolAuditSortOrder::StartedAtAsc,
+                ToolLogSortOrder::StartedAtDesc => ToolAuditSortOrder::StartedAtDesc,
+            },
         };
         match run_session_task(move |manager| async move {
             let filter_options = manager
@@ -1232,10 +1248,8 @@ impl ToolPanel {
         }
     }
 
-    fn selected_log_record(&self) -> Option<&ToolAuditRecord> {
-        self.log_selected_id
-            .as_deref()
-            .and_then(|id| self.log_rows.iter().find(|row| row.id == id))
+    fn log_record_by_id(&self, id: &str) -> Option<&ToolAuditRecord> {
+        self.log_rows.iter().find(|row| row.id == id)
     }
 
     fn filtered_log_rows(&self) -> Vec<ToolAuditRecord> {
@@ -1251,6 +1265,20 @@ impl ToolPanel {
             .collect()
     }
 
+    fn toggle_log_sort_order(&mut self) {
+        self.log_sort_order = match self.log_sort_order {
+            ToolLogSortOrder::StartedAtAsc => ToolLogSortOrder::StartedAtDesc,
+            ToolLogSortOrder::StartedAtDesc => ToolLogSortOrder::StartedAtAsc,
+        };
+    }
+
+    fn log_sort_label(&self) -> &'static str {
+        match self.log_sort_order {
+            ToolLogSortOrder::StartedAtAsc => "Time ↑",
+            ToolLogSortOrder::StartedAtDesc => "Time ↓",
+        }
+    }
+
     fn render_logs_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         let Some(tool_key) = self.logs_key else {
             return;
@@ -1259,35 +1287,32 @@ impl ToolPanel {
             self.logs_key = None;
             self.log_rows.clear();
             self.log_selected_id = None;
+            self.log_summary_id = None;
             return;
         };
 
-        let viewport_height = ui.ctx().input(|input| {
-            input
-                .viewport()
-                .inner_rect
-                .map(|rect| rect.height())
-                .unwrap_or(LOGS_WINDOW_MAX_HEIGHT)
-        });
-        let window_height =
-            (viewport_height - 72.0).clamp(LOGS_WINDOW_MIN_HEIGHT, LOGS_WINDOW_MAX_HEIGHT);
+        let window_size = viewport_ratio_window_size(ui.ctx(), LOGS_WINDOW_VIEWPORT_RATIO);
         let mut open = true;
         egui::Window::new(format!("Tool Logs: {}", tool.name))
             .id(egui::Id::new(("tool-logs", tool.key)))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
-            .resizable(true)
+            .resizable(false)
             .open(&mut open)
-            .default_width(LOGS_WINDOW_WIDTH)
-            .min_width(LOGS_WINDOW_WIDTH)
-            .default_height(window_height)
-            .min_height(window_height)
+            .default_width(window_size.x)
+            .min_width(window_size.x)
+            .max_width(window_size.x)
+            .default_height(window_size.y)
+            .min_height(window_size.y)
+            .max_height(window_size.y)
             .show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Refresh").clicked() {
                         self.refresh_tool_logs(tool.key, notifications);
                     }
                     ui.label(format!("Rows: {}", self.log_rows.len()));
+                    ui.separator();
+                    ui.label("Right-click a row to open Summary.");
                 });
                 let mut need_refresh = false;
                 ui.horizontal(|ui| {
@@ -1355,155 +1380,146 @@ impl ToolPanel {
                     self.refresh_tool_logs(tool.key, notifications);
                 }
                 let filtered_rows = self.filtered_log_rows();
-
-                ui.columns(2, |columns| {
-                    columns[0].set_min_width(420.0);
-                    columns[0].vertical(|ui| {
-                        if filtered_rows.is_empty() {
-                            ui.label("No tool audit rows found.");
-                            return;
-                        }
-                        egui::ScrollArea::vertical()
-                            .id_salt(("tool-logs-list", tool.key))
-                            .show(ui, |ui| {
-                                let row_height = ui.spacing().interact_size.y;
-                                TableBuilder::new(ui)
-                                    .striped(true)
-                                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                    .column(Column::auto().at_least(150.0))
-                                    .column(Column::auto().at_least(80.0))
-                                    .column(Column::auto().at_least(80.0))
-                                    .column(Column::remainder().at_least(80.0))
-                                    .header(24.0, |mut header| {
-                                        header.col(|ui| {
-                                            ui.strong("Time");
-                                        });
-                                        header.col(|ui| {
-                                            ui.strong("Status");
-                                        });
-                                        header.col(|ui| {
-                                            ui.strong("Seq");
-                                        });
-                                        header.col(|ui| {
-                                            ui.strong("Session");
-                                        });
-                                    })
-                                    .body(|body| {
-                                        body.rows(row_height, filtered_rows.len(), |mut row| {
-                                            let audit = &filtered_rows[row.index()];
-                                            row.col(|ui| {
-                                                let label =
-                                                    format_timestamp_millis(audit.started_at_ms);
-                                                let selected = self.log_selected_id.as_deref()
-                                                    == Some(audit.id.as_str());
-                                                if ui.selectable_label(selected, label).clicked() {
-                                                    self.log_selected_id = Some(audit.id.clone());
-                                                }
-                                            });
-                                            row.col(|ui| {
-                                                let failed = matches!(
-                                                    audit.status,
-                                                    klaw_session::ToolAuditStatus::Failed
-                                                );
-                                                render_boolean_status(
-                                                    ui, !failed, "Success", "Failed",
-                                                );
-                                            });
-                                            row.col(|ui| {
-                                                ui.monospace(format!(
-                                                    "{}/{}",
-                                                    audit.request_seq, audit.tool_call_seq
-                                                ));
-                                            });
-                                            row.col(|ui| {
-                                                ui.label(&audit.session_key);
-                                            });
-                                        });
-                                    });
-                            });
-                    });
-
-                    columns[1].vertical(|ui| {
-                        let Some(audit) = self.selected_log_record() else {
-                            ui.label("Select a log row to inspect the full call.");
-                            return;
-                        };
-                        ui.strong("Summary");
-                        egui::Grid::new(("tool-log-summary", audit.id.as_str()))
-                            .num_columns(2)
-                            .spacing([12.0, 6.0])
-                            .show(ui, |ui| {
-                                ui.label("tool");
-                                ui.monospace(&audit.tool_name);
-                                ui.end_row();
-                                ui.label("session");
-                                ui.monospace(&audit.session_key);
-                                ui.end_row();
-                                ui.label("chat");
-                                ui.monospace(&audit.chat_id);
-                                ui.end_row();
-                                ui.label("status");
-                                ui.monospace(match audit.status {
-                                    klaw_session::ToolAuditStatus::Success => "success",
-                                    klaw_session::ToolAuditStatus::Failed => "failed",
+                if filtered_rows.is_empty() {
+                    ui.label("No tool audit rows found.");
+                    return;
+                }
+                egui::ScrollArea::both()
+                    .id_salt(("tool-logs-list", tool.key))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let row_height = ui.spacing().interact_size.y;
+                        TableBuilder::new(ui)
+                            .striped(true)
+                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                            .column(Column::auto().at_least(150.0))
+                            .column(Column::auto().at_least(90.0))
+                            .column(Column::auto().at_least(80.0))
+                            .column(Column::auto().at_least(80.0))
+                            .column(Column::remainder().at_least(120.0))
+                            .sense(egui::Sense::click())
+                            .header(24.0, |mut header| {
+                                header.col(|ui| {
+                                    if ui.button(self.log_sort_label()).clicked() {
+                                        self.toggle_log_sort_order();
+                                        self.refresh_tool_logs(tool.key, notifications);
+                                    }
                                 });
-                                ui.end_row();
-                                ui.label("seq");
-                                ui.monospace(format!(
-                                    "{}/{}",
-                                    audit.request_seq, audit.tool_call_seq
-                                ));
-                                ui.end_row();
-                                ui.label("started");
-                                ui.monospace(format_timestamp_millis(audit.started_at_ms));
-                                ui.end_row();
-                                ui.label("duration");
-                                ui.monospace(format!(
-                                    "{} ms",
-                                    audit.finished_at_ms.saturating_sub(audit.started_at_ms)
-                                ));
-                                ui.end_row();
-                                ui.label("error_code");
-                                ui.monospace(audit.error_code.as_deref().unwrap_or("-"));
-                                ui.end_row();
-                            });
-                        ui.separator();
-                        egui::ScrollArea::vertical()
-                            .id_salt(("tool-log-detail", audit.id.as_str()))
-                            .show(ui, |ui| {
-                                render_json_section(ui, "Arguments", &audit.arguments_json);
-                                ui.separator();
-                                ui.strong("Result");
-                                ui.code(&audit.result_content);
-                                if let Some(error_message) = audit.error_message.as_deref() {
-                                    ui.separator();
-                                    ui.strong("Error");
-                                    ui.code(error_message);
-                                }
-                                if let Some(raw) = audit.error_details_json.as_deref() {
-                                    ui.separator();
-                                    render_json_section(ui, "Error Details", raw);
-                                }
-                                if let Some(raw) = audit.signals_json.as_deref() {
-                                    ui.separator();
-                                    render_json_section(ui, "Signals", raw);
-                                }
-                                if let Some(raw) = audit.metadata_json.as_deref() {
-                                    ui.separator();
-                                    render_json_section(ui, "Metadata", raw);
-                                }
+                                header.col(|ui| {
+                                    ui.strong("Tool Call ID");
+                                });
+                                header.col(|ui| {
+                                    ui.strong("Status");
+                                });
+                                header.col(|ui| {
+                                    ui.strong("Seq");
+                                });
+                                header.col(|ui| {
+                                    ui.strong("Session");
+                                });
+                            })
+                            .body(|body| {
+                                body.rows(row_height, filtered_rows.len(), |mut row| {
+                                    let audit = &filtered_rows[row.index()];
+                                    let selected =
+                                        self.log_selected_id.as_deref() == Some(audit.id.as_str());
+                                    row.set_selected(selected);
+
+                                    row.col(|ui| {
+                                        ui.label(format_timestamp_millis(audit.started_at_ms));
+                                    });
+                                    row.col(|ui| {
+                                        ui.monospace(tool_call_id_label(audit));
+                                    });
+                                    row.col(|ui| {
+                                        let failed = matches!(
+                                            audit.status,
+                                            klaw_session::ToolAuditStatus::Failed
+                                        );
+                                        render_boolean_status(ui, !failed, "Success", "Failed");
+                                    });
+                                    row.col(|ui| {
+                                        ui.monospace(format!(
+                                            "{}/{}",
+                                            audit.request_seq, audit.tool_call_seq
+                                        ));
+                                    });
+                                    row.col(|ui| {
+                                        ui.label(&audit.session_key);
+                                    });
+
+                                    let row_response = row.response();
+                                    if row_response.clicked() || row_response.secondary_clicked() {
+                                        self.log_selected_id = Some(audit.id.clone());
+                                    }
+                                    row_response.context_menu(|ui| {
+                                        if ui.button(format!("{} Summary", regular::EYE)).clicked()
+                                        {
+                                            self.log_selected_id = Some(audit.id.clone());
+                                            self.log_summary_id = Some(audit.id.clone());
+                                            ui.close();
+                                        }
+                                    });
+                                });
                             });
                     });
-                });
             });
 
         if !open {
             self.logs_key = None;
             self.log_rows.clear();
             self.log_selected_id = None;
+            self.log_summary_id = None;
             self.log_session_options.clear();
             self.log_session_filter = None;
             self.log_status_filter = LogStatusFilter::All;
+            self.log_sort_order = ToolLogSortOrder::StartedAtDesc;
+        }
+    }
+
+    fn render_log_summary_window(&mut self, ui: &mut egui::Ui) {
+        let Some(summary_id) = self.log_summary_id.clone() else {
+            return;
+        };
+        let Some(audit) = self.log_record_by_id(&summary_id) else {
+            self.log_summary_id = None;
+            return;
+        };
+
+        let window_size = constrained_window_size(
+            ui.ctx(),
+            LOGS_SUMMARY_WINDOW_WIDTH,
+            LOGS_SUMMARY_WINDOW_HEIGHT,
+        );
+        let mut open = true;
+        egui::Window::new(format!("Tool Log Summary: {}", audit.tool_name))
+            .id(egui::Id::new((
+                "tool-log-summary-window",
+                audit.id.as_str(),
+            )))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .default_width(window_size.x)
+            .min_width(window_size.x)
+            .max_width(window_size.x)
+            .default_height(window_size.y)
+            .min_height(window_size.y)
+            .max_height(window_size.y)
+            .show(ui.ctx(), |ui| {
+                ui.label("JSON sections stay inside fixed scroll areas.");
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt(("tool-log-summary-body", audit.id.as_str()))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        render_tool_log_summary(ui, audit);
+                    });
+            });
+
+        if !open {
+            self.log_summary_id = None;
         }
     }
 }
@@ -1573,7 +1589,6 @@ impl PanelRenderer for ToolPanel {
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::auto().at_least(150.0))
                     .column(Column::auto().at_least(90.0))
-                    .column(Column::auto().at_least(70.0))
                     .column(Column::remainder().at_least(320.0))
                     .min_scrolled_height(table_height)
                     .max_scroll_height(table_height)
@@ -1586,33 +1601,17 @@ impl PanelRenderer for ToolPanel {
                             ui.strong("Status");
                         });
                         header.col(|ui| {
-                            ui.strong("Params");
-                        });
-                        header.col(|ui| {
                             ui.strong("Description");
                         });
                     })
                     .body(|body| {
                         body.rows(row_height, tools.len(), |mut row| {
                             let tool = tools[row.index()];
-                            let parameter_count = self
-                                .runtime_definition(tool.key)
-                                .and_then(|item| {
-                                    item.parameters
-                                        .get("properties")
-                                        .and_then(serde_json::Value::as_object)
-                                        .map(|properties| properties.len())
-                                })
-                                .unwrap_or(0);
-
                             row.col(|ui| {
                                 ui.monospace(tool.name);
                             });
                             row.col(|ui| {
                                 render_boolean_status(ui, tool.enabled, "Enabled", "Disabled");
-                            });
-                            row.col(|ui| {
-                                ui.label(parameter_count.to_string());
                             });
                             row.col(|ui| {
                                 ui.label(
@@ -1660,6 +1659,7 @@ impl PanelRenderer for ToolPanel {
         self.render_form_window(ui, notifications);
         self.render_inspect_window(ui);
         self.render_logs_window(ui, notifications);
+        self.render_log_summary_window(ui);
     }
 }
 
@@ -1813,14 +1813,172 @@ fn optional_string(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-fn render_json_section(ui: &mut egui::Ui, title: &str, raw: &str) {
-    ui.strong(title);
-    match serde_json::from_str::<serde_json::Value>(raw) {
-        Ok(value) => show_json_tree_with_id(ui, &value, &format!("{title}:{raw}")),
-        Err(_) => {
-            ui.code(raw);
-        }
+fn render_tool_log_summary(ui: &mut egui::Ui, audit: &ToolAuditRecord) {
+    ui.strong("Summary");
+    egui::Grid::new(("tool-log-summary", audit.id.as_str()))
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            ui.label("tool");
+            ui.monospace(&audit.tool_name);
+            ui.end_row();
+            ui.label("session");
+            ui.monospace(&audit.session_key);
+            ui.end_row();
+            ui.label("chat");
+            ui.monospace(&audit.chat_id);
+            ui.end_row();
+            ui.label("status");
+            ui.monospace(match audit.status {
+                klaw_session::ToolAuditStatus::Success => "success",
+                klaw_session::ToolAuditStatus::Failed => "failed",
+            });
+            ui.end_row();
+            ui.label("seq");
+            ui.monospace(format!("{}/{}", audit.request_seq, audit.tool_call_seq));
+            ui.end_row();
+            ui.label("started");
+            ui.monospace(format_timestamp_millis(audit.started_at_ms));
+            ui.end_row();
+            ui.label("duration");
+            ui.monospace(format!(
+                "{} ms",
+                audit.finished_at_ms.saturating_sub(audit.started_at_ms)
+            ));
+            ui.end_row();
+            ui.label("error_code");
+            ui.monospace(audit.error_code.as_deref().unwrap_or("-"));
+            ui.end_row();
+        });
+    ui.separator();
+    render_json_section(
+        ui,
+        "Arguments",
+        &audit.arguments_json,
+        &format!("tool-log-arguments:{}", audit.id),
+    );
+    ui.separator();
+    render_text_section(
+        ui,
+        "Result",
+        &audit.result_content,
+        &format!("tool-log-result:{}", audit.id),
+    );
+    if let Some(error_message) = audit.error_message.as_deref() {
+        ui.separator();
+        render_text_section(
+            ui,
+            "Error",
+            error_message,
+            &format!("tool-log-error:{}", audit.id),
+        );
     }
+    if let Some(raw) = audit.error_details_json.as_deref() {
+        ui.separator();
+        render_json_section(
+            ui,
+            "Error Details",
+            raw,
+            &format!("tool-log-error-details:{}", audit.id),
+        );
+    }
+    if let Some(raw) = audit.signals_json.as_deref() {
+        ui.separator();
+        render_json_section(
+            ui,
+            "Signals",
+            raw,
+            &format!("tool-log-signals:{}", audit.id),
+        );
+    }
+    if let Some(raw) = audit.metadata_json.as_deref() {
+        ui.separator();
+        render_json_section(
+            ui,
+            "Metadata",
+            raw,
+            &format!("tool-log-metadata:{}", audit.id),
+        );
+    }
+}
+
+fn render_text_section(ui: &mut egui::Ui, title: &str, body: &str, scroll_id: &str) {
+    ui.strong(title);
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_min_height(LOG_DETAIL_SECTION_HEIGHT);
+        egui::ScrollArea::both()
+            .id_salt(scroll_id)
+            .max_height(LOG_DETAIL_SECTION_HEIGHT)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.code(body);
+            });
+    });
+}
+
+fn tool_call_id_label(audit: &ToolAuditRecord) -> String {
+    audit
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| {
+            value
+                .get("tool_call_id")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn render_json_section(ui: &mut egui::Ui, title: &str, raw: &str, scroll_id: &str) {
+    ui.strong(title);
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_min_height(LOG_DETAIL_SECTION_HEIGHT);
+        egui::ScrollArea::both()
+            .id_salt(scroll_id)
+            .max_height(LOG_DETAIL_SECTION_HEIGHT)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                match serde_json::from_str::<serde_json::Value>(raw) {
+                    Ok(value) => show_json_tree_with_id(ui, &value, scroll_id),
+                    Err(_) => {
+                        ui.code(raw);
+                    }
+                }
+            });
+    });
+}
+
+fn constrained_window_size(
+    ctx: &egui::Context,
+    desired_width: f32,
+    desired_height: f32,
+) -> egui::Vec2 {
+    let (viewport_width, viewport_height) = ctx.input(|input| {
+        input
+            .viewport()
+            .inner_rect
+            .map(|rect| (rect.width(), rect.height()))
+            .unwrap_or((desired_width, desired_height))
+    });
+    egui::vec2(
+        desired_width.min((viewport_width - LOG_WINDOW_VIEWPORT_MARGIN).max(320.0)),
+        desired_height.min((viewport_height - LOG_WINDOW_VIEWPORT_MARGIN).max(320.0)),
+    )
+}
+
+fn viewport_ratio_window_size(ctx: &egui::Context, ratio: f32) -> egui::Vec2 {
+    let (viewport_width, viewport_height) = ctx.input(|input| {
+        input
+            .viewport()
+            .inner_rect
+            .map(|rect| (rect.width(), rect.height()))
+            .unwrap_or((720.0, 540.0))
+    });
+    egui::vec2(
+        (viewport_width * ratio).max(320.0),
+        (viewport_height * ratio).max(320.0),
+    )
 }
 
 fn run_session_task<T, F, Fut>(op: F) -> Result<T, String>
