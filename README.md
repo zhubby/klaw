@@ -1,6 +1,6 @@
 # Klaw
 
-A Rust-based AI agent.
+A Crab ❤️ Claw.
 
 ## Core Design
 

@@ -3,7 +3,7 @@ title = "Klaw Documentation"
 authors = ["zhubby"]
 language = "zh-CN"
 src = "src"
-description = "Klaw - Rust-based AI Agent"
+description = "Klaw - Crab ❤️ Claw"
 
 [output.html]
 git-repository-url = "https://github.com/zhubby/klaw"
