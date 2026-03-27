@@ -60,7 +60,7 @@
 ## Runtime Integration
 
 - `stdio` 和 `gateway` 复用 runtime bundle 构建逻辑
-- runtime 内置通用 IM 会话命令路由：`/help`、`/stop`、`/new`、`/model-provider`、`/model`
+- runtime 内置通用 IM 会话命令路由：`/help`、`/stop`、`/new`、`/start`、`/model-provider`、`/model`
 - runtime 内置审批命令：`/approve <approval_id>`、`/reject <approval_id>`
 - runtime 审批命令与工具审批流统一通过 `klaw-approval` manager 层处理状态流转与消费
 - runtime 对 `approval_required` 工具结果会直接透传审批提示，不再包装成通用的 tool failure 文案

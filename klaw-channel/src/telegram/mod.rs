@@ -104,7 +104,7 @@ impl TelegramChannel {
     async fn register_bot_commands(&self) -> ChannelResult<()> {
         self.client
             .set_my_commands(vec![
-                BotCommand::new("start", "Show help and available commands"),
+                BotCommand::new("start", "Start a new session context"),
                 BotCommand::new("help", "Show help and available commands"),
                 BotCommand::new("new", "Start a new session context"),
                 BotCommand::new("model_provider", "List or switch model providers"),

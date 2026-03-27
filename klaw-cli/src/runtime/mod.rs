@@ -1217,6 +1217,10 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
         "```text".to_string(),
     ];
     lines.push(format!("{:<24}{}", "/new", "Start a new session context"));
+    lines.push(format!(
+        "{:<24}{}",
+        "/start", "Alias of /new for a fresh session"
+    ));
     lines.push(format!("{:<24}{}", "/help", "Show this help"));
     lines.push(format!(
         "{:<24}{}",
@@ -1345,7 +1349,7 @@ async fn handle_im_command(
     };
     let route = resolve_session_route(runtime, &channel, &base_session_key, &chat_id).await?;
     let response = match command {
-        "help" | "start" => ChannelResponse {
+        "help" => ChannelResponse {
             content: render_help_text(runtime),
             reasoning: None,
             metadata: BTreeMap::new(),
@@ -1355,7 +1359,7 @@ async fn handle_im_command(
             reasoning: None,
             metadata: stopped_turn_metadata("manual stop command", "im_command"),
         },
-        "new" => {
+        "new" | "start" => {
             let new_session_key = format!("{base_session_key}:{}", Uuid::new_v4().simple());
             let (new_session_provider, new_session_model) = resolve_new_session_target(runtime);
             let sessions = session_manager(runtime);
@@ -3985,6 +3989,59 @@ A .docx file is a ZIP archive containing XML files.
             .unwrap_or_else(|err| err.into_inner())
             .clone();
         assert_eq!(tool_choice, Some(Value::String("required".to_string())));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn start_command_writes_bootstrap_user_message_into_new_session() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let channel = "telegram".to_string();
+        let base_session_key = "telegram:chat-start".to_string();
+        let chat_id = "chat-start".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &base_session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+
+        let response = handle_im_command(
+            &runtime,
+            channel.clone(),
+            base_session_key.clone(),
+            chat_id.clone(),
+            "/start".to_string(),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("start command should succeed")
+        .expect("start command should return a response");
+
+        assert!(response.content.contains("New session started"));
+        assert!(response.content.contains("bootstrap reply"));
+
+        let route = resolve_session_route(&runtime, &channel, &base_session_key, &chat_id)
+            .await
+            .expect("start command route should resolve");
+        assert_ne!(route.active_session_key, base_session_key);
+
+        let new_history = sessions
+            .read_chat_records(&route.active_session_key)
+            .await
+            .expect("new session history should load");
+        assert_eq!(new_history.len(), 2);
+        assert_eq!(new_history[0].role, "user");
+        assert_eq!(
+            new_history[0].content,
+            build_new_session_bootstrap_user_message()
+        );
+        assert_eq!(new_history[1].role, "assistant");
+        assert_eq!(new_history[1].content, "bootstrap reply");
     }
 
     #[tokio::test(flavor = "current_thread")]
