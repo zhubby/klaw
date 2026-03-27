@@ -3651,7 +3651,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "klaw-agent"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "klaw-config",
@@ -3666,7 +3666,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-approval"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "klaw-storage",
@@ -3679,7 +3679,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-archive"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "hex",
@@ -3695,7 +3695,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-channel"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3717,7 +3717,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "clap",
@@ -3753,7 +3753,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-config"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "humantime",
  "klaw-util",
@@ -3765,7 +3765,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "klaw-agent",
@@ -3782,7 +3782,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-cron"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3798,7 +3798,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-gateway"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3818,7 +3818,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-gui"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "catppuccin-egui",
@@ -3869,7 +3869,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-heartbeat"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "humantime",
@@ -3883,7 +3883,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-llm"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3898,7 +3898,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-mcp"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "klaw-config",
@@ -3914,7 +3914,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-memory"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "klaw-config",
@@ -3929,7 +3929,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-observability"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axum 0.8.8",
@@ -3954,7 +3954,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-session"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "klaw-storage",
@@ -3964,7 +3964,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-skill"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "klaw-util",
@@ -3978,7 +3978,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-storage"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -4002,7 +4002,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-tool"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4036,7 +4036,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-util"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "iana-time-zone",
  "serde",
@@ -4045,7 +4045,7 @@ dependencies = [
 
 [[package]]
 name = "klaw-voice"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
