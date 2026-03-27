@@ -117,3 +117,10 @@ klaw-gateway = { path = "klaw-gateway" }
 klaw-channel = { path = "klaw-channel" }
 klaw-gui = { path = "klaw-gui" }
 klaw-observability = { path = "klaw-observability" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
