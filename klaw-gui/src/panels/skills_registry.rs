@@ -562,13 +562,10 @@ impl PanelRenderer for SkillsRegistryPanel {
             if ui.button("Reload").clicked() {
                 self.reload(notifications);
             }
+            if ui.button("Add Skills Registry").clicked() {
+                self.open_add_registry();
+            }
         });
-
-        ui.add_space(8.0);
-
-        if ui.button("Add Skills Registry").clicked() {
-            self.open_add_registry();
-        }
 
         ui.add_space(8.0);
 

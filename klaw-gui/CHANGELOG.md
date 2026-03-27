@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- `Skills Manager` 安装窗口在 registry skill 的 `id` 为空时，现在会按 `name` 再回退到 registry 名选择稳定标识，避免 root-level `SKILL.md` 安装时把空 skill 名写进配置
+- `Skills Registry` 面板顶部的 `Config`、`Reload`、`Add Skills Registry` 按钮现在放在同一行，避免工具栏被拆成两行后显得松散
 - `Cron` 面板在创建 / 编辑任务时，重算 `Next Run At` 现在会把表单里的 `timezone` 一并传入调度计算，避免任务列表继续按 UTC 预览 cron 触发时间
 - `Tool Logs` 的 JSON tree 与长文本详情现在都包裹在固定高度的内部滚动区中，展开节点或查看大结果时不再把窗口高度继续撑大
 - `Tool Logs` 记录列表改为整行选中并恢复右键菜单交互，`Time` 列同时支持升降序切换，主窗口固定尺寸更新为当前 app 视口的 `2/3`

@@ -1283,14 +1283,23 @@ async fn discover_registry_skills(
                     path: path.clone(),
                     source,
                 })?;
+            let registry_name = registry_repo_dir
+                .file_name()
+                .and_then(OsStr::to_str)
+                .unwrap_or_default()
+                .to_string();
             let fallback_name = skill_dir
                 .file_name()
                 .and_then(OsStr::to_str)
                 .unwrap_or_default()
                 .to_string();
-            let name = parse_skill_name_from_markdown(&content)
+            let parsed_name = parse_skill_name_from_markdown(&content);
+            let name = parsed_name
+                .clone()
                 .filter(|value| !value.trim().is_empty())
-                .unwrap_or(fallback_name);
+                .or_else(|| (!fallback_name.is_empty()).then_some(fallback_name))
+                .or_else(|| (!registry_name.is_empty()).then_some(registry_name.clone()))
+                .unwrap_or_default();
             if name.is_empty() {
                 continue;
             }
@@ -1299,10 +1308,11 @@ async fn discover_registry_skills(
                 .ok()
                 .unwrap_or(skill_dir.as_path());
             let relative_dir_text = relative_dir.to_string_lossy().replace('\\', "/");
-            let id = relative_dir_text
-                .strip_prefix("skills/")
-                .unwrap_or(&relative_dir_text)
-                .to_string();
+            let id = derive_registry_skill_id(
+                &relative_dir_text,
+                parsed_name.as_deref(),
+                &registry_name,
+            );
             items.push(RegistrySkillEntry {
                 id,
                 name,
@@ -1344,6 +1354,27 @@ fn parse_skill_name_from_markdown(markdown: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn derive_registry_skill_id(
+    relative_dir_text: &str,
+    parsed_name: Option<&str>,
+    registry_name: &str,
+) -> String {
+    let derived_path = relative_dir_text
+        .strip_prefix("skills/")
+        .unwrap_or(relative_dir_text)
+        .trim_matches('/')
+        .trim();
+    if !derived_path.is_empty() {
+        return derived_path.to_string();
+    }
+
+    if let Some(parsed_name) = parsed_name.map(str::trim).filter(|value| !value.is_empty()) {
+        return parsed_name.to_string();
+    }
+
+    registry_name.trim().to_string()
 }
 
 fn validate_registry_skill_selector(input: &str) -> Result<String, SkillError> {
@@ -1941,6 +1972,74 @@ mod tests {
         assert_eq!(skills[0].name, "alpha");
         assert_eq!(skills[1].id, "tools/beta");
         assert_eq!(skills[1].name, "beta");
+    }
+
+    #[tokio::test]
+    async fn list_source_skills_uses_parsed_name_for_root_level_skill_id() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        write_registry_skill_at(
+            &root,
+            "amap",
+            "",
+            "SKILL.md",
+            "name: amap-lbs-skill\nRoot-level skill",
+        )
+        .await;
+
+        let skills = store
+            .list_source_skills("amap")
+            .await
+            .expect("list root-level registry skill");
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].id, "amap-lbs-skill");
+        assert_eq!(skills[0].name, "amap-lbs-skill");
+    }
+
+    #[tokio::test]
+    async fn list_source_skills_uses_registry_name_when_root_level_skill_has_no_name() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        write_registry_skill_at(
+            &root,
+            "amap",
+            "",
+            "SKILL.md",
+            "Root-level skill without name",
+        )
+        .await;
+
+        let skills = store
+            .list_source_skills("amap")
+            .await
+            .expect("list unnamed root-level registry skill");
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].id, "amap");
+        assert_eq!(skills[0].name, "amap");
+    }
+
+    #[tokio::test]
+    async fn install_from_registry_supports_root_level_skill_by_fallback_id() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+        write_registry_skill_at(
+            &root,
+            "amap",
+            "",
+            "SKILL.md",
+            "name: amap-lbs-skill\nRoot-level skill",
+        )
+        .await;
+
+        let (record, already_installed) = store
+            .install_from_registry("amap", "amap-lbs-skill")
+            .await
+            .expect("install root-level registry skill");
+
+        assert!(!already_installed);
+        assert_eq!(record.name, "amap-lbs-skill");
     }
 
     #[tokio::test]
