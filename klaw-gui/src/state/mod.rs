@@ -222,7 +222,10 @@ mod tests {
     fn logs_panel_defaults_to_info_only() {
         let state = UiState::default();
 
-        assert_eq!(state.logs_panel.level_filter, LogsLevelFilterState::default());
+        assert_eq!(
+            state.logs_panel.level_filter,
+            LogsLevelFilterState::default()
+        );
         assert!(state.logs_panel.level_filter.info);
         assert!(!state.logs_panel.level_filter.trace);
         assert!(!state.logs_panel.level_filter.debug);
@@ -230,5 +233,4 @@ mod tests {
         assert!(!state.logs_panel.level_filter.error);
         assert!(!state.logs_panel.level_filter.unknown);
     }
-
 }

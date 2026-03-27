@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 
-const GEO_TIMEOUT_SECONDS: u64 = 15;
+const GEO_TIMEOUT_SECONDS: u64 = 60;
 
 pub struct GeoTool;
 
@@ -103,31 +103,38 @@ impl Tool for GeoTool {
 
 #[cfg(target_os = "macos")]
 async fn fetch_current_location_macos() -> Result<GeoResponse, ToolError> {
-    macos::fetch_current_location_on_main_thread().await
+    macos::fetch_current_location_with_authorization_strategy().await
 }
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use std::cell::RefCell;
     use std::sync::Mutex;
-    use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-    use std::time::{Duration, Instant};
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+    use std::time::Duration;
 
-    use objc2::rc::{Retained, autoreleasepool};
+    use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
     use objc2::{ClassType, DeclaredClass, declare_class, msg_send_id, mutability};
     use objc2_core_location::{
         CLAccuracyAuthorization, CLAuthorizationStatus, CLError, CLLocation, CLLocationManager,
         CLLocationManagerDelegate, kCLLocationAccuracyBest,
     };
-    use objc2_foundation::{
-        NSArray, NSDate, NSError, NSObject, NSObjectProtocol, NSRunLoop, run_on_main,
-    };
+    use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol, run_on_main};
 
     use super::{GEO_TIMEOUT_SECONDS, GeoResponse};
     use crate::ToolError;
 
-    const RUN_LOOP_STEP_MS: u64 = 200;
     const LOCATION_UNKNOWN_RETRY_LIMIT: usize = 2;
+
+    thread_local! {
+        static ACTIVE_REQUEST: RefCell<Option<ActiveGeoRequest>> = const { RefCell::new(None) };
+    }
+
+    struct ActiveGeoRequest {
+        manager: Retained<CLLocationManager>,
+        delegate: Retained<LocationDelegate>,
+    }
 
     #[derive(Debug)]
     struct LocationDelegateState {
@@ -161,14 +168,10 @@ mod macos {
                 manager: &CLLocationManager,
                 locations: &NSArray<CLLocation>,
             ) {
-                unsafe {
-                    manager.stopUpdatingLocation();
-                }
-
                 let result = unsafe { locations.lastObject() }
                     .ok_or_else(|| "macOS location services returned no coordinates".to_string())
                     .and_then(|location| GeoResponse::from_location(manager, &location));
-                self.finish(result);
+                self.complete(manager, result);
             }
 
             #[method(locationManager:didFailWithError:)]
@@ -181,20 +184,17 @@ mod macos {
                     return;
                 }
 
-                unsafe {
-                    manager.stopUpdatingLocation();
-                }
-                self.finish(Err(format_location_error(error)));
+                self.complete(manager, Err(format_location_error(error)));
             }
 
             #[method(locationManagerDidChangeAuthorization:)]
             fn location_manager_did_change_authorization(&self, manager: &CLLocationManager) {
                 match authorization_state(unsafe { manager.authorizationStatus() }) {
                     AuthorizationState::Authorized => unsafe {
-                        manager.requestLocation();
+                        manager.startUpdatingLocation();
                     },
                     AuthorizationState::Denied => {
-                        self.finish(Err(
+                        self.complete(manager, Err(
                             "macOS location permission was denied or restricted".to_string(),
                         ));
                     }
@@ -229,12 +229,12 @@ mod macos {
 
             *retries_remaining -= 1;
             unsafe {
-                manager.requestLocation();
+                manager.startUpdatingLocation();
             }
             true
         }
 
-        fn finish(&self, result: Result<GeoResponse, String>) {
+        fn complete(&self, manager: &CLLocationManager, result: Result<GeoResponse, String>) {
             let mut sender = self
                 .ivars()
                 .sender
@@ -243,6 +243,11 @@ mod macos {
             if let Some(sender) = sender.take() {
                 let _ = sender.send(result);
             }
+            unsafe {
+                manager.stopUpdatingLocation();
+                manager.setDelegate(None);
+            }
+            clear_active_request();
         }
     }
 
@@ -278,33 +283,102 @@ mod macos {
         }
     }
 
-    pub(super) async fn fetch_current_location_on_main_thread() -> Result<GeoResponse, ToolError> {
-        tokio::task::spawn_blocking(|| run_on_main(|_| fetch_current_location()))
-            .await
-            .map_err(|err| ToolError::ExecutionFailed(format!("geo task failed: {err}")))?
+    pub(super) async fn fetch_current_location_with_authorization_strategy()
+    -> Result<GeoResponse, ToolError> {
+        let status = current_authorization_status_on_main_thread().await?;
+        match authorization_state(status) {
+            AuthorizationState::Authorized | AuthorizationState::NotDetermined => {}
+            AuthorizationState::Denied => {}
+        }
+
+        if authorization_state(status) == AuthorizationState::Denied {
+            return Err(ToolError::ExecutionFailed(format!(
+                "location permission is unavailable (services_enabled: {}, authorization_status: {} [{}])",
+                unsafe { CLLocationManager::locationServicesEnabled_class() },
+                authorization_status_label(status),
+                status.0
+            )));
+        }
+
+        let (sender, receiver) = mpsc::channel();
+        start_location_request_on_main_thread(sender).await?;
+        wait_for_location_result(receiver).await
     }
 
-    fn fetch_current_location() -> Result<GeoResponse, ToolError> {
-        autoreleasepool(|_| {
-            let (sender, receiver) = mpsc::channel();
-            let manager = unsafe { CLLocationManager::new() };
-            let delegate = LocationDelegate::new(sender);
-            let delegate_ref = ProtocolObject::from_ref(&*delegate);
+    async fn current_authorization_status_on_main_thread()
+    -> Result<CLAuthorizationStatus, ToolError> {
+        tokio::task::spawn_blocking(|| run_on_main(|_| current_authorization_status()))
+            .await
+            .map_err(|err| ToolError::ExecutionFailed(format!("geo task failed: {err}")))
+    }
 
-            unsafe {
-                manager.setDelegate(Some(delegate_ref));
-                manager.setDesiredAccuracy(kCLLocationAccuracyBest);
-            }
+    async fn start_location_request_on_main_thread(
+        sender: Sender<Result<GeoResponse, String>>,
+    ) -> Result<(), ToolError> {
+        tokio::task::spawn_blocking(|| {
+            run_on_main(|_| {
+                let manager = unsafe { CLLocationManager::new() };
+                let delegate = LocationDelegate::new(sender);
 
-            start_location_flow(&manager, &delegate)?;
-            let result = wait_for_location(&manager, receiver);
+                ACTIVE_REQUEST.with(|slot| {
+                    let mut slot = slot.borrow_mut();
+                    *slot = Some(ActiveGeoRequest { manager, delegate });
 
-            unsafe {
-                manager.setDelegate(None);
-            }
+                    let active = slot
+                        .as_mut()
+                        .expect("active geo request must be present after insertion");
+                    let delegate_ref = ProtocolObject::from_ref(&*active.delegate);
+                    unsafe {
+                        active.manager.setDelegate(Some(delegate_ref));
+                        active.manager.setDesiredAccuracy(kCLLocationAccuracyBest);
+                    }
 
-            result.map_err(ToolError::ExecutionFailed)
+                    let start_result = start_location_flow(&active.manager, &active.delegate);
+                    if start_result.is_err() {
+                        unsafe {
+                            active.manager.setDelegate(None);
+                        }
+                        slot.take();
+                    }
+                    start_result
+                })
+            })
         })
+        .await
+        .map_err(|err| ToolError::ExecutionFailed(format!("geo task failed: {err}")))?
+    }
+
+    async fn wait_for_location_result(
+        receiver: Receiver<Result<GeoResponse, String>>,
+    ) -> Result<GeoResponse, ToolError> {
+        let result = tokio::task::spawn_blocking(move || {
+            receiver.recv_timeout(Duration::from_secs(GEO_TIMEOUT_SECONDS))
+        })
+        .await
+        .map_err(|err| ToolError::ExecutionFailed(format!("geo task failed: {err}")))?;
+
+        match result {
+            Ok(Ok(location)) => Ok(location),
+            Ok(Err(message)) => Err(ToolError::ExecutionFailed(message)),
+            Err(RecvTimeoutError::Timeout) => {
+                clear_active_request_on_main_thread().await;
+                let status = current_authorization_status_on_main_thread().await?;
+                Err(ToolError::ExecutionFailed(format!(
+                    "timed out after {}s waiting for location services (services_enabled: {}, authorization_status: {} [{}])",
+                    GEO_TIMEOUT_SECONDS,
+                    unsafe { CLLocationManager::locationServicesEnabled_class() },
+                    authorization_status_label(status),
+                    status.0
+                )))
+            }
+            Err(RecvTimeoutError::Disconnected) => Err(ToolError::ExecutionFailed(
+                "macOS location delegate disconnected unexpectedly".to_string(),
+            )),
+        }
+    }
+
+    fn current_authorization_status() -> CLAuthorizationStatus {
+        unsafe { CLLocationManager::new().authorizationStatus() }
     }
 
     fn start_location_flow(
@@ -312,15 +386,16 @@ mod macos {
         delegate: &LocationDelegate,
     ) -> Result<(), ToolError> {
         if !unsafe { CLLocationManager::locationServicesEnabled_class() } {
-            delegate.finish(Err(
-                "macOS location services are disabled for this device".to_string()
-            ));
+            delegate.complete(
+                manager,
+                Err("macOS location services are disabled for this device".to_string()),
+            );
             return Ok(());
         }
 
         match authorization_state(unsafe { manager.authorizationStatus() }) {
             AuthorizationState::Authorized => unsafe {
-                manager.requestLocation();
+                manager.startUpdatingLocation();
             },
             AuthorizationState::NotDetermined => unsafe {
                 manager.requestWhenInUseAuthorization();
@@ -338,44 +413,14 @@ mod macos {
         Ok(())
     }
 
-    fn wait_for_location(
-        manager: &CLLocationManager,
-        receiver: Receiver<Result<GeoResponse, String>>,
-    ) -> Result<GeoResponse, String> {
-        let run_loop = unsafe { NSRunLoop::currentRunLoop() };
-        let timeout = Duration::from_secs(GEO_TIMEOUT_SECONDS);
-        let deadline = Instant::now() + timeout;
+    async fn clear_active_request_on_main_thread() {
+        let _ = tokio::task::spawn_blocking(|| run_on_main(|_| clear_active_request())).await;
+    }
 
-        loop {
-            match receiver.try_recv() {
-                Ok(result) => return result,
-                Err(TryRecvError::Disconnected) => {
-                    return Err("macOS location delegate disconnected unexpectedly".to_string());
-                }
-                Err(TryRecvError::Empty) => {}
-            }
-
-            let now = Instant::now();
-            if now >= deadline {
-                let services_enabled =
-                    unsafe { CLLocationManager::locationServicesEnabled_class() };
-                let status = unsafe { manager.authorizationStatus() };
-                return Err(format!(
-                    "timed out after {}s waiting for location services (services_enabled: {}, authorization_status: {} [{}])",
-                    GEO_TIMEOUT_SECONDS,
-                    services_enabled,
-                    authorization_status_label(status),
-                    status.0
-                ));
-            }
-
-            let remaining = deadline.saturating_duration_since(now);
-            let step = remaining.min(Duration::from_millis(RUN_LOOP_STEP_MS));
-            let until = unsafe { NSDate::dateWithTimeIntervalSinceNow(step.as_secs_f64()) };
-            unsafe {
-                run_loop.runUntilDate(&until);
-            }
-        }
+    fn clear_active_request() {
+        ACTIVE_REQUEST.with(|slot| {
+            slot.borrow_mut().take();
+        });
     }
 
     fn format_location_error(error: &NSError) -> String {

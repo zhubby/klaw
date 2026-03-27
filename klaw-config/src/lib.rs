@@ -1013,7 +1013,7 @@ impl ToolEnabled for GeoToolConfig {
 }
 
 fn default_geo_tool_enabled() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

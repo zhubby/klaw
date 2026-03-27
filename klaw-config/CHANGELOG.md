@@ -4,7 +4,7 @@
 
 ### Added
 
-- 新增 `tools.geo.enabled` 配置项，默认值为 `true`，用于控制 macOS `geo` 定位工具是否向 runtime 暴露
+- 新增 `tools.geo.enabled` 配置项，默认值为 `false`，用于控制 macOS `geo` 定位工具是否向 runtime 暴露
 
 ## 2026-03-26
 

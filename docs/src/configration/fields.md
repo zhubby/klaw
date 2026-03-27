@@ -224,7 +224,7 @@ enabled = true
 ### `gateway.webhook.events.enabled`
 
 **类型**: `boolean`
-**默认值**: `true`
+**默认值**: `false`
 **必填**: 否
 
 是否启用结构化事件入口。
@@ -790,7 +790,7 @@ tools.approval.enabled = false
 - 在权限被拒或定位失败时返回明确错误
 
 ```toml
-tools.geo.enabled = true
+tools.geo.enabled = false
 ```
 
 ### `tools.local_search`

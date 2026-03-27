@@ -229,7 +229,8 @@ impl LogsPanel {
             return;
         }
 
-        self.filtered_indices = filtered_entry_indices(&self.entries, &self.level_filter, &self.search_text);
+        self.filtered_indices =
+            filtered_entry_indices(&self.entries, &self.level_filter, &self.search_text);
         self.visible_cache_dirty = false;
     }
 }
@@ -259,11 +260,21 @@ impl PanelRenderer for LogsPanel {
                 egui::RichText::new("error").color(level_color(ParsedLevel::Error, ui));
             let unknown_label =
                 egui::RichText::new("unknown").color(level_color(ParsedLevel::Unknown, ui));
-            let changed = ui.checkbox(&mut self.level_filter.trace, trace_label).changed()
-                || ui.checkbox(&mut self.level_filter.debug, debug_label).changed()
-                || ui.checkbox(&mut self.level_filter.info, info_label).changed()
-                || ui.checkbox(&mut self.level_filter.warn, warn_label).changed()
-                || ui.checkbox(&mut self.level_filter.error, error_label).changed()
+            let changed = ui
+                .checkbox(&mut self.level_filter.trace, trace_label)
+                .changed()
+                || ui
+                    .checkbox(&mut self.level_filter.debug, debug_label)
+                    .changed()
+                || ui
+                    .checkbox(&mut self.level_filter.info, info_label)
+                    .changed()
+                || ui
+                    .checkbox(&mut self.level_filter.warn, warn_label)
+                    .changed()
+                || ui
+                    .checkbox(&mut self.level_filter.error, error_label)
+                    .changed()
                 || ui
                     .checkbox(&mut self.level_filter.unknown, unknown_label)
                     .changed();
@@ -326,18 +337,23 @@ impl PanelRenderer for LogsPanel {
             .id_salt("logs-panel-scroll")
             .auto_shrink([false, false])
             .stick_to_bottom(self.auto_scroll && !self.paused)
-            .show_rows(ui, row_height, self.filtered_indices.len(), |ui, row_range| {
-                for row in row_range {
-                    let Some(entry_idx) = self.filtered_indices.get(row).copied() else {
-                        continue;
-                    };
-                    let Some(entry) = self.entries.get(entry_idx) else {
-                        continue;
-                    };
-                    let color = level_color(entry.level, ui);
-                    ui.label(egui::RichText::new(&entry.line).monospace().color(color));
-                }
-            });
+            .show_rows(
+                ui,
+                row_height,
+                self.filtered_indices.len(),
+                |ui, row_range| {
+                    for row in row_range {
+                        let Some(entry_idx) = self.filtered_indices.get(row).copied() else {
+                            continue;
+                        };
+                        let Some(entry) = self.entries.get(entry_idx) else {
+                            continue;
+                        };
+                        let color = level_color(entry.level, ui);
+                        ui.label(egui::RichText::new(&entry.line).monospace().color(color));
+                    }
+                },
+            );
     }
 }
 
@@ -538,7 +554,10 @@ mod tests {
             parse_level("custom metadata includes error_details but no level"),
             ParsedLevel::Unknown
         );
-        assert_eq!(parse_level("request severity=warning-ish"), ParsedLevel::Unknown);
+        assert_eq!(
+            parse_level("request severity=warning-ish"),
+            ParsedLevel::Unknown
+        );
     }
 
     #[test]

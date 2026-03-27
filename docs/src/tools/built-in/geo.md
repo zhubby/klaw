@@ -50,7 +50,7 @@
 
 ```toml
 [tools.geo]
-enabled = true
+enabled = false
 ```
 
-默认值为 `true`。
+默认值为 `false`。
