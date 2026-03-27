@@ -39,6 +39,7 @@ pub struct ToolPanel {
     log_start_date: Option<NaiveDate>,
     log_end_date: Option<NaiveDate>,
     log_status_filter: LogStatusFilter,
+    log_sort_order: ToolLogSortOrder,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,6 +47,13 @@ enum LogStatusFilter {
     #[default]
     All,
     FailedOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ToolLogSortOrder {
+    StartedAtAsc,
+    #[default]
+    StartedAtDesc,
 }
 
 #[derive(Debug, Clone)]
@@ -156,8 +164,7 @@ const INSPECT_WINDOW_WIDTH: f32 = 760.0;
 const INSPECT_WINDOW_MIN_HEIGHT: f32 = 520.0;
 const INSPECT_WINDOW_MAX_HEIGHT: f32 = 760.0;
 const INSPECT_SCHEMA_HEIGHT: f32 = 260.0;
-const LOGS_WINDOW_WIDTH: f32 = 1120.0;
-const LOGS_WINDOW_HEIGHT: f32 = 760.0;
+const LOGS_WINDOW_VIEWPORT_RATIO: f32 = 2.0 / 3.0;
 const LOGS_SUMMARY_WINDOW_WIDTH: f32 = 860.0;
 const LOGS_SUMMARY_WINDOW_HEIGHT: f32 = 720.0;
 const LOG_WINDOW_VIEWPORT_MARGIN: f32 = 48.0;
@@ -185,6 +192,7 @@ impl Default for ToolPanel {
             log_start_date: Some(one_month_ago),
             log_end_date: Some(today),
             log_status_filter: LogStatusFilter::All,
+            log_sort_order: ToolLogSortOrder::StartedAtDesc,
         }
     }
 }
@@ -1218,7 +1226,10 @@ impl ToolPanel {
             started_to_ms: filter_query.started_to_ms,
             limit: TOOL_LOG_PAGE_SIZE,
             offset: 0,
-            sort_order: ToolAuditSortOrder::StartedAtDesc,
+            sort_order: match self.log_sort_order {
+                ToolLogSortOrder::StartedAtAsc => ToolAuditSortOrder::StartedAtAsc,
+                ToolLogSortOrder::StartedAtDesc => ToolAuditSortOrder::StartedAtDesc,
+            },
         };
         match run_session_task(move |manager| async move {
             let filter_options = manager
@@ -1254,6 +1265,20 @@ impl ToolPanel {
             .collect()
     }
 
+    fn toggle_log_sort_order(&mut self) {
+        self.log_sort_order = match self.log_sort_order {
+            ToolLogSortOrder::StartedAtAsc => ToolLogSortOrder::StartedAtDesc,
+            ToolLogSortOrder::StartedAtDesc => ToolLogSortOrder::StartedAtAsc,
+        };
+    }
+
+    fn log_sort_label(&self) -> &'static str {
+        match self.log_sort_order {
+            ToolLogSortOrder::StartedAtAsc => "Time ↑",
+            ToolLogSortOrder::StartedAtDesc => "Time ↓",
+        }
+    }
+
     fn render_logs_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         let Some(tool_key) = self.logs_key else {
             return;
@@ -1266,7 +1291,7 @@ impl ToolPanel {
             return;
         };
 
-        let window_size = constrained_window_size(ui.ctx(), LOGS_WINDOW_WIDTH, LOGS_WINDOW_HEIGHT);
+        let window_size = viewport_ratio_window_size(ui.ctx(), LOGS_WINDOW_VIEWPORT_RATIO);
         let mut open = true;
         egui::Window::new(format!("Tool Logs: {}", tool.name))
             .id(egui::Id::new(("tool-logs", tool.key)))
@@ -1371,9 +1396,13 @@ impl ToolPanel {
                             .column(Column::auto().at_least(80.0))
                             .column(Column::auto().at_least(80.0))
                             .column(Column::remainder().at_least(120.0))
+                            .sense(egui::Sense::click())
                             .header(24.0, |mut header| {
                                 header.col(|ui| {
-                                    ui.strong("Time");
+                                    if ui.button(self.log_sort_label()).clicked() {
+                                        self.toggle_log_sort_order();
+                                        self.refresh_tool_logs(tool.key, notifications);
+                                    }
                                 });
                                 header.col(|ui| {
                                     ui.strong("Status");
@@ -1390,12 +1419,10 @@ impl ToolPanel {
                                     let audit = &filtered_rows[row.index()];
                                     let selected =
                                         self.log_selected_id.as_deref() == Some(audit.id.as_str());
-                                    let mut label_clicked = false;
+                                    row.set_selected(selected);
 
                                     row.col(|ui| {
-                                        let label = format_timestamp_millis(audit.started_at_ms);
-                                        let response = ui.selectable_label(selected, label);
-                                        label_clicked = response.clicked();
+                                        ui.label(format_timestamp_millis(audit.started_at_ms));
                                     });
                                     row.col(|ui| {
                                         let failed = matches!(
@@ -1415,7 +1442,7 @@ impl ToolPanel {
                                     });
 
                                     let row_response = row.response();
-                                    if label_clicked || row_response.clicked() {
+                                    if row_response.clicked() || row_response.secondary_clicked() {
                                         self.log_selected_id = Some(audit.id.clone());
                                     }
                                     row_response.context_menu(|ui| {
@@ -1439,6 +1466,7 @@ impl ToolPanel {
             self.log_session_options.clear();
             self.log_session_filter = None;
             self.log_status_filter = LogStatusFilter::All;
+            self.log_sort_order = ToolLogSortOrder::StartedAtDesc;
         }
     }
 
@@ -1932,6 +1960,20 @@ fn constrained_window_size(
     egui::vec2(
         desired_width.min((viewport_width - LOG_WINDOW_VIEWPORT_MARGIN).max(320.0)),
         desired_height.min((viewport_height - LOG_WINDOW_VIEWPORT_MARGIN).max(320.0)),
+    )
+}
+
+fn viewport_ratio_window_size(ctx: &egui::Context, ratio: f32) -> egui::Vec2 {
+    let (viewport_width, viewport_height) = ctx.input(|input| {
+        input
+            .viewport()
+            .inner_rect
+            .map(|rect| (rect.width(), rect.height()))
+            .unwrap_or((720.0, 540.0))
+    });
+    egui::vec2(
+        (viewport_width * ratio).max(320.0),
+        (viewport_height * ratio).max(320.0),
     )
 }
 
