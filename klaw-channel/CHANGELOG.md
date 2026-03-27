@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-27
+
+### Changed
+
+- `telegram` channel 注册的 `/start` bot command 现在与 runtime 里的新会话语义对齐，触发效果等同于 `/new`
+
 ## 2026-03-24
 
 ### Changed
