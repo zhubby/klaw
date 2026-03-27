@@ -1393,6 +1393,7 @@ impl ToolPanel {
                             .striped(true)
                             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                             .column(Column::auto().at_least(150.0))
+                            .column(Column::auto().at_least(90.0))
                             .column(Column::auto().at_least(80.0))
                             .column(Column::auto().at_least(80.0))
                             .column(Column::remainder().at_least(120.0))
@@ -1403,6 +1404,9 @@ impl ToolPanel {
                                         self.toggle_log_sort_order();
                                         self.refresh_tool_logs(tool.key, notifications);
                                     }
+                                });
+                                header.col(|ui| {
+                                    ui.strong("Tool Call ID");
                                 });
                                 header.col(|ui| {
                                     ui.strong("Status");
@@ -1423,6 +1427,9 @@ impl ToolPanel {
 
                                     row.col(|ui| {
                                         ui.label(format_timestamp_millis(audit.started_at_ms));
+                                    });
+                                    row.col(|ui| {
+                                        ui.monospace(tool_call_id_label(audit));
                                     });
                                     row.col(|ui| {
                                         let failed = matches!(
@@ -1582,7 +1589,6 @@ impl PanelRenderer for ToolPanel {
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::auto().at_least(150.0))
                     .column(Column::auto().at_least(90.0))
-                    .column(Column::auto().at_least(70.0))
                     .column(Column::remainder().at_least(320.0))
                     .min_scrolled_height(table_height)
                     .max_scroll_height(table_height)
@@ -1595,33 +1601,17 @@ impl PanelRenderer for ToolPanel {
                             ui.strong("Status");
                         });
                         header.col(|ui| {
-                            ui.strong("Params");
-                        });
-                        header.col(|ui| {
                             ui.strong("Description");
                         });
                     })
                     .body(|body| {
                         body.rows(row_height, tools.len(), |mut row| {
                             let tool = tools[row.index()];
-                            let parameter_count = self
-                                .runtime_definition(tool.key)
-                                .and_then(|item| {
-                                    item.parameters
-                                        .get("properties")
-                                        .and_then(serde_json::Value::as_object)
-                                        .map(|properties| properties.len())
-                                })
-                                .unwrap_or(0);
-
                             row.col(|ui| {
                                 ui.monospace(tool.name);
                             });
                             row.col(|ui| {
                                 render_boolean_status(ui, tool.enabled, "Enabled", "Disabled");
-                            });
-                            row.col(|ui| {
-                                ui.label(parameter_count.to_string());
                             });
                             row.col(|ui| {
                                 ui.label(
@@ -1924,6 +1914,20 @@ fn render_text_section(ui: &mut egui::Ui, title: &str, body: &str, scroll_id: &s
                 ui.code(body);
             });
     });
+}
+
+fn tool_call_id_label(audit: &ToolAuditRecord) -> String {
+    audit
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| {
+            value
+                .get("tool_call_id")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| "-".to_string())
 }
 
 fn render_json_section(ui: &mut egui::Ui, title: &str, raw: &str, scroll_id: &str) {
