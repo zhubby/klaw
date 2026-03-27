@@ -401,12 +401,15 @@ impl PanelRenderer for LlmPanel {
                             });
 
                             let response = row.response();
-                            if response.clicked() {
-                                self.selected_id = if is_selected {
-                                    None
-                                } else {
-                                    Some(item.id.clone())
-                                };
+                            let interaction = handle_row_interaction(
+                                is_selected,
+                                item.id.clone(),
+                                response.clicked(),
+                                response.double_clicked(),
+                            );
+                            self.selected_id = interaction.selected_id;
+                            if interaction.open_detail {
+                                open_detail = Some(item.clone());
                             }
                             response.context_menu(|ui| {
                                 if ui
@@ -507,6 +510,38 @@ fn llm_status_display(status: LlmAuditStatus) -> (&'static str, Color32, &'stati
     match status {
         LlmAuditStatus::Success => ("✓", Color32::from_rgb(50, 180, 80), "success"),
         LlmAuditStatus::Failed => ("✗", Color32::from_rgb(220, 60, 60), "failed"),
+    }
+}
+
+struct RowInteraction {
+    selected_id: Option<String>,
+    open_detail: bool,
+}
+
+fn handle_row_interaction(
+    is_selected: bool,
+    item_id: String,
+    clicked: bool,
+    double_clicked: bool,
+) -> RowInteraction {
+    if double_clicked {
+        return RowInteraction {
+            selected_id: Some(item_id),
+            open_detail: true,
+        };
+    }
+
+    let selected_id = if clicked {
+        if is_selected { None } else { Some(item_id) }
+    } else if is_selected {
+        Some(item_id)
+    } else {
+        None
+    };
+
+    RowInteraction {
+        selected_id,
+        open_detail: false,
     }
 }
 
@@ -666,5 +701,27 @@ mod tests {
         assert_eq!(panel.session_options, vec!["session-1".to_string()]);
         assert_eq!(panel.provider_options, vec!["openai".to_string()]);
         assert!(panel.load_request.is_none());
+    }
+
+    #[test]
+    fn single_click_toggles_selection_without_opening_detail() {
+        let interaction = handle_row_interaction(false, "audit-1".to_string(), true, false);
+        assert_eq!(interaction.selected_id, Some("audit-1".to_string()));
+        assert!(!interaction.open_detail);
+
+        let interaction = handle_row_interaction(true, "audit-1".to_string(), true, false);
+        assert_eq!(interaction.selected_id, None);
+        assert!(!interaction.open_detail);
+    }
+
+    #[test]
+    fn double_click_keeps_row_selected_and_opens_detail() {
+        let interaction = handle_row_interaction(false, "audit-1".to_string(), true, true);
+        assert_eq!(interaction.selected_id, Some("audit-1".to_string()));
+        assert!(interaction.open_detail);
+
+        let interaction = handle_row_interaction(true, "audit-1".to_string(), true, true);
+        assert_eq!(interaction.selected_id, Some("audit-1".to_string()));
+        assert!(interaction.open_detail);
     }
 }
