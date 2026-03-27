@@ -139,7 +139,7 @@ fn init_tracing(
     log_level: Option<LogLevel>,
     gui_log_sender: Option<mpsc::SyncSender<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let env_filter = build_env_filter(log_level);
+    let env_filter = build_env_filter(command, log_level);
 
     match command {
         Commands::Stdio(cmd) if cmd.verbose_terminal => {
@@ -200,8 +200,14 @@ fn create_gui_log_sender_for_command(command: &Commands) -> Option<mpsc::SyncSen
     Some(sender)
 }
 
-fn build_env_filter(log_level: Option<LogLevel>) -> EnvFilter {
-    match log_level {
+fn build_env_filter(command: &Commands, log_level: Option<LogLevel>) -> EnvFilter {
+    let effective_level = if matches!(command, Commands::Gui(_)) {
+        Some(LogLevel::Trace)
+    } else {
+        log_level
+    };
+
+    match effective_level {
         Some(level) => {
             // Keep app-level debug/trace while suppressing noisy DB internals.
             let filter = format!(
@@ -352,9 +358,20 @@ mod tests {
 
     #[test]
     fn build_env_filter_includes_sqlx_suppression_when_log_level_is_set() {
-        let filter = build_env_filter(Some(LogLevel::Debug));
+        let cli = Cli::parse_from(["klaw", "stdio", "--log-level", "debug"]);
+        let command = cli.command.as_ref().expect("command should be present");
+        let filter = build_env_filter(command, cli.log_level);
         let rendered = filter.to_string();
         assert!(rendered.contains("debug"));
+        assert!(rendered.contains("sqlx=warn"));
+        assert!(rendered.contains("turso=warn"));
+    }
+
+    #[test]
+    fn build_env_filter_for_gui_forces_trace_collection() {
+        let filter = build_env_filter(&Commands::Gui(GuiCommand {}), Some(LogLevel::Error));
+        let rendered = filter.to_string();
+        assert!(rendered.contains("trace"));
         assert!(rendered.contains("sqlx=warn"));
         assert!(rendered.contains("turso=warn"));
     }

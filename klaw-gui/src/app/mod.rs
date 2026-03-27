@@ -67,7 +67,7 @@ impl KlawGuiApp {
                 self.mark_state_dirty();
             }
             UiAction::SetThemeMode(theme_mode) => {
-                self.sync_theme_presets_from_disk();
+                self.sync_persisted_ui_state_from_disk();
                 self.state.apply(UiAction::SetThemeMode(theme_mode));
                 theme::apply_theme(ctx, &self.state);
                 self.save_state_now();
@@ -115,17 +115,18 @@ impl KlawGuiApp {
     }
 
     fn save_state_now(&mut self) {
-        self.sync_theme_presets_from_disk();
+        self.sync_persisted_ui_state_from_disk();
         if persistence::save_ui_state(&self.state).is_ok() {
             self.state_dirty = false;
             self.last_state_save_at = Instant::now();
         }
     }
 
-    fn sync_theme_presets_from_disk(&mut self) {
+    fn sync_persisted_ui_state_from_disk(&mut self) {
         let disk_state = persistence::load_ui_state();
         self.state.light_theme = disk_state.light_theme;
         self.state.dark_theme = disk_state.dark_theme;
+        self.state.logs_panel = disk_state.logs_panel;
     }
 
     fn handle_tray_command(&mut self, ctx: &egui::Context, command: TrayCommand) {

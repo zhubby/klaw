@@ -79,6 +79,35 @@ impl DarkThemePreset {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogsLevelFilterState {
+    pub trace: bool,
+    pub debug: bool,
+    pub info: bool,
+    pub warn: bool,
+    pub error: bool,
+    pub unknown: bool,
+}
+
+impl Default for LogsLevelFilterState {
+    fn default() -> Self {
+        Self {
+            trace: false,
+            debug: false,
+            info: true,
+            warn: false,
+            error: false,
+            unknown: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LogsPanelState {
+    #[serde(default)]
+    pub level_filter: LogsLevelFilterState,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
     pub workbench: workbench::WorkbenchState,
@@ -93,6 +122,8 @@ pub struct UiState {
     pub runtime_provider_override: Option<String>,
     #[serde(default)]
     pub window_size: Option<WindowSize>,
+    #[serde(default)]
+    pub logs_panel: LogsPanelState,
     pub show_about: bool,
 }
 
@@ -112,6 +143,7 @@ impl Default for UiState {
             fullscreen: false,
             runtime_provider_override: None,
             window_size: None,
+            logs_panel: LogsPanelState::default(),
             show_about: false,
         }
     }
@@ -149,7 +181,9 @@ impl UiState {
 
 #[cfg(test)]
 mod tests {
-    use super::{DarkThemePreset, LightThemePreset, ThemeMode, UiAction, UiState};
+    use super::{
+        DarkThemePreset, LightThemePreset, LogsLevelFilterState, ThemeMode, UiAction, UiState,
+    };
 
     #[test]
     fn ui_state_defaults_to_default_theme_presets() {
@@ -183,4 +217,18 @@ mod tests {
         state.apply(UiAction::SetRuntimeProviderOverride(None));
         assert_eq!(state.runtime_provider_override, None);
     }
+
+    #[test]
+    fn logs_panel_defaults_to_info_only() {
+        let state = UiState::default();
+
+        assert_eq!(state.logs_panel.level_filter, LogsLevelFilterState::default());
+        assert!(state.logs_panel.level_filter.info);
+        assert!(!state.logs_panel.level_filter.trace);
+        assert!(!state.logs_panel.level_filter.debug);
+        assert!(!state.logs_panel.level_filter.warn);
+        assert!(!state.logs_panel.level_filter.error);
+        assert!(!state.logs_panel.level_filter.unknown);
+    }
+
 }

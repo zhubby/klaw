@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use crate::state::{LogsLevelFilterState, LogsPanelState, persistence};
 use egui::Color32;
 use std::collections::VecDeque;
 use std::fs;
@@ -41,18 +42,33 @@ struct LevelFilter {
 
 impl Default for LevelFilter {
     fn default() -> Self {
-        Self {
-            trace: true,
-            debug: true,
-            info: true,
-            warn: true,
-            error: true,
-            unknown: true,
-        }
+        Self::from_persisted(LogsLevelFilterState::default())
     }
 }
 
 impl LevelFilter {
+    fn from_persisted(state: LogsLevelFilterState) -> Self {
+        Self {
+            trace: state.trace,
+            debug: state.debug,
+            info: state.info,
+            warn: state.warn,
+            error: state.error,
+            unknown: state.unknown,
+        }
+    }
+
+    fn as_persisted(&self) -> LogsLevelFilterState {
+        LogsLevelFilterState {
+            trace: self.trace,
+            debug: self.debug,
+            info: self.info,
+            warn: self.warn,
+            error: self.error,
+            unknown: self.unknown,
+        }
+    }
+
     fn matches(&self, level: ParsedLevel) -> bool {
         match level {
             ParsedLevel::Trace => self.trace,
@@ -77,10 +93,16 @@ pub struct LogsPanel {
     level_filter: LevelFilter,
     paused: bool,
     export_path: String,
+    prefs_loaded: bool,
 }
 
 impl LogsPanel {
     fn ensure_defaults(&mut self) {
+        if !self.prefs_loaded {
+            self.level_filter =
+                LevelFilter::from_persisted(persistence::load_ui_state().logs_panel.level_filter);
+            self.prefs_loaded = true;
+        }
         if self.max_lines == 0 {
             self.max_lines = DEFAULT_MAX_LINES;
         }
@@ -175,6 +197,16 @@ impl LogsPanel {
         fs::write(&path, output).map_err(|err| format!("failed to write log file: {err}"))?;
         Ok(path)
     }
+
+    fn persist_level_filter(&self) -> Result<(), String> {
+        persistence::update_ui_state(|state| {
+            state.logs_panel = LogsPanelState {
+                level_filter: self.level_filter.as_persisted(),
+            };
+        })
+        .map(|_| ())
+        .map_err(|err| format!("failed to save log filter preferences: {err}"))
+    }
 }
 
 impl PanelRenderer for LogsPanel {
@@ -205,12 +237,17 @@ impl PanelRenderer for LogsPanel {
                 egui::RichText::new("error").color(level_color(ParsedLevel::Error, ui));
             let unknown_label =
                 egui::RichText::new("unknown").color(level_color(ParsedLevel::Unknown, ui));
-            ui.checkbox(&mut self.level_filter.trace, trace_label);
-            ui.checkbox(&mut self.level_filter.debug, debug_label);
-            ui.checkbox(&mut self.level_filter.info, info_label);
-            ui.checkbox(&mut self.level_filter.warn, warn_label);
-            ui.checkbox(&mut self.level_filter.error, error_label);
-            ui.checkbox(&mut self.level_filter.unknown, unknown_label);
+            let changed = ui.checkbox(&mut self.level_filter.trace, trace_label).changed()
+                || ui.checkbox(&mut self.level_filter.debug, debug_label).changed()
+                || ui.checkbox(&mut self.level_filter.info, info_label).changed()
+                || ui.checkbox(&mut self.level_filter.warn, warn_label).changed()
+                || ui.checkbox(&mut self.level_filter.error, error_label).changed()
+                || ui
+                    .checkbox(&mut self.level_filter.unknown, unknown_label)
+                    .changed();
+            if changed && let Err(err) = self.persist_level_filter() {
+                notifications.error(err);
+            }
         });
 
         ui.horizontal(|ui| {
@@ -298,19 +335,27 @@ fn visible_entries<'a>(
 }
 
 fn parse_level(line: &str) -> ParsedLevel {
-    let lower = line.to_ascii_lowercase();
-    if lower.contains("error") || lower.contains(" level=error") {
-        ParsedLevel::Error
-    } else if lower.contains("warn") || lower.contains(" level=warn") {
-        ParsedLevel::Warn
-    } else if lower.contains("info") || lower.contains(" level=info") {
-        ParsedLevel::Info
-    } else if lower.contains("debug") || lower.contains(" level=debug") {
-        ParsedLevel::Debug
-    } else if lower.contains("trace") || lower.contains(" level=trace") {
-        ParsedLevel::Trace
-    } else {
-        ParsedLevel::Unknown
+    for token in line.split_whitespace() {
+        if let Some(level) = parse_level_token(token) {
+            return level;
+        }
+    }
+
+    ParsedLevel::Unknown
+}
+
+fn parse_level_token(token: &str) -> Option<ParsedLevel> {
+    let normalized = token
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '=')
+        .to_ascii_lowercase();
+
+    match normalized.as_str() {
+        "trace" | "level=trace" => Some(ParsedLevel::Trace),
+        "debug" | "level=debug" => Some(ParsedLevel::Debug),
+        "info" | "level=info" => Some(ParsedLevel::Info),
+        "warn" | "warning" | "level=warn" | "level=warning" => Some(ParsedLevel::Warn),
+        "error" | "level=error" => Some(ParsedLevel::Error),
+        _ => None,
     }
 }
 
@@ -407,6 +452,7 @@ mod tests {
         });
         let filter = LevelFilter {
             info: false,
+            error: true,
             ..LevelFilter::default()
         };
 
@@ -416,13 +462,46 @@ mod tests {
     }
 
     #[test]
+    fn level_filter_defaults_to_info_only() {
+        let filter = LevelFilter::default();
+        assert!(!filter.trace);
+        assert!(!filter.debug);
+        assert!(filter.info);
+        assert!(!filter.warn);
+        assert!(!filter.error);
+        assert!(!filter.unknown);
+    }
+
+    #[test]
     fn parse_level_detects_known_levels() {
         assert_eq!(parse_level("INFO started"), ParsedLevel::Info);
         assert_eq!(parse_level("WARN cache miss"), ParsedLevel::Warn);
         assert_eq!(parse_level("ERROR panic"), ParsedLevel::Error);
         assert_eq!(parse_level("DEBUG cmd"), ParsedLevel::Debug);
         assert_eq!(parse_level("TRACE frame"), ParsedLevel::Trace);
+        assert_eq!(parse_level("ts level=info booted"), ParsedLevel::Info);
         assert_eq!(parse_level("custom line"), ParsedLevel::Unknown);
+    }
+
+    #[test]
+    fn parse_level_prefers_explicit_level_token_over_message_text() {
+        assert_eq!(
+            parse_level(r#"2026-03-27T07:51:56Z INFO channel init metadata={"error":"none"}"#),
+            ParsedLevel::Info
+        );
+        assert_eq!(
+            parse_level("INFO media_references=[] last_error_count=0"),
+            ParsedLevel::Info
+        );
+    }
+
+    #[test]
+    fn parse_level_does_not_treat_substrings_as_levels() {
+        assert_eq!(
+            parse_level("custom metadata includes error_details but no level"),
+            ParsedLevel::Unknown
+        );
+        assert_eq!(parse_level("request severity=warning-ish"), ParsedLevel::Unknown);
     }
 
     #[test]

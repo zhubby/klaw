@@ -97,7 +97,9 @@ mod tests {
     use super::{load_ui_state_from_path, save_ui_state_to_path};
     use crate::domain::menu::WorkbenchMenu;
     use crate::state::workbench::TabId;
-    use crate::state::{DarkThemePreset, LightThemePreset, ThemeMode, UiAction, UiState};
+    use crate::state::{
+        DarkThemePreset, LightThemePreset, LogsLevelFilterState, ThemeMode, UiAction, UiState,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -122,6 +124,10 @@ mod tests {
         assert_eq!(restored.dark_theme, DarkThemePreset::Mocha);
         assert_eq!(restored.workbench.active_tab, state.workbench.active_tab);
         assert_eq!(restored.workbench.tabs.len(), state.workbench.tabs.len());
+        assert_eq!(
+            restored.logs_panel.level_filter,
+            LogsLevelFilterState::default()
+        );
 
         let _ = fs::remove_file(path);
     }
@@ -171,6 +177,10 @@ mod tests {
         assert_eq!(restored.theme_mode, ThemeMode::Dark);
         assert_eq!(restored.light_theme, LightThemePreset::Default);
         assert_eq!(restored.dark_theme, DarkThemePreset::Default);
+        assert_eq!(
+            restored.logs_panel.level_filter,
+            LogsLevelFilterState::default()
+        );
 
         let _ = fs::remove_file(path);
     }
