@@ -1,3 +1,4 @@
+use crate::autostart;
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::settings::{
@@ -156,7 +157,7 @@ impl PanelRenderer for SettingPanel {
                                         .auto_shrink([false, false])
                                         .show(ui, |ui| match this.active_section {
                                             SettingsSection::General => {
-                                                this.render_general_section(ui)
+                                                this.render_general_section(ui, notifications)
                                             }
                                             SettingsSection::Privacy => {
                                                 this.render_privacy_section(ui, notifications)
@@ -231,6 +232,57 @@ impl SettingPanel {
             Err(err) => {
                 self.save_error = Some(err.to_string());
                 false
+            }
+        }
+    }
+
+    fn persist_launch_at_startup_change(
+        &mut self,
+        previous: bool,
+        notifications: &mut NotificationCenter,
+    ) {
+        let desired = self.settings.general.launch_at_startup;
+        if desired == previous {
+            return;
+        }
+
+        if let Err(err) = autostart::apply(desired) {
+            self.settings.general.launch_at_startup = previous;
+            self.save_error = Some(err.to_string());
+            notifications.error(format!("Failed to update launch at startup: {err}"));
+            return;
+        }
+
+        if self.try_save() {
+            let message = if desired {
+                "Launch at startup enabled."
+            } else {
+                "Launch at startup disabled."
+            };
+            notifications.success(message);
+            return;
+        }
+
+        let save_error = self
+            .save_error
+            .clone()
+            .unwrap_or_else(|| "unknown settings save failure".to_string());
+        self.settings.general.launch_at_startup = previous;
+
+        match autostart::apply(previous) {
+            Ok(()) => {
+                notifications.error(format!(
+                    "Failed to save launch at startup setting: {save_error}"
+                ));
+            }
+            Err(rollback_err) => {
+                let message = format!(
+                    "{save_error}; also failed to restore the previous macOS login item state: {rollback_err}"
+                );
+                self.save_error = Some(message.clone());
+                notifications.error(format!(
+                    "Failed to save launch at startup setting and rollback macOS login item: {message}"
+                ));
             }
         }
     }
@@ -504,26 +556,43 @@ impl SettingPanel {
         runtime
     }
 
-    fn render_general_section(&mut self, ui: &mut egui::Ui) {
+    fn render_general_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+    ) {
         self.sync_theme_state();
         ui.strong("General Settings");
         ui.add_space(8.0);
 
+        let previous_launch_setting = self.settings.general.launch_at_startup;
+        let enable_unavailable_reason = autostart::enable_availability()
+            .unsupported_reason()
+            .map(str::to_owned);
+        let mut startup_setting_changed = false;
         ui.horizontal(|ui| {
             ui.label("Launch at startup:");
-            if ui
-                .radio_value(&mut self.settings.general.launch_at_startup, true, "Yes")
-                .changed()
-                || ui
-                    .radio_value(&mut self.settings.general.launch_at_startup, false, "No")
-                    .changed()
-            {
-                self.try_save();
-            }
+            ui.add_enabled_ui(enable_unavailable_reason.is_none(), |ui| {
+                startup_setting_changed = ui
+                    .radio_value(&mut self.settings.general.launch_at_startup, true, "Yes")
+                    .changed();
+            });
+            startup_setting_changed |= ui
+                .radio_value(&mut self.settings.general.launch_at_startup, false, "No")
+                .changed();
         });
+        if startup_setting_changed {
+            self.persist_launch_at_startup_change(previous_launch_setting, notifications);
+        }
 
         ui.add_space(8.0);
         ui.label("Automatically start Klaw when you log in to your computer.");
+        if let Some(reason) = enable_unavailable_reason {
+            ui.add_space(4.0);
+            ui.label(format!(
+                "{reason} You can still turn the setting off from here."
+            ));
+        }
 
         ui.add_space(16.0);
         ui.separator();

@@ -1,4 +1,5 @@
 mod app;
+mod autostart;
 mod domain;
 mod icon;
 mod notifications;

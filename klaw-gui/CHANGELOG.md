@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-28
+
+### Fixed
+
+- macOS `Settings > General > Launch at startup` now manages a real user `LaunchAgent`, only enables from the packaged `Klaw.app` bundle, and re-syncs stale login-item state on GUI startup
+
 ## 2026-03-27
 
 ### Added

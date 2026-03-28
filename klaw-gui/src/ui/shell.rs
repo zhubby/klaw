@@ -1,3 +1,4 @@
+use crate::autostart::{self, ReconcileOutcome};
 use crate::notifications::NotificationCenter;
 use crate::panels::PanelRegistry;
 use crate::runtime_bridge::{ProviderRuntimeSnapshot, request_provider_status};
@@ -35,9 +36,29 @@ const SYNC_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 impl Default for ShellUi {
     fn default() -> Self {
+        let mut notifications = NotificationCenter::default();
+        let settings = load_settings();
+        match autostart::reconcile(settings.general.launch_at_startup) {
+            Ok(ReconcileOutcome::Unchanged) => {}
+            Ok(ReconcileOutcome::Enabled) => {
+                notifications.info("Launch at startup was re-synced with macOS login items.");
+            }
+            Ok(ReconcileOutcome::Disabled) => {
+                notifications.info("Removed stale macOS login item for launch at startup.");
+            }
+            Err(err) if settings.general.launch_at_startup => {
+                notifications.warning(format!(
+                    "Launch at startup is enabled in settings but could not be refreshed: {err}"
+                ));
+            }
+            Err(err) => {
+                notifications.error(format!("Failed to sync launch at startup: {err}"));
+            }
+        }
+
         Self {
             panels: PanelRegistry::default(),
-            notifications: NotificationCenter::default(),
+            notifications,
             provider_ids: Vec::new(),
             config_default_provider: String::new(),
             provider_default_models: BTreeMap::new(),
