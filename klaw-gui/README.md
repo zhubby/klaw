@@ -19,6 +19,7 @@
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
   - includes tabs/theme mode/light-dark theme presets/fullscreen and window size
 - macOS app icon is loaded from embedded image bytes at startup, so both `.app` bundles and standalone binaries keep the custom icon
+- macOS `Launch at startup` now provisions a user `LaunchAgent` from the packaged `.app` bundle and re-syncs stale login-item state on startup
 - System CJK font fallback via `fontdb` to avoid Chinese text missing-glyph rendering
 - Strongly typed menu model for workspace modules
 - Sidebar group headings for `WORKSPACE`, `AI & CAPABILITY`, `RUNTIME & ACCESS`, `AUTOMATION & OPERATIONS`, `DATA & HISTORY`, and `OBSERVABILITY`
