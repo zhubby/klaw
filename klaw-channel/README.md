@@ -19,6 +19,7 @@
 - 通道层只负责 I/O、协议适配和交互体验，不承载 agent 业务逻辑
 - crate 内提供共享 `media` / `render` 模块，复用媒体引用构造、归档回填和通道输出渲染逻辑，避免各 channel 重复实现
 - `ChannelRequest` 可携带 `media_references`；`dingtalk` / `telegram` 会在入站阶段解析媒体附件，下载媒体并写入 archive，再把媒体引用透传给 runtime
+- `dingtalk` 入站媒体下载现在优先使用消息体里的 `downloadCode`，仅在缺失或失败时再回退 `pictureDownloadCode`，减少图片附件在钉钉下载接口上返回 `unknownError` 的概率
 - `telegram` 可在 `stream_output=true` 时通过 `sendMessage + editMessageText` 渐进刷新同一条回复；不支持编辑的 channel 则退回完整回复
 - `telegram` HTTP 客户端默认沿用环境代理设置；若配置 `channels.telegram[].proxy`，则显式覆盖为该代理地址
 - `telegram` 现在可注入共享 `VoiceService`；当收到 `voice` / `audio` 入站媒体时，会在下载与 archive 入库后尝试 STT，并将 transcript 作为真正的 runtime 输入

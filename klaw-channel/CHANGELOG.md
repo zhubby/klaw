@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-28
+
+### Fixed
+
+- `dingtalk` 入站媒体下载候选顺序调整为优先 `downloadCode`、再回退 `pictureDownloadCode`，缓解图片附件调用 `/v1.0/robot/messageFiles/download` 时偶发 `HTTP 500 unknownError`
+
 ## 2026-03-27
 
 ### Changed

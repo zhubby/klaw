@@ -2054,8 +2054,8 @@ fn resolve_download_code_candidates(
     resolve_metadata_value_candidates(
         metadata,
         &[
-            ("dingtalk.picture_download_code", "picture_download_code"),
             ("dingtalk.download_code", "download_code"),
+            ("dingtalk.picture_download_code", "picture_download_code"),
         ],
     )
 }
@@ -2646,7 +2646,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_download_code_prefers_picture_download_code() {
+    fn resolve_download_code_prefers_download_code() {
         let metadata = BTreeMap::from([
             (
                 "dingtalk.download_code".to_string(),
@@ -2661,8 +2661,8 @@ mod tests {
             .into_iter()
             .next()
             .expect("should resolve");
-        assert_eq!(resolved.0, "picture-code");
-        assert_eq!(resolved.1, "picture_download_code");
+        assert_eq!(resolved.0, "download-code");
+        assert_eq!(resolved.1, "download_code");
     }
 
     #[test]
