@@ -234,7 +234,15 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                         )
                         .await;
                 }
-                ToolInvocationResult::success(output.content_for_model)
+                let signals = output
+                    .signals
+                    .into_iter()
+                    .map(|signal| ToolInvocationSignal {
+                        kind: signal.kind,
+                        payload: signal.payload,
+                    })
+                    .collect();
+                ToolInvocationResult::success_with_signals(output.content_for_model, signals)
             }
             Err(err) => {
                 let error_code = err.code().to_string();
@@ -947,6 +955,18 @@ impl AgentLoop {
                         response_metadata
                             .insert("turn.stop_signal".to_string(), stop_signal.payload.clone());
                     }
+                    let channel_attachments = output
+                        .tool_signals
+                        .iter()
+                        .filter(|signal| signal.kind == "channel_attachment")
+                        .map(|signal| signal.payload.clone())
+                        .collect::<Vec<_>>();
+                    if !channel_attachments.is_empty() {
+                        response_metadata.insert(
+                            "channel.attachments".to_string(),
+                            serde_json::Value::Array(channel_attachments),
+                        );
+                    }
                 }
                 if let Some(reasoning) = output.reasoning.filter(|value| !value.trim().is_empty()) {
                     response_metadata.insert(
@@ -1657,7 +1677,7 @@ fn augment_user_content_with_attachment_context(
 
     let mut lines = vec![
         "Current message attachments:".to_string(),
-        "If an attachment below already includes an archive_id, prefer calling the archive tool with action=get and that exact archive_id. Use list_current_attachments only to confirm attachments from the current message, and use list_session_attachments when the user is referring to files from earlier turns in this same session. For audio or voice attachments, use the voice tool with action=stt and the attachment archive_id to transcribe them.".to_string(),
+        "If an attachment below already includes an archive_id, prefer calling the archive tool with action=get and that exact archive_id. Use list_current_attachments only to confirm attachments from the current message, and use list_session_attachments when the user is referring to files from earlier turns in this same session. For audio or voice attachments, use the voice tool with action=stt and the attachment archive_id to transcribe them. If the user wants you to send one of these archived files back into the chat, use the channel_attachment tool with that exact archive_id instead of merely saying that you sent it.".to_string(),
     ];
     for (idx, attachment) in attachments.iter().enumerate() {
         let Some(item) = attachment.as_object() else {
@@ -1789,6 +1809,7 @@ mod tests {
         assert!(content.contains("archive_id=arch-1"));
         assert!(content.contains("use list_session_attachments"));
         assert!(content.contains("voice tool with action=stt"));
+        assert!(content.contains("use the channel_attachment tool"));
         assert!(content.contains("access=read_only archive"));
         assert!(content.contains("copy the file into workspace first"));
     }

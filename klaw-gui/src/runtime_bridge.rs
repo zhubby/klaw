@@ -91,6 +91,8 @@ pub enum RuntimeCommand {
 static RUNTIME_COMMAND_SENDER: OnceLock<Mutex<Option<UnboundedSender<RuntimeCommand>>>> =
     OnceLock::new();
 static LOG_RECEIVER: OnceLock<Mutex<Option<mpsc::Receiver<String>>>> = OnceLock::new();
+const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_millis(200);
+const RUNTIME_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
     RUNTIME_COMMAND_SENDER.get_or_init(|| Mutex::new(None))
@@ -98,6 +100,21 @@ fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
 
 fn log_receiver_slot() -> &'static Mutex<Option<mpsc::Receiver<String>>> {
     LOG_RECEIVER.get_or_init(|| Mutex::new(None))
+}
+
+fn recv_response<T>(
+    receiver: mpsc::Receiver<T>,
+    timeout: Duration,
+    operation: &str,
+) -> Result<T, String> {
+    receiver.recv_timeout(timeout).map_err(|err| match err {
+        mpsc::RecvTimeoutError::Timeout => {
+            format!("timed out waiting for {operation} response")
+        }
+        mpsc::RecvTimeoutError::Disconnected => {
+            "runtime command response channel closed".to_string()
+        }
+    })
 }
 
 pub fn install_runtime_command_sender(sender: UnboundedSender<RuntimeCommand>) {
@@ -176,9 +193,7 @@ pub fn request_set_provider_override(
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "set provider override")?
 }
 
 pub fn request_run_cron_now(cron_id: &str) -> Result<String, String> {
@@ -195,9 +210,7 @@ pub fn request_run_cron_now(cron_id: &str) -> Result<String, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "run cron")?
 }
 
 pub fn request_run_heartbeat_now(heartbeat_id: &str) -> Result<String, String> {
@@ -214,9 +227,7 @@ pub fn request_run_heartbeat_now(heartbeat_id: &str) -> Result<String, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "run heartbeat")?
 }
 
 pub fn request_sync_channels() -> Result<ChannelSyncResult, String> {
@@ -232,9 +243,7 @@ pub fn request_sync_channels() -> Result<ChannelSyncResult, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync channels")?
 }
 
 pub fn request_sync_providers() -> Result<ProviderRuntimeSnapshot, String> {
@@ -250,9 +259,7 @@ pub fn request_sync_providers() -> Result<ProviderRuntimeSnapshot, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync providers")?
 }
 
 pub fn request_provider_status() -> Result<ProviderRuntimeSnapshot, String> {
@@ -268,9 +275,7 @@ pub fn request_provider_status() -> Result<ProviderRuntimeSnapshot, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "provider status")?
 }
 
 pub fn request_env_check() -> Result<EnvironmentCheckReport, String> {
@@ -286,9 +291,7 @@ pub fn request_env_check() -> Result<EnvironmentCheckReport, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())
+    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "environment check")
 }
 
 pub fn request_gateway_status() -> Result<GatewayStatusSnapshot, String> {
@@ -304,16 +307,7 @@ pub fn request_gateway_status() -> Result<GatewayStatusSnapshot, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv_timeout(Duration::from_secs(2))
-        .map_err(|err| match err {
-            mpsc::RecvTimeoutError::Timeout => {
-                "timed out waiting for gateway status response".to_string()
-            }
-            mpsc::RecvTimeoutError::Disconnected => {
-                "runtime command response channel closed".to_string()
-            }
-        })
+    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "gateway status")
 }
 
 pub fn request_start_gateway() -> Result<GatewayStatusSnapshot, String> {
@@ -329,9 +323,7 @@ pub fn request_start_gateway() -> Result<GatewayStatusSnapshot, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "start gateway")?
 }
 
 pub fn request_set_gateway_enabled(enabled: bool) -> Result<GatewayStatusSnapshot, String> {
@@ -348,9 +340,7 @@ pub fn request_set_gateway_enabled(enabled: bool) -> Result<GatewayStatusSnapsho
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "set gateway enabled")?
 }
 
 pub fn request_restart_gateway() -> Result<GatewayStatusSnapshot, String> {
@@ -366,9 +356,7 @@ pub fn request_restart_gateway() -> Result<GatewayStatusSnapshot, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "restart gateway")?
 }
 
 pub fn request_set_tailscale_mode(mode: TailscaleMode) -> Result<GatewayStatusSnapshot, String> {
@@ -385,9 +373,7 @@ pub fn request_set_tailscale_mode(mode: TailscaleMode) -> Result<GatewayStatusSn
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "set tailscale mode")?
 }
 
 pub fn request_sync_mcp() -> Result<McpSyncResult, String> {
@@ -403,9 +389,7 @@ pub fn request_sync_mcp() -> Result<McpSyncResult, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync mcp")?
 }
 
 pub fn request_sync_tools() -> Result<Vec<String>, String> {
@@ -421,9 +405,7 @@ pub fn request_sync_tools() -> Result<Vec<String>, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync tools")?
 }
 
 pub fn request_tool_definitions() -> Result<Vec<ToolDefinition>, String> {
@@ -439,9 +421,7 @@ pub fn request_tool_definitions() -> Result<Vec<ToolDefinition>, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    response_rx
-        .recv()
-        .map_err(|_| "runtime command response channel closed".to_string())?
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "tool definitions")?
 }
 
 pub fn request_mcp_status() -> Result<McpRuntimeSnapshot, String> {
@@ -463,8 +443,8 @@ pub fn request_mcp_status() -> Result<McpRuntimeSnapshot, String> {
         return Err("failed to send runtime command".to_string());
     }
 
-    match response_rx.recv() {
+    match recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "mcp status") {
         Ok(result) => result,
-        Err(_) => Err("runtime command response channel closed".to_string()),
+        Err(error) => Err(error),
     }
 }

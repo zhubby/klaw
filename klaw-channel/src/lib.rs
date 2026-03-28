@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use klaw_core::MediaReference;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::time::Duration;
@@ -7,6 +8,7 @@ use std::time::Duration;
 pub mod dingtalk;
 pub mod manager;
 pub mod media;
+pub mod outbound;
 pub mod render;
 pub mod stdio;
 pub mod telegram;
@@ -18,6 +20,23 @@ pub use manager::{
 };
 
 pub type ChannelResult<T> = Result<T, Box<dyn Error>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutboundAttachmentKind {
+    Image,
+    File,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboundAttachment {
+    pub archive_id: String,
+    pub kind: OutboundAttachmentKind,
+    #[serde(default)]
+    pub filename: Option<String>,
+    #[serde(default)]
+    pub caption: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct ChannelRequest {
@@ -34,6 +53,7 @@ pub struct ChannelResponse {
     pub content: String,
     pub reasoning: Option<String>,
     pub metadata: BTreeMap<String, serde_json::Value>,
+    pub attachments: Vec<OutboundAttachment>,
 }
 
 #[derive(Debug, Clone)]

@@ -13,7 +13,7 @@ use klaw_approval::{
 };
 use klaw_channel::{
     ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
-    ChannelStreamWriter, DefaultChannelDriverFactory,
+    ChannelStreamWriter, DefaultChannelDriverFactory, OutboundAttachment,
 };
 use klaw_config::{AppConfig, ConfigStore, McpConfig, ToolEnabled};
 use klaw_core::{
@@ -41,10 +41,10 @@ use klaw_skill::{
 };
 use klaw_storage::{DefaultSessionStore, open_default_store};
 use klaw_tool::{
-    ApplyPatchTool, ApprovalTool, ArchiveTool, CronManagerTool, GeoTool, HeartbeatManagerTool,
-    LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool, SkillsRegistryTool,
-    SubAgentAuditSink, SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool,
-    WebFetchTool, WebSearchTool,
+    ApplyPatchTool, ApprovalTool, ArchiveTool, ChannelAttachmentTool, CronManagerTool, GeoTool,
+    HeartbeatManagerTool, LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool,
+    SkillsRegistryTool, SubAgentAuditSink, SubAgentTool, TerminalMultiplexerTool, ToolContext,
+    ToolRegistry, VoiceTool, WebFetchTool, WebSearchTool,
 };
 use klaw_util::EnvironmentCheckReport;
 use serde_json::{Value, json};
@@ -65,6 +65,7 @@ use uuid::Uuid;
 const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const TOOL_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, use the available workspace tools to read it and follow it before anything else. If it does not exist, start with a short, natural greeting and do not recreate or restore `BOOTSTRAP.md`.\nGuide the user through initializing the agent's identity, vibe, and context. When you learn durable bootstrap details, use tools to update `IDENTITY.md` and `USER.md`, and delete `BOOTSTRAP.md` once bootstrap is truly complete. If `BOOTSTRAP.md` is already absent, leave it absent. Do not claim files were updated unless you actually changed them with tools. Do not mention that this message was auto-generated.";
+const META_OUTBOUND_ATTACHMENTS_KEY: &str = "channel.attachments";
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
     pub skill_names: Vec<String>,
@@ -185,11 +186,8 @@ impl ChannelRuntime for SharedChannelRuntime {
         )
         .await?;
 
-        Ok(maybe_output.map(|output| ChannelResponse {
-            content: output.content,
-            reasoning: output.reasoning,
-            metadata: output.metadata,
-        }))
+        Ok(maybe_output
+            .map(|output| channel_response(output.content, output.reasoning, output.metadata)))
     }
 
     async fn submit_streaming(
@@ -238,11 +236,8 @@ impl ChannelRuntime for SharedChannelRuntime {
         )
         .await?;
 
-        Ok(maybe_output.map(|output| ChannelResponse {
-            content: output.content,
-            reasoning: output.reasoning,
-            metadata: output.metadata,
-        }))
+        Ok(maybe_output
+            .map(|output| channel_response(output.content, output.reasoning, output.metadata)))
     }
 
     fn cron_tick_interval(&self) -> Duration {
@@ -267,6 +262,50 @@ pub struct AssistantOutput {
     pub content: String,
     pub reasoning: Option<String>,
     pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+fn parse_outbound_attachments(
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> Vec<OutboundAttachment> {
+    metadata
+        .get(META_OUTBOUND_ATTACHMENTS_KEY)
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Vec<OutboundAttachment>>(value).ok())
+        .map(|attachments| {
+            attachments
+                .into_iter()
+                .filter_map(|mut attachment| {
+                    attachment.archive_id = attachment.archive_id.trim().to_string();
+                    if attachment.archive_id.is_empty() {
+                        return None;
+                    }
+                    attachment.filename = attachment.filename.and_then(|value| {
+                        let trimmed = value.trim().to_string();
+                        (!trimmed.is_empty()).then_some(trimmed)
+                    });
+                    attachment.caption = attachment.caption.and_then(|value| {
+                        let trimmed = value.trim().to_string();
+                        (!trimmed.is_empty()).then_some(trimmed)
+                    });
+                    Some(attachment)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn channel_response(
+    content: String,
+    reasoning: Option<String>,
+    metadata: BTreeMap<String, serde_json::Value>,
+) -> ChannelResponse {
+    let attachments = parse_outbound_attachments(&metadata);
+    ChannelResponse {
+        content,
+        reasoning,
+        metadata,
+        attachments,
+    }
 }
 
 pub fn build_channel_driver_factory(
@@ -1051,6 +1090,7 @@ async fn register_configured_tools(
     if config.tools.archive.enabled() {
         tools.register(ArchiveTool::open_default(config).await?);
     }
+    tools.register(ChannelAttachmentTool::open_default().await?);
     if voice_tool_is_enabled(config) {
         tools.register(VoiceTool::open_default(config).await?);
     } else if config.tools.voice.enabled() && !config.voice.enabled {
@@ -1349,16 +1389,12 @@ async fn handle_im_command(
     };
     let route = resolve_session_route(runtime, &channel, &base_session_key, &chat_id).await?;
     let response = match command {
-        "help" => ChannelResponse {
-            content: render_help_text(runtime),
-            reasoning: None,
-            metadata: BTreeMap::new(),
-        },
-        "stop" => ChannelResponse {
-            content: "Current turn stopped manually. No further tool calls were made.".to_string(),
-            reasoning: None,
-            metadata: stopped_turn_metadata("manual stop command", "im_command"),
-        },
+        "help" => channel_response(render_help_text(runtime), None, BTreeMap::new()),
+        "stop" => channel_response(
+            "Current turn stopped manually. No further tool calls were made.".to_string(),
+            None,
+            stopped_turn_metadata("manual stop command", "im_command"),
+        ),
         "new" | "start" => {
             let new_session_key = format!("{base_session_key}:{}", Uuid::new_v4().simple());
             let (new_session_provider, new_session_model) = resolve_new_session_target(runtime);
@@ -1390,28 +1426,28 @@ async fn handle_im_command(
             )
             .await
             {
-                Ok(Some(output)) => ChannelResponse {
-                    content: format_new_session_started_message(
+                Ok(Some(output)) => channel_response(
+                    format_new_session_started_message(
                         &new_session_key,
                         &new_session_provider,
                         &new_session_model,
                         Some(&output.content),
                     ),
-                    reasoning: output.reasoning,
-                    metadata: output.metadata,
-                },
-                Ok(None) => ChannelResponse {
-                    content: format_new_session_started_message(
+                    output.reasoning,
+                    output.metadata,
+                ),
+                Ok(None) => channel_response(
+                    format_new_session_started_message(
                         &new_session_key,
                         &new_session_provider,
                         &new_session_model,
                         None,
                     ),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                },
-                Err(err) => ChannelResponse {
-                    content: format!(
+                    None,
+                    BTreeMap::new(),
+                ),
+                Err(err) => channel_response(
+                    format!(
                         "{}\n\n⚠️ Session bootstrap reply failed: {}",
                         format_new_session_started_message(
                             &new_session_key,
@@ -1421,20 +1457,19 @@ async fn handle_im_command(
                         ),
                         err
                     ),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                },
+                    None,
+                    BTreeMap::new(),
+                ),
             }
         }
         "model_provider" => {
             let provider_runtime = provider_runtime_snapshot(runtime);
             if provider_runtime.provider_default_models.len() <= 1 && arg.is_none() {
-                return Ok(Some(ChannelResponse {
-                    content: "ℹ️ Only one provider is configured, so switching is not required."
-                        .to_string(),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                }));
+                return Ok(Some(channel_response(
+                    "ℹ️ Only one provider is configured, so switching is not required.".to_string(),
+                    None,
+                    BTreeMap::new(),
+                )));
             }
             if let Some(provider_id) = first_arg_token(arg) {
                 let Some(default_model) = provider_runtime.provider_default_models.get(provider_id)
@@ -1445,13 +1480,11 @@ async fn handle_im_command(
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(", ");
-                    return Ok(Some(ChannelResponse {
-                        content: format!(
-                            "❌ Unknown provider: `{provider_id}`\n🧩 Available: {all}"
-                        ),
-                        reasoning: None,
-                        metadata: BTreeMap::new(),
-                    }));
+                    return Ok(Some(channel_response(
+                        format!("❌ Unknown provider: `{provider_id}`\n🧩 Available: {all}"),
+                        None,
+                        BTreeMap::new(),
+                    )));
                 };
                 let sessions = session_manager(runtime);
                 let (global_provider, global_model) = runtime_default_route(runtime);
@@ -1470,13 +1503,13 @@ async fn handle_im_command(
                         )
                         .await?;
                 }
-                ChannelResponse {
-                    content: format!(
+                channel_response(
+                    format!(
                         "✅ **Provider switched**\n\n🧩 Provider: `{provider_id}`\n🤖 Model: `{default_model}`"
                     ),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                }
+                    None,
+                    BTreeMap::new(),
+                )
             } else {
                 let lines = provider_runtime
                     .provider_default_models
@@ -1490,21 +1523,21 @@ async fn handle_im_command(
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
-                ChannelResponse {
-                    content: format!("🧩 **Providers**\n\n{lines}"),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                }
+                channel_response(
+                    format!("🧩 **Providers**\n\n{lines}"),
+                    None,
+                    BTreeMap::new(),
+                )
             }
         }
         "model" => {
             if let Some(model) = arg.map(str::trim).filter(|value| !value.is_empty()) {
                 if model.trim().is_empty() {
-                    return Ok(Some(ChannelResponse {
-                        content: "❌ Model name cannot be empty.".to_string(),
-                        reasoning: None,
-                        metadata: BTreeMap::new(),
-                    }));
+                    return Ok(Some(channel_response(
+                        "❌ Model name cannot be empty.".to_string(),
+                        None,
+                        BTreeMap::new(),
+                    )));
                 }
                 let sessions = session_manager(runtime);
                 let (global_provider, global_model) = runtime_default_route(runtime);
@@ -1523,54 +1556,52 @@ async fn handle_im_command(
                         )
                         .await?;
                 }
-                ChannelResponse {
-                    content: format!(
+                channel_response(
+                    format!(
                         "✅ **Model updated**\n\n🧩 Provider: `{}`\n🤖 Model: `{model}`",
                         route.model_provider
                     ),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                }
+                    None,
+                    BTreeMap::new(),
+                )
             } else {
-                ChannelResponse {
-                    content: format!(
+                channel_response(
+                    format!(
                         "🤖 **Current model**\n\n🧩 Provider: `{}`\n🤖 Model: `{}`",
                         route.model_provider, route.model
                     ),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                }
+                    None,
+                    BTreeMap::new(),
+                )
             }
         }
         "approve" => {
             let Some(approval_id) = first_arg_token(arg) else {
-                return Ok(Some(ChannelResponse {
-                    content: "❌ Usage: `/approve <approval_id>`".to_string(),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                }));
+                return Ok(Some(channel_response(
+                    "❌ Usage: `/approve <approval_id>`".to_string(),
+                    None,
+                    BTreeMap::new(),
+                )));
             };
             let manager = approval_manager(runtime);
             let approval = match manager.get_approval(approval_id).await {
                 Ok(approval) => approval,
                 Err(_) => {
-                    return Ok(Some(ChannelResponse {
-                        content: format!("❌ Approval not found: `{approval_id}`"),
-                        reasoning: None,
-                        metadata: BTreeMap::new(),
-                    }));
+                    return Ok(Some(channel_response(
+                        format!("❌ Approval not found: `{approval_id}`"),
+                        None,
+                        BTreeMap::new(),
+                    )));
                 }
             };
             if approval.session_key != route.active_session_key
                 && approval.session_key != base_session_key
             {
-                return Ok(Some(ChannelResponse {
-                    content: format!(
-                        "❌ Approval `{approval_id}` does not belong to current session."
-                    ),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                }));
+                return Ok(Some(channel_response(
+                    format!("❌ Approval `{approval_id}` does not belong to current session."),
+                    None,
+                    BTreeMap::new(),
+                )));
             }
             match approval.status {
                 ApprovalStatus::Pending => {
@@ -1583,11 +1614,11 @@ async fn handle_im_command(
                                 now_ms(),
                             )
                             .await?;
-                        return Ok(Some(ChannelResponse {
-                            content: format!("⌛ Approval expired: `{approval_id}`"),
-                            reasoning: None,
-                            metadata: BTreeMap::new(),
-                        }));
+                        return Ok(Some(channel_response(
+                            format!("⌛ Approval expired: `{approval_id}`"),
+                            None,
+                            BTreeMap::new(),
+                        )));
                     }
                     let approved = manager
                         .resolve_approval(
@@ -1599,14 +1630,14 @@ async fn handle_im_command(
                         .await?
                         .approval;
                     if approved.tool_name != "shell" {
-                        return Ok(Some(ChannelResponse {
-                            content: format!(
+                        return Ok(Some(channel_response(
+                            format!(
                                 "✅ Approval granted: `{}` (`{}`).\n\n请重试之前触发审批的操作。",
                                 approved.id, approved.tool_name
                             ),
-                            reasoning: None,
-                            metadata: BTreeMap::new(),
-                        }));
+                            None,
+                            BTreeMap::new(),
+                        )));
                     }
                     let execution_result = execute_approved_shell(
                         runtime,
@@ -1640,57 +1671,53 @@ async fn handle_im_command(
                     )
                     .await?;
                     match maybe_output {
-                        Some(output) => ChannelResponse {
-                            content: output.content,
-                            reasoning: output.reasoning,
-                            metadata: output.metadata,
-                        },
-                        None => ChannelResponse {
-                            content: format!(
+                        Some(output) => {
+                            channel_response(output.content, output.reasoning, output.metadata)
+                        }
+                        None => channel_response(
+                            format!(
                                 "✅ **Approval granted and command executed**\n\n{}",
                                 execution_result
                             ),
-                            reasoning: None,
-                            metadata: BTreeMap::new(),
-                        },
+                            None,
+                            BTreeMap::new(),
+                        ),
                     }
                 }
-                other => ChannelResponse {
-                    content: format_approve_already_handled_message(approval_id, other),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                },
+                other => channel_response(
+                    format_approve_already_handled_message(approval_id, other),
+                    None,
+                    BTreeMap::new(),
+                ),
             }
         }
         "reject" => {
             let Some(approval_id) = first_arg_token(arg) else {
-                return Ok(Some(ChannelResponse {
-                    content: "❌ Usage: `/reject <approval_id>`".to_string(),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                }));
+                return Ok(Some(channel_response(
+                    "❌ Usage: `/reject <approval_id>`".to_string(),
+                    None,
+                    BTreeMap::new(),
+                )));
             };
             let manager = approval_manager(runtime);
             let approval = match manager.get_approval(approval_id).await {
                 Ok(approval) => approval,
                 Err(_) => {
-                    return Ok(Some(ChannelResponse {
-                        content: format!("❌ Approval not found: `{approval_id}`"),
-                        reasoning: None,
-                        metadata: BTreeMap::new(),
-                    }));
+                    return Ok(Some(channel_response(
+                        format!("❌ Approval not found: `{approval_id}`"),
+                        None,
+                        BTreeMap::new(),
+                    )));
                 }
             };
             if approval.session_key != route.active_session_key
                 && approval.session_key != base_session_key
             {
-                return Ok(Some(ChannelResponse {
-                    content: format!(
-                        "❌ Approval `{approval_id}` does not belong to current session."
-                    ),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                }));
+                return Ok(Some(channel_response(
+                    format!("❌ Approval `{approval_id}` does not belong to current session."),
+                    None,
+                    BTreeMap::new(),
+                )));
             }
             match approval.status {
                 ApprovalStatus::Pending => {
@@ -1703,11 +1730,11 @@ async fn handle_im_command(
                                 now_ms(),
                             )
                             .await?;
-                        return Ok(Some(ChannelResponse {
-                            content: format!("⌛ Approval expired: `{approval_id}`"),
-                            reasoning: None,
-                            metadata: BTreeMap::new(),
-                        }));
+                        return Ok(Some(channel_response(
+                            format!("⌛ Approval expired: `{approval_id}`"),
+                            None,
+                            BTreeMap::new(),
+                        )));
                     }
                     manager
                         .resolve_approval(
@@ -1717,32 +1744,32 @@ async fn handle_im_command(
                             now_ms(),
                         )
                         .await?;
-                    ChannelResponse {
-                        content: format!(
+                    channel_response(
+                        format!(
                             "🛑 Approval rejected: `{approval_id}` (`{}`).",
                             approval.tool_name
                         ),
-                        reasoning: None,
-                        metadata: BTreeMap::new(),
-                    }
+                        None,
+                        BTreeMap::new(),
+                    )
                 }
-                other => ChannelResponse {
-                    content: format!(
+                other => channel_response(
+                    format!(
                         "ℹ️ Approval `{approval_id}` is already `{}`.",
                         other.as_str()
                     ),
-                    reasoning: None,
-                    metadata: BTreeMap::new(),
-                },
+                    None,
+                    BTreeMap::new(),
+                ),
             }
         }
         other => {
             let help = render_help_text(runtime);
-            ChannelResponse {
-                content: format!("❌ Unknown command: `/{other}`\n\n{help}"),
-                reasoning: None,
-                metadata: BTreeMap::new(),
-            }
+            channel_response(
+                format!("❌ Unknown command: `/{other}`\n\n{help}"),
+                None,
+                BTreeMap::new(),
+            )
         }
     };
     Ok(Some(response))
@@ -2672,11 +2699,13 @@ pub async fn submit_and_stream_output(
                 };
                 match event {
                     AgentExecutionStreamEvent::Snapshot { content, reasoning } => {
-                        writer.write(ChannelStreamEvent::Snapshot(ChannelResponse {
-                            content,
-                            reasoning,
-                            metadata: BTreeMap::new(),
-                        })).await?;
+                        writer
+                            .write(ChannelStreamEvent::Snapshot(channel_response(
+                                content,
+                                reasoning,
+                                BTreeMap::new(),
+                            )))
+                            .await?;
                     }
                     AgentExecutionStreamEvent::Clear => {
                         writer.write(ChannelStreamEvent::Clear).await?;
@@ -2715,11 +2744,11 @@ pub async fn submit_and_stream_output(
                 metadata: msg.payload.metadata.clone(),
             };
             writer
-                .write(ChannelStreamEvent::Snapshot(ChannelResponse {
-                    content: output.content.clone(),
-                    reasoning: output.reasoning.clone(),
-                    metadata: output.metadata.clone(),
-                }))
+                .write(ChannelStreamEvent::Snapshot(channel_response(
+                    output.content.clone(),
+                    output.reasoning.clone(),
+                    output.metadata.clone(),
+                )))
                 .await?;
             Ok(Some(output))
         }
@@ -2954,10 +2983,10 @@ mod tests {
         compression_trigger_interval, configured_default_model, extract_skill_short_description,
         first_arg_token, format_approve_already_handled_message,
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
-        parse_im_command, resolve_session_route, resolve_webhook_agent_model, should_emit_outbound,
-        should_trigger_compression, spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output,
-        sync_runtime_providers, sync_runtime_tools, trim_conversation_history,
-        voice_tool_is_enabled,
+        parse_im_command, parse_outbound_attachments, resolve_session_route,
+        resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
+        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, sync_runtime_providers,
+        sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
@@ -2986,6 +3015,38 @@ mod tests {
     struct BootstrapCaptureProvider {
         last_user_message: Arc<Mutex<Option<String>>>,
         last_tool_choice: Arc<Mutex<Option<Value>>>,
+    }
+
+    #[test]
+    fn parse_outbound_attachments_reads_structured_metadata() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "channel.attachments".to_string(),
+            json!([{
+                "archive_id": "arch-1",
+                "kind": "image",
+                "filename": "chart.png",
+                "caption": "latest chart"
+            }]),
+        );
+
+        let attachments = parse_outbound_attachments(&metadata);
+
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].archive_id, "arch-1");
+        assert_eq!(attachments[0].filename.as_deref(), Some("chart.png"));
+    }
+
+    #[test]
+    fn parse_outbound_attachments_ignores_invalid_metadata() {
+        let metadata = BTreeMap::from([(
+            "channel.attachments".to_string(),
+            json!([{ "archive_id": "" }]),
+        )]);
+
+        let attachments = parse_outbound_attachments(&metadata);
+
+        assert!(attachments.is_empty());
     }
 
     #[async_trait::async_trait]
@@ -3284,6 +3345,7 @@ mod tests {
         let tool_names = sync_runtime_tools(&runtime, &config)
             .await
             .expect("tool sync should succeed");
+        assert!(tool_names.iter().any(|name| name == "channel_attachment"));
         assert!(tool_names.iter().any(|name| name == "geo"));
         assert!(tool_names.iter().any(|name| name == "sub_agent"));
         assert!(!tool_names.iter().any(|name| name == "voice"));
@@ -3322,6 +3384,7 @@ mod tests {
         assert!(names.iter().any(|name| name == "voice"));
         assert!(names.iter().any(|name| name == "shell"));
         assert!(names.iter().any(|name| name == "sub_agent"));
+        assert!(!names.iter().any(|name| name == "channel_attachment"));
     }
 
     fn test_session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {

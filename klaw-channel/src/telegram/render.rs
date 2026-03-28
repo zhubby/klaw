@@ -538,6 +538,7 @@ mod tests {
             content: "**Title**\n\n```text\n/help\n```".to_string(),
             reasoning: Some("line 1\nline 2".to_string()),
             metadata: BTreeMap::new(),
+            attachments: Vec::new(),
         };
 
         let rendered = render_telegram_response(&output, true);
@@ -561,6 +562,7 @@ mod tests {
             content: "approval_id=from-content".to_string(),
             reasoning: None,
             metadata,
+            attachments: Vec::new(),
         };
 
         assert_eq!(extract_approval_id(&output).as_deref(), Some("approval-1"));
@@ -575,6 +577,7 @@ mod tests {
             content: "📘 **Command Center**".to_string(),
             reasoning: None,
             metadata: BTreeMap::new(),
+            attachments: Vec::new(),
         };
 
         let rendered = render_telegram_response(&output, false);
@@ -588,6 +591,7 @@ mod tests {
             content: "# Title\n\n> quoted **line**\n\n- item with [link](https://example.com?q=1&x=2)\n1. `code`\n\n__underline__ ~~gone~~ ||spoiler|| _italic_".to_string(),
             reasoning: None,
             metadata: BTreeMap::new(),
+            attachments: Vec::new(),
         };
 
         let rendered = render_telegram_response(&output, false);

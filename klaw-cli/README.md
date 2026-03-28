@@ -65,6 +65,7 @@
 - runtime 审批命令与工具审批流统一通过 `klaw-approval` manager 层处理状态流转与消费
 - runtime 对 `approval_required` 工具结果会直接透传审批提示，不再包装成通用的 tool failure 文案
 - runtime 对 `stop` 工具信号会立即结束当前轮次，并在 outbound metadata 中写入 `turn.stopped` / `turn.stop_signal`
+- runtime 现支持从 outbound metadata 的 `channel.attachments` 解析结构化附件，并把 archive 驱动的图片/文件回复透传给 Telegram 与 DingTalk channel adapter
 - runtime 现在会把 `sub_agent` 的 LLM 审计按父 session 持久化，并在审计记录 metadata 中附带 parent/child session 关联信息
 - runtime 现在会异步写入 `tool_audit`，持久化每次工具调用的完整参数、结果/失败详情、signals 与 tool call metadata，并让 `sub_agent` 的工具调用回写到父 session
 - runtime 和 `klaw session` 命令的会话状态/历史操作统一通过 `klaw-session` manager 层处理

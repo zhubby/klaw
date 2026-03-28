@@ -2,6 +2,13 @@
 
 ## 2026-03-28
 
+### Added
+
+- `ChannelResponse` 新增结构化 `attachments` 字段，支持基于 `archive_id` 的出站附件回复能力
+- 新增共享出站附件解析层：channel 现在可从 archive 读取字节并按渠道能力发送图片或文件
+- `telegram` 新增出站附件发送：图片走 `sendPhoto`，其他文件走 `sendDocument`
+- `dingtalk` 应用机器人新增出站附件发送：图片上传媒体后以内嵌 Markdown 图片显示，文件上传后以原生文件消息发送
+
 ### Fixed
 
 - `dingtalk` 入站媒体下载候选顺序调整为优先 `downloadCode`、再回退 `pictureDownloadCode`，缓解图片附件调用 `/v1.0/robot/messageFiles/download` 时偶发 `HTTP 500 unknownError`

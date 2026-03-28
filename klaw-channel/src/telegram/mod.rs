@@ -9,11 +9,12 @@ use self::types::{
 };
 use crate::{
     Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
-    ChannelStreamWriter,
+    ChannelStreamWriter, OutboundAttachment,
     manager::{ChannelKind, ManagedChannelDriver},
     media::{
         ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES, ingest_media_reference_bytes,
     },
+    outbound::resolve_outbound_attachment,
 };
 use klaw_archive::open_default_archive_service;
 use klaw_config::{TelegramConfig, TelegramProxyConfig};
@@ -431,7 +432,22 @@ impl TelegramChannel {
                 rebuilt_client.send_message(request).await?
             }
         };
+        if extract_approval_id(output).is_none() {
+            self.send_attachments(chat_id, output);
+        }
         Ok(())
+    }
+
+    fn send_attachments(&self, chat_id: &str, output: &ChannelResponse) {
+        if output.attachments.is_empty() {
+            return;
+        }
+        let client = self.client.clone();
+        let chat_id = chat_id.to_string();
+        let attachments = output.attachments.clone();
+        tokio::task::spawn_local(async move {
+            deliver_telegram_attachments(client, chat_id, attachments).await;
+        });
     }
 
     async fn submit_request(
@@ -538,6 +554,71 @@ impl TelegramChannel {
     }
 }
 
+async fn deliver_telegram_attachments(
+    client: TelegramApiClient,
+    chat_id: String,
+    attachments: Vec<OutboundAttachment>,
+) {
+    let archive_service = match open_default_archive_service().await {
+        Ok(service) => service,
+        Err(error) => {
+            warn!(
+                chat_id,
+                error = %error,
+                "failed to open archive service for telegram outbound attachments"
+            );
+            return;
+        }
+    };
+
+    for attachment in &attachments {
+        let resolved = match resolve_outbound_attachment(&archive_service, attachment).await {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                warn!(
+                    chat_id,
+                    archive_id = attachment.archive_id.as_str(),
+                    error = %error,
+                    "failed to resolve telegram outbound attachment"
+                );
+                continue;
+            }
+        };
+
+        let result = match resolved.kind {
+            crate::OutboundAttachmentKind::Image => {
+                client
+                    .send_photo_bytes(
+                        &chat_id,
+                        &resolved.filename,
+                        &resolved.bytes,
+                        resolved.caption.as_deref(),
+                    )
+                    .await
+            }
+            crate::OutboundAttachmentKind::File => {
+                client
+                    .send_document_bytes(
+                        &chat_id,
+                        &resolved.filename,
+                        &resolved.bytes,
+                        resolved.caption.as_deref(),
+                    )
+                    .await
+            }
+        };
+
+        if let Err(error) = result {
+            warn!(
+                chat_id,
+                archive_id = resolved.archive_id.as_str(),
+                error = %error,
+                "failed to send telegram outbound attachment"
+            );
+        }
+    }
+}
+
 pub async fn dispatch_background_outbound(
     config: &TelegramConfig,
     output: &OutboundMessage,
@@ -552,6 +633,7 @@ pub async fn dispatch_background_outbound(
             .map(ToString::to_string)
             .filter(|value| !value.trim().is_empty()),
         metadata: output.metadata.clone(),
+        attachments: Vec::new(),
     };
     let request = if let Some(approval_id) = extract_approval_id(&response) {
         SendMessageRequest::html(
@@ -673,7 +755,22 @@ impl TelegramStreamWriter {
             }
         }
         self.last_update_at = Some(Instant::now());
+        if extract_approval_id(output).is_none() {
+            self.send_attachments(output);
+        }
         Ok(())
+    }
+
+    fn send_attachments(&mut self, output: &ChannelResponse) {
+        if output.attachments.is_empty() {
+            return;
+        }
+        let client = self.client.clone();
+        let chat_id = self.chat_id.clone();
+        let attachments = output.attachments.clone();
+        tokio::task::spawn_local(async move {
+            deliver_telegram_attachments(client, chat_id, attachments).await;
+        });
     }
 }
 
@@ -948,6 +1045,7 @@ mod tests {
             content: "**Title**\n\n```text\n/help\n```".to_string(),
             reasoning: Some("line 1".to_string()),
             metadata,
+            attachments: Vec::new(),
         };
 
         let rendered = render_telegram_response(&output, true);

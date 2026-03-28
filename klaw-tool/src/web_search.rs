@@ -185,6 +185,7 @@ impl Tool for WebSearchTool {
         Ok(ToolOutput {
             content_for_model: content.clone(),
             content_for_user: Some(content),
+            signals: Vec::new(),
         })
     }
 }

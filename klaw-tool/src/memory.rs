@@ -294,6 +294,7 @@ impl Tool for MemoryTool {
         Ok(ToolOutput {
             content_for_model: rendered.clone(),
             content_for_user: Some(rendered),
+            signals: Vec::new(),
         })
     }
 }

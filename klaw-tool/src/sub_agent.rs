@@ -149,6 +149,7 @@ impl SubAgentTool {
             return Ok(ToolOutput {
                 content_for_model: output.content.clone(),
                 content_for_user: Some(output.content),
+                signals: Vec::new(),
             });
         }
 

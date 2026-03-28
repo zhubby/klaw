@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-28
+
+### Added
+
+- shared channel runtime 现在会从 outbound metadata 的 `channel.attachments` 解析结构化附件，并把它们映射到 `ChannelResponse.attachments`
+
 ## 2026-03-27
 
 ### Added

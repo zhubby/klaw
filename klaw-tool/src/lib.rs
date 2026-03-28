@@ -1,6 +1,7 @@
 pub mod apply_patch;
 pub mod approval;
 pub mod archive;
+pub mod channel_attachment;
 pub mod cron_manager;
 pub mod geo;
 pub mod heartbeat_manager;
@@ -24,6 +25,7 @@ use thiserror::Error;
 pub use apply_patch::ApplyPatchTool;
 pub use approval::ApprovalTool;
 pub use archive::ArchiveTool;
+pub use channel_attachment::ChannelAttachmentTool;
 pub use cron_manager::CronManagerTool;
 pub use geo::GeoTool;
 pub use heartbeat_manager::HeartbeatManagerTool;
@@ -77,6 +79,8 @@ pub struct ToolOutput {
     pub content_for_model: String,
     /// 可直接给用户的可读内容。
     pub content_for_user: Option<String>,
+    /// 成功执行后仍需上抛给 runtime 的结构化信号。
+    pub signals: Vec<ToolSignal>,
 }
 
 /// 工具侧发出的结构化信号，可由 runtime/channel 消费。
@@ -118,6 +122,28 @@ impl ToolSignal {
         }
         Self {
             kind: "stop".to_string(),
+            payload,
+        }
+    }
+
+    pub fn channel_attachment(
+        archive_id: &str,
+        kind: &str,
+        filename: Option<&str>,
+        caption: Option<&str>,
+    ) -> Self {
+        let mut payload = serde_json::json!({
+            "archive_id": archive_id.trim(),
+            "kind": kind.trim(),
+        });
+        if let Some(filename) = filename.map(str::trim).filter(|value| !value.is_empty()) {
+            payload["filename"] = serde_json::Value::String(filename.to_string());
+        }
+        if let Some(caption) = caption.map(str::trim).filter(|value| !value.is_empty()) {
+            payload["caption"] = serde_json::Value::String(caption.to_string());
+        }
+        Self {
+            kind: "channel_attachment".to_string(),
             payload,
         }
     }

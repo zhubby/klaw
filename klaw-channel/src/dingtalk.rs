@@ -1,11 +1,12 @@
 use crate::{
-    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime,
+    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, OutboundAttachment,
     manager::{ChannelKind, ManagedChannelDriver},
     media::{
         ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES, attach_declared_media_metadata,
         build_media_reference, first_object_string_value, first_string_value,
         ingest_media_reference_bytes, resolve_metadata_value_candidates,
     },
+    outbound::resolve_outbound_attachment,
     render::{OutputRenderStyle, render_agent_output},
 };
 use futures_util::{SinkExt, StreamExt};
@@ -622,21 +623,24 @@ impl DingtalkChannel {
                         self.config.show_reasoning,
                         OutputRenderStyle::Markdown,
                     );
-                    if let Err(err) = self
-                        .client
-                        .send_session_webhook_markdown(
-                            &inbound.session_webhook,
-                            &self.config.bot_title,
-                            &body,
-                        )
-                        .await
-                    {
-                        warn!(
-                            chat_id = inbound.chat_id.as_str(),
-                            error = %err,
-                            "failed to send dingtalk reply"
-                        );
+                    if !body.trim().is_empty() {
+                        if let Err(err) = self
+                            .client
+                            .send_session_webhook_markdown(
+                                &inbound.session_webhook,
+                                &self.config.bot_title,
+                                &body,
+                            )
+                            .await
+                        {
+                            warn!(
+                                chat_id = inbound.chat_id.as_str(),
+                                error = %err,
+                                "failed to send dingtalk reply"
+                            );
+                        }
                     }
+                    self.send_attachments(&inbound.session_webhook, &inbound.chat_id, &output);
                 }
             }
             Ok(None) => {}
@@ -798,6 +802,140 @@ impl DingtalkChannel {
                     );
                 }
             }
+        }
+    }
+
+    fn send_attachments(&self, session_webhook: &str, chat_id: &str, output: &ChannelResponse) {
+        if output.attachments.is_empty() {
+            return;
+        }
+        let client = self.client.clone();
+        let config = self.config.clone();
+        let session_webhook = session_webhook.to_string();
+        let chat_id = chat_id.to_string();
+        let attachments = output.attachments.clone();
+        tokio::task::spawn_local(async move {
+            deliver_dingtalk_attachments(client, config, session_webhook, chat_id, attachments)
+                .await;
+        });
+    }
+}
+
+async fn deliver_dingtalk_attachments(
+    client: DingtalkApiClient,
+    config: DingtalkChannelConfig,
+    session_webhook: String,
+    chat_id: String,
+    attachments: Vec<OutboundAttachment>,
+) {
+    let archive_service = match open_default_archive_service().await {
+        Ok(service) => service,
+        Err(error) => {
+            warn!(
+                chat_id,
+                error = %error,
+                "failed to open archive service for dingtalk outbound attachments"
+            );
+            return;
+        }
+    };
+
+    let access_token = match client
+        .fetch_access_token(&config.client_id, &config.client_secret)
+        .await
+    {
+        Ok(token) => token,
+        Err(error) => {
+            warn!(
+                chat_id,
+                error = %error,
+                "failed to fetch dingtalk access token for outbound attachments"
+            );
+            return;
+        }
+    };
+
+    for attachment in &attachments {
+        let resolved = match resolve_outbound_attachment(&archive_service, attachment).await {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                warn!(
+                    chat_id,
+                    archive_id = attachment.archive_id.as_str(),
+                    error = %error,
+                    "failed to resolve dingtalk outbound attachment"
+                );
+                continue;
+            }
+        };
+
+        let result = match resolved.kind {
+            crate::OutboundAttachmentKind::Image => {
+                let media_id = match client
+                    .upload_media(
+                        &access_token,
+                        &resolved.bytes,
+                        "image",
+                        &resolved.filename,
+                        resolved.mime_type.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(media_id) => media_id,
+                    Err(error) => {
+                        warn!(
+                            chat_id,
+                            archive_id = resolved.archive_id.as_str(),
+                            error = %error,
+                            "failed to upload dingtalk image attachment"
+                        );
+                        continue;
+                    }
+                };
+                client
+                    .send_session_webhook_image_markdown(
+                        &session_webhook,
+                        &config.bot_title,
+                        &media_id,
+                        resolved.caption.as_deref(),
+                    )
+                    .await
+            }
+            crate::OutboundAttachmentKind::File => {
+                let media_id = match client
+                    .upload_media(
+                        &access_token,
+                        &resolved.bytes,
+                        "file",
+                        &resolved.filename,
+                        resolved.mime_type.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(media_id) => media_id,
+                    Err(error) => {
+                        warn!(
+                            chat_id,
+                            archive_id = resolved.archive_id.as_str(),
+                            error = %error,
+                            "failed to upload dingtalk file attachment"
+                        );
+                        continue;
+                    }
+                };
+                client
+                    .send_session_webhook_file(&session_webhook, &media_id)
+                    .await
+            }
+        };
+
+        if let Err(error) = result {
+            warn!(
+                chat_id,
+                archive_id = resolved.archive_id.as_str(),
+                error = %error,
+                "failed to send dingtalk outbound attachment"
+            );
         }
     }
 }
@@ -979,7 +1117,15 @@ impl DingtalkApiClient {
         access_token: &str,
         audio_bytes: &[u8],
     ) -> ChannelResult<String> {
-        let media_id = self.upload_voice_media(access_token, audio_bytes).await?;
+        let media_id = self
+            .upload_media(
+                access_token,
+                audio_bytes,
+                "voice",
+                "voice.wav",
+                Some("audio/wav"),
+            )
+            .await?;
         let url = format!(
             "{DINGTALK_OAPI_BASE}{OAPI_ASR_TRANSLATE_PATH}?access_token={}",
             urlencoding::encode(access_token)
@@ -1020,18 +1166,24 @@ impl DingtalkApiClient {
             .ok_or_else(|| format!("missing result in dingtalk asr response body={body}").into())
     }
 
-    async fn upload_voice_media(
+    async fn upload_media(
         &self,
         access_token: &str,
-        audio_bytes: &[u8],
+        bytes: &[u8],
+        media_type: &str,
+        filename: &str,
+        mime_type: Option<&str>,
     ) -> ChannelResult<String> {
         let url = format!(
-            "{DINGTALK_OAPI_BASE}{OAPI_MEDIA_UPLOAD_PATH}?access_token={}&type=voice",
-            urlencoding::encode(access_token)
+            "{DINGTALK_OAPI_BASE}{OAPI_MEDIA_UPLOAD_PATH}?access_token={}&type={}",
+            urlencoding::encode(access_token),
+            urlencoding::encode(media_type),
         );
-        let part = reqwest::multipart::Part::bytes(audio_bytes.to_vec())
-            .file_name("voice.wav")
-            .mime_str("audio/wav")?;
+        let mut part =
+            reqwest::multipart::Part::bytes(bytes.to_vec()).file_name(filename.trim().to_string());
+        if let Some(mime_type) = mime_type.map(str::trim).filter(|value| !value.is_empty()) {
+            part = part.mime_str(mime_type)?;
+        }
         let form = reqwest::multipart::Form::new().part("media", part);
         let response = self.http.post(url).multipart(form).send().await?;
         let status = response.status();
@@ -1089,6 +1241,53 @@ impl DingtalkApiClient {
         if !status.is_success() {
             return Err(format!(
                 "dingtalk session webhook send failed with HTTP {}: {}",
+                status, body
+            )
+            .into());
+        }
+
+        Ok(())
+    }
+
+    async fn send_session_webhook_image_markdown(
+        &self,
+        session_webhook: &str,
+        title: &str,
+        media_id: &str,
+        caption: Option<&str>,
+    ) -> ChannelResult<()> {
+        let mut lines = Vec::new();
+        if let Some(caption) = caption.map(str::trim).filter(|value| !value.is_empty()) {
+            lines.push(caption.to_string());
+        }
+        lines.push(format!("![]({})", media_id.trim()));
+        self.send_session_webhook_markdown(session_webhook, title, &lines.join("\n\n"))
+            .await
+    }
+
+    async fn send_session_webhook_file(
+        &self,
+        session_webhook: &str,
+        media_id: &str,
+    ) -> ChannelResult<()> {
+        let response = self
+            .http
+            .post(session_webhook)
+            .json(&serde_json::json!({
+                "msgtype": "file",
+                "file": {
+                    "mediaId": media_id,
+                    "media_id": media_id,
+                }
+            }))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk session webhook file send failed with HTTP {}: {}",
                 status, body
             )
             .into());
@@ -2598,6 +2797,7 @@ mod tests {
                 content: "done".to_string(),
                 reasoning: Some("step1\nstep2".to_string()),
                 metadata: BTreeMap::new(),
+                attachments: Vec::new(),
             },
             true,
             OutputRenderStyle::Markdown,
@@ -2731,6 +2931,7 @@ mod tests {
                 "approval.id".to_string(),
                 serde_json::json!("from-metadata"),
             )]),
+            attachments: Vec::new(),
         };
         let approval_id = extract_approval_id_for_action_card(&output).expect("approval id");
         assert_eq!(approval_id, "from-metadata");
@@ -2742,6 +2943,7 @@ mod tests {
             content: "approval required: approval_id=from-content".to_string(),
             reasoning: None,
             metadata: BTreeMap::new(),
+            attachments: Vec::new(),
         };
         let approval_id = extract_approval_id_for_action_card(&output).expect("approval id");
         assert_eq!(approval_id, "from-content");
@@ -2759,6 +2961,7 @@ mod tests {
                     "command_preview": "pip3 install pymupdf -q"
                 }),
             )]),
+            attachments: Vec::new(),
         };
         let preview = extract_approval_command_preview(&output).expect("command preview");
         assert_eq!(preview, "pip3 install pymupdf -q");
@@ -2776,6 +2979,7 @@ mod tests {
                     "command_preview": "python3 -c \"print(1)\""
                 }),
             )]),
+            attachments: Vec::new(),
         };
         let body = build_approval_action_card_body(&output, "approval-1");
         assert!(body.contains("待执行命令"));

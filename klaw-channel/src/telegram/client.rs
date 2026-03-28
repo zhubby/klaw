@@ -88,6 +88,35 @@ impl TelegramApiClient {
         Ok(())
     }
 
+    pub async fn send_photo_bytes(
+        &self,
+        chat_id: &str,
+        filename: &str,
+        bytes: &[u8],
+        caption: Option<&str>,
+    ) -> ChannelResult<TelegramMessage> {
+        self.post_multipart("sendPhoto", "photo", chat_id, filename, bytes, caption)
+            .await
+    }
+
+    pub async fn send_document_bytes(
+        &self,
+        chat_id: &str,
+        filename: &str,
+        bytes: &[u8],
+        caption: Option<&str>,
+    ) -> ChannelResult<TelegramMessage> {
+        self.post_multipart(
+            "sendDocument",
+            "document",
+            chat_id,
+            filename,
+            bytes,
+            caption,
+        )
+        .await
+    }
+
     pub async fn download_file(&self, file_path: &str) -> ChannelResult<Vec<u8>> {
         let url = format!("{}/{}", self.file_base, file_path.trim_start_matches('/'));
         let response = self.http.get(url).send().await?;
@@ -110,6 +139,46 @@ impl TelegramApiClient {
     ) -> ChannelResult<T> {
         let url = format!("{}/{}", self.api_base, method);
         let response = self.http.post(url).json(body).send().await?;
+        let status = response.status();
+        let envelope: TelegramApiEnvelope<T> = response.json().await?;
+        if !status.is_success() || !envelope.ok {
+            return Err(format!(
+                "telegram {} failed: HTTP {} description={}",
+                method,
+                status,
+                envelope
+                    .description
+                    .as_deref()
+                    .unwrap_or("unknown telegram api error")
+            )
+            .into());
+        }
+        envelope
+            .result
+            .ok_or_else(|| format!("telegram {} missing result", method).into())
+    }
+
+    async fn post_multipart<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        field_name: &str,
+        chat_id: &str,
+        filename: &str,
+        bytes: &[u8],
+        caption: Option<&str>,
+    ) -> ChannelResult<T> {
+        let url = format!("{}/{}", self.api_base, method);
+        let part =
+            reqwest::multipart::Part::bytes(bytes.to_vec()).file_name(filename.trim().to_string());
+        let mut form = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.trim().to_string())
+            .part(field_name.to_string(), part);
+        if let Some(caption) = caption.map(str::trim).filter(|value| !value.is_empty()) {
+            form = form
+                .text("caption", caption.to_string())
+                .text("parse_mode", TelegramParseMode::Html.as_str().to_string());
+        }
+        let response = self.http.post(url).multipart(form).send().await?;
         let status = response.status();
         let envelope: TelegramApiEnvelope<T> = response.json().await?;
         if !status.is_success() || !envelope.ok {

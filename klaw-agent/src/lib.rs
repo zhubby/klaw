@@ -126,6 +126,21 @@ impl ToolInvocationResult {
     }
 
     #[must_use]
+    pub fn success_with_signals(
+        content_for_model: String,
+        signals: Vec<ToolInvocationSignal>,
+    ) -> Self {
+        Self {
+            ok: true,
+            content_for_model,
+            error_code: None,
+            error_details: None,
+            retryable: None,
+            signals,
+        }
+    }
+
+    #[must_use]
     pub fn error(
         content_for_model: String,
         error_code: String,

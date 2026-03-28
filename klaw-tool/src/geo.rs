@@ -88,6 +88,7 @@ impl Tool for GeoTool {
             })?;
             return Ok(ToolOutput {
                 content_for_user: Some(Self::format_user_message(&location)),
+                signals: Vec::new(),
                 content_for_model,
             });
         }

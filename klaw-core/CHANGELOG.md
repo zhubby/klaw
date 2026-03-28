@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-28
+
+### Changed
+- runtime prompt guidance now explicitly tells the model to use `channel_attachment` when an archived file or image should be sent back into chat, instead of only describing the file in plain text
+- current-message attachment guidance now points models at `channel_attachment` for returning archived attachments to the user
+
 ## 2026-03-26
 
 ### Added

@@ -438,6 +438,7 @@ impl Tool for ArchiveTool {
                 ToolError::ExecutionFailed(format!("failed to serialize archive response: {err}"))
             })?,
             content_for_user: None,
+            signals: Vec::new(),
         })
     }
 }
