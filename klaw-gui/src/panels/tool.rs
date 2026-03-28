@@ -34,6 +34,7 @@ pub struct ToolPanel {
     log_rows: Vec<ToolAuditRecord>,
     log_selected_id: Option<String>,
     log_summary_id: Option<String>,
+    log_summary_tab: ToolLogSummaryTab,
     log_session_options: Vec<String>,
     log_session_filter: Option<String>,
     log_start_date: Option<NaiveDate>,
@@ -54,6 +55,14 @@ enum ToolLogSortOrder {
     StartedAtAsc,
     #[default]
     StartedAtDesc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ToolLogSummaryTab {
+    #[default]
+    Arguments,
+    Result,
+    Metadata,
 }
 
 #[derive(Debug, Clone)]
@@ -162,14 +171,19 @@ struct ToolDescriptor {
 }
 
 const INSPECT_WINDOW_WIDTH: f32 = 760.0;
-const INSPECT_WINDOW_MIN_HEIGHT: f32 = 520.0;
 const INSPECT_WINDOW_MAX_HEIGHT: f32 = 760.0;
+const INSPECT_WINDOW_CHROME_HEIGHT: f32 = 56.0;
+const INSPECT_SECTION_CHROME_HEIGHT: f32 = 28.0;
+const INSPECT_DESCRIPTION_HEIGHT: f32 = 120.0;
 const INSPECT_SCHEMA_HEIGHT: f32 = 260.0;
 const LOGS_WINDOW_VIEWPORT_RATIO: f32 = 2.0 / 3.0;
 const LOGS_SUMMARY_WINDOW_WIDTH: f32 = 860.0;
 const LOGS_SUMMARY_WINDOW_HEIGHT: f32 = 720.0;
+const LOGS_SUMMARY_WINDOW_CHROME_HEIGHT: f32 = 56.0;
+const LOGS_SUMMARY_STATIC_HEIGHT: f32 = 220.0;
 const LOG_WINDOW_VIEWPORT_MARGIN: f32 = 48.0;
 const LOG_DETAIL_SECTION_HEIGHT: f32 = 220.0;
+const LOG_DETAIL_SECTION_BLOCK_HEIGHT: f32 = LOG_DETAIL_SECTION_HEIGHT + 28.0;
 const TOOL_LOG_PAGE_SIZE: i64 = 100;
 
 impl Default for ToolPanel {
@@ -188,6 +202,7 @@ impl Default for ToolPanel {
             log_rows: Vec::new(),
             log_selected_id: None,
             log_summary_id: None,
+            log_summary_tab: ToolLogSummaryTab::Arguments,
             log_session_options: Vec::new(),
             log_session_filter: None,
             log_start_date: Some(one_month_ago),
@@ -1165,15 +1180,14 @@ impl ToolPanel {
             job.wrap.max_width = wrap_width;
             ui.fonts_mut(|fonts| fonts.layout_job(job))
         };
-        let viewport_height = ui.ctx().input(|input| {
-            input
-                .viewport()
-                .inner_rect
-                .map(|rect| rect.height())
-                .unwrap_or(760.0)
-        });
-        let window_height =
-            (viewport_height - 96.0).clamp(INSPECT_WINDOW_MIN_HEIGHT, INSPECT_WINDOW_MAX_HEIGHT);
+        let preferred_window_height = preferred_inspect_window_height();
+        let window_size = constrained_window_size(
+            ui.ctx(),
+            INSPECT_WINDOW_WIDTH,
+            preferred_window_height.min(INSPECT_WINDOW_MAX_HEIGHT),
+        );
+        let inspect_body_height =
+            (window_size.y - INSPECT_WINDOW_CHROME_HEIGHT).max(INSPECT_SCHEMA_HEIGHT);
 
         let mut open = true;
         egui::Window::new(format!("Inspect Tool: {}", tool.name))
@@ -1185,42 +1199,81 @@ impl ToolPanel {
             .default_width(INSPECT_WINDOW_WIDTH)
             .min_width(INSPECT_WINDOW_WIDTH)
             .max_width(INSPECT_WINDOW_WIDTH)
-            .default_height(window_height)
-            .min_height(window_height)
-            .max_height(window_height)
+            .default_height(window_size.y)
+            .min_height(window_size.y)
+            .max_height(window_size.y)
             .show(ui.ctx(), |ui| {
                 let description = definition
                     .map(|item| item.description.as_str())
                     .unwrap_or(tool.description);
-                StripBuilder::new(ui)
-                    .size(Size::exact(72.0))
-                    .size(Size::exact(INSPECT_SCHEMA_HEIGHT + 28.0))
-                    .vertical(|mut strip| {
-                        strip.cell(|ui| {
-                            ui.strong("Description");
-                            ui.add_space(4.0);
-                            ui.label(description);
-                        });
+                egui::ScrollArea::vertical()
+                    .id_salt(("tool-inspect-body", tool.key))
+                    .max_height(inspect_body_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        StripBuilder::new(ui)
+                            .size(Size::exact(
+                                INSPECT_DESCRIPTION_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT,
+                            ))
+                            .size(Size::exact(
+                                INSPECT_SCHEMA_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT,
+                            ))
+                            .vertical(|mut strip| {
+                                strip.cell(|ui| {
+                                    ui.strong("Description");
+                                    ui.add_space(6.0);
+                                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                                        ui.set_min_height(INSPECT_DESCRIPTION_HEIGHT);
+                                        ui.set_max_height(INSPECT_DESCRIPTION_HEIGHT);
+                                        egui::ScrollArea::vertical()
+                                            .id_salt(("tool-inspect-description", tool.key))
+                                            .max_height(INSPECT_DESCRIPTION_HEIGHT)
+                                            .auto_shrink([false, false])
+                                            .show(ui, |ui| {
+                                                ui.label(description);
+                                            });
+                                    });
+                                });
 
-                        strip.cell(|ui| {
-                            ui.separator();
-                            ui.strong("Schema");
-                            ui.add_space(6.0);
-                            if definition.is_none() {
-                                ui.label("Runtime metadata unavailable for this tool.");
-                                return;
-                            }
-                            let editor_width = ui.available_width().max(1.0);
-                            ui.add_sized(
-                                [editor_width, INSPECT_SCHEMA_HEIGHT],
-                                egui::TextEdit::multiline(&mut schema_json)
-                                    .desired_width(f32::INFINITY)
-                                    .font(egui::TextStyle::Monospace)
-                                    .code_editor()
-                                    .layouter(&mut json_layouter)
-                                    .interactive(false),
-                            );
-                        });
+                                strip.cell(|ui| {
+                                    ui.separator();
+                                    ui.strong("Schema");
+                                    ui.add_space(6.0);
+                                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                                        ui.set_min_height(INSPECT_SCHEMA_HEIGHT);
+                                        ui.set_max_height(INSPECT_SCHEMA_HEIGHT);
+                                        if definition.is_none() {
+                                            egui::ScrollArea::vertical()
+                                                .id_salt(("tool-inspect-schema-empty", tool.key))
+                                                .max_height(INSPECT_SCHEMA_HEIGHT)
+                                                .auto_shrink([false, false])
+                                                .show(ui, |ui| {
+                                                    ui.label(
+                                                        "Runtime metadata unavailable for this tool.",
+                                                    );
+                                                });
+                                            return;
+                                        }
+
+                                        egui::ScrollArea::both()
+                                            .id_salt(("tool-inspect-schema", tool.key))
+                                            .max_height(INSPECT_SCHEMA_HEIGHT)
+                                            .auto_shrink([false, false])
+                                            .show(ui, |ui| {
+                                                let editor_width = ui.available_width().max(1.0);
+                                                ui.add_sized(
+                                                    [editor_width, INSPECT_SCHEMA_HEIGHT],
+                                                    egui::TextEdit::multiline(&mut schema_json)
+                                                        .desired_width(f32::INFINITY)
+                                                        .font(egui::TextStyle::Monospace)
+                                                        .code_editor()
+                                                        .layouter(&mut json_layouter)
+                                                        .interactive(false),
+                                                );
+                                            });
+                                    });
+                                });
+                            });
                     });
             });
 
@@ -1327,7 +1380,7 @@ impl ToolPanel {
                     }
                     ui.label(format!("Rows: {}", self.log_rows.len()));
                     ui.separator();
-                    ui.label("Right-click a row to open Summary.");
+                    ui.label("Double-click a row or right-click for Summary.");
                 });
                 let mut need_refresh = false;
                 ui.horizontal(|ui| {
@@ -1464,7 +1517,13 @@ impl ToolPanel {
                                     });
 
                                     let row_response = row.response();
-                                    if row_response.clicked() || row_response.secondary_clicked() {
+                                    if row_response.double_clicked() {
+                                        self.log_selected_id = Some(audit.id.clone());
+                                        self.log_summary_id = Some(audit.id.clone());
+                                        self.log_summary_tab = ToolLogSummaryTab::Arguments;
+                                    } else if row_response.clicked()
+                                        || row_response.secondary_clicked()
+                                    {
                                         self.log_selected_id = Some(audit.id.clone());
                                     }
                                     row_response.context_menu(|ui| {
@@ -1472,6 +1531,7 @@ impl ToolPanel {
                                         {
                                             self.log_selected_id = Some(audit.id.clone());
                                             self.log_summary_id = Some(audit.id.clone());
+                                            self.log_summary_tab = ToolLogSummaryTab::Arguments;
                                             ui.close();
                                         }
                                     });
@@ -1485,6 +1545,7 @@ impl ToolPanel {
             self.log_rows.clear();
             self.log_selected_id = None;
             self.log_summary_id = None;
+            self.log_summary_tab = ToolLogSummaryTab::Arguments;
             self.log_session_options.clear();
             self.log_session_filter = None;
             self.log_status_filter = LogStatusFilter::All;
@@ -1496,16 +1557,19 @@ impl ToolPanel {
         let Some(summary_id) = self.log_summary_id.clone() else {
             return;
         };
-        let Some(audit) = self.log_record_by_id(&summary_id) else {
+        let Some(audit) = self.log_record_by_id(&summary_id).cloned() else {
             self.log_summary_id = None;
             return;
         };
 
+        let desired_height = preferred_tool_log_summary_window_height(&audit);
         let window_size = constrained_window_size(
             ui.ctx(),
             LOGS_SUMMARY_WINDOW_WIDTH,
-            LOGS_SUMMARY_WINDOW_HEIGHT,
+            desired_height.min(LOGS_SUMMARY_WINDOW_HEIGHT),
         );
+        let summary_body_height =
+            (window_size.y - LOGS_SUMMARY_WINDOW_CHROME_HEIGHT).max(LOG_DETAIL_SECTION_BLOCK_HEIGHT);
         let mut open = true;
         egui::Window::new(format!("Tool Log Summary: {}", audit.tool_name))
             .id(egui::Id::new((
@@ -1523,18 +1587,20 @@ impl ToolPanel {
             .min_height(window_size.y)
             .max_height(window_size.y)
             .show(ui.ctx(), |ui| {
-                ui.label("JSON sections stay inside fixed scroll areas.");
+                ui.label("Arguments / Result / Metadata supports tab switching.");
                 ui.separator();
                 egui::ScrollArea::vertical()
                     .id_salt(("tool-log-summary-body", audit.id.as_str()))
+                    .max_height(summary_body_height)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        render_tool_log_summary(ui, audit);
+                        render_tool_log_summary(ui, &audit, &mut self.log_summary_tab);
                     });
             });
 
         if !open {
             self.log_summary_id = None;
+            self.log_summary_tab = ToolLogSummaryTab::Arguments;
         }
     }
 }
@@ -1828,7 +1894,11 @@ fn optional_string(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-fn render_tool_log_summary(ui: &mut egui::Ui, audit: &ToolAuditRecord) {
+fn render_tool_log_summary(
+    ui: &mut egui::Ui,
+    audit: &ToolAuditRecord,
+    active_tab: &mut ToolLogSummaryTab,
+) {
     ui.strong("Summary");
     egui::Grid::new(("tool-log-summary", audit.id.as_str()))
         .num_columns(2)
@@ -1866,19 +1936,35 @@ fn render_tool_log_summary(ui: &mut egui::Ui, audit: &ToolAuditRecord) {
             ui.end_row();
         });
     ui.separator();
-    render_json_section(
-        ui,
-        "Arguments",
-        &audit.arguments_json,
-        &format!("tool-log-arguments:{}", audit.id),
-    );
+
+    ui.horizontal(|ui| {
+        ui.selectable_value(active_tab, ToolLogSummaryTab::Arguments, "Arguments");
+        ui.selectable_value(active_tab, ToolLogSummaryTab::Result, "Result");
+        ui.selectable_value(active_tab, ToolLogSummaryTab::Metadata, "Metadata");
+    });
     ui.separator();
-    render_text_section(
-        ui,
-        "Result",
-        &audit.result_content,
-        &format!("tool-log-result:{}", audit.id),
-    );
+
+    match active_tab {
+        ToolLogSummaryTab::Arguments => render_json_section(
+            ui,
+            "Arguments",
+            &audit.arguments_json,
+            &format!("tool-log-arguments:{}", audit.id),
+        ),
+        ToolLogSummaryTab::Result => render_text_section(
+            ui,
+            "Result",
+            &audit.result_content,
+            &format!("tool-log-result:{}", audit.id),
+        ),
+        ToolLogSummaryTab::Metadata => render_optional_json_section(
+            ui,
+            "Metadata",
+            audit.metadata_json.as_deref(),
+            &format!("tool-log-metadata:{}", audit.id),
+        ),
+    }
+
     if let Some(error_message) = audit.error_message.as_deref() {
         ui.separator();
         render_text_section(
@@ -1906,28 +1992,27 @@ fn render_tool_log_summary(ui: &mut egui::Ui, audit: &ToolAuditRecord) {
             &format!("tool-log-signals:{}", audit.id),
         );
     }
-    if let Some(raw) = audit.metadata_json.as_deref() {
-        ui.separator();
-        render_json_section(
-            ui,
-            "Metadata",
-            raw,
-            &format!("tool-log-metadata:{}", audit.id),
-        );
-    }
 }
 
 fn render_text_section(ui: &mut egui::Ui, title: &str, body: &str, scroll_id: &str) {
     ui.strong(title);
     egui::Frame::group(ui.style()).show(ui, |ui| {
+        let section_size = egui::vec2(ui.available_width(), LOG_DETAIL_SECTION_HEIGHT);
         ui.set_min_height(LOG_DETAIL_SECTION_HEIGHT);
-        egui::ScrollArea::both()
-            .id_salt(scroll_id)
-            .max_height(LOG_DETAIL_SECTION_HEIGHT)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.code(body);
-            });
+        ui.set_max_height(LOG_DETAIL_SECTION_HEIGHT);
+        ui.allocate_ui_with_layout(
+            section_size,
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::both()
+                    .id_salt(scroll_id)
+                    .max_height(LOG_DETAIL_SECTION_HEIGHT)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.code(body);
+                    });
+            },
+        );
     });
 }
 
@@ -1948,20 +2033,62 @@ fn tool_call_id_label(audit: &ToolAuditRecord) -> String {
 fn render_json_section(ui: &mut egui::Ui, title: &str, raw: &str, scroll_id: &str) {
     ui.strong(title);
     egui::Frame::group(ui.style()).show(ui, |ui| {
+        let section_size = egui::vec2(ui.available_width(), LOG_DETAIL_SECTION_HEIGHT);
         ui.set_min_height(LOG_DETAIL_SECTION_HEIGHT);
-        egui::ScrollArea::both()
-            .id_salt(scroll_id)
-            .max_height(LOG_DETAIL_SECTION_HEIGHT)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                match serde_json::from_str::<serde_json::Value>(raw) {
-                    Ok(value) => show_json_tree_with_id(ui, &value, scroll_id),
-                    Err(_) => {
-                        ui.code(raw);
-                    }
-                }
-            });
+        ui.set_max_height(LOG_DETAIL_SECTION_HEIGHT);
+        ui.allocate_ui_with_layout(
+            section_size,
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::both()
+                    .id_salt(scroll_id)
+                    .max_height(LOG_DETAIL_SECTION_HEIGHT)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| match serde_json::from_str::<serde_json::Value>(raw) {
+                        Ok(value) => show_json_tree_with_id(ui, &value, scroll_id),
+                        Err(_) => {
+                            ui.code(raw);
+                        }
+                    });
+            },
+        );
     });
+}
+
+fn render_optional_json_section(
+    ui: &mut egui::Ui,
+    title: &str,
+    raw: Option<&str>,
+    scroll_id: &str,
+) {
+    match raw {
+        Some(raw) => render_json_section(ui, title, raw, scroll_id),
+        None => render_text_section(ui, title, "<empty>", scroll_id),
+    }
+}
+
+fn preferred_inspect_window_height() -> f32 {
+    INSPECT_WINDOW_CHROME_HEIGHT
+        + INSPECT_DESCRIPTION_HEIGHT
+        + INSPECT_SCHEMA_HEIGHT
+        + INSPECT_SECTION_CHROME_HEIGHT * 2.0
+}
+
+fn preferred_tool_log_summary_window_height(audit: &ToolAuditRecord) -> f32 {
+    let mut section_count = 1.0;
+    if audit.error_message.is_some() {
+        section_count += 1.0;
+    }
+    if audit.error_details_json.is_some() {
+        section_count += 1.0;
+    }
+    if audit.signals_json.is_some() {
+        section_count += 1.0;
+    }
+
+    LOGS_SUMMARY_WINDOW_CHROME_HEIGHT
+        + LOGS_SUMMARY_STATIC_HEIGHT
+        + section_count * LOG_DETAIL_SECTION_BLOCK_HEIGHT
 }
 
 fn constrained_window_size(
