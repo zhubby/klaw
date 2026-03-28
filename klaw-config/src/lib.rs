@@ -344,6 +344,8 @@ pub struct DingtalkConfig {
     #[serde(default)]
     pub allowlist: Vec<String>,
     #[serde(default)]
+    pub local_attachments: LocalAttachmentConfig,
+    #[serde(default)]
     pub proxy: DingtalkProxyConfig,
 }
 
@@ -358,6 +360,7 @@ impl Default for DingtalkConfig {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
+            local_attachments: LocalAttachmentConfig::default(),
             proxy: DingtalkProxyConfig::default(),
         }
     }
@@ -391,6 +394,8 @@ pub struct TelegramConfig {
     #[serde(default)]
     pub allowlist: Vec<String>,
     #[serde(default)]
+    pub local_attachments: LocalAttachmentConfig,
+    #[serde(default)]
     pub proxy: TelegramProxyConfig,
 }
 
@@ -403,7 +408,24 @@ impl Default for TelegramConfig {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
+            local_attachments: LocalAttachmentConfig::default(),
             proxy: TelegramProxyConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LocalAttachmentConfig {
+    pub allowlist: Vec<String>,
+    pub max_bytes: u64,
+}
+
+impl Default for LocalAttachmentConfig {
+    fn default() -> Self {
+        Self {
+            allowlist: Vec::new(),
+            max_bytes: 10 * 1024 * 1024,
         }
     }
 }

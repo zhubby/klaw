@@ -1,5 +1,6 @@
 use crate::{
-    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, OutboundAttachment,
+    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, LocalAttachmentPolicy,
+    OutboundAttachment,
     manager::{ChannelKind, ManagedChannelDriver},
     media::{
         ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES, attach_declared_media_metadata,
@@ -11,12 +12,14 @@ use crate::{
 };
 use futures_util::{SinkExt, StreamExt};
 use klaw_archive::open_default_archive_service;
-use klaw_config::DingtalkConfig;
+use klaw_config::{DingtalkConfig, LocalAttachmentConfig};
 use klaw_core::{MediaReference, MediaSourceKind};
+use klaw_util::{default_data_dir, workspace_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -52,6 +55,7 @@ pub struct DingtalkChannelConfig {
     pub show_reasoning: bool,
     pub stream_output: bool,
     pub allowlist: Vec<String>,
+    pub local_attachments: LocalAttachmentConfig,
     pub proxy: DingtalkProxyConfig,
 }
 
@@ -65,6 +69,7 @@ impl Default for DingtalkChannelConfig {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
+            local_attachments: LocalAttachmentConfig::default(),
             proxy: DingtalkProxyConfig::default(),
         }
     }
@@ -103,6 +108,7 @@ impl DingtalkChannel {
             show_reasoning: config.show_reasoning,
             stream_output: config.stream_output,
             allowlist: config.allowlist,
+            local_attachments: config.local_attachments,
             proxy: DingtalkProxyConfig {
                 enabled: config.proxy.enabled,
                 url: config.proxy.url,
@@ -814,9 +820,23 @@ impl DingtalkChannel {
         let session_webhook = session_webhook.to_string();
         let chat_id = chat_id.to_string();
         let attachments = output.attachments.clone();
+        let local_policy = match self.local_attachment_policy() {
+            Ok(policy) => policy,
+            Err(error) => {
+                warn!(chat_id, error = %error, "failed to resolve dingtalk local attachment policy");
+                return;
+            }
+        };
         tokio::task::spawn_local(async move {
-            deliver_dingtalk_attachments(client, config, session_webhook, chat_id, attachments)
-                .await;
+            deliver_dingtalk_attachments(
+                client,
+                config,
+                session_webhook,
+                chat_id,
+                attachments,
+                local_policy,
+            )
+            .await;
         });
     }
 }
@@ -827,6 +847,7 @@ async fn deliver_dingtalk_attachments(
     session_webhook: String,
     chat_id: String,
     attachments: Vec<OutboundAttachment>,
+    local_policy: LocalAttachmentPolicy,
 ) {
     let archive_service = match open_default_archive_service().await {
         Ok(service) => service,
@@ -856,18 +877,19 @@ async fn deliver_dingtalk_attachments(
     };
 
     for attachment in &attachments {
-        let resolved = match resolve_outbound_attachment(&archive_service, attachment).await {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                warn!(
-                    chat_id,
-                    archive_id = attachment.archive_id.as_str(),
-                    error = %error,
-                    "failed to resolve dingtalk outbound attachment"
-                );
-                continue;
-            }
-        };
+        let resolved =
+            match resolve_outbound_attachment(&archive_service, &local_policy, attachment).await {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    warn!(
+                        chat_id,
+                        source = ?attachment.source,
+                        error = %error,
+                        "failed to resolve dingtalk outbound attachment"
+                    );
+                    continue;
+                }
+            };
 
         let result = match resolved.kind {
             crate::OutboundAttachmentKind::Image => {
@@ -885,7 +907,7 @@ async fn deliver_dingtalk_attachments(
                     Err(error) => {
                         warn!(
                             chat_id,
-                            archive_id = resolved.archive_id.as_str(),
+                            source = resolved.source_label.as_str(),
                             error = %error,
                             "failed to upload dingtalk image attachment"
                         );
@@ -916,7 +938,7 @@ async fn deliver_dingtalk_attachments(
                     Err(error) => {
                         warn!(
                             chat_id,
-                            archive_id = resolved.archive_id.as_str(),
+                            source = resolved.source_label.as_str(),
                             error = %error,
                             "failed to upload dingtalk file attachment"
                         );
@@ -932,11 +954,36 @@ async fn deliver_dingtalk_attachments(
         if let Err(error) = result {
             warn!(
                 chat_id,
-                archive_id = resolved.archive_id.as_str(),
+                source = resolved.source_label.as_str(),
                 error = %error,
                 "failed to send dingtalk outbound attachment"
             );
         }
+    }
+}
+
+fn resolve_local_attachment_policy(
+    config: &LocalAttachmentConfig,
+) -> ChannelResult<LocalAttachmentPolicy> {
+    let root = default_data_dir().ok_or_else(|| "failed to resolve home dir".to_string())?;
+    let workspace = workspace_dir(&root);
+    std::fs::create_dir_all(&workspace)?;
+    let workspace_root = std::fs::canonicalize(&workspace)?;
+    let allowlist = config
+        .allowlist
+        .iter()
+        .map(|path| PathBuf::from(path.trim()))
+        .collect();
+    Ok(LocalAttachmentPolicy {
+        workspace_root,
+        allowlist,
+        max_bytes: config.max_bytes,
+    })
+}
+
+impl DingtalkChannel {
+    fn local_attachment_policy(&self) -> ChannelResult<LocalAttachmentPolicy> {
+        resolve_local_attachment_policy(&self.config.local_attachments)
     }
 }
 

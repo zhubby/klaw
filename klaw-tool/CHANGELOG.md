@@ -3,7 +3,7 @@
 ## 2026-03-28
 
 ### Added
-- added `channel_attachment`, a messaging tool that turns an existing `archive_id` into a structured success signal so runtime/channel adapters can send the archived image or file back into the active chat
+- expanded `channel_attachment` so it can send either an existing `archive_id` or a policy-checked local file path back into the active chat
 - `ToolOutput` now supports success-path structured signals, allowing non-error tools to ask runtime for side effects such as channel attachment delivery
 
 ## 2026-03-27

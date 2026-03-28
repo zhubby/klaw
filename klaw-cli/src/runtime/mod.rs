@@ -13,7 +13,7 @@ use klaw_approval::{
 };
 use klaw_channel::{
     ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
-    ChannelStreamWriter, DefaultChannelDriverFactory, OutboundAttachment,
+    ChannelStreamWriter, DefaultChannelDriverFactory, OutboundAttachment, OutboundAttachmentSource,
 };
 use klaw_config::{AppConfig, ConfigStore, McpConfig, ToolEnabled};
 use klaw_core::{
@@ -275,10 +275,22 @@ fn parse_outbound_attachments(
             attachments
                 .into_iter()
                 .filter_map(|mut attachment| {
-                    attachment.archive_id = attachment.archive_id.trim().to_string();
-                    if attachment.archive_id.is_empty() {
-                        return None;
-                    }
+                    attachment.source = match attachment.source {
+                        OutboundAttachmentSource::ArchiveId { archive_id } => {
+                            let archive_id = archive_id.trim().to_string();
+                            if archive_id.is_empty() {
+                                return None;
+                            }
+                            OutboundAttachmentSource::ArchiveId { archive_id }
+                        }
+                        OutboundAttachmentSource::LocalPath { path } => {
+                            let path = path.trim().to_string();
+                            if path.is_empty() {
+                                return None;
+                            }
+                            OutboundAttachmentSource::LocalPath { path }
+                        }
+                    };
                     attachment.filename = attachment.filename.and_then(|value| {
                         let trimmed = value.trim().to_string();
                         (!trimmed.is_empty()).then_some(trimmed)
@@ -2989,6 +3001,7 @@ mod tests {
         sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
+    use klaw_channel::OutboundAttachmentSource;
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
     use klaw_core::{
         CircuitBreakerPolicy, DeadLetterPolicy, Envelope, EnvelopeHeader,
@@ -3033,7 +3046,10 @@ mod tests {
         let attachments = parse_outbound_attachments(&metadata);
 
         assert_eq!(attachments.len(), 1);
-        assert_eq!(attachments[0].archive_id, "arch-1");
+        assert!(matches!(
+            attachments[0].source,
+            OutboundAttachmentSource::ArchiveId { ref archive_id } if archive_id == "arch-1"
+        ));
         assert_eq!(attachments[0].filename.as_deref(), Some("chart.png"));
     }
 
@@ -3047,6 +3063,26 @@ mod tests {
         let attachments = parse_outbound_attachments(&metadata);
 
         assert!(attachments.is_empty());
+    }
+
+    #[test]
+    fn parse_outbound_attachments_reads_local_path_metadata() {
+        let metadata = BTreeMap::from([(
+            "channel.attachments".to_string(),
+            json!([{
+                "path": "/tmp/report.pdf",
+                "kind": "file",
+                "filename": "report.pdf"
+            }]),
+        )]);
+
+        let attachments = parse_outbound_attachments(&metadata);
+
+        assert_eq!(attachments.len(), 1);
+        assert!(matches!(
+            attachments[0].source,
+            OutboundAttachmentSource::LocalPath { ref path } if path == "/tmp/report.pdf"
+        ));
     }
 
     #[async_trait::async_trait]

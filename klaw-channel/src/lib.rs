@@ -3,6 +3,7 @@ use klaw_core::MediaReference;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
+use std::path::PathBuf;
 use std::time::Duration;
 
 pub mod dingtalk;
@@ -29,13 +30,28 @@ pub enum OutboundAttachmentKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OutboundAttachmentSource {
+    ArchiveId { archive_id: String },
+    LocalPath { path: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutboundAttachment {
-    pub archive_id: String,
+    #[serde(flatten)]
+    pub source: OutboundAttachmentSource,
     pub kind: OutboundAttachmentKind,
     #[serde(default)]
     pub filename: Option<String>,
     #[serde(default)]
     pub caption: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalAttachmentPolicy {
+    pub workspace_root: PathBuf,
+    pub allowlist: Vec<PathBuf>,
+    pub max_bytes: u64,
 }
 
 #[derive(Debug, Clone)]

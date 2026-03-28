@@ -9,7 +9,7 @@ use self::types::{
 };
 use crate::{
     Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
-    ChannelStreamWriter, OutboundAttachment,
+    ChannelStreamWriter, LocalAttachmentPolicy, OutboundAttachment,
     manager::{ChannelKind, ManagedChannelDriver},
     media::{
         ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES, ingest_media_reference_bytes,
@@ -17,12 +17,14 @@ use crate::{
     outbound::resolve_outbound_attachment,
 };
 use klaw_archive::open_default_archive_service;
-use klaw_config::{TelegramConfig, TelegramProxyConfig};
+use klaw_config::{LocalAttachmentConfig, TelegramConfig, TelegramProxyConfig};
 use klaw_core::OutboundMessage;
+use klaw_util::{default_data_dir, workspace_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
@@ -58,6 +60,7 @@ pub struct TelegramChannelConfig {
     pub show_reasoning: bool,
     pub stream_output: bool,
     pub allowlist: Vec<String>,
+    pub local_attachments: LocalAttachmentConfig,
     pub proxy: TelegramProxyConfig,
 }
 
@@ -69,6 +72,7 @@ impl Default for TelegramChannelConfig {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
+            local_attachments: LocalAttachmentConfig::default(),
             proxy: TelegramProxyConfig::default(),
         }
     }
@@ -82,6 +86,7 @@ impl TelegramChannel {
             show_reasoning: config.show_reasoning,
             stream_output: config.stream_output,
             allowlist: config.allowlist,
+            local_attachments: config.local_attachments,
             proxy: config.proxy,
         })
     }
@@ -445,8 +450,15 @@ impl TelegramChannel {
         let client = self.client.clone();
         let chat_id = chat_id.to_string();
         let attachments = output.attachments.clone();
+        let local_policy = match self.local_attachment_policy() {
+            Ok(policy) => policy,
+            Err(error) => {
+                warn!(chat_id, error = %error, "failed to resolve telegram local attachment policy");
+                return;
+            }
+        };
         tokio::task::spawn_local(async move {
-            deliver_telegram_attachments(client, chat_id, attachments).await;
+            deliver_telegram_attachments(client, chat_id, attachments, local_policy).await;
         });
     }
 
@@ -462,6 +474,7 @@ impl TelegramChannel {
                     self.client.clone(),
                     self.config.bot_token.clone(),
                     self.config.proxy.clone(),
+                    self.config.local_attachments.clone(),
                     chat_id.to_string(),
                     self.config.show_reasoning,
                 );
@@ -558,6 +571,7 @@ async fn deliver_telegram_attachments(
     client: TelegramApiClient,
     chat_id: String,
     attachments: Vec<OutboundAttachment>,
+    local_policy: LocalAttachmentPolicy,
 ) {
     let archive_service = match open_default_archive_service().await {
         Ok(service) => service,
@@ -572,18 +586,19 @@ async fn deliver_telegram_attachments(
     };
 
     for attachment in &attachments {
-        let resolved = match resolve_outbound_attachment(&archive_service, attachment).await {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                warn!(
-                    chat_id,
-                    archive_id = attachment.archive_id.as_str(),
-                    error = %error,
-                    "failed to resolve telegram outbound attachment"
-                );
-                continue;
-            }
-        };
+        let resolved =
+            match resolve_outbound_attachment(&archive_service, &local_policy, attachment).await {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    warn!(
+                        chat_id,
+                        source = ?attachment.source,
+                        error = %error,
+                        "failed to resolve telegram outbound attachment"
+                    );
+                    continue;
+                }
+            };
 
         let result = match resolved.kind {
             crate::OutboundAttachmentKind::Image => {
@@ -611,7 +626,7 @@ async fn deliver_telegram_attachments(
         if let Err(error) = result {
             warn!(
                 chat_id,
-                archive_id = resolved.archive_id.as_str(),
+                source = resolved.source_label.as_str(),
                 error = %error,
                 "failed to send telegram outbound attachment"
             );
@@ -657,6 +672,7 @@ struct TelegramStreamWriter {
     client: TelegramApiClient,
     bot_token: String,
     proxy: TelegramProxyConfig,
+    local_attachments: LocalAttachmentConfig,
     chat_id: String,
     show_reasoning: bool,
     message_id: Option<i64>,
@@ -669,6 +685,7 @@ impl TelegramStreamWriter {
         client: TelegramApiClient,
         bot_token: String,
         proxy: TelegramProxyConfig,
+        local_attachments: LocalAttachmentConfig,
         chat_id: String,
         show_reasoning: bool,
     ) -> Self {
@@ -676,6 +693,7 @@ impl TelegramStreamWriter {
             client,
             bot_token,
             proxy,
+            local_attachments,
             chat_id,
             show_reasoning,
             message_id: None,
@@ -768,9 +786,47 @@ impl TelegramStreamWriter {
         let client = self.client.clone();
         let chat_id = self.chat_id.clone();
         let attachments = output.attachments.clone();
+        let local_policy = match self.local_attachment_policy() {
+            Ok(policy) => policy,
+            Err(error) => {
+                warn!(chat_id = self.chat_id.as_str(), error = %error, "failed to resolve telegram local attachment policy");
+                return;
+            }
+        };
         tokio::task::spawn_local(async move {
-            deliver_telegram_attachments(client, chat_id, attachments).await;
+            deliver_telegram_attachments(client, chat_id, attachments, local_policy).await;
         });
+    }
+}
+
+fn resolve_local_attachment_policy(
+    config: &LocalAttachmentConfig,
+) -> ChannelResult<LocalAttachmentPolicy> {
+    let root = default_data_dir().ok_or_else(|| "failed to resolve home dir".to_string())?;
+    let workspace = workspace_dir(&root);
+    std::fs::create_dir_all(&workspace)?;
+    let workspace_root = std::fs::canonicalize(&workspace)?;
+    let allowlist = config
+        .allowlist
+        .iter()
+        .map(|path| PathBuf::from(path.trim()))
+        .collect();
+    Ok(LocalAttachmentPolicy {
+        workspace_root,
+        allowlist,
+        max_bytes: config.max_bytes,
+    })
+}
+
+impl TelegramChannel {
+    fn local_attachment_policy(&self) -> ChannelResult<LocalAttachmentPolicy> {
+        resolve_local_attachment_policy(&self.config.local_attachments)
+    }
+}
+
+impl TelegramStreamWriter {
+    fn local_attachment_policy(&self) -> ChannelResult<LocalAttachmentPolicy> {
+        resolve_local_attachment_policy(&self.local_attachments)
     }
 }
 

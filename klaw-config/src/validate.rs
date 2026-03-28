@@ -385,6 +385,10 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
         require_non_empty(&account.client_id, "channels.dingtalk.client_id")?;
         require_non_empty(&account.client_secret, "channels.dingtalk.client_secret")?;
         require_non_empty(&account.bot_title, "channels.dingtalk.bot_title")?;
+        validate_local_attachments(
+            &account.local_attachments,
+            &format!("channels.dingtalk '{}' local_attachments", account.id),
+        )?;
         if account.proxy.enabled {
             require_non_empty(&account.proxy.url, "channels.dingtalk.proxy.url")?;
             let parsed = url::Url::parse(account.proxy.url.trim()).map_err(|err| {
@@ -417,6 +421,10 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
             continue;
         }
         require_non_empty(&account.bot_token, "channels.telegram.bot_token")?;
+        validate_local_attachments(
+            &account.local_attachments,
+            &format!("channels.telegram '{}' local_attachments", account.id),
+        )?;
         if account.proxy.enabled {
             require_non_empty(&account.proxy.url, "channels.telegram.proxy.url")?;
             let parsed = url::Url::parse(account.proxy.url.trim()).map_err(|err| {
@@ -438,6 +446,28 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
     }
     for channel in &channels.disable_session_commands_for {
         require_non_empty(channel, "channels.disable_session_commands_for")?;
+    }
+    Ok(())
+}
+
+fn validate_local_attachments(
+    config: &crate::LocalAttachmentConfig,
+    field_prefix: &str,
+) -> Result<(), ConfigError> {
+    if config.max_bytes == 0 {
+        return Err(ConfigError::InvalidConfig(format!(
+            "{field_prefix}.max_bytes must be greater than 0"
+        )));
+    }
+    for path in &config.allowlist {
+        require_non_empty(path, &format!("{field_prefix}.allowlist"))?;
+        let trimmed = path.trim();
+        if !trimmed.starts_with('/') {
+            return Err(ConfigError::InvalidConfig(format!(
+                "{field_prefix}.allowlist entry '{}' must be an absolute path",
+                trimmed
+            )));
+        }
     }
     Ok(())
 }

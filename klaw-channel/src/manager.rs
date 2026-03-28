@@ -661,6 +661,7 @@ mod tests {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
+            local_attachments: Default::default(),
             proxy: Default::default(),
         })
     }
@@ -673,6 +674,7 @@ mod tests {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
+            local_attachments: Default::default(),
             proxy: Default::default(),
         })
     }

@@ -1,64 +1,162 @@
-use crate::{ChannelResult, OutboundAttachment, OutboundAttachmentKind};
-use klaw_archive::{ArchiveBlob, ArchiveRecord, ArchiveService};
+use crate::{
+    ChannelResult, LocalAttachmentPolicy, OutboundAttachment, OutboundAttachmentKind,
+    OutboundAttachmentSource,
+};
+use klaw_archive::{ArchiveBlob, ArchiveService};
+use std::path::{Path, PathBuf};
+use tokio::fs;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedOutboundAttachment {
-    pub archive_id: String,
+    pub source_label: String,
     pub kind: OutboundAttachmentKind,
     pub filename: String,
     pub mime_type: Option<String>,
     pub caption: Option<String>,
     pub bytes: Vec<u8>,
-    pub record: ArchiveRecord,
 }
 
 pub async fn resolve_outbound_attachment(
     archive_service: &dyn ArchiveService,
+    local_policy: &LocalAttachmentPolicy,
     attachment: &OutboundAttachment,
 ) -> ChannelResult<ResolvedOutboundAttachment> {
-    let ArchiveBlob { record, bytes, .. } = archive_service
-        .open_download(&attachment.archive_id)
-        .await?;
+    match &attachment.source {
+        OutboundAttachmentSource::ArchiveId { archive_id } => {
+            resolve_archive_attachment(archive_service, attachment, archive_id).await
+        }
+        OutboundAttachmentSource::LocalPath { path } => {
+            resolve_local_attachment(local_policy, attachment, path).await
+        }
+    }
+}
+
+async fn resolve_archive_attachment(
+    archive_service: &dyn ArchiveService,
+    attachment: &OutboundAttachment,
+    archive_id: &str,
+) -> ChannelResult<ResolvedOutboundAttachment> {
+    let archive_id = archive_id.trim();
+    let ArchiveBlob { record, bytes, .. } = archive_service.open_download(archive_id).await?;
     if bytes.is_empty() {
+        return Err(format!("archive attachment {archive_id} has no content").into());
+    }
+
+    Ok(ResolvedOutboundAttachment {
+        source_label: archive_id.to_string(),
+        kind: attachment.kind,
+        filename: resolve_filename(
+            attachment.filename.as_deref(),
+            record.original_filename.as_deref(),
+            Some(archive_id),
+        ),
+        mime_type: record.mime_type.clone(),
+        caption: normalize_optional_string(attachment.caption.as_deref()),
+        bytes,
+    })
+}
+
+async fn resolve_local_attachment(
+    local_policy: &LocalAttachmentPolicy,
+    attachment: &OutboundAttachment,
+    path: &str,
+) -> ChannelResult<ResolvedOutboundAttachment> {
+    let requested_path = PathBuf::from(path.trim());
+    if !requested_path.is_absolute() {
+        return Err(format!("local attachment path '{}' must be absolute", path).into());
+    }
+
+    let canonical_path = fs::canonicalize(&requested_path).await.map_err(|err| {
+        format!(
+            "failed to resolve local attachment path '{}': {err}",
+            requested_path.display()
+        )
+    })?;
+    let metadata = fs::metadata(&canonical_path).await.map_err(|err| {
+        format!(
+            "failed to read local attachment metadata '{}': {err}",
+            canonical_path.display()
+        )
+    })?;
+    if !metadata.is_file() {
         return Err(format!(
-            "archive attachment {} has no content",
-            attachment.archive_id
+            "local attachment path '{}' must be a file",
+            canonical_path.display()
+        )
+        .into());
+    }
+    let size_bytes = metadata.len();
+    if size_bytes == 0 {
+        return Err(format!(
+            "local attachment path '{}' has no content",
+            canonical_path.display()
+        )
+        .into());
+    }
+    if size_bytes > local_policy.max_bytes {
+        return Err(format!(
+            "local attachment '{}' exceeds max_bytes limit ({} > {})",
+            canonical_path.display(),
+            size_bytes,
+            local_policy.max_bytes
+        )
+        .into());
+    }
+    if !path_allowed(&canonical_path, local_policy) {
+        return Err(format!(
+            "local attachment '{}' is outside the workspace and channel allowlist",
+            canonical_path.display()
         )
         .into());
     }
 
-    let filename = attachment
-        .filename
-        .as_deref()
+    let bytes = fs::read(&canonical_path).await.map_err(|err| {
+        format!(
+            "failed to read local attachment file '{}': {err}",
+            canonical_path.display()
+        )
+    })?;
+    let original_filename = canonical_path.file_name().and_then(|value| value.to_str());
+
+    Ok(ResolvedOutboundAttachment {
+        source_label: canonical_path.display().to_string(),
+        kind: attachment.kind,
+        filename: resolve_filename(
+            attachment.filename.as_deref(),
+            original_filename,
+            original_filename,
+        ),
+        mime_type: None,
+        caption: normalize_optional_string(attachment.caption.as_deref()),
+        bytes,
+    })
+}
+
+fn path_allowed(candidate: &Path, policy: &LocalAttachmentPolicy) -> bool {
+    if candidate.starts_with(&policy.workspace_root) {
+        return true;
+    }
+    policy
+        .allowlist
+        .iter()
+        .any(|entry| candidate.starts_with(entry))
+}
+
+fn resolve_filename(
+    requested: Option<&str>,
+    fallback: Option<&str>,
+    default_stem: Option<&str>,
+) -> String {
+    normalize_optional_string(requested)
+        .or_else(|| normalize_optional_string(fallback))
+        .unwrap_or_else(|| default_stem.unwrap_or("attachment.bin").to_string())
+}
+
+fn normalize_optional_string(value: Option<&str>) -> Option<String> {
+    value
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| {
-            record
-                .original_filename
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
-        .unwrap_or_else(|| format!("{}.bin", attachment.archive_id));
-
-    let caption = attachment
-        .caption
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-
-    Ok(ResolvedOutboundAttachment {
-        archive_id: attachment.archive_id.clone(),
-        kind: attachment.kind,
-        filename,
-        mime_type: record.mime_type.clone(),
-        caption,
-        bytes,
-        record,
-    })
 }
 
 #[cfg(test)]
@@ -68,7 +166,7 @@ mod tests {
     use klaw_archive::{
         ArchiveError, ArchiveMediaKind, ArchiveRecord, ArchiveService, ArchiveSourceKind,
     };
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     #[derive(Clone)]
     struct FakeArchiveService {
@@ -142,6 +240,14 @@ mod tests {
         }
     }
 
+    fn local_policy() -> LocalAttachmentPolicy {
+        LocalAttachmentPolicy {
+            workspace_root: std::env::temp_dir(),
+            allowlist: Vec::new(),
+            max_bytes: 1024,
+        }
+    }
+
     #[tokio::test]
     async fn resolves_attachment_with_record_filename() {
         let service = FakeArchiveService {
@@ -149,13 +255,15 @@ mod tests {
             bytes: vec![1, 2, 3, 4],
         };
         let attachment = OutboundAttachment {
-            archive_id: "arch-1".to_string(),
+            source: OutboundAttachmentSource::ArchiveId {
+                archive_id: "arch-1".to_string(),
+            },
             kind: OutboundAttachmentKind::Image,
             filename: None,
             caption: Some("  hello ".to_string()),
         };
 
-        let resolved = resolve_outbound_attachment(&service, &attachment)
+        let resolved = resolve_outbound_attachment(&service, &local_policy(), &attachment)
             .await
             .expect("should resolve");
 
@@ -165,19 +273,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_empty_bytes() {
+    async fn rejects_empty_archive_bytes() {
         let service = FakeArchiveService {
             record: Some(sample_record("arch-1")),
             bytes: Vec::new(),
         };
         let attachment = OutboundAttachment {
-            archive_id: "arch-1".to_string(),
+            source: OutboundAttachmentSource::ArchiveId {
+                archive_id: "arch-1".to_string(),
+            },
             kind: OutboundAttachmentKind::File,
             filename: None,
             caption: None,
         };
 
-        let error = resolve_outbound_attachment(&service, &attachment)
+        let error = resolve_outbound_attachment(&service, &local_policy(), &attachment)
             .await
             .expect_err("should reject empty blob");
 

@@ -21,3 +21,4 @@ klaw-core = { workspace = true }
 klaw-archive = { workspace = true }
 klaw-config = { workspace = true }
 klaw-voice = { workspace = true }
+klaw-util = { workspace = true }

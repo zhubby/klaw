@@ -127,15 +127,21 @@ impl ToolSignal {
     }
 
     pub fn channel_attachment(
-        archive_id: &str,
         kind: &str,
+        archive_id: Option<&str>,
+        path: Option<&str>,
         filename: Option<&str>,
         caption: Option<&str>,
     ) -> Self {
         let mut payload = serde_json::json!({
-            "archive_id": archive_id.trim(),
             "kind": kind.trim(),
         });
+        if let Some(archive_id) = archive_id.map(str::trim).filter(|value| !value.is_empty()) {
+            payload["archive_id"] = serde_json::Value::String(archive_id.to_string());
+        }
+        if let Some(path) = path.map(str::trim).filter(|value| !value.is_empty()) {
+            payload["path"] = serde_json::Value::String(path.to_string());
+        }
         if let Some(filename) = filename.map(str::trim).filter(|value| !value.is_empty()) {
             payload["filename"] = serde_json::Value::String(filename.to_string());
         }
