@@ -3,7 +3,7 @@ use klaw_archive::{
     ArchiveMediaKind, ArchiveService, SqliteArchiveService, open_default_archive_service,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolSignal};
 
@@ -32,6 +32,53 @@ impl ChannelAttachmentTool {
             OutboundAttachmentRequestKind::File => "file",
         }
     }
+
+    fn parse_request(args: Value) -> Result<ChannelAttachmentRequest, ToolError> {
+        let Value::Object(mut object) = args else {
+            return Err(ToolError::InvalidArgs(
+                "request must be an object".to_string(),
+            ));
+        };
+
+        let archive_id = parse_archive_id(&mut object)?;
+        let mut request: ChannelAttachmentRequest =
+            serde_json::from_value(Value::Object(object)).map_err(|err| {
+                ToolError::InvalidArgs(format!("invalid request: {err}"))
+            })?;
+        request.archive_id = archive_id;
+        Ok(request)
+    }
+}
+
+fn parse_archive_id(object: &mut Map<String, Value>) -> Result<String, ToolError> {
+    let Some(value) = object.remove("archive_id") else {
+        return Err(ToolError::InvalidArgs(
+            "`archive_id` is required and must be the exact archive id string like `arch_123`, not an attachment number such as `1`".to_string(),
+        ));
+    };
+
+    let archive_id = match value {
+        Value::String(value) => value.trim().to_string(),
+        Value::Number(number) => {
+            return Err(ToolError::InvalidArgs(format!(
+                "`archive_id` must be the exact archive id string like `arch_123`, not an attachment number such as `{number}`"
+            )));
+        }
+        other => {
+            return Err(ToolError::InvalidArgs(format!(
+                "`archive_id` must be a string like `arch_123`, got {other}"
+            )));
+        }
+    };
+
+    if archive_id.is_empty() {
+        return Err(ToolError::InvalidArgs(
+            "`archive_id` cannot be empty; pass the exact archive id string from the attachment context".to_string(),
+        ));
+    }
+
+    object.insert("archive_id".to_string(), Value::String(archive_id.clone()));
+    Ok(archive_id)
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,17 +109,17 @@ impl Tool for ChannelAttachmentTool {
     }
 
     fn description(&self) -> &str {
-        "Queue one archived file for delivery back to the current chat channel. Use this after you already have an `archive_id` and want Telegram or DingTalk to send the file or display the image in-chat."
+        "Queue one archived file for delivery back to the current chat channel. Use this only after you already have an exact `archive_id` string such as `arch_123`; do not pass attachment numbers like `1` or local filesystem paths."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Send one archived attachment back to the current chat. Prefer `kind=image` for screenshots or images that should render inline; use `kind=file` for documents, zip files, and other generic files. If omitted, `kind=auto` uses the archive media type.",
+            "description": "Send one archived attachment back to the current chat. Prefer `kind=image` for screenshots or images that should render inline; use `kind=file` for documents, zip files, and other generic files. If omitted, `kind=auto` uses the archive media type. `archive_id` must be the literal archive id string returned by the archive or attachment context, not a numeric list index.",
             "properties": {
                 "archive_id": {
                     "type": "string",
-                    "description": "Exact archive record id to send, e.g. `arch_123`. Get this from the archive tool or from current message attachments."
+                    "description": "Exact archive record id to send, e.g. `arch_123`. Copy it verbatim from the archive tool or from current message attachments. Do not pass an attachment number like `1`."
                 },
                 "kind": {
                     "type": "string",
@@ -99,14 +146,7 @@ impl Tool for ChannelAttachmentTool {
     }
 
     async fn execute(&self, args: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let mut request: ChannelAttachmentRequest = serde_json::from_value(args)
-            .map_err(|err| ToolError::InvalidArgs(format!("invalid request: {err}")))?;
-        request.archive_id = request.archive_id.trim().to_string();
-        if request.archive_id.is_empty() {
-            return Err(ToolError::InvalidArgs(
-                "`archive_id` cannot be empty".to_string(),
-            ));
-        }
+        let mut request = Self::parse_request(args)?;
         if let Some(filename) = request.filename.as_mut() {
             *filename = filename.trim().to_string();
             if filename.is_empty() {
@@ -151,6 +191,7 @@ impl Tool for ChannelAttachmentTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn normalize_kind_uses_archive_media_when_auto() {
@@ -168,5 +209,18 @@ mod tests {
             ),
             "file"
         );
+    }
+
+    #[test]
+    fn parse_request_rejects_numeric_archive_id() {
+        let error = ChannelAttachmentTool::parse_request(json!({
+            "archive_id": 1,
+            "kind": "file"
+        }))
+        .expect_err("numeric archive id should be rejected");
+
+        assert!(error
+            .to_string()
+            .contains("not an attachment number such as `1`"));
     }
 }

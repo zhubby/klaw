@@ -1677,7 +1677,8 @@ fn augment_user_content_with_attachment_context(
 
     let mut lines = vec![
         "Current message attachments:".to_string(),
-        "If an attachment below already includes an archive_id, prefer calling the archive tool with action=get and that exact archive_id. Use list_current_attachments only to confirm attachments from the current message, and use list_session_attachments when the user is referring to files from earlier turns in this same session. For audio or voice attachments, use the voice tool with action=stt and the attachment archive_id to transcribe them. If the user wants you to send one of these archived files back into the chat, use the channel_attachment tool with that exact archive_id instead of merely saying that you sent it.".to_string(),
+        "If an attachment below already includes an archive_id, prefer calling the archive tool with action=get and that exact archive_id. Use list_current_attachments only to confirm attachments from the current message, and use list_session_attachments when the user is referring to files from earlier turns in this same session. For audio or voice attachments, use the voice tool with action=stt and the attachment archive_id to transcribe them. If the user wants you to send one of these archived files back into the chat, use the channel_attachment tool with that exact archive_id instead of merely saying that you sent it. Do not pass the numbered list position like `1` or `2` as archive_id; copy the literal archive_id string exactly."
+            .to_string(),
     ];
     for (idx, attachment) in attachments.iter().enumerate() {
         let Some(item) = attachment.as_object() else {
@@ -1706,6 +1707,10 @@ fn augment_user_content_with_attachment_context(
             .unwrap_or_else(|| "unknown".to_string());
         lines.push(format!(
             "{idx}. filename={filename}; archive_id={archive_id}; storage_rel_path={storage_rel_path}; mime_type={mime_type}; size_bytes={size_bytes}; access=read_only archive; if modification is needed, copy the file into workspace first and edit the copied file there.",
+            idx = idx + 1
+        ));
+        lines.push(format!(
+            "   When calling channel_attachment for item {idx}, set archive_id=\"{archive_id}\" exactly.",
             idx = idx + 1
         ));
     }
