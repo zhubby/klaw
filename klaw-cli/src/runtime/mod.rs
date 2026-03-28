@@ -64,7 +64,7 @@ use uuid::Uuid;
 
 const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const TOOL_AUDIT_QUEUE_CAPACITY: usize = 1024;
-const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, use the available workspace tools to read it and follow it before anything else. If it does not exist, start with a short, natural greeting.\nGuide the user through initializing the agent's identity, vibe, and context. When you learn durable bootstrap details, use tools to update `IDENTITY.md` and `USER.md`, and delete `BOOTSTRAP.md` once bootstrap is truly complete. Do not claim files were updated unless you actually changed them with tools. Do not mention that this message was auto-generated.";
+const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, use the available workspace tools to read it and follow it before anything else. If it does not exist, start with a short, natural greeting and do not recreate or restore `BOOTSTRAP.md`.\nGuide the user through initializing the agent's identity, vibe, and context. When you learn durable bootstrap details, use tools to update `IDENTITY.md` and `USER.md`, and delete `BOOTSTRAP.md` once bootstrap is truly complete. If `BOOTSTRAP.md` is already absent, leave it absent. Do not claim files were updated unless you actually changed them with tools. Do not mention that this message was auto-generated.";
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
     pub skill_names: Vec<String>,
@@ -3397,6 +3397,8 @@ mod tests {
         assert!(message.contains("You just woke up"));
         assert!(message.contains("If `BOOTSTRAP.md` exists, use the available workspace tools"));
         assert!(message.contains("start with a short, natural greeting"));
+        assert!(message.contains("do not recreate or restore `BOOTSTRAP.md`"));
+        assert!(message.contains("If `BOOTSTRAP.md` is already absent, leave it absent"));
         assert!(message.contains(
             "Do not claim files were updated unless you actually changed them with tools"
         ));

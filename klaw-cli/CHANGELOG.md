@@ -215,3 +215,6 @@
 - `--log-level` 显式设置为 `debug/trace` 时，默认将 Turso/SQLite 引擎内部 target 降为 `warn`，抑制 `normal_step/_prepare/read_page` 类高频日志
 - `klaw stdio` 现在和 `gateway` 共享统一的 shutdown signal 处理，并在 runtime shutdown 阶段支持第二次信号直接终止进程
 - `klaw stdio`/`agent` 运行时现在会在发起本轮请求前读取会话 JSONL 历史，并把上一轮对话注入到 LLM 请求中
+# 2026-03-28
+- Fixed
+  - `/new` bootstrap prompt now explicitly forbids recreating `BOOTSTRAP.md` after the file has already been deleted, avoiding DingTalk new-session turns that restore the bootstrap doc unnecessarily
