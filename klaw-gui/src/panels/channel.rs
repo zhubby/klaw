@@ -8,7 +8,7 @@ use egui_phosphor::regular;
 use klaw_channel::{ChannelInstanceStatus, ChannelKind};
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig,
-    LocalAttachmentConfig, TelegramConfig, TelegramProxyConfig,
+    TelegramConfig, TelegramProxyConfig,
 };
 use std::collections::BTreeMap;
 
@@ -83,7 +83,6 @@ impl DingtalkForm {
             show_reasoning: self.show_reasoning,
             stream_output: self.stream_output,
             allowlist: self.allowlist_input.to_vec(),
-            local_attachments: LocalAttachmentConfig::default(),
             proxy: DingtalkProxyConfig {
                 enabled: self.proxy_enabled,
                 url: self.proxy_url.trim().to_string(),
@@ -155,7 +154,6 @@ impl TelegramForm {
             show_reasoning: self.show_reasoning,
             stream_output: self.stream_output,
             allowlist: self.allowlist_input.to_vec(),
-            local_attachments: LocalAttachmentConfig::default(),
             proxy: TelegramProxyConfig {
                 enabled: self.proxy_enabled,
                 url: self.proxy_url.trim().to_string(),

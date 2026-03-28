@@ -79,14 +79,17 @@ impl Default for TelegramChannelConfig {
 }
 
 impl TelegramChannel {
-    pub fn from_app_config(config: TelegramConfig) -> ChannelResult<Self> {
+    pub fn from_app_config(
+        config: TelegramConfig,
+        local_attachments: LocalAttachmentConfig,
+    ) -> ChannelResult<Self> {
         Self::new(TelegramChannelConfig {
             account_id: config.id,
             bot_token: config.bot_token,
             show_reasoning: config.show_reasoning,
             stream_output: config.stream_output,
             allowlist: config.allowlist,
-            local_attachments: config.local_attachments,
+            local_attachments,
             proxy: config.proxy,
         })
     }
@@ -599,6 +602,15 @@ async fn deliver_telegram_attachments(
                     continue;
                 }
             };
+        debug!(
+            chat_id,
+            source = resolved.source_label.as_str(),
+            kind = ?resolved.kind,
+            filename = resolved.filename.as_str(),
+            mime_type = resolved.mime_type.as_deref().unwrap_or("unknown"),
+            size_bytes = resolved.bytes.len(),
+            "resolved telegram outbound attachment"
+        );
 
         let result = match resolved.kind {
             crate::OutboundAttachmentKind::Image => {
@@ -629,6 +641,12 @@ async fn deliver_telegram_attachments(
                 source = resolved.source_label.as_str(),
                 error = %error,
                 "failed to send telegram outbound attachment"
+            );
+        } else {
+            debug!(
+                chat_id,
+                source = resolved.source_label.as_str(),
+                "sent telegram outbound attachment"
             );
         }
     }

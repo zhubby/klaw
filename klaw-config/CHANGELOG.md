@@ -5,7 +5,7 @@
 ### Added
 
 - 新增 `tools.geo.enabled` 配置项，默认值为 `false`，用于控制 macOS `geo` 定位工具是否向 runtime 暴露
-- 新增 `channels.dingtalk[].local_attachments` 与 `channels.telegram[].local_attachments`，支持声明本地附件 allowlist 和最大文件大小限制
+- 新增 `tools.channel_attachment.enabled` 与 `tools.channel_attachment.local_attachments`，支持控制附件回复工具注册、声明本地附件 allowlist 和最大文件大小限制
 
 ## 2026-03-26
 

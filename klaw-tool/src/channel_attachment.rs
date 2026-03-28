@@ -1,8 +1,6 @@
 use async_trait::async_trait;
-use klaw_archive::{
-    ArchiveMediaKind, ArchiveService, SqliteArchiveService, open_default_archive_service,
-};
-use klaw_config::{ChannelsConfig, ConfigStore};
+use klaw_archive::{ArchiveMediaKind, ArchiveService, open_default_archive_service};
+use klaw_config::{AppConfig, LocalAttachmentConfig};
 use klaw_util::{default_data_dir, workspace_dir};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -11,20 +9,12 @@ use std::path::{Path, PathBuf};
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolSignal};
 
 pub struct ChannelAttachmentTool {
-    archive: SqliteArchiveService,
-    channels: ChannelsConfig,
+    local_attachments: LocalAttachmentConfig,
     workspace_root: PathBuf,
 }
 
 impl ChannelAttachmentTool {
-    pub async fn open_default() -> Result<Self, ToolError> {
-        let archive = open_default_archive_service().await.map_err(|err| {
-            ToolError::ExecutionFailed(format!("failed to open archive service: {err}"))
-        })?;
-        let store = ConfigStore::open(None).map_err(|err| {
-            ToolError::ExecutionFailed(format!("failed to open config store: {err}"))
-        })?;
-        let channels = store.snapshot().config.channels;
+    pub async fn open_default(config: &AppConfig) -> Result<Self, ToolError> {
         let root = default_data_dir()
             .ok_or_else(|| ToolError::ExecutionFailed("failed to resolve home dir".to_string()))?;
         let workspace = workspace_dir(&root);
@@ -41,8 +31,7 @@ impl ChannelAttachmentTool {
             ))
         })?;
         Ok(Self {
-            archive,
-            channels,
+            local_attachments: config.tools.channel_attachment.local_attachments.clone(),
             workspace_root,
         })
     }
@@ -79,31 +68,11 @@ impl ChannelAttachmentTool {
     fn local_policy_for_session(
         &self,
         session_key: &str,
+        config: &LocalAttachmentConfig,
     ) -> Result<LocalAttachmentPolicy, ToolError> {
-        let (channel, account_id) = parse_session_channel(session_key).ok_or_else(|| {
+        let (_channel, _account_id) = parse_session_channel(session_key).ok_or_else(|| {
             ToolError::ExecutionFailed(format!(
                 "failed to resolve channel attachment policy from session_key `{session_key}`"
-            ))
-        })?;
-
-        let config = match channel {
-            "dingtalk" => self
-                .channels
-                .dingtalk
-                .iter()
-                .find(|item| item.id.trim() == account_id)
-                .map(|item| &item.local_attachments),
-            "telegram" => self
-                .channels
-                .telegram
-                .iter()
-                .find(|item| item.id.trim() == account_id)
-                .map(|item| &item.local_attachments),
-            _ => None,
-        }
-        .ok_or_else(|| {
-            ToolError::ExecutionFailed(format!(
-                "failed to find local attachment policy for channel `{channel}` account `{account_id}`"
             ))
         })?;
 
@@ -320,7 +289,10 @@ impl Tool for ChannelAttachmentTool {
 
         let (kind, source_for_signal, display_name) = match &request.source {
             OutboundAttachmentRequestSource::ArchiveId { archive_id } => {
-                let record = self.archive.get(archive_id).await.map_err(|err| {
+                let archive = open_default_archive_service().await.map_err(|err| {
+                    ToolError::ExecutionFailed(format!("failed to open archive service: {err}"))
+                })?;
+                let record = archive.get(archive_id).await.map_err(|err| {
                     ToolError::ExecutionFailed(format!("failed to load archive record: {err}"))
                 })?;
                 let kind = Self::normalize_kind(request.kind, record.media_kind);
@@ -332,7 +304,8 @@ impl Tool for ChannelAttachmentTool {
                 (kind, (Some(archive_id.as_str()), None), display_name)
             }
             OutboundAttachmentRequestSource::LocalPath { path } => {
-                let policy = self.local_policy_for_session(&ctx.session_key)?;
+                let policy =
+                    self.local_policy_for_session(&ctx.session_key, &self.local_attachments)?;
                 let canonical_path = std::fs::canonicalize(path).map_err(|err| {
                     ToolError::ExecutionFailed(format!(
                         "failed to resolve local attachment path `{path}`: {err}"

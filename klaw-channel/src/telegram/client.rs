@@ -5,6 +5,7 @@ use klaw_config::TelegramProxyConfig;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
 use tokio::time::Duration;
+use tracing::debug;
 
 const TELEGRAM_API_BASE: &str = "https://api.telegram.org";
 const TELEGRAM_LONG_POLL_TIMEOUT_SECS: u64 = 20;
@@ -95,6 +96,13 @@ impl TelegramApiClient {
         bytes: &[u8],
         caption: Option<&str>,
     ) -> ChannelResult<TelegramMessage> {
+        debug!(
+            chat_id,
+            filename = filename.trim(),
+            size_bytes = bytes.len(),
+            has_caption = caption.is_some(),
+            "sending telegram photo attachment"
+        );
         self.post_multipart("sendPhoto", "photo", chat_id, filename, bytes, caption)
             .await
     }
@@ -106,6 +114,13 @@ impl TelegramApiClient {
         bytes: &[u8],
         caption: Option<&str>,
     ) -> ChannelResult<TelegramMessage> {
+        debug!(
+            chat_id,
+            filename = filename.trim(),
+            size_bytes = bytes.len(),
+            has_caption = caption.is_some(),
+            "sending telegram document attachment"
+        );
         self.post_multipart(
             "sendDocument",
             "document",
@@ -167,6 +182,15 @@ impl TelegramApiClient {
         bytes: &[u8],
         caption: Option<&str>,
     ) -> ChannelResult<T> {
+        debug!(
+            method,
+            chat_id = chat_id.trim(),
+            field_name,
+            filename = filename.trim(),
+            size_bytes = bytes.len(),
+            has_caption = caption.is_some(),
+            "calling telegram multipart api"
+        );
         let url = format!("{}/{}", self.api_base, method);
         let part =
             reqwest::multipart::Part::bytes(bytes.to_vec()).file_name(filename.trim().to_string());
@@ -193,6 +217,12 @@ impl TelegramApiClient {
             )
             .into());
         }
+        debug!(
+            method,
+            chat_id = chat_id.trim(),
+            filename = filename.trim(),
+            "telegram multipart api succeeded"
+        );
         envelope
             .result
             .ok_or_else(|| format!("telegram {} missing result", method).into())

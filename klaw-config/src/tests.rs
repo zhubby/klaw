@@ -29,6 +29,7 @@ fn parse_default_template_succeeds() {
     assert_eq!(parsed.tools.shell.max_timeout_ms, 120_000);
     assert_eq!(parsed.tools.shell.max_output_bytes, 128 * 1024);
     assert!(parsed.tools.archive.enabled);
+    assert!(parsed.tools.channel_attachment.enabled);
     assert!(parsed.tools.voice.enabled);
     assert!(parsed.tools.shell.enabled);
     assert!(parsed.tools.approval.enabled);
@@ -45,6 +46,16 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.apply_patch.workspace.is_none());
     assert!(!parsed.tools.apply_patch.allow_absolute_paths);
     assert!(parsed.tools.apply_patch.allowed_roots.is_empty());
+    assert!(parsed
+        .tools
+        .channel_attachment
+        .local_attachments
+        .allowlist
+        .is_empty());
+    assert_eq!(
+        parsed.tools.channel_attachment.local_attachments.max_bytes,
+        10 * 1024 * 1024
+    );
     assert!(parsed.tools.memory.enabled);
     assert_eq!(parsed.tools.memory.search_limit, 8);
     assert_eq!(parsed.tools.memory.fts_limit, 20);
@@ -763,7 +774,6 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             show_reasoning: false,
             stream_output: false,
             allowlist: vec![],
-            local_attachments: Default::default(),
             proxy: DingtalkProxyConfig::default(),
         },
         DingtalkConfig {
@@ -775,7 +785,6 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             show_reasoning: false,
             stream_output: false,
             allowlist: vec![],
-            local_attachments: Default::default(),
             proxy: DingtalkProxyConfig::default(),
         },
     ];
@@ -796,7 +805,6 @@ fn validate_fails_when_enabled_dingtalk_channel_missing_secret() {
         show_reasoning: false,
         stream_output: false,
         allowlist: vec![],
-        local_attachments: Default::default(),
         proxy: DingtalkProxyConfig::default(),
     }];
 
@@ -816,7 +824,6 @@ fn validate_fails_when_enabled_dingtalk_proxy_missing_url() {
         show_reasoning: false,
         stream_output: false,
         allowlist: vec![],
-        local_attachments: Default::default(),
         proxy: DingtalkProxyConfig {
             enabled: true,
             url: String::new(),
@@ -839,7 +846,6 @@ fn validate_fails_when_enabled_dingtalk_proxy_has_invalid_scheme() {
         show_reasoning: false,
         stream_output: false,
         allowlist: vec![],
-        local_attachments: Default::default(),
         proxy: DingtalkProxyConfig {
             enabled: true,
             url: "socks5://127.0.0.1:1080".to_string(),
@@ -862,12 +868,12 @@ fn validate_fails_when_dingtalk_local_attachment_allowlist_is_relative() {
         show_reasoning: false,
         stream_output: false,
         allowlist: vec![],
-        local_attachments: crate::LocalAttachmentConfig {
-            allowlist: vec!["relative/path".to_string()],
-            max_bytes: 1024,
-        },
         proxy: DingtalkProxyConfig::default(),
     }];
+    cfg.tools.channel_attachment.local_attachments = crate::LocalAttachmentConfig {
+        allowlist: vec!["relative/path".to_string()],
+        max_bytes: 1024,
+    };
 
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("must be an absolute path"));
@@ -884,7 +890,6 @@ fn validate_fails_when_telegram_channel_ids_duplicate() {
             show_reasoning: false,
             stream_output: false,
             allowlist: vec![],
-            local_attachments: Default::default(),
             proxy: TelegramProxyConfig::default(),
         },
         TelegramConfig {
@@ -894,7 +899,6 @@ fn validate_fails_when_telegram_channel_ids_duplicate() {
             show_reasoning: false,
             stream_output: false,
             allowlist: vec![],
-            local_attachments: Default::default(),
             proxy: TelegramProxyConfig::default(),
         },
     ];
@@ -913,7 +917,6 @@ fn validate_fails_when_enabled_telegram_channel_missing_token() {
         show_reasoning: false,
         stream_output: false,
         allowlist: vec![],
-        local_attachments: Default::default(),
         proxy: TelegramProxyConfig::default(),
     }];
 
@@ -931,7 +934,6 @@ fn validate_fails_when_enabled_telegram_proxy_missing_url() {
         show_reasoning: false,
         stream_output: false,
         allowlist: vec![],
-        local_attachments: Default::default(),
         proxy: TelegramProxyConfig {
             enabled: true,
             url: String::new(),
@@ -952,7 +954,6 @@ fn validate_fails_when_enabled_telegram_proxy_has_invalid_scheme() {
         show_reasoning: false,
         stream_output: false,
         allowlist: vec![],
-        local_attachments: Default::default(),
         proxy: TelegramProxyConfig {
             enabled: true,
             url: "socks5://127.0.0.1:1080".to_string(),
@@ -973,12 +974,12 @@ fn validate_fails_when_telegram_local_attachment_max_bytes_is_zero() {
         show_reasoning: false,
         stream_output: false,
         allowlist: vec![],
-        local_attachments: crate::LocalAttachmentConfig {
-            allowlist: vec![],
-            max_bytes: 0,
-        },
         proxy: TelegramProxyConfig::default(),
     }];
+    cfg.tools.channel_attachment.local_attachments = crate::LocalAttachmentConfig {
+        allowlist: vec![],
+        max_bytes: 0,
+    };
 
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("max_bytes must be greater than 0"));

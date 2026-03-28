@@ -344,8 +344,6 @@ pub struct DingtalkConfig {
     #[serde(default)]
     pub allowlist: Vec<String>,
     #[serde(default)]
-    pub local_attachments: LocalAttachmentConfig,
-    #[serde(default)]
     pub proxy: DingtalkProxyConfig,
 }
 
@@ -360,7 +358,6 @@ impl Default for DingtalkConfig {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
-            local_attachments: LocalAttachmentConfig::default(),
             proxy: DingtalkProxyConfig::default(),
         }
     }
@@ -394,8 +391,6 @@ pub struct TelegramConfig {
     #[serde(default)]
     pub allowlist: Vec<String>,
     #[serde(default)]
-    pub local_attachments: LocalAttachmentConfig,
-    #[serde(default)]
     pub proxy: TelegramProxyConfig,
 }
 
@@ -408,7 +403,6 @@ impl Default for TelegramConfig {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
-            local_attachments: LocalAttachmentConfig::default(),
             proxy: TelegramProxyConfig::default(),
         }
     }
@@ -870,6 +864,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub archive: ArchiveToolConfig,
     #[serde(default)]
+    pub channel_attachment: ChannelAttachmentToolConfig,
+    #[serde(default)]
     pub voice: VoiceToolConfig,
     #[serde(default)]
     pub apply_patch: ApplyPatchConfig,
@@ -926,6 +922,33 @@ impl ToolEnabled for ArchiveToolConfig {
 }
 
 fn default_archive_tool_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelAttachmentToolConfig {
+    #[serde(default = "default_channel_attachment_tool_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub local_attachments: LocalAttachmentConfig,
+}
+
+impl Default for ChannelAttachmentToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_channel_attachment_tool_enabled(),
+            local_attachments: LocalAttachmentConfig::default(),
+        }
+    }
+}
+
+impl ToolEnabled for ChannelAttachmentToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_channel_attachment_tool_enabled() -> bool {
     true
 }
 

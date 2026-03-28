@@ -321,9 +321,11 @@ fn channel_response(
 }
 
 pub fn build_channel_driver_factory(
-    _config: &AppConfig,
+    config: &AppConfig,
 ) -> Result<DefaultChannelDriverFactory, Box<dyn Error>> {
-    Ok(DefaultChannelDriverFactory::default())
+    Ok(DefaultChannelDriverFactory::new(
+        config.tools.channel_attachment.local_attachments.clone(),
+    ))
 }
 
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
@@ -1102,7 +1104,9 @@ async fn register_configured_tools(
     if config.tools.archive.enabled() {
         tools.register(ArchiveTool::open_default(config).await?);
     }
-    tools.register(ChannelAttachmentTool::open_default().await?);
+    if config.tools.channel_attachment.enabled() {
+        tools.register(ChannelAttachmentTool::open_default(config).await?);
+    }
     if voice_tool_is_enabled(config) {
         tools.register(VoiceTool::open_default(config).await?);
     } else if config.tools.voice.enabled() && !config.voice.enabled {
@@ -3338,6 +3342,7 @@ mod tests {
 
     fn disable_all_tools(config: &mut AppConfig) {
         config.tools.archive.enabled = false;
+        config.tools.channel_attachment.enabled = false;
         config.tools.voice.enabled = false;
         config.tools.apply_patch.enabled = false;
         config.tools.shell.enabled = false;
@@ -3375,6 +3380,7 @@ mod tests {
 
         let mut config = AppConfig::default();
         disable_all_tools(&mut config);
+        config.tools.channel_attachment.enabled = true;
         config.tools.geo.enabled = true;
         config.tools.sub_agent.enabled = true;
 
@@ -3418,9 +3424,9 @@ mod tests {
         let names = builtin_tool_names(&config);
 
         assert!(names.iter().any(|name| name == "voice"));
+        assert!(names.iter().any(|name| name == "channel_attachment"));
         assert!(names.iter().any(|name| name == "shell"));
         assert!(names.iter().any(|name| name == "sub_agent"));
-        assert!(!names.iter().any(|name| name == "channel_attachment"));
     }
 
     fn test_session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {

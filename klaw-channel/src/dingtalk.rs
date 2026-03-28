@@ -99,7 +99,10 @@ pub struct DingtalkChannel {
 }
 
 impl DingtalkChannel {
-    pub fn from_app_config(config: DingtalkConfig) -> ChannelResult<Self> {
+    pub fn from_app_config(
+        config: DingtalkConfig,
+        local_attachments: LocalAttachmentConfig,
+    ) -> ChannelResult<Self> {
         Self::new(DingtalkChannelConfig {
             account_id: config.id,
             client_id: config.client_id,
@@ -108,7 +111,7 @@ impl DingtalkChannel {
             show_reasoning: config.show_reasoning,
             stream_output: config.stream_output,
             allowlist: config.allowlist,
-            local_attachments: config.local_attachments,
+            local_attachments,
             proxy: DingtalkProxyConfig {
                 enabled: config.proxy.enabled,
                 url: config.proxy.url,
@@ -886,13 +889,29 @@ async fn deliver_dingtalk_attachments(
                         source = ?attachment.source,
                         error = %error,
                         "failed to resolve dingtalk outbound attachment"
-                    );
-                    continue;
-                }
-            };
+                );
+                continue;
+            }
+        };
+        debug!(
+            chat_id,
+            source = resolved.source_label.as_str(),
+            kind = ?resolved.kind,
+            filename = resolved.filename.as_str(),
+            mime_type = resolved.mime_type.as_deref().unwrap_or("unknown"),
+            size_bytes = resolved.bytes.len(),
+            "resolved dingtalk outbound attachment"
+        );
 
         let result = match resolved.kind {
             crate::OutboundAttachmentKind::Image => {
+                debug!(
+                    chat_id,
+                    source = resolved.source_label.as_str(),
+                    filename = resolved.filename.as_str(),
+                    size_bytes = resolved.bytes.len(),
+                    "uploading dingtalk image attachment"
+                );
                 let media_id = match client
                     .upload_media(
                         &access_token,
@@ -914,6 +933,18 @@ async fn deliver_dingtalk_attachments(
                         continue;
                     }
                 };
+                debug!(
+                    chat_id,
+                    source = resolved.source_label.as_str(),
+                    media_id = media_id.as_str(),
+                    "uploaded dingtalk image attachment"
+                );
+                debug!(
+                    chat_id,
+                    source = resolved.source_label.as_str(),
+                    media_id = media_id.as_str(),
+                    "sending dingtalk image attachment message"
+                );
                 client
                     .send_session_webhook_image_markdown(
                         &session_webhook,
@@ -924,6 +955,13 @@ async fn deliver_dingtalk_attachments(
                     .await
             }
             crate::OutboundAttachmentKind::File => {
+                debug!(
+                    chat_id,
+                    source = resolved.source_label.as_str(),
+                    filename = resolved.filename.as_str(),
+                    size_bytes = resolved.bytes.len(),
+                    "uploading dingtalk file attachment"
+                );
                 let media_id = match client
                     .upload_media(
                         &access_token,
@@ -945,6 +983,18 @@ async fn deliver_dingtalk_attachments(
                         continue;
                     }
                 };
+                debug!(
+                    chat_id,
+                    source = resolved.source_label.as_str(),
+                    media_id = media_id.as_str(),
+                    "uploaded dingtalk file attachment"
+                );
+                debug!(
+                    chat_id,
+                    source = resolved.source_label.as_str(),
+                    media_id = media_id.as_str(),
+                    "sending dingtalk file attachment message"
+                );
                 client
                     .send_session_webhook_file(&session_webhook, &media_id)
                     .await
@@ -957,6 +1007,12 @@ async fn deliver_dingtalk_attachments(
                 source = resolved.source_label.as_str(),
                 error = %error,
                 "failed to send dingtalk outbound attachment"
+            );
+        } else {
+            debug!(
+                chat_id,
+                source = resolved.source_label.as_str(),
+                "sent dingtalk outbound attachment"
             );
         }
     }
@@ -1221,6 +1277,13 @@ impl DingtalkApiClient {
         filename: &str,
         mime_type: Option<&str>,
     ) -> ChannelResult<String> {
+        debug!(
+            media_type = media_type,
+            filename = filename.trim(),
+            mime_type = mime_type.unwrap_or("unknown"),
+            size_bytes = bytes.len(),
+            "calling dingtalk media upload"
+        );
         let url = format!(
             "{DINGTALK_OAPI_BASE}{OAPI_MEDIA_UPLOAD_PATH}?access_token={}&type={}",
             urlencoding::encode(access_token),
@@ -1253,15 +1316,23 @@ impl DingtalkApiClient {
             )
             .into());
         }
-        body.get("media_id")
+        let Some(media_id) = body
+            .get("media_id")
             .or_else(|| body.get("mediaId"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
-            .ok_or_else(|| {
-                format!("missing media_id in dingtalk media upload response body={body}").into()
-            })
+        else {
+            return Err(format!("missing media_id in dingtalk media upload response body={body}").into());
+        };
+        debug!(
+            media_type = media_type,
+            filename = filename.trim(),
+            media_id = media_id.as_str(),
+            "dingtalk media upload succeeded"
+        );
+        Ok(media_id)
     }
 
     async fn send_session_webhook_markdown(

@@ -1,5 +1,5 @@
 use crate::{ChannelResult, ChannelRuntime, dingtalk::DingtalkChannel, telegram::TelegramChannel};
-use klaw_config::{ChannelsConfig, DingtalkConfig, TelegramConfig};
+use klaw_config::{ChannelsConfig, DingtalkConfig, LocalAttachmentConfig, TelegramConfig};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -204,7 +204,16 @@ pub trait ChannelDriverFactory {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct DefaultChannelDriverFactory;
+pub struct DefaultChannelDriverFactory {
+    local_attachments: LocalAttachmentConfig,
+}
+
+impl DefaultChannelDriverFactory {
+    #[must_use]
+    pub fn new(local_attachments: LocalAttachmentConfig) -> Self {
+        Self { local_attachments }
+    }
+}
 
 impl ChannelDriverFactory for DefaultChannelDriverFactory {
     fn build(
@@ -213,10 +222,16 @@ impl ChannelDriverFactory for DefaultChannelDriverFactory {
     ) -> ChannelResult<Box<dyn ManagedChannelDriver>> {
         match config {
             ChannelInstanceConfig::Dingtalk(config) => {
-                Ok(Box::new(DingtalkChannel::from_app_config(config.clone())?))
+                Ok(Box::new(DingtalkChannel::from_app_config(
+                    config.clone(),
+                    self.local_attachments.clone(),
+                )?))
             }
             ChannelInstanceConfig::Telegram(config) => {
-                Ok(Box::new(TelegramChannel::from_app_config(config.clone())?))
+                Ok(Box::new(TelegramChannel::from_app_config(
+                    config.clone(),
+                    self.local_attachments.clone(),
+                )?))
             }
         }
     }
@@ -661,7 +676,6 @@ mod tests {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
-            local_attachments: Default::default(),
             proxy: Default::default(),
         })
     }
@@ -674,7 +688,6 @@ mod tests {
             show_reasoning: false,
             stream_output: false,
             allowlist: Vec::new(),
-            local_attachments: Default::default(),
             proxy: Default::default(),
         })
     }

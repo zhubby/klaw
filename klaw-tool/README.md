@@ -19,7 +19,7 @@
 - the `apply_patch` tool is intentionally patch-oriented and only supports batched file mutations
 - the `approval` tool delegates persisted approval lifecycle actions (`request`, `get`, `resolve`) to the `klaw-approval` manager layer
 - tools can emit structured signals on both success and failure paths; current runtime consumers include `approval_required`, `stop`, and `channel_attachment`
-- the `channel_attachment` tool is the model-facing way to send a file back to DingTalk/Telegram chat, either from a valid `archive_id` or from an absolute local path that stays inside the workspace or a configured allowlist
+- the `channel_attachment` tool is gated by `tools.channel_attachment.enabled`, and its local path policy comes from `tools.channel_attachment.local_attachments`
 - the `shell` tool now supports two rule lists: `blocked_patterns` reject immediately, while `unsafe_patterns` require approval; commands that match neither execute directly
 - the `cron_manager` tool accepts planner-friendly schedule inputs such as 5-field cron (`0 8 * * *`), `every 24h`, and daily time shorthand (`8:00`), then normalizes them before persistence
 - the `cron_manager` tool also accepts either a JSON object or a JSON string for payloads, and tolerates common boolean strings like `"true"` / `"false"` for `enabled`
