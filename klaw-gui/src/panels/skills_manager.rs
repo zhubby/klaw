@@ -93,6 +93,24 @@ impl SkillsManagerPanel {
         self.load_items(notifications, false);
     }
 
+    fn reload_config_snapshot(&mut self, notifications: &mut NotificationCenter) -> bool {
+        self.ensure_store_loaded(notifications);
+        let Some(store) = self.config_store.as_ref() else {
+            return false;
+        };
+
+        match store.reload() {
+            Ok(snapshot) => {
+                self.apply_snapshot(snapshot);
+                true
+            }
+            Err(err) => {
+                notifications.error(format!("Failed to reload config: {err}"));
+                false
+            }
+        }
+    }
+
     fn load_items(&mut self, notifications: &mut NotificationCenter, reload_config: bool) {
         self.ensure_store_loaded(notifications);
         let Some(store) = self.config_store.as_ref() else {
@@ -145,6 +163,8 @@ impl SkillsManagerPanel {
     }
 
     fn open_install_window(&mut self, notifications: &mut NotificationCenter) {
+        let _ = self.reload_config_snapshot(notifications);
+
         if self.config.skills.registries.is_empty() {
             notifications.warning("No skills registry configured");
             return;
@@ -1122,7 +1142,10 @@ where
 mod tests {
     use super::*;
     use klaw_config::SkillsRegistryConfig;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        env, fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn remove_skill_from_config_updates_matching_registry_only() {
@@ -1168,6 +1191,51 @@ mod tests {
             next.skills.registries["private"].installed,
             vec!["alpha", "zeta"]
         );
+    }
+
+    #[test]
+    fn reload_config_snapshot_picks_up_new_registries_from_disk() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = env::temp_dir().join(format!("klaw-gui-skills-manager-test-{suffix}"));
+        let path = root.join("config.toml");
+        fs::create_dir_all(&root).expect("should create temp root");
+        fs::write(
+            &path,
+            toml::to_string_pretty(&AppConfig::default()).expect("default config should serialize"),
+        )
+        .expect("should write initial config");
+
+        let store = ConfigStore::open(Some(&path)).expect("store should open");
+        let mut panel = SkillsManagerPanel {
+            config_store: Some(store.clone()),
+            ..Default::default()
+        };
+        panel.apply_snapshot(store.snapshot());
+        let mut notifications = NotificationCenter::default();
+
+        let stale_store = ConfigStore::open(Some(&path)).expect("stale store should open");
+        stale_store
+            .update_config(|config| {
+                config.skills.registries.insert(
+                    "fresh".to_string(),
+                    SkillsRegistryConfig {
+                        address: "https://example.com/fresh.git".to_string(),
+                        installed: Vec::new(),
+                    },
+                );
+                Ok(())
+            })
+            .expect("config update should succeed");
+
+        assert!(!panel.config.skills.registries.contains_key("fresh"));
+        assert!(panel.reload_config_snapshot(&mut notifications));
+        assert!(panel.config.skills.registries.contains_key("fresh"));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
