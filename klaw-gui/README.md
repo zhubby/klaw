@@ -14,11 +14,12 @@
 - Bottom status bar with version and theme-mode dropdown
   - Runtime provider override dropdown on the right (select from `model_providers` without editing config; applies immediately to the running runtime's default provider for new routes and `/new`)
 - System tray / macOS menu bar icon loaded from embedded PNG assets at runtime
-  - tray menu includes `Open Klaw`, `Settings`, `About`, and `Quit Klaw`
-  - `Settings` opens the in-app settings workbench
+  - macOS menu bar icon now uses left click to show and activate the main window
+  - right click opens a compact menu with `About` and `Quit Klaw`
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
   - includes tabs/theme mode/light-dark theme presets/fullscreen and window size
 - macOS app icon is loaded from embedded image bytes at startup, so both `.app` bundles and standalone binaries keep the custom icon
+- macOS window close requests now hide the app to the menu bar instead of quitting; tray `Quit Klaw` remains the explicit full-exit path
 - macOS `Launch at startup` now provisions a user `LaunchAgent` from the packaged `.app` bundle and re-syncs stale login-item state on startup
 - System CJK font fallback via `fontdb` to avoid Chinese text missing-glyph rendering
 - Strongly typed menu model for workspace modules

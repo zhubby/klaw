@@ -60,7 +60,8 @@ impl WorkbenchState {
             UiAction::CloseTab(tab_id) => self.close(tab_id),
             UiAction::SetRuntimeProviderOverride(_)
             | UiAction::SetThemeMode(_)
-            | UiAction::CloseWindow
+            | UiAction::HideWindow
+            | UiAction::QuitApp
             | UiAction::ForcePersistLayout
             | UiAction::ToggleFullscreen
             | UiAction::MinimizeWindow

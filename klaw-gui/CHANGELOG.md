@@ -2,6 +2,10 @@
 
 ## 2026-03-28
 
+### Changed
+
+- macOS 顶部状态栏图标现在改为左键直接显示并激活主窗口、右键仅弹出 `About` / `Quit Klaw` 菜单；窗口关闭动作同时改为隐藏到状态栏而非直接退出
+
 ### Fixed
 
 - macOS `Settings > General > Launch at startup` now manages a real user `LaunchAgent`, only enables from the packaged `Klaw.app` bundle, and re-syncs stale login-item state on GUI startup

@@ -124,8 +124,8 @@ impl ShellUi {
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Close Windows").clicked() {
-                        actions.push(UiAction::CloseWindow);
+                    if ui.button("Hide Window").clicked() {
+                        actions.push(UiAction::HideWindow);
                         ui.close();
                     }
                 });
@@ -165,12 +165,8 @@ impl ShellUi {
                     egui::vec2(ui.available_width(), row_height),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        if ui
-                            .button(regular::X)
-                            .on_hover_text("Close Window")
-                            .clicked()
-                        {
-                            actions.push(UiAction::CloseWindow);
+                        if ui.button(regular::X).on_hover_text("Hide Window").clicked() {
+                            actions.push(UiAction::HideWindow);
                         }
 
                         let zoom_icon = if state.fullscreen {
