@@ -1,10 +1,10 @@
-use crate::domain::menu::WorkbenchMenu;
 use crate::runtime_bridge::request_set_provider_override;
 use crate::state::persistence;
 use crate::state::{UiAction, UiState, WindowSize};
 use crate::theme;
 use crate::tray::{self, TrayCommand, TrayIntegration};
 use crate::ui::shell::ShellUi;
+use crate::{hide_macos_app, show_macos_app};
 use std::time::{Duration, Instant};
 
 const UI_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -12,9 +12,8 @@ const UI_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 fn tray_command_ui_action(command: TrayCommand) -> Option<UiAction> {
     match command {
         TrayCommand::OpenKlaw => None,
-        TrayCommand::OpenSettings => Some(UiAction::OpenMenu(WorkbenchMenu::Setting)),
         TrayCommand::ShowAbout => Some(UiAction::ShowAbout),
-        TrayCommand::QuitKlaw => Some(UiAction::CloseWindow),
+        TrayCommand::QuitKlaw => Some(UiAction::QuitApp),
     }
 }
 
@@ -24,6 +23,7 @@ pub struct KlawGuiApp {
     tray: Option<TrayIntegration>,
     state_dirty: bool,
     last_state_save_at: Instant,
+    should_quit: bool,
 }
 
 impl KlawGuiApp {
@@ -35,6 +35,7 @@ impl KlawGuiApp {
             tray: tray::install(&creation_ctx.egui_ctx).ok().flatten(),
             state_dirty: false,
             last_state_save_at: Instant::now(),
+            should_quit: false,
         };
         theme::install_fonts(&creation_ctx.egui_ctx);
         theme::apply_theme(&creation_ctx.egui_ctx, &app.state);
@@ -54,8 +55,12 @@ impl KlawGuiApp {
 
     fn handle_action(&mut self, ctx: &egui::Context, action: UiAction) {
         match action {
-            UiAction::CloseWindow => {
+            UiAction::HideWindow => {
+                self.hide_window(ctx);
+            }
+            UiAction::QuitApp => {
                 self.save_state_now();
+                self.should_quit = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             UiAction::ForcePersistLayout => {
@@ -110,6 +115,19 @@ impl KlawGuiApp {
         }
     }
 
+    fn show_window(&self, ctx: &egui::Context) {
+        show_macos_app();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    fn hide_window(&mut self, ctx: &egui::Context) {
+        self.save_state_now();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        hide_macos_app();
+    }
+
     fn mark_state_dirty(&mut self) {
         self.state_dirty = true;
     }
@@ -132,19 +150,10 @@ impl KlawGuiApp {
     fn handle_tray_command(&mut self, ctx: &egui::Context, command: TrayCommand) {
         match command {
             TrayCommand::OpenKlaw => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            }
-            TrayCommand::OpenSettings => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                self.show_window(ctx);
             }
             TrayCommand::ShowAbout => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                self.show_window(ctx);
             }
             TrayCommand::QuitKlaw => {}
         }
@@ -214,7 +223,12 @@ impl eframe::App for KlawGuiApp {
 
         let close_requested = ctx.input(|input| input.viewport().close_requested());
         if close_requested {
-            self.save_state_now();
+            if self.should_quit {
+                self.save_state_now();
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.hide_window(ctx);
+            }
         }
     }
 }
@@ -222,17 +236,8 @@ impl eframe::App for KlawGuiApp {
 #[cfg(test)]
 mod tests {
     use super::tray_command_ui_action;
-    use crate::domain::menu::WorkbenchMenu;
     use crate::state::UiAction;
     use crate::tray::TrayCommand;
-
-    #[test]
-    fn tray_settings_command_opens_setting_menu() {
-        assert_eq!(
-            tray_command_ui_action(TrayCommand::OpenSettings),
-            Some(UiAction::OpenMenu(WorkbenchMenu::Setting))
-        );
-    }
 
     #[test]
     fn tray_about_and_quit_commands_keep_expected_actions() {
@@ -242,7 +247,7 @@ mod tests {
         );
         assert_eq!(
             tray_command_ui_action(TrayCommand::QuitKlaw),
-            Some(UiAction::CloseWindow)
+            Some(UiAction::QuitApp)
         );
         assert_eq!(tray_command_ui_action(TrayCommand::OpenKlaw), None);
     }

@@ -83,3 +83,38 @@ fn install_macos_app_icon() {
         app.setApplicationIconImage(Some(&icon));
     }
 }
+
+#[cfg(target_os = "macos")]
+pub(crate) fn show_macos_app() {
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    use objc2_foundation::MainThreadMarker;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+
+    let app = NSApplication::sharedApplication(mtm);
+    unsafe {
+        app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+        app.activate();
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn show_macos_app() {}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn hide_macos_app() {
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    use objc2_foundation::MainThreadMarker;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn hide_macos_app() {}

@@ -12,7 +12,8 @@ pub enum UiAction {
     CloseTab(TabId),
     SetRuntimeProviderOverride(Option<String>),
     SetThemeMode(ThemeMode),
-    CloseWindow,
+    HideWindow,
+    QuitApp,
     ForcePersistLayout,
     ToggleFullscreen,
     MinimizeWindow,
@@ -170,7 +171,8 @@ impl UiState {
             UiAction::HideAbout => {
                 self.show_about = false;
             }
-            UiAction::CloseWindow
+            UiAction::HideWindow
+            | UiAction::QuitApp
             | UiAction::ForcePersistLayout
             | UiAction::MinimizeWindow
             | UiAction::ZoomWindow
