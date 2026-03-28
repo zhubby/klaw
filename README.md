@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Klaw</h1>
-  <img src="klaw-gui/assets/icons/logo.iconset/icon_128x128@2x.png" alt="Klaw logo" width="128" />
+  <img src="klaw-gui/assets/icons/Icon-macOS-Default-1024x1024@1x.png" alt="Klaw logo" width="128" />
   <p>Crab ❤️ Claw.</p>
 </div>
 
