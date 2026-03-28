@@ -727,10 +727,6 @@ impl PanelRenderer for SkillsManagerPanel {
                 self.config.skills.registries.len()
             ));
         });
-        if let Some(skill_root) = self.skill_root.as_ref() {
-            ui.label(format!("Skill Root: {}", skill_root.display()));
-        }
-
         ui.separator();
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {

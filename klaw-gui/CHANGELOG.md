@@ -9,7 +9,7 @@
 ### Fixed
 
 - macOS `Settings > General > Launch at startup` now manages a real user `LaunchAgent`, only enables from the packaged `Klaw.app` bundle, and re-syncs stale login-item state on GUI startup
-- `Channel`、`Voice`、`Tool`、`Skills Registry`、`Skills Manager`、`Model Provider`、`MCP` 与 `Profile Prompt` 面板标题下方不再显示冗余的 `Config` / `Path` / `Workspace Path` 状态行
+- `Channel`、`Voice`、`Tool`、`Skills Registry`、`Skills Manager`、`Model Provider`、`MCP` 与 `Profile Prompt` 面板标题下方不再显示冗余的 `Config` / `Path` / `Workspace Path` / `Skill Root` 状态行
 
 ## 2026-03-27
 
