@@ -8,7 +8,6 @@ use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, ModelProviderConfig};
 use klaw_llm::OpenAiWireApi;
-use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -97,7 +96,6 @@ impl ProviderForm {
 #[derive(Default)]
 pub struct ProviderPanel {
     store: Option<ConfigStore>,
-    config_path: Option<PathBuf>,
     revision: Option<u64>,
     config: AppConfig,
     runtime_status: Option<ProviderRuntimeSnapshot>,
@@ -139,16 +137,8 @@ impl ProviderPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.config_path = Some(snapshot.path);
         self.revision = Some(snapshot.revision);
         self.config = snapshot.config;
-    }
-
-    fn status_label(path: Option<&Path>) -> String {
-        match path {
-            Some(path) => format!("Path: {}", path.display()),
-            None => "Path: (not loaded)".to_string(),
-        }
     }
 
     fn reload(&mut self, notifications: &mut NotificationCenter) {
@@ -505,7 +495,6 @@ impl PanelRenderer for ProviderPanel {
         self.refresh_runtime_status();
 
         ui.heading(ctx.tab_title);
-        ui.label(Self::status_label(self.config_path.as_deref()));
         ui.horizontal(|ui| {
             ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.colored_label(

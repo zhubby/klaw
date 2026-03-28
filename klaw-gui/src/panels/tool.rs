@@ -17,14 +17,12 @@ use klaw_session::{
     ToolAuditRecord, ToolAuditSortOrder,
 };
 use std::future::Future;
-use std::path::{Path, PathBuf};
 use std::thread;
 use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
 
 pub struct ToolPanel {
     store: Option<ConfigStore>,
-    config_path: Option<PathBuf>,
     revision: Option<u64>,
     config: AppConfig,
     form: Option<ToolForm>,
@@ -192,7 +190,6 @@ impl Default for ToolPanel {
         let one_month_ago = today - chrono::Duration::days(30);
         Self {
             store: None,
-            config_path: None,
             revision: None,
             config: AppConfig::default(),
             form: None,
@@ -482,16 +479,8 @@ impl ToolPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.config_path = Some(snapshot.path);
         self.revision = Some(snapshot.revision);
         self.config = snapshot.config;
-    }
-
-    fn status_label(path: Option<&Path>) -> String {
-        match path {
-            Some(path) => format!("Path: {}", path.display()),
-            None => "Path: (not loaded)".to_string(),
-        }
     }
 
     fn save_config<F>(
@@ -1640,7 +1629,6 @@ impl PanelRenderer for ToolPanel {
         self.ensure_store_loaded(notifications);
 
         ui.heading(ctx.tab_title);
-        ui.label(Self::status_label(self.config_path.as_deref()));
         ui.horizontal(|ui| {
             ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label("Manage tool enablement and per-tool settings.");
