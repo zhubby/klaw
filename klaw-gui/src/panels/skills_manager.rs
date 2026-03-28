@@ -26,7 +26,6 @@ struct InstallSkillWindow {
 
 pub struct SkillsManagerPanel {
     config_store: Option<ConfigStore>,
-    config_path: Option<PathBuf>,
     revision: Option<u64>,
     config: AppConfig,
     skill_root: Option<PathBuf>,
@@ -45,7 +44,6 @@ impl Default for SkillsManagerPanel {
     fn default() -> Self {
         Self {
             config_store: None,
-            config_path: None,
             revision: None,
             config: AppConfig::default(),
             skill_root: None,
@@ -84,7 +82,6 @@ impl SkillsManagerPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.config_path = Some(snapshot.path);
         self.revision = Some(snapshot.revision);
         self.config = snapshot.config;
     }
@@ -451,13 +448,6 @@ impl SkillsManagerPanel {
         }
     }
 
-    fn status_label(path: Option<&Path>) -> String {
-        match path {
-            Some(path) => format!("Config: {}", path.display()),
-            None => "Config: (not loaded)".to_string(),
-        }
-    }
-
     fn render_detail_window(&mut self, ctx: &egui::Context) {
         if !self.detail_window_open {
             return;
@@ -729,7 +719,6 @@ impl PanelRenderer for SkillsManagerPanel {
         self.handle_local_install_selection(notifications);
 
         ui.heading(ctx.tab_title);
-        ui.label(Self::status_label(self.config_path.as_deref()));
         ui.horizontal(|ui| {
             ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!("Installed: {}", self.items.len()));

@@ -11,7 +11,6 @@ use klaw_skill::{
 };
 use klaw_skill::{RegistrySyncReport, RegistrySyncStatus};
 use std::future::Future;
-use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
@@ -69,7 +68,6 @@ impl SkillsRegistryForm {
 #[derive(Default)]
 pub struct SkillsRegistryPanel {
     store: Option<ConfigStore>,
-    config_path: Option<PathBuf>,
     revision: Option<u64>,
     config: AppConfig,
     form: Option<SkillsRegistryForm>,
@@ -106,17 +104,9 @@ impl SkillsRegistryPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.config_path = Some(snapshot.path);
         self.revision = Some(snapshot.revision);
         self.sync_timeout_text = snapshot.config.skills.sync_timeout.to_string();
         self.config = snapshot.config;
-    }
-
-    fn status_label(path: Option<&Path>) -> String {
-        match path {
-            Some(path) => format!("Path: {}", path.display()),
-            None => "Path: (not loaded)".to_string(),
-        }
     }
 
     fn save_config<F>(
@@ -544,7 +534,6 @@ impl PanelRenderer for SkillsRegistryPanel {
         }
 
         ui.heading(ctx.tab_title);
-        ui.label(Self::status_label(self.config_path.as_deref()));
         ui.horizontal(|ui| {
             ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!(

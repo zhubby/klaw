@@ -770,10 +770,6 @@ impl PanelRenderer for ProfilePanel {
         }
 
         ui.heading(ctx.tab_title);
-        match self.workspace_dir.as_deref() {
-            Some(workspace_dir) => ui.label(format!("Workspace Path: {}", workspace_dir.display())),
-            None => ui.label("Workspace Path: (not loaded)"),
-        };
         ui.horizontal(|ui| {
             ui.label(format!("Markdown Files: {}", self.docs.len()));
             if ui.button("Reload").clicked() {

@@ -12,7 +12,7 @@ use rodio::{Decoder, OutputStream, Sink};
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -245,7 +245,6 @@ struct PlaybackHandle {
 
 pub struct VoicePanel {
     store: Option<ConfigStore>,
-    config_path: Option<PathBuf>,
     config: AppConfig,
     config_form: VoiceConfigForm,
     config_window_open: bool,
@@ -264,7 +263,6 @@ impl Default for VoicePanel {
     fn default() -> Self {
         Self {
             store: None,
-            config_path: None,
             config: AppConfig::default(),
             config_form: VoiceConfigForm::default(),
             config_window_open: false,
@@ -297,7 +295,6 @@ impl VoicePanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.config_path = Some(snapshot.path);
         self.config = snapshot.config;
         self.config_form = VoiceConfigForm::from_config(&self.config.voice);
     }
@@ -937,12 +934,6 @@ impl VoicePanel {
         }
     }
 
-    fn status_label(path: Option<&Path>) -> String {
-        match path {
-            Some(path) => format!("Path: {}", path.display()),
-            None => "Path: (not loaded)".to_string(),
-        }
-    }
 }
 
 impl PanelRenderer for VoicePanel {
@@ -958,7 +949,6 @@ impl PanelRenderer for VoicePanel {
         self.poll_playback();
 
         ui.heading(ctx.tab_title);
-        ui.label(Self::status_label(self.config_path.as_deref()));
         ui.label("Manage voice providers and run split STT/TTS voice tests.");
         ui.separator();
 

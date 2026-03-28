@@ -10,10 +10,7 @@ use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig,
     TelegramConfig, TelegramProxyConfig,
 };
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 struct DingtalkForm {
@@ -256,7 +253,6 @@ impl ChannelRow {
 #[derive(Default)]
 pub struct ChannelPanel {
     store: Option<ConfigStore>,
-    config_path: Option<PathBuf>,
     revision: Option<u64>,
     config: AppConfig,
     form: Option<ChannelForm>,
@@ -285,20 +281,12 @@ impl ChannelPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.config_path = Some(snapshot.path);
         self.revision = Some(snapshot.revision);
         self.disable_session_commands_input = ArrayEditor::from_vec(
             "Disable Session Commands For",
             &snapshot.config.channels.disable_session_commands_for,
         );
         self.config = snapshot.config;
-    }
-
-    fn status_label(path: Option<&Path>) -> String {
-        match path {
-            Some(path) => format!("Path: {}", path.display()),
-            None => "Path: (not loaded)".to_string(),
-        }
     }
 
     fn instance_key(kind: ChannelKind, id: &str) -> String {
@@ -838,7 +826,6 @@ impl PanelRenderer for ChannelPanel {
         let rows = self.all_rows();
 
         ui.heading(ctx.tab_title);
-        ui.label(Self::status_label(self.config_path.as_deref()));
         ui.horizontal(|ui| {
             ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!("Channel instances: {}", rows.len()));

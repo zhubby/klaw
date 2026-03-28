@@ -11,7 +11,6 @@ use klaw_config::{
 use klaw_mcp::{McpRuntimeSnapshot, McpServerDetail, McpSyncResult};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -110,7 +109,6 @@ struct McpServerDetailWindow {
 #[derive(Default)]
 pub struct McpPanel {
     store: Option<ConfigStore>,
-    config_path: Option<PathBuf>,
     revision: Option<u64>,
     config: AppConfig,
     form: Option<McpServerForm>,
@@ -145,7 +143,6 @@ impl McpPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.config_path = Some(snapshot.path);
         self.revision = Some(snapshot.revision);
         self.config = snapshot.config;
     }
@@ -284,13 +281,6 @@ impl McpPanel {
                 notifications.error("Failed to sync MCP runtime: background task disconnected");
                 self.sync_announce = false;
             }
-        }
-    }
-
-    fn status_label(path: Option<&Path>) -> String {
-        match path {
-            Some(path) => format!("Path: {}", path.display()),
-            None => "Path: (not loaded)".to_string(),
         }
     }
 
@@ -615,7 +605,6 @@ impl PanelRenderer for McpPanel {
         ui.ctx().request_repaint_after(MCP_STATUS_POLL_INTERVAL);
 
         ui.heading(ctx.tab_title);
-        ui.label(Self::status_label(self.config_path.as_deref()));
         ui.horizontal(|ui| {
             ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!("Servers: {}", self.config.mcp.servers.len()));
