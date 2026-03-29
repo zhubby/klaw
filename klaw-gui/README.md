@@ -123,7 +123,7 @@
   - show per-server runtime state and discovered tool counts directly in the table
   - open a detail popup that renders the cached MCP `tools/list` response for the selected server
 - Settings panel features:
-  - configure GUI theme presets in `General`, with `Default`/`Latte` for light mode and `Default`/`Frappé`/`Macchiato`/`Mocha` for dark mode
+  - configure GUI theme presets in `General`, with `Default`/`Latte`/`Crab` for light mode and `Default`/`Frappé`/`Macchiato`/`Mocha` for dark mode
   - persist sync settings in `settings.json`, including S3 endpoint/region/bucket/prefix, backup scope, retention, schedule, hostname-based device ID, and both direct or env-backed credentials
   - trigger manual manifest sync runs against the remote blob store
   - show a live progress bar plus stage/detail text while manual sync is reconciling, uploading blobs, publishing manifests, and pruning remote history
@@ -162,7 +162,7 @@
   - includes `logs` panel backed by a non-blocking runtime log chunk bridge
 - `widgets/`: shared reusable UI widgets
 - `theme.rs`: centralized theme setup
-  - system-follow mode selection plus configurable light/dark theme presets
+  - system-follow mode selection plus configurable light/dark theme presets, including the custom `Crab` light palette derived from the Klaw gateway logo
 - `state/persistence.rs`: local UI state load/save with schema versioning and atomic writes
 
 ## Running

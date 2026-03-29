@@ -109,7 +109,7 @@ mod tests {
         let path = unique_test_path();
         let mut state = UiState::default();
         state.theme_mode = ThemeMode::Dark;
-        state.light_theme = LightThemePreset::Latte;
+        state.light_theme = LightThemePreset::Crab;
         state.dark_theme = DarkThemePreset::Mocha;
         state.apply(UiAction::OpenMenu(WorkbenchMenu::Provider));
         state.apply(UiAction::ActivateTab(TabId::from_menu(
@@ -120,7 +120,7 @@ mod tests {
         let restored = load_ui_state_from_path(&path).expect("load ui state");
 
         assert_eq!(restored.theme_mode, ThemeMode::Dark);
-        assert_eq!(restored.light_theme, LightThemePreset::Latte);
+        assert_eq!(restored.light_theme, LightThemePreset::Crab);
         assert_eq!(restored.dark_theme, DarkThemePreset::Mocha);
         assert_eq!(restored.workbench.active_tab, state.workbench.active_tab);
         assert_eq!(restored.workbench.tabs.len(), state.workbench.tabs.len());

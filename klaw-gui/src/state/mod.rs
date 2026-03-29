@@ -48,6 +48,7 @@ pub enum LightThemePreset {
     #[default]
     Default,
     Latte,
+    Crab,
 }
 
 impl LightThemePreset {
@@ -55,6 +56,7 @@ impl LightThemePreset {
         match self {
             LightThemePreset::Default => "Default",
             LightThemePreset::Latte => "Latte",
+            LightThemePreset::Crab => "Crab",
         }
     }
 }

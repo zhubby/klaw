@@ -5,6 +5,7 @@
 ### Added
 
 - `Gateway` 配置弹窗中的 `auth.token` 现在带有 `Generate` 按钮，可直接填充 `sk_...` 风格随机密钥
+- `Settings > General` 的浅色主题预设新增 `Crab`，采用 Klaw logo 的奶白、蟹壳橙红、金色点缀与深棕描边配色
 
 ### Changed
 

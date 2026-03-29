@@ -613,7 +613,11 @@ impl SettingPanel {
                     .width(160.0)
                     .selected_text(self.theme_state.light_theme.label())
                     .show_ui(ui, |ui| {
-                        for preset in [LightThemePreset::Default, LightThemePreset::Latte] {
+                        for preset in [
+                            LightThemePreset::Default,
+                            LightThemePreset::Latte,
+                            LightThemePreset::Crab,
+                        ] {
                             if ui
                                 .selectable_label(
                                     self.theme_state.light_theme == preset,
