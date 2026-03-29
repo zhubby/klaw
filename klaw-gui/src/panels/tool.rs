@@ -8,8 +8,9 @@ use egui::{Color32, FontId, TextFormat, text::LayoutJob};
 use egui_extras::{Column, DatePickerButton, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{
-    AppConfig, ApplyPatchConfig, ConfigError, ConfigSnapshot, ConfigStore, MemoryToolConfig,
-    ShellConfig, SubAgentConfig, WebFetchConfig, WebSearchConfig,
+    AppConfig, ApplyPatchConfig, ChannelAttachmentToolConfig, ConfigError, ConfigSnapshot,
+    ConfigStore, LocalAttachmentConfig, MemoryToolConfig, ShellConfig, SubAgentConfig,
+    WebFetchConfig, WebSearchConfig,
 };
 use klaw_llm::ToolDefinition;
 use klaw_session::{
@@ -67,6 +68,7 @@ enum ToolForm {
     ApplyPatch(ApplyPatchForm),
     Shell(ShellForm),
     Archive(ToggleForm),
+    ChannelAttachment(ChannelAttachmentForm),
     Voice(ToggleForm),
     Approval(ToggleForm),
     Geo(ToggleForm),
@@ -105,6 +107,13 @@ struct ShellForm {
     allow_login_shell: bool,
     max_timeout_ms: String,
     max_output_bytes: String,
+}
+
+#[derive(Debug, Clone)]
+struct ChannelAttachmentForm {
+    enabled: bool,
+    allowlist_text: String,
+    max_bytes: String,
 }
 
 #[derive(Debug, Clone)]
@@ -263,6 +272,32 @@ impl ShellForm {
             allow_login_shell: self.allow_login_shell,
             max_timeout_ms,
             max_output_bytes,
+        })
+    }
+}
+
+impl ChannelAttachmentForm {
+    fn from_config(config: &ChannelAttachmentToolConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            allowlist_text: config.local_attachments.allowlist.join("\n"),
+            max_bytes: config.local_attachments.max_bytes.to_string(),
+        }
+    }
+
+    fn to_config(&self) -> Result<ChannelAttachmentToolConfig, String> {
+        let max_bytes = self
+            .max_bytes
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| "max_bytes must be a positive integer".to_string())?;
+
+        Ok(ChannelAttachmentToolConfig {
+            enabled: self.enabled,
+            local_attachments: LocalAttachmentConfig {
+                allowlist: parse_lines(&self.allowlist_text),
+                max_bytes,
+            },
         })
     }
 }
@@ -451,6 +486,7 @@ impl ToolForm {
             | ToolForm::HeartbeatManager(form)
             | ToolForm::SkillsRegistry(form)
             | ToolForm::SkillsManager(form) => form.title,
+            ToolForm::ChannelAttachment(_) => "Edit Tool: channel_attachment",
             ToolForm::Memory(_) => "Edit Tool: memory",
             ToolForm::WebFetch(_) => "Edit Tool: web_fetch",
             ToolForm::WebSearch(_) => "Edit Tool: web_search",
@@ -558,6 +594,12 @@ impl ToolPanel {
                 enabled: self.config.tools.archive.enabled,
             },
             ToolDescriptor {
+                key: "channel_attachment",
+                name: "channel_attachment",
+                description: "Send archived or approved local files back into the current chat.",
+                enabled: self.config.tools.channel_attachment.enabled,
+            },
+            ToolDescriptor {
                 key: "voice",
                 name: "voice",
                 description: "Transcribe audio and synthesize text into speech.",
@@ -655,6 +697,7 @@ impl ToolPanel {
                 "Edit Tool: archive",
                 self.config.tools.archive.enabled,
             ),
+            "channel_attachment" => self.open_channel_attachment(),
             "voice" => {
                 self.open_toggle("voice", "Edit Tool: voice", self.config.tools.voice.enabled)
             }
@@ -712,6 +755,12 @@ impl ToolPanel {
         self.form = Some(ToolForm::Shell(ShellForm::from_config(
             &self.config.tools.shell,
         )));
+    }
+
+    fn open_channel_attachment(&mut self) {
+        self.form = Some(ToolForm::ChannelAttachment(
+            ChannelAttachmentForm::from_config(&self.config.tools.channel_attachment),
+        ));
     }
 
     fn open_toggle(&mut self, key: &str, title: &'static str, enabled: bool) {
@@ -773,6 +822,10 @@ impl ToolPanel {
                 }
                 ToolForm::Archive(form) => {
                     config.tools.archive.enabled = form.enabled;
+                    Ok(())
+                }
+                ToolForm::ChannelAttachment(form) => {
+                    config.tools.channel_attachment = form.to_config()?;
                     Ok(())
                 }
                 ToolForm::Voice(form) => {
@@ -939,6 +992,27 @@ impl ToolPanel {
                             ui.label("enabled");
                             ui.checkbox(&mut form.enabled, "");
                         });
+                    }
+                    ToolForm::ChannelAttachment(form) => {
+                        egui::Grid::new("tool-channel-attachment-grid")
+                            .num_columns(2)
+                            .spacing([12.0, 8.0])
+                            .show(ui, |ui| {
+                                ui.label("enabled");
+                                ui.checkbox(&mut form.enabled, "");
+                                ui.end_row();
+
+                                ui.label("max_bytes");
+                                ui.text_edit_singleline(&mut form.max_bytes);
+                                ui.end_row();
+                            });
+                        ui.separator();
+                        ui.label("allowlist (absolute paths, one per line)");
+                        ui.add(
+                            egui::TextEdit::multiline(&mut form.allowlist_text)
+                                .desired_rows(5)
+                                .desired_width(f32::INFINITY),
+                        );
                     }
                     ToolForm::Memory(form) => {
                         egui::Grid::new("tool-memory-grid")
@@ -2200,6 +2274,23 @@ mod tests {
 
         let err = form.to_config().expect_err("should reject invalid timeout");
         assert!(err.contains("max_timeout_ms"));
+    }
+
+    #[test]
+    fn channel_attachment_form_parses_values() {
+        let form = ChannelAttachmentForm {
+            enabled: true,
+            allowlist_text: "/tmp\n /Users/zhubby/Downloads ".to_string(),
+            max_bytes: "2048".to_string(),
+        };
+
+        let config = form.to_config().expect("should parse");
+        assert!(config.enabled);
+        assert_eq!(config.local_attachments.max_bytes, 2048);
+        assert_eq!(
+            config.local_attachments.allowlist,
+            vec!["/tmp".to_string(), "/Users/zhubby/Downloads".to_string()]
+        );
     }
 
     #[test]

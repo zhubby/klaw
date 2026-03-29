@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- `Tool` 面板现在会显示 `channel_attachment`，并支持编辑其 `enabled`、本地附件 allowlist 与 `max_bytes` 配置，不再出现 runtime 已注册但 GUI 面板缺失该工具的情况
 - `Archive` 面板主列表现在在内容超出可视宽度时提供横向滚动，并继续保留纵向滚动，避免右侧列被截断后无法浏览
 - `Archive` 面板记录列表现在支持双击直接打开可预览条目的预览窗口，同时保留现有单击选中与右键菜单操作
 - `Gateway` 面板切换到 Tailscale Funnel 时不再错误地强制要求先启用 `gateway.auth`；未配置认证时改为仅显示公网暴露警告
