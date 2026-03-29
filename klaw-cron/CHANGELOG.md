@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-29
+
+### Fixed
+
+- `CronWorker` no longer rewrites channel cron deliveries onto the chat's current `active_session_key`; scheduled runs now keep their own stored `session_key` so cron turns do not merge into normal agent-loop history, while channel delivery metadata is still refreshed from the active route when available
+
 ## 2026-03-27
 
 ### Fixed

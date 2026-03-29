@@ -89,11 +89,11 @@ where
     async fn publish_inbound(&self, job: &CronJob) -> Result<String, CronError> {
         let mut payload: InboundMessage = serde_json::from_str(&job.payload_json)?;
         let original_session_key = payload.session_key.clone();
-        let resolved_session_key = self
-            .resolve_active_session_key(&payload)
+        let delivery_session_key = self
+            .resolve_delivery_session_key(&payload)
             .await?
             .unwrap_or_else(|| original_session_key.clone());
-        self.refresh_session_delivery_metadata(&mut payload, &resolved_session_key)
+        self.refresh_session_delivery_metadata(&mut payload, &delivery_session_key)
             .await?;
         payload.metadata.insert(
             "cron_id".to_string(),
@@ -101,16 +101,15 @@ where
         );
         payload.metadata.insert(
             "cron.original_session_key".to_string(),
-            serde_json::Value::String(original_session_key),
+            serde_json::Value::String(original_session_key.clone()),
         );
         payload.metadata.insert(
             "cron.resolved_session_key".to_string(),
-            serde_json::Value::String(resolved_session_key.clone()),
+            serde_json::Value::String(original_session_key.clone()),
         );
-        payload.session_key = resolved_session_key.clone();
 
         let envelope = Envelope {
-            header: EnvelopeHeader::new(resolved_session_key),
+            header: EnvelopeHeader::new(original_session_key),
             metadata: BTreeMap::new(),
             payload,
         };
@@ -186,7 +185,7 @@ where
         }
     }
 
-    async fn resolve_active_session_key(
+    async fn resolve_delivery_session_key(
         &self,
         payload: &InboundMessage,
     ) -> Result<Option<String>, CronError> {
@@ -264,10 +263,12 @@ mod tests {
         ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
         CronTaskRun, CronTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
         LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord,
-        NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewWebhookAgentRecord,
-        NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionStorage, StorageError,
-        UpdateCronJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
-        WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
+        NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
+        NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
+        SessionStorage, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
+        ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateWebhookAgentResult,
+        UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
+        WebhookEventRecord,
     };
     use std::{
         collections::BTreeMap,
@@ -729,6 +730,27 @@ mod tests {
             Ok(LlmAuditFilterOptions::default())
         }
 
+        async fn append_tool_audit(
+            &self,
+            _input: &NewToolAuditRecord,
+        ) -> Result<ToolAuditRecord, StorageError> {
+            Err(StorageError::backend("not implemented for test"))
+        }
+
+        async fn list_tool_audit(
+            &self,
+            _query: &ToolAuditQuery,
+        ) -> Result<Vec<ToolAuditRecord>, StorageError> {
+            Ok(Vec::new())
+        }
+
+        async fn list_tool_audit_filter_options(
+            &self,
+            _query: &ToolAuditFilterOptionsQuery,
+        ) -> Result<ToolAuditFilterOptions, StorageError> {
+            Ok(ToolAuditFilterOptions::default())
+        }
+
         async fn append_webhook_event(
             &self,
             input: &NewWebhookEventRecord,
@@ -1097,8 +1119,8 @@ mod tests {
 
         let messages = transport.published_messages().await;
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].header.session_key, "dingtalk:acc:chat1:child");
-        assert_eq!(messages[0].payload.session_key, "dingtalk:acc:chat1:child");
+        assert_eq!(messages[0].header.session_key, "cron:job-dingtalk");
+        assert_eq!(messages[0].payload.session_key, "cron:job-dingtalk");
         assert_eq!(
             messages[0]
                 .payload
@@ -1113,7 +1135,7 @@ mod tests {
                 .metadata
                 .get("cron.resolved_session_key")
                 .and_then(|value| value.as_str()),
-            Some("dingtalk:acc:chat1:child")
+            Some("cron:job-dingtalk")
         );
         assert_eq!(
             messages[0]
@@ -1152,8 +1174,8 @@ mod tests {
 
         let messages = transport.published_messages().await;
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].header.session_key, "telegram:acc:chat1:child");
-        assert_eq!(messages[0].payload.session_key, "telegram:acc:chat1:child");
+        assert_eq!(messages[0].header.session_key, "cron:job-telegram");
+        assert_eq!(messages[0].payload.session_key, "cron:job-telegram");
         assert_eq!(
             messages[0]
                 .payload
@@ -1168,7 +1190,7 @@ mod tests {
                 .metadata
                 .get("cron.resolved_session_key")
                 .and_then(|value| value.as_str()),
-            Some("telegram:acc:chat1:child")
+            Some("cron:job-telegram")
         );
     }
 
