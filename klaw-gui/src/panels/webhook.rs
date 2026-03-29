@@ -1366,7 +1366,7 @@ impl PanelRenderer for WebhookPanel {
                     if trick_state.session_options.is_empty() {
                         ui.colored_label(
                             ui.visuals().warn_fg_color,
-                            "No base sessions found. Trick requires an existing IM base session.",
+                            "No delivery-ready base sessions found. Send a fresh message from a supported IM chat first.",
                         );
                     }
                     ui.add_space(8.0);
@@ -1566,20 +1566,49 @@ fn load_prompt_markdown(path: &Path) -> Result<String, String> {
 fn load_session_options() -> Result<Vec<TrickSessionOption>, String> {
     run_session_task(move |manager| async move {
         let sessions = manager.list_sessions(SessionListQuery::default()).await?;
+        let sessions_by_key = sessions
+            .iter()
+            .cloned()
+            .map(|session| (session.session_key.clone(), session))
+            .collect::<std::collections::BTreeMap<_, _>>();
         let active_session_keys = sessions
             .iter()
             .filter_map(|session| session.active_session_key.clone())
             .collect::<std::collections::BTreeSet<_>>();
         let mut session_options = sessions
             .into_iter()
-            .filter(|session| session.channel != "webhook")
+            .filter(|session| matches!(session.channel.as_str(), "dingtalk" | "telegram"))
             .filter(|session| !active_session_keys.contains(&session.session_key))
-            .map(|session| TrickSessionOption {
-                label: format!(
-                    "{} ({}, {})",
-                    session.session_key, session.channel, session.chat_id
-                ),
-                base_session_key: session.session_key,
+            .filter_map(|session| {
+                let target_key = session
+                    .active_session_key
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(session.session_key.as_str());
+                let target = sessions_by_key.get(target_key).unwrap_or(&session);
+                let delivery_ready = match target.channel.as_str() {
+                    "telegram" => true,
+                    "dingtalk" => target
+                        .delivery_metadata_json
+                        .as_deref()
+                        .is_some_and(|value| value.contains("channel.dingtalk.session_webhook")),
+                    _ => false,
+                };
+                if !delivery_ready {
+                    return None;
+                }
+                let target_suffix = if target.session_key == session.session_key {
+                    "active=self".to_string()
+                } else {
+                    format!("active={}", target.session_key)
+                };
+                Some(TrickSessionOption {
+                    label: format!(
+                        "{} ({}, chat={}, {})",
+                        session.session_key, session.channel, session.chat_id, target_suffix
+                    ),
+                    base_session_key: session.session_key,
+                })
             })
             .collect::<Vec<_>>();
         session_options.sort_by(|a, b| a.label.cmp(&b.label));
