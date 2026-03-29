@@ -9,6 +9,7 @@
 ### Changed
 
 - `Webhook` 面板不再允许编辑 webhook path；`events` / `agents` 路径固定显示为 `/webhook/events` 与 `/webhook/agents`
+- `Webhook` 面板的 `Inspect Prompt` 右键菜单新增 `Edit`，并复用内置 Markdown 编辑器直接修改现有 prompt 模板
 
 ### Fixed
 
