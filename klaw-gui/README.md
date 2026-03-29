@@ -34,7 +34,7 @@
   - cron (db-bound list + add/edit window)
   - heartbeat (db-backed heartbeat list + add/edit/delete/run-now)
 - gateway (runtime-backed gateway status, disk-config reload sync, start, restart, base address display, independent Tailscale host status, background gateway/tailscale actions, explicit Tailscale mode apply flow, Tailscale-only refresh/apply guards when the local service is unavailable, and `auth.token` random-secret generation from the config dialog)
-  - webhook (db-backed webhook event list, filters, detail inspection, `gateway.webhook.events` / `gateway.webhook.agents` config editing, local `hooks/prompts/*.md` template management, and generated `/webhook/agents` trick URLs based on current gateway/tailscale runtime state)
+  - webhook (db-backed webhook event list, filters, detail inspection, `gateway.webhook.events` / `gateway.webhook.agents` config editing, local `hooks/prompts/*.md` template management with create/edit/view/delete flows, and generated `/webhook/agents` trick URLs based on current gateway/tailscale runtime state)
   - mcp (config-bound list + add/edit window)
   - skill (installed skill management with list/detail/remove/sync actions)
   - skills registry (config-bound list + add/edit window)
@@ -77,7 +77,7 @@
 - Channel panel features:
   - read/write channel config from `config.toml` for `channels.dingtalk` and `channels.telegram`
   - add/edit current dingtalk and telegram channels via `egui::Window`
-  - show per-instance `type / id / enabled / status`
+  - show per-instance `type / id / enabled / status` with color-coded runtime state icons, without exposing auth secrets in the list, and with proxy reduced to an on/off indicator
   - delete channel instances from the table
   - edit and save `channels.disable_session_commands_for`
   - request a live GUI runtime `SyncChannels` after channel saves/reloads so running channel instances update without restarting the app
@@ -111,7 +111,7 @@
   - read memory-layer aggregate stats via `klaw-memory` stats abstraction
   - open a `Config` dialog from the toolbar to edit `memory.embedding.enabled/provider/model`
   - populate the provider picker from configured `model_providers` and default the model field from the selected provider's `default_model`
-  - show total/pinned/embedded/scope/recency/index metrics and top scopes
+  - show total/pinned/embedded/scope/recency/index metrics and a parent-width `Top Scopes` table with horizontal and vertical scrolling when needed
 - System panel features:
   - resolve `~/.klaw/tmp` through `klaw-storage::StoragePaths`
   - calculate the temporary directory size on demand

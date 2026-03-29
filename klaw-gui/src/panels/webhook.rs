@@ -84,6 +84,13 @@ struct CreatePromptState {
     error_message: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum PromptEditorMode {
+    #[default]
+    Create,
+    Edit,
+}
+
 #[derive(Debug, Clone, Default)]
 struct InspectPromptState {
     templates: Vec<PromptTemplateRecord>,
@@ -189,6 +196,7 @@ pub struct WebhookPanel {
     prompt_dir: Option<PathBuf>,
     create_prompt_open: bool,
     create_prompt: CreatePromptState,
+    prompt_editor_mode: PromptEditorMode,
     inspect_prompt_open: bool,
     inspect_prompt: InspectPromptState,
     view_prompt: Option<ViewPromptState>,
@@ -228,6 +236,7 @@ impl Default for WebhookPanel {
             prompt_dir: None,
             create_prompt_open: false,
             create_prompt: CreatePromptState::default(),
+            prompt_editor_mode: PromptEditorMode::Create,
             inspect_prompt_open: false,
             inspect_prompt: InspectPromptState::default(),
             view_prompt: None,
@@ -462,7 +471,28 @@ impl WebhookPanel {
 
     fn open_create_prompt(&mut self) {
         self.create_prompt = CreatePromptState::default();
+        self.prompt_editor_mode = PromptEditorMode::Create;
         self.create_prompt_open = true;
+    }
+
+    fn open_edit_prompt(
+        &mut self,
+        template: &PromptTemplateRecord,
+        notifications: &mut NotificationCenter,
+    ) {
+        match load_prompt_markdown(&template.path) {
+            Ok(markdown) => {
+                self.create_prompt = CreatePromptState {
+                    hook_id: template.hook_id.clone(),
+                    markdown,
+                    status_message: None,
+                    error_message: None,
+                };
+                self.prompt_editor_mode = PromptEditorMode::Edit;
+                self.create_prompt_open = true;
+            }
+            Err(err) => notifications.error(err),
+        }
     }
 
     fn open_inspect_prompt(&mut self, notifications: &mut NotificationCenter) {
@@ -1011,58 +1041,72 @@ impl PanelRenderer for WebhookPanel {
 
         if self.create_prompt_open {
             let mut open = self.create_prompt_open;
-            egui::Window::new("Create Prompt")
-                .id(egui::Id::new("webhook-create-prompt"))
-                .open(&mut open)
-                .resizable(true)
-                .default_width(920.0)
-                .default_height(620.0)
-                .show(ui.ctx(), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Hook ID");
+            let is_editing = self.prompt_editor_mode == PromptEditorMode::Edit;
+            egui::Window::new(if is_editing {
+                "Edit Prompt"
+            } else {
+                "Create Prompt"
+            })
+            .id(egui::Id::new("webhook-create-prompt"))
+            .open(&mut open)
+            .resizable(true)
+            .default_width(920.0)
+            .default_height(620.0)
+            .show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Hook ID");
+                    ui.add_enabled_ui(!is_editing, |ui| {
                         ui.add_sized(
                             [280.0, ui.spacing().interact_size.y],
                             egui::TextEdit::singleline(&mut self.create_prompt.hook_id),
                         );
-                        if let Some(prompt_dir) = &self.prompt_dir {
-                            ui.label(format!("Save To: {}", prompt_dir.display()));
-                        }
                     });
-                    if let Some(message) = &self.create_prompt.status_message {
-                        ui.colored_label(Color32::from_rgb(0x22, 0xC5, 0x5E), message);
+                    if let Some(prompt_dir) = &self.prompt_dir {
+                        ui.label(format!("Save To: {}", prompt_dir.display()));
                     }
-                    if let Some(message) = &self.create_prompt.error_message {
-                        ui.colored_label(ui.visuals().error_fg_color, message);
-                    }
-                    ui.separator();
-                    ui.columns(2, |columns| {
-                        columns[0].label("Markdown");
-                        columns[0].add_sized(
-                            [columns[0].available_width(), PROMPT_TEXT_HEIGHT],
-                            egui::TextEdit::multiline(&mut self.create_prompt.markdown)
-                                .desired_width(f32::INFINITY),
-                        );
-                        columns[1].label("Preview");
-                        egui::ScrollArea::vertical()
-                            .id_salt("webhook-create-prompt-preview")
-                            .max_height(PREVIEW_HEIGHT)
-                            .show(&mut columns[1], |ui| {
-                                render_markdown(ui, &self.create_prompt.markdown);
-                            });
-                    });
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui.button("Save").clicked() {
-                            self.save_prompt_template(notifications);
-                        }
-                    });
                 });
+                if let Some(message) = &self.create_prompt.status_message {
+                    ui.colored_label(Color32::from_rgb(0x22, 0xC5, 0x5E), message);
+                }
+                if let Some(message) = &self.create_prompt.error_message {
+                    ui.colored_label(ui.visuals().error_fg_color, message);
+                }
+                ui.separator();
+                ui.columns(2, |columns| {
+                    columns[0].label("Markdown");
+                    columns[0].add_sized(
+                        [columns[0].available_width(), PROMPT_TEXT_HEIGHT],
+                        egui::TextEdit::multiline(&mut self.create_prompt.markdown)
+                            .desired_width(f32::INFINITY),
+                    );
+                    columns[1].label("Preview");
+                    egui::ScrollArea::vertical()
+                        .id_salt("webhook-create-prompt-preview")
+                        .max_height(PREVIEW_HEIGHT)
+                        .show(&mut columns[1], |ui| {
+                            render_markdown(ui, &self.create_prompt.markdown);
+                        });
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(if is_editing { "Save Changes" } else { "Save" })
+                        .clicked()
+                    {
+                        self.save_prompt_template(notifications);
+                    }
+                });
+            });
             self.create_prompt_open = open;
+            if !self.create_prompt_open {
+                self.prompt_editor_mode = PromptEditorMode::Create;
+            }
         }
 
         if self.inspect_prompt_open {
             let mut open = self.inspect_prompt_open;
             let mut open_view: Option<PromptTemplateRecord> = None;
+            let mut open_edit: Option<PromptTemplateRecord> = None;
             let mut open_trick: Option<PromptTemplateRecord> = None;
             let mut confirm_delete: Option<DeletePromptState> = None;
             egui::Window::new("Inspect Prompt")
@@ -1141,6 +1185,13 @@ impl PanelRenderer for WebhookPanel {
                                             let item_for_menu = item.clone();
                                             response.context_menu(|ui| {
                                                 if ui
+                                                    .button(format!("{} Edit", regular::PENCIL))
+                                                    .clicked()
+                                                {
+                                                    open_edit = Some(item_for_menu.clone());
+                                                    ui.close();
+                                                }
+                                                if ui
                                                     .button(format!("{} View", regular::EYE))
                                                     .clicked()
                                                 {
@@ -1191,6 +1242,9 @@ impl PanelRenderer for WebhookPanel {
             self.inspect_prompt_open = open;
             if let Some(item) = open_view {
                 self.open_view_prompt(&item, notifications);
+            }
+            if let Some(item) = open_edit {
+                self.open_edit_prompt(&item, notifications);
             }
             if let Some(item) = open_trick {
                 self.open_trick_prompt(&item, notifications);

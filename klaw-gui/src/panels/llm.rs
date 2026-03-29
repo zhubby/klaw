@@ -306,7 +306,6 @@ impl PanelRenderer for LlmPanel {
         let table_width = ui.available_width();
         egui::ScrollArea::both()
             .auto_shrink([false, false])
-            .max_width(table_width)
             .show(ui, |ui| {
                 ui.set_min_width(table_width);
                 if self.loading && !self.loaded {

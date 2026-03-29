@@ -8,7 +8,10 @@
 
 ### Changed
 
+- `Channel` 面板列表移除了 `Auth` 列；`Status` 改为按运行态显示带颜色的图标+文字，`Proxy` 列收敛为仅显示是否开启
+- `Memory` 面板的 `Top Scopes` 改为贴合父容器宽度的表格，并在内容超出时同时提供横向与纵向滚动
 - `Webhook` 面板不再允许编辑 webhook path；`events` / `agents` 路径固定显示为 `/webhook/events` 与 `/webhook/agents`
+- `Webhook` 面板的 `Inspect Prompt` 右键菜单新增 `Edit`，并复用内置 Markdown 编辑器直接修改现有 prompt 模板
 
 ### Fixed
 
@@ -16,6 +19,8 @@
 - `Archive` 面板主列表现在在内容超出可视宽度时提供横向滚动，并继续保留纵向滚动，避免右侧列被截断后无法浏览
 - `Archive` 面板记录列表现在支持双击直接打开可预览条目的预览窗口，同时保留现有单击选中与右键菜单操作
 - `Gateway` 面板切换到 Tailscale Funnel 时不再错误地强制要求先启用 `gateway.auth`；未配置认证时改为仅显示公网暴露警告
+- `Gateway` 状态轮询的 runtime 响应超时从 `200ms` 调整为 `1s`，避免本机 Tailscale 状态探测稍慢时反复报 `timed out waiting for gateway status response`
+- `LLM` 面板表格滚动容器不再设置最大宽度，列表区域现在会直接贴合父容器可用宽度
 
 ## 2026-03-28
 

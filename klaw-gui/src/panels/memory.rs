@@ -1,12 +1,15 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
+use egui_extras::{Column, TableBuilder};
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, EmbeddingConfig};
 use klaw_memory::{MemoryError, MemoryStats, SqliteMemoryStatsService};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::thread;
 use tokio::runtime::Builder;
+
+const TOP_SCOPES_TABLE_MAX_HEIGHT: f32 = 240.0;
 
 #[derive(Debug, Clone)]
 struct MemoryConfigForm {
@@ -362,20 +365,40 @@ impl PanelRenderer for MemoryPanel {
         if stats.top_scopes.is_empty() {
             ui.label("No scope data.");
         } else {
-            egui::Grid::new("memory-top-scopes-grid")
-                .striped(true)
-                .num_columns(2)
-                .spacing([12.0, 8.0])
+            let table_width = ui.available_width();
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .max_width(table_width)
+                .max_height(TOP_SCOPES_TABLE_MAX_HEIGHT)
                 .show(ui, |ui| {
-                    ui.strong("Scope");
-                    ui.strong("Count");
-                    ui.end_row();
-
-                    for scope in &stats.top_scopes {
-                        ui.label(&scope.scope);
-                        ui.monospace(scope.count.to_string());
-                        ui.end_row();
-                    }
+                    ui.set_min_width(table_width);
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::remainder().at_least(320.0))
+                        .column(Column::auto().at_least(80.0))
+                        .min_scrolled_height(0.0)
+                        .max_scroll_height(TOP_SCOPES_TABLE_MAX_HEIGHT)
+                        .sense(egui::Sense::hover())
+                        .header(20.0, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("Scope");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Count");
+                            });
+                        })
+                        .body(|body| {
+                            body.rows(22.0, stats.top_scopes.len(), |mut row| {
+                                let scope = &stats.top_scopes[row.index()];
+                                row.col(|ui| {
+                                    ui.label(&scope.scope);
+                                });
+                                row.col(|ui| {
+                                    ui.monospace(scope.count.to_string());
+                                });
+                            });
+                        });
                 });
         }
 

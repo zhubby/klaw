@@ -91,7 +91,7 @@ pub enum RuntimeCommand {
 static RUNTIME_COMMAND_SENDER: OnceLock<Mutex<Option<UnboundedSender<RuntimeCommand>>>> =
     OnceLock::new();
 static LOG_RECEIVER: OnceLock<Mutex<Option<mpsc::Receiver<String>>>> = OnceLock::new();
-const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_millis(200);
+const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(1);
 const RUNTIME_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
