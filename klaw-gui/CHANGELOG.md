@@ -9,6 +9,7 @@
 ### Changed
 
 - `Channel` 面板列表移除了 `Auth` 列；`Status` 改为按运行态显示带颜色的图标+文字，`Proxy` 列收敛为仅显示是否开启
+- `Memory` 面板的 `Top Scopes` 改为贴合父容器宽度的表格，并在内容超出时同时提供横向与纵向滚动
 - `Webhook` 面板不再允许编辑 webhook path；`events` / `agents` 路径固定显示为 `/webhook/events` 与 `/webhook/agents`
 - `Webhook` 面板的 `Inspect Prompt` 右键菜单新增 `Edit`，并复用内置 Markdown 编辑器直接修改现有 prompt 模板
 

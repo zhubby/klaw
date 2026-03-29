@@ -12,6 +12,7 @@ pub struct SchemaVersion {
     pub major: u16,
     /// Minor version number - incremented for backward-compatible additions.
     /// New minor versions should not break existing message parsing logic.
+    pub minor: u16,
 }
 
 impl SchemaVersion {

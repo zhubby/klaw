@@ -959,10 +959,8 @@ impl PanelRenderer for ChannelPanel {
                                 });
                                 row.col(|ui| {
                                     let (icon, label, color) = channel_status_style(status);
-                                    let status_response = ui.colored_label(
-                                        color,
-                                        format!("{} {}", icon, label),
-                                    );
+                                    let status_response =
+                                        ui.colored_label(color, format!("{} {}", icon, label));
                                     if let Some(s) = status {
                                         if let Some(error) = s.last_error.as_deref() {
                                             status_response.on_hover_text(error);
