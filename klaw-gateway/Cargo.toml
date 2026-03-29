@@ -8,11 +8,15 @@ version.workspace = true
 async-trait = { workspace = true }
 axum = { workspace = true }
 futures-util = { workspace = true }
+hmac = { workspace = true }
+hex = { workspace = true }
 klaw-config = { workspace = true }
 klaw-observability = { workspace = true }
 klaw-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "sync"] }
 tracing = { workspace = true }

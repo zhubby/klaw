@@ -14,8 +14,13 @@ use klaw_gateway::TailscaleStatus;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
+use uuid::Uuid;
 
 const GATEWAY_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+fn generate_gateway_auth_token() -> String {
+    format!("sk_{}", Uuid::new_v4().simple())
+}
 
 #[derive(Debug, Clone)]
 struct GatewayConfigForm {
@@ -408,11 +413,16 @@ impl GatewayPanel {
                         ui.end_row();
 
                         ui.label("Token");
-                        ui.add_sized(
-                            [280.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.auth_token)
-                                .password(true),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.add_sized(
+                                [280.0, ui.spacing().interact_size.y],
+                                egui::TextEdit::singleline(&mut self.config_form.auth_token)
+                                    .password(true),
+                            );
+                            if ui.button("Generate").clicked() {
+                                self.config_form.auth_token = generate_gateway_auth_token();
+                            }
+                        });
                         ui.end_row();
 
                         ui.label("Env Key");
@@ -601,15 +611,7 @@ impl PanelRenderer for GatewayPanel {
                 .add_enabled(apply_enabled, egui::Button::new("Apply"))
                 .clicked()
             {
-                if self.selected_tailscale_mode == TailscaleMode::Funnel && !status.auth_configured
-                {
-                    notifications.error(
-                        "Funnel mode requires authentication. Please configure gateway.auth first.",
-                    );
-                    self.selected_tailscale_mode = current_mode;
-                } else {
-                    self.set_tailscale_mode(self.selected_tailscale_mode, notifications);
-                }
+                self.set_tailscale_mode(self.selected_tailscale_mode, notifications);
             }
         });
 
@@ -801,5 +803,27 @@ mod tests {
 
         status.tailscale_host.status = TailscaleStatus::Connected;
         assert!(tailscale_service_available(&status));
+    }
+
+    #[test]
+    fn generated_gateway_auth_token_uses_expected_prefix() {
+        let token = generate_gateway_auth_token();
+        assert!(token.starts_with("sk_"));
+        assert_eq!(token.len(), 35);
+    }
+
+    #[test]
+    fn config_form_persists_generated_auth_token() {
+        let token = generate_gateway_auth_token();
+        let form = GatewayConfigForm {
+            auth_token: token.clone(),
+            ..GatewayConfigForm::default()
+        };
+        let mut config = AppConfig::default();
+
+        form.apply_to_config(&mut config)
+            .expect("config apply should succeed");
+
+        assert_eq!(config.gateway.auth.token.as_deref(), Some(token.as_str()));
     }
 }

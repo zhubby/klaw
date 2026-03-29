@@ -60,14 +60,14 @@ pub async fn spawn_gateway_with_options(
         return Err(GatewayError::TlsNotImplemented);
     }
 
-    if config.tailscale.mode == TailscaleMode::Funnel && !config.auth.is_enabled() {
-        return Err(GatewayError::FunnelRequiresAuth);
-    }
-
     let socket_addr = parse_socket_addr(config)?;
     let health = build_health_registry(options.health);
     let webhook = build_webhook_state(config, options.webhook_handler)?;
-    let auth_token = config.auth.resolve_token();
+    let auth_token = config
+        .auth
+        .enabled
+        .then(|| config.auth.resolve_token())
+        .flatten();
     let state = Arc::new(GatewayState::new(health, options.prometheus, webhook));
     let app = build_router(config, state, auth_token);
 

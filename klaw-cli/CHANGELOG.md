@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-29
+
+### Added
+
+- runtime gateway webhook handler 现在会在 `events` / `agents` 的 accepted、落库、异步处理开始、processed/failed 等关键节点输出 debug 日志，便于串联网关入站与异步执行排障
+
 ## 2026-03-28
 
 ### Added

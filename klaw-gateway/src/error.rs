@@ -16,8 +16,6 @@ pub enum GatewayError {
     PrometheusExporter(String),
     #[error("gateway webhook handler is required when gateway.webhook.enabled=true")]
     MissingWebhookHandler,
-    #[error("funnel mode requires gateway.auth to be configured")]
-    FunnelRequiresAuth,
     #[error("tailscale CLI not found")]
     TailscaleCliNotFound,
     #[error("tailscale not logged in")]

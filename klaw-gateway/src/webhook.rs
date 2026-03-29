@@ -7,7 +7,7 @@ use axum::{
     Json,
     body::Bytes,
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use klaw_config::GatewayConfig;
@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayWebhookRequest {
@@ -142,15 +143,26 @@ pub(crate) fn build_webhook_state(
     }
 
     let handler = handler.ok_or(GatewayError::MissingWebhookHandler)?;
-    Ok(Some(GatewayWebhookState { handler }))
+    let auth = if config.auth.enabled {
+        crate::auth::WebhookAuth::enabled(config.auth.resolve_token())
+    } else {
+        crate::auth::WebhookAuth::disabled()
+    };
+    Ok(Some(GatewayWebhookState { handler, auth }))
 }
 
 pub(crate) async fn webhook_handler(
     State(state): State<Arc<GatewayState>>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let Some(webhook) = state.webhook.as_ref() else {
         return (StatusCode::NOT_FOUND, "webhook is not enabled").into_response();
+    };
+
+    let validation = match webhook.auth.validate(&headers, &body) {
+        Ok(result) => result,
+        Err(err) => return (StatusCode::UNAUTHORIZED, err.message().to_string()).into_response(),
     };
 
     let payload: GatewayWebhookPayload = match serde_json::from_slice(&body) {
@@ -161,6 +173,17 @@ pub(crate) async fn webhook_handler(
         Ok(request) => request,
         Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
     };
+    debug!(
+        webhook_kind = "events",
+        event_id = request.event_id.as_str(),
+        source = request.source.as_str(),
+        event_type = request.event_type.as_str(),
+        session_key = request.session_key.as_str(),
+        remote_addr = request.remote_addr.as_deref().unwrap_or("unknown"),
+        body_bytes = body.len(),
+        auth_mode = validation.mode,
+        "webhook event request received"
+    );
     match webhook.handler.handle_event(request).await {
         Ok(response) => (StatusCode::ACCEPTED, Json(response)).into_response(),
         Err(err) => (err.status, err.message).into_response(),
@@ -170,10 +193,16 @@ pub(crate) async fn webhook_handler(
 pub(crate) async fn webhook_agents_handler(
     State(state): State<Arc<GatewayState>>,
     Query(query): Query<GatewayWebhookAgentQuery>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let Some(webhook) = state.webhook.as_ref() else {
         return (StatusCode::NOT_FOUND, "webhook is not enabled").into_response();
+    };
+
+    let validation = match webhook.auth.validate(&headers, &body) {
+        Ok(result) => result,
+        Err(err) => return (StatusCode::UNAUTHORIZED, err.message().to_string()).into_response(),
     };
 
     let raw_body: Value = match serde_json::from_slice(&body) {
@@ -186,6 +215,18 @@ pub(crate) async fn webhook_agents_handler(
         Ok(request) => request,
         Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
     };
+    debug!(
+        webhook_kind = "agents",
+        request_id = request.request_id.as_str(),
+        hook_id = request.hook_id.as_str(),
+        session_key = request.session_key.as_str(),
+        provider = request.provider.as_deref().unwrap_or("default"),
+        model = request.model.as_deref().unwrap_or("default"),
+        remote_addr = request.remote_addr.as_deref().unwrap_or("unknown"),
+        body_bytes = body.len(),
+        auth_mode = validation.mode,
+        "webhook agent request received"
+    );
     match webhook.handler.handle_agent(request).await {
         Ok(response) => (StatusCode::ACCEPTED, Json(response)).into_response(),
         Err(err) => (err.status, err.message).into_response(),

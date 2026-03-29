@@ -55,6 +55,8 @@ turso = { version = "0.4.3"}
 time = { version = "0.3", features = ["formatting"] }
 iana-time-zone = "0.1.65"
 sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
 hex = "0.4"
 base64 = "0.22"
 anyhow = "1"

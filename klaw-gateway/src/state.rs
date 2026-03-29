@@ -1,5 +1,8 @@
-use crate::tailscale::{TailscaleManager, TailscaleRuntimeInfo};
 use crate::{GatewayError, webhook::GatewayWebhookHandler};
+use crate::{
+    auth::WebhookAuth,
+    tailscale::{TailscaleManager, TailscaleRuntimeInfo},
+};
 use klaw_config::GatewayConfig;
 use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{
@@ -17,6 +20,7 @@ pub(crate) const ROOM_BUFFER_SIZE: usize = 256;
 
 pub(crate) struct GatewayWebhookState {
     pub(crate) handler: Arc<dyn GatewayWebhookHandler>,
+    pub(crate) auth: WebhookAuth,
 }
 
 pub(crate) struct GatewayState {

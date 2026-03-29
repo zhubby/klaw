@@ -22,7 +22,15 @@ mod tests {
             webhook: Default::default(),
         };
 
-        let handle = spawn_gateway(&config).await.expect("gateway should start");
+        let handle = match spawn_gateway(&config).await {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
         assert!(handle.info().actual_port > 0);
         assert!(
             handle

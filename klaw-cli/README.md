@@ -71,6 +71,7 @@
 - runtime 和 `klaw session` 命令的会话状态/历史操作统一通过 `klaw-session` manager 层处理
 - 普通消息默认按 Base Session -> Active Session 路由；全局默认 provider/model 从当前配置实时解析，session 里的 `model_provider` / `model` 只表示显式 override，不再在建会话时复制默认值
 - gateway runtime 现同时支持结构化 `POST /webhook/events` 与模板驱动的 `POST /webhook/agents`；后者通过 URL query 接收 `hook_id` / `session_key` / `provider` / `model` 等控制参数，HTTP body 则保持原始 JSON 并在模板尾部追加为 request JSON 代码块
+- gateway runtime 现在会为 webhook `events` / `agents` 输出接受、落库与异步处理状态的 debug tracing，便于对照 gateway 入站日志排查请求去向
 - `stdio` 启动时会在 runtime 与 MCP 完全就绪后打印 ASCII `KLAW` 标记，以及版本、skills、tools、MCP 加载摘要
 - `stdio` 默认会将 tracing 日志写入 `~/.klaw/logs/stdio.log`，避免后台日志覆盖当前输入中的 prompt
 - `stdio --verbose-terminal` 可显式把 tracing 日志重新打回终端，便于排查启动或 MCP 问题

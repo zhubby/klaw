@@ -18,7 +18,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::fs;
-use tracing::warn;
+use tracing::{debug, warn};
 
 pub fn gateway_options(runtime: Arc<RuntimeBundle>) -> GatewayOptions {
     GatewayOptions {
@@ -37,6 +37,15 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
         &self,
         request: GatewayWebhookRequest,
     ) -> Result<GatewayWebhookResponse, GatewayWebhookHandlerError> {
+        debug!(
+            webhook_kind = "events",
+            event_id = request.event_id.as_str(),
+            source = request.source.as_str(),
+            event_type = request.event_type.as_str(),
+            session_key = request.session_key.as_str(),
+            remote_addr = request.remote_addr.as_deref().unwrap_or("unknown"),
+            "accepting webhook event request"
+        );
         let manager = SqliteSessionManager::from_store(self.runtime.session_store.clone());
         manager
             .touch_session(&request.session_key, &request.chat_id, "webhook")
@@ -70,6 +79,12 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
             })
             .await
             .map_err(|err| GatewayWebhookHandlerError::internal(err.to_string()))?;
+        debug!(
+            webhook_kind = "events",
+            event_id = request.event_id.as_str(),
+            session_key = request.session_key.as_str(),
+            "persisted webhook event request"
+        );
 
         let event_id = request.event_id.clone();
         let session_key = request.session_key.clone();
@@ -89,6 +104,14 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
         &self,
         request: GatewayWebhookAgentRequest,
     ) -> Result<GatewayWebhookAgentResponse, GatewayWebhookHandlerError> {
+        debug!(
+            webhook_kind = "agents",
+            request_id = request.request_id.as_str(),
+            hook_id = request.hook_id.as_str(),
+            session_key = request.session_key.as_str(),
+            remote_addr = request.remote_addr.as_deref().unwrap_or("unknown"),
+            "accepting webhook agent request"
+        );
         let content = load_webhook_agent_prompt(&request)
             .await
             .map_err(|err| GatewayWebhookHandlerError::not_found(err))?;
@@ -122,6 +145,13 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
             })
             .await
             .map_err(|err| GatewayWebhookHandlerError::internal(err.to_string()))?;
+        debug!(
+            webhook_kind = "agents",
+            request_id = request.request_id.as_str(),
+            hook_id = request.hook_id.as_str(),
+            session_key = request.session_key.as_str(),
+            "persisted webhook agent request"
+        );
 
         let request_id = request.request_id.clone();
         let hook_id = request.hook_id.clone();
@@ -142,6 +172,12 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
 
 async fn process_webhook_event(runtime: Arc<RuntimeBundle>, request: GatewayWebhookRequest) {
     let manager = SqliteSessionManager::from_store(runtime.session_store.clone());
+    debug!(
+        webhook_kind = "events",
+        event_id = request.event_id.as_str(),
+        session_key = request.session_key.as_str(),
+        "starting webhook event processing"
+    );
     let result = submit_webhook_event(runtime.as_ref(), &request).await;
     let update = match result {
         Ok(output) => UpdateWebhookEventResult {
@@ -159,6 +195,22 @@ async fn process_webhook_event(runtime: Arc<RuntimeBundle>, request: GatewayWebh
             processed_at_ms: Some(now_ms()),
         },
     };
+    match &update.status {
+        WebhookEventStatus::Processed => debug!(
+            webhook_kind = "events",
+            event_id = request.event_id.as_str(),
+            session_key = request.session_key.as_str(),
+            "webhook event processed"
+        ),
+        WebhookEventStatus::Failed => debug!(
+            webhook_kind = "events",
+            event_id = request.event_id.as_str(),
+            session_key = request.session_key.as_str(),
+            error = update.error_message.as_deref().unwrap_or("unknown"),
+            "webhook event processing failed"
+        ),
+        WebhookEventStatus::Accepted => {}
+    }
 
     if let Err(err) = manager
         .update_webhook_event_status(&request.event_id, &update)
@@ -178,6 +230,13 @@ async fn process_webhook_agent(
     content: String,
 ) {
     let manager = SqliteSessionManager::from_store(runtime.session_store.clone());
+    debug!(
+        webhook_kind = "agents",
+        request_id = request.request_id.as_str(),
+        hook_id = request.hook_id.as_str(),
+        session_key = request.session_key.as_str(),
+        "starting webhook agent processing"
+    );
     let result = submit_webhook_agent(runtime.as_ref(), &request, content).await;
     let update = match result {
         Ok(output) => UpdateWebhookAgentResult {
@@ -195,6 +254,24 @@ async fn process_webhook_agent(
             processed_at_ms: Some(now_ms()),
         },
     };
+    match &update.status {
+        WebhookEventStatus::Processed => debug!(
+            webhook_kind = "agents",
+            request_id = request.request_id.as_str(),
+            hook_id = request.hook_id.as_str(),
+            session_key = request.session_key.as_str(),
+            "webhook agent processed"
+        ),
+        WebhookEventStatus::Failed => debug!(
+            webhook_kind = "agents",
+            request_id = request.request_id.as_str(),
+            hook_id = request.hook_id.as_str(),
+            session_key = request.session_key.as_str(),
+            error = update.error_message.as_deref().unwrap_or("unknown"),
+            "webhook agent processing failed"
+        ),
+        WebhookEventStatus::Accepted => {}
+    }
 
     if let Err(err) = manager
         .update_webhook_agent_status(&request.request_id, &update)
