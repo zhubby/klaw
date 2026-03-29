@@ -16,6 +16,7 @@
 - `Archive` 面板主列表现在在内容超出可视宽度时提供横向滚动，并继续保留纵向滚动，避免右侧列被截断后无法浏览
 - `Archive` 面板记录列表现在支持双击直接打开可预览条目的预览窗口，同时保留现有单击选中与右键菜单操作
 - `Gateway` 面板切换到 Tailscale Funnel 时不再错误地强制要求先启用 `gateway.auth`；未配置认证时改为仅显示公网暴露警告
+- `Gateway` 状态轮询的 runtime 响应超时从 `200ms` 调整为 `1s`，避免本机 Tailscale 状态探测稍慢时反复报 `timed out waiting for gateway status response`
 - `LLM` 面板表格滚动容器不再设置最大宽度，列表区域现在会直接贴合父容器可用宽度
 
 ## 2026-03-28
