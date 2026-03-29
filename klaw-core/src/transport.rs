@@ -3,51 +3,74 @@ use async_trait::async_trait;
 use std::time::Duration;
 use thiserror::Error;
 
-/// 消息交付语义。
+/// Message delivery semantics defining guarantees provided by the transport layer.
+/// Different transport implementations may offer different delivery guarantees
+/// depending on the underlying message broker capabilities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryMode {
-    /// 至少一次，可能重复。
+    /// At-least-once delivery - messages may be delivered multiple times but never lost.
+    /// Consumer must handle duplicates through idempotency.
     AtLeastOnce,
-    /// 至多一次，可能丢失。
+    /// At-most-once delivery - messages may be lost but never delivered multiple times.
+    /// Suitable for fire-and-forget scenarios where duplicates are worse than loss.
     AtMostOnce,
-    /// 精确一次（实现成本高，通常依赖外部事务语义）。
+    /// Exactly-once delivery - each message is delivered precisely once.
+    /// Implementation typically requires external transaction semantics or
+    /// two-phase commit protocols. Often expensive to implement.
     ExactlyOnce,
 }
 
-/// 可自定义主题名封装。
+/// Wrapper for customizable topic names with static lifetime.
+/// Allows transport implementations to use topic names efficiently without
+/// heap allocation for each message.
 #[derive(Debug, Clone)]
 pub struct MessageTopic(pub &'static str);
 
-/// 订阅配置。
+/// Subscription configuration for consuming messages from a topic.
+/// Defines how the consumer should connect to the message source and
+/// how unacknowledged messages should be handled.
 #[derive(Debug, Clone)]
 pub struct Subscription {
-    /// 订阅主题。
+    /// The topic name to subscribe to for receiving messages.
     pub topic: &'static str,
-    /// 消费组标识。
+    /// Consumer group identifier for load balancing across multiple consumers.
+    /// Messages within the same group are distributed among group members.
     pub consumer_group: String,
-    /// 可见性超时（用于重投）。
+    /// Visibility timeout duration for message re-delivery.
+    /// If a message is not acknowledged within this period, it becomes
+    /// visible to other consumers for redelivery.
     pub visibility_timeout: Duration,
 }
 
-/// transport 返回的消息及其确认句柄。
+/// Transport message wrapper containing the payload and acknowledgment handle.
+/// The acknowledgment handle is required to confirm successful processing
+/// or signal failure for retry/dead-letter handling.
 #[derive(Debug, Clone)]
 pub struct TransportMessage<T> {
-    /// 业务消息。
+    /// The actual business message content wrapped in an envelope.
+    /// Contains header metadata and typed payload.
     pub payload: Envelope<T>,
-    /// 用于 ack/nack 的句柄。
+    /// Handle for acknowledging or rejecting the message.
+    /// Must be called to prevent message redelivery or trigger retry logic.
     pub ack_handle: TransportAckHandle,
 }
 
-/// ack/nack 句柄。
+/// Handle for message acknowledgment (ack) or rejection (nack).
+/// Provides the transport layer with context needed to manage message delivery
+/// and implement retry/redelivery logic.
 #[derive(Debug, Clone)]
 pub struct TransportAckHandle {
-    /// broker 侧消息 ID。
+    /// Unique identifier for the message at the broker level.
+    /// Used for correlation and deduplication at the transport layer.
     pub broker_message_id: String,
-    /// 当前投递次数。
+    /// Current delivery attempt number for this message.
+    /// Starts at 1 and increments on each redelivery.
     pub delivery_attempt: u32,
 }
 
-/// 传输层错误。
+/// Transport layer error types covering common failure scenarios.
+/// Errors are categorized by the operation that failed to aid in
+/// error handling and recovery strategy selection.
 #[derive(Debug, Error)]
 pub enum TransportError {
     #[error("transport unavailable: {0}")]
@@ -62,32 +85,42 @@ pub enum TransportError {
     NackFailed(String),
 }
 
-/// 统一消息传输抽象。
+/// Unified message transport abstraction for publishing and consuming messages.
+/// Defines the interface that all transport implementations must provide,
+/// enabling the agent to work with various message brokers through a common API.
 #[async_trait]
 pub trait MessageTransport<T>: Send + Sync {
-    /// 返回传输层交付模式。
+    /// Returns the delivery mode supported by this transport implementation.
+    /// Indicates what delivery guarantees the transport provides.
     fn mode(&self) -> DeliveryMode;
 
-    /// 发布消息到指定主题。
+    /// Publishes a message to the specified topic.
+    /// The message is wrapped in an envelope containing routing metadata.
     async fn publish(&self, topic: &'static str, msg: Envelope<T>) -> Result<(), TransportError>;
 
-    /// 拉取一条消息。
+    /// Pulls a single message from the subscription.
+    /// Blocks until a message is available or an error occurs.
     async fn consume(
         &self,
         subscription: &Subscription,
     ) -> Result<TransportMessage<T>, TransportError>;
 
-    /// 确认处理完成。
+    /// Acknowledges successful processing of the message.
+    /// After ack, the message will not be redelivered.
     async fn ack(&self, handle: &TransportAckHandle) -> Result<(), TransportError>;
 
-    /// 拒绝处理，可选延迟重投。
+    /// Rejects the message with optional delay before redelivery.
+    /// If requeue_after is specified, the message will reappear after that duration.
+    /// Otherwise, the message may be immediately available for redelivery.
     async fn nack(
         &self,
         handle: &TransportAckHandle,
         requeue_after: Option<Duration>,
     ) -> Result<(), TransportError>;
 
-    /// 以延迟方式重投消息（默认委托给 `nack`）。
+    /// Requeues the message with a specified delay before redelivery.
+    /// Default implementation delegates to nack with a delay.
+    /// Allows for simple delay-based retry without immediate requeue.
     async fn requeue(
         &self,
         handle: &TransportAckHandle,

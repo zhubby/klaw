@@ -2,35 +2,42 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, time::SystemTime};
 use uuid::Uuid;
 
-/// 协议版本号。
+/// Schema version identifier for message envelope compatibility tracking.
+/// Used to ensure backward compatibility between different protocol versions
+/// and to validate message structure evolution over time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaVersion {
-    /// 主版本（破坏性变更递增）。
+    /// Major version number - incremented for breaking changes that are not backward compatible.
+    /// Changes in major version may require migration or version-specific handling.
     pub major: u16,
-    /// 次版本（向后兼容变更递增）。
-    pub minor: u16,
+    /// Minor version number - incremented for backward-compatible additions.
+    /// New minor versions should not break existing message parsing logic.
 }
 
 impl SchemaVersion {
-    /// 当前默认协议版本。
+    /// Current default protocol version used for newly created messages.
+    /// This version represents the stable, production-ready protocol format.
     pub const V1_0: Self = Self { major: 1, minor: 0 };
 }
 
-/// 逻辑主题类型（与具体 MQ 产品无关）。
+/// Logical topic types for message routing independent of specific message queue implementations.
+/// Provides a generic abstraction over message broker topics, allowing the same code
+/// to work with different MQ systems (Redis, Kafka, SQS, etc.) through configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageTopic {
-    /// 入站消息主题。
+    /// Inbound message topic - receives messages from external sources (users, webhooks, etc.)
     Inbound,
-    /// 最终出站消息主题。
+    /// Outbound message topic - final responses sent back to users or downstream systems
     Outbound,
-    /// 中间事件主题（流式/进度/状态）。
+    /// Events topic - intermediate events for streaming, progress updates, and state changes
     Events,
-    /// 死信主题。
+    /// Dead letter topic - messages that failed processing after all retry attempts
     DeadLetter,
 }
 
 impl MessageTopic {
-    /// 返回标准主题名。
+    /// Returns the canonical topic name string for this message topic type.
+    /// These names are used as the actual queue/topic identifiers in message brokers.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Inbound => "agent.inbound",
@@ -41,35 +48,50 @@ impl MessageTopic {
     }
 }
 
-/// Envelope 头部，承载路由、追踪和重试语义。
+/// Envelope header containing routing, tracing, and retry semantics.
+/// This header accompanies every message through the system and provides essential
+/// metadata for processing, correlation, and observability.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvelopeHeader {
-    /// 全局消息 ID。
+    /// Globally unique message identifier for deduplication and correlation.
+    /// Generated fresh for each new message entry into the system.
     pub message_id: Uuid,
-    /// 端到端链路追踪 ID。
+    /// End-to-end trace identifier for distributed tracing across services.
+    /// Allows correlating related messages and tracking request flow.
     pub trace_id: Uuid,
-    /// 会话串行键。
+    /// Session serialization key for ensuring sequential processing.
+    /// Messages with the same session_key are processed one at a time.
     pub session_key: String,
-    /// 生成时间戳。
+    /// Timestamp when the message was originally created/queued.
+    /// Used for TTL calculations and temporal ordering.
     pub timestamp: SystemTime,
-    /// 当前重试次数（从 1 开始）。
+    /// Current retry attempt number (starts from 1).
+    /// Incremented on each retry to implement exponential backoff and limit retry attempts.
     pub attempt: u32,
-    /// 当前 schema 版本。
+    /// Schema version of the envelope structure.
+    /// Enables version-specific parsing and backward compatibility handling.
     pub schema_version: SchemaVersion,
-    /// 多租户 ID（可选）。
+    /// Multi-tenant identifier for isolation in multi-tenant deployments.
+    /// When present, ensures message processing respects tenant boundaries.
     pub tenant_id: Option<String>,
-    /// 逻辑命名空间（可选）。
+    /// Logical namespace for additional routing and isolation beyond tenant_id.
+    /// Useful for separating different environments or service domains.
     pub namespace: Option<String>,
-    /// 优先级（可选）。
+    /// Message priority level for queue scheduling.
+    /// Higher values indicate higher priority; None uses default priority.
     pub priority: Option<u8>,
-    /// 生存时间毫秒（可选）。
+    /// Time-to-live in milliseconds for message expiration.
+    /// Messages exceeding their TTL are automatically moved to dead letter.
     pub ttl_ms: Option<u64>,
-    /// 路由提示扩展字段。
+    /// Extension field for provider-specific routing hints.
+    /// Allows passing additional routing metadata to transport layer or providers.
     pub routing_hints: BTreeMap<String, serde_json::Value>,
 }
 
 impl EnvelopeHeader {
-    /// 使用默认值创建头部。
+    /// Creates a new envelope header with default values.
+    /// Initializes all fields with sensible defaults including fresh UUIDs for
+    /// message_id and timestamp, and attempt starting at 1.
     pub fn new(session_key: impl Into<String>) -> Self {
         Self {
             message_id: Uuid::new_v4(),
@@ -87,53 +109,65 @@ impl EnvelopeHeader {
     }
 }
 
-/// 通用消息封装结构。
+/// Generic message wrapper structure combining header, metadata, and payload.
+/// The envelope pattern provides a consistent structure for all messages passing
+/// through the agent system, enabling uniform handling regardless of message type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope<T> {
-    /// 协议头。
+    /// Protocol header containing routing, tracing, and delivery metadata.
+    /// Shared across all message types for consistent processing.
     pub header: EnvelopeHeader,
-    /// 业务扩展元数据。
+    /// Business-level extension metadata for custom attributes.
+    /// Allows passing additional context without modifying the payload structure.
     pub metadata: BTreeMap<String, serde_json::Value>,
-    /// 实际负载。
+    /// The actual message payload content.
+    /// Type parameter T allows type-safe handling of different message types.
     pub payload: T,
 }
 
-/// 核心错误码定义。
+/// Core error codes for standardized error handling across the system.
+/// These codes provide machine-readable error categorization for automated error handling,
+/// retry logic, and user-facing error messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ErrorCode {
-    /// schema 不合法。
+    /// Message schema validation failed - payload structure doesn't match expected format.
     InvalidSchema,
-    /// 业务字段校验失败。
+    /// Business field validation failed - content doesn't meet business rules.
     ValidationFailed,
-    /// 命中幂等去重。
+    /// Message is a duplicate of one already processed - idempotency check triggered.
     DuplicateMessage,
-    /// 会话繁忙。
+    /// Session is currently busy with another request - concurrency limit reached.
     SessionBusy,
-    /// agent 处理超时。
+    /// Agent processing exceeded the configured timeout threshold.
     AgentTimeout,
-    /// tool 调用超时。
+    /// Tool execution exceeded the configured timeout threshold.
     ToolTimeout,
-    /// provider 不可用。
+    /// LLM provider service is unavailable - network or capacity issues.
     ProviderUnavailable,
-    /// provider 返回格式非法。
+    /// Provider response format is invalid or unparseable.
     ProviderResponseInvalid,
-    /// 传输层不可用。
+    /// Transport layer is unavailable - message broker connection failed.
     TransportUnavailable,
-    /// 重试耗尽。
+    /// All retry attempts exhausted - message moved to dead letter queue.
     RetryExhausted,
-    /// token 预算超限。
+    /// Token budget limit exceeded - prevents runaway token consumption.
     BudgetExceeded,
-    /// 已进入死信。
+    /// Message has been sent to dead letter queue after processing failure.
     SentToDeadLetter,
 }
 
-/// 协议向后兼容规则接口。
+/// Trait for defining schema evolution and backward compatibility rules.
+/// Implementations can define custom logic for determining if a newer schema version
+/// can safely process messages from an older version.
 pub trait SchemaEvolutionRule {
-    /// 校验 `to` 是否可向后兼容 `from`。
+    /// Validates whether the 'to' schema version is backward compatible with 'from'.
+    /// Returns true if messages from 'from' version can be processed by 'to' version.
     fn validate_backward_compatible(from: SchemaVersion, to: SchemaVersion) -> bool;
 }
 
-/// 基于语义化版本的默认规则实现。
+/// Default schema evolution rule implementation using semantic versioning.
+/// Under semver rules, backward compatibility is maintained when major versions match
+/// and the minor version of the target is greater than or equal to the source.
 pub struct SemverEvolutionRule;
 
 impl SchemaEvolutionRule for SemverEvolutionRule {

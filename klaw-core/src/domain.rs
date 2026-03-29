@@ -2,57 +2,81 @@ use crate::media::MediaReference;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// 会话唯一键，通常由 `channel:chat_id` 组成。
+/// Session unique key for serializing message processing.
+/// Typically composed from channel identifier and chat/conversation identifier,
+/// e.g., "stdio:user123" or "telegram:chat456". Used by the scheduler to ensure
+/// all messages within the same session are processed sequentially.
 pub type SessionKey = String;
 
-/// 标准化后的入站消息。
+/// Normalized inbound message structure representing user input entering the agent system.
+/// This is the canonical format after parsing and normalization from various input channels
+/// (stdio, websocket, message queue, webhook, etc.).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InboundMessage {
-    /// 入站来源通道（如 stdio、mq）。
+    /// The source channel where this message originated.
+    /// Examples: "stdio", "telegram", "discord", "slack", "kafka", etc.
     pub channel: String,
-    /// 发送者标识。
+    /// Unique identifier of the sender (user, bot, or system).
+    /// Format depends on channel type: user ID, session ID, or system identifier.
     pub sender_id: String,
-    /// 对话标识。
+    /// Conversation/dialogue identifier for grouping related messages.
+    /// Together with channel, forms the basis for session_key.
     pub chat_id: String,
-    /// 会话串行调度键。
+    /// Session serialization key for ensuring ordered processing.
+    /// Derived from channel and chat_id, used by the scheduler for queue management.
     pub session_key: SessionKey,
-    /// 用户可读文本内容。
+    /// Human-readable text content from the user.
+    /// This is the primary input that the agent processes.
     pub content: String,
-    /// 当前消息携带的媒体引用。
+    /// Media attachments (images, files, etc.) included with the message.
+    /// Empty vector if no attachments are present.
     #[serde(default)]
     pub media_references: Vec<MediaReference>,
-    /// 附加元数据，用于路由/策略扩展。
+    /// Additional metadata for routing, policy decisions, and extensibility.
+    /// Allows passing channel-specific or application-specific context.
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
-/// 标准化后的出站消息。
+/// Normalized outbound message structure representing agent output sent to users.
+/// This is the canonical format for all responses before being translated to
+/// channel-specific formats for delivery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutboundMessage {
-    /// 目标通道。
+    /// Target delivery channel for this message.
     pub channel: String,
-    /// 目标会话。
+    /// Target conversation/dialogue for delivery.
     pub chat_id: String,
-    /// 发送给用户的文本内容。
+    /// Text content to send to the user.
+    /// This is the primary output from agent processing.
     pub content: String,
-    /// 可选的回复引用 ID。
+    /// Optional message ID being replied to, enabling threading.
     pub reply_to: Option<String>,
-    /// 附加元数据，用于平台侧路由提示。
+    /// Additional metadata for channel routing and platform-specific features.
+    /// May include attachments, buttons, or other rich UI elements.
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
-/// 死信消息结构，用于回溯失败上下文和补偿处理。
+/// Dead letter message structure for failed processing attempts.
+/// Contains complete context needed for manual review, reprocessing, or compensation.
+/// When a message fails all retry attempts, it's moved to a dead letter queue
+/// for later investigation or automated remediation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeadLetterMessage {
-    /// 原始消息 ID。
+    /// Original message identifier from the failed message's header.
+    /// Useful for correlation and looking up original request details.
     pub original_message_id: String,
-    /// 关联会话键。
+    /// Session key from the original message for context reconstruction.
     pub session_key: SessionKey,
-    /// 最终错误类型字符串。
+    /// Final error that caused the message to be moved to dead letter.
+    /// Provides the primary reason for failure.
     pub final_error: String,
-    /// 已尝试次数。
+    /// Number of retry attempts made before reaching dead letter.
+    /// Indicates how many times the system attempted to process this message.
     pub attempts: u32,
-    /// 进入死信的原因描述。
+    /// Human-readable description of why the message entered dead letter.
+    /// Includes context about which retry policy or circuit breaker triggered the move.
     pub reason: String,
-    /// 原始入站负载。
+    /// The complete original inbound payload for reprocessing or analysis.
+    /// Contains all user content, media, and metadata from the original request.
     pub original_payload: InboundMessage,
 }

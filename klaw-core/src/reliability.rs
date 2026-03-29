@@ -4,93 +4,125 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-/// 重试策略返回的动作。
+/// Retry decision returned by retry policies to indicate what action should be taken.
+/// Provides explicit control over retry behavior rather than returning error codes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RetryDecision {
-    /// 立即重试。
+    /// Retry the operation immediately without delay.
+    /// Suitable for transient failures that are likely to succeed on retry.
     RetryNow,
-    /// 延迟后重试。
+    /// Retry the operation after the specified delay duration.
+    /// Used for rate limiting or backoff scenarios.
     RetryAfter(Duration),
-    /// 写入死信。
+    /// Move the failed message to dead letter queue.
+    /// Applied when the error indicates a permanent failure requiring manual intervention.
     SendToDeadLetter,
-    /// 停止重试并终止。
+    /// Stop retrying and terminate processing.
+    /// Used for validation errors or other non-recoverable situations.
     Abort,
 }
 
-/// 重试策略抽象。
+/// Retry policy abstraction for determining retry behavior based on error type and attempt count.
+/// Implementations can define custom logic for classifying errors and deciding retry strategy.
 #[async_trait]
 pub trait RetryPolicy: Send + Sync {
-    /// 最大尝试次数。
+    /// Maximum number of retry attempts before giving up.
+    /// Defines the upper bound for retry attempts.
     fn max_attempts(&self) -> u32;
-    /// 根据错误类型和次数返回重试决策。
+    /// Classifies the error and returns the appropriate retry decision.
+    /// @param error_kind - String identifier for the error category (e.g., "timeout", "validation")
+    /// @param attempt - Current attempt number (starting from 1)
     fn classify(&self, error_kind: &str, attempt: u32) -> RetryDecision;
 }
 
-/// 统一错误分类。
+/// Error classification categories for systematic error handling.
+/// Provides a structured way to categorize errors based on their nature and recoverability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorClass {
-    /// 校验类错误。
+    /// Validation errors - payload or input doesn't meet requirements.
+    /// These are typically permanent and should not be retried.
     Validation,
-    /// 临时依赖错误（可重试）。
+    /// Temporary dependency failures - external service temporarily unavailable.
+    /// These are typically recoverable after a short delay.
     DependencyTemporary,
-    /// 永久依赖错误（通常不可重试）。
+    /// Permanent dependency failures - external service returning persistent errors.
+    /// These may require intervention and should not be blindly retried.
     DependencyPermanent,
-    /// 临时基础设施错误（可重试）。
+    /// Temporary infrastructure failures - network or resource issues.
+    /// These are typically recoverable after infrastructure recovers.
     InfrastructureTemporary,
-    /// 永久基础设施错误。
+    /// Permanent infrastructure failures - persistent system-level issues.
     InfrastructurePermanent,
-    /// 预算限制错误。
+    /// Budget or quota limit exceeded errors.
+    /// These require quota increase or throttling adjustments to resolve.
     BudgetExceeded,
 }
 
-/// 死信策略配置。
+/// Dead letter policy configuration for handling permanently failed messages.
+/// Defines how messages should be handled when all retry attempts are exhausted.
 #[derive(Debug, Clone)]
 pub struct DeadLetterPolicy {
-    /// 死信主题名。
+    /// Dead letter topic/queue name where failed messages are sent.
     pub topic: &'static str,
-    /// 允许的最大负载大小。
+    /// Maximum payload size allowed in bytes for dead letter messages.
+    /// Messages exceeding this may be truncated or rejected.
     pub max_payload_bytes: usize,
-    /// 是否包含错误栈信息。
+    /// Whether to include full error stack traces in dead letter messages.
+    /// Useful for debugging but may increase message size significantly.
     pub include_error_stack: bool,
 }
 
-/// 熔断器策略配置。
+/// Circuit breaker policy configuration for failure detection and recovery.
+/// Circuit breakers prevent cascading failures by stopping requests to failing services.
 #[derive(Debug, Clone)]
 pub struct CircuitBreakerPolicy {
-    /// 连续失败阈值。
+    /// Number of consecutive failures required to open the circuit.
+    /// When exceeded, the circuit transitions from closed to open state.
     pub failure_threshold: u32,
-    /// 断路保持时间。
+    /// Duration the circuit remains open before transitioning to half-open.
+    /// During half-open, limited test requests are allowed to check recovery.
     pub open_interval: Duration,
-    /// 半开阶段允许的探测请求数。
+    /// Maximum number of requests allowed in half-open state.
+    /// These test requests determine if the service has recovered.
     pub half_open_max_requests: u32,
 }
 
-/// 熔断器抽象。
+/// Circuit breaker abstraction for preventing cascading failures.
+/// Implements the circuit breaker pattern: closed (normal), open (failing), half-open (testing).
 #[async_trait]
 pub trait CircuitBreaker: Send + Sync {
-    /// 是否允许放行本次请求。
+    /// Checks if a request should be allowed to proceed.
+    /// Returns true if circuit is closed or half-open with available test slots.
     async fn allow_request(&self) -> bool;
-    /// 请求成功后回调。
+    /// Records a successful request, potentially closing an open circuit.
+    /// Called after successful completion of a request.
     async fn on_success(&self);
-    /// 请求失败后回调。
+    /// Records a failed request, potentially opening the circuit.
+    /// Called when a request fails due to dependency issues.
     async fn on_failure(&self);
 }
 
-/// 指数退避重试策略。
+/// Exponential backoff retry policy with configurable delays.
+/// Implements increasing delay between retries to avoid overwhelming failing services.
 #[derive(Debug, Clone)]
 pub struct ExponentialBackoffRetryPolicy {
-    /// 最大重试次数。
+    /// Maximum number of retry attempts before giving up.
     pub max_attempts: u32,
-    /// 基础延迟。
+    /// Base delay duration for first retry.
+    /// Each subsequent retry multiplies this delay exponentially.
     pub base_delay: Duration,
-    /// 最大延迟。
+    /// Maximum delay cap to prevent excessively long wait times.
+    /// Even with exponential backoff, delays are capped at this value.
     pub max_delay: Duration,
-    /// 随机抖动比例（当前实现暂未注入随机数）。
+    /// Jitter ratio for adding randomness to delays (0.0 to 1.0).
+    /// Helps prevent thundering herd when multiple clients retry simultaneously.
+    /// Note: Current implementation does not yet inject random jitter.
     pub jitter_ratio: f32,
 }
 
 impl ExponentialBackoffRetryPolicy {
-    /// 计算指定尝试次数对应的退避时长。
+    /// Calculates the backoff delay for a given attempt number.
+    /// Uses exponential formula: base_delay * 2^(attempt-1), capped at max_delay.
     pub fn delay_for(&self, attempt: u32) -> Duration {
         let exp = 2u32.saturating_pow(attempt.saturating_sub(1));
         let delay = self.base_delay.saturating_mul(exp);
@@ -118,12 +150,14 @@ impl RetryPolicy for ExponentialBackoffRetryPolicy {
     }
 }
 
-/// 构造默认幂等键。
+/// Constructs a standardized idempotency key for deduplication.
+/// Combines message ID, session key, and processing stage into a unique key.
 pub fn idempotency_key(message_id: &str, session_key: &str, stage: &str) -> String {
     format!("{message_id}:{session_key}:{stage}")
 }
 
-/// 基于内存的熔断器实现，适用于本地和测试。
+/// In-memory circuit breaker implementation for local development and testing.
+/// Not suitable for production distributed systems - use Redis-based implementations there.
 #[derive(Debug)]
 pub struct InMemoryCircuitBreaker {
     policy: CircuitBreakerPolicy,
@@ -132,7 +166,7 @@ pub struct InMemoryCircuitBreaker {
 }
 
 impl InMemoryCircuitBreaker {
-    /// 创建熔断器实例。
+    /// Creates a new in-memory circuit breaker with the given policy.
     pub fn new(policy: CircuitBreakerPolicy) -> Self {
         Self {
             policy,
@@ -172,13 +206,17 @@ impl CircuitBreaker for InMemoryCircuitBreaker {
     }
 }
 
-/// 幂等存储抽象。
+/// Idempotency store abstraction for preventing duplicate message processing.
+/// Implementations should support TTL for automatic cleanup of old entries.
 #[async_trait]
 pub trait IdempotencyStore: Send + Sync {
-    /// 查询键是否已存在。
+    /// Checks if a key has been seen before.
+    /// Returns true if the key exists (message already processed).
     async fn seen(&self, key: &str) -> bool;
-    /// 标记键为已处理。
+    /// Marks a key as processed with a TTL for automatic expiration.
+    /// The entry will automatically become "unseen" after TTL expires.
     async fn mark_seen(&self, key: &str, ttl: Duration);
-    /// 清理指定键。
+    /// Removes a key from the idempotency store.
+    /// Useful for manual cleanup or reprocessing scenarios.
     async fn clear(&self, key: &str);
 }
