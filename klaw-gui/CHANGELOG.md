@@ -21,6 +21,7 @@
 - `Gateway` 面板切换到 Tailscale Funnel 时不再错误地强制要求先启用 `gateway.auth`；未配置认证时改为仅显示公网暴露警告
 - `Gateway` 状态轮询的 runtime 响应超时从 `200ms` 调整为 `1s`，避免本机 Tailscale 状态探测稍慢时反复报 `timed out waiting for gateway status response`
 - `LLM` 面板表格滚动容器不再设置最大宽度，列表区域现在会直接贴合父容器可用宽度
+- `LLM` 面板表格列定义现在与实际渲染列一致，`Session` 列改为占用剩余宽度并对长文本做截断悬浮提示，避免长 `session_key` 把右侧列挤压错位
 
 ## 2026-03-28
 

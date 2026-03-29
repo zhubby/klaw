@@ -324,15 +324,14 @@ impl PanelRenderer for LlmPanel {
                 TableBuilder::new(ui)
                     .striped(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::auto().at_least(120.0))
-                    .column(Column::auto().at_least(120.0))
-                    .column(Column::auto().at_least(70.0))
-                    .column(Column::auto().at_least(80.0))
-                    .column(Column::auto().at_least(70.0))
-                    .column(Column::auto().at_least(40.0))
-                    .column(Column::auto().at_least(40.0))
-                    .column(Column::auto().at_least(60.0))
-                    .column(Column::remainder().at_least(100.0))
+                    .column(Column::exact(170.0))
+                    .column(Column::remainder().at_least(320.0))
+                    .column(Column::exact(190.0))
+                    .column(Column::exact(180.0))
+                    .column(Column::exact(170.0))
+                    .column(Column::exact(56.0))
+                    .column(Column::exact(56.0))
+                    .column(Column::exact(132.0))
                     .sense(egui::Sense::click())
                     .header(22.0, |mut header| {
                         header.col(|ui| {
@@ -373,16 +372,16 @@ impl PanelRenderer for LlmPanel {
                                 ui.label(format_timestamp_millis(item.requested_at_ms));
                             });
                             row.col(|ui| {
-                                ui.label(&item.session_key);
+                                render_truncated_cell(ui, &item.session_key);
                             });
                             row.col(|ui| {
-                                ui.label(&item.provider);
+                                render_truncated_cell(ui, &item.provider);
                             });
                             row.col(|ui| {
-                                ui.label(&item.model);
+                                render_truncated_cell(ui, &item.model);
                             });
                             row.col(|ui| {
-                                ui.label(&item.wire_api);
+                                render_truncated_cell(ui, &item.wire_api);
                             });
                             row.col(|ui| {
                                 ui.label(item.turn_index.to_string());
@@ -542,6 +541,11 @@ fn handle_row_interaction(
         selected_id,
         open_detail: false,
     }
+}
+
+fn render_truncated_cell(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(text).truncate())
+        .on_hover_text(text);
 }
 
 fn render_json_payload(ui: &mut egui::Ui, raw: &str) {
