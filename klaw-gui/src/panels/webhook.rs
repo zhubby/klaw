@@ -8,10 +8,10 @@ use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
-use klaw_gateway::{WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH};
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayWebhookConfig, TailscaleMode,
 };
+use klaw_gateway::{WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH};
 use klaw_session::{
     SessionError, SessionListQuery, SessionManager, SqliteSessionManager, WebhookAgentQuery,
     WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,

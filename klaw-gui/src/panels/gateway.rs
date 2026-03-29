@@ -113,6 +113,7 @@ pub struct GatewayPanel {
     config: AppConfig,
     config_form: GatewayConfigForm,
     config_window_open: bool,
+    auth_token_visible: bool,
     selected_tailscale_mode: TailscaleMode,
     pending_request: Option<PendingGatewayRequest>,
 }
@@ -128,6 +129,7 @@ impl Default for GatewayPanel {
             config: AppConfig::default(),
             config_form: GatewayConfigForm::default(),
             config_window_open: false,
+            auth_token_visible: false,
             selected_tailscale_mode: TailscaleMode::Off,
             pending_request: None,
         }
@@ -301,6 +303,7 @@ impl GatewayPanel {
 
     fn open_config_window(&mut self) {
         self.config_form = GatewayConfigForm::from_config(&self.config.gateway);
+        self.auth_token_visible = false;
         self.config_window_open = true;
     }
 
@@ -417,8 +420,29 @@ impl GatewayPanel {
                             ui.add_sized(
                                 [280.0, ui.spacing().interact_size.y],
                                 egui::TextEdit::singleline(&mut self.config_form.auth_token)
-                                    .password(true),
+                                    .password(!self.auth_token_visible),
                             );
+                            let toggle_icon = if self.auth_token_visible {
+                                regular::EYE_SLASH
+                            } else {
+                                regular::EYE
+                            };
+                            if ui.button(toggle_icon).clicked() {
+                                self.auth_token_visible = !self.auth_token_visible;
+                            }
+                            if ui.button(regular::COPY).clicked() {
+                                if self.config_form.auth_token.is_empty() {
+                                    notifications.error("Gateway auth token is empty");
+                                } else {
+                                    let auth_token = self.config_form.auth_token.clone();
+                                    ui.ctx().output_mut(|output| {
+                                        output.commands.push(
+                                            egui::output::OutputCommand::CopyText(auth_token),
+                                        );
+                                    });
+                                    notifications.success("Gateway auth token copied");
+                                }
+                            }
                             if ui.button("Generate").clicked() {
                                 self.config_form.auth_token = generate_gateway_auth_token();
                             }

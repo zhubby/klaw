@@ -1,8 +1,8 @@
 use crate::{
     GatewayError,
     auth::GatewayAuth,
-    home::{home_logo_handler, home_page_handler},
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
+    home::{home_logo_handler, home_page_handler},
     routes::{HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH},
     state::{GatewayHandle, GatewayRuntimeInfo, GatewayState},
     tailscale::{TailscaleError, TailscaleManager},

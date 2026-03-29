@@ -66,10 +66,7 @@ mod tests {
             Err(err) => panic!("gateway should start: {err}"),
         };
 
-        let base_url = format!(
-            "http://127.0.0.1:{}",
-            handle.info().actual_port
-        );
+        let base_url = format!("http://127.0.0.1:{}", handle.info().actual_port);
         let client = reqwest::Client::new();
 
         let home_response = client
@@ -82,7 +79,7 @@ mod tests {
             .text()
             .await
             .expect("home page body should load");
-        assert!(home_html.contains("Catch Every Message."));
+        assert!(home_html.contains("Little Claws, Big Conversations."));
         assert!(home_html.contains(HOME_LOGO_PATH));
 
         let logo_response = client

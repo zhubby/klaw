@@ -14,10 +14,7 @@ pub async fn home_page_handler() -> Html<&'static str> {
 pub async fn home_logo_handler() -> Response<Body> {
     Response::builder()
         .status(StatusCode::OK)
-        .header(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("image/webp"),
-        )
+        .header(header::CONTENT_TYPE, HeaderValue::from_static("image/webp"))
         .header(
             header::CACHE_CONTROL,
             HeaderValue::from_static("public, max-age=86400"),

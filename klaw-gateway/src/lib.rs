@@ -1,7 +1,7 @@
 mod auth;
 mod error;
-mod home;
 mod handlers;
+mod home;
 mod routes;
 mod runtime;
 mod state;
