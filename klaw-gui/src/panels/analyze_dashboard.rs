@@ -1,11 +1,12 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use egui_extras::{Column, TableBuilder};
 use egui_plot::{GridMark, Legend, Line, Plot, PlotPoints};
 use klaw_config::{ConfigStore, ObservabilityConfig};
 use klaw_observability::{
-    LocalMetricsStore, LocalStoreConfig, ModelDashboardSnapshot, ModelStatsQuery,
-    SqliteLocalMetricsStore, ToolDashboardSnapshot, ToolSampleBucket, ToolStatsQuery,
-    ToolTimeRange,
+    LocalMetricsStore, LocalStoreConfig, ModelDashboardSnapshot, ModelStatsQuery, ModelStatsRow,
+    ModelToolBreakdownRow, SqliteLocalMetricsStore, ToolDashboardSnapshot, ToolSampleBucket,
+    ToolStatsQuery, ToolStatsRow, ToolTimeRange,
 };
 use klaw_util::{default_data_dir, observability_db_path};
 use std::path::PathBuf;
@@ -14,6 +15,9 @@ use std::time::{Duration, Instant};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const TOP_TOOLS_TABLE_HEIGHT: f32 = 220.0;
+const MODEL_RANKING_TABLE_HEIGHT: f32 = 96.0;
+const MODEL_TOOL_BREAKDOWN_TABLE_HEIGHT: f32 = 220.0;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum DashboardView {
@@ -380,47 +384,33 @@ impl AnalyzeDashboardPanel {
         let mut changed = false;
         ui.columns(2, |cols| {
             cols[0].group(|ui| {
-                ui.strong("Top Tools by Calls");
-                ui.separator();
-                for row in &snapshot.top_by_calls {
-                    let selected = self.selected_tool.as_deref() == Some(row.tool_name.as_str());
-                    if ui
-                        .selectable_label(
-                            selected,
-                            format!(
-                                "{}  calls={}  success={}",
-                                row.tool_name,
-                                row.calls,
-                                format_percent(row.success_rate)
-                            ),
-                        )
-                        .clicked()
-                    {
-                        self.selected_tool = Some(row.tool_name.clone());
-                        changed = true;
-                    }
-                }
+                let selected_tool = self.selected_tool.clone();
+                changed |= render_top_tool_table(
+                    ui,
+                    "Top Tools by Calls",
+                    &snapshot.top_by_calls,
+                    selected_tool.as_deref(),
+                    |row| row.calls.to_string(),
+                    |row| format_percent(row.success_rate),
+                    "Calls",
+                    "Success",
+                    &mut self.selected_tool,
+                );
             });
 
             cols[1].group(|ui| {
-                ui.strong("Top Tools by Failure Load");
-                ui.separator();
-                for row in &snapshot.top_by_failure_rate {
-                    let selected = self.selected_tool.as_deref() == Some(row.tool_name.as_str());
-                    if ui
-                        .selectable_label(
-                            selected,
-                            format!(
-                                "{}  failures={}  calls={}",
-                                row.tool_name, row.failures, row.calls
-                            ),
-                        )
-                        .clicked()
-                    {
-                        self.selected_tool = Some(row.tool_name.clone());
-                        changed = true;
-                    }
-                }
+                let selected_tool = self.selected_tool.clone();
+                changed |= render_top_tool_table(
+                    ui,
+                    "Top Tools by Failure Load",
+                    &snapshot.top_by_failure_rate,
+                    selected_tool.as_deref(),
+                    |row| row.failures.to_string(),
+                    |row| row.calls.to_string(),
+                    "Failures",
+                    "Calls",
+                    &mut self.selected_tool,
+                );
             });
         });
         changed
@@ -454,70 +444,56 @@ impl AnalyzeDashboardPanel {
         });
 
         ui.columns(2, |cols| {
-            render_model_list(
+            render_model_stats_table(
                 &mut cols[0],
                 "Top Models by Requests",
-                snapshot.model_rows.iter(),
-                |row| {
-                    format!(
-                        "{}/{}  req={}  success={}",
-                        row.provider,
-                        row.model,
-                        row.requests,
-                        format_percent(row.request_success_rate)
-                    )
-                },
+                &snapshot.model_rows,
+                |row| row.requests.to_string(),
+                |row| format_percent(row.request_success_rate),
+                "Requests",
+                "Success",
             );
-            render_model_list(
+            render_model_stats_table(
                 &mut cols[1],
                 "Top Models by Token Usage",
-                by_tokens.iter(),
-                |row| {
-                    format!(
-                        "{}/{}  tokens={}  avg={:.1}",
-                        row.provider, row.model, row.total_tokens, row.avg_total_tokens
-                    )
-                },
+                &by_tokens,
+                |row| row.total_tokens.to_string(),
+                |row| format!("{:.1}", row.avg_total_tokens),
+                "Tokens",
+                "Avg",
             );
         });
         ui.add_space(8.0);
         ui.columns(2, |cols| {
-            render_model_list(
+            render_model_stats_table(
                 &mut cols[0],
                 "Worst Models by Failure Load",
-                by_failures.iter(),
-                |row| {
-                    format!(
-                        "{}/{}  failures={}  timeout={}",
-                        row.provider,
-                        row.model,
-                        row.failures,
-                        format_percent(row.timeout_rate)
-                    )
-                },
+                &by_failures,
+                |row| row.failures.to_string(),
+                |row| format_percent(row.timeout_rate),
+                "Failures",
+                "Timeout",
             );
-            render_model_list(
+            render_model_stats_table(
                 &mut cols[1],
                 "Highest P95 Latency Models",
-                by_p95.iter(),
-                |row| {
-                    format!(
-                        "{}/{}  p95={:.1} ms  avg={:.1} ms",
-                        row.provider, row.model, row.p95_duration_ms, row.avg_duration_ms
-                    )
-                },
+                &by_p95,
+                |row| format!("{:.1} ms", row.p95_duration_ms),
+                |row| format!("{:.1} ms", row.avg_duration_ms),
+                "P95",
+                "Avg",
             );
         });
         ui.add_space(8.0);
-        render_model_list(&mut *ui, "Highest Cost Models", by_cost.iter(), |row| {
-            format!(
-                "{}/{}  cost={}  cost/success={}",
-                row.provider,
-                row.model,
-                format_optional_cost(row.estimated_cost_usd),
-                format_optional_cost(row.cost_per_successful_turn)
-            )
-        });
+        render_model_stats_table(
+            &mut *ui,
+            "Highest Cost Models",
+            &by_cost,
+            |row| format_optional_cost(row.estimated_cost_usd),
+            |row| format_optional_cost(row.cost_per_successful_turn),
+            "Cost",
+            "Cost/Success",
+        );
     }
 
     fn render_tool_error_breakdown(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
@@ -777,16 +753,7 @@ impl AnalyzeDashboardPanel {
                 ui.label("No model-attributed tool data in the selected time range.");
                 return;
             }
-            for row in &snapshot.tool_breakdown {
-                ui.label(format!(
-                    "{}  calls={}  success={}  approval={}  avg={:.1} ms",
-                    row.tool_name,
-                    row.calls,
-                    format_percent(row.success_rate),
-                    format_percent(row.approval_required_rate),
-                    row.avg_duration_ms
-                ));
-            }
+            render_model_tool_breakdown_table(ui, &snapshot.tool_breakdown);
         });
     }
 
@@ -897,19 +864,197 @@ fn summary_card(ui: &mut egui::Ui, title: &str, value: String) {
     });
 }
 
-fn render_model_list<'a>(
+fn render_model_stats_table<FPrimary, FSecondary>(
     ui: &mut egui::Ui,
     title: &str,
-    rows: impl IntoIterator<Item = &'a klaw_observability::ModelStatsRow>,
-    render: impl Fn(&klaw_observability::ModelStatsRow) -> String,
-) {
+    rows: &[ModelStatsRow],
+    primary_value: FPrimary,
+    secondary_value: FSecondary,
+    primary_label: &str,
+    secondary_label: &str,
+) where
+    FPrimary: Fn(&ModelStatsRow) -> String,
+    FSecondary: Fn(&ModelStatsRow) -> String,
+{
     ui.group(|ui| {
         ui.strong(title);
         ui.separator();
-        for row in rows.into_iter().take(5) {
-            ui.label(render(row));
+
+        if rows.is_empty() {
+            ui.add_sized(
+                [ui.available_width(), MODEL_RANKING_TABLE_HEIGHT],
+                egui::Label::new("No model data."),
+            );
+            return;
         }
+
+        ui.push_id(title, |ui| {
+            TableBuilder::new(ui)
+                .striped(true)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::remainder().at_least(220.0))
+                .column(Column::auto().at_least(84.0))
+                .column(Column::auto().at_least(96.0))
+                .min_scrolled_height(MODEL_RANKING_TABLE_HEIGHT)
+                .max_scroll_height(MODEL_RANKING_TABLE_HEIGHT)
+                .header(22.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("Model");
+                    });
+                    header.col(|ui| {
+                        ui.strong(primary_label);
+                    });
+                    header.col(|ui| {
+                        ui.strong(secondary_label);
+                    });
+                })
+                .body(|body| {
+                    body.rows(22.0, rows.len(), |mut row| {
+                        let item = &rows[row.index()];
+                        row.col(|ui| {
+                            ui.label(format!("{}/{}", item.provider, item.model));
+                        });
+                        row.col(|ui| {
+                            ui.label(primary_value(item));
+                        });
+                        row.col(|ui| {
+                            ui.label(secondary_value(item));
+                        });
+                    });
+                });
+        });
     });
+}
+
+fn render_model_tool_breakdown_table(ui: &mut egui::Ui, rows: &[ModelToolBreakdownRow]) {
+    ui.push_id("selected-model-tool-breakdown", |ui| {
+        TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::remainder().at_least(160.0))
+            .column(Column::auto().at_least(72.0))
+            .column(Column::auto().at_least(78.0))
+            .column(Column::auto().at_least(84.0))
+            .column(Column::auto().at_least(88.0))
+            .min_scrolled_height(MODEL_TOOL_BREAKDOWN_TABLE_HEIGHT)
+            .max_scroll_height(MODEL_TOOL_BREAKDOWN_TABLE_HEIGHT)
+            .header(22.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("Tool");
+                });
+                header.col(|ui| {
+                    ui.strong("Calls");
+                });
+                header.col(|ui| {
+                    ui.strong("Success");
+                });
+                header.col(|ui| {
+                    ui.strong("Approval");
+                });
+                header.col(|ui| {
+                    ui.strong("Avg");
+                });
+            })
+            .body(|body| {
+                body.rows(22.0, rows.len(), |mut row| {
+                    let item = &rows[row.index()];
+                    row.col(|ui| {
+                        ui.label(&item.tool_name);
+                    });
+                    row.col(|ui| {
+                        ui.label(item.calls.to_string());
+                    });
+                    row.col(|ui| {
+                        ui.label(format_percent(item.success_rate));
+                    });
+                    row.col(|ui| {
+                        ui.label(format_percent(item.approval_required_rate));
+                    });
+                    row.col(|ui| {
+                        ui.label(format!("{:.1} ms", item.avg_duration_ms));
+                    });
+                });
+            });
+    });
+}
+
+fn render_top_tool_table<FPrimary, FSecondary>(
+    ui: &mut egui::Ui,
+    title: &str,
+    rows: &[ToolStatsRow],
+    selected_tool: Option<&str>,
+    primary_value: FPrimary,
+    secondary_value: FSecondary,
+    primary_label: &str,
+    secondary_label: &str,
+    selected_tool_state: &mut Option<String>,
+) -> bool
+where
+    FPrimary: Fn(&ToolStatsRow) -> String,
+    FSecondary: Fn(&ToolStatsRow) -> String,
+{
+    ui.strong(title);
+    ui.separator();
+
+    if rows.is_empty() {
+        ui.add_sized(
+            [ui.available_width(), TOP_TOOLS_TABLE_HEIGHT],
+            egui::Label::new("No tool data."),
+        );
+        return false;
+    }
+
+    let mut changed = false;
+    ui.push_id(title, |ui| {
+        TableBuilder::new(ui)
+            .striped(true)
+            .sense(egui::Sense::click())
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::remainder().at_least(160.0))
+            .column(Column::auto().at_least(72.0))
+            .column(Column::auto().at_least(72.0))
+            .min_scrolled_height(TOP_TOOLS_TABLE_HEIGHT)
+            .max_scroll_height(TOP_TOOLS_TABLE_HEIGHT)
+            .header(22.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("Tool");
+                });
+                header.col(|ui| {
+                    ui.strong(primary_label);
+                });
+                header.col(|ui| {
+                    ui.strong(secondary_label);
+                });
+            })
+            .body(|body| {
+                body.rows(22.0, rows.len(), |mut row| {
+                    let item = &rows[row.index()];
+                    let is_selected = selected_tool == Some(item.tool_name.as_str());
+                    row.set_selected(is_selected);
+
+                    row.col(|ui| {
+                        ui.label(&item.tool_name);
+                    });
+                    row.col(|ui| {
+                        ui.label(primary_value(item));
+                    });
+                    row.col(|ui| {
+                        ui.label(secondary_value(item));
+                    });
+
+                    if row.response().clicked() {
+                        *selected_tool_state = if is_selected {
+                            None
+                        } else {
+                            Some(item.tool_name.clone())
+                        };
+                        changed = true;
+                    }
+                });
+            });
+    });
+
+    changed
 }
 
 fn format_percent(value: f64) -> String {
