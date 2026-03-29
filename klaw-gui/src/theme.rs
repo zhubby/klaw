@@ -138,12 +138,12 @@ fn crab_widget_visual(
 const fn crab_theme() -> CrabTheme {
     CrabTheme {
         text: egui::Color32::from_rgb(0x60, 0x30, 0x38),
-        base: egui::Color32::from_rgb(0xFF, 0xFA, 0xF4),
-        mantle: egui::Color32::from_rgb(0xF7, 0xEC, 0xDD),
-        crust: egui::Color32::from_rgb(0xEE, 0xDD, 0xC3),
-        surface0: egui::Color32::from_rgb(0xFF, 0xF2, 0xE1),
-        surface1: egui::Color32::from_rgb(0xFA, 0xE3, 0xC6),
-        surface2: egui::Color32::from_rgb(0xF5, 0xD0, 0xB2),
+        base: egui::Color32::from_rgb(0xFF, 0xFC, 0xF8),
+        mantle: egui::Color32::from_rgb(0xFB, 0xF7, 0xF0),
+        crust: egui::Color32::from_rgb(0xF6, 0xEF, 0xE4),
+        surface0: egui::Color32::from_rgb(0xFD, 0xF8, 0xF1),
+        surface1: egui::Color32::from_rgb(0xFA, 0xF2, 0xE7),
+        surface2: egui::Color32::from_rgb(0xF4, 0xE8, 0xDA),
         overlay1: egui::Color32::from_rgb(0xCC, 0xA1, 0x72),
         accent: egui::Color32::from_rgb(0xE8, 0x70, 0x50),
         warn: egui::Color32::from_rgb(0xD0, 0xA0, 0x58),
