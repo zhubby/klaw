@@ -358,17 +358,20 @@ impl PanelRenderer for ArchivePanel {
                                 });
 
                                 let response = row.response();
-
-                                if response.clicked() {
-                                    self.selected_archive = if is_selected {
-                                        None
-                                    } else {
-                                        Some(item.id.clone())
-                                    };
+                                let can_preview = preview_capability_for_record(item).is_some();
+                                let interaction = handle_archive_row_interaction(
+                                    is_selected,
+                                    item.id.clone(),
+                                    response.clicked(),
+                                    response.double_clicked(),
+                                    can_preview,
+                                );
+                                self.selected_archive = interaction.selected_id;
+                                if interaction.open_preview {
+                                    preview_item = Some(item.clone());
                                 }
 
                                 let item_id = item.id.clone();
-                                let can_preview = preview_capability_for_record(item).is_some();
                                 response.context_menu(|ui| {
                                     if can_preview
                                         && ui.button(format!("{} Preview", regular::EYE)).clicked()
@@ -881,6 +884,39 @@ fn optional_trimmed(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+struct ArchiveRowInteraction {
+    selected_id: Option<String>,
+    open_preview: bool,
+}
+
+fn handle_archive_row_interaction(
+    is_selected: bool,
+    item_id: String,
+    clicked: bool,
+    double_clicked: bool,
+    can_preview: bool,
+) -> ArchiveRowInteraction {
+    if double_clicked {
+        return ArchiveRowInteraction {
+            selected_id: Some(item_id),
+            open_preview: can_preview,
+        };
+    }
+
+    let selected_id = if clicked {
+        if is_selected { None } else { Some(item_id) }
+    } else if is_selected {
+        Some(item_id)
+    } else {
+        None
+    };
+
+    ArchiveRowInteraction {
+        selected_id,
+        open_preview: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -949,5 +985,36 @@ mod tests {
             Some("bin"),
         );
         assert!(preview_capability_for_record(&record).is_none());
+    }
+
+    #[test]
+    fn double_click_selects_row_and_opens_preview_when_supported() {
+        let interaction =
+            handle_archive_row_interaction(false, "arch-1".to_string(), true, true, true);
+
+        assert_eq!(interaction.selected_id.as_deref(), Some("arch-1"));
+        assert!(interaction.open_preview);
+    }
+
+    #[test]
+    fn double_click_selects_row_without_preview_for_unsupported_items() {
+        let interaction =
+            handle_archive_row_interaction(false, "arch-1".to_string(), true, true, false);
+
+        assert_eq!(interaction.selected_id.as_deref(), Some("arch-1"));
+        assert!(!interaction.open_preview);
+    }
+
+    #[test]
+    fn single_click_toggles_selection_without_opening_preview() {
+        let deselect_interaction =
+            handle_archive_row_interaction(true, "arch-1".to_string(), true, false, true);
+        assert!(deselect_interaction.selected_id.is_none());
+        assert!(!deselect_interaction.open_preview);
+
+        let select_interaction =
+            handle_archive_row_interaction(false, "arch-1".to_string(), true, false, true);
+        assert_eq!(select_interaction.selected_id.as_deref(), Some("arch-1"));
+        assert!(!select_interaction.open_preview);
     }
 }
