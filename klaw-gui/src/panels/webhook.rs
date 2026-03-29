@@ -3,7 +3,6 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::request_gateway_status;
 use crate::time_format::format_timestamp_millis;
-use crate::widgets::show_json_tree_with_id;
 use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
@@ -31,6 +30,7 @@ const PAGING_INPUT_WIDTH: f32 = 50.0;
 const PROMPT_LIST_HEIGHT: f32 = 320.0;
 const PROMPT_TEXT_HEIGHT: f32 = 260.0;
 const PREVIEW_HEIGHT: f32 = 260.0;
+const SUMMARY_WINDOW_HEIGHT: f32 = 260.0;
 
 struct PendingWebhookRowsRequest {
     receiver: Receiver<Result<Vec<WebhookListRow>, String>>,
@@ -49,9 +49,9 @@ enum WebhookListRow {
 }
 
 #[derive(Debug, Clone)]
-enum WebhookDetailRecord {
-    Event(WebhookEventRecord),
-    Agent(WebhookAgentRecord),
+struct WebhookSummaryState {
+    title: String,
+    summary: String,
 }
 
 impl WebhookListRow {
@@ -179,7 +179,7 @@ pub struct WebhookPanel {
     size: i64,
     sort_order: WebhookEventSortOrder,
     selected_id: Option<String>,
-    detail_record: Option<WebhookDetailRecord>,
+    summary_popup: Option<WebhookSummaryState>,
     prompt_dir: Option<PathBuf>,
     create_prompt_open: bool,
     create_prompt: CreatePromptState,
@@ -218,7 +218,7 @@ impl Default for WebhookPanel {
             size: 100,
             sort_order: WebhookEventSortOrder::ReceivedAtDesc,
             selected_id: None,
-            detail_record: None,
+            summary_popup: None,
             prompt_dir: None,
             create_prompt_open: false,
             create_prompt: CreatePromptState::default(),
@@ -686,7 +686,7 @@ impl PanelRenderer for WebhookPanel {
                 self.query_kind = WebhookQueryKind::Events;
                 self.page = 1;
                 self.selected_id = None;
-                self.detail_record = None;
+                self.summary_popup = None;
                 need_refresh = true;
             }
             let agents_selected = self.query_kind == WebhookQueryKind::Agents;
@@ -694,7 +694,7 @@ impl PanelRenderer for WebhookPanel {
                 self.query_kind = WebhookQueryKind::Agents;
                 self.page = 1;
                 self.selected_id = None;
-                self.detail_record = None;
+                self.summary_popup = None;
                 need_refresh = true;
             }
         });
@@ -782,7 +782,7 @@ impl PanelRenderer for WebhookPanel {
 
         ui.separator();
         let table_width = ui.available_width();
-        let mut open_detail: Option<WebhookDetailRecord> = None;
+        let mut open_summary: Option<WebhookSummaryState> = None;
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .max_width(table_width)
@@ -801,7 +801,6 @@ impl PanelRenderer for WebhookPanel {
                     .column(Column::auto().at_least(140.0))
                     .column(Column::auto().at_least(70.0))
                     .column(Column::auto().at_least(100.0))
-                    .column(Column::remainder().at_least(180.0))
                     .sense(egui::Sense::click())
                     .header(22.0, |mut header| {
                         header.col(|ui| {
@@ -842,13 +841,8 @@ impl PanelRenderer for WebhookPanel {
                             ui.strong(if self.query_kind == WebhookQueryKind::Events {
                                 "Sender"
                             } else {
-                                "Response Summary"
+                                "Sender"
                             });
-                        });
-                        header.col(|ui| {
-                            if self.query_kind == WebhookQueryKind::Events {
-                                ui.strong("Response Summary");
-                            }
                         });
                     })
                     .body(|body| {
@@ -890,15 +884,8 @@ impl PanelRenderer for WebhookPanel {
                             row.col(|ui| {
                                 match item {
                                     WebhookListRow::Event(record) => ui.label(&record.sender_id),
-                                    WebhookListRow::Agent(record) => {
-                                        ui.label(record.response_summary.as_deref().unwrap_or(""))
-                                    }
+                                    WebhookListRow::Agent(record) => ui.label(&record.sender_id),
                                 };
-                            });
-                            row.col(|ui| {
-                                if let WebhookListRow::Event(record) = item {
-                                    ui.label(record.response_summary.as_deref().unwrap_or(""));
-                                }
                             });
                             let response = row.response();
                             if response.clicked() {
@@ -909,107 +896,41 @@ impl PanelRenderer for WebhookPanel {
                                 };
                             }
                             if response.double_clicked() {
-                                open_detail = Some(match item {
-                                    WebhookListRow::Event(record) => {
-                                        WebhookDetailRecord::Event(record.clone())
-                                    }
-                                    WebhookListRow::Agent(record) => {
-                                        WebhookDetailRecord::Agent(record.clone())
-                                    }
-                                });
+                                open_summary = webhook_summary_state(item);
                             }
                         });
                     });
             });
 
-        if let Some(record) = open_detail {
-            self.detail_record = Some(record);
+        if let Some(summary) = open_summary {
+            self.summary_popup = Some(summary);
         }
-        if let Some(record) = &mut self.detail_record {
+        if let Some(summary_state) = &mut self.summary_popup {
             let mut open = true;
-            egui::Window::new("Webhook Event Detail")
-                .id(egui::Id::new("webhook-event-detail"))
+            egui::Window::new(&summary_state.title)
+                .id(egui::Id::new((
+                    "webhook-summary-popup",
+                    &summary_state.title,
+                )))
                 .open(&mut open)
                 .resizable(true)
-                .default_width(860.0)
-                .default_height(520.0)
-                .show(ui.ctx(), |ui| match record {
-                    WebhookDetailRecord::Event(record) => {
-                        ui.label(format!("ID: {}", record.id));
-                        ui.label(format!(
-                            "Time: {}",
-                            format_timestamp_millis(record.received_at_ms)
-                        ));
-                        ui.label(format!("Source: {}", record.source));
-                        ui.label(format!("Event Type: {}", record.event_type));
-                        ui.label(format!("Session: {}", record.session_key));
-                        ui.label(format!("Chat ID: {}", record.chat_id));
-                        ui.label(format!("Sender: {}", record.sender_id));
-                        ui.label(format!("Status: {}", record.status.as_str()));
-                        if let Some(processed_at_ms) = record.processed_at_ms {
-                            ui.label(format!(
-                                "Processed At: {}",
-                                format_timestamp_millis(processed_at_ms)
-                            ));
-                        }
-                        if let Some(remote_addr) = &record.remote_addr {
-                            ui.label(format!("Remote Addr: {remote_addr}"));
-                        }
-                        if let Some(error_message) = &record.error_message {
-                            ui.colored_label(
-                                ui.visuals().error_fg_color,
-                                format!("Error: {error_message}"),
+                .default_width(720.0)
+                .default_height(360.0)
+                .show(ui.ctx(), |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt(("webhook-summary-scroll", &summary_state.title))
+                        .max_height(SUMMARY_WINDOW_HEIGHT)
+                        .show(ui, |ui| {
+                            ui.add_sized(
+                                [ui.available_width(), SUMMARY_WINDOW_HEIGHT],
+                                egui::TextEdit::multiline(&mut summary_state.summary)
+                                    .desired_width(f32::INFINITY)
+                                    .interactive(false),
                             );
-                        }
-                        if let Some(summary) = &record.response_summary {
-                            ui.label(format!("Response Summary: {summary}"));
-                        }
-                        ui.separator();
-                        ui.strong("Payload");
-                        render_json_payload(ui, record.payload_json.as_deref().unwrap_or("{}"));
-                        ui.separator();
-                        ui.strong("Metadata");
-                        render_json_payload(ui, record.metadata_json.as_deref().unwrap_or("{}"));
-                    }
-                    WebhookDetailRecord::Agent(record) => {
-                        ui.label(format!("ID: {}", record.id));
-                        ui.label(format!(
-                            "Time: {}",
-                            format_timestamp_millis(record.received_at_ms)
-                        ));
-                        ui.label(format!("Hook ID: {}", record.hook_id));
-                        ui.label(format!("Session: {}", record.session_key));
-                        ui.label(format!("Chat ID: {}", record.chat_id));
-                        ui.label(format!("Sender: {}", record.sender_id));
-                        ui.label(format!("Status: {}", record.status.as_str()));
-                        if let Some(processed_at_ms) = record.processed_at_ms {
-                            ui.label(format!(
-                                "Processed At: {}",
-                                format_timestamp_millis(processed_at_ms)
-                            ));
-                        }
-                        if let Some(remote_addr) = &record.remote_addr {
-                            ui.label(format!("Remote Addr: {remote_addr}"));
-                        }
-                        if let Some(error_message) = &record.error_message {
-                            ui.colored_label(
-                                ui.visuals().error_fg_color,
-                                format!("Error: {error_message}"),
-                            );
-                        }
-                        if let Some(summary) = &record.response_summary {
-                            ui.label(format!("Response Summary: {summary}"));
-                        }
-                        ui.separator();
-                        ui.strong("Payload");
-                        render_json_payload(ui, record.payload_json.as_deref().unwrap_or("{}"));
-                        ui.separator();
-                        ui.strong("Metadata");
-                        render_json_payload(ui, record.metadata_json.as_deref().unwrap_or("{}"));
-                    }
+                        });
                 });
             if !open {
-                self.detail_record = None;
+                self.summary_popup = None;
             }
         }
 
@@ -1514,24 +1435,25 @@ fn render_webhook_config_summary(
         });
 }
 
-fn render_json_payload(ui: &mut egui::Ui, raw: &str) {
-    egui::ScrollArea::both()
-        .id_salt(("webhook-json-scroll", raw.len()))
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            match serde_json::from_str::<serde_json::Value>(raw) {
-                Ok(value) => show_json_tree_with_id(ui, &value, &format!("webhook-json:{raw}")),
-                Err(_) => {
-                    let mut text = raw.to_string();
-                    ui.add(
-                        egui::TextEdit::multiline(&mut text)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(18)
-                            .interactive(false),
-                    );
-                }
-            }
-        });
+fn webhook_summary_state(item: &WebhookListRow) -> Option<WebhookSummaryState> {
+    match item {
+        WebhookListRow::Event(record) => record
+            .response_summary
+            .as_ref()
+            .filter(|summary| !summary.trim().is_empty())
+            .map(|summary| WebhookSummaryState {
+                title: format!("Response Summary: {}", record.id),
+                summary: summary.clone(),
+            }),
+        WebhookListRow::Agent(record) => record
+            .response_summary
+            .as_ref()
+            .filter(|summary| !summary.trim().is_empty())
+            .map(|summary| WebhookSummaryState {
+                title: format!("Response Summary: {}", record.hook_id),
+                summary: summary.clone(),
+            }),
+    }
 }
 
 fn normalize_filter(raw: &str) -> Option<String> {

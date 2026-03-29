@@ -294,12 +294,7 @@ async fn load_webhook_agent_prompt(request: &GatewayWebhookAgentRequest) -> Resu
             prompt_path.display()
         )
     })?;
-    build_webhook_agent_content(
-        &template,
-        &request.hook_id,
-        &request.session_key,
-        &request.body,
-    )
+    build_webhook_agent_content(&template, &request.body)
 }
 
 fn webhook_agent_prompt_path(hook_id: &str) -> Result<PathBuf, String> {
@@ -315,12 +310,7 @@ fn webhook_agent_prompt_path(hook_id: &str) -> Result<PathBuf, String> {
         .join(format!("{hook_id}.md")))
 }
 
-fn build_webhook_agent_content(
-    template: &str,
-    hook_id: &str,
-    session_key: &str,
-    body: &Value,
-) -> Result<String, String> {
+fn build_webhook_agent_content(template: &str, body: &Value) -> Result<String, String> {
     let body_json = serde_json::to_string_pretty(body)
         .map_err(|err| format!("failed to serialize request body: {err}"))?;
     let template = template.trim_end();
@@ -329,12 +319,7 @@ fn build_webhook_agent_content(
         content.push_str(template);
         content.push_str("\n\n");
     }
-    content.push_str("## Hook Context\n\n");
-    content.push_str(&format!(
-        "- Hook ID: `{}`\n- Original Session Key: `{}`\n",
-        hook_id, session_key
-    ));
-    content.push_str("\n## Request JSON\n\n```json\n");
+    content.push_str("## Request JSON\n\n```json\n");
     content.push_str(&body_json);
     content.push_str("\n```");
     Ok(content)
@@ -368,21 +353,18 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn build_webhook_agent_content_appends_pretty_json_block() {
+    fn build_webhook_agent_content_appends_only_pretty_json_block() {
         let content = build_webhook_agent_content(
             "# Order Hook\n\nFollow the request.",
-            "order",
-            "dingtalk:acc:chat-1",
             &json!({"order_id":"A123","status":"paid"}),
         )
         .expect("content should build");
 
         assert!(content.contains("# Order Hook"));
-        assert!(content.contains("## Hook Context"));
-        assert!(content.contains("`order`"));
-        assert!(content.contains("`dingtalk:acc:chat-1`"));
         assert!(content.contains("## Request JSON"));
         assert!(content.contains("```json"));
         assert!(content.contains("\"order_id\": \"A123\""));
+        assert!(!content.contains("## Hook Context"));
+        assert!(!content.contains("Original Session Key"));
     }
 }
