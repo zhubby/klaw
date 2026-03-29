@@ -12,6 +12,8 @@
 ### Fixed
 
 - `dingtalk` 入站媒体下载候选顺序调整为优先 `downloadCode`、再回退 `pictureDownloadCode`，缓解图片附件调用 `/v1.0/robot/messageFiles/download` 时偶发 `HTTP 500 unknownError`
+- `dingtalk` 出站文件消息补齐 webhook `file.fileType` 字段，修复 `channel_attachment` 发送 PDF/文档时被钉钉拒绝并返回 `errcode=401104 miss param : file->fileType`
+- `dingtalk` 出站原生文件消息现只放行文档里明确支持的 `pdf/doc/docx/xlsx/zip/rar`；其他文件类型会降级成 Markdown 提示，避免继续触发 webhook 参数或类型校验失败
 
 ## 2026-03-27
 

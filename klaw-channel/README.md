@@ -32,7 +32,7 @@
 - channel 仅消费 `ChannelResponse` 并回发，不持有 provider/model 路由策略
 - `dingtalk` 通道会在响应中检测 `approval_id` 并渲染 ActionCard，把卡片回调映射为 `/approve` 或 `/reject` 指令回送 runtime
 - `telegram` 通道现在使用目录模块拆分（`telegram/`），并提供 Telegram 专用 HTML 渲染、面向常见 Markdown 的格式映射（标题、引用、列表、链接、行内样式、代码块）、`/start` 新会话兼容、图片/文件/音视频媒体入站、基于 inline keyboard 的审批回调，以及 archive 驱动的出站图片/文件回复
-- `dingtalk` 应用机器人现支持 archive 驱动的出站附件回复：图片会先上传媒体并在 Markdown 中直接显示，文件会作为原生文件消息发送
+- `dingtalk` 应用机器人现支持 archive 驱动的出站附件回复：图片会先上传媒体并在 Markdown 中直接显示；文件仅对 `pdf/doc/docx/xlsx/zip/rar` 发送原生文件消息，并按文件名/MIME 自动补齐 webhook `fileType`，其他类型降级为 Markdown 提示
 
 ## Stdio Interaction
 

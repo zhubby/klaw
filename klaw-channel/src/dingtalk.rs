@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
+use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::OnceLock;
@@ -955,49 +956,82 @@ async fn deliver_dingtalk_attachments(
                     .await
             }
             crate::OutboundAttachmentKind::File => {
-                debug!(
-                    chat_id,
-                    source = resolved.source_label.as_str(),
-                    filename = resolved.filename.as_str(),
-                    size_bytes = resolved.bytes.len(),
-                    "uploading dingtalk file attachment"
-                );
-                let media_id = match client
-                    .upload_media(
-                        &access_token,
-                        &resolved.bytes,
-                        "file",
-                        &resolved.filename,
-                        resolved.mime_type.as_deref(),
-                    )
-                    .await
-                {
-                    Ok(media_id) => media_id,
-                    Err(error) => {
+                match supported_dingtalk_file_type(
+                    &resolved.filename,
+                    resolved.mime_type.as_deref(),
+                ) {
+                    Some(file_type) => {
+                        debug!(
+                            chat_id,
+                            source = resolved.source_label.as_str(),
+                            filename = resolved.filename.as_str(),
+                            size_bytes = resolved.bytes.len(),
+                            file_type,
+                            "uploading dingtalk file attachment"
+                        );
+                        let media_id = match client
+                            .upload_media(
+                                &access_token,
+                                &resolved.bytes,
+                                "file",
+                                &resolved.filename,
+                                resolved.mime_type.as_deref(),
+                            )
+                            .await
+                        {
+                            Ok(media_id) => media_id,
+                            Err(error) => {
+                                warn!(
+                                    chat_id,
+                                    source = resolved.source_label.as_str(),
+                                    error = %error,
+                                    "failed to upload dingtalk file attachment"
+                                );
+                                continue;
+                            }
+                        };
+                        debug!(
+                            chat_id,
+                            source = resolved.source_label.as_str(),
+                            media_id = media_id.as_str(),
+                            "uploaded dingtalk file attachment"
+                        );
+                        debug!(
+                            chat_id,
+                            source = resolved.source_label.as_str(),
+                            media_id = media_id.as_str(),
+                            file_type,
+                            "sending dingtalk file attachment message"
+                        );
+                        client
+                            .send_session_webhook_file(
+                                &session_webhook,
+                                &media_id,
+                                file_type,
+                                &resolved.filename,
+                            )
+                            .await
+                    }
+                    None => {
                         warn!(
                             chat_id,
                             source = resolved.source_label.as_str(),
-                            error = %error,
-                            "failed to upload dingtalk file attachment"
+                            filename = resolved.filename.as_str(),
+                            mime_type = resolved.mime_type.as_deref().unwrap_or("unknown"),
+                            "skipping unsupported dingtalk file attachment type"
                         );
-                        continue;
+                        client
+                            .send_session_webhook_markdown(
+                                &session_webhook,
+                                &config.bot_title,
+                                &build_unsupported_file_attachment_markdown(
+                                    &resolved.filename,
+                                    resolved.caption.as_deref(),
+                                ),
+                            )
+                            .await
                     }
-                };
-                debug!(
-                    chat_id,
-                    source = resolved.source_label.as_str(),
-                    media_id = media_id.as_str(),
-                    "uploaded dingtalk file attachment"
-                );
-                debug!(
-                    chat_id,
-                    source = resolved.source_label.as_str(),
-                    media_id = media_id.as_str(),
-                    "sending dingtalk file attachment message"
-                );
-                client
-                    .send_session_webhook_file(&session_webhook, &media_id)
-                    .await
+                }
             }
         };
 
@@ -1414,6 +1448,8 @@ impl DingtalkApiClient {
         &self,
         session_webhook: &str,
         media_id: &str,
+        file_type: &str,
+        filename: &str,
     ) -> ChannelResult<()> {
         let response = self
             .http
@@ -1421,6 +1457,8 @@ impl DingtalkApiClient {
             .json(&serde_json::json!({
                 "msgtype": "file",
                 "file": {
+                    "fileType": file_type,
+                    "fileName": filename,
                     "mediaId": media_id,
                     "media_id": media_id,
                 }
@@ -1495,6 +1533,52 @@ impl DingtalkApiClient {
             format!("{endpoint}?ticket={}", urlencoding::encode(ticket))
         }
     }
+}
+
+fn infer_dingtalk_file_type(filename: &str, mime_type: Option<&str>) -> String {
+    let extension = Path::new(filename.trim())
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.trim_start_matches('.').to_ascii_lowercase());
+    if let Some(extension) = extension {
+        return extension;
+    }
+
+    let mime_subtype = mime_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.split('/').nth(1))
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.rsplit('+').next().unwrap_or(value).to_ascii_lowercase());
+    mime_subtype.unwrap_or_else(|| "bin".to_string())
+}
+
+fn supported_dingtalk_file_type(filename: &str, mime_type: Option<&str>) -> Option<&'static str> {
+    match infer_dingtalk_file_type(filename, mime_type).as_str() {
+        "pdf" => Some("pdf"),
+        "doc" => Some("doc"),
+        "docx" => Some("docx"),
+        "xlsx" => Some("xlsx"),
+        "zip" => Some("zip"),
+        "rar" => Some("rar"),
+        _ => None,
+    }
+}
+
+fn build_unsupported_file_attachment_markdown(filename: &str, caption: Option<&str>) -> String {
+    let mut lines = Vec::new();
+    if let Some(caption) = caption.map(str::trim).filter(|value| !value.is_empty()) {
+        lines.push(caption.to_string());
+    }
+    lines.push(format!(
+        "钉钉当前仅支持发送 `pdf/doc/docx/xlsx/zip/rar` 文件，`{}` 无法作为原生文件消息发送。",
+        filename.trim()
+    ));
+    lines.join("\n\n")
 }
 
 fn ensure_rustls_crypto_provider() {
@@ -2602,11 +2686,12 @@ fn escape_markdown_for_action_card(input: &str) -> String {
 mod tests {
     use super::{
         ApprovalAction, CardCallbackEvent, DingtalkApiClient, EventDeduper, InboundEvent,
-        build_approval_action_card_body, extract_approval_command_preview,
-        extract_approval_id_for_action_card, extract_dingtalk_media_references,
-        extract_dingtalk_message_text, extract_shell_approval_id, is_sender_allowed,
+        build_approval_action_card_body, build_unsupported_file_attachment_markdown,
+        extract_approval_command_preview, extract_approval_id_for_action_card,
+        extract_dingtalk_media_references, extract_dingtalk_message_text,
+        extract_shell_approval_id, infer_dingtalk_file_type, is_sender_allowed,
         parse_card_callback_event, parse_inbound_event, parse_stream_data, resolve_chat_id,
-        resolve_download_code_candidates,
+        resolve_download_code_candidates, supported_dingtalk_file_type,
     };
     use crate::{
         ChannelResponse,
@@ -2984,6 +3069,58 @@ mod tests {
         .expect_err("non-zero errcode should fail");
         assert!(err.to_string().contains("errcode=310000"));
         assert!(err.to_string().contains("invalid session"));
+    }
+
+    #[test]
+    fn infer_dingtalk_file_type_prefers_filename_extension() {
+        assert_eq!(
+            infer_dingtalk_file_type("江苏电信电子发票-202601031936.PDF", Some("application/pdf")),
+            "pdf"
+        );
+    }
+
+    #[test]
+    fn infer_dingtalk_file_type_falls_back_to_mime_subtype() {
+        assert_eq!(
+            infer_dingtalk_file_type(
+                "attachment",
+                Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            ),
+            "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        assert_eq!(
+            infer_dingtalk_file_type("attachment", Some("application/json+zip")),
+            "zip"
+        );
+    }
+
+    #[test]
+    fn infer_dingtalk_file_type_defaults_to_bin() {
+        assert_eq!(infer_dingtalk_file_type("attachment", None), "bin");
+    }
+
+    #[test]
+    fn supported_dingtalk_file_type_accepts_documented_extensions() {
+        assert_eq!(supported_dingtalk_file_type("report.pdf", None), Some("pdf"));
+        assert_eq!(supported_dingtalk_file_type("report.doc", None), Some("doc"));
+        assert_eq!(supported_dingtalk_file_type("report.docx", None), Some("docx"));
+        assert_eq!(supported_dingtalk_file_type("report.xlsx", None), Some("xlsx"));
+        assert_eq!(supported_dingtalk_file_type("report.zip", None), Some("zip"));
+        assert_eq!(supported_dingtalk_file_type("report.rar", None), Some("rar"));
+    }
+
+    #[test]
+    fn supported_dingtalk_file_type_rejects_other_extensions() {
+        assert_eq!(supported_dingtalk_file_type("slides.pptx", None), None);
+        assert_eq!(supported_dingtalk_file_type("notes.txt", Some("text/plain")), None);
+    }
+
+    #[test]
+    fn unsupported_file_attachment_markdown_mentions_supported_types() {
+        let markdown = build_unsupported_file_attachment_markdown("slides.pptx", Some("附件如下"));
+        assert!(markdown.contains("附件如下"));
+        assert!(markdown.contains("pdf/doc/docx/xlsx/zip/rar"));
+        assert!(markdown.contains("slides.pptx"));
     }
 
     #[test]
