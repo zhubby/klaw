@@ -26,7 +26,6 @@ struct InstallSkillWindow {
 
 pub struct SkillsManagerPanel {
     config_store: Option<ConfigStore>,
-    revision: Option<u64>,
     config: AppConfig,
     skill_root: Option<PathBuf>,
     loaded: bool,
@@ -44,7 +43,6 @@ impl Default for SkillsManagerPanel {
     fn default() -> Self {
         Self {
             config_store: None,
-            revision: None,
             config: AppConfig::default(),
             skill_root: None,
             loaded: false,
@@ -82,7 +80,6 @@ impl SkillsManagerPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.revision = Some(snapshot.revision);
         self.config = snapshot.config;
     }
 
@@ -740,7 +737,6 @@ impl PanelRenderer for SkillsManagerPanel {
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!("Installed: {}", self.items.len()));
             ui.label(format!(
                 "Registries: {}",
