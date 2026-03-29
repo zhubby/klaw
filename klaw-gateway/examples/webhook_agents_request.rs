@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     let webhook_path = env_or_default("WEBHOOK_PATH", "/webhook/agents");
     let webhook_token = env_or_default("WEBHOOK_TOKEN", "replace-me");
     let hook_id = env_or_default("HOOK_ID", "order");
-    let session_key = env_or_default("SESSION_KEY", "dingtalk:acc:chat-1");
+    let base_session_key = env_or_default("BASE_SESSION_KEY", "dingtalk:acc:chat-1");
     let provider = optional_env("PROVIDER");
     let model = optional_env("MODEL");
     let chat_id = optional_env("CHAT_ID");
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("hook_id", &hook_id);
-        query.append_pair("session_key", &session_key);
+        query.append_pair("base_session_key", &base_session_key);
         if let Some(provider) = &provider {
             query.append_pair("provider", provider);
         }

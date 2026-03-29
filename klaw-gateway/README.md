@@ -7,6 +7,7 @@
 - 暴露 `/ws/chat` WebSocket 入口
 - 暴露 `/` 默认落地页与内置 logo 静态资源
 - 可选暴露固定路径的 `POST /webhook/events` 与 `POST /webhook/agents`，并支持 Bearer、GitHub、GitLab 多种 header/signature 校验
+- webhook 请求会进入独立的 `webhook:*` 执行 session；若提供 `base_session_key`，最终回复会路由回目标 IM 会话当前 active session
 - 按 `session_key` 维护房间广播通道
 - 在启动成功后打印实际可连接的 WebSocket 地址
 - 提供可管理的 `GatewayHandle` / `GatewayRuntimeInfo`，以及可注入业务逻辑的 `GatewayWebhookHandler`

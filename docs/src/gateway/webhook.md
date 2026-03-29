@@ -9,6 +9,12 @@ Webhook 现在提供两类 HTTP 输入端点：
 - `POST /webhook/events`：结构化事件入口，适合已经完成归一化的外部事件
 - `POST /webhook/agents`：模板驱动入口，适合任意 JSON `body` 结合本地 markdown hook 模板直接注入 agent loop
 
+两类入口都遵循同一条运行时语义：
+
+- 每次 webhook 请求都会启动一轮独立的 agent loop
+- webhook 自己使用独立的 `webhook:*` 执行 session，不继承 IM 会话上下文
+- 若提供 `base_session_key`，运行时会把最终回复投递到该 base session 当前 active session 对应的 channel/chat
+
 主要特性：
 
 - **双 HTTP POST 端点** - 覆盖事件归一化与模板驱动两类场景
@@ -93,6 +99,7 @@ Content-Length: 234
   "source": "github",
   "event_type": "issue_comment.created",
   "content": "事件描述文本",
+  "base_session_key": "dingtalk:acc:chat-1",
   "payload": {
     // 任意 JSON 对象
   }
@@ -104,12 +111,14 @@ Content-Length: 234
 | `source` | String | 是 | 事件来源标识（如 "github", "gitlab", "custom"） |
 | `event_type` | String | 是 | 事件类型（如 "push", "issue.created"） |
 | `content` | String | 是 | 事件描述，会作为消息内容 |
+| `base_session_key` | String | 否 | 回复投递目标；运行时会解析该 base session 当前 active session |
+| `session_key` | String | 否 | 兼容旧字段，等价于 `base_session_key`，后续会移除 |
 | `payload` | Object | 否 | 扩展数据，任意 JSON 对象 |
 
 ### `/webhook/agents`
 
 ```http
-POST /webhook/agents?hook_id=order&session_key=dingtalk%3Aacc%3Achat-1&provider=openai&model=gpt-4.1 HTTP/1.1
+POST /webhook/agents?hook_id=order&base_session_key=dingtalk%3Aacc%3Achat-1&provider=openai&model=gpt-4.1 HTTP/1.1
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -123,13 +132,14 @@ Content-Type: application/json
 
 - URL query:
   - `hook_id`：必填，对应 `(<storage.root_dir 或 ~/.klaw>)/hooks/prompts/<hook_id>.md`
-  - `session_key`：必填，建议传短 session key；运行时会先解析到 active session
+  - `base_session_key`：可选，指定回复投递目标；运行时会先解析到 active session
+  - `session_key`：兼容旧字段，等价于 `base_session_key`
   - `provider` / `model`：可选，仅作用于当前请求
   - `chat_id` / `sender_id`：可选
 - HTTP body:
   - 原封不动接受任意 JSON value，并作为 request JSON 追加到模板后面
 
-agent 请求会读取本地 markdown hook 模板，并在末尾统一追加 pretty-printed request JSON fenced code block，最终内容再注入 agent loop。
+agent 请求会读取本地 markdown hook 模板，并在末尾统一追加 pretty-printed request JSON fenced code block，最终内容再注入独立的 webhook agent loop。
 
 ### 响应格式
 

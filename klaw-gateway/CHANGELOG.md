@@ -12,6 +12,7 @@
 
 - 首页内置 logo 资源现改为 `512x512` 的 `/assets/logo.webp`，显著减小静态资源和内嵌二进制体积
 - `/webhook/events` 与 `/webhook/agents` 路径现固定为内置常量，不再从配置读取 path
+- webhook `events` / `agents` 现在都会生成独立的 `webhook:*` 执行 session；`base_session_key` 仅用于回复投递路由，旧 `session_key` 字段暂作为兼容别名保留
 - gateway Bearer 鉴权中间件现仅保护 `/ws/chat`；webhook 路由继续使用独立的 webhook 校验链；首页、health、metrics 不参与鉴权
 - `gateway.auth.enabled = false` 时，webhook 入口现在直接放行，不再要求任何 header 校验
 - Tailscale Funnel 不再强制要求 `gateway.auth` 已配置；若未配置认证，gateway/GUI 仅保留公网暴露警告

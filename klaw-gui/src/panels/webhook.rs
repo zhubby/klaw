@@ -106,12 +106,18 @@ struct DeletePromptState {
 #[derive(Debug, Clone, Default)]
 struct TrickPromptState {
     hook_id: String,
-    session_keys: Vec<String>,
-    session_key: String,
+    session_options: Vec<TrickSessionOption>,
+    base_session_key: String,
     provider: String,
     model: String,
     generated_url: Option<String>,
     error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrickSessionOption {
+    base_session_key: String,
+    label: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -577,8 +583,8 @@ impl WebhookPanel {
         template: &PromptTemplateRecord,
         notifications: &mut NotificationCenter,
     ) {
-        let session_keys = match load_session_keys() {
-            Ok(session_keys) => session_keys,
+        let session_options = match load_session_options() {
+            Ok(session_options) => session_options,
             Err(err) => {
                 notifications.error(err.clone());
                 self.trick_prompt = Some(TrickPromptState {
@@ -597,11 +603,14 @@ impl WebhookPanel {
 
         let provider = default_webhook_provider(&self.config);
         let model = default_webhook_model(&self.config, &provider);
-        let session_key = session_keys.first().cloned().unwrap_or_default();
+        let base_session_key = session_options
+            .first()
+            .map(|item| item.base_session_key.clone())
+            .unwrap_or_default();
         self.trick_prompt = Some(TrickPromptState {
             hook_id: template.hook_id.clone(),
-            session_keys,
-            session_key,
+            session_options,
+            base_session_key,
             provider,
             model,
             generated_url: None,
@@ -1296,22 +1305,29 @@ impl PanelRenderer for WebhookPanel {
                             ui.label(&trick_state.hook_id);
                             ui.end_row();
 
-                            ui.label("Session Key");
+                            ui.label("Base Session");
                             egui::ComboBox::from_id_salt((
                                 "webhook-trick-session",
                                 &trick_state.hook_id,
                             ))
-                            .selected_text(if trick_state.session_key.is_empty() {
-                                "Select a session"
-                            } else {
-                                trick_state.session_key.as_str()
-                            })
+                            .selected_text(
+                                trick_state
+                                    .session_options
+                                    .iter()
+                                    .find(|item| {
+                                        item.base_session_key == trick_state.base_session_key
+                                    })
+                                    .map(|item| item.label.as_str())
+                                    .unwrap_or("Select a base session"),
+                            )
                             .width(420.0)
                             .show_ui(ui, |ui| {
-                                for session_key in &trick_state.session_keys {
-                                    let selected = trick_state.session_key == *session_key;
-                                    if ui.selectable_label(selected, session_key).clicked() {
-                                        trick_state.session_key = session_key.clone();
+                                for option in &trick_state.session_options {
+                                    let selected =
+                                        trick_state.base_session_key == option.base_session_key;
+                                    if ui.selectable_label(selected, &option.label).clicked() {
+                                        trick_state.base_session_key =
+                                            option.base_session_key.clone();
                                     }
                                 }
                             });
@@ -1347,16 +1363,16 @@ impl PanelRenderer for WebhookPanel {
                             );
                             ui.end_row();
                         });
-                    if trick_state.session_keys.is_empty() {
+                    if trick_state.session_options.is_empty() {
                         ui.colored_label(
                             ui.visuals().warn_fg_color,
-                            "No indexed sessions found. Trick requires an existing session.",
+                            "No base sessions found. Trick requires an existing IM base session.",
                         );
                     }
                     ui.add_space(8.0);
                     let generate_enabled = trick_state.error_message.is_none()
                         && trick_ready_error(&self.config, self.gateway_status.as_ref()).is_none()
-                        && !trick_state.session_key.trim().is_empty()
+                        && !trick_state.base_session_key.trim().is_empty()
                         && !trick_state.provider.trim().is_empty();
                     if ui
                         .add_enabled(generate_enabled, egui::Button::new("Generate"))
@@ -1547,16 +1563,28 @@ fn load_prompt_markdown(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))
 }
 
-fn load_session_keys() -> Result<Vec<String>, String> {
+fn load_session_options() -> Result<Vec<TrickSessionOption>, String> {
     run_session_task(move |manager| async move {
         let sessions = manager.list_sessions(SessionListQuery::default()).await?;
-        let mut session_keys = sessions
+        let active_session_keys = sessions
+            .iter()
+            .filter_map(|session| session.active_session_key.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut session_options = sessions
             .into_iter()
-            .map(|session| session.session_key)
+            .filter(|session| session.channel != "webhook")
+            .filter(|session| !active_session_keys.contains(&session.session_key))
+            .map(|session| TrickSessionOption {
+                label: format!(
+                    "{} ({}, {})",
+                    session.session_key, session.channel, session.chat_id
+                ),
+                base_session_key: session.session_key,
+            })
             .collect::<Vec<_>>();
-        session_keys.sort();
-        session_keys.dedup();
-        Ok(session_keys)
+        session_options.sort_by(|a, b| a.label.cmp(&b.label));
+        session_options.dedup_by(|a, b| a.base_session_key == b.base_session_key);
+        Ok(session_options)
     })
 }
 
@@ -1625,9 +1653,9 @@ fn build_trick_url(
         return Err(err);
     }
     let hook_id = normalize_hook_id(&trick.hook_id)?;
-    let session_key = trick.session_key.trim();
-    if session_key.is_empty() {
-        return Err("session_key is required".to_string());
+    let base_session_key = trick.base_session_key.trim();
+    if base_session_key.is_empty() {
+        return Err("base_session_key is required".to_string());
     }
     let provider = trick.provider.trim();
     if provider.is_empty() {
@@ -1638,7 +1666,10 @@ fn build_trick_url(
     let mut url = format!("{base}{WEBHOOK_AGENTS_PATH}");
     let mut query = vec![
         ("hook_id", percent_encode_query_value(&hook_id)),
-        ("session_key", percent_encode_query_value(session_key)),
+        (
+            "base_session_key",
+            percent_encode_query_value(base_session_key),
+        ),
     ];
     query.push(("provider", percent_encode_query_value(provider)));
     if !model.is_empty() {
@@ -1825,8 +1856,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        PromptTemplateRecord, TrickPromptState, WebhookPanel, WebhookQueryKind, build_trick_url,
-        default_webhook_model, list_prompt_templates_in_dir, normalize_hook_id,
+        PromptTemplateRecord, TrickPromptState, TrickSessionOption, WebhookPanel, WebhookQueryKind,
+        build_trick_url, default_webhook_model, list_prompt_templates_in_dir, normalize_hook_id,
         percent_encode_query_value, prompt_templates_dir_from_config, query_mode_primary_label,
         trick_base_url,
     };
@@ -1954,7 +1985,11 @@ mod tests {
         };
         let trick = TrickPromptState {
             hook_id: "order_sync".to_string(),
-            session_key: "session 1".to_string(),
+            session_options: vec![TrickSessionOption {
+                base_session_key: "session 1".to_string(),
+                label: "session 1 (telegram, chat-1)".to_string(),
+            }],
+            base_session_key: "session 1".to_string(),
             provider: "openai".to_string(),
             model: "gpt-4.1-mini".to_string(),
             ..TrickPromptState::default()
@@ -1962,7 +1997,7 @@ mod tests {
         let url = build_trick_url(&config, Some(&status), &trick).expect("trick url");
         assert_eq!(
             url,
-            "http://127.0.0.1:9000/webhook/agents?hook_id=order_sync&session_key=session%201&provider=openai&model=gpt-4.1-mini"
+            "http://127.0.0.1:9000/webhook/agents?hook_id=order_sync&base_session_key=session%201&provider=openai&model=gpt-4.1-mini"
         );
     }
 

@@ -28,6 +28,8 @@ pub struct GatewayWebhookRequest {
     pub event_type: String,
     pub content: String,
     pub session_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_session_key: Option<String>,
     pub chat_id: String,
     pub sender_id: String,
     pub payload: Option<Value>,
@@ -48,6 +50,8 @@ pub struct GatewayWebhookAgentRequest {
     pub request_id: String,
     pub hook_id: String,
     pub session_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_session_key: Option<String>,
     pub chat_id: String,
     pub sender_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,6 +113,8 @@ pub(crate) struct GatewayWebhookPayload {
     pub(crate) event_type: String,
     pub(crate) content: String,
     #[serde(default)]
+    pub(crate) base_session_key: Option<String>,
+    #[serde(default)]
     pub(crate) session_key: Option<String>,
     #[serde(default)]
     pub(crate) chat_id: Option<String>,
@@ -123,7 +129,10 @@ pub(crate) struct GatewayWebhookPayload {
 #[derive(Debug, Deserialize)]
 pub(crate) struct GatewayWebhookAgentQuery {
     pub(crate) hook_id: String,
-    pub(crate) session_key: String,
+    #[serde(default)]
+    pub(crate) base_session_key: Option<String>,
+    #[serde(default)]
+    pub(crate) session_key: Option<String>,
     #[serde(default)]
     pub(crate) chat_id: Option<String>,
     #[serde(default)]
@@ -251,13 +260,14 @@ pub(crate) fn normalize_webhook_request(
     }
 
     let event_id = uuid::Uuid::new_v4().to_string();
-    let session_key = payload
-        .session_key
+    let session_key = format!("webhook:{source}:{}", uuid::Uuid::new_v4());
+    let base_session_key = payload
+        .base_session_key
         .as_deref()
+        .or(payload.session_key.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| format!("webhook:{source}:{}", uuid::Uuid::new_v4()));
+        .map(ToString::to_string);
     let chat_id = payload
         .chat_id
         .as_deref()
@@ -294,6 +304,12 @@ pub(crate) fn normalize_webhook_request(
         "webhook.event_id".to_string(),
         Value::String(event_id.clone()),
     );
+    if let Some(base_session_key) = base_session_key.as_ref() {
+        metadata.insert(
+            "webhook.base_session_key".to_string(),
+            Value::String(base_session_key.clone()),
+        );
+    }
 
     Ok(GatewayWebhookRequest {
         event_id,
@@ -301,6 +317,7 @@ pub(crate) fn normalize_webhook_request(
         event_type: event_type.to_string(),
         content: content.to_string(),
         session_key,
+        base_session_key,
         chat_id,
         sender_id,
         payload: payload.payload,
@@ -326,10 +343,14 @@ pub(crate) fn normalize_webhook_agent_request(
         return Err("hook_id may only contain letters, numbers, '-' and '_'");
     }
 
-    let session_key = query.session_key.trim();
-    if session_key.is_empty() {
-        return Err("session_key is required");
-    }
+    let base_session_key = query
+        .base_session_key
+        .as_deref()
+        .or(query.session_key.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let session_key = format!("webhook:{hook_id}:{}", uuid::Uuid::new_v4());
 
     let chat_id = query
         .chat_id
@@ -337,7 +358,7 @@ pub(crate) fn normalize_webhook_agent_request(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(|| session_key.to_string());
+        .unwrap_or_else(|| session_key.clone());
     let sender_id = query
         .sender_id
         .as_deref()
@@ -380,11 +401,18 @@ pub(crate) fn normalize_webhook_agent_request(
         "webhook.agents.request_id".to_string(),
         Value::String(request_id.clone()),
     );
+    if let Some(base_session_key) = base_session_key.as_ref() {
+        metadata.insert(
+            "webhook.base_session_key".to_string(),
+            Value::String(base_session_key.clone()),
+        );
+    }
 
     Ok(GatewayWebhookAgentRequest {
         request_id,
         hook_id: hook_id.to_string(),
-        session_key: session_key.to_string(),
+        session_key,
+        base_session_key,
         chat_id,
         sender_id,
         provider,

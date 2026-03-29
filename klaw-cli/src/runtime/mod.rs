@@ -20,9 +20,9 @@ use klaw_core::{
     AgentLoop, AgentRuntimeError, AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage,
     DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
     InMemoryCircuitBreaker, InMemoryIdempotencyStore, InMemoryTransport, InboundMessage,
-    MediaReference, OutboundMessage, ProviderRuntimeSnapshot, QueueStrategy, RunLimits,
-    SessionSchedulingPolicy, SkillPromptEntry, Subscription, TransportError,
-    build_runtime_system_prompt, ensure_workspace_prompt_templates,
+    MediaReference, MessageTopic, MessageTransport, OutboundMessage, ProviderRuntimeSnapshot,
+    QueueStrategy, RunLimits, SessionSchedulingPolicy, SkillPromptEntry, Subscription,
+    TransportError, build_runtime_system_prompt, ensure_workspace_prompt_templates,
 };
 use klaw_gateway::{GatewayWebhookAgentRequest, GatewayWebhookRequest};
 use klaw_heartbeat::should_suppress_output;
@@ -338,6 +338,24 @@ struct SessionRoute {
     active_session_key: String,
     model_provider: String,
     model: String,
+}
+
+#[derive(Debug, Clone)]
+struct WebhookExecutionRoute {
+    session_key: String,
+    chat_id: String,
+    model_provider: String,
+    model: String,
+}
+
+#[derive(Debug, Clone)]
+struct WebhookDeliveryRoute {
+    session_key: String,
+    chat_id: String,
+    channel: String,
+    model_provider: String,
+    model: String,
+    metadata: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1390,6 +1408,146 @@ async fn persist_session_delivery_metadata(
         )
         .await?;
     Ok(())
+}
+
+fn parse_delivery_metadata_json(raw: &str) -> Option<BTreeMap<String, Value>> {
+    serde_json::from_str::<serde_json::Map<String, Value>>(raw)
+        .ok()
+        .map(|metadata| metadata.into_iter().collect())
+}
+
+fn validate_webhook_delivery_target(route: &WebhookDeliveryRoute) -> Result<(), String> {
+    match route.channel.as_str() {
+        "telegram" => Ok(()),
+        "dingtalk" => {
+            let has_session_webhook = route
+                .metadata
+                .get("channel.dingtalk.session_webhook")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty());
+            if has_session_webhook {
+                Ok(())
+            } else {
+                Err(format!(
+                    "delivery target '{}' is missing dingtalk session webhook metadata",
+                    route.session_key
+                ))
+            }
+        }
+        channel => Err(format!(
+            "delivery target channel '{channel}' does not support background webhook delivery"
+        )),
+    }
+}
+
+async fn resolve_webhook_delivery_route(
+    runtime: &RuntimeBundle,
+    base_session_key: Option<&str>,
+) -> Result<Option<WebhookDeliveryRoute>, String> {
+    let Some(base_session_key) = base_session_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let sessions = session_manager(runtime);
+    let (default_provider_id, default_model) = runtime_default_route(runtime);
+    let base = sessions
+        .get_session(base_session_key)
+        .await
+        .map_err(|err| format!("base delivery session '{base_session_key}' not found: {err}"))?;
+    if base.channel == "webhook" {
+        return Err(format!(
+            "base_session_key '{}' points to a webhook execution session; choose the originating IM base session instead",
+            base.session_key
+        ));
+    }
+    let base_chat_id = base.chat_id.clone();
+    let base_channel = base.channel.clone();
+    let base = normalize_session_route_state(
+        runtime,
+        base,
+        &base_chat_id,
+        &base_channel,
+        &default_provider_id,
+        &default_model,
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+    let target_session_key = base
+        .active_session_key
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| base.session_key.clone());
+    let target = if target_session_key == base.session_key {
+        base
+    } else {
+        let target = sessions
+            .get_session(&target_session_key)
+            .await
+            .map_err(|err| {
+                format!("active delivery session '{target_session_key}' not found: {err}")
+            })?;
+        let target_chat_id = target.chat_id.clone();
+        let target_channel = target.channel.clone();
+        normalize_session_route_state(
+            runtime,
+            target,
+            &target_chat_id,
+            &target_channel,
+            &default_provider_id,
+            &default_model,
+        )
+        .await
+        .map_err(|err| err.to_string())?
+    };
+    if target.channel == "webhook" {
+        return Err(format!(
+            "base_session_key '{}' currently routes to webhook execution session '{}'; choose the originating IM base session instead",
+            base_session_key, target.session_key
+        ));
+    }
+    let model_provider = target
+        .model_provider
+        .clone()
+        .unwrap_or_else(|| default_provider_id.clone());
+    let model = target.model.clone().unwrap_or_else(|| {
+        if model_provider == default_provider_id {
+            default_model.clone()
+        } else {
+            default_model_for_provider(runtime, &model_provider)
+        }
+    });
+    let metadata = target
+        .delivery_metadata_json
+        .as_deref()
+        .and_then(parse_delivery_metadata_json)
+        .unwrap_or_default();
+    let route = WebhookDeliveryRoute {
+        session_key: target.session_key,
+        chat_id: target.chat_id,
+        channel: target.channel,
+        model_provider,
+        model,
+        metadata,
+    };
+    validate_webhook_delivery_target(&route)?;
+    Ok(Some(route))
+}
+
+fn build_webhook_execution_route(
+    request_session_key: &str,
+    request_chat_id: &str,
+    default_provider: &str,
+    default_model: &str,
+) -> WebhookExecutionRoute {
+    WebhookExecutionRoute {
+        session_key: request_session_key.to_string(),
+        chat_id: request_chat_id.to_string(),
+        model_provider: default_provider.to_string(),
+        model: default_model.to_string(),
+    }
 }
 
 async fn handle_im_command(
@@ -2502,23 +2660,139 @@ pub async fn submit_and_get_output(
     }
 }
 
+async fn submit_webhook_isolated_turn(
+    runtime: &RuntimeBundle,
+    input: String,
+    sender_id: String,
+    execution: WebhookExecutionRoute,
+    delivery_route: Option<WebhookDeliveryRoute>,
+    request_metadata: BTreeMap<String, Value>,
+) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
+    let sessions = session_manager(runtime);
+    let header = EnvelopeHeader::new(execution.session_key.clone());
+    let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
+    sessions
+        .append_chat_record(&execution.session_key, &user_record)
+        .await?;
+    let session_state = sessions
+        .touch_session(&execution.session_key, &execution.chat_id, "webhook")
+        .await?;
+
+    let mut inbound_metadata = request_metadata;
+    inbound_metadata.insert(
+        META_CONVERSATION_HISTORY_KEY.to_string(),
+        Value::Array(Vec::new()),
+    );
+    inbound_metadata.insert(
+        META_PROVIDER_KEY.to_string(),
+        Value::String(execution.model_provider.clone()),
+    );
+    inbound_metadata.insert(
+        META_MODEL_KEY.to_string(),
+        Value::String(execution.model.clone()),
+    );
+    if let Some(route) = delivery_route.as_ref() {
+        inbound_metadata.insert(
+            "webhook.delivery_session_key".to_string(),
+            Value::String(route.session_key.clone()),
+        );
+        inbound_metadata.insert(
+            "webhook.delivery_channel".to_string(),
+            Value::String(route.channel.clone()),
+        );
+        inbound_metadata.insert(
+            "webhook.delivery_chat_id".to_string(),
+            Value::String(route.chat_id.clone()),
+        );
+    }
+
+    let envelope = Envelope {
+        header,
+        metadata: BTreeMap::new(),
+        payload: InboundMessage {
+            channel: "webhook".to_string(),
+            sender_id,
+            chat_id: execution.chat_id.clone(),
+            session_key: execution.session_key.clone(),
+            content: input,
+            media_references: Vec::new(),
+            metadata: inbound_metadata,
+        },
+    };
+    let outcome = runtime.runtime.process_message(envelope, false).await;
+    enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
+
+    let Some(mut msg) = outcome.final_response else {
+        return Ok(None);
+    };
+    if !should_emit_outbound(&msg) {
+        return Ok(None);
+    }
+
+    if let Some(route) = delivery_route.as_ref() {
+        msg.payload.channel = route.channel.clone();
+        msg.payload.chat_id = route.chat_id.clone();
+        msg.payload.metadata.extend(route.metadata.clone());
+        runtime
+            .outbound_transport
+            .publish(MessageTopic::Outbound.as_str(), msg.clone())
+            .await?;
+    }
+
+    let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
+    persist_assistant_response_state(
+        runtime,
+        &msg.header.session_key,
+        &execution.chat_id,
+        "webhook",
+        session_state.turn_count,
+        &msg.header.message_id,
+        &msg.payload.metadata,
+        &agent_record,
+    )
+    .await;
+    let reasoning = msg
+        .payload
+        .metadata
+        .get("reasoning")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+        .filter(|value| !value.trim().is_empty());
+    Ok(Some(AssistantOutput {
+        content: msg.payload.content,
+        reasoning,
+        metadata: msg.payload.metadata,
+    }))
+}
+
 pub async fn submit_webhook_event(
     runtime: &RuntimeBundle,
     request: &GatewayWebhookRequest,
 ) -> Result<Option<AssistantOutput>, String> {
-    let route = resolve_session_route(runtime, "webhook", &request.session_key, &request.chat_id)
-        .await
-        .map_err(|err| err.to_string())?;
-    submit_and_get_output(
+    let (default_provider_id, default_model) = runtime_default_route(runtime);
+    let delivery_route =
+        resolve_webhook_delivery_route(runtime, request.base_session_key.as_deref()).await?;
+    let execution = if let Some(route) = delivery_route.as_ref() {
+        build_webhook_execution_route(
+            &request.session_key,
+            &request.chat_id,
+            &route.model_provider,
+            &route.model,
+        )
+    } else {
+        build_webhook_execution_route(
+            &request.session_key,
+            &request.chat_id,
+            &default_provider_id,
+            &default_model,
+        )
+    };
+    submit_webhook_isolated_turn(
         runtime,
-        "webhook".to_string(),
         request.content.clone(),
-        route.active_session_key,
-        request.chat_id.clone(),
         request.sender_id.clone(),
-        route.model_provider,
-        route.model,
-        Vec::new(),
+        execution,
+        delivery_route,
         request.metadata.clone(),
     )
     .await
@@ -2530,25 +2804,47 @@ pub async fn submit_webhook_agent(
     request: &GatewayWebhookAgentRequest,
     content: String,
 ) -> Result<Option<AssistantOutput>, String> {
-    let route = resolve_session_route(runtime, "webhook", &request.session_key, &request.chat_id)
-        .await
-        .map_err(|err| err.to_string())?;
+    let (default_provider_id, default_model) = runtime_default_route(runtime);
+    let delivery_route =
+        resolve_webhook_delivery_route(runtime, request.base_session_key.as_deref()).await?;
+    let inherited_provider = delivery_route
+        .as_ref()
+        .map(|route| route.model_provider.as_str())
+        .unwrap_or(default_provider_id.as_str());
+    let inherited_model = delivery_route
+        .as_ref()
+        .map(|route| route.model.as_str())
+        .unwrap_or(default_model.as_str());
     let (model_provider, model) = resolve_webhook_agent_model(
         runtime,
-        &route.model_provider,
-        &route.model,
+        inherited_provider,
+        inherited_model,
         request.provider.as_deref(),
         request.model.as_deref(),
     )?;
+    let execution = WebhookExecutionRoute {
+        session_key: request.session_key.clone(),
+        chat_id: request.chat_id.clone(),
+        model_provider: model_provider.clone(),
+        model: model.clone(),
+    };
     let mut metadata = request.metadata.clone();
     metadata.insert(
-        "webhook.agents.original_session_key".to_string(),
+        "webhook.agents.execution_session_key".to_string(),
         Value::String(request.session_key.clone()),
     );
-    metadata.insert(
-        "webhook.agents.resolved_session_key".to_string(),
-        Value::String(route.active_session_key.clone()),
-    );
+    if let Some(base_session_key) = request.base_session_key.as_ref() {
+        metadata.insert(
+            "webhook.agents.base_session_key".to_string(),
+            Value::String(base_session_key.clone()),
+        );
+    }
+    if let Some(route) = delivery_route.as_ref() {
+        metadata.insert(
+            "webhook.agents.delivery_session_key".to_string(),
+            Value::String(route.session_key.clone()),
+        );
+    }
     metadata.insert(
         "webhook.agents.provider".to_string(),
         Value::String(model_provider.clone()),
@@ -2557,16 +2853,12 @@ pub async fn submit_webhook_agent(
         "webhook.agents.model".to_string(),
         Value::String(model.clone()),
     );
-    submit_and_get_output(
+    submit_webhook_isolated_turn(
         runtime,
-        "webhook".to_string(),
         content,
-        route.active_session_key,
-        request.chat_id.clone(),
         request.sender_id.clone(),
-        model_provider,
-        model,
-        Vec::new(),
+        execution,
+        delivery_route,
         metadata,
     )
     .await
@@ -3001,8 +3293,9 @@ mod tests {
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, parse_outbound_attachments, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, sync_runtime_providers,
-        sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
+        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, submit_webhook_agent,
+        submit_webhook_event, sync_runtime_providers, sync_runtime_tools,
+        trim_conversation_history, voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
     use klaw_channel::OutboundAttachmentSource;
@@ -3013,6 +3306,7 @@ mod tests {
         InMemoryTransport, OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
         Subscription,
     };
+    use klaw_gateway::{GatewayWebhookAgentRequest, GatewayWebhookRequest};
     use klaw_llm::{ChatOptions, LlmAuditPayload, LlmError, LlmProvider};
     use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
     use klaw_storage::ApprovalStatus;
@@ -4361,5 +4655,302 @@ A .docx file is a ZIP archive containing XML files.
 
         assert_eq!(resolved_provider, "test-provider");
         assert_eq!(resolved_model, "one-off-model");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_webhook_event_routes_output_to_active_delivery_session() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+        sessions
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1:active",
+                "chat-1",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("active session should exist");
+        sessions
+            .set_active_session(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "dingtalk:acc:chat-1:active",
+            )
+            .await
+            .expect("active session should switch");
+        sessions
+            .set_delivery_metadata(
+                "dingtalk:acc:chat-1:active",
+                "chat-1",
+                "dingtalk",
+                Some(
+                    "{\"channel.dingtalk.bot_title\":\"Klaw\",\"channel.dingtalk.session_webhook\":\"https://example/session-active\"}",
+                ),
+            )
+            .await
+            .expect("delivery metadata should persist");
+
+        let output = submit_webhook_event(
+            &runtime,
+            &GatewayWebhookRequest {
+                event_id: "evt-1".to_string(),
+                source: "github".to_string(),
+                event_type: "push".to_string(),
+                content: "run webhook".to_string(),
+                session_key: "webhook:github:req-1".to_string(),
+                base_session_key: Some("dingtalk:acc:chat-1".to_string()),
+                chat_id: "webhook:github:req-1".to_string(),
+                sender_id: "github:webhook".to_string(),
+                payload: None,
+                metadata: BTreeMap::new(),
+                remote_addr: None,
+                received_at_ms: 1,
+            },
+        )
+        .await
+        .expect("webhook event should succeed")
+        .expect("webhook event should produce output");
+
+        assert_eq!(output.content, "bootstrap reply");
+        let webhook_history = sessions
+            .read_chat_records("webhook:github:req-1")
+            .await
+            .expect("webhook session history should load");
+        assert_eq!(webhook_history.len(), 2);
+
+        let base_history = sessions
+            .read_chat_records("dingtalk:acc:chat-1")
+            .await
+            .expect("base session history should load");
+        assert!(base_history.is_empty());
+        let active_history = sessions
+            .read_chat_records("dingtalk:acc:chat-1:active")
+            .await
+            .expect("active session history should load");
+        assert!(active_history.is_empty());
+
+        let outbound = runtime.outbound_transport.published_messages().await;
+        assert_eq!(outbound.len(), 1);
+        assert_eq!(outbound[0].header.session_key, "webhook:github:req-1");
+        assert_eq!(outbound[0].payload.channel, "dingtalk");
+        assert_eq!(outbound[0].payload.chat_id, "chat-1");
+        assert_eq!(
+            outbound[0]
+                .payload
+                .metadata
+                .get("channel.dingtalk.session_webhook"),
+            Some(&json!("https://example/session-active"))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_webhook_agent_uses_isolated_session_and_legacy_base_alias() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "telegram:acc:chat-1",
+                "chat-1",
+                "telegram",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("telegram session should exist");
+
+        let execution_session_key = "webhook:order_sync:req-1".to_string();
+        let output = submit_webhook_agent(
+            &runtime,
+            &GatewayWebhookAgentRequest {
+                request_id: "req-1".to_string(),
+                hook_id: "order_sync".to_string(),
+                session_key: execution_session_key.clone(),
+                base_session_key: Some("telegram:acc:chat-1".to_string()),
+                chat_id: execution_session_key.clone(),
+                sender_id: "webhook-agent:order_sync".to_string(),
+                provider: None,
+                model: None,
+                body: json!({"order_id":"A123"}),
+                metadata: BTreeMap::new(),
+                remote_addr: None,
+                received_at_ms: 1,
+            },
+            "template body".to_string(),
+        )
+        .await
+        .expect("webhook agent should succeed")
+        .expect("webhook agent should produce output");
+
+        assert_eq!(output.content, "bootstrap reply");
+        let captured = provider
+            .last_user_message
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
+        assert_eq!(captured.as_deref(), Some("template body"));
+
+        let webhook_history = sessions
+            .read_chat_records(&execution_session_key)
+            .await
+            .expect("webhook history should load");
+        assert_eq!(webhook_history.len(), 2);
+        let target_history = sessions
+            .read_chat_records("telegram:acc:chat-1")
+            .await
+            .expect("target history should load");
+        assert!(target_history.is_empty());
+
+        let outbound = runtime.outbound_transport.published_messages().await;
+        assert_eq!(outbound.len(), 1);
+        assert_eq!(outbound[0].payload.channel, "telegram");
+        assert_eq!(outbound[0].payload.chat_id, "chat-1");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_webhook_event_without_delivery_target_keeps_output_local_to_webhook_session() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+        let sessions = test_session_manager(&runtime);
+
+        let output = submit_webhook_event(
+            &runtime,
+            &GatewayWebhookRequest {
+                event_id: "evt-2".to_string(),
+                source: "github".to_string(),
+                event_type: "push".to_string(),
+                content: "local only".to_string(),
+                session_key: "webhook:github:req-2".to_string(),
+                base_session_key: None,
+                chat_id: "webhook:github:req-2".to_string(),
+                sender_id: "github:webhook".to_string(),
+                payload: None,
+                metadata: BTreeMap::new(),
+                remote_addr: None,
+                received_at_ms: 2,
+            },
+        )
+        .await
+        .expect("webhook event should succeed")
+        .expect("webhook event should produce output");
+
+        assert_eq!(output.content, "bootstrap reply");
+        assert!(
+            runtime
+                .outbound_transport
+                .published_messages()
+                .await
+                .is_empty()
+        );
+        let webhook_history = sessions
+            .read_chat_records("webhook:github:req-2")
+            .await
+            .expect("webhook history should load");
+        assert_eq!(webhook_history.len(), 2);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_webhook_event_fails_when_dingtalk_delivery_metadata_is_missing() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-missing",
+                "chat-missing",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("dingtalk session should exist");
+
+        let err = submit_webhook_event(
+            &runtime,
+            &GatewayWebhookRequest {
+                event_id: "evt-3".to_string(),
+                source: "github".to_string(),
+                event_type: "push".to_string(),
+                content: "should fail".to_string(),
+                session_key: "webhook:github:req-3".to_string(),
+                base_session_key: Some("dingtalk:acc:chat-missing".to_string()),
+                chat_id: "webhook:github:req-3".to_string(),
+                sender_id: "github:webhook".to_string(),
+                payload: None,
+                metadata: BTreeMap::new(),
+                remote_addr: None,
+                received_at_ms: 3,
+            },
+        )
+        .await
+        .expect_err("missing delivery metadata should fail");
+
+        assert!(err.contains("missing dingtalk session webhook metadata"));
+        assert!(
+            runtime
+                .outbound_transport
+                .published_messages()
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_webhook_event_rejects_webhook_execution_session_as_base_target() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "webhook:legacy:req-1",
+                "webhook:legacy:req-1",
+                "webhook",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("webhook execution session should exist");
+
+        let err = submit_webhook_event(
+            &runtime,
+            &GatewayWebhookRequest {
+                event_id: "evt-4".to_string(),
+                source: "github".to_string(),
+                event_type: "push".to_string(),
+                content: "should fail".to_string(),
+                session_key: "webhook:github:req-4".to_string(),
+                base_session_key: Some("webhook:legacy:req-1".to_string()),
+                chat_id: "webhook:github:req-4".to_string(),
+                sender_id: "github:webhook".to_string(),
+                payload: None,
+                metadata: BTreeMap::new(),
+                remote_addr: None,
+                received_at_ms: 4,
+            },
+        )
+        .await
+        .expect_err("webhook execution session should be rejected as base target");
+
+        assert!(err.contains("points to a webhook execution session"));
+        assert!(
+            runtime
+                .outbound_transport
+                .published_messages()
+                .await
+                .is_empty()
+        );
     }
 }

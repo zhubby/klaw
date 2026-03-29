@@ -27,6 +27,7 @@ async fn main() -> Result<()> {
     let source = env_or_default("SOURCE", "github");
     let event_type = env_or_default("EVENT_TYPE", "issue_comment.created");
     let content = env_or_default("CONTENT", "PR #42 received a new review comment");
+    let base_session_key = optional_env("BASE_SESSION_KEY");
     let session_key = optional_env("SESSION_KEY");
     let chat_id = optional_env("CHAT_ID");
     let sender_id = optional_env("SENDER_ID");
@@ -43,6 +44,7 @@ async fn main() -> Result<()> {
         "source": source,
         "event_type": event_type,
         "content": content,
+        "base_session_key": base_session_key,
         "session_key": session_key,
         "chat_id": chat_id,
         "sender_id": sender_id,

@@ -6,6 +6,10 @@
 
 - runtime gateway webhook handler 现在会在 `events` / `agents` 的 accepted、落库、异步处理开始、processed/failed 等关键节点输出 debug 日志，便于串联网关入站与异步执行排障
 
+### Changed
+
+- webhook runtime 现在会为每次 `events` / `agents` 请求创建独立执行 session，并把 `base_session_key` 仅作为回复投递路由使用；若目标 session 有 active session，则会把后台回复投递到该 active session 的 channel/chat
+
 ## 2026-03-28
 
 ### Added

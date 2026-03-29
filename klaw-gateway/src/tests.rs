@@ -122,6 +122,7 @@ mod tests {
                 source: "github".to_string(),
                 event_type: "issue_comment.created".to_string(),
                 content: "New comment".to_string(),
+                base_session_key: Some("telegram:chat-1".to_string()),
                 session_key: None,
                 chat_id: None,
                 sender_id: None,
@@ -134,10 +135,15 @@ mod tests {
 
         assert!(request.session_key.starts_with("webhook:github:"));
         assert_eq!(request.chat_id, request.session_key);
+        assert_eq!(request.base_session_key.as_deref(), Some("telegram:chat-1"));
         assert_eq!(request.sender_id, "github:webhook");
         assert_eq!(
             request.metadata.get("trigger.kind"),
             Some(&json!("webhook"))
+        );
+        assert_eq!(
+            request.metadata.get("webhook.base_session_key"),
+            Some(&json!("telegram:chat-1"))
         );
     }
 
@@ -146,7 +152,8 @@ mod tests {
         let request = normalize_webhook_agent_request(
             GatewayWebhookAgentQuery {
                 hook_id: "order_sync".to_string(),
-                session_key: "dingtalk:acc:chat-1".to_string(),
+                base_session_key: Some("dingtalk:acc:chat-1".to_string()),
+                session_key: None,
                 chat_id: None,
                 sender_id: None,
                 provider: None,
@@ -157,10 +164,42 @@ mod tests {
         )
         .expect("payload should normalize");
 
-        assert_eq!(request.chat_id, "dingtalk:acc:chat-1");
+        assert!(request.session_key.starts_with("webhook:order_sync:"));
+        assert_eq!(request.chat_id, request.session_key);
+        assert_eq!(
+            request.base_session_key.as_deref(),
+            Some("dingtalk:acc:chat-1")
+        );
         assert_eq!(request.sender_id, "webhook-agent:order_sync");
         assert_eq!(request.provider, None);
         assert_eq!(request.model, None);
         assert_eq!(request.metadata.get("webhook.kind"), Some(&json!("agents")));
+        assert_eq!(
+            request.metadata.get("webhook.base_session_key"),
+            Some(&json!("dingtalk:acc:chat-1"))
+        );
+    }
+
+    #[test]
+    fn normalize_webhook_agent_request_accepts_legacy_session_key_alias() {
+        let request = normalize_webhook_agent_request(
+            GatewayWebhookAgentQuery {
+                hook_id: "order_sync".to_string(),
+                base_session_key: None,
+                session_key: Some("telegram:acc:chat-legacy".to_string()),
+                chat_id: None,
+                sender_id: None,
+                provider: None,
+                model: None,
+            },
+            json!({"order_id":"A123"}),
+            None,
+        )
+        .expect("legacy alias should normalize");
+
+        assert_eq!(
+            request.base_session_key.as_deref(),
+            Some("telegram:acc:chat-legacy")
+        );
     }
 }
