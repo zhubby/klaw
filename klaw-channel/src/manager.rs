@@ -221,18 +221,12 @@ impl ChannelDriverFactory for DefaultChannelDriverFactory {
         config: &ChannelInstanceConfig,
     ) -> ChannelResult<Box<dyn ManagedChannelDriver>> {
         match config {
-            ChannelInstanceConfig::Dingtalk(config) => {
-                Ok(Box::new(DingtalkChannel::from_app_config(
-                    config.clone(),
-                    self.local_attachments.clone(),
-                )?))
-            }
-            ChannelInstanceConfig::Telegram(config) => {
-                Ok(Box::new(TelegramChannel::from_app_config(
-                    config.clone(),
-                    self.local_attachments.clone(),
-                )?))
-            }
+            ChannelInstanceConfig::Dingtalk(config) => Ok(Box::new(
+                DingtalkChannel::from_app_config(config.clone(), self.local_attachments.clone())?,
+            )),
+            ChannelInstanceConfig::Telegram(config) => Ok(Box::new(
+                TelegramChannel::from_app_config(config.clone(), self.local_attachments.clone())?,
+            )),
         }
     }
 }

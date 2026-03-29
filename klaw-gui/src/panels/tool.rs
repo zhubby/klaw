@@ -1557,8 +1557,8 @@ impl ToolPanel {
             LOGS_SUMMARY_WINDOW_WIDTH,
             desired_height.min(LOGS_SUMMARY_WINDOW_HEIGHT),
         );
-        let summary_body_height =
-            (window_size.y - LOGS_SUMMARY_WINDOW_CHROME_HEIGHT).max(LOG_DETAIL_SECTION_BLOCK_HEIGHT);
+        let summary_body_height = (window_size.y - LOGS_SUMMARY_WINDOW_CHROME_HEIGHT)
+            .max(LOG_DETAIL_SECTION_BLOCK_HEIGHT);
         let mut open = true;
         egui::Window::new(format!("Tool Log Summary: {}", audit.tool_name))
             .id(egui::Id::new((
@@ -2032,10 +2032,12 @@ fn render_json_section(ui: &mut egui::Ui, title: &str, raw: &str, scroll_id: &st
                     .id_salt(scroll_id)
                     .max_height(LOG_DETAIL_SECTION_HEIGHT)
                     .auto_shrink([false, false])
-                    .show(ui, |ui| match serde_json::from_str::<serde_json::Value>(raw) {
-                        Ok(value) => show_json_tree_with_id(ui, &value, scroll_id),
-                        Err(_) => {
-                            ui.code(raw);
+                    .show(ui, |ui| {
+                        match serde_json::from_str::<serde_json::Value>(raw) {
+                            Ok(value) => show_json_tree_with_id(ui, &value, scroll_id),
+                            Err(_) => {
+                                ui.code(raw);
+                            }
                         }
                     });
             },

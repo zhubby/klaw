@@ -278,128 +278,137 @@ impl PanelRenderer for ArchivePanel {
         }
 
         ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            if self.items.is_empty() {
-                ui.label("No archive records found.");
-            } else {
-                let available_height = ui.available_height();
-                let mut view_detail_id: Option<String> = None;
-                let mut preview_item: Option<ArchiveRecord> = None;
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.items.is_empty() {
+                    ui.label("No archive records found.");
+                } else {
+                    let table_width = ui.available_width();
+                    ui.set_min_width(table_width);
+                    let available_height = ui.available_height();
+                    let mut view_detail_id: Option<String> = None;
+                    let mut preview_item: Option<ArchiveRecord> = None;
 
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::auto().at_least(80.0))
-                    .column(Column::auto().at_least(70.0))
-                    .column(Column::auto().at_least(60.0))
-                    .column(Column::auto().at_least(120.0))
-                    .column(Column::auto().at_least(100.0))
-                    .column(Column::auto().at_least(80.0))
-                    .column(Column::remainder().at_least(120.0))
-                    .min_scrolled_height(0.0)
-                    .max_scroll_height(available_height)
-                    .sense(egui::Sense::click())
-                    .header(20.0, |mut header| {
-                        header.col(|ui| {
-                            ui.strong("ID");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Source");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Media");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Filename");
-                        });
-                        header.col(|ui| {
-                            ui.strong("MIME");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Size");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Created At");
-                        });
-                    })
-                    .body(|body| {
-                        body.rows(20.0, self.items.len(), |mut row| {
-                            let idx = row.index();
-                            let item = &self.items[idx];
-                            let is_selected = self.selected_archive.as_deref() == Some(&item.id);
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(70.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(120.0))
+                        .column(Column::auto().at_least(100.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::remainder().at_least(120.0))
+                        .min_scrolled_height(0.0)
+                        .max_scroll_height(available_height)
+                        .sense(egui::Sense::click())
+                        .header(20.0, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("ID");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Source");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Media");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Filename");
+                            });
+                            header.col(|ui| {
+                                ui.strong("MIME");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Size");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Created At");
+                            });
+                        })
+                        .body(|body| {
+                            body.rows(20.0, self.items.len(), |mut row| {
+                                let idx = row.index();
+                                let item = &self.items[idx];
+                                let is_selected =
+                                    self.selected_archive.as_deref() == Some(&item.id);
 
-                            row.set_selected(is_selected);
+                                row.set_selected(is_selected);
 
-                            row.col(|ui| {
-                                ui.label(&item.id);
-                            });
-                            row.col(|ui| {
-                                ui.label(item.source_kind.as_str());
-                            });
-                            row.col(|ui| {
-                                ui.label(item.media_kind.as_str());
-                            });
-                            row.col(|ui| {
-                                ui.label(item.original_filename.as_deref().unwrap_or(""));
-                            });
-                            row.col(|ui| {
-                                ui.label(item.mime_type.as_deref().unwrap_or(""));
-                            });
-                            row.col(|ui| {
-                                ui.label(format_bytes(item.size_bytes));
-                            });
-                            row.col(|ui| {
-                                ui.label(format_timestamp_millis(item.created_at_ms));
-                            });
+                                row.col(|ui| {
+                                    ui.label(&item.id);
+                                });
+                                row.col(|ui| {
+                                    ui.label(item.source_kind.as_str());
+                                });
+                                row.col(|ui| {
+                                    ui.label(item.media_kind.as_str());
+                                });
+                                row.col(|ui| {
+                                    ui.label(item.original_filename.as_deref().unwrap_or(""));
+                                });
+                                row.col(|ui| {
+                                    ui.label(item.mime_type.as_deref().unwrap_or(""));
+                                });
+                                row.col(|ui| {
+                                    ui.label(format_bytes(item.size_bytes));
+                                });
+                                row.col(|ui| {
+                                    ui.label(format_timestamp_millis(item.created_at_ms));
+                                });
 
-                            let response = row.response();
-
-                            if response.clicked() {
-                                self.selected_archive = if is_selected {
-                                    None
-                                } else {
-                                    Some(item.id.clone())
-                                };
-                            }
-
-                            let item_id = item.id.clone();
-                            let can_preview = preview_capability_for_record(item).is_some();
-                            response.context_menu(|ui| {
-                                if can_preview
-                                    && ui.button(format!("{} Preview", regular::EYE)).clicked()
-                                {
+                                let response = row.response();
+                                let can_preview = preview_capability_for_record(item).is_some();
+                                let interaction = handle_archive_row_interaction(
+                                    is_selected,
+                                    item.id.clone(),
+                                    response.clicked(),
+                                    response.double_clicked(),
+                                    can_preview,
+                                );
+                                self.selected_archive = interaction.selected_id;
+                                if interaction.open_preview {
                                     preview_item = Some(item.clone());
-                                    ui.close();
                                 }
-                                if ui
-                                    .button(format!("{} Details", regular::FILE_TEXT))
-                                    .clicked()
-                                {
-                                    view_detail_id = Some(item_id.clone());
-                                    ui.close();
-                                }
-                                if can_preview {
-                                    ui.separator();
-                                }
-                                if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
-                                    ui.ctx().output_mut(|o| {
-                                        o.commands
-                                            .push(egui::OutputCommand::CopyText(item.id.clone()));
-                                    });
-                                    ui.close();
-                                }
+
+                                let item_id = item.id.clone();
+                                response.context_menu(|ui| {
+                                    if can_preview
+                                        && ui.button(format!("{} Preview", regular::EYE)).clicked()
+                                    {
+                                        preview_item = Some(item.clone());
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(format!("{} Details", regular::FILE_TEXT))
+                                        .clicked()
+                                    {
+                                        view_detail_id = Some(item_id.clone());
+                                        ui.close();
+                                    }
+                                    if can_preview {
+                                        ui.separator();
+                                    }
+                                    if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                        ui.ctx().output_mut(|o| {
+                                            o.commands.push(egui::OutputCommand::CopyText(
+                                                item.id.clone(),
+                                            ));
+                                        });
+                                        ui.close();
+                                    }
+                                });
                             });
                         });
-                    });
 
-                if let Some(id) = view_detail_id {
-                    self.detail_id = Some(id);
+                    if let Some(id) = view_detail_id {
+                        self.detail_id = Some(id);
+                    }
+                    if let Some(item) = preview_item {
+                        self.open_preview(ui.ctx(), &item, notifications);
+                    }
                 }
-                if let Some(item) = preview_item {
-                    self.open_preview(ui.ctx(), &item, notifications);
-                }
-            }
-        });
+            });
 
         if let Some(item) = self.selected_item().cloned() {
             egui::Window::new("Archive Details")
@@ -875,6 +884,39 @@ fn optional_trimmed(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+struct ArchiveRowInteraction {
+    selected_id: Option<String>,
+    open_preview: bool,
+}
+
+fn handle_archive_row_interaction(
+    is_selected: bool,
+    item_id: String,
+    clicked: bool,
+    double_clicked: bool,
+    can_preview: bool,
+) -> ArchiveRowInteraction {
+    if double_clicked {
+        return ArchiveRowInteraction {
+            selected_id: Some(item_id),
+            open_preview: can_preview,
+        };
+    }
+
+    let selected_id = if clicked {
+        if is_selected { None } else { Some(item_id) }
+    } else if is_selected {
+        Some(item_id)
+    } else {
+        None
+    };
+
+    ArchiveRowInteraction {
+        selected_id,
+        open_preview: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -943,5 +985,36 @@ mod tests {
             Some("bin"),
         );
         assert!(preview_capability_for_record(&record).is_none());
+    }
+
+    #[test]
+    fn double_click_selects_row_and_opens_preview_when_supported() {
+        let interaction =
+            handle_archive_row_interaction(false, "arch-1".to_string(), true, true, true);
+
+        assert_eq!(interaction.selected_id.as_deref(), Some("arch-1"));
+        assert!(interaction.open_preview);
+    }
+
+    #[test]
+    fn double_click_selects_row_without_preview_for_unsupported_items() {
+        let interaction =
+            handle_archive_row_interaction(false, "arch-1".to_string(), true, true, false);
+
+        assert_eq!(interaction.selected_id.as_deref(), Some("arch-1"));
+        assert!(!interaction.open_preview);
+    }
+
+    #[test]
+    fn single_click_toggles_selection_without_opening_preview() {
+        let deselect_interaction =
+            handle_archive_row_interaction(true, "arch-1".to_string(), true, false, true);
+        assert!(deselect_interaction.selected_id.is_none());
+        assert!(!deselect_interaction.open_preview);
+
+        let select_interaction =
+            handle_archive_row_interaction(false, "arch-1".to_string(), true, false, true);
+        assert_eq!(select_interaction.selected_id.as_deref(), Some("arch-1"));
+        assert!(!select_interaction.open_preview);
     }
 }
