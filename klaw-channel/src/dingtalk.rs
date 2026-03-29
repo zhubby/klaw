@@ -1337,6 +1337,30 @@ impl DingtalkApiClient {
         Ok(media_id)
     }
 
+    fn ensure_session_webhook_success(body: &str, context: &str) -> ChannelResult<()> {
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+        let Ok(payload) = serde_json::from_str::<Value>(trimmed) else {
+            return Ok(());
+        };
+        let Some(errcode) = payload.get("errcode").and_then(Value::as_i64) else {
+            return Ok(());
+        };
+        if errcode == 0 {
+            return Ok(());
+        }
+        let errmsg = payload
+            .get("errmsg")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        Err(format!(
+            "dingtalk session webhook {context} failed: errcode={errcode} errmsg={errmsg} body={payload}"
+        )
+        .into())
+    }
+
     async fn send_session_webhook_markdown(
         &self,
         session_webhook: &str,
@@ -1365,6 +1389,7 @@ impl DingtalkApiClient {
             )
             .into());
         }
+        Self::ensure_session_webhook_success(&body, "markdown send")?;
 
         Ok(())
     }
@@ -1412,6 +1437,7 @@ impl DingtalkApiClient {
             )
             .into());
         }
+        Self::ensure_session_webhook_success(&body, "file send")?;
 
         Ok(())
     }
@@ -1458,6 +1484,7 @@ impl DingtalkApiClient {
             )
             .into());
         }
+        Self::ensure_session_webhook_success(&body, "actionCard send")?;
         Ok(())
     }
 
@@ -2937,6 +2964,26 @@ mod tests {
             DingtalkApiClient::build_ws_url("wss://example/ws?v=1", "abc=="),
             "wss://example/ws?v=1&ticket=abc%3D%3D"
         );
+    }
+
+    #[test]
+    fn session_webhook_success_accepts_errcode_zero_json() {
+        DingtalkApiClient::ensure_session_webhook_success(
+            r#"{"errcode":0,"errmsg":"ok"}"#,
+            "markdown send",
+        )
+        .expect("errcode 0 should succeed");
+    }
+
+    #[test]
+    fn session_webhook_success_rejects_non_zero_errcode_json() {
+        let err = DingtalkApiClient::ensure_session_webhook_success(
+            r#"{"errcode":310000,"errmsg":"invalid session"}"#,
+            "markdown send",
+        )
+        .expect_err("non-zero errcode should fail");
+        assert!(err.to_string().contains("errcode=310000"));
+        assert!(err.to_string().contains("invalid session"));
     }
 
     #[test]
