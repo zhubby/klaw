@@ -253,7 +253,6 @@ impl ChannelRow {
 #[derive(Default)]
 pub struct ChannelPanel {
     store: Option<ConfigStore>,
-    revision: Option<u64>,
     config: AppConfig,
     form: Option<ChannelForm>,
     show_disabled_dialog: bool,
@@ -281,7 +280,6 @@ impl ChannelPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.revision = Some(snapshot.revision);
         self.disable_session_commands_input = ArrayEditor::from_vec(
             "Disable Session Commands For",
             &snapshot.config.channels.disable_session_commands_for,
@@ -827,7 +825,6 @@ impl PanelRenderer for ChannelPanel {
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!("Channel instances: {}", rows.len()));
         });
         ui.separator();

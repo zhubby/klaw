@@ -96,7 +96,6 @@ impl ProviderForm {
 #[derive(Default)]
 pub struct ProviderPanel {
     store: Option<ConfigStore>,
-    revision: Option<u64>,
     config: AppConfig,
     runtime_status: Option<ProviderRuntimeSnapshot>,
     last_runtime_status_at: Option<Instant>,
@@ -137,7 +136,6 @@ impl ProviderPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.revision = Some(snapshot.revision);
         self.config = snapshot.config;
     }
 
@@ -496,7 +494,6 @@ impl PanelRenderer for ProviderPanel {
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.colored_label(
                 egui::Color32::LIGHT_GREEN,
                 format!("Config default: {}", self.config.model_provider),

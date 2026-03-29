@@ -17,7 +17,6 @@ pub struct ConfigurationPanel {
     config_path: Option<PathBuf>,
     editor_raw: String,
     saved_raw: String,
-    revision: Option<u64>,
     pending_confirm: Option<ConfirmAction>,
 }
 
@@ -43,7 +42,6 @@ impl ConfigurationPanel {
         self.config_path = Some(snapshot.path);
         self.editor_raw = snapshot.raw_toml.clone();
         self.saved_raw = snapshot.raw_toml;
-        self.revision = Some(snapshot.revision);
     }
 
     fn is_dirty(&self) -> bool {
@@ -370,7 +368,6 @@ impl PanelRenderer for ConfigurationPanel {
             ui.heading(ctx.tab_title);
             ui.label(Self::status_label(this.config_path.as_deref()));
             ui.horizontal(|ui| {
-                ui.label(format!("Revision: {}", this.revision.unwrap_or_default()));
                 let dirty = this.is_dirty();
                 let dirty_label = if dirty { "Dirty: yes" } else { "Dirty: no" };
                 let color = if dirty {

@@ -68,7 +68,6 @@ impl SkillsRegistryForm {
 #[derive(Default)]
 pub struct SkillsRegistryPanel {
     store: Option<ConfigStore>,
-    revision: Option<u64>,
     config: AppConfig,
     form: Option<SkillsRegistryForm>,
     config_window_open: bool,
@@ -104,7 +103,6 @@ impl SkillsRegistryPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.revision = Some(snapshot.revision);
         self.sync_timeout_text = snapshot.config.skills.sync_timeout.to_string();
         self.config = snapshot.config;
     }
@@ -535,7 +533,6 @@ impl PanelRenderer for SkillsRegistryPanel {
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!(
                 "Registries: {}",
                 self.config.skills.registries.len()

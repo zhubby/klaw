@@ -23,7 +23,6 @@ use tokio::runtime::Builder;
 
 pub struct ToolPanel {
     store: Option<ConfigStore>,
-    revision: Option<u64>,
     config: AppConfig,
     form: Option<ToolForm>,
     runtime_definitions: Vec<ToolDefinition>,
@@ -190,7 +189,6 @@ impl Default for ToolPanel {
         let one_month_ago = today - chrono::Duration::days(30);
         Self {
             store: None,
-            revision: None,
             config: AppConfig::default(),
             form: None,
             runtime_definitions: Vec::new(),
@@ -479,7 +477,6 @@ impl ToolPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.revision = Some(snapshot.revision);
         self.config = snapshot.config;
     }
 
@@ -1630,7 +1627,6 @@ impl PanelRenderer for ToolPanel {
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label("Manage tool enablement and per-tool settings.");
             if ui.button("Reload").clicked() {
                 self.reload(notifications);

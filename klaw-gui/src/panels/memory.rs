@@ -72,7 +72,6 @@ pub struct MemoryPanel {
     stats: Option<MemoryStats>,
     store: Option<ConfigStore>,
     config_path: Option<PathBuf>,
-    revision: Option<u64>,
     config: AppConfig,
     form: Option<MemoryConfigForm>,
 }
@@ -112,7 +111,6 @@ impl MemoryPanel {
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
         self.config_path = Some(snapshot.path);
-        self.revision = Some(snapshot.revision);
         self.config = snapshot.config;
     }
 
@@ -193,7 +191,6 @@ impl MemoryPanel {
             .show(ui.ctx(), |ui| {
                 ui.set_min_width(420.0);
                 ui.label(Self::status_label(self.config_path.as_deref()));
-                ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
                 ui.separator();
 
                 egui::Grid::new("memory-config-grid")

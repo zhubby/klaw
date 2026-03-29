@@ -109,7 +109,6 @@ struct McpServerDetailWindow {
 #[derive(Default)]
 pub struct McpPanel {
     store: Option<ConfigStore>,
-    revision: Option<u64>,
     config: AppConfig,
     form: Option<McpServerForm>,
     global_settings_form: Option<String>,
@@ -143,7 +142,6 @@ impl McpPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
-        self.revision = Some(snapshot.revision);
         self.config = snapshot.config;
     }
 
@@ -606,7 +604,6 @@ impl PanelRenderer for McpPanel {
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            ui.label(format!("Revision: {}", self.revision.unwrap_or_default()));
             ui.label(format!("Servers: {}", self.config.mcp.servers.len()));
             if self.sync_fetch_rx.is_some() {
                 ui.spinner();
