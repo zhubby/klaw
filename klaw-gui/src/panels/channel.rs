@@ -205,13 +205,6 @@ impl ChannelRow {
         }
     }
 
-    fn auth_label(&self) -> String {
-        match self {
-            Self::Dingtalk(config) => config.client_id.clone(),
-            Self::Telegram(config) => config.bot_token.clone(),
-        }
-    }
-
     fn title_label(&self) -> String {
         match self {
             Self::Dingtalk(config) => config.bot_title.clone(),
@@ -220,19 +213,11 @@ impl ChannelRow {
     }
 
     fn proxy_label(&self) -> String {
-        let (enabled, url) = match self {
-            Self::Dingtalk(config) => (config.proxy.enabled, config.proxy.url.as_str()),
-            Self::Telegram(config) => (config.proxy.enabled, config.proxy.url.as_str()),
+        let enabled = match self {
+            Self::Dingtalk(config) => config.proxy.enabled,
+            Self::Telegram(config) => config.proxy.enabled,
         };
-        if enabled {
-            if url.trim().is_empty() {
-                "enabled".to_string()
-            } else {
-                url.to_string()
-            }
-        } else {
-            "disabled".to_string()
-        }
+        if enabled { "on" } else { "off" }.to_string()
     }
 
     fn show_reasoning(&self) -> bool {
@@ -247,6 +232,38 @@ impl ChannelRow {
             Self::Dingtalk(config) => config.stream_output,
             Self::Telegram(config) => config.stream_output,
         }
+    }
+}
+
+fn channel_status_style(
+    status: Option<&ChannelInstanceStatus>,
+) -> (&'static str, &'static str, egui::Color32) {
+    match status.map(|item| item.state) {
+        Some(klaw_channel::ChannelLifecycleState::Running) => (
+            regular::CHECK_CIRCLE,
+            "running",
+            egui::Color32::from_rgb(0x22, 0xC5, 0x5E),
+        ),
+        Some(klaw_channel::ChannelLifecycleState::Starting) => (
+            regular::ARROW_CLOCKWISE,
+            "starting",
+            egui::Color32::from_rgb(0xF5, 0x9E, 0x0B),
+        ),
+        Some(klaw_channel::ChannelLifecycleState::Stopped) => (
+            regular::STOP_CIRCLE,
+            "stopped",
+            egui::Color32::from_rgb(0x94, 0xA3, 0xB8),
+        ),
+        Some(klaw_channel::ChannelLifecycleState::Failed) => (
+            regular::WARNING_CIRCLE,
+            "failed",
+            egui::Color32::from_rgb(0xEF, 0x44, 0x44),
+        ),
+        None => (
+            regular::QUESTION,
+            "unknown",
+            egui::Color32::from_rgb(0x94, 0xA3, 0xB8),
+        ),
     }
 }
 
@@ -879,10 +896,9 @@ impl PanelRenderer for ChannelPanel {
                         .column(Column::auto().at_least(60.0))
                         .column(Column::auto().at_least(80.0))
                         .column(Column::auto().at_least(80.0))
-                        .column(Column::auto().at_least(100.0))
                         .column(Column::auto().at_least(70.0))
                         .column(Column::auto().at_least(70.0))
-                        .column(Column::remainder().at_least(100.0))
+                        .column(Column::remainder().at_least(70.0))
                         .min_scrolled_height(0.0)
                         .max_scroll_height(available_height)
                         .sense(egui::Sense::click())
@@ -903,9 +919,6 @@ impl PanelRenderer for ChannelPanel {
                                 ui.strong("Title");
                             });
                             header.col(|ui| {
-                                ui.strong("Auth");
-                            });
-                            header.col(|ui| {
                                 ui.strong("Reasoning");
                             });
                             header.col(|ui| {
@@ -923,9 +936,6 @@ impl PanelRenderer for ChannelPanel {
                                 let id = channel_row.id().to_string();
                                 let key = Self::instance_key(kind, &id);
                                 let status = self.statuses.get(&key);
-                                let status_label = status
-                                    .map(|s| s.state.as_str().to_string())
-                                    .unwrap_or_else(|| "unknown".to_string());
                                 let is_selected =
                                     self.selected_channel.as_ref() == Some(&(kind, id.clone()));
 
@@ -948,7 +958,11 @@ impl PanelRenderer for ChannelPanel {
                                     ui.label(format!("{} {}", icon, text));
                                 });
                                 row.col(|ui| {
-                                    let status_response = ui.label(&status_label);
+                                    let (icon, label, color) = channel_status_style(status);
+                                    let status_response = ui.colored_label(
+                                        color,
+                                        format!("{} {}", icon, label),
+                                    );
                                     if let Some(s) = status {
                                         if let Some(error) = s.last_error.as_deref() {
                                             status_response.on_hover_text(error);
@@ -957,9 +971,6 @@ impl PanelRenderer for ChannelPanel {
                                 });
                                 row.col(|ui| {
                                     ui.label(channel_row.title_label());
-                                });
-                                row.col(|ui| {
-                                    ui.label(channel_row.auth_label());
                                 });
                                 row.col(|ui| {
                                     let show = channel_row.show_reasoning();
