@@ -46,12 +46,14 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.apply_patch.workspace.is_none());
     assert!(!parsed.tools.apply_patch.allow_absolute_paths);
     assert!(parsed.tools.apply_patch.allowed_roots.is_empty());
-    assert!(parsed
-        .tools
-        .channel_attachment
-        .local_attachments
-        .allowlist
-        .is_empty());
+    assert!(
+        parsed
+            .tools
+            .channel_attachment
+            .local_attachments
+            .allowlist
+            .is_empty()
+    );
     assert_eq!(
         parsed.tools.channel_attachment.local_attachments.max_bytes,
         10 * 1024 * 1024

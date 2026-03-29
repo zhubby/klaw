@@ -885,14 +885,14 @@ async fn deliver_dingtalk_attachments(
                 Ok(resolved) => resolved,
                 Err(error) => {
                     warn!(
-                        chat_id,
-                        source = ?attachment.source,
-                        error = %error,
-                        "failed to resolve dingtalk outbound attachment"
-                );
-                continue;
-            }
-        };
+                            chat_id,
+                            source = ?attachment.source,
+                            error = %error,
+                            "failed to resolve dingtalk outbound attachment"
+                    );
+                    continue;
+                }
+            };
         debug!(
             chat_id,
             source = resolved.source_label.as_str(),
@@ -1324,7 +1324,9 @@ impl DingtalkApiClient {
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
         else {
-            return Err(format!("missing media_id in dingtalk media upload response body={body}").into());
+            return Err(
+                format!("missing media_id in dingtalk media upload response body={body}").into(),
+            );
         };
         debug!(
             media_type = media_type,

@@ -933,7 +933,6 @@ impl VoicePanel {
             }
         }
     }
-
 }
 
 impl PanelRenderer for VoicePanel {
