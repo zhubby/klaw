@@ -5,7 +5,8 @@
 - 绑定配置中的监听地址和端口
 - 支持 `listen_port = 0` 时由系统分配随机可用端口
 - 暴露 `/ws/chat` WebSocket 入口
-- 可选暴露 `events` / `agents` 双 webhook 入口，并支持 Bearer、GitHub、GitLab 多种 header/signature 校验
+- 暴露 `/` 默认落地页与内置 logo 静态资源
+- 可选暴露固定路径的 `POST /webhook/events` 与 `POST /webhook/agents`，并支持 Bearer、GitHub、GitLab 多种 header/signature 校验
 - 按 `session_key` 维护房间广播通道
 - 在启动成功后打印实际可连接的 WebSocket 地址
 - 提供可管理的 `GatewayHandle` / `GatewayRuntimeInfo`，以及可注入业务逻辑的 `GatewayWebhookHandler`
@@ -24,8 +25,9 @@
 
 - 当前仅支持非 TLS 监听
 - 启动成功后会输出实际监听地址对应的 `http://<listen_addr>/ws/chat`
-- webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 可分别启停并配置独立 path 与 body limit
-- 当 `gateway.auth.enabled = false` 时，webhook 路由会直接接受请求；启用后会复用 `gateway.auth` 的 token/env secret 做多模式校验
+- 根路径 `/` 会返回单页品牌首页，logo 资源位于 `/assets/logo.webp`
+- webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 仅可分别启停并配置独立 body limit，路径固定不再开放配置
+- 仅 `/ws/chat` 会走 gateway Bearer 鉴权中间件；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、health、metrics 不做鉴权
 - `TailscaleManager::inspect_host()` 可独立读取本机 Tailscale 状态，供 GUI 在 gateway 未运行时展示主机连接信息
 - Tailscale Serve/Funnel 会在 gateway 绑定完成后使用实际监听端口做反向代理，并在 setup 后回读 `tailscale serve status --json` / `tailscale funnel status --json` 确认配置是否生效；Funnel 未配置 auth 时允许启动，但应视为公网裸露入口
 

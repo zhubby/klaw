@@ -8,6 +8,7 @@ use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
+use klaw_gateway::{WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH};
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayWebhookConfig, TailscaleMode,
 };
@@ -117,10 +118,8 @@ struct TrickPromptState {
 struct WebhookConfigForm {
     enabled: bool,
     events_enabled: bool,
-    events_path: String,
     events_max_body_bytes: String,
     agents_enabled: bool,
-    agents_path: String,
     agents_max_body_bytes: String,
 }
 
@@ -129,24 +128,13 @@ impl WebhookConfigForm {
         Self {
             enabled: config.enabled,
             events_enabled: config.events.enabled,
-            events_path: config.events.path.clone(),
             events_max_body_bytes: config.events.max_body_bytes.to_string(),
             agents_enabled: config.agents.enabled,
-            agents_path: config.agents.path.clone(),
             agents_max_body_bytes: config.agents.max_body_bytes.to_string(),
         }
     }
 
     fn apply_to_config(&self, config: &mut AppConfig) -> Result<(), String> {
-        let events_path = self.events_path.trim();
-        if events_path.is_empty() {
-            return Err("events path cannot be empty".to_string());
-        }
-        let agents_path = self.agents_path.trim();
-        if agents_path.is_empty() {
-            return Err("agents path cannot be empty".to_string());
-        }
-
         let events_max_body_bytes = self
             .events_max_body_bytes
             .trim()
@@ -160,10 +148,8 @@ impl WebhookConfigForm {
 
         config.gateway.webhook.enabled = self.enabled;
         config.gateway.webhook.events.enabled = self.events_enabled;
-        config.gateway.webhook.events.path = events_path.to_string();
         config.gateway.webhook.events.max_body_bytes = events_max_body_bytes;
         config.gateway.webhook.agents.enabled = self.agents_enabled;
-        config.gateway.webhook.agents.path = agents_path.to_string();
         config.gateway.webhook.agents.max_body_bytes = agents_max_body_bytes;
         Ok(())
     }
@@ -1049,10 +1035,7 @@ impl PanelRenderer for WebhookPanel {
 
                     ui.horizontal(|ui| {
                         ui.label("Path");
-                        ui.add_sized(
-                            [320.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.events_path),
-                        );
+                        ui.monospace(WEBHOOK_EVENTS_PATH);
                     });
 
                     ui.horizontal(|ui| {
@@ -1072,10 +1055,7 @@ impl PanelRenderer for WebhookPanel {
 
                     ui.horizontal(|ui| {
                         ui.label("Path");
-                        ui.add_sized(
-                            [320.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.agents_path),
-                        );
+                        ui.monospace(WEBHOOK_AGENTS_PATH);
                     });
 
                     ui.horizontal(|ui| {
@@ -1521,7 +1501,7 @@ fn render_webhook_config_summary(
             ui.end_row();
 
             ui.label("Events Path");
-            ui.label(&webhook.events.path);
+            ui.monospace(WEBHOOK_EVENTS_PATH);
             ui.end_row();
 
             ui.label("Agents Enabled");
@@ -1529,7 +1509,7 @@ fn render_webhook_config_summary(
             ui.end_row();
 
             ui.label("Agents Path");
-            ui.label(&webhook.agents.path);
+            ui.monospace(WEBHOOK_AGENTS_PATH);
             ui.end_row();
         });
 }
@@ -1733,7 +1713,7 @@ fn build_trick_url(
     }
     let model = trick.model.trim();
     let base = trick_base_url(gateway_status.expect("checked by trick_ready_error"))?;
-    let mut url = format!("{base}{}", config.gateway.webhook.agents.path);
+    let mut url = format!("{base}{WEBHOOK_AGENTS_PATH}");
     let mut query = vec![
         ("hook_id", percent_encode_query_value(&hook_id)),
         ("session_key", percent_encode_query_value(session_key)),

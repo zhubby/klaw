@@ -1,6 +1,8 @@
 mod auth;
 mod error;
+mod home;
 mod handlers;
+mod routes;
 mod runtime;
 mod state;
 mod tailscale;
@@ -9,6 +11,9 @@ mod webhook;
 mod websocket;
 
 pub use error::GatewayError;
+pub use routes::{
+    HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
+};
 pub use runtime::{
     GatewayOptions, run_gateway, run_gateway_with_options, spawn_gateway,
     spawn_gateway_with_options,

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-29
+
+### Changed
+
+- `gateway.webhook.events.path` 与 `gateway.webhook.agents.path` 不再作为有效配置项；webhook 路径固定为 `/webhook/events` 和 `/webhook/agents`，旧配置值会被兼容解析但忽略
+
 ## 2026-03-27
 
 ### Added

@@ -83,19 +83,12 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     }
     validate_gateway_webhook_endpoint(
         "gateway.webhook.events",
-        &config.gateway.webhook.events.path,
         config.gateway.webhook.events.max_body_bytes,
     )?;
     validate_gateway_webhook_endpoint(
         "gateway.webhook.agents",
-        &config.gateway.webhook.agents.path,
         config.gateway.webhook.agents.max_body_bytes,
     )?;
-    if config.gateway.webhook.events.path == config.gateway.webhook.agents.path {
-        return Err(ConfigError::InvalidConfig(
-            "gateway.webhook.events.path and gateway.webhook.agents.path must differ".to_string(),
-        ));
-    }
 
     validate_channels(&config.channels)?;
     validate_local_attachments(
@@ -357,14 +350,8 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
 
 fn validate_gateway_webhook_endpoint(
     field_prefix: &str,
-    path: &str,
     max_body_bytes: usize,
 ) -> Result<(), ConfigError> {
-    if path.trim().is_empty() || !path.trim().starts_with('/') {
-        return Err(ConfigError::InvalidConfig(format!(
-            "{field_prefix}.path must start with '/' and cannot be empty"
-        )));
-    }
     if max_body_bytes == 0 {
         return Err(ConfigError::InvalidConfig(format!(
             "{field_prefix}.max_body_bytes must be greater than 0"

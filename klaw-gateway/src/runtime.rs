@@ -1,7 +1,9 @@
 use crate::{
     GatewayError,
     auth::GatewayAuth,
+    home::{home_logo_handler, home_page_handler},
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
+    routes::{HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH},
     state::{GatewayHandle, GatewayRuntimeInfo, GatewayState},
     tailscale::{TailscaleError, TailscaleManager},
     webhook::{
@@ -170,7 +172,9 @@ fn build_router(
     auth_token: Option<String>,
 ) -> Router {
     let mut app = Router::new()
-        .route("/ws/chat", get(ws_chat_handler))
+        .route(HOME_PATH, get(home_page_handler))
+        .route(HOME_LOGO_PATH, get(home_logo_handler))
+        .route(WS_CHAT_PATH, get(ws_chat_handler))
         .route("/health/live", get(health_live_handler))
         .route("/health/ready", get(health_ready_handler))
         .route("/health/status", get(health_status_handler))
@@ -179,13 +183,13 @@ fn build_router(
     if config.webhook.enabled {
         if config.webhook.events.enabled {
             let events_router = Router::new()
-                .route(&config.webhook.events.path, post(webhook_handler))
+                .route(WEBHOOK_EVENTS_PATH, post(webhook_handler))
                 .layer(DefaultBodyLimit::max(config.webhook.events.max_body_bytes));
             app = app.merge(events_router);
         }
         if config.webhook.agents.enabled {
             let agents_router = Router::new()
-                .route(&config.webhook.agents.path, post(webhook_agents_handler))
+                .route(WEBHOOK_AGENTS_PATH, post(webhook_agents_handler))
                 .layer(DefaultBodyLimit::max(config.webhook.agents.max_body_bytes));
             app = app.merge(agents_router);
         }

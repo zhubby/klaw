@@ -139,10 +139,8 @@ fn parse_default_template_succeeds() {
     assert!(parsed.gateway.tls.key_path.is_none());
     assert!(!parsed.gateway.webhook.enabled);
     assert!(parsed.gateway.webhook.events.enabled);
-    assert_eq!(parsed.gateway.webhook.events.path, "/webhook/events");
     assert_eq!(parsed.gateway.webhook.events.max_body_bytes, 262_144);
     assert!(!parsed.gateway.webhook.agents.enabled);
-    assert_eq!(parsed.gateway.webhook.agents.path, "/webhook/agents");
     assert_eq!(parsed.gateway.webhook.agents.max_body_bytes, 262_144);
     validate(&parsed).expect("default template should be valid");
 }
@@ -545,7 +543,6 @@ enabled = false
     assert_eq!(parsed.gateway.listen_port, 18_080);
     assert!(parsed.gateway.webhook.enabled);
     assert!(parsed.gateway.webhook.events.enabled);
-    assert_eq!(parsed.gateway.webhook.events.path, "/hooks/events");
     assert_eq!(parsed.gateway.webhook.events.max_body_bytes, 4096);
     assert!(!parsed.gateway.webhook.agents.enabled);
     assert!(!parsed.gateway.tls.enabled);
@@ -579,10 +576,8 @@ max_body_bytes = 8192
     let parsed: AppConfig = toml::from_str(raw).expect("dual webhook config should parse");
     assert!(parsed.gateway.webhook.enabled);
     assert!(parsed.gateway.webhook.events.enabled);
-    assert_eq!(parsed.gateway.webhook.events.path, "/hooks/events");
     assert_eq!(parsed.gateway.webhook.events.max_body_bytes, 4096);
     assert!(parsed.gateway.webhook.agents.enabled);
-    assert_eq!(parsed.gateway.webhook.agents.path, "/hooks/agents");
     assert_eq!(parsed.gateway.webhook.agents.max_body_bytes, 8192);
 }
 
@@ -727,14 +722,6 @@ fn validate_accepts_gateway_random_port() {
 }
 
 #[test]
-fn validate_fails_when_gateway_webhook_path_invalid() {
-    let mut cfg = AppConfig::default();
-    cfg.gateway.webhook.events.path = "hooks".to_string();
-    let err = validate(&cfg).expect_err("should fail");
-    assert!(format!("{err}").contains("gateway.webhook.events.path"));
-}
-
-#[test]
 fn validate_fails_when_gateway_webhook_max_body_bytes_zero() {
     let mut cfg = AppConfig::default();
     cfg.gateway.webhook.agents.max_body_bytes = 0;
@@ -743,14 +730,34 @@ fn validate_fails_when_gateway_webhook_max_body_bytes_zero() {
 }
 
 #[test]
-fn validate_fails_when_gateway_webhook_paths_overlap() {
-    let mut cfg = AppConfig::default();
-    cfg.gateway.webhook.agents.path = cfg.gateway.webhook.events.path.clone();
-    let err = validate(&cfg).expect_err("should fail");
-    assert!(
-        format!("{err}")
-            .contains("gateway.webhook.events.path and gateway.webhook.agents.path must differ")
-    );
+fn parse_gateway_webhook_path_config_is_ignored() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[gateway.webhook]
+enabled = true
+
+[gateway.webhook.events]
+enabled = true
+path = "/ignored/events"
+max_body_bytes = 4096
+
+[gateway.webhook.agents]
+enabled = true
+path = "/ignored/agents"
+max_body_bytes = 8192
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("webhook path config should parse");
+    assert_eq!(parsed.gateway.webhook.events.max_body_bytes, 4096);
+    assert_eq!(parsed.gateway.webhook.agents.max_body_bytes, 8192);
+    validate(&parsed).expect("ignored webhook paths should not affect validation");
 }
 
 #[test]

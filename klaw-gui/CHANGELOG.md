@@ -6,6 +6,10 @@
 
 - `Gateway` 配置弹窗中的 `auth.token` 现在带有 `Generate` 按钮，可直接填充 `sk_...` 风格随机密钥
 
+### Changed
+
+- `Webhook` 面板不再允许编辑 webhook path；`events` / `agents` 路径固定显示为 `/webhook/events` 与 `/webhook/agents`
+
 ### Fixed
 
 - `Archive` 面板主列表现在在内容超出可视宽度时提供横向滚动，并继续保留纵向滚动，避免右侧列被截断后无法浏览

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Klaw Gateway</title>
+    <style>
+      :root {
+        --ink: #5a2f2f;
+        --ink-soft: #8f5d54;
+        --sun: #ffd978;
+        --sun-deep: #f4b248;
+        --peach: #fff4eb;
+        --peach-deep: #ffd9bf;
+        --coral: #ff7a59;
+        --coral-deep: #eb5537;
+        --card: rgba(255, 253, 249, 0.88);
+        --line: rgba(163, 101, 66, 0.16);
+        --shadow: 0 24px 80px rgba(184, 111, 54, 0.16);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "LXGW WenKai", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(255, 246, 222, 0.96), transparent 28%),
+          radial-gradient(circle at 85% 16%, rgba(255, 218, 184, 0.9), transparent 24%),
+          linear-gradient(180deg, #fffaf4 0%, #fff3e7 54%, #ffe9d1 100%);
+        overflow-x: hidden;
+      }
+
+      body::before,
+      body::after {
+        content: "";
+        position: fixed;
+        inset: auto;
+        border-radius: 999px;
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      body::before {
+        width: 22rem;
+        height: 22rem;
+        top: -6rem;
+        right: -5rem;
+        background: radial-gradient(circle, rgba(255, 210, 132, 0.46), rgba(255, 210, 132, 0));
+      }
+
+      body::after {
+        width: 26rem;
+        height: 26rem;
+        left: -9rem;
+        bottom: -10rem;
+        background: radial-gradient(circle, rgba(255, 165, 116, 0.22), rgba(255, 165, 116, 0));
+      }
+
+      main {
+        position: relative;
+        z-index: 1;
+        width: min(1080px, calc(100vw - 32px));
+        min-height: 100vh;
+        margin: 0 auto;
+        display: grid;
+        place-items: center;
+        padding: 48px 0;
+      }
+
+      .hero {
+        width: 100%;
+        display: grid;
+        grid-template-columns: minmax(280px, 460px) minmax(280px, 1fr);
+        gap: 28px;
+        align-items: center;
+      }
+
+      .art,
+      .content {
+        position: relative;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 32px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+      }
+
+      .art {
+        padding: 28px;
+        overflow: hidden;
+        isolation: isolate;
+      }
+
+      .art::before {
+        content: "";
+        position: absolute;
+        inset: 12px;
+        border-radius: 26px;
+        background:
+          radial-gradient(circle at 50% 105%, rgba(246, 198, 89, 0.24), transparent 32%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 246, 234, 0.84));
+        z-index: -1;
+      }
+
+      .art img {
+        display: block;
+        width: min(100%, 360px);
+        margin: 0 auto;
+        filter: drop-shadow(0 18px 30px rgba(237, 129, 69, 0.18));
+        animation: float 5.8s ease-in-out infinite;
+      }
+
+      .sparkles {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      .sparkles span {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        border-radius: 4px;
+        background: linear-gradient(180deg, #ffe9a8, #f3b753);
+        transform: rotate(45deg);
+        opacity: 0.82;
+        animation: twinkle 3.2s ease-in-out infinite;
+      }
+
+      .sparkles span:nth-child(1) { top: 16%; left: 16%; animation-delay: 0s; }
+      .sparkles span:nth-child(2) { top: 26%; right: 18%; width: 10px; height: 10px; animation-delay: 0.7s; }
+      .sparkles span:nth-child(3) { bottom: 22%; left: 20%; width: 8px; height: 8px; animation-delay: 1.1s; }
+      .sparkles span:nth-child(4) { bottom: 18%; right: 16%; width: 14px; height: 14px; animation-delay: 1.7s; }
+      .sparkles span:nth-child(5) { top: 48%; right: 8%; width: 7px; height: 7px; animation-delay: 2.2s; }
+
+      .content {
+        padding: 40px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: rgba(255, 226, 187, 0.72);
+        color: #9f5b2e;
+        font-size: 14px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 18px 0 12px;
+        font-size: clamp(2.6rem, 5vw, 5rem);
+        line-height: 0.96;
+        letter-spacing: -0.04em;
+      }
+
+      .slogan {
+        margin: 0;
+        font-size: clamp(1.1rem, 2vw, 1.45rem);
+        line-height: 1.7;
+        color: var(--ink-soft);
+      }
+
+      .slogan strong {
+        color: var(--coral-deep);
+      }
+
+      .copy {
+        margin: 22px 0 0;
+        font-size: 1rem;
+        line-height: 1.9;
+        color: #7d6158;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      .chip {
+        padding: 12px 16px;
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255, 245, 234, 0.96), rgba(255, 234, 214, 0.92));
+        border: 1px solid rgba(244, 177, 113, 0.24);
+        color: #8e553d;
+        font-size: 0.96rem;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      }
+
+      .footer-note {
+        margin-top: 28px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: #a56b4e;
+        font-size: 0.95rem;
+      }
+
+      .footer-note::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, var(--sun), var(--sun-deep));
+        box-shadow: 0 0 0 6px rgba(255, 219, 138, 0.24);
+      }
+
+      @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+      }
+
+      @keyframes twinkle {
+        0%, 100% { transform: scale(0.85) rotate(45deg); opacity: 0.35; }
+        50% { transform: scale(1.2) rotate(45deg); opacity: 1; }
+      }
+
+      @media (max-width: 840px) {
+        main {
+          width: min(100vw - 20px, 720px);
+          padding: 20px 0 28px;
+        }
+
+        .hero {
+          grid-template-columns: 1fr;
+          gap: 18px;
+        }
+
+        .content,
+        .art {
+          padding: 24px;
+          border-radius: 28px;
+        }
+
+        h1 {
+          font-size: clamp(2.2rem, 12vw, 3.8rem);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="art">
+          <div class="sparkles">
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <img src="/assets/logo.webp" alt="Klaw cartoon crab logo" />
+        </div>
+        <div class="content">
+          <div class="badge">Klaw Gateway</div>
+          <h1>Little Claws, Big Conversations.</h1>
+          <p class="slogan">
+            Where <strong>messages, tools, and agents</strong> gather at one cheerful shore,
+            turning every signal into a smooth, lively conversation.
+          </p>
+          <p class="copy">
+            Klaw Gateway is the friendly little harbor of the system.
+            WebSocket streams, webhook calls, runtime routes, and session traffic all meet here,
+            guided by a bright-eyed crab that catches each ping and sends it exactly where it belongs.
+          </p>
+          <div class="chips">
+            <span class="chip">Playful Realtime Flow</span>
+            <span class="chip">Webhook to Agent Magic</span>
+            <span class="chip">Cute Shell, Sharp Routing</span>
+          </div>
+          <div class="footer-note">A sunny gateway for every signal that wants to chat</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

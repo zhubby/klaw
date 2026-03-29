@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::{
+        HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
         spawn_gateway,
         webhook::{
             GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
@@ -8,6 +9,7 @@ mod tests {
         },
     };
     use klaw_config::GatewayConfig;
+    use reqwest::StatusCode;
     use serde_json::json;
 
     #[tokio::test]
@@ -40,6 +42,80 @@ mod tests {
         );
 
         handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn gateway_root_route_serves_home_page_and_logo() {
+        let config = GatewayConfig {
+            enabled: true,
+            listen_ip: "127.0.0.1".to_string(),
+            listen_port: 0,
+            auth: Default::default(),
+            tailscale: Default::default(),
+            tls: Default::default(),
+            webhook: Default::default(),
+        };
+
+        let handle = match spawn_gateway(&config).await {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let base_url = format!(
+            "http://127.0.0.1:{}",
+            handle.info().actual_port
+        );
+        let client = reqwest::Client::new();
+
+        let home_response = client
+            .get(format!("{base_url}{HOME_PATH}"))
+            .send()
+            .await
+            .expect("home page should respond");
+        assert_eq!(home_response.status(), StatusCode::OK);
+        let home_html = home_response
+            .text()
+            .await
+            .expect("home page body should load");
+        assert!(home_html.contains("Catch Every Message."));
+        assert!(home_html.contains(HOME_LOGO_PATH));
+
+        let logo_response = client
+            .get(format!("{base_url}{HOME_LOGO_PATH}"))
+            .send()
+            .await
+            .expect("logo should respond");
+        assert_eq!(logo_response.status(), StatusCode::OK);
+        assert_eq!(
+            logo_response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("image/webp")
+        );
+        assert!(
+            !logo_response
+                .bytes()
+                .await
+                .expect("logo body should load")
+                .is_empty()
+        );
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[test]
+    fn exported_route_constants_match_expected_paths() {
+        assert_eq!(HOME_PATH, "/");
+        assert_eq!(HOME_LOGO_PATH, "/assets/logo.webp");
+        assert_eq!(WS_CHAT_PATH, "/ws/chat");
+        assert_eq!(WEBHOOK_EVENTS_PATH, "/webhook/events");
+        assert_eq!(WEBHOOK_AGENTS_PATH, "/webhook/agents");
     }
 
     #[test]

@@ -9,6 +9,8 @@ use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::Sha256;
 
+use crate::routes::WS_CHAT_PATH;
+
 type HmacSha1 = Hmac<Sha1>;
 type HmacSha256 = Hmac<Sha256>;
 
@@ -29,7 +31,7 @@ impl GatewayAuth {
     ) -> Result<Response, StatusCode> {
         let path = request.uri().path();
 
-        if should_skip_auth(path) {
+        if !should_require_gateway_auth(path) {
             return Ok(next.run(request).await);
         }
 
@@ -52,8 +54,8 @@ impl GatewayAuth {
     }
 }
 
-pub fn should_skip_auth(path: &str) -> bool {
-    path.starts_with("/health/") || path.starts_with("/webhook/")
+pub fn should_require_gateway_auth(path: &str) -> bool {
+    path == WS_CHAT_PATH
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -309,7 +311,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{GatewayAuth, WebhookAuth, should_skip_auth};
+    use super::{GatewayAuth, WebhookAuth, should_require_gateway_auth};
     use axum::http::{HeaderMap, HeaderValue};
     use hmac::{Hmac, Mac};
     use sha1::Sha1;
@@ -319,11 +321,13 @@ mod tests {
     type HmacSha256 = Hmac<Sha256>;
 
     #[test]
-    fn gateway_auth_skips_health_and_webhook_paths() {
-        assert!(should_skip_auth("/health/status"));
-        assert!(should_skip_auth("/webhook/events"));
-        assert!(should_skip_auth("/webhook/agents"));
-        assert!(!should_skip_auth("/ws/chat"));
+    fn gateway_auth_only_protects_ws_chat_route() {
+        assert!(should_require_gateway_auth("/ws/chat"));
+        assert!(!should_require_gateway_auth("/"));
+        assert!(!should_require_gateway_auth("/health/status"));
+        assert!(!should_require_gateway_auth("/metrics"));
+        assert!(!should_require_gateway_auth("/webhook/events"));
+        assert!(!should_require_gateway_auth("/webhook/agents"));
     }
 
     #[test]

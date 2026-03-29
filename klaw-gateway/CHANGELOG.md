@@ -4,11 +4,15 @@
 
 ### Added
 
+- gateway 根路径 `/` 现在会返回卡通风格的默认单页首页，并内置 `/assets/logo.webp` logo 静态资源
 - webhook 请求校验现抽象为可扩展 validator 链，支持 `Authorization: Bearer`、GitHub `X-Hub-Signature-256` / `X-Hub-Signature`、以及 GitLab `X-Gitlab-Token` / `X-Gitlab-Signature`
 - `/webhook/events` 与 `/webhook/agents` 现在会输出入站 debug 日志，记录 endpoint、request id、session、body 大小与命中的鉴权模式，不暴露明文 secret
 
 ### Changed
 
+- 首页内置 logo 资源现改为 `512x512` 的 `/assets/logo.webp`，显著减小静态资源和内嵌二进制体积
+- `/webhook/events` 与 `/webhook/agents` 路径现固定为内置常量，不再从配置读取 path
+- gateway Bearer 鉴权中间件现仅保护 `/ws/chat`；webhook 路由继续使用独立的 webhook 校验链；首页、health、metrics 不参与鉴权
 - `gateway.auth.enabled = false` 时，webhook 入口现在直接放行，不再要求任何 header 校验
 - Tailscale Funnel 不再强制要求 `gateway.auth` 已配置；若未配置认证，gateway/GUI 仅保留公网暴露警告
 
