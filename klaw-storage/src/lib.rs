@@ -26,10 +26,11 @@ pub use types::{
     LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
     NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
     NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
-    ToolAuditSortOrder, ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
-    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
-    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
+    SessionSortOrder, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery,
+    ToolAuditRecord, ToolAuditSortOrder, ToolAuditStatus, UpdateCronJobPatch,
+    UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
+    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
+    WebhookEventStatus,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -172,6 +173,39 @@ mod tests {
             .map(|record| (record.role.as_str(), record.content.as_str()))
             .collect();
         assert_eq!(summary, vec![("user", "hello"), ("assistant", "world")]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn list_sessions_supports_channel_filter_and_sort_order() {
+        let store = create_store().await;
+        let _ = store
+            .touch_session("telegram:chat-1", "chat-1", "telegram")
+            .await
+            .expect("telegram session should be created");
+        let _ = store
+            .touch_session("stdio:chat-2", "chat-2", "stdio")
+            .await
+            .expect("stdio session should be created");
+
+        let filtered = store
+            .list_sessions(
+                10,
+                0,
+                None,
+                None,
+                Some("stdio"),
+                SessionSortOrder::UpdatedAtAsc,
+            )
+            .await
+            .expect("filtered sessions should load");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].session_key, "stdio:chat-2");
+
+        let channels = store
+            .list_session_channels()
+            .await
+            .expect("channel list should load");
+        assert_eq!(channels, vec!["stdio".to_string(), "telegram".to_string()]);
     }
 
     #[tokio::test(flavor = "current_thread")]

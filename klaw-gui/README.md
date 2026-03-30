@@ -134,6 +134,8 @@
 - Session panel features:
   - read indexed sessions via `klaw-session` manager abstraction
   - render session metadata in a read-only table with limit/offset controls
+  - support SQL-backed `channel` dropdown filtering and `Updated At` ascending/descending sorting
+  - open the chat history window directly by double-clicking a session row
 - Approval panel features:
   - read approvals via `klaw-approval` manager abstraction
   - resolve `approve` / `reject` and trigger `consume` from a table view

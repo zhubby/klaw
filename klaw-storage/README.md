@@ -8,6 +8,7 @@
 - provide session, cron, and heartbeat persistence stores
 - expose generic SQLite access used by higher-level modules such as memory and archive services
 - persist session routing/model state used by IM command routing (`active_session_key`, `model_provider`, `model`)
+- support SQL-backed session listing with optional `channel` filtering, `updated_at` ordering, and distinct channel option queries
 - persist structured `tool_audit` and `llm_audit` records for runtime/GUI diagnostics
 - sync and restore versioned manifests plus deduplicated blobs for the managed data root via S3-compatible object storage
 

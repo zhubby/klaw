@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-03-30
+
+### Changed
+
+- `Session` 面板顶部新增 `channel` 下拉筛选，并把筛选条件下沉到 session SQL 查询层，而不是在 GUI 内存列表中二次过滤
+
+### Fixed
+
+- `Session` 面板的 `Updated At` 列现在支持升序/降序切换，并直接驱动底层 SQL `ORDER BY`
+- `Session` 面板记录现在支持双击直接打开 `View Chat`，无需再进入右键菜单
+
 ## 2026-03-29
 
 ### Added

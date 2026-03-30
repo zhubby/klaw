@@ -7,7 +7,7 @@ use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_session::{
     LlmUsageSummary, SessionError, SessionIndex, SessionListQuery, SessionManager,
-    SqliteSessionManager,
+    SessionSortOrder, SqliteSessionManager,
 };
 use std::future::Future;
 use std::thread;
@@ -19,8 +19,11 @@ const PAGING_INPUT_WIDTH: f32 = 50.0;
 pub struct SessionPanel {
     loaded: bool,
     sessions: Vec<SessionRow>,
+    channels: Vec<String>,
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
+    channel_filter: Option<String>,
+    sort_order: SessionSortOrder,
     page: i64,
     size: i64,
     selected_session: Option<String>,
@@ -34,8 +37,11 @@ impl Default for SessionPanel {
         Self {
             loaded: false,
             sessions: Vec::new(),
+            channels: Vec::new(),
             start_date: Some(one_year_ago),
             end_date: Some(today),
+            channel_filter: None,
+            sort_order: SessionSortOrder::UpdatedAtDesc,
             page: 1,
             size: 100,
             selected_session: None,
@@ -67,9 +73,12 @@ impl SessionPanel {
             offset,
             updated_from_ms: self.start_date.and_then(date_start_ms),
             updated_to_ms: self.end_date.and_then(date_end_ms),
+            channel: self.channel_filter.clone(),
+            sort_order: self.sort_order,
         };
 
         match run_session_task(move |manager| async move {
+            let channels = manager.list_session_channels().await?;
             let sessions = manager.list_sessions(query).await?;
             let mut rows = Vec::with_capacity(sessions.len());
             for session in sessions {
@@ -78,9 +87,10 @@ impl SessionPanel {
                     .await?;
                 rows.push(SessionRow { session, usage });
             }
-            Ok(rows)
+            Ok((channels, rows))
         }) {
-            Ok(sessions) => {
+            Ok((channels, sessions)) => {
+                self.channels = channels;
                 self.sessions = sessions;
                 self.loaded = true;
             }
@@ -112,6 +122,20 @@ impl SessionPanel {
             }
         }
     }
+
+    fn toggle_sort_order(&mut self) {
+        self.sort_order = match self.sort_order {
+            SessionSortOrder::UpdatedAtAsc => SessionSortOrder::UpdatedAtDesc,
+            SessionSortOrder::UpdatedAtDesc => SessionSortOrder::UpdatedAtAsc,
+        };
+    }
+
+    fn updated_at_label(&self) -> &'static str {
+        match self.sort_order {
+            SessionSortOrder::UpdatedAtAsc => "Updated At ↑",
+            SessionSortOrder::UpdatedAtDesc => "Updated At ↓",
+        }
+    }
 }
 
 impl PanelRenderer for SessionPanel {
@@ -140,6 +164,38 @@ impl PanelRenderer for SessionPanel {
             }
             ui.label("end date");
             if render_date_picker(ui, &mut self.end_date, "session-end-date") {
+                need_refresh = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("channel");
+            let combo_resp = egui::ComboBox::from_id_salt("session-channel-filter")
+                .selected_text(self.channel_filter.as_deref().unwrap_or("All"))
+                .width(140.0)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui
+                        .selectable_value(&mut self.channel_filter, None, "All")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    for channel in &self.channels {
+                        if ui
+                            .selectable_value(
+                                &mut self.channel_filter,
+                                Some(channel.clone()),
+                                channel,
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+            if combo_resp.inner.unwrap_or(false) {
+                self.page = 1;
                 need_refresh = true;
             }
         });
@@ -235,7 +291,10 @@ impl PanelRenderer for SessionPanel {
                             ui.strong("Total");
                         });
                         header.col(|ui| {
-                            ui.strong("Updated At");
+                            if ui.button(self.updated_at_label()).clicked() {
+                                self.toggle_sort_order();
+                                self.refresh(notifications);
+                            }
                         });
                         header.col(|ui| {
                             ui.strong("JSONL Path");
@@ -296,6 +355,10 @@ impl PanelRenderer for SessionPanel {
                                 } else {
                                     Some(session.session_key.clone())
                                 };
+                            }
+
+                            if response.double_clicked() {
+                                view_session_key = Some(session.session_key.clone());
                             }
 
                             response.context_menu(|ui| {

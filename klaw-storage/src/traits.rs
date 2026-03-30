@@ -4,10 +4,10 @@ use crate::{
     LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob,
     NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
     NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState,
-    SessionIndex, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
-    ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
-    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
-    WebhookEventQuery, WebhookEventRecord,
+    SessionIndex, SessionSortOrder, StorageError, ToolAuditFilterOptions,
+    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch,
+    UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
+    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -104,7 +104,11 @@ pub trait SessionStorage: Send + Sync {
         offset: i64,
         updated_from_ms: Option<i64>,
         updated_to_ms: Option<i64>,
+        channel: Option<&str>,
+        sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError>;
+
+    async fn list_session_channels(&self) -> Result<Vec<String>, StorageError>;
 
     async fn append_llm_usage(
         &self,

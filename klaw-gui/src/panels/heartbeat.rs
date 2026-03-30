@@ -810,7 +810,14 @@ fn run_session_query(limit: i64, offset: i64) -> Result<Vec<SessionIndex>, Strin
                 .await
                 .map_err(|err| format!("failed to open session store: {err}"))?;
             store
-                .list_sessions(limit, offset, None, None)
+                .list_sessions(
+                    limit,
+                    offset,
+                    None,
+                    None,
+                    None,
+                    klaw_storage::SessionSortOrder::UpdatedAtDesc,
+                )
                 .await
                 .map_err(|err| format!("session query failed: {err}"))
         })
