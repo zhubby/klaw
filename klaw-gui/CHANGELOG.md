@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- `LLM` 面板的 `Provider` 列与 provider 筛选现在优先显示 `model_providers.<id>.name`，未配置名称时回退到 provider id，同时默认分页 `size` 从 `100` 调整为 `50`
 - `Session` 面板的 `Updated At` 列现在支持升序/降序切换，并直接驱动底层 SQL `ORDER BY`
 - `Session` 面板记录现在支持双击直接打开 `View Chat`，无需再进入右键菜单
 - `Analyze Dashboard` 的 `Token Composition` 与 `Error Breakdown` 进度条改为 grid 对齐布局，避免因 label 长度不同导致条形长度和起点不一致

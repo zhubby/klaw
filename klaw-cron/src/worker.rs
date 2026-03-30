@@ -267,8 +267,7 @@ fn infer_telegram_base_session_key(session_key: &str, chat_id: &str) -> Option<S
 mod tests {
     use super::{
         CronWorker, CronWorkerConfig, MissedRunPolicy, infer_base_session_key,
-        infer_dingtalk_base_session_key,
-        infer_telegram_base_session_key,
+        infer_dingtalk_base_session_key, infer_telegram_base_session_key,
     };
     use crate::time::now_ms;
     use async_trait::async_trait;
@@ -1135,7 +1134,10 @@ mod tests {
         assert!(job.next_run_at_ms >= before_tick + 5_000);
         assert!(job.next_run_at_ms > overdue_next_run_at_ms + 5_000);
 
-        let runs = storage.list_task_runs("job-skip", 10, 0).await.expect("runs");
+        let runs = storage
+            .list_task_runs("job-skip", 10, 0)
+            .await
+            .expect("runs");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].scheduled_at_ms, overdue_next_run_at_ms);
     }
