@@ -102,6 +102,7 @@ where
     async fn publish_inbound(&self, job: &CronJob) -> Result<String, CronError> {
         let mut payload: InboundMessage = serde_json::from_str(&job.payload_json)?;
         let original_session_key = payload.session_key.clone();
+        let base_session_key = infer_base_session_key(&payload);
         let delivery_session_key = self
             .resolve_delivery_session_key(&payload)
             .await?
@@ -119,6 +120,16 @@ where
         payload.metadata.insert(
             "cron.resolved_session_key".to_string(),
             serde_json::Value::String(original_session_key.clone()),
+        );
+        if let Some(base_session_key) = base_session_key {
+            payload.metadata.insert(
+                "channel.base_session_key".to_string(),
+                serde_json::Value::String(base_session_key),
+            );
+        }
+        payload.metadata.insert(
+            "channel.delivery_session_key".to_string(),
+            serde_json::Value::String(delivery_session_key),
         );
 
         let envelope = Envelope {
@@ -1234,6 +1245,22 @@ mod tests {
                 .get("channel.dingtalk.session_webhook")
                 .and_then(|value| value.as_str()),
             Some("https://example/new-session")
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .metadata
+                .get("channel.base_session_key")
+                .and_then(|value| value.as_str()),
+            Some("dingtalk:acc:chat1")
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .metadata
+                .get("channel.delivery_session_key")
+                .and_then(|value| value.as_str()),
+            Some("dingtalk:acc:chat1:child")
         );
     }
 

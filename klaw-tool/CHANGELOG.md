@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-30
+
+### Removed
+- deleted the empty typo placeholder file `src/event_subcribe.rs`
+
 ## 2026-03-28
 
 ### Added

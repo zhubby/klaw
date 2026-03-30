@@ -2722,6 +2722,7 @@ async fn submit_webhook_isolated_turn(
     sender_id: String,
     execution: WebhookExecutionRoute,
     delivery_route: Option<WebhookDeliveryRoute>,
+    base_session_key: Option<&str>,
     request_metadata: BTreeMap<String, Value>,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let sessions = session_manager(runtime);
@@ -2747,7 +2748,20 @@ async fn submit_webhook_isolated_turn(
         META_MODEL_KEY.to_string(),
         Value::String(execution.model.clone()),
     );
+    if let Some(base_session_key) = base_session_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        inbound_metadata.insert(
+            "channel.base_session_key".to_string(),
+            Value::String(base_session_key.to_string()),
+        );
+    }
     if let Some(route) = delivery_route.as_ref() {
+        inbound_metadata.insert(
+            "channel.delivery_session_key".to_string(),
+            Value::String(route.session_key.clone()),
+        );
         inbound_metadata.insert(
             "webhook.delivery_session_key".to_string(),
             Value::String(route.session_key.clone()),
@@ -2849,6 +2863,7 @@ pub async fn submit_webhook_event(
         request.sender_id.clone(),
         execution,
         delivery_route,
+        request.base_session_key.as_deref(),
         request.metadata.clone(),
     )
     .await
@@ -2915,6 +2930,7 @@ pub async fn submit_webhook_agent(
         request.sender_id.clone(),
         execution,
         delivery_route,
+        request.base_session_key.as_deref(),
         metadata,
     )
     .await
@@ -4844,6 +4860,17 @@ A .docx file is a ZIP archive containing XML files.
                 .metadata
                 .get("channel.dingtalk.session_webhook"),
             Some(&json!("https://example/session-active"))
+        );
+        assert_eq!(
+            outbound[0].payload.metadata.get("channel.base_session_key"),
+            Some(&json!("dingtalk:acc:chat-1"))
+        );
+        assert_eq!(
+            outbound[0]
+                .payload
+                .metadata
+                .get("channel.delivery_session_key"),
+            Some(&json!("dingtalk:acc:chat-1:active"))
         );
     }
 
