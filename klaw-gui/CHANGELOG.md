@@ -8,6 +8,7 @@
 - `ACP` 面板默认模板现在同时提供 Claude Code 与 Codex 两套 Zed adapter 启动参数，并移除了独立 `cwd` 编辑项
 - `ACP` 面板的 `Test Prompt` 改为弹窗式流式输出，运行中会实时展示 ACP session 返回的增量内容而不是停留在固定 `Output` 文本框
 - `ACP` 面板的 `Test Prompt` 新增 `Stop` 按钮，可主动取消当前正在运行的测试并在弹窗中标记为已停止
+- `ACP` 面板主区不再内嵌 `Test Prompt`；测试入口改为工具栏里的 `Test` 按钮，`ACP Agents` 表格现在占满剩余空间
 
 ### Fixed
 

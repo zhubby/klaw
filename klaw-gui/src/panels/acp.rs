@@ -633,7 +633,7 @@ impl AcpPanel {
         });
     }
 
-    fn render_agent_table(&mut self, ui: &mut egui::Ui) {
+    fn render_agent_table(&mut self, ui: &mut egui::Ui, max_height: f32) {
         ui.group(|ui| {
             ui.label(RichText::new("ACP Agents").strong());
             ui.label("Manage external ACP-compatible agents and inspect their runtime state.");
@@ -652,7 +652,7 @@ impl AcpPanel {
                 .map(|agent| agent.id.clone())
                 .collect::<Vec<_>>();
             let table_width = ui.available_width();
-            let max_height = 220.0;
+            let max_height = max_height.max(160.0);
             let mut detail_agent_id = None;
             let mut edit_agent_id = None;
             let mut delete_agent_id = None;
@@ -818,116 +818,98 @@ impl AcpPanel {
         });
     }
 
-    fn render_test_prompt(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
-        ui.group(|ui| {
-            ui.label(RichText::new("Test Prompt").strong());
-            ui.label(
-                "Run one real ACP prompt against a selected external agent in a streaming popup.",
-            );
-            ui.add_space(4.0);
-
-            ui.horizontal(|ui| {
-                ui.label("Target Agent");
-                if self.config.acp.agents.is_empty() {
-                    ui.monospace("(no agent configured)");
-                } else {
-                    egui::ComboBox::from_id_salt("acp-test-prompt-agent")
-                        .selected_text(self.prompt_test.agent_id.as_str())
-                        .show_ui(ui, |ui| {
-                            for agent in &self.config.acp.agents {
-                                ui.selectable_value(
-                                    &mut self.prompt_test.agent_id,
-                                    agent.id.clone(),
-                                    agent.id.as_str(),
-                                );
-                            }
-                        });
-                }
-            });
-
-            ui.label("Prompt");
-            ui.add(
-                egui::TextEdit::multiline(&mut self.prompt_test.prompt)
-                    .desired_rows(4)
-                    .hint_text("Ask the external ACP agent to do something small"),
-            );
-
-            egui::Grid::new("acp-test-prompt-grid")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("Working Directory");
-                    ui.text_edit_singleline(&mut self.prompt_test.working_directory);
-                    ui.end_row();
-
-                    ui.label("Timeout Seconds");
-                    ui.text_edit_singleline(&mut self.prompt_test.timeout_seconds);
-                    ui.end_row();
-                });
-
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        !self.prompt_test.running,
-                        egui::Button::new("Run Test Prompt"),
-                    )
-                    .clicked()
-                {
-                    self.trigger_test_prompt(notifications);
-                }
-                if ui
-                    .add_enabled(self.prompt_test.running, egui::Button::new("Stop"))
-                    .clicked()
-                {
-                    self.stop_test_prompt(notifications);
-                }
-                if ui
-                    .add_enabled(
-                        self.prompt_test.running
-                            || !self.prompt_test.output.is_empty()
-                            || self.prompt_test.last_error.is_some(),
-                        egui::Button::new("Open Stream Window"),
-                    )
-                    .clicked()
-                {
-                    self.prompt_test.window_open = true;
-                }
-                if ui.button("Clear Stream").clicked() {
-                    self.prompt_test.output.clear();
-                    self.prompt_test.last_error = None;
-                    self.prompt_test.stopped = false;
-                }
-                if self.prompt_test.running {
-                    ui.spinner();
-                    ui.label("Running...");
-                } else if !self.prompt_test.output.is_empty() {
-                    ui.weak("Last run available in popup");
-                }
-            });
-
-            if let Some(error) = self.prompt_test.last_error.as_deref() {
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new("Last Error")
-                        .strong()
-                        .color(Color32::LIGHT_RED),
-                );
-                ui.colored_label(Color32::LIGHT_RED, error);
-            }
-        });
-    }
-
-    fn render_prompt_window(&mut self, ctx: &egui::Context) {
+    fn render_prompt_window(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
         if !self.prompt_test.window_open {
             return;
         }
 
         let mut open = true;
-        egui::Window::new("ACP Test Prompt Stream")
+        egui::Window::new("ACP Test Prompt")
             .open(&mut open)
-            .default_size([760.0, 520.0])
+            .default_size([820.0, 620.0])
             .resizable(true)
             .show(ctx, |ui| {
+                ui.label(
+                    "Run one real ACP prompt against a selected external agent and inspect the live stream below.",
+                );
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    ui.label("Target Agent");
+                    if self.config.acp.agents.is_empty() {
+                        ui.monospace("(no agent configured)");
+                    } else {
+                        egui::ComboBox::from_id_salt("acp-test-prompt-agent-window")
+                            .selected_text(self.prompt_test.agent_id.as_str())
+                            .show_ui(ui, |ui| {
+                                for agent in &self.config.acp.agents {
+                                    ui.selectable_value(
+                                        &mut self.prompt_test.agent_id,
+                                        agent.id.clone(),
+                                        agent.id.as_str(),
+                                    );
+                                }
+                            });
+                    }
+                });
+
+                ui.add_space(6.0);
+                ui.label("Prompt");
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.prompt_test.prompt)
+                        .desired_rows(5)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Ask the external ACP agent to do something small"),
+                );
+
+                ui.add_space(6.0);
+                egui::Grid::new("acp-test-prompt-window-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Working Directory");
+                        ui.text_edit_singleline(&mut self.prompt_test.working_directory);
+                        ui.end_row();
+
+                        ui.label("Timeout Seconds");
+                        ui.text_edit_singleline(&mut self.prompt_test.timeout_seconds);
+                        ui.end_row();
+                    });
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            !self.prompt_test.running,
+                            egui::Button::new(format!("{} Run", regular::PLAY)),
+                        )
+                        .clicked()
+                    {
+                        self.trigger_test_prompt(notifications);
+                    }
+                    if ui
+                        .add_enabled(
+                            self.prompt_test.running,
+                            egui::Button::new(
+                                RichText::new(format!("{} Stop", regular::STOP)).color(Color32::RED),
+                            ),
+                        )
+                        .clicked()
+                    {
+                        self.stop_test_prompt(notifications);
+                    }
+                    if ui.button("Clear Stream").clicked() {
+                        self.prompt_test.output.clear();
+                        self.prompt_test.last_error = None;
+                        self.prompt_test.stopped = false;
+                    }
+                });
+
+                ui.separator();
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new("Agent").strong());
                     ui.monospace(self.prompt_test.agent_id.as_str());
@@ -961,6 +943,7 @@ impl AcpPanel {
                 }
 
                 ui.add_space(8.0);
+                ui.label(RichText::new("Stream").strong());
                 egui::ScrollArea::vertical()
                     .id_salt("acp-test-prompt-stream-window")
                     .auto_shrink([false, false])
@@ -1253,56 +1236,52 @@ impl PanelRenderer for AcpPanel {
         self.poll_prompt_test(notifications);
         self.refresh_status_if_due();
         ui.ctx().request_repaint_after(ACP_STATUS_POLL_INTERVAL);
+        ui.heading(ctx.tab_title);
+        ui.label(
+            "ACP lets klaw call external ACP-compatible coding agents through adapter commands.",
+        );
+        ui.small(
+            "Default templates use `npx -y @zed-industries/claude-agent-acp` and `npx -y @zed-industries/codex-acp`; runtime cwd comes from `working_directory`.",
+        );
+        ui.add_space(8.0);
+        self.render_stats(ui);
+        ui.add_space(8.0);
 
-        egui::ScrollArea::vertical()
-            .id_salt("acp-panel-scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.heading(ctx.tab_title);
-                ui.label(
-                    "ACP lets klaw call external ACP-compatible coding agents through adapter commands.",
-                );
-                ui.small(
-                    "Default templates use `npx -y @zed-industries/claude-agent-acp` and `npx -y @zed-industries/codex-acp`; runtime cwd comes from `working_directory`.",
-                );
-                ui.add_space(8.0);
-                self.render_stats(ui);
-                ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui.button(format!("{} Config", regular::GEAR)).clicked()
+                && self.global_settings_form.is_none()
+            {
+                self.open_global_settings();
+            }
+            if ui.button("Add Agent").clicked() {
+                self.open_add_agent();
+            }
+            if ui.button("Reload").clicked() {
+                self.reload(notifications);
+            }
+            if ui
+                .button(format!("{} Sync Runtime", regular::ARROWS_CLOCKWISE))
+                .clicked()
+            {
+                self.schedule_manager_sync(true);
+            }
+            if ui
+                .button(format!("{} Refresh Status", regular::ARROW_CLOCKWISE))
+                .clicked()
+            {
+                self.schedule_status_refresh(true);
+            }
+            if ui.button(format!("{} Test", regular::FLASK)).clicked() {
+                self.prompt_test.window_open = true;
+            }
+        });
 
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button(format!("{} Config", regular::GEAR)).clicked()
-                        && self.global_settings_form.is_none()
-                    {
-                        self.open_global_settings();
-                    }
-                    if ui.button("Add Agent").clicked() {
-                        self.open_add_agent();
-                    }
-                    if ui.button("Reload").clicked() {
-                        self.reload(notifications);
-                    }
-                    if ui
-                        .button(format!("{} Sync Runtime", regular::ARROWS_CLOCKWISE))
-                        .clicked()
-                    {
-                        self.schedule_manager_sync(true);
-                    }
-                    if ui
-                        .button(format!("{} Refresh Status", regular::ARROW_CLOCKWISE))
-                        .clicked()
-                    {
-                        self.schedule_status_refresh(true);
-                    }
-                });
-
-                ui.add_space(12.0);
-                self.render_agent_table(ui);
-                ui.add_space(12.0);
-                self.render_test_prompt(ui, notifications);
-            });
+        ui.add_space(12.0);
+        let remaining_height = ui.available_height();
+        self.render_agent_table(ui, remaining_height);
 
         self.render_detail_window(ui.ctx());
-        self.render_prompt_window(ui.ctx());
+        self.render_prompt_window(ui.ctx(), notifications);
         self.render_form_window(ui, notifications);
         self.render_global_settings_window(ui, notifications);
         self.render_delete_confirm_dialog(ui.ctx(), notifications);
