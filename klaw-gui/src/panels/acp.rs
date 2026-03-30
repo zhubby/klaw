@@ -1,7 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::{
-    AcpPromptEvent, request_acp_status, request_execute_acp_prompt_stream, request_sync_acp,
+    AcpPromptEvent, request_acp_status, request_execute_acp_prompt_stream, request_stop_acp_prompt,
+    request_sync_acp,
 };
 use crate::widgets::{ArrayEditor, KeyValueEditor};
 use egui::{Color32, RichText};
@@ -96,6 +97,7 @@ struct PromptTestState {
     output: String,
     last_error: Option<String>,
     running: bool,
+    stopped: bool,
     window_open: bool,
 }
 
@@ -301,6 +303,7 @@ impl AcpPanel {
                 }
                 Ok(AcpPromptEvent::Completed { final_output }) => {
                     self.prompt_test.running = false;
+                    self.prompt_test.stopped = false;
                     if self.prompt_test.output.trim().is_empty() {
                         self.prompt_test.output = final_output;
                     }
@@ -310,8 +313,26 @@ impl AcpPanel {
                     notifications.success("ACP test prompt completed");
                     break;
                 }
+                Ok(AcpPromptEvent::Stopped) => {
+                    self.prompt_test.running = false;
+                    self.prompt_test.stopped = true;
+                    self.prompt_test.last_error = None;
+                    if !self.prompt_test.output.ends_with("\n[prompt stopped]\n") {
+                        if !self.prompt_test.output.ends_with('\n')
+                            && !self.prompt_test.output.is_empty()
+                        {
+                            self.prompt_test.output.push('\n');
+                        }
+                        self.prompt_test.output.push_str("[prompt stopped]\n");
+                    }
+                    self.prompt_test.window_open = true;
+                    clear_receiver = true;
+                    notifications.info("ACP test prompt stopped");
+                    break;
+                }
                 Ok(AcpPromptEvent::Failed(err)) => {
                     self.prompt_test.running = false;
+                    self.prompt_test.stopped = false;
                     self.prompt_test.last_error = Some(err.clone());
                     self.prompt_test.window_open = true;
                     clear_receiver = true;
@@ -561,15 +582,28 @@ impl AcpPanel {
             Ok(rx) => {
                 self.prompt_fetch_rx = Some(rx);
                 self.prompt_test.running = true;
+                self.prompt_test.stopped = false;
                 self.prompt_test.last_error = None;
                 self.prompt_test.output.clear();
                 self.prompt_test.window_open = true;
             }
             Err(err) => {
                 self.prompt_test.running = false;
+                self.prompt_test.stopped = false;
                 self.prompt_test.last_error = Some(err.clone());
                 self.prompt_test.window_open = true;
                 notifications.error(format!("Failed to start ACP test prompt: {err}"));
+            }
+        }
+    }
+
+    fn stop_test_prompt(&mut self, notifications: &mut NotificationCenter) {
+        match request_stop_acp_prompt() {
+            Ok(()) => {
+                notifications.info("Stopping ACP test prompt...");
+            }
+            Err(err) => {
+                notifications.error(format!("Failed to stop ACP test prompt: {err}"));
             }
         }
     }
@@ -842,6 +876,12 @@ impl AcpPanel {
                     self.trigger_test_prompt(notifications);
                 }
                 if ui
+                    .add_enabled(self.prompt_test.running, egui::Button::new("Stop"))
+                    .clicked()
+                {
+                    self.stop_test_prompt(notifications);
+                }
+                if ui
                     .add_enabled(
                         self.prompt_test.running
                             || !self.prompt_test.output.is_empty()
@@ -855,6 +895,7 @@ impl AcpPanel {
                 if ui.button("Clear Stream").clicked() {
                     self.prompt_test.output.clear();
                     self.prompt_test.last_error = None;
+                    self.prompt_test.stopped = false;
                 }
                 if self.prompt_test.running {
                     ui.spinner();
@@ -893,6 +934,8 @@ impl AcpPanel {
                     if self.prompt_test.running {
                         ui.spinner();
                         ui.label("Streaming...");
+                    } else if self.prompt_test.stopped {
+                        ui.colored_label(Color32::YELLOW, "Stopped");
                     } else if self.prompt_test.last_error.is_some() {
                         ui.colored_label(Color32::LIGHT_RED, "Failed");
                     } else {

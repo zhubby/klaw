@@ -311,6 +311,7 @@ impl AcpManager {
             working_directory,
             timeout,
             None,
+            None,
         )
         .await
     }
@@ -322,10 +323,12 @@ impl AcpManager {
         working_directory: Option<&str>,
         timeout: Option<Duration>,
         prompt_update_sink: Option<Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>>,
+        cancel_receiver: Option<watch::Receiver<bool>>,
     ) -> Result<String, AcpExecutionError> {
         let prompt = prompt.to_string();
         let working_directory = working_directory.map(ToString::to_string);
         let prompt_update_sink = prompt_update_sink.clone();
+        let cancel_receiver = cancel_receiver.clone();
         tokio::task::spawn_blocking(move || {
             run_prompt_blocking(
                 config,
@@ -334,6 +337,7 @@ impl AcpManager {
                 working_directory,
                 timeout,
                 prompt_update_sink,
+                cancel_receiver,
             )
         })
         .await
@@ -494,6 +498,7 @@ fn run_prompt_blocking(
     working_directory: Option<String>,
     timeout: Option<Duration>,
     prompt_update_sink: Option<Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>>,
+    cancel_receiver: Option<watch::Receiver<bool>>,
 ) -> Result<String, AcpExecutionError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -508,6 +513,7 @@ fn run_prompt_blocking(
             working_directory,
             timeout,
             prompt_update_sink,
+            cancel_receiver,
         )
         .await
     })
@@ -520,6 +526,7 @@ async fn run_prompt_async(
     working_directory: Option<String>,
     timeout: Option<Duration>,
     prompt_update_sink: Option<Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>>,
+    mut cancel_receiver: Option<watch::Receiver<bool>>,
 ) -> Result<String, AcpExecutionError> {
     use acp::Agent as _;
 
@@ -645,7 +652,42 @@ async fn run_prompt_async(
     let prompt_request =
         acp::PromptRequest::new(new_session.session_id.clone(), vec![prompt.into()]);
     debug!(agent = %config.id, "sending acp prompt request");
-    let prompt_result = if let Some(timeout) = timeout {
+    let prompt_result = if let Some(cancel) = cancel_receiver.as_mut() {
+        if *cancel.borrow() {
+            cleanup_prompt_process(&config.id, &mut child, &mut io_handle).await;
+            return Err(AcpExecutionError::Cancelled {
+                agent_id: config.id.clone(),
+            });
+        }
+        if let Some(timeout) = timeout {
+            tokio::select! {
+                _ = cancel.changed() => {
+                    debug!(agent = %config.id, "acp prompt cancelled before completion");
+                    cleanup_prompt_process(&config.id, &mut child, &mut io_handle).await;
+                    return Err(AcpExecutionError::Cancelled {
+                        agent_id: config.id.clone(),
+                    });
+                }
+                result = tokio::time::timeout(timeout, conn.prompt(prompt_request)) => {
+                    result.map_err(|_| AcpExecutionError::Timeout {
+                        agent_id: config.id.clone(),
+                        timeout,
+                    })?
+                }
+            }
+        } else {
+            tokio::select! {
+                _ = cancel.changed() => {
+                    debug!(agent = %config.id, "acp prompt cancelled before completion");
+                    cleanup_prompt_process(&config.id, &mut child, &mut io_handle).await;
+                    return Err(AcpExecutionError::Cancelled {
+                        agent_id: config.id.clone(),
+                    });
+                }
+                result = conn.prompt(prompt_request) => result,
+            }
+        }
+    } else if let Some(timeout) = timeout {
         tokio::time::timeout(timeout, conn.prompt(prompt_request))
             .await
             .map_err(|_| AcpExecutionError::Timeout {
@@ -670,29 +712,7 @@ async fn run_prompt_async(
         .final_output();
     debug!(agent = %config.id, output_len = session_log.len(), "acp session output aggregated");
 
-    match tokio::time::timeout(ACP_PROMPT_CLEANUP_TIMEOUT, terminate_child(&mut child)).await {
-        Ok(()) => {}
-        Err(_) => {
-            warn!(
-                agent = %config.id,
-                timeout_secs = ACP_PROMPT_CLEANUP_TIMEOUT.as_secs(),
-                "timed out waiting for acp child process shutdown"
-            );
-        }
-    }
-    match tokio::time::timeout(ACP_PROMPT_CLEANUP_TIMEOUT, &mut io_handle).await {
-        Ok(_) => {
-            debug!(agent = %config.id, "acp agent child terminated");
-        }
-        Err(_) => {
-            io_handle.abort();
-            warn!(
-                agent = %config.id,
-                timeout_secs = ACP_PROMPT_CLEANUP_TIMEOUT.as_secs(),
-                "timed out waiting for acp io driver shutdown; aborted local task"
-            );
-        }
-    }
+    cleanup_prompt_process(&config.id, &mut child, &mut io_handle).await;
 
     if session_log.trim().is_empty() {
         return Err(AcpExecutionError::EmptyResponse {
@@ -700,6 +720,36 @@ async fn run_prompt_async(
         });
     }
     Ok(session_log)
+}
+
+async fn cleanup_prompt_process(
+    agent_id: &str,
+    child: &mut tokio::process::Child,
+    io_handle: &mut JoinHandle<Result<(), acp::Error>>,
+) {
+    match tokio::time::timeout(ACP_PROMPT_CLEANUP_TIMEOUT, terminate_child(child)).await {
+        Ok(()) => {}
+        Err(_) => {
+            warn!(
+                agent = %agent_id,
+                timeout_secs = ACP_PROMPT_CLEANUP_TIMEOUT.as_secs(),
+                "timed out waiting for acp child process shutdown"
+            );
+        }
+    }
+    match tokio::time::timeout(ACP_PROMPT_CLEANUP_TIMEOUT, &mut *io_handle).await {
+        Ok(_) => {
+            debug!(agent = %agent_id, "acp agent child terminated");
+        }
+        Err(_) => {
+            io_handle.abort();
+            warn!(
+                agent = %agent_id,
+                timeout_secs = ACP_PROMPT_CLEANUP_TIMEOUT.as_secs(),
+                "timed out waiting for acp io driver shutdown; aborted local task"
+            );
+        }
+    }
 }
 
 fn resolve_session_root(
@@ -973,6 +1023,72 @@ for raw_line in sys.stdin:
         script
     }
 
+    fn write_hanging_mock_agent_script(dir: &PathBuf) -> PathBuf {
+        let script = dir.join("hanging_mock_acp_agent.py");
+        std::fs::write(
+            &script,
+            r#"#!/usr/bin/env python3
+import json
+import sys
+import time
+
+session_id = "mock-session"
+
+def send(message):
+    sys.stdout.write(json.dumps(message) + "\n")
+    sys.stdout.flush()
+
+for raw_line in sys.stdin:
+    line = raw_line.strip()
+    if not line:
+        continue
+    message = json.loads(line)
+    method = message.get("method")
+    msg_id = message.get("id")
+    if method == "initialize":
+        send({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "protocolVersion": 1,
+                "agentCapabilities": {},
+                "authMethods": [],
+                "agentInfo": {
+                    "name": "mock-agent",
+                    "version": "0.1.0"
+                }
+            }
+        })
+    elif method == "session/new":
+        send({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "sessionId": session_id
+            }
+        })
+    elif method == "session/prompt":
+        send({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {
+                        "type": "text",
+                        "text": "still running"
+                    }
+                }
+            }
+        })
+        time.sleep(30)
+"#,
+        )
+        .expect("write hanging mock ACP agent script");
+        script
+    }
+
     #[test]
     fn snapshot_clones_from_config() {
         let config = AcpConfig {
@@ -1068,6 +1184,42 @@ for raw_line in sys.stdin:
             .expect("mock ACP agent prompt should succeed");
 
         assert_eq!(result, "mock response for: summarize the mock plan");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn execute_prompt_can_be_cancelled() {
+        ensure_python3();
+        let root = temp_dir("klaw-acp-cancel");
+        let script = write_hanging_mock_agent_script(&root);
+
+        let mut config = agent("mock", true);
+        config.command = "python3".to_string();
+        config.args = vec![script.display().to_string()];
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let working_directory = root.display().to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel_tx
+                .send(true)
+                .expect("cancel receiver should still exist");
+        });
+
+        let result = AcpManager::execute_prompt_with_config_stream(
+            config,
+            Duration::from_secs(5),
+            "please keep running",
+            Some(working_directory.as_str()),
+            None,
+            None,
+            Some(cancel_rx),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AcpExecutionError::Cancelled { agent_id }) if agent_id == "mock"
+        ));
 
         let _ = std::fs::remove_dir_all(root);
     }

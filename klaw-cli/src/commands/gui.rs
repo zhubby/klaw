@@ -122,6 +122,7 @@ impl GuiCommand {
                             let mut shutdown_rx = shutdown_rx;
                             let mut runtime_cmd_rx = runtime_cmd_rx;
                             let mut runtime_cmd_open = true;
+                            let mut active_acp_prompt_cancel: Option<watch::Sender<bool>> = None;
                             let channel_factory = build_channel_driver_factory(&config_for_thread)
                                 .map_err(|err| err.to_string())?;
                             let mut channel_manager =
@@ -271,6 +272,8 @@ impl GuiCommand {
                                                 timeout_seconds,
                                                 events,
                                             }) => {
+                                                let (cancel_tx, cancel_rx) = watch::channel(false);
+                                                active_acp_prompt_cancel = Some(cancel_tx);
                                                 let manager = Arc::clone(&acp_manager);
                                                 tokio::task::spawn_local(async move {
                                                     tracing::debug!(
@@ -307,11 +310,11 @@ impl GuiCommand {
                                                                 working_directory.as_deref(),
                                                                 timeout,
                                                                 Some(sink),
+                                                                Some(cancel_rx),
                                                             )
                                                             .await
-                                                            .map_err(|err| err.to_string())
                                                         }
-                                                        Err(err) => Err(err.to_string()),
+                                                        Err(err) => Err(err),
                                                     };
                                                     match result {
                                                         Ok(final_output) => {
@@ -319,11 +322,23 @@ impl GuiCommand {
                                                                 final_output,
                                                             });
                                                         }
+                                                        Err(klaw_acp::AcpExecutionError::Cancelled { .. }) => {
+                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Stopped);
+                                                        }
                                                         Err(err) => {
-                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Failed(err));
+                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Failed(err.to_string()));
                                                         }
                                                     }
                                                 });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::StopAcpPrompt { response }) => {
+                                                let result = match active_acp_prompt_cancel.take() {
+                                                    Some(cancel) => cancel
+                                                        .send(true)
+                                                        .map_err(|_| "acp prompt is no longer running".to_string()),
+                                                    None => Err("no ACP test prompt is currently running".to_string()),
+                                                };
+                                                let _ = response.send(result.map(|_| ()));
                                             }
                                             Some(klaw_gui::RuntimeCommand::RunCronNow { cron_id, response }) => {
                                                 let result = background.run_cron_now(&cron_id).await;

@@ -34,6 +34,8 @@ pub enum AcpExecutionError {
     Prompt(String),
     #[error("acp prompt timed out for `{agent_id}` after {timeout:?}")]
     Timeout { agent_id: String, timeout: Duration },
+    #[error("acp prompt cancelled for `{agent_id}`")]
+    Cancelled { agent_id: String },
     #[error("acp worker join failed: {0}")]
     WorkerJoin(String),
     #[error("acp agent `{agent_id}` returned no usable output")]

@@ -35,6 +35,7 @@ pub struct ProviderRuntimeSnapshot {
 pub enum AcpPromptEvent {
     Chunk(String),
     Completed { final_output: String },
+    Stopped,
     Failed(String),
 }
 
@@ -78,6 +79,9 @@ pub enum RuntimeCommand {
         working_directory: Option<String>,
         timeout_seconds: Option<u64>,
         events: mpsc::Sender<AcpPromptEvent>,
+    },
+    StopAcpPrompt {
+        response: mpsc::Sender<Result<(), String>>,
     },
     RunCronNow {
         cron_id: String,
@@ -535,6 +539,21 @@ pub fn request_execute_acp_prompt_stream(
     Ok(events_rx)
 }
 
+pub fn request_stop_acp_prompt() -> Result<(), String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::StopAcpPrompt {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "stop acp prompt")?
+}
+
 #[cfg(test)]
 mod tests {
     use super::AcpPromptEvent;
@@ -548,5 +567,10 @@ mod tests {
             AcpPromptEvent::Completed { final_output } => assert_eq!(final_output, "done"),
             _ => panic!("expected completed event"),
         }
+    }
+
+    #[test]
+    fn acp_prompt_event_stopped_is_distinct() {
+        assert!(matches!(AcpPromptEvent::Stopped, AcpPromptEvent::Stopped));
     }
 }

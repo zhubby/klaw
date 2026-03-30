@@ -14,3 +14,4 @@
 - ACP client 现在支持权限请求、文本文件读写和终端创建/读取/等待/释放/终止等基础反向能力。
 - ACP prompt 执行目录现在统一来自调用方传入的 `working_directory`，默认 adapter 模板对齐为 Zed 的 Claude/Codex ACP 包。
 - ACP prompt 执行现在支持可选的增量 update sink，可把 `session/update` 中的回答、思考和工具状态实时转发给 GUI。
+- ACP prompt 执行现在支持取消信号，GUI 可主动停止正在运行的测试 prompt。
