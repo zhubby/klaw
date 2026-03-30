@@ -685,7 +685,7 @@ impl AcpPanel {
                                 ui.strong("ID");
                             });
                             header.col(|ui| {
-                                ui.strong("Command");
+                                ui.strong("Adapter Command");
                             });
                             header.col(|ui| {
                                 ui.strong("State");
