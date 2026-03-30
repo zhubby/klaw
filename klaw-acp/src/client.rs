@@ -21,6 +21,15 @@ pub struct AcpSessionUpdateLog {
     pub raw_updates: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AcpPromptUpdate {
+    AnswerChunk(String),
+    ThoughtChunk(String),
+    ToolUpdate(String),
+}
+
+type PromptUpdateSink = Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>;
+
 impl AcpSessionUpdateLog {
     #[must_use]
     pub fn final_output(&self) -> String {
@@ -76,15 +85,25 @@ pub struct KlawAcpClient {
     session_root: PathBuf,
     updates: Arc<Mutex<BTreeMap<String, AcpSessionUpdateLog>>>,
     terminals: Arc<Mutex<BTreeMap<String, Arc<Mutex<TrackedTerminal>>>>>,
+    prompt_update_sink: Option<PromptUpdateSink>,
 }
 
 impl KlawAcpClient {
     #[must_use]
     pub fn new(session_root: PathBuf) -> Self {
+        Self::with_prompt_update_sink(session_root, None)
+    }
+
+    #[must_use]
+    pub fn with_prompt_update_sink(
+        session_root: PathBuf,
+        prompt_update_sink: Option<PromptUpdateSink>,
+    ) -> Self {
         Self {
             session_root,
             updates: Arc::new(Mutex::new(BTreeMap::new())),
             terminals: Arc::new(Mutex::new(BTreeMap::new())),
+            prompt_update_sink,
         }
     }
 
@@ -155,6 +174,30 @@ impl acp::Client for KlawAcpClient {
 
     async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
         let session_id = args.session_id.to_string();
+        let stream_update = match &args.update {
+            acp::SessionUpdate::AgentMessageChunk(chunk) => Some(AcpPromptUpdate::AnswerChunk(
+                render_content_block(&chunk.content).to_string(),
+            )),
+            acp::SessionUpdate::AgentThoughtChunk(chunk) => Some(AcpPromptUpdate::ThoughtChunk(
+                render_content_block(&chunk.content).to_string(),
+            )),
+            acp::SessionUpdate::ToolCall(tool_call) => Some(AcpPromptUpdate::ToolUpdate(format!(
+                "tool call: {:?} {}",
+                tool_call.kind, tool_call.title
+            ))),
+            acp::SessionUpdate::ToolCallUpdate(update) => Some(AcpPromptUpdate::ToolUpdate(
+                format!("tool update: {:?}", update),
+            )),
+            acp::SessionUpdate::Plan(plan) => {
+                Some(AcpPromptUpdate::ToolUpdate(format!("plan: {:?}", plan)))
+            }
+            _ => None,
+        };
+        if let Some(update) = stream_update
+            && let Some(sink) = self.prompt_update_sink.as_ref()
+        {
+            sink(update);
+        }
         self.mutate_session_log(session_id, |entry| {
             entry.raw_updates.push(format!("{:?}", args.update));
             match args.update {

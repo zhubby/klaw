@@ -1,6 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::runtime_bridge::{request_acp_status, request_execute_acp_prompt, request_sync_acp};
+use crate::runtime_bridge::{
+    AcpPromptEvent, request_acp_status, request_execute_acp_prompt_stream, request_sync_acp,
+};
 use crate::widgets::{ArrayEditor, KeyValueEditor};
 use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
@@ -94,6 +96,7 @@ struct PromptTestState {
     output: String,
     last_error: Option<String>,
     running: bool,
+    window_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -113,7 +116,7 @@ pub struct AcpPanel {
     runtime_statuses: BTreeMap<String, AcpRuntimeStatusRow>,
     status_fetch_rx: Option<Receiver<Result<AcpRuntimeSnapshot, String>>>,
     sync_fetch_rx: Option<Receiver<Result<AcpSyncResult, String>>>,
-    prompt_fetch_rx: Option<Receiver<Result<String, String>>>,
+    prompt_fetch_rx: Option<Receiver<AcpPromptEvent>>,
     prompt_test: PromptTestState,
     last_status_refresh_at: Option<Instant>,
     status_refresh_announce: bool,
@@ -289,29 +292,46 @@ impl AcpPanel {
         let Some(rx) = self.prompt_fetch_rx.as_ref() else {
             return;
         };
-        match rx.try_recv() {
-            Ok(Ok(output)) => {
-                self.prompt_test.running = false;
-                self.prompt_test.output = output;
-                self.prompt_test.last_error = None;
-                self.prompt_fetch_rx = None;
-                notifications.success("ACP test prompt completed");
+        let mut clear_receiver = false;
+        for _ in 0..64 {
+            match rx.try_recv() {
+                Ok(AcpPromptEvent::Chunk(chunk)) => {
+                    self.prompt_test.output.push_str(&chunk);
+                    self.prompt_test.window_open = true;
+                }
+                Ok(AcpPromptEvent::Completed { final_output }) => {
+                    self.prompt_test.running = false;
+                    if self.prompt_test.output.trim().is_empty() {
+                        self.prompt_test.output = final_output;
+                    }
+                    self.prompt_test.last_error = None;
+                    self.prompt_test.window_open = true;
+                    clear_receiver = true;
+                    notifications.success("ACP test prompt completed");
+                    break;
+                }
+                Ok(AcpPromptEvent::Failed(err)) => {
+                    self.prompt_test.running = false;
+                    self.prompt_test.last_error = Some(err.clone());
+                    self.prompt_test.window_open = true;
+                    clear_receiver = true;
+                    notifications.error(format!("ACP test prompt failed: {err}"));
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.prompt_test.running = false;
+                    self.prompt_test.last_error =
+                        Some("ACP test prompt task disconnected unexpectedly".to_string());
+                    self.prompt_test.window_open = true;
+                    clear_receiver = true;
+                    notifications.error("ACP test prompt task disconnected unexpectedly");
+                    break;
+                }
             }
-            Ok(Err(err)) => {
-                self.prompt_test.running = false;
-                self.prompt_test.last_error = Some(err.clone());
-                self.prompt_test.output.clear();
-                self.prompt_fetch_rx = None;
-                notifications.error(format!("ACP test prompt failed: {err}"));
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.prompt_test.running = false;
-                self.prompt_test.last_error =
-                    Some("ACP test prompt task disconnected unexpectedly".to_string());
-                self.prompt_fetch_rx = None;
-                notifications.error("ACP test prompt task disconnected unexpectedly");
-            }
+        }
+        if clear_receiver {
+            self.prompt_fetch_rx = None;
         }
     }
 
@@ -532,18 +552,26 @@ impl AcpPanel {
             },
         };
 
-        let (tx, rx) = mpsc::channel();
-        self.prompt_fetch_rx = Some(rx);
-        self.prompt_test.running = true;
-        self.prompt_test.last_error = None;
-        self.prompt_test.output.clear();
-
-        thread::spawn(move || {
-            let result =
-                request_execute_acp_prompt(&agent_id, &prompt, working_directory, timeout_seconds)
-                    .map(|result| result.output);
-            let _ = tx.send(result);
-        });
+        match request_execute_acp_prompt_stream(
+            &agent_id,
+            &prompt,
+            working_directory,
+            timeout_seconds,
+        ) {
+            Ok(rx) => {
+                self.prompt_fetch_rx = Some(rx);
+                self.prompt_test.running = true;
+                self.prompt_test.last_error = None;
+                self.prompt_test.output.clear();
+                self.prompt_test.window_open = true;
+            }
+            Err(err) => {
+                self.prompt_test.running = false;
+                self.prompt_test.last_error = Some(err.clone());
+                self.prompt_test.window_open = true;
+                notifications.error(format!("Failed to start ACP test prompt: {err}"));
+            }
+        }
     }
 
     fn render_stats(&self, ui: &mut egui::Ui) {
@@ -759,7 +787,9 @@ impl AcpPanel {
     fn render_test_prompt(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         ui.group(|ui| {
             ui.label(RichText::new("Test Prompt").strong());
-            ui.label("Run one real ACP prompt against a selected external agent.");
+            ui.label(
+                "Run one real ACP prompt against a selected external agent in a streaming popup.",
+            );
             ui.add_space(4.0);
 
             ui.horizontal(|ui| {
@@ -811,13 +841,26 @@ impl AcpPanel {
                 {
                     self.trigger_test_prompt(notifications);
                 }
-                if ui.button("Clear Output").clicked() {
+                if ui
+                    .add_enabled(
+                        self.prompt_test.running
+                            || !self.prompt_test.output.is_empty()
+                            || self.prompt_test.last_error.is_some(),
+                        egui::Button::new("Open Stream Window"),
+                    )
+                    .clicked()
+                {
+                    self.prompt_test.window_open = true;
+                }
+                if ui.button("Clear Stream").clicked() {
                     self.prompt_test.output.clear();
                     self.prompt_test.last_error = None;
                 }
                 if self.prompt_test.running {
                     ui.spinner();
                     ui.label("Running...");
+                } else if !self.prompt_test.output.is_empty() {
+                    ui.weak("Last run available in popup");
                 }
             });
 
@@ -830,15 +873,72 @@ impl AcpPanel {
                 );
                 ui.colored_label(Color32::LIGHT_RED, error);
             }
-
-            ui.add_space(8.0);
-            ui.label(RichText::new("Output").strong());
-            ui.add(
-                egui::TextEdit::multiline(&mut self.prompt_test.output)
-                    .desired_rows(8)
-                    .desired_width(f32::INFINITY),
-            );
         });
+    }
+
+    fn render_prompt_window(&mut self, ctx: &egui::Context) {
+        if !self.prompt_test.window_open {
+            return;
+        }
+
+        let mut open = true;
+        egui::Window::new("ACP Test Prompt Stream")
+            .open(&mut open)
+            .default_size([760.0, 520.0])
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Agent").strong());
+                    ui.monospace(self.prompt_test.agent_id.as_str());
+                    if self.prompt_test.running {
+                        ui.spinner();
+                        ui.label("Streaming...");
+                    } else if self.prompt_test.last_error.is_some() {
+                        ui.colored_label(Color32::LIGHT_RED, "Failed");
+                    } else {
+                        ui.colored_label(Color32::LIGHT_GREEN, "Completed");
+                    }
+                });
+
+                if !self.prompt_test.working_directory.trim().is_empty() {
+                    ui.small(format!(
+                        "working_directory: {}",
+                        self.prompt_test.working_directory.trim()
+                    ));
+                }
+
+                if let Some(error) = self.prompt_test.last_error.as_deref() {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Last Error")
+                            .strong()
+                            .color(Color32::LIGHT_RED),
+                    );
+                    ui.colored_label(Color32::LIGHT_RED, error);
+                }
+
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("acp-test-prompt-stream-window")
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        if self.prompt_test.output.trim().is_empty() {
+                            ui.weak("Waiting for ACP session updates...");
+                        } else {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(self.prompt_test.output.as_str()).monospace(),
+                                )
+                                .selectable(true)
+                                .wrap(),
+                            );
+                        }
+                    });
+            });
+
+        self.prompt_test.window_open = open;
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
@@ -1159,6 +1259,7 @@ impl PanelRenderer for AcpPanel {
             });
 
         self.render_detail_window(ui.ctx());
+        self.render_prompt_window(ui.ctx());
         self.render_form_window(ui, notifications);
         self.render_global_settings_window(ui, notifications);
         self.render_delete_confirm_dialog(ui.ctx(), notifications);

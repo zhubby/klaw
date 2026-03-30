@@ -1,5 +1,5 @@
 use crate::{
-    client::KlawAcpClient,
+    client::{AcpPromptUpdate, KlawAcpClient},
     hub::AcpAgentHub,
     runtime::{AcpExecutionError, AcpProxyTool, AcpToolDescriptor},
 };
@@ -20,6 +20,8 @@ use tokio::{
 };
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, info, warn};
+
+const ACP_PROMPT_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AcpAgentKey(String);
@@ -302,10 +304,37 @@ impl AcpManager {
         working_directory: Option<&str>,
         timeout: Option<Duration>,
     ) -> Result<String, AcpExecutionError> {
+        Self::execute_prompt_with_config_stream(
+            config,
+            startup_timeout,
+            prompt,
+            working_directory,
+            timeout,
+            None,
+        )
+        .await
+    }
+
+    pub async fn execute_prompt_with_config_stream(
+        config: AcpAgentConfig,
+        startup_timeout: Duration,
+        prompt: &str,
+        working_directory: Option<&str>,
+        timeout: Option<Duration>,
+        prompt_update_sink: Option<Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>>,
+    ) -> Result<String, AcpExecutionError> {
         let prompt = prompt.to_string();
         let working_directory = working_directory.map(ToString::to_string);
+        let prompt_update_sink = prompt_update_sink.clone();
         tokio::task::spawn_blocking(move || {
-            run_prompt_blocking(config, startup_timeout, prompt, working_directory, timeout)
+            run_prompt_blocking(
+                config,
+                startup_timeout,
+                prompt,
+                working_directory,
+                timeout,
+                prompt_update_sink,
+            )
         })
         .await
         .map_err(|err| AcpExecutionError::WorkerJoin(err.to_string()))?
@@ -464,6 +493,7 @@ fn run_prompt_blocking(
     prompt: String,
     working_directory: Option<String>,
     timeout: Option<Duration>,
+    prompt_update_sink: Option<Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>>,
 ) -> Result<String, AcpExecutionError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -471,7 +501,15 @@ fn run_prompt_blocking(
         .map_err(|err| AcpExecutionError::Runtime(err.to_string()))?;
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async move {
-        run_prompt_async(config, startup_timeout, prompt, working_directory, timeout).await
+        run_prompt_async(
+            config,
+            startup_timeout,
+            prompt,
+            working_directory,
+            timeout,
+            prompt_update_sink,
+        )
+        .await
     })
 }
 
@@ -481,6 +519,7 @@ async fn run_prompt_async(
     prompt: String,
     working_directory: Option<String>,
     timeout: Option<Duration>,
+    prompt_update_sink: Option<Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>>,
 ) -> Result<String, AcpExecutionError> {
     use acp::Agent as _;
 
@@ -493,7 +532,7 @@ async fn run_prompt_async(
     );
     let session_root = resolve_session_root(working_directory.as_deref())?;
     debug!(agent = %config.id, session_root = %session_root.display(), "resolved acp session root");
-    let client = KlawAcpClient::new(session_root.clone());
+    let client = KlawAcpClient::with_prompt_update_sink(session_root.clone(), prompt_update_sink);
 
     let mut command = tokio::process::Command::new(config.command.trim());
     command
@@ -537,7 +576,7 @@ async fn run_prompt_async(
             tokio::task::spawn_local(fut);
         },
     );
-    let io_handle = tokio::task::spawn_local(async move { io_driver.await });
+    let mut io_handle = tokio::task::spawn_local(async move { io_driver.await });
 
     let init_request = acp::InitializeRequest::new(acp::ProtocolVersion::from(1u16))
         .client_capabilities(
@@ -631,9 +670,29 @@ async fn run_prompt_async(
         .final_output();
     debug!(agent = %config.id, output_len = session_log.len(), "acp session output aggregated");
 
-    terminate_child(&mut child).await;
-    let _ = io_handle.await;
-    debug!(agent = %config.id, "acp agent child terminated");
+    match tokio::time::timeout(ACP_PROMPT_CLEANUP_TIMEOUT, terminate_child(&mut child)).await {
+        Ok(()) => {}
+        Err(_) => {
+            warn!(
+                agent = %config.id,
+                timeout_secs = ACP_PROMPT_CLEANUP_TIMEOUT.as_secs(),
+                "timed out waiting for acp child process shutdown"
+            );
+        }
+    }
+    match tokio::time::timeout(ACP_PROMPT_CLEANUP_TIMEOUT, &mut io_handle).await {
+        Ok(_) => {
+            debug!(agent = %config.id, "acp agent child terminated");
+        }
+        Err(_) => {
+            io_handle.abort();
+            warn!(
+                agent = %config.id,
+                timeout_secs = ACP_PROMPT_CLEANUP_TIMEOUT.as_secs(),
+                "timed out waiting for acp io driver shutdown; aborted local task"
+            );
+        }
+    }
 
     if session_log.trim().is_empty() {
         return Err(AcpExecutionError::EmptyResponse {

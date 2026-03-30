@@ -6,6 +6,7 @@
 
 - `Session` 面板顶部新增 `channel` 下拉筛选，并把筛选条件下沉到 session SQL 查询层，而不是在 GUI 内存列表中二次过滤
 - `ACP` 面板默认模板现在同时提供 Claude Code 与 Codex 两套 Zed adapter 启动参数，并移除了独立 `cwd` 编辑项
+- `ACP` 面板的 `Test Prompt` 改为弹窗式流式输出，运行中会实时展示 ACP session 返回的增量内容而不是停留在固定 `Output` 文本框
 
 ### Fixed
 

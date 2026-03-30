@@ -3,7 +3,7 @@ mod hub;
 mod manager;
 mod runtime;
 
-pub use client::{AcpSessionUpdateLog, KlawAcpClient};
+pub use client::{AcpPromptUpdate, AcpSessionUpdateLog, KlawAcpClient};
 pub use hub::AcpAgentHub;
 pub use manager::{
     AcpAgentKey, AcpAgentStatus, AcpBootstrapError, AcpConfigSnapshot, AcpInitHandle,

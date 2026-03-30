@@ -264,12 +264,12 @@ impl GuiCommand {
                                                 };
                                                 let _ = response.send(result);
                                             }
-                                            Some(klaw_gui::RuntimeCommand::ExecuteAcpPrompt {
+                                            Some(klaw_gui::RuntimeCommand::ExecuteAcpPromptStream {
                                                 agent_id,
                                                 prompt,
                                                 working_directory,
                                                 timeout_seconds,
-                                                response,
+                                                events,
                                             }) => {
                                                 let manager = Arc::clone(&acp_manager);
                                                 tokio::task::spawn_local(async move {
@@ -286,19 +286,43 @@ impl GuiCommand {
                                                         guard.agent_execution_config(&agent_id)
                                                     };
                                                     let result = match execution_config {
-                                                        Ok((config, startup_timeout)) => klaw_acp::AcpManager::execute_prompt_with_config(
-                                                            config,
-                                                            startup_timeout,
-                                                            &prompt,
-                                                            working_directory.as_deref(),
-                                                            timeout,
-                                                        )
-                                                        .await
-                                                        .map(|output| klaw_gui::AcpPromptResult { output })
-                                                        .map_err(|err| err.to_string()),
+                                                        Ok((config, startup_timeout)) => {
+                                                            let chunk_events = events.clone();
+                                                            let sink = Arc::new(move |update: klaw_acp::AcpPromptUpdate| {
+                                                                let chunk = match update {
+                                                                    klaw_acp::AcpPromptUpdate::AnswerChunk(text) => text,
+                                                                    klaw_acp::AcpPromptUpdate::ThoughtChunk(text) => {
+                                                                        format!("\n[thought] {text}\n")
+                                                                    }
+                                                                    klaw_acp::AcpPromptUpdate::ToolUpdate(text) => {
+                                                                        format!("\n[{text}]\n")
+                                                                    }
+                                                                };
+                                                                let _ = chunk_events.send(klaw_gui::AcpPromptEvent::Chunk(chunk));
+                                                            });
+                                                            klaw_acp::AcpManager::execute_prompt_with_config_stream(
+                                                                config,
+                                                                startup_timeout,
+                                                                &prompt,
+                                                                working_directory.as_deref(),
+                                                                timeout,
+                                                                Some(sink),
+                                                            )
+                                                            .await
+                                                            .map_err(|err| err.to_string())
+                                                        }
                                                         Err(err) => Err(err.to_string()),
                                                     };
-                                                    let _ = response.send(result);
+                                                    match result {
+                                                        Ok(final_output) => {
+                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Completed {
+                                                                final_output,
+                                                            });
+                                                        }
+                                                        Err(err) => {
+                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Failed(err));
+                                                        }
+                                                    }
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::RunCronNow { cron_id, response }) => {

@@ -31,9 +31,11 @@ pub struct ProviderRuntimeSnapshot {
     pub active_model: String,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct AcpPromptResult {
-    pub output: String,
+#[derive(Debug, Clone)]
+pub enum AcpPromptEvent {
+    Chunk(String),
+    Completed { final_output: String },
+    Failed(String),
 }
 
 #[derive(Debug)]
@@ -70,12 +72,12 @@ pub enum RuntimeCommand {
     GetAcpStatus {
         response: mpsc::Sender<Result<AcpRuntimeSnapshot, String>>,
     },
-    ExecuteAcpPrompt {
+    ExecuteAcpPromptStream {
         agent_id: String,
         prompt: String,
         working_directory: Option<String>,
         timeout_seconds: Option<u64>,
-        response: mpsc::Sender<Result<AcpPromptResult, String>>,
+        events: mpsc::Sender<AcpPromptEvent>,
     },
     RunCronNow {
         cron_id: String,
@@ -112,8 +114,6 @@ static RUNTIME_COMMAND_SENDER: OnceLock<Mutex<Option<UnboundedSender<RuntimeComm
 static LOG_RECEIVER: OnceLock<Mutex<Option<mpsc::Receiver<String>>>> = OnceLock::new();
 const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(1);
 const RUNTIME_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
-const DEFAULT_ACP_PROMPT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
-const ACP_PROMPT_TIMEOUT_BUFFER_SECONDS: u64 = 10;
 
 fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
     RUNTIME_COMMAND_SENDER.get_or_init(|| Mutex::new(None))
@@ -135,12 +135,6 @@ fn recv_response<T>(
         mpsc::RecvTimeoutError::Disconnected => {
             "runtime command response channel closed".to_string()
         }
-    })
-}
-
-fn acp_prompt_response_timeout(timeout_seconds: Option<u64>) -> Duration {
-    timeout_seconds.map_or(DEFAULT_ACP_PROMPT_RESPONSE_TIMEOUT, |seconds| {
-        Duration::from_secs(seconds.saturating_add(ACP_PROMPT_TIMEOUT_BUFFER_SECONDS))
     })
 }
 
@@ -517,56 +511,42 @@ pub fn request_acp_status() -> Result<AcpRuntimeSnapshot, String> {
     }
 }
 
-pub fn request_execute_acp_prompt(
+pub fn request_execute_acp_prompt_stream(
     agent_id: &str,
     prompt: &str,
     working_directory: Option<String>,
     timeout_seconds: Option<u64>,
-) -> Result<AcpPromptResult, String> {
+) -> Result<mpsc::Receiver<AcpPromptEvent>, String> {
     let sender = sender_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone()
         .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
+    let (events_tx, events_rx) = mpsc::channel();
     sender
-        .send(RuntimeCommand::ExecuteAcpPrompt {
+        .send(RuntimeCommand::ExecuteAcpPromptStream {
             agent_id: agent_id.to_string(),
             prompt: prompt.to_string(),
             working_directory,
             timeout_seconds,
-            response: response_tx,
+            events: events_tx,
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(
-        response_rx,
-        acp_prompt_response_timeout(timeout_seconds),
-        "execute acp prompt",
-    )?
+    Ok(events_rx)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ACP_PROMPT_TIMEOUT_BUFFER_SECONDS, DEFAULT_ACP_PROMPT_RESPONSE_TIMEOUT,
-        acp_prompt_response_timeout,
-    };
-    use std::time::Duration;
+    use super::AcpPromptEvent;
 
     #[test]
-    fn acp_prompt_timeout_uses_long_default_when_not_provided() {
-        assert_eq!(
-            acp_prompt_response_timeout(None),
-            DEFAULT_ACP_PROMPT_RESPONSE_TIMEOUT
-        );
-    }
-
-    #[test]
-    fn acp_prompt_timeout_adds_buffer_to_user_timeout() {
-        assert_eq!(
-            acp_prompt_response_timeout(Some(45)),
-            Duration::from_secs(45 + ACP_PROMPT_TIMEOUT_BUFFER_SECONDS)
-        );
+    fn acp_prompt_event_completed_carries_final_output() {
+        let event = AcpPromptEvent::Completed {
+            final_output: "done".to_string(),
+        };
+        match event {
+            AcpPromptEvent::Completed { final_output } => assert_eq!(final_output, "done"),
+            _ => panic!("expected completed event"),
+        }
     }
 }
