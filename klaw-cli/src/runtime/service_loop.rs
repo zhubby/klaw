@@ -1,9 +1,9 @@
 use super::{RuntimeBundle, drain_runtime_queue};
 use klaw_channel::dingtalk::{DingtalkProxyConfig, send_session_webhook_markdown_via_proxy};
 use klaw_channel::telegram::dispatch_background_outbound as dispatch_telegram_background_outbound;
-use klaw_config::AppConfig;
+use klaw_config::{AppConfig, CronMissedRunPolicy};
 use klaw_core::{Envelope, InboundMessage, OutboundMessage};
-use klaw_cron::{CronWorker, CronWorkerConfig};
+use klaw_cron::{CronWorker, CronWorkerConfig, MissedRunPolicy};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig};
 use klaw_storage::DefaultSessionStore;
 use std::{
@@ -27,6 +27,7 @@ pub struct BackgroundServiceConfig {
     pub runtime_tick_interval: Duration,
     pub runtime_drain_batch: usize,
     pub cron_batch_limit: i64,
+    pub cron_missed_run_policy: MissedRunPolicy,
     pub dingtalk_titles: BTreeMap<String, String>,
     pub dingtalk_proxies: BTreeMap<String, DingtalkProxyConfig>,
     pub telegram_configs: BTreeMap<String, klaw_config::TelegramConfig>,
@@ -39,6 +40,10 @@ impl BackgroundServiceConfig {
             runtime_tick_interval: Duration::from_millis(config.cron.runtime_tick_ms),
             runtime_drain_batch: config.cron.runtime_drain_batch,
             cron_batch_limit: config.cron.batch_limit,
+            cron_missed_run_policy: match config.cron.missed_run_policy {
+                CronMissedRunPolicy::Skip => MissedRunPolicy::Skip,
+                CronMissedRunPolicy::CatchUp => MissedRunPolicy::CatchUp,
+            },
             dingtalk_titles: config
                 .channels
                 .dingtalk
@@ -76,6 +81,7 @@ impl Default for BackgroundServiceConfig {
             runtime_tick_interval: Duration::from_millis(200),
             runtime_drain_batch: 8,
             cron_batch_limit: 64,
+            cron_missed_run_policy: MissedRunPolicy::Skip,
             dingtalk_titles: BTreeMap::new(),
             dingtalk_proxies: BTreeMap::new(),
             telegram_configs: BTreeMap::new(),
@@ -101,6 +107,7 @@ impl BackgroundServices {
             CronWorkerConfig {
                 poll_interval: Duration::from_secs(1),
                 batch_limit: config.cron_batch_limit,
+                missed_run_policy: config.cron_missed_run_policy,
             },
         );
         let heartbeat_worker = HeartbeatWorker::new(

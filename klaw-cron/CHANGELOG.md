@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-30
+
+### Changed
+
+- `CronWorker` 新增 `MissedRunPolicy`；默认 `Skip` 会在服务恢复后直接跳到当前时间之后的下一次触发，显式启用 `CatchUp` 时才会逐次补偿停机期间错过的执行点
+
 ## 2026-03-29
 
 ### Fixed
