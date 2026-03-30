@@ -5,7 +5,9 @@ use klaw_config::{AppConfig, CronMissedRunPolicy};
 use klaw_core::{Envelope, InboundMessage, OutboundMessage};
 use klaw_cron::{CronWorker, CronWorkerConfig, MissedRunPolicy};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig};
+use klaw_session::{SessionManager, SqliteSessionManager};
 use klaw_storage::DefaultSessionStore;
+use serde_json::Value;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, mpsc},
@@ -100,7 +102,8 @@ pub struct BackgroundServices {
 
 impl BackgroundServices {
     pub fn new(runtime: &RuntimeBundle, config: BackgroundServiceConfig) -> Self {
-        let outbound_dispatch_tx = spawn_outbound_dispatcher(config.clone());
+        let outbound_dispatch_tx =
+            spawn_outbound_dispatcher(config.clone(), runtime.session_store.clone());
         let cron_worker = CronWorker::new(
             std::sync::Arc::new(runtime.session_store.clone()),
             std::sync::Arc::new(runtime.inbound_transport.clone()),
@@ -214,6 +217,7 @@ impl BackgroundServices {
 
 fn spawn_outbound_dispatcher(
     config: BackgroundServiceConfig,
+    session_store: DefaultSessionStore,
 ) -> mpsc::Sender<Envelope<OutboundMessage>> {
     let (tx, rx) = mpsc::channel::<Envelope<OutboundMessage>>();
     thread::Builder::new()
@@ -231,7 +235,9 @@ fn spawn_outbound_dispatcher(
             };
 
             for msg in rx {
-                if let Err(err) = runtime.block_on(dispatch_outbound_message(&msg, &config)) {
+                if let Err(err) =
+                    runtime.block_on(dispatch_outbound_message(&msg, &config, &session_store))
+                {
                     warn!(
                         session_key = msg.header.session_key.as_str(),
                         channel = msg.payload.channel.as_str(),
@@ -248,6 +254,7 @@ fn spawn_outbound_dispatcher(
 async fn dispatch_outbound_message(
     msg: &Envelope<OutboundMessage>,
     config: &BackgroundServiceConfig,
+    session_store: &DefaultSessionStore,
 ) -> Result<(), String> {
     if msg
         .payload
@@ -260,7 +267,7 @@ async fn dispatch_outbound_message(
     }
 
     match msg.payload.channel.as_str() {
-        "dingtalk" => dispatch_dingtalk_outbound_message(msg, config).await,
+        "dingtalk" => dispatch_dingtalk_outbound_message(msg, config, session_store).await,
         "telegram" => dispatch_telegram_outbound_message(msg, config).await,
         _ => Ok(()),
     }
@@ -269,6 +276,7 @@ async fn dispatch_outbound_message(
 async fn dispatch_dingtalk_outbound_message(
     msg: &Envelope<OutboundMessage>,
     config: &BackgroundServiceConfig,
+    session_store: &DefaultSessionStore,
 ) -> Result<(), String> {
     let Some(session_webhook) = msg
         .payload
@@ -300,7 +308,7 @@ async fn dispatch_dingtalk_outbound_message(
         .unwrap_or_default();
 
     let body = render_outbound_markdown(&msg.payload);
-    timeout(
+    let initial_result = timeout(
         OUTBOUND_DISPATCH_TIMEOUT,
         send_session_webhook_markdown_via_proxy(&proxy, session_webhook, &bot_title, &body),
     )
@@ -311,7 +319,41 @@ async fn dispatch_dingtalk_outbound_message(
             OUTBOUND_DISPATCH_TIMEOUT.as_secs()
         )
     })?
-    .map_err(|err| err.to_string())
+    .map_err(|err| err.to_string());
+    let err = match initial_result {
+        Ok(()) => return Ok(()),
+        Err(err) => err,
+    };
+    if !is_dingtalk_session_not_found_error(&err) {
+        return Err(err);
+    }
+
+    let Some(refreshed) =
+        refresh_dingtalk_delivery_target(session_store, &msg.payload.metadata).await
+    else {
+        return Err(err);
+    };
+    if refreshed.session_webhook == session_webhook {
+        return Err(err);
+    }
+    let retry_title = refreshed.bot_title.unwrap_or(bot_title);
+    timeout(
+        OUTBOUND_DISPATCH_TIMEOUT,
+        send_session_webhook_markdown_via_proxy(
+            &proxy,
+            &refreshed.session_webhook,
+            &retry_title,
+            &body,
+        ),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "dingtalk outbound delivery timed out after {}s",
+            OUTBOUND_DISPATCH_TIMEOUT.as_secs()
+        )
+    })?
+    .map_err(|retry_err| format!("{err}; retry_after_refresh={retry_err}"))
 }
 
 async fn dispatch_telegram_outbound_message(
@@ -347,6 +389,60 @@ fn infer_account_id<'a>(session_key: &'a str, expected_channel: &str) -> Option<
     parts.next()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RefreshedDingtalkDeliveryTarget {
+    session_webhook: String,
+    bot_title: Option<String>,
+}
+
+fn is_dingtalk_session_not_found_error(err: &str) -> bool {
+    err.contains("errcode=300001") && err.contains("session 不存在")
+}
+
+async fn refresh_dingtalk_delivery_target(
+    session_store: &DefaultSessionStore,
+    metadata: &BTreeMap<String, Value>,
+) -> Option<RefreshedDingtalkDeliveryTarget> {
+    let manager = SqliteSessionManager::from_store(session_store.clone());
+    let target_session_key = if let Some(base_session_key) = metadata
+        .get("channel.base_session_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let base = manager.get_session(base_session_key).await.ok()?;
+        base.active_session_key
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| base.session_key.clone())
+    } else {
+        metadata
+            .get("channel.delivery_session_key")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?
+            .to_string()
+    };
+    let session = manager.get_session(&target_session_key).await.ok()?;
+    let raw = session.delivery_metadata_json.as_deref()?;
+    let persisted = serde_json::from_str::<serde_json::Map<String, Value>>(raw).ok()?;
+    let session_webhook = persisted
+        .get("channel.dingtalk.session_webhook")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let bot_title = persisted
+        .get("channel.dingtalk.bot_title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    Some(RefreshedDingtalkDeliveryTarget {
+        session_webhook,
+        bot_title,
+    })
+}
+
 fn render_outbound_markdown(output: &OutboundMessage) -> String {
     match output
         .metadata
@@ -357,5 +453,132 @@ fn render_outbound_markdown(output: &OutboundMessage) -> String {
             format!("{}\n\n---\n\n> reasoning\n{}\n", output.content, reasoning)
         }
         _ => output.content.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_dingtalk_session_not_found_error, refresh_dingtalk_delivery_target};
+    use klaw_session::{SessionManager, SqliteSessionManager};
+    use klaw_storage::{DefaultSessionStore, StoragePaths};
+    use serde_json::json;
+    use std::{collections::BTreeMap, path::PathBuf};
+    use uuid::Uuid;
+
+    async fn create_store() -> DefaultSessionStore {
+        let root = PathBuf::from(std::env::temp_dir())
+            .join(format!("klaw-service-loop-{}", Uuid::new_v4()));
+        DefaultSessionStore::open(StoragePaths::from_root(root))
+            .await
+            .expect("store should open")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_dingtalk_delivery_target_uses_active_session_metadata() {
+        let store = create_store().await;
+        let manager = SqliteSessionManager::from_store(store.clone());
+        manager
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "provider",
+                "model",
+            )
+            .await
+            .expect("base session should exist");
+        manager
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1:child",
+                "chat-1",
+                "dingtalk",
+                "provider",
+                "model",
+            )
+            .await
+            .expect("child session should exist");
+        manager
+            .set_active_session(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "dingtalk:acc:chat-1:child",
+            )
+            .await
+            .expect("active session should update");
+        manager
+            .set_delivery_metadata(
+                "dingtalk:acc:chat-1:child",
+                "chat-1",
+                "dingtalk",
+                Some(
+                    "{\"channel.dingtalk.session_webhook\":\"https://example/new\",\"channel.dingtalk.bot_title\":\"Klaw\"}",
+                ),
+            )
+            .await
+            .expect("delivery metadata should persist");
+
+        let metadata = BTreeMap::from([
+            (
+                "channel.base_session_key".to_string(),
+                json!("dingtalk:acc:chat-1"),
+            ),
+            (
+                "channel.dingtalk.session_webhook".to_string(),
+                json!("https://example/stale"),
+            ),
+        ]);
+        let refreshed = refresh_dingtalk_delivery_target(&store, &metadata)
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(refreshed.session_webhook, "https://example/new");
+        assert_eq!(refreshed.bot_title.as_deref(), Some("Klaw"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_dingtalk_delivery_target_falls_back_to_delivery_session_key() {
+        let store = create_store().await;
+        let manager = SqliteSessionManager::from_store(store.clone());
+        manager
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-2:child",
+                "chat-2",
+                "dingtalk",
+                "provider",
+                "model",
+            )
+            .await
+            .expect("session should exist");
+        manager
+            .set_delivery_metadata(
+                "dingtalk:acc:chat-2:child",
+                "chat-2",
+                "dingtalk",
+                Some("{\"channel.dingtalk.session_webhook\":\"https://example/current\"}"),
+            )
+            .await
+            .expect("delivery metadata should persist");
+        let metadata = BTreeMap::from([(
+            "channel.delivery_session_key".to_string(),
+            json!("dingtalk:acc:chat-2:child"),
+        )]);
+
+        let refreshed = refresh_dingtalk_delivery_target(&store, &metadata)
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(refreshed.session_webhook, "https://example/current");
+        assert_eq!(refreshed.bot_title, None);
+    }
+
+    #[test]
+    fn detects_dingtalk_session_not_found_error() {
+        assert!(is_dingtalk_session_not_found_error(
+            "dingtalk session webhook markdown send failed: errcode=300001 errmsg=session 不存在"
+        ));
+        assert!(!is_dingtalk_session_not_found_error(
+            "dingtalk session webhook markdown send failed: errcode=40035 errmsg=invalid"
+        ));
     }
 }

@@ -2,6 +2,11 @@
 
 ## 2026-03-30
 
+### Fixed
+
+- background DingTalk outbound delivery now treats `errcode=300001` / `session 不存在` as a recoverable stale-session-webhook failure, reloads the latest delivery metadata from the routed session, and retries once when a newer `session_webhook` is available
+- webhook isolated turns now copy `channel.base_session_key` and `channel.delivery_session_key` into inbound metadata so background channel dispatch can re-resolve the latest delivery target after webhook execution sessions are restored or the active IM session changes
+
 ### Added
 
 - runtime bootstrap 新增 ACP manager 初始化链路，会按 `config.acp` 注册 ACP agent proxy tools

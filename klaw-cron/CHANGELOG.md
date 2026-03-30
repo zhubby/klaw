@@ -2,6 +2,10 @@
 
 ## 2026-03-30
 
+### Fixed
+
+- `CronWorker` 现在会把 `channel.base_session_key` 与解析后的 `channel.delivery_session_key` 一并写入已发布的入站 metadata，允许后台 channel dispatcher 在 DingTalk `session_webhook` 失效后重新解析最新 active session 并做单次补发
+
 ### Changed
 
 - `CronWorker` 新增 `MissedRunPolicy`；默认 `Skip` 会在服务恢复后直接跳到当前时间之后的下一次触发，显式启用 `CatchUp` 时才会逐次补偿停机期间错过的执行点
