@@ -1,4 +1,5 @@
 use clap::Args;
+use klaw_acp::AcpConfigSnapshot;
 use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
 use klaw_llm::ToolDefinition;
@@ -121,6 +122,7 @@ impl GuiCommand {
                             let mut shutdown_rx = shutdown_rx;
                             let mut runtime_cmd_rx = runtime_cmd_rx;
                             let mut runtime_cmd_open = true;
+                            let mut active_acp_prompt_cancel: Option<watch::Sender<bool>> = None;
                             let channel_factory = build_channel_driver_factory(&config_for_thread)
                                 .map_err(|err| err.to_string())?;
                             let mut channel_manager =
@@ -129,6 +131,10 @@ impl GuiCommand {
 
                             let mcp_manager = {
                                 let guard = runtime.mcp_init.lock().await;
+                                guard.manager()
+                            };
+                            let acp_manager = {
+                                let guard = runtime.acp_init.lock().await;
                                 guard.manager()
                             };
 
@@ -201,6 +207,21 @@ impl GuiCommand {
                                                     let _ = response.send(result);
                                                 });
                                             }
+                                            Some(klaw_gui::RuntimeCommand::SyncAcp { response }) => {
+                                                let manager = Arc::clone(&acp_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            let acp_snapshot = AcpConfigSnapshot::from_config(&snapshot.config.acp);
+                                                            let mut guard = manager.lock().await;
+                                                            Ok(guard.sync(Arc::clone(&manager), acp_snapshot).await)
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
+                                            }
                                             Some(klaw_gui::RuntimeCommand::SyncTools { response }) => {
                                                 let result = match ConfigStore::open(None) {
                                                     Ok(store) => {
@@ -229,6 +250,95 @@ impl GuiCommand {
                                                     Err(err) => Err(err.to_string()),
                                                 };
                                                 let _ = response.send(result);
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::GetAcpStatus { response }) => {
+                                                let result = match ConfigStore::open(None) {
+                                                    Ok(store) => {
+                                                        let snapshot = store.snapshot();
+                                                        let acp_snapshot = AcpConfigSnapshot::from_config(&snapshot.config.acp);
+                                                        match acp_manager.try_lock() {
+                                                            Ok(guard) => Ok(guard.runtime_snapshot(&acp_snapshot)),
+                                                            Err(_) => Err("acp manager is busy".to_string()),
+                                                        }
+                                                    }
+                                                    Err(err) => Err(err.to_string()),
+                                                };
+                                                let _ = response.send(result);
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::ExecuteAcpPromptStream {
+                                                agent_id,
+                                                prompt,
+                                                working_directory,
+                                                timeout_seconds,
+                                                events,
+                                            }) => {
+                                                let (cancel_tx, cancel_rx) = watch::channel(false);
+                                                active_acp_prompt_cancel = Some(cancel_tx);
+                                                let manager = Arc::clone(&acp_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    tracing::debug!(
+                                                        agent = %agent_id,
+                                                        working_directory = ?working_directory,
+                                                        timeout_seconds,
+                                                        prompt_len = prompt.len(),
+                                                        "gui requested acp test prompt"
+                                                    );
+                                                    let timeout = timeout_seconds.map(std::time::Duration::from_secs);
+                                                    let execution_config = {
+                                                        let guard = manager.lock().await;
+                                                        guard.agent_execution_config(&agent_id)
+                                                    };
+                                                    let result = match execution_config {
+                                                        Ok((config, startup_timeout)) => {
+                                                            let chunk_events = events.clone();
+                                                            let sink = Arc::new(move |update: klaw_acp::AcpPromptUpdate| {
+                                                                let chunk = match update {
+                                                                    klaw_acp::AcpPromptUpdate::AnswerChunk(text) => text,
+                                                                    klaw_acp::AcpPromptUpdate::ThoughtChunk(text) => {
+                                                                        format!("\n[thought] {text}\n")
+                                                                    }
+                                                                    klaw_acp::AcpPromptUpdate::ToolUpdate(text) => {
+                                                                        format!("\n[{text}]\n")
+                                                                    }
+                                                                };
+                                                                let _ = chunk_events.send(klaw_gui::AcpPromptEvent::Chunk(chunk));
+                                                            });
+                                                            klaw_acp::AcpManager::execute_prompt_with_config_stream(
+                                                                config,
+                                                                startup_timeout,
+                                                                &prompt,
+                                                                working_directory.as_deref(),
+                                                                timeout,
+                                                                Some(sink),
+                                                                Some(cancel_rx),
+                                                            )
+                                                            .await
+                                                        }
+                                                        Err(err) => Err(err),
+                                                    };
+                                                    match result {
+                                                        Ok(final_output) => {
+                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Completed {
+                                                                final_output,
+                                                            });
+                                                        }
+                                                        Err(klaw_acp::AcpExecutionError::Cancelled { .. }) => {
+                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Stopped);
+                                                        }
+                                                        Err(err) => {
+                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Failed(err.to_string()));
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::StopAcpPrompt { response }) => {
+                                                let result = match active_acp_prompt_cancel.take() {
+                                                    Some(cancel) => cancel
+                                                        .send(true)
+                                                        .map_err(|_| "acp prompt is no longer running".to_string()),
+                                                    None => Err("no ACP test prompt is currently running".to_string()),
+                                                };
+                                                let _ = response.send(result.map(|_| ()));
                                             }
                                             Some(klaw_gui::RuntimeCommand::RunCronNow { cron_id, response }) => {
                                                 let result = background.run_cron_now(&cron_id).await;

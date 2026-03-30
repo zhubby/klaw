@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-03-30
+
+### Added
+
+- runtime bootstrap 新增 ACP manager 初始化链路，会按 `config.acp` 注册 ACP agent proxy tools
+
+### Changed
+
+- runtime shutdown 现在会同时关闭 MCP server 和 ACP agent manager，避免外部 agent 生命周期泄漏
+- ACP proxy tool 现在会实际通过 stdio 调起外部 ACP agent，并代理文件读写、终端与权限请求所需的客户端能力
+
 ## 2026-03-29
 
 ### Added

@@ -1,0 +1,19 @@
+[package]
+name = "klaw-acp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+
+[dependencies]
+agent-client-protocol = { workspace = true }
+async-trait = { workspace = true }
+klaw-config = { workspace = true }
+klaw-tool = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "process", "sync", "time"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }

@@ -1,3 +1,4 @@
+use klaw_acp::{AcpRuntimeSnapshot, AcpSyncResult};
 use klaw_channel::ChannelSyncResult;
 use klaw_config::TailscaleMode;
 use klaw_gateway::{GatewayRuntimeInfo, TailscaleHostInfo};
@@ -30,6 +31,14 @@ pub struct ProviderRuntimeSnapshot {
     pub active_model: String,
 }
 
+#[derive(Debug, Clone)]
+pub enum AcpPromptEvent {
+    Chunk(String),
+    Completed { final_output: String },
+    Stopped,
+    Failed(String),
+}
+
 #[derive(Debug)]
 pub enum RuntimeCommand {
     ReloadSkillsPrompt,
@@ -49,6 +58,9 @@ pub enum RuntimeCommand {
     SyncMcp {
         response: mpsc::Sender<Result<McpSyncResult, String>>,
     },
+    SyncAcp {
+        response: mpsc::Sender<Result<AcpSyncResult, String>>,
+    },
     SyncTools {
         response: mpsc::Sender<Result<Vec<String>, String>>,
     },
@@ -57,6 +69,19 @@ pub enum RuntimeCommand {
     },
     GetMcpStatus {
         response: mpsc::Sender<Result<McpRuntimeSnapshot, String>>,
+    },
+    GetAcpStatus {
+        response: mpsc::Sender<Result<AcpRuntimeSnapshot, String>>,
+    },
+    ExecuteAcpPromptStream {
+        agent_id: String,
+        prompt: String,
+        working_directory: Option<String>,
+        timeout_seconds: Option<u64>,
+        events: mpsc::Sender<AcpPromptEvent>,
+    },
+    StopAcpPrompt {
+        response: mpsc::Sender<Result<(), String>>,
     },
     RunCronNow {
         cron_id: String,
@@ -392,6 +417,22 @@ pub fn request_sync_mcp() -> Result<McpSyncResult, String> {
     recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync mcp")?
 }
 
+pub fn request_sync_acp() -> Result<AcpSyncResult, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::SyncAcp {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync acp")?
+}
+
 pub fn request_sync_tools() -> Result<Vec<String>, String> {
     let sender = sender_slot()
         .lock()
@@ -446,5 +487,90 @@ pub fn request_mcp_status() -> Result<McpRuntimeSnapshot, String> {
     match recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "mcp status") {
         Ok(result) => result,
         Err(error) => Err(error),
+    }
+}
+
+pub fn request_acp_status() -> Result<AcpRuntimeSnapshot, String> {
+    let sender = match sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+    {
+        Some(s) => s,
+        None => return Err("runtime command channel is not available".to_string()),
+    };
+    let (response_tx, response_rx) = mpsc::channel();
+    if sender
+        .send(RuntimeCommand::GetAcpStatus {
+            response: response_tx,
+        })
+        .is_err()
+    {
+        return Err("failed to send runtime command".to_string());
+    }
+
+    match recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "acp status") {
+        Ok(result) => result,
+        Err(error) => Err(error),
+    }
+}
+
+pub fn request_execute_acp_prompt_stream(
+    agent_id: &str,
+    prompt: &str,
+    working_directory: Option<String>,
+    timeout_seconds: Option<u64>,
+) -> Result<mpsc::Receiver<AcpPromptEvent>, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (events_tx, events_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::ExecuteAcpPromptStream {
+            agent_id: agent_id.to_string(),
+            prompt: prompt.to_string(),
+            working_directory,
+            timeout_seconds,
+            events: events_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+    Ok(events_rx)
+}
+
+pub fn request_stop_acp_prompt() -> Result<(), String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::StopAcpPrompt {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "stop acp prompt")?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AcpPromptEvent;
+
+    #[test]
+    fn acp_prompt_event_completed_carries_final_output() {
+        let event = AcpPromptEvent::Completed {
+            final_output: "done".to_string(),
+        };
+        match event {
+            AcpPromptEvent::Completed { final_output } => assert_eq!(final_output, "done"),
+            _ => panic!("expected completed event"),
+        }
+    }
+
+    #[test]
+    fn acp_prompt_event_stopped_is_distinct() {
+        assert!(matches!(AcpPromptEvent::Stopped, AcpPromptEvent::Stopped));
     }
 }

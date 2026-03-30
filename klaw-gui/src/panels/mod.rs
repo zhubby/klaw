@@ -1,3 +1,4 @@
+mod acp;
 mod analyze_dashboard;
 mod approval;
 mod archive;
@@ -47,6 +48,7 @@ pub struct PanelRegistry {
     setting: setting::SettingPanel,
     session: session::SessionPanel,
     approval: approval::ApprovalPanel,
+    acp: acp::AcpPanel,
     configuration: configuration::ConfigurationPanel,
     provider: provider::ProviderPanel,
     channel: channel::ChannelPanel,
@@ -85,6 +87,7 @@ impl PanelRegistry {
             WorkbenchMenu::Setting => self.setting.render(ui, ctx, notifications),
             WorkbenchMenu::Session => self.session.render(ui, ctx, notifications),
             WorkbenchMenu::Approval => self.approval.render(ui, ctx, notifications),
+            WorkbenchMenu::Acp => self.acp.render(ui, ctx, notifications),
             WorkbenchMenu::Configuration => self.configuration.render(ui, ctx, notifications),
             WorkbenchMenu::Provider => self.provider.render(ui, ctx, notifications),
             WorkbenchMenu::Llm => self.llm.render(ui, ctx, notifications),

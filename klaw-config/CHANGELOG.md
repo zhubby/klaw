@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-03-30
+
+### Added
+
+- 新增顶层 `acp` 配置块，支持声明 ACP agent 启动超时和 agent 列表
+- 新增 `AcpAgentConfig`，用于描述外部 ACP agent 的 `id`、`command`、`args`、`env` 和描述信息
+
+### Changed
+
+- 默认 ACP agent 模板现在预填两套 Zed adapter：`npx -y @zed-industries/claude-agent-acp` 与 `npx -y @zed-industries/codex-acp`
+- ACP agent 配置不再持久化独立 `cwd`；实际运行目录统一由调用时传入的 `working_directory` 决定
+
 ## 2026-03-29
 
 ### Changed

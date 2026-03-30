@@ -39,6 +39,20 @@ Memory 模块实施计划（Turso/libSQL 优先）：
 - `klaw-cron` - 复用为底层调度机制
 - `klaw-storage` - 复用 `CronStorage`（v1 不新增表）
 
+### [ACP Client 集成设计](./acp-client-integration.md)
+
+ACP 客户端接入设计:
+
+- **定位**：让 klaw 成为 ACP client，调用外部 ACP Agent
+- **目标能力**：以 tool 形式集成 Claude Code、Codex CLI 等编码 Agent
+- **复用模式**：沿用 `klaw-mcp` 的 `manager + hub + proxy tool` 架构
+
+涉及 crate：
+- `klaw-acp` - ACP 客户端生命周期与连接管理
+- `klaw-config` - ACP agent 配置模型
+- `klaw-cli` - runtime 启动与 tool 注册
+- `klaw-tool` - 复用 Tool 抽象承载 ACP proxy tool
+
 ### [Voice 模块设计](./voice-module-design.md)
 
 语音转文字（STT）和文字转语音（TTS）能力设计：

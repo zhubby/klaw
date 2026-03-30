@@ -3,6 +3,7 @@ pub mod gateway_manager;
 pub mod service_loop;
 pub mod webhook;
 
+use klaw_acp::{AcpConfigSnapshot, AcpInitHandle, AcpManager};
 use klaw_agent::{
     AgentExecutionOutput, AgentExecutionStreamEvent, ConversationMessage, ConversationSummary,
     build_compression_prompt, build_provider_from_config, merge_or_reset_summary,
@@ -87,6 +88,7 @@ pub struct RuntimeBundle {
     pub subscription: Subscription,
     pub session_store: DefaultSessionStore,
     pub mcp_init: Mutex<McpInitHandle>,
+    pub acp_init: Mutex<AcpInitHandle>,
     pub startup_report: StartupReport,
     pub observability: Option<ObservabilityHandle>,
     pub conversation_history_limit: usize,
@@ -1044,6 +1046,11 @@ fn spawn_mcp_init(tools: &ToolRegistry, config: &McpConfig) -> Mutex<McpInitHand
     Mutex::new(McpManager::spawn_init(tools.clone(), snapshot))
 }
 
+fn spawn_acp_init(tools: &ToolRegistry, config: &klaw_config::AcpConfig) -> Mutex<AcpInitHandle> {
+    let snapshot = AcpConfigSnapshot::from_config(config);
+    Mutex::new(AcpManager::spawn_init(tools.clone(), snapshot))
+}
+
 fn default_model_for_provider(runtime: &RuntimeBundle, provider_id: &str) -> String {
     let snapshot = provider_runtime_snapshot(runtime);
     snapshot
@@ -1986,6 +1993,18 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         "bootstrapping mcp servers"
     );
     let mcp_init = spawn_mcp_init(&tools, &config.mcp);
+    let configured_acp_agents = config
+        .acp
+        .agents
+        .iter()
+        .filter(|agent| agent.enabled)
+        .count();
+    info!(
+        configured_agents = configured_acp_agents,
+        startup_timeout_seconds = config.acp.startup_timeout_seconds,
+        "bootstrapping acp agents"
+    );
+    let acp_init = spawn_acp_init(&tools, &config.acp);
 
     ensure_workspace_prompt_templates_if_possible().await;
     let loaded_skills = load_skills_system_prompt(config).await;
@@ -2074,6 +2093,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         },
         session_store,
         mcp_init,
+        acp_init,
         observability,
         conversation_history_limit: config.conversation_history_limit,
         llm_audit_tx,
@@ -2139,17 +2159,53 @@ fn spawn_tool_audit_writer(
 }
 
 pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<dyn Error>> {
-    info!("shutting down runtime mcp servers");
-    let guard = runtime.mcp_init.lock().await;
-    let manager = guard.manager();
-    let mut manager_guard = manager.lock().await;
     let shutdown_deadline = Duration::from_secs(2);
-    match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
-        Ok(()) => {}
+
+    info!("shutting down runtime mcp servers");
+    let mcp_manager = {
+        let guard = runtime.mcp_init.lock().await;
+        guard.manager()
+    };
+    match timeout(shutdown_deadline, mcp_manager.lock()).await {
+        Ok(mut manager_guard) => {
+            match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
+                Ok(()) => {}
+                Err(_) => {
+                    warn!(
+                        timeout_seconds = shutdown_deadline.as_secs(),
+                        "mcp shutdown timed out; continuing process exit"
+                    );
+                }
+            }
+        }
         Err(_) => {
             warn!(
                 timeout_seconds = shutdown_deadline.as_secs(),
-                "mcp shutdown timed out; continuing process exit"
+                "mcp manager busy during shutdown; continuing process exit"
+            );
+        }
+    }
+    info!("shutting down runtime acp agents");
+    let acp_manager = {
+        let guard = runtime.acp_init.lock().await;
+        guard.manager()
+    };
+    match timeout(shutdown_deadline, acp_manager.lock()).await {
+        Ok(mut manager_guard) => {
+            match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
+                Ok(()) => {}
+                Err(_) => {
+                    warn!(
+                        timeout_seconds = shutdown_deadline.as_secs(),
+                        "acp shutdown timed out; continuing process exit"
+                    );
+                }
+            }
+        }
+        Err(_) => {
+            warn!(
+                timeout_seconds = shutdown_deadline.as_secs(),
+                "acp manager busy during shutdown; continuing process exit"
             );
         }
     }
@@ -3273,6 +3329,15 @@ pub async fn finalize_startup_report(
             None
         }
     };
+    {
+        let mut guard = runtime.acp_init.lock().await;
+        if guard.is_ready() {
+            let _ = guard
+                .wait_until_ready()
+                .await
+                .map_err(|err| config_err(format!("acp init failed: {err}")))?;
+        }
+    }
 
     runtime.startup_report.tool_names = runtime.runtime.tools.list();
     runtime.startup_report.mcp_summary = mcp_summary;
@@ -3293,9 +3358,9 @@ mod tests {
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, parse_outbound_attachments, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, submit_webhook_agent,
-        submit_webhook_event, sync_runtime_providers, sync_runtime_tools,
-        trim_conversation_history, voice_tool_is_enabled,
+        shutdown_runtime_bundle, spawn_acp_init, spawn_llm_audit_writer, spawn_mcp_init,
+        submit_and_get_output, submit_webhook_agent, submit_webhook_event, sync_runtime_providers,
+        sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
     use klaw_channel::OutboundAttachmentSource;
@@ -3483,6 +3548,7 @@ mod tests {
             },
             session_store: session_store.clone(),
             mcp_init: spawn_mcp_init(&ToolRegistry::default(), &McpConfig::default()),
+            acp_init: spawn_acp_init(&ToolRegistry::default(), &klaw_config::AcpConfig::default()),
             startup_report: StartupReport::default(),
             observability: None,
             conversation_history_limit: 16,
@@ -3665,6 +3731,31 @@ mod tests {
         assert!(summary.active_servers.is_empty());
         assert!(summary.statuses.is_empty());
         assert_eq!(summary.tool_count, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_runtime_bundle_returns_when_acp_manager_is_busy() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+        let acp_manager = {
+            let guard = runtime.acp_init.lock().await;
+            guard.manager()
+        };
+        let _busy_guard = acp_manager.lock().await;
+
+        let shutdown_result =
+            tokio::time::timeout(Duration::from_secs(5), shutdown_runtime_bundle(&runtime)).await;
+
+        assert!(
+            shutdown_result.is_ok(),
+            "shutdown should not hang while acp manager is busy"
+        );
+        assert!(
+            shutdown_result
+                .expect("shutdown future should complete")
+                .is_ok(),
+            "shutdown should continue even when acp manager lock is unavailable"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

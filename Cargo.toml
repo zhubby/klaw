@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "klaw-acp",
     "klaw-agent",
     "klaw-approval",
     "klaw-archive",
@@ -30,11 +31,13 @@ license = "MIT"
 version = "0.6.2"
 
 [workspace.dependencies]
+agent-client-protocol = "0.10.3"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "time", "macros", "rt", "signal"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 rustls = "0.23"
@@ -100,6 +103,7 @@ cpal = "0.16"
 hound = "3.5"
 rodio = "0.20"
 
+klaw-acp = { path = "klaw-acp" }
 klaw-core = { path = "klaw-core" }
 klaw-approval = { path = "klaw-approval" }
 klaw-archive = { path = "klaw-archive" }

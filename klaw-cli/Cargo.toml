@@ -9,6 +9,7 @@ name = "klaw"
 path = "src/main.rs"
 
 [dependencies]
+klaw-acp = { workspace = true }
 async-trait = { workspace = true }
 klaw-core = { workspace = true }
 klaw-agent = { workspace = true }
