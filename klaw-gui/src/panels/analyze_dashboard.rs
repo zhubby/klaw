@@ -18,6 +18,7 @@ const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const TOP_TOOLS_TABLE_HEIGHT: f32 = 220.0;
 const MODEL_RANKING_TABLE_HEIGHT: f32 = 96.0;
 const MODEL_TOOL_BREAKDOWN_TABLE_HEIGHT: f32 = 220.0;
+const SMOOTH_PLOT_SEGMENTS_PER_INTERVAL: usize = 12;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum DashboardView {
@@ -1165,7 +1166,7 @@ fn show_plot(
         .show(ui, |plot_ui| {
             for (name, points, color, width) in lines {
                 plot_ui.line(
-                    Line::new(*name, points.points())
+                    Line::new(*name, smooth_plot_points(points))
                         .color(*color)
                         .width(*width),
                 );
@@ -1173,6 +1174,168 @@ fn show_plot(
         });
 }
 
+fn smooth_plot_points(points: &PlotPoints<'_>) -> PlotPoints<'static> {
+    let normalized = normalize_plot_points(points);
+    if normalized.len() < 3 {
+        return normalized.into();
+    }
+
+    let x_deltas: Vec<f64> = normalized
+        .windows(2)
+        .map(|window| window[1][0] - window[0][0])
+        .collect();
+    let secants: Vec<f64> = normalized
+        .windows(2)
+        .zip(x_deltas.iter().copied())
+        .map(|(window, dx)| (window[1][1] - window[0][1]) / dx)
+        .collect();
+    let tangents = monotone_cubic_tangents(&x_deltas, &secants);
+
+    let mut smoothed =
+        Vec::with_capacity((normalized.len() - 1) * SMOOTH_PLOT_SEGMENTS_PER_INTERVAL + 1);
+    smoothed.push(normalized[0]);
+
+    for segment_index in 0..(normalized.len() - 1) {
+        let [x0, y0] = normalized[segment_index];
+        let [x1, y1] = normalized[segment_index + 1];
+        let dx = x1 - x0;
+        let m0 = tangents[segment_index];
+        let m1 = tangents[segment_index + 1];
+
+        for step in 1..=SMOOTH_PLOT_SEGMENTS_PER_INTERVAL {
+            let t = step as f64 / SMOOTH_PLOT_SEGMENTS_PER_INTERVAL as f64;
+            let t2 = t * t;
+            let t3 = t2 * t;
+            let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+            let h10 = t3 - 2.0 * t2 + t;
+            let h01 = -2.0 * t3 + 3.0 * t2;
+            let h11 = t3 - t2;
+            let x = x0 + dx * t;
+            let y = h00 * y0 + h10 * dx * m0 + h01 * y1 + h11 * dx * m1;
+
+            if x.is_finite() && y.is_finite() {
+                smoothed.push([x, y]);
+            }
+        }
+    }
+
+    smoothed.into()
+}
+
+fn normalize_plot_points(points: &PlotPoints<'_>) -> Vec<[f64; 2]> {
+    let mut normalized: Vec<[f64; 2]> = Vec::new();
+    for point in points.points() {
+        if !(point.x.is_finite() && point.y.is_finite()) {
+            continue;
+        }
+
+        match normalized.last_mut() {
+            Some(last) if (point.x - last[0]).abs() <= f64::EPSILON => last[1] = point.y,
+            Some(last) if point.x < last[0] => {
+                return points.points().iter().map(|p| [p.x, p.y]).collect();
+            }
+            _ => normalized.push([point.x, point.y]),
+        }
+    }
+    normalized
+}
+
+fn monotone_cubic_tangents(x_deltas: &[f64], secants: &[f64]) -> Vec<f64> {
+    let point_count = secants.len() + 1;
+    let mut tangents = vec![0.0; point_count];
+    tangents[0] = secants[0];
+    tangents[point_count - 1] = secants[point_count - 2];
+
+    for index in 1..(point_count - 1) {
+        tangents[index] = (secants[index - 1] + secants[index]) / 2.0;
+    }
+
+    for index in 0..secants.len() {
+        let secant = secants[index];
+        if secant.abs() <= f64::EPSILON {
+            tangents[index] = 0.0;
+            tangents[index + 1] = 0.0;
+            continue;
+        }
+
+        if tangents[index].signum() != secant.signum() {
+            tangents[index] = 0.0;
+        }
+        if tangents[index + 1].signum() != secant.signum() {
+            tangents[index + 1] = 0.0;
+        }
+
+        let left = tangents[index] / secant;
+        let right = tangents[index + 1] / secant;
+        let magnitude = (left * left + right * right).sqrt();
+        if magnitude > 3.0 {
+            let scale = 3.0 / magnitude;
+            tangents[index] = scale * left * secant;
+            tangents[index + 1] = scale * right * secant;
+        }
+    }
+
+    for (index, dx) in x_deltas.iter().copied().enumerate() {
+        if dx <= f64::EPSILON || !dx.is_finite() {
+            tangents[index] = 0.0;
+            tangents[index + 1] = 0.0;
+        }
+    }
+
+    tangents
+}
+
 fn rgb(red: u8, green: u8, blue: u8) -> egui::Color32 {
     egui::Color32::from_rgb(red, green, blue)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SMOOTH_PLOT_SEGMENTS_PER_INTERVAL, normalize_plot_points, smooth_plot_points};
+    use egui_plot::PlotPoints;
+
+    fn plot_pairs(points: &PlotPoints<'_>) -> Vec<[f64; 2]> {
+        points
+            .points()
+            .iter()
+            .map(|point| [point.x, point.y])
+            .collect()
+    }
+
+    #[test]
+    fn smooth_plot_points_preserves_small_series() {
+        let original = PlotPoints::from(vec![[0.0, 10.0], [1.0, 20.0]]);
+        let smoothed = smooth_plot_points(&original);
+        assert_eq!(plot_pairs(&smoothed), vec![[0.0, 10.0], [1.0, 20.0]]);
+    }
+
+    #[test]
+    fn smooth_plot_points_adds_interpolated_samples() {
+        let original = PlotPoints::from(vec![[0.0, 0.0], [1.0, 10.0], [2.0, 5.0]]);
+        let smoothed = smooth_plot_points(&original);
+        let pairs = plot_pairs(&smoothed);
+
+        assert_eq!(pairs.first(), Some(&[0.0, 0.0]));
+        assert_eq!(pairs.last(), Some(&[2.0, 5.0]));
+        assert_eq!(pairs.len(), (3 - 1) * SMOOTH_PLOT_SEGMENTS_PER_INTERVAL + 1);
+    }
+
+    #[test]
+    fn normalize_plot_points_collapses_duplicate_timestamps() {
+        let original = PlotPoints::from(vec![[0.0, 10.0], [0.0, 12.0], [1.0, 20.0]]);
+        assert_eq!(
+            normalize_plot_points(&original),
+            vec![[0.0, 12.0], [1.0, 20.0]]
+        );
+    }
+
+    #[test]
+    fn smooth_plot_points_does_not_overshoot_monotonic_data() {
+        let original = PlotPoints::from(vec![[0.0, 0.0], [1.0, 20.0], [3.0, 40.0], [6.0, 60.0]]);
+        let smoothed = smooth_plot_points(&original);
+
+        for [_, y] in plot_pairs(&smoothed) {
+            assert!((0.0..=60.0).contains(&y));
+        }
+    }
 }

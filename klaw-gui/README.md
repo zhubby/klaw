@@ -46,7 +46,7 @@
   - setting (general/network plus versioned manifest sync, retention, and restore)
 - system-monitor (real-time CPU/memory/data-dir/uptime cards in a 2x2 equal-width layout, plus detailed system information)
 - logs panel (live tracing stream in-process with level filters, keyword search, pause stream, auto-scroll, clear, export, and bounded in-memory buffer)
-- analyze dashboard panel (local observability-backed tool and model analytics with time-range switching, provider/model filters, token composition, error breakdown, tool success breakdown, and trend sampling)
+- analyze dashboard panel (local observability-backed tool and model analytics with time-range switching, provider/model filters, token composition, error breakdown, tool success breakdown, and smoothed trend curves)
 - GUI timestamp rendering uses the host system timezone for human-readable datetime display
 - Configuration panel features:
   - load and edit `config.toml` raw text
