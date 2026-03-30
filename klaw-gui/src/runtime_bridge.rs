@@ -5,8 +5,9 @@ use klaw_gateway::{GatewayRuntimeInfo, TailscaleHostInfo};
 use klaw_llm::ToolDefinition;
 use klaw_mcp::{McpRuntimeSnapshot, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
-use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock, mpsc};
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -115,16 +116,17 @@ pub enum RuntimeCommand {
 
 static RUNTIME_COMMAND_SENDER: OnceLock<Mutex<Option<UnboundedSender<RuntimeCommand>>>> =
     OnceLock::new();
-static LOG_RECEIVER: OnceLock<Mutex<Option<mpsc::Receiver<String>>>> = OnceLock::new();
+static LOG_BRIDGE: OnceLock<Mutex<Option<Arc<GuiLogBridge>>>> = OnceLock::new();
 const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(1);
 const RUNTIME_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
+const LOG_BRIDGE_MAX_CHUNKS: usize = 8_192;
 
 fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
     RUNTIME_COMMAND_SENDER.get_or_init(|| Mutex::new(None))
 }
 
-fn log_receiver_slot() -> &'static Mutex<Option<mpsc::Receiver<String>>> {
-    LOG_RECEIVER.get_or_init(|| Mutex::new(None))
+fn log_bridge_slot() -> &'static Mutex<Option<Arc<GuiLogBridge>>> {
+    LOG_BRIDGE.get_or_init(|| Mutex::new(None))
 }
 
 fn recv_response<T>(
@@ -157,14 +159,25 @@ pub fn clear_runtime_command_sender() {
 }
 
 pub fn install_log_receiver(receiver: mpsc::Receiver<String>) {
-    let mut guard = log_receiver_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *guard = Some(receiver);
+    let bridge = Arc::new(GuiLogBridge::default());
+    {
+        let mut guard = log_bridge_slot()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(Arc::clone(&bridge));
+    }
+
+    let _ = std::thread::Builder::new()
+        .name("klaw-gui-log-pump".to_string())
+        .spawn(move || {
+            while let Ok(chunk) = receiver.recv() {
+                bridge.push_chunk(chunk);
+            }
+        });
 }
 
 pub fn clear_log_receiver() {
-    let mut guard = log_receiver_slot()
+    let mut guard = log_bridge_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     *guard = None;
@@ -174,21 +187,132 @@ pub fn drain_log_chunks(max_batch: usize) -> Vec<String> {
     if max_batch == 0 {
         return Vec::new();
     }
-    let mut guard = log_receiver_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let Some(receiver) = guard.as_mut() else {
+    let bridge = {
+        let guard = log_bridge_slot()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.as_ref().map(Arc::clone)
+    };
+    let Some(bridge) = bridge else {
         return Vec::new();
     };
 
-    let mut chunks = Vec::new();
-    for _ in 0..max_batch {
+    bridge.drain_chunks(max_batch)
+}
+
+pub fn record_dropped_log_chunk(len_bytes: usize) {
+    let guard = log_bridge_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(bridge) = guard.as_ref() {
+        bridge.record_transport_drop(len_bytes);
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GuiLogStatsSnapshot {
+    pub transport_dropped_chunks: u64,
+    pub transport_dropped_bytes: u64,
+    pub bridge_dropped_chunks: u64,
+}
+
+pub fn log_stats_snapshot() -> GuiLogStatsSnapshot {
+    let bridge = {
+        let guard = log_bridge_slot()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.as_ref().map(Arc::clone)
+    };
+    bridge.map_or_else(GuiLogStatsSnapshot::default, |bridge| bridge.stats_snapshot())
+}
+
+#[derive(Debug)]
+pub struct RuntimeRequestHandle<T> {
+    receiver: Option<mpsc::Receiver<Result<T, String>>>,
+}
+
+impl<T> RuntimeRequestHandle<T> {
+    pub fn try_take_result(&mut self) -> Option<Result<T, String>> {
+        let receiver = self.receiver.as_ref()?;
         match receiver.try_recv() {
-            Ok(chunk) => chunks.push(chunk),
-            Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
+            Ok(result) => {
+                let _ = self.receiver.take();
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let _ = self.receiver.take();
+                Some(Err("runtime request worker closed unexpectedly".to_string()))
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
         }
     }
-    chunks
+
+    pub fn is_pending(&self) -> bool {
+        self.receiver.is_some()
+    }
+}
+
+fn spawn_request<T, F>(operation: F) -> RuntimeRequestHandle<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(operation());
+    });
+    RuntimeRequestHandle { receiver: Some(rx) }
+}
+
+#[derive(Debug, Default)]
+struct GuiLogBridge {
+    chunks: Mutex<VecDeque<String>>,
+    transport_dropped_chunks: AtomicU64,
+    transport_dropped_bytes: AtomicU64,
+    bridge_dropped_chunks: AtomicU64,
+}
+
+impl GuiLogBridge {
+    fn push_chunk(&self, chunk: String) {
+        let mut guard = self
+            .chunks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if guard.len() >= LOG_BRIDGE_MAX_CHUNKS {
+            guard.pop_front();
+            self.bridge_dropped_chunks.fetch_add(1, Ordering::Relaxed);
+        }
+        guard.push_back(chunk);
+    }
+
+    fn drain_chunks(&self, max_batch: usize) -> Vec<String> {
+        let mut guard = self
+            .chunks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut chunks = Vec::new();
+        for _ in 0..max_batch {
+            let Some(chunk) = guard.pop_front() else {
+                break;
+            };
+            chunks.push(chunk);
+        }
+        chunks
+    }
+
+    fn record_transport_drop(&self, len_bytes: usize) {
+        self.transport_dropped_chunks.fetch_add(1, Ordering::Relaxed);
+        self.transport_dropped_bytes
+            .fetch_add(len_bytes as u64, Ordering::Relaxed);
+    }
+
+    fn stats_snapshot(&self) -> GuiLogStatsSnapshot {
+        GuiLogStatsSnapshot {
+            transport_dropped_chunks: self.transport_dropped_chunks.load(Ordering::Relaxed),
+            transport_dropped_bytes: self.transport_dropped_bytes.load(Ordering::Relaxed),
+            bridge_dropped_chunks: self.bridge_dropped_chunks.load(Ordering::Relaxed),
+        }
+    }
 }
 
 pub fn request_reload_skills_prompt() -> Result<(), String> {
@@ -219,6 +343,12 @@ pub fn request_set_provider_override(
         .map_err(|_| "failed to send runtime command".to_string())?;
 
     recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "set provider override")?
+}
+
+pub fn begin_set_provider_override_request(
+    provider_id: Option<String>,
+) -> RuntimeRequestHandle<(String, String)> {
+    spawn_request(move || request_set_provider_override(provider_id))
 }
 
 pub fn request_run_cron_now(cron_id: &str) -> Result<String, String> {
@@ -287,6 +417,10 @@ pub fn request_sync_providers() -> Result<ProviderRuntimeSnapshot, String> {
     recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync providers")?
 }
 
+pub fn begin_sync_providers_request() -> RuntimeRequestHandle<ProviderRuntimeSnapshot> {
+    spawn_request(request_sync_providers)
+}
+
 pub fn request_provider_status() -> Result<ProviderRuntimeSnapshot, String> {
     let sender = sender_slot()
         .lock()
@@ -303,6 +437,10 @@ pub fn request_provider_status() -> Result<ProviderRuntimeSnapshot, String> {
     recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "provider status")?
 }
 
+pub fn begin_provider_status_request() -> RuntimeRequestHandle<ProviderRuntimeSnapshot> {
+    spawn_request(request_provider_status)
+}
+
 pub fn request_env_check() -> Result<EnvironmentCheckReport, String> {
     let sender = sender_slot()
         .lock()
@@ -317,6 +455,10 @@ pub fn request_env_check() -> Result<EnvironmentCheckReport, String> {
         .map_err(|_| "failed to send runtime command".to_string())?;
 
     recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "environment check")
+}
+
+pub fn begin_env_check_request() -> RuntimeRequestHandle<EnvironmentCheckReport> {
+    spawn_request(request_env_check)
 }
 
 pub fn request_gateway_status() -> Result<GatewayStatusSnapshot, String> {
@@ -556,7 +698,12 @@ pub fn request_stop_acp_prompt() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::AcpPromptEvent;
+    use super::{
+        AcpPromptEvent, RuntimeRequestHandle, drain_log_chunks, install_log_receiver,
+        log_stats_snapshot, record_dropped_log_chunk,
+    };
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     #[test]
     fn acp_prompt_event_completed_carries_final_output() {
@@ -572,5 +719,41 @@ mod tests {
     #[test]
     fn acp_prompt_event_stopped_is_distinct() {
         assert!(matches!(AcpPromptEvent::Stopped, AcpPromptEvent::Stopped));
+    }
+
+    #[test]
+    fn runtime_request_handle_reports_pending_then_result() {
+        let (tx, rx) = mpsc::channel();
+        let mut handle = RuntimeRequestHandle { receiver: Some(rx) };
+
+        assert!(handle.is_pending());
+        assert!(handle.try_take_result().is_none());
+
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            let _ = tx.send(Ok::<_, String>("done".to_string()));
+        })
+        .join()
+        .expect("sender thread joins");
+
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(handle.try_take_result(), Some(Ok("done".to_string())));
+        assert!(!handle.is_pending());
+    }
+
+    #[test]
+    fn log_bridge_tracks_transport_drops_and_drains_chunks() {
+        let (tx, rx) = mpsc::channel();
+        install_log_receiver(rx);
+
+        tx.send("first\n".to_string()).expect("send chunk");
+        std::thread::sleep(Duration::from_millis(20));
+        let drained = drain_log_chunks(16);
+        assert_eq!(drained, vec!["first\n".to_string()]);
+
+        record_dropped_log_chunk(12);
+        let stats = log_stats_snapshot();
+        assert!(stats.transport_dropped_chunks >= 1);
+        assert!(stats.transport_dropped_bytes >= 12);
     }
 }

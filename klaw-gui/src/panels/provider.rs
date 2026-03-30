@@ -1,7 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::{
-    ProviderRuntimeSnapshot, request_provider_status, request_sync_providers,
+    ProviderRuntimeSnapshot, RuntimeRequestHandle, begin_provider_status_request,
+    begin_sync_providers_request,
 };
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
@@ -99,6 +100,10 @@ pub struct ProviderPanel {
     config: AppConfig,
     runtime_status: Option<ProviderRuntimeSnapshot>,
     last_runtime_status_at: Option<Instant>,
+    runtime_status_request: Option<RuntimeRequestHandle<ProviderRuntimeSnapshot>>,
+    sync_request: Option<RuntimeRequestHandle<ProviderRuntimeSnapshot>>,
+    sync_success_message: Option<String>,
+    sync_failure_message: Option<String>,
     form: Option<ProviderForm>,
     selected_provider: Option<String>,
     delete_confirm: Option<String>,
@@ -106,15 +111,59 @@ pub struct ProviderPanel {
 
 impl ProviderPanel {
     fn refresh_runtime_status(&mut self) {
+        if let Some(request) = self.runtime_status_request.as_mut()
+            && let Some(result) = request.try_take_result()
+        {
+            self.runtime_status_request = None;
+            if let Ok(snapshot) = result {
+                self.runtime_status = Some(snapshot);
+            }
+        }
         let should_refresh = self
             .last_runtime_status_at
             .is_none_or(|last| last.elapsed() >= Duration::from_secs(2));
-        if !should_refresh {
+        if !should_refresh || self.runtime_status_request.is_some() {
             return;
         }
         self.last_runtime_status_at = Some(Instant::now());
-        if let Ok(snapshot) = request_provider_status() {
-            self.runtime_status = Some(snapshot);
+        self.runtime_status_request = Some(begin_provider_status_request());
+    }
+
+    fn begin_runtime_sync(
+        &mut self,
+        success_message: impl Into<String>,
+        failure_message: impl Into<String>,
+    ) {
+        self.sync_request = Some(begin_sync_providers_request());
+        self.sync_success_message = Some(success_message.into());
+        self.sync_failure_message = Some(failure_message.into());
+    }
+
+    fn poll_runtime_sync(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.sync_request.as_mut() else {
+            return;
+        };
+        let Some(result) = request.try_take_result() else {
+            return;
+        };
+
+        self.sync_request = None;
+        match result {
+            Ok(snapshot) => {
+                self.runtime_status = Some(snapshot);
+                if let Some(message) = self.sync_success_message.take() {
+                    notifications.success(message);
+                }
+                self.sync_failure_message = None;
+            }
+            Err(err) => {
+                let prefix = self
+                    .sync_failure_message
+                    .take()
+                    .unwrap_or_else(|| "Failed to sync running runtime".to_string());
+                notifications.error(format!("{prefix}: {err}"));
+                self.sync_success_message = None;
+            }
         }
     }
 
@@ -174,16 +223,10 @@ impl ProviderPanel {
         }) {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
-                match request_sync_providers() {
-                    Ok(_) => notifications.success(format!(
-                        "Set active provider to '{}' and synced running runtime",
-                        provider_id
-                    )),
-                    Err(err) => notifications.error(format!(
-                        "Saved active provider to '{}', but failed to sync running runtime: {err}",
-                        provider_id
-                    )),
-                }
+                self.begin_runtime_sync(
+                    format!("Set active provider to '{}' and synced running runtime", provider_id),
+                    format!("Saved active provider to '{}', but failed to sync running runtime", provider_id),
+                );
             }
             Err(err) => notifications.error(format!("Save failed: {err}")),
         }
@@ -224,14 +267,10 @@ impl ProviderPanel {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
                 self.form = None;
-                match request_sync_providers() {
-                    Ok(_) => {
-                        notifications.success("Provider configuration saved and runtime synced")
-                    }
-                    Err(err) => notifications.error(format!(
-                        "Provider configuration saved, but failed to sync running runtime: {err}"
-                    )),
-                }
+                self.begin_runtime_sync(
+                    "Provider configuration saved and runtime synced",
+                    "Provider configuration saved, but failed to sync running runtime",
+                );
             }
             Err(err) => notifications.error(format!("Save failed: {err}")),
         }
@@ -255,16 +294,10 @@ impl ProviderPanel {
                 if self.selected_provider.as_deref() == Some(provider_id.as_str()) {
                     self.selected_provider = None;
                 }
-                match request_sync_providers() {
-                    Ok(_) => notifications.success(format!(
-                        "Deleted provider '{}' and synced runtime",
-                        provider_id
-                    )),
-                    Err(err) => notifications.error(format!(
-                        "Deleted provider '{}', but failed to sync running runtime: {err}",
-                        provider_id
-                    )),
-                }
+                self.begin_runtime_sync(
+                    format!("Deleted provider '{}' and synced runtime", provider_id),
+                    format!("Deleted provider '{}', but failed to sync running runtime", provider_id),
+                );
             }
             Err(err) => notifications.error(format!("Save failed: {err}")),
         }
@@ -491,6 +524,7 @@ impl PanelRenderer for ProviderPanel {
     ) {
         self.ensure_store_loaded(notifications);
         self.refresh_runtime_status();
+        self.poll_runtime_sync(notifications);
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {

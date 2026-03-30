@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::{RuntimeRequestHandle, begin_env_check_request};
 use egui::RichText;
 use egui_phosphor::regular;
 use klaw_storage::StoragePaths;
@@ -99,6 +100,7 @@ pub struct SystemPanel {
     clear_confirm: Option<DirKind>,
     env_check: Option<EnvironmentCheckReport>,
     env_check_loaded: bool,
+    env_check_request: Option<RuntimeRequestHandle<EnvironmentCheckReport>>,
     current_view: SystemView,
 }
 
@@ -193,18 +195,25 @@ impl SystemPanel {
     }
 
     fn load_env_check(&mut self) {
-        if self.env_check_loaded {
+        if let Some(request) = self.env_check_request.as_mut()
+            && let Some(result) = request.try_take_result()
+        {
+            self.env_check_request = None;
+            self.env_check_loaded = true;
+            match result {
+                Ok(report) => {
+                    self.env_check = Some(report);
+                }
+                Err(err) => {
+                    tracing::warn!("Failed to get environment check: {err}");
+                }
+            }
+        }
+
+        if self.env_check_loaded || self.env_check_request.is_some() {
             return;
         }
-        self.env_check_loaded = true;
-        match crate::request_env_check() {
-            Ok(report) => {
-                self.env_check = Some(report);
-            }
-            Err(err) => {
-                tracing::warn!("Failed to get environment check: {err}");
-            }
-        }
+        self.env_check_request = Some(begin_env_check_request());
     }
 
     fn render_env_check_section(&mut self, ui: &mut egui::Ui) {

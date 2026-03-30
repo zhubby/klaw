@@ -4,8 +4,8 @@ use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
 use klaw_llm::ToolDefinition;
 use klaw_mcp::McpConfigSnapshot;
-use std::{io, sync::Arc};
-use tokio::sync::watch;
+use std::{io, sync::Arc, time::Duration};
+use tokio::sync::{Mutex as AsyncMutex, watch};
 
 use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
@@ -18,6 +18,32 @@ use crate::runtime::{
 };
 use klaw_config::ConfigStore;
 use tracing::{info, warn};
+
+fn wait_for_worker_shutdown<T>(
+    worker: std::thread::JoinHandle<T>,
+    timeout: Duration,
+) -> io::Result<T>
+where
+    T: Send + 'static,
+{
+    let (join_tx, join_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = join_tx.send(worker.join());
+    });
+
+    match join_rx.recv_timeout(timeout) {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(err)) => Err(io::Error::other(format!(
+            "gui runtime worker panicked: {err:?}"
+        ))),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(io::Error::other(
+            "timed out waiting for gui runtime worker shutdown",
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::other(
+            "gui runtime worker join channel closed unexpectedly",
+        )),
+    }
+}
 
 fn provider_runtime_snapshot(
     runtime: &crate::runtime::RuntimeBundle,
@@ -106,9 +132,16 @@ impl GuiCommand {
                         runtime.as_ref(),
                         BackgroundServiceConfig::from_app_config(&config_for_thread),
                     ));
-                    let mut gateway_manager =
-                        GatewayManager::new(&config_for_thread, runtime.clone());
-                    if let Err(err) = gateway_manager.start_if_enabled(&config_for_thread).await {
+                    let gateway_manager = Arc::new(AsyncMutex::new(GatewayManager::new(
+                        &config_for_thread,
+                        runtime.clone(),
+                    )));
+                    if let Err(err) = gateway_manager
+                        .lock()
+                        .await
+                        .start_if_enabled(&config_for_thread)
+                        .await
+                    {
                         warn!(error = %err, "failed to start gateway for gui runtime");
                     }
                     let adapter = Arc::new(SharedChannelRuntime::new(
@@ -125,9 +158,13 @@ impl GuiCommand {
                             let mut active_acp_prompt_cancel: Option<watch::Sender<bool>> = None;
                             let channel_factory = build_channel_driver_factory(&config_for_thread)
                                 .map_err(|err| err.to_string())?;
-                            let mut channel_manager =
-                                ChannelManager::with_factory(Arc::clone(&adapter), channel_factory);
-                            channel_manager.sync(channel_snapshot).await;
+                            let channel_manager = Arc::new(AsyncMutex::new(
+                                ChannelManager::with_factory(
+                                    Arc::clone(&adapter),
+                                    channel_factory,
+                                ),
+                            ));
+                            channel_manager.lock().await.sync(channel_snapshot).await;
 
                             let mcp_manager = {
                                 let guard = runtime.mcp_init.lock().await;
@@ -165,32 +202,38 @@ impl GuiCommand {
                                                 let _ = response.send(result);
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncProviders { response }) => {
-                                                let result = match ConfigStore::open(None) {
-                                                    Ok(store) => {
-                                                        let snapshot = store.snapshot();
-                                                        sync_runtime_providers(runtime.as_ref(), &snapshot.config)
-                                                            .map(|_| provider_runtime_snapshot(runtime.as_ref()))
-                                                            .map_err(|err| err.to_string())
-                                                    }
-                                                    Err(err) => Err(err.to_string()),
-                                                };
-                                                let _ = response.send(result);
+                                                let runtime = Arc::clone(&runtime);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            sync_runtime_providers(runtime.as_ref(), &snapshot.config)
+                                                                .map(|_| provider_runtime_snapshot(runtime.as_ref()))
+                                                                .map_err(|err| err.to_string())
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetProviderStatus { response }) => {
                                                 let _ = response.send(Ok(provider_runtime_snapshot(runtime.as_ref())));
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncChannels { response }) => {
-                                                let result = match ConfigStore::open(None) {
-                                                    Ok(store) => {
-                                                        let snapshot = store.snapshot();
-                                                        match ChannelConfigSnapshot::from_channels_config(&snapshot.config.channels) {
-                                                            Ok(channel_snapshot) => Ok(channel_manager.sync(channel_snapshot).await),
-                                                            Err(err) => Err(err),
+                                                let channel_manager = Arc::clone(&channel_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            match ChannelConfigSnapshot::from_channels_config(&snapshot.config.channels) {
+                                                                Ok(channel_snapshot) => Ok(channel_manager.lock().await.sync(channel_snapshot).await),
+                                                                Err(err) => Err(err),
+                                                            }
                                                         }
-                                                    }
-                                                    Err(err) => Err(err.to_string()),
-                                                };
-                                                let _ = response.send(result);
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncMcp { response }) => {
                                                 let manager = Arc::clone(&mcp_manager);
@@ -223,16 +266,19 @@ impl GuiCommand {
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncTools { response }) => {
-                                                let result = match ConfigStore::open(None) {
-                                                    Ok(store) => {
-                                                        let snapshot = store.snapshot();
-                                                        sync_runtime_tools(runtime.as_ref(), &snapshot.config)
-                                                            .await
-                                                            .map_err(|err| err.to_string())
-                                                    }
-                                                    Err(err) => Err(err.to_string()),
-                                                };
-                                                let _ = response.send(result);
+                                                let runtime = Arc::clone(&runtime);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            sync_runtime_tools(runtime.as_ref(), &snapshot.config)
+                                                                .await
+                                                                .map_err(|err| err.to_string())
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetToolDefinitions { response }) => {
                                                 let _ = response.send(Ok(tool_definitions(runtime.as_ref())));
@@ -341,52 +387,65 @@ impl GuiCommand {
                                                 let _ = response.send(result.map(|_| ()));
                                             }
                                             Some(klaw_gui::RuntimeCommand::RunCronNow { cron_id, response }) => {
-                                                let result = background.run_cron_now(&cron_id).await;
-                                                if result.is_ok() {
-                                                    let runtime = Arc::clone(&runtime);
-                                                    let background = Arc::clone(&background);
-                                                    tokio::task::spawn_local(async move {
+                                                let runtime = Arc::clone(&runtime);
+                                                let background = Arc::clone(&background);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = background.run_cron_now(&cron_id).await;
+                                                    if result.is_ok() {
                                                         background.on_runtime_tick(runtime.as_ref()).await;
-                                                    });
-                                                }
-                                                let _ = response.send(result);
+                                                    }
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::RunHeartbeatNow { heartbeat_id, response }) => {
-                                                let result = background.run_heartbeat_now(&heartbeat_id).await;
-                                                if result.is_ok() {
-                                                    let runtime = Arc::clone(&runtime);
-                                                    let background = Arc::clone(&background);
-                                                    tokio::task::spawn_local(async move {
+                                                let runtime = Arc::clone(&runtime);
+                                                let background = Arc::clone(&background);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = background.run_heartbeat_now(&heartbeat_id).await;
+                                                    if result.is_ok() {
                                                         background.on_runtime_tick(runtime.as_ref()).await;
-                                                    });
-                                                }
-                                                let _ = response.send(result);
+                                                    }
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetEnvCheck { response }) => {
                                                 let env_check = runtime.env_check.clone();
                                                 let _ = response.send(env_check);
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetGatewayStatus { response }) => {
+                                                let mut gateway_manager = gateway_manager.lock().await;
                                                 if let Err(err) = gateway_manager.refresh_from_store() {
                                                     warn!(error = %err, "failed to refresh gateway config metadata");
                                                 }
                                                 let _ = response.send(gateway_manager.snapshot());
                                             }
                                             Some(klaw_gui::RuntimeCommand::StartGateway { response }) => {
-                                                let result = gateway_manager.start_from_store().await;
-                                                let _ = response.send(result);
+                                                let gateway_manager = Arc::clone(&gateway_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = gateway_manager.lock().await.start_from_store().await;
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::SetGatewayEnabled { enabled, response }) => {
-                                                let result = gateway_manager.set_enabled(enabled).await;
-                                                let _ = response.send(result);
+                                                let gateway_manager = Arc::clone(&gateway_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = gateway_manager.lock().await.set_enabled(enabled).await;
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::RestartGateway { response }) => {
-                                                let result = gateway_manager.restart_from_store().await;
-                                                let _ = response.send(result);
+                                                let gateway_manager = Arc::clone(&gateway_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = gateway_manager.lock().await.restart_from_store().await;
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::SetTailscaleMode { mode, response }) => {
-                                                let result = gateway_manager.set_tailscale_mode(mode).await;
-                                                let _ = response.send(result);
+                                                let gateway_manager = Arc::clone(&gateway_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = gateway_manager.lock().await.set_tailscale_mode(mode).await;
+                                                    let _ = response.send(result);
+                                                });
                                             }
                                             None => {
                                                 runtime_cmd_open = false;
@@ -399,10 +458,10 @@ impl GuiCommand {
                                 info!("shutdown signal received, stopping gui runtime");
                             }
 
-                            if let Err(err) = gateway_manager.stop().await {
+                            if let Err(err) = gateway_manager.lock().await.stop().await {
                                 warn!(error = %err, "failed to stop gateway during gui shutdown");
                             }
-                            channel_manager.shutdown_all().await;
+                            channel_manager.lock().await.shutdown_all().await;
                             if let Err(err) = shutdown_runtime_bundle(runtime.as_ref()).await {
                                 warn!(error = %err, "runtime shutdown failed");
                             }
@@ -431,14 +490,49 @@ impl GuiCommand {
         klaw_gui::clear_runtime_command_sender();
         klaw_gui::clear_log_receiver();
         let _ = shutdown_tx.send(true);
-        let worker_result = worker
-            .join()
-            .map_err(|err| io::Error::other(format!("gui runtime worker panicked: {err:?}")))?;
+        let worker_result = tokio::task::spawn_blocking(move || {
+            wait_for_worker_shutdown(worker, Duration::from_secs(5))
+        })
+        .await
+        .map_err(|err| io::Error::other(format!("gui worker join wait failed: {err}")))?
+        .map_err(|err| {
+            warn!(error = %err, "gui runtime worker did not shut down cleanly");
+            err
+        })?;
         worker_result
             .map_err(|err| io::Error::other(format!("gui runtime worker failed: {err}")))?;
         if let Err(err) = gui_result {
             return Err(Box::new(io::Error::other(err.to_string())));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wait_for_worker_shutdown;
+    use std::time::Duration;
+
+    #[test]
+    fn wait_for_worker_shutdown_returns_result_before_timeout() {
+        let worker = std::thread::spawn(|| Ok::<_, String>(()));
+
+        let result =
+            wait_for_worker_shutdown(worker, Duration::from_millis(100)).expect("join succeeds");
+
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn wait_for_worker_shutdown_times_out_for_stuck_worker() {
+        let worker = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(100));
+            Ok::<_, String>(())
+        });
+
+        let err = wait_for_worker_shutdown(worker, Duration::from_millis(5))
+            .expect_err("join should time out");
+
+        assert!(err.to_string().contains("timed out"));
     }
 }

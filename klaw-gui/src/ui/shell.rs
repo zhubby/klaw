@@ -1,7 +1,9 @@
 use crate::autostart::{self, ReconcileOutcome};
 use crate::notifications::NotificationCenter;
 use crate::panels::PanelRegistry;
-use crate::runtime_bridge::{ProviderRuntimeSnapshot, request_provider_status};
+use crate::runtime_bridge::{
+    ProviderRuntimeSnapshot, RuntimeRequestHandle, begin_provider_status_request,
+};
 use crate::settings::{AppSettings, SyncMode, load_settings, save_settings};
 use crate::state::{ThemeMode, UiAction, UiState};
 use crate::sync_runtime::{
@@ -27,7 +29,9 @@ pub struct ShellUi {
     config_default_provider: String,
     provider_default_models: BTreeMap<String, String>,
     runtime_provider_override: Option<String>,
+    pending_provider_override_target: Option<Option<String>>,
     last_provider_sync_at: Instant,
+    provider_status_request: Option<RuntimeRequestHandle<ProviderRuntimeSnapshot>>,
     sync_supervisor: SyncSupervisor,
 }
 
@@ -63,7 +67,9 @@ impl Default for ShellUi {
             config_default_provider: String::new(),
             provider_default_models: BTreeMap::new(),
             runtime_provider_override: None,
+            pending_provider_override_target: None,
             last_provider_sync_at: Instant::now() - PROVIDER_SYNC_INTERVAL,
+            provider_status_request: None,
             sync_supervisor: SyncSupervisor::default(),
         }
     }
@@ -82,19 +88,39 @@ impl ShellUi {
         self.runtime_provider_override = provider_id;
     }
 
+    pub fn set_pending_provider_override(&mut self, provider_id: Option<String>) {
+        self.pending_provider_override_target = Some(provider_id.clone());
+        self.runtime_provider_override = provider_id;
+    }
+
+    pub fn clear_pending_provider_override(&mut self) {
+        self.pending_provider_override_target = None;
+    }
+
     fn sync_provider_choices(&mut self) {
+        if let Some(request) = self.provider_status_request.as_mut()
+            && let Some(result) = request.try_take_result()
+        {
+            self.provider_status_request = None;
+            if let Ok(snapshot) = result {
+                self.apply_provider_snapshot(snapshot);
+            }
+        }
         if self.last_provider_sync_at.elapsed() < PROVIDER_SYNC_INTERVAL {
             return;
         }
-        self.last_provider_sync_at = Instant::now();
-        if let Ok(snapshot) = request_provider_status() {
-            self.apply_provider_snapshot(snapshot);
+        if self.provider_status_request.is_some() {
+            return;
         }
+        self.last_provider_sync_at = Instant::now();
+        self.provider_status_request = Some(begin_provider_status_request());
     }
 
     fn apply_provider_snapshot(&mut self, snapshot: ProviderRuntimeSnapshot) {
         self.config_default_provider = snapshot.default_provider_id;
-        self.runtime_provider_override = snapshot.runtime_provider_override;
+        if self.pending_provider_override_target.is_none() {
+            self.runtime_provider_override = snapshot.runtime_provider_override;
+        }
         self.provider_ids = snapshot
             .provider_default_models
             .keys()

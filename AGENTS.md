@@ -137,6 +137,14 @@ Each workspace crate must maintain its own documentation:
 - Keep editor width equal to parent container width (`available_width` + `add_sized`).
 - When parent height is below the panel minimum height, enable one outer scroll area for the whole panel.
 - Prefer global toast notifications (`egui-notify`) for operation feedback; avoid inline success/error blocks that shift layout.
+- Do not block the egui render/update path on runtime or IO work. Avoid calling `recv_timeout`, network requests, disk-heavy syncs, or other waiting operations directly from render callbacks.
+- For GUI-to-runtime communication, prefer a background request handle plus `try_recv`/polling from UI state. Reuse the non-blocking request pattern already used by MCP/Gateway/ACP-style panels instead of introducing new synchronous `request_*` calls in render code.
+- Treat status refreshes as background work. Periodic polling (provider status, environment checks, gateway/runtime snapshots, etc.) must be scheduled asynchronously and coalesced so a slow prior refresh does not queue duplicate work.
+- User-triggered actions that may take noticeable time should also avoid blocking the UI thread. Prefer pending task state, optimistic or staged UI updates, and completion toasts over synchronous waits.
+- Keep the GUI runtime command loop responsive: slow commands should be spawned into tasks or subsystem workers instead of awaiting inline on the main command dispatcher.
+- Do not silently drop GUI log delivery. If logs are buffered or lossy, track dropped message counts/bytes and surface that state in the Logs UI so "no new logs" and "logs were dropped" are distinguishable.
+- GUI shutdown must be bounded. Do not rely on an unbounded `join()` or a single stalled runtime task to determine whether quit completes; use timeouts and warn when shutdown is incomplete.
+- Add regression coverage for any GUI/runtime bridge change. At minimum, cover that slow background commands do not block status requests or quit, and that log-drop telemetry remains observable when the GUI falls behind.
 
 ## Git Commit Guidelines
 
