@@ -1553,7 +1553,13 @@ fn infer_dingtalk_file_type(filename: &str, mime_type: Option<&str>) -> String {
         .and_then(|value| value.split(';').next())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| value.rsplit('+').next().unwrap_or(value).to_ascii_lowercase());
+        .map(|value| {
+            value
+                .rsplit('+')
+                .next()
+                .unwrap_or(value)
+                .to_ascii_lowercase()
+        });
     mime_subtype.unwrap_or_else(|| "bin".to_string())
 }
 
@@ -3101,18 +3107,39 @@ mod tests {
 
     #[test]
     fn supported_dingtalk_file_type_accepts_documented_extensions() {
-        assert_eq!(supported_dingtalk_file_type("report.pdf", None), Some("pdf"));
-        assert_eq!(supported_dingtalk_file_type("report.doc", None), Some("doc"));
-        assert_eq!(supported_dingtalk_file_type("report.docx", None), Some("docx"));
-        assert_eq!(supported_dingtalk_file_type("report.xlsx", None), Some("xlsx"));
-        assert_eq!(supported_dingtalk_file_type("report.zip", None), Some("zip"));
-        assert_eq!(supported_dingtalk_file_type("report.rar", None), Some("rar"));
+        assert_eq!(
+            supported_dingtalk_file_type("report.pdf", None),
+            Some("pdf")
+        );
+        assert_eq!(
+            supported_dingtalk_file_type("report.doc", None),
+            Some("doc")
+        );
+        assert_eq!(
+            supported_dingtalk_file_type("report.docx", None),
+            Some("docx")
+        );
+        assert_eq!(
+            supported_dingtalk_file_type("report.xlsx", None),
+            Some("xlsx")
+        );
+        assert_eq!(
+            supported_dingtalk_file_type("report.zip", None),
+            Some("zip")
+        );
+        assert_eq!(
+            supported_dingtalk_file_type("report.rar", None),
+            Some("rar")
+        );
     }
 
     #[test]
     fn supported_dingtalk_file_type_rejects_other_extensions() {
         assert_eq!(supported_dingtalk_file_type("slides.pptx", None), None);
-        assert_eq!(supported_dingtalk_file_type("notes.txt", Some("text/plain")), None);
+        assert_eq!(
+            supported_dingtalk_file_type("notes.txt", Some("text/plain")),
+            None
+        );
     }
 
     #[test]
