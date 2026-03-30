@@ -796,13 +796,19 @@ where
     I: IntoIterator<Item = (T, egui::ProgressBar)>,
     T: Into<egui::WidgetText>,
 {
+    let row_height = ui.spacing().interact_size.y;
     egui::Grid::new(id_salt)
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             for (label, bar) in rows {
-                ui.label(label);
-                ui.add_sized([ui.available_width().max(0.0), 0.0], bar);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.label(label);
+                });
+                let bar_width = ui.available_width().max(0.0);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add_sized([bar_width, row_height], bar.desired_height(row_height));
+                });
                 ui.end_row();
             }
         });
