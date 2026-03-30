@@ -489,6 +489,20 @@ impl AcpPanel {
         format!("acp_agent_{}", id.trim())
     }
 
+    fn command_display(agent: &AcpAgentConfig) -> String {
+        let mut parts = Vec::new();
+        let command = agent.command.trim();
+        if !command.is_empty() {
+            parts.push(command.to_string());
+        }
+        parts.extend(agent.args.iter().cloned());
+        if parts.is_empty() {
+            "-".to_string()
+        } else {
+            parts.join(" ")
+        }
+    }
+
     fn trigger_test_prompt(&mut self, notifications: &mut NotificationCenter) {
         let agent_id = self.prompt_test.agent_id.trim().to_string();
         if agent_id.is_empty() {
@@ -646,7 +660,7 @@ impl AcpPanel {
                                     ui.label(agent_id);
                                 });
                                 row.col(|ui| {
-                                    ui.monospace(agent.command.as_str());
+                                    ui.monospace(Self::command_display(agent));
                                 });
                                 row.col(|ui| {
                                     let state =
@@ -1044,7 +1058,7 @@ impl AcpPanel {
                             ui.end_row();
 
                             ui.label("Command");
-                            ui.monospace(&agent.command);
+                            ui.monospace(Self::command_display(agent));
                             ui.end_row();
 
                             ui.label("Args");
@@ -1148,5 +1162,45 @@ impl PanelRenderer for AcpPanel {
         self.render_form_window(ui, notifications);
         self.render_global_settings_window(ui, notifications);
         self.render_delete_confirm_dialog(ui.ctx(), notifications);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn command_display_joins_command_and_args() {
+        let agent = AcpAgentConfig {
+            id: "claude_code".to_string(),
+            enabled: true,
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@zed-industries/claude-agent-acp".to_string(),
+            ],
+            env: BTreeMap::new(),
+            description: String::new(),
+        };
+
+        assert_eq!(
+            AcpPanel::command_display(&agent),
+            "npx -y @zed-industries/claude-agent-acp"
+        );
+    }
+
+    #[test]
+    fn command_display_returns_dash_when_empty() {
+        let agent = AcpAgentConfig {
+            id: "empty".to_string(),
+            enabled: true,
+            command: "  ".to_string(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            description: String::new(),
+        };
+
+        assert_eq!(AcpPanel::command_display(&agent), "-");
     }
 }
