@@ -5,7 +5,7 @@
 ### Changed
 
 - `Session` 面板顶部新增 `channel` 下拉筛选，并把筛选条件下沉到 session SQL 查询层，而不是在 GUI 内存列表中二次过滤
-- `ACP` 面板新增 agent 时，默认模板现在改为基于 `acpx` 的 Claude adapter 启动参数，而不是裸 `claude` 命令
+- `ACP` 面板默认模板现在同时提供 Claude Code 与 Codex 两套 Zed adapter 启动参数，并移除了独立 `cwd` 编辑项
 
 ### Fixed
 

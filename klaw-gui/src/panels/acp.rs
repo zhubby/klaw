@@ -23,7 +23,6 @@ struct AcpAgentForm {
     command: String,
     args_input: ArrayEditor,
     env_input: KeyValueEditor,
-    cwd: String,
 }
 
 impl AcpAgentForm {
@@ -41,7 +40,6 @@ impl AcpAgentForm {
             command: template.command.clone(),
             args_input: ArrayEditor::from_vec("Args", &template.args),
             env_input: KeyValueEditor::from_map("Env", &template.env),
-            cwd: template.cwd.unwrap_or_default(),
         }
     }
 
@@ -54,7 +52,6 @@ impl AcpAgentForm {
             command: agent.command.clone(),
             args_input: ArrayEditor::from_vec("Args", &agent.args),
             env_input: KeyValueEditor::from_map("Env", &agent.env),
-            cwd: agent.cwd.clone().unwrap_or_default(),
         }
     }
 
@@ -71,14 +68,12 @@ impl AcpAgentForm {
     }
 
     fn to_config(&self) -> AcpAgentConfig {
-        let cwd = self.cwd.trim();
         AcpAgentConfig {
             id: self.normalized_id(),
             enabled: self.enabled,
             command: self.command.trim().to_string(),
             args: self.args_input.to_vec(),
             env: self.env_input.to_map(),
-            cwd: (!cwd.is_empty()).then(|| cwd.to_string()),
             description: self.description.trim().to_string(),
         }
     }
@@ -599,8 +594,7 @@ impl AcpPanel {
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                         .column(Column::auto().at_least(60.0))
                         .column(Column::auto().at_least(120.0))
-                        .column(Column::remainder().at_least(180.0))
-                        .column(Column::auto().at_least(120.0))
+                        .column(Column::remainder().at_least(220.0))
                         .column(Column::auto().at_least(80.0))
                         .column(Column::auto().at_least(140.0))
                         .column(Column::remainder().at_least(160.0))
@@ -616,9 +610,6 @@ impl AcpPanel {
                             });
                             header.col(|ui| {
                                 ui.strong("Command");
-                            });
-                            header.col(|ui| {
-                                ui.strong("CWD");
                             });
                             header.col(|ui| {
                                 ui.strong("State");
@@ -656,9 +647,6 @@ impl AcpPanel {
                                 });
                                 row.col(|ui| {
                                     ui.monospace(agent.command.as_str());
-                                });
-                                row.col(|ui| {
-                                    ui.monospace(agent.cwd.as_deref().unwrap_or("(inherit)"));
                                 });
                                 row.col(|ui| {
                                     let state =
@@ -870,12 +858,10 @@ impl AcpPanel {
                         ui.label("Command");
                         ui.text_edit_singleline(&mut form.command);
                         ui.end_row();
-
-                        ui.label("CWD");
-                        ui.text_edit_singleline(&mut form.cwd);
-                        ui.end_row();
                     });
 
+                ui.add_space(6.0);
+                ui.small("Runtime working directory comes from the tool/test prompt `working_directory` input.");
                 ui.add_space(6.0);
                 ui.label("Description");
                 ui.add(
@@ -1061,10 +1047,6 @@ impl AcpPanel {
                             ui.monospace(&agent.command);
                             ui.end_row();
 
-                            ui.label("CWD");
-                            ui.monospace(agent.cwd.as_deref().unwrap_or("(inherit runtime cwd)"));
-                            ui.end_row();
-
                             ui.label("Args");
                             ui.label(if agent.args.is_empty() {
                                 "(none)".to_string()
@@ -1121,10 +1103,10 @@ impl PanelRenderer for AcpPanel {
             .show(ui, |ui| {
                 ui.heading(ctx.tab_title);
                 ui.label(
-                    "ACP lets klaw call external ACP-compatible coding agents through adapter commands such as acpx.",
+                    "ACP lets klaw call external ACP-compatible coding agents through adapter commands.",
                 );
                 ui.small(
-                    "The default Claude template uses `npx -y acpx@latest claude`, not the bare `claude` command.",
+                    "Default templates use `npx -y @zed-industries/claude-agent-acp` and `npx -y @zed-industries/codex-acp`; runtime cwd comes from `working_directory`.",
                 );
                 ui.add_space(8.0);
                 self.render_stats(ui);

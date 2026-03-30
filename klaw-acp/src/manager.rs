@@ -491,7 +491,7 @@ async fn run_prompt_async(
         prompt_timeout_secs = timeout.map(|value| value.as_secs()),
         "starting acp prompt execution"
     );
-    let session_root = resolve_session_root(&config, working_directory.as_deref())?;
+    let session_root = resolve_session_root(working_directory.as_deref())?;
     debug!(agent = %config.id, session_root = %session_root.display(), "resolved acp session root");
     let client = KlawAcpClient::new(session_root.clone());
 
@@ -502,10 +502,7 @@ async fn run_prompt_async(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    if let Some(cwd) = config.cwd.as_ref().filter(|value| !value.trim().is_empty()) {
-        let cwd = resolve_base_cwd(cwd)?;
-        command.current_dir(cwd);
-    }
+    command.current_dir(&session_root);
     for (key, value) in &config.env {
         command.env(key, value);
     }
@@ -646,33 +643,11 @@ async fn run_prompt_async(
     Ok(session_log)
 }
 
-fn resolve_base_cwd(raw: &str) -> Result<PathBuf, AcpExecutionError> {
-    let candidate = PathBuf::from(raw.trim());
-    let candidate = if candidate.is_absolute() {
-        candidate
-    } else {
-        std::env::current_dir()
-            .map_err(|err| AcpExecutionError::WorkingDirectory(err.to_string()))?
-            .join(candidate)
-    };
-    std::fs::canonicalize(candidate)
-        .map_err(|err| AcpExecutionError::WorkingDirectory(err.to_string()))
-}
-
 fn resolve_session_root(
-    config: &AcpAgentConfig,
     override_working_directory: Option<&str>,
 ) -> Result<PathBuf, AcpExecutionError> {
-    let base = config
-        .cwd
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(resolve_base_cwd)
-        .transpose()?
-        .unwrap_or(
-            std::env::current_dir()
-                .map_err(|err| AcpExecutionError::WorkingDirectory(err.to_string()))?,
-        );
+    let base = std::env::current_dir()
+        .map_err(|err| AcpExecutionError::WorkingDirectory(err.to_string()))?;
 
     let candidate = override_working_directory
         .map(str::trim)
@@ -707,11 +682,7 @@ async fn initialize_timeout_message(
     stderr_tail: &Arc<Mutex<String>>,
 ) -> String {
     let tail = stderr_tail.lock().await.clone();
-    let hint = if config.command.trim() == "claude" && config.args.is_empty() {
-        " hint: `claude` CLI does not appear to expose a native ACP server entrypoint; use an ACP adapter command instead."
-    } else {
-        ""
-    };
+    let hint = " hint: configure a real ACP adapter command, for example `npx -y @zed-industries/claude-agent-acp` or `npx -y @zed-industries/codex-acp`.";
     if tail.trim().is_empty() {
         format!(
             "timed out after {:?} waiting for initialize response from `{}`. The process may not be speaking ACP over stdio.{hint}",
@@ -822,7 +793,6 @@ mod tests {
             command: "echo".to_string(),
             args: Vec::new(),
             env: BTreeMap::new(),
-            cwd: None,
             description: String::new(),
         }
     }
@@ -991,20 +961,20 @@ for raw_line in sys.stdin:
     }
 
     #[test]
-    fn resolve_session_root_prefers_override_relative_to_agent_cwd() {
+    fn resolve_session_root_prefers_override_relative_to_process_cwd() {
         let root = std::env::temp_dir().join(format!("klaw-acp-manager-{}", uuid::Uuid::new_v4()));
-        let nested = root.join("workspace").join("subdir");
+        let nested = root.join("subdir");
         std::fs::create_dir_all(&nested).expect("create nested dir");
+        let original_cwd = std::env::current_dir().expect("read cwd");
+        std::env::set_current_dir(&root).expect("switch cwd");
 
-        let mut config = agent("claude", true);
-        config.cwd = Some(root.join("workspace").display().to_string());
-
-        let resolved = resolve_session_root(&config, Some("subdir")).expect("resolve session root");
+        let resolved = resolve_session_root(Some("subdir")).expect("resolve session root");
         assert_eq!(
             resolved,
             std::fs::canonicalize(&nested).expect("canonical nested")
         );
 
+        std::env::set_current_dir(original_cwd).expect("restore cwd");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1017,7 +987,6 @@ for raw_line in sys.stdin:
         let mut config = agent("mock", true);
         config.command = "python3".to_string();
         config.args = vec![script.display().to_string()];
-        config.cwd = Some(root.display().to_string());
 
         let mut manager = AcpManager::new(ToolRegistry::default());
         manager.agents.insert(

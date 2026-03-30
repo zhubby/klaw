@@ -13,3 +13,5 @@
 - ACP agent 到 `klaw_tool::Tool` 的代理注册
 
 实现继续沿用 `klaw-mcp` 的 `manager + hub + proxy tool` 结构，但执行模型采用“每次 tool 调用启动一个短生命周期 ACP 会话”，优先保证 Claude Code、Codex CLI 这类外部 ACP agent 能被 klaw 真实调起和代理。
+
+默认推荐通过 Zed 的 ACP adapter 包启动外部 agent，例如 `npx -y @zed-industries/claude-agent-acp` 与 `npx -y @zed-industries/codex-acp`。运行目录不再由 agent 配置固定，而是由每次调用传入的 `working_directory` 决定。

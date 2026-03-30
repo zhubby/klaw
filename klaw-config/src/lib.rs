@@ -801,26 +801,12 @@ pub struct AcpAgentConfig {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
-    pub cwd: Option<String>,
-    #[serde(default)]
     pub description: String,
 }
 
 impl Default for AcpAgentConfig {
     fn default() -> Self {
-        Self {
-            id: "claude_code".to_string(),
-            enabled: default_acp_agent_enabled(),
-            command: "npx".to_string(),
-            args: vec![
-                "-y".to_string(),
-                "acpx@latest".to_string(),
-                "claude".to_string(),
-            ],
-            env: BTreeMap::new(),
-            cwd: Some(".".to_string()),
-            description: "Claude Code ACP adapter template via acpx".to_string(),
-        }
+        default_claude_acp_agent()
     }
 }
 
@@ -829,11 +815,36 @@ fn default_acp_startup_timeout_seconds() -> u64 {
 }
 
 fn default_acp_agents() -> Vec<AcpAgentConfig> {
-    vec![AcpAgentConfig::default()]
+    vec![default_claude_acp_agent(), default_codex_acp_agent()]
 }
 
 fn default_acp_agent_enabled() -> bool {
     true
+}
+
+fn default_claude_acp_agent() -> AcpAgentConfig {
+    AcpAgentConfig {
+        id: "claude_code".to_string(),
+        enabled: default_acp_agent_enabled(),
+        command: "npx".to_string(),
+        args: vec![
+            "-y".to_string(),
+            "@zed-industries/claude-agent-acp".to_string(),
+        ],
+        env: BTreeMap::new(),
+        description: "Claude Code ACP adapter template".to_string(),
+    }
+}
+
+fn default_codex_acp_agent() -> AcpAgentConfig {
+    AcpAgentConfig {
+        id: "codex".to_string(),
+        enabled: default_acp_agent_enabled(),
+        command: "npx".to_string(),
+        args: vec!["-y".to_string(), "@zed-industries/codex-acp".to_string()],
+        env: BTreeMap::new(),
+        description: "Codex ACP adapter template".to_string(),
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

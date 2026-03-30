@@ -153,18 +153,16 @@ startup_timeout_seconds = 30
 [[acp.agents]]
 id = "claude_code"
 enabled = true
-command = "claude"
-args = []
-cwd = "."
-description = "Claude Code agent for complex coding tasks"
+command = "npx"
+args = ["-y", "@zed-industries/claude-agent-acp"]
+description = "Claude Code ACP adapter template"
 
 [[acp.agents]]
 id = "codex"
 enabled = true
-command = "codex"
-args = ["--agent"]
-cwd = "."
-description = "OpenAI Codex CLI agent"
+command = "npx"
+args = ["-y", "@zed-industries/codex-acp"]
+description = "Codex ACP adapter template"
 ```
 
 对应配置模型:
@@ -181,7 +179,6 @@ pub struct AcpAgentConfig {
     pub command: String,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
-    pub cwd: Option<String>,
     pub description: String,
 }
 ```
