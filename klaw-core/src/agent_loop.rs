@@ -452,6 +452,14 @@ async fn record_model_requests(
     }
 }
 
+fn normalize_audit_payload_provider(
+    mut payload: klaw_llm::LlmAuditPayload,
+    provider_id: &str,
+) -> klaw_llm::LlmAuditPayload {
+    payload.provider = provider_id.to_string();
+    payload
+}
+
 async fn record_turn_outcome(
     telemetry: Option<&Arc<dyn AgentTelemetry>>,
     session_key: &str,
@@ -845,9 +853,19 @@ impl AgentLoop {
 
         match result {
             Ok(output) => {
-                let request_count = output.request_audits.len().max(output.request_usages.len());
-                let tool_iterations = output
+                let request_audits = output
                     .request_audits
+                    .into_iter()
+                    .map(|record| klaw_agent::AgentRequestAudit {
+                        request_seq: record.request_seq,
+                        payload: normalize_audit_payload_provider(
+                            record.payload,
+                            &resolved_provider_id,
+                        ),
+                    })
+                    .collect::<Vec<_>>();
+                let request_count = request_audits.len().max(output.request_usages.len());
+                let tool_iterations = request_audits
                     .iter()
                     .filter(|record| {
                         record
@@ -864,7 +882,7 @@ impl AgentLoop {
                     &resolved_provider_id,
                     &resolved_model,
                     provider.wire_api().unwrap_or(provider.name()),
-                    &output.request_audits,
+                    &request_audits,
                     &output.request_usages,
                     None,
                 )
@@ -1001,12 +1019,11 @@ impl AgentLoop {
                         ),
                     );
                 }
-                if !output.request_audits.is_empty() {
+                if !request_audits.is_empty() {
                     response_metadata.insert(
                         META_LLM_AUDIT_RECORDS_KEY.to_string(),
                         serde_json::Value::Array(
-                            output
-                                .request_audits
+                            request_audits
                                 .iter()
                                 .map(|record| {
                                     serde_json::json!({
@@ -1043,8 +1060,7 @@ impl AgentLoop {
                     }),
                     error_code: None,
                     final_state: state,
-                    llm_audits: output
-                        .request_audits
+                    llm_audits: request_audits
                         .into_iter()
                         .map(|record| record.payload)
                         .collect(),
@@ -1056,7 +1072,12 @@ impl AgentLoop {
             }
             Err(AgentExecutionError::Provider(err)) => {
                 warn!(error = %err, "provider failed");
-                let audits = err.audit().cloned().into_iter().collect::<Vec<_>>();
+                let audits = err
+                    .audit()
+                    .cloned()
+                    .into_iter()
+                    .map(|payload| normalize_audit_payload_provider(payload, &resolved_provider_id))
+                    .collect::<Vec<_>>();
                 let request_audits = audits
                     .iter()
                     .enumerate()
@@ -1730,7 +1751,7 @@ fn augment_user_content_with_attachment_context(
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentLoop, QueueStrategy, RunLimits, SessionSchedulingPolicy,
+        AgentLoop, META_LLM_AUDIT_RECORDS_KEY, QueueStrategy, RunLimits, SessionSchedulingPolicy,
         augment_user_content_with_attachment_context, current_attachment_contexts,
         heartbeat_response_metadata,
     };
@@ -1743,7 +1764,10 @@ mod tests {
         protocol::EnvelopeHeader,
     };
     use async_trait::async_trait;
-    use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
+    use klaw_llm::{
+        ChatOptions, LlmAuditPayload, LlmAuditStatus, LlmError, LlmMessage, LlmProvider,
+        LlmResponse, ToolDefinition,
+    };
     use klaw_tool::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolRegistry};
     use serde_json::json;
     use std::{
@@ -2172,6 +2196,108 @@ mod tests {
         assert_eq!(usage_records[0].get("provider"), Some(&json!("openai")));
         assert_eq!(usage_records[0].get("wire_api"), Some(&json!("responses")));
         assert_eq!(usage_records[0].get("total_tokens"), Some(&json!(16)));
+    }
+
+    struct AuditNameMismatchProvider;
+
+    #[async_trait]
+    impl LlmProvider for AuditNameMismatchProvider {
+        fn name(&self) -> &str {
+            "openai-compatible"
+        }
+
+        fn default_model(&self) -> &str {
+            "gpt-4.1-mini"
+        }
+
+        fn wire_api(&self) -> Option<&str> {
+            Some("responses")
+        }
+
+        async fn chat(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: Vec<ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<LlmResponse, LlmError> {
+            Ok(LlmResponse {
+                content: "ok".to_string(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
+                audit: Some(LlmAuditPayload {
+                    provider: self.name().to_string(),
+                    model: "gpt-4.1-mini".to_string(),
+                    wire_api: "responses".to_string(),
+                    status: LlmAuditStatus::Success,
+                    error_code: None,
+                    error_message: None,
+                    provider_request_id: None,
+                    provider_response_id: None,
+                    request_body: json!({ "input": "hello" }),
+                    response_body: Some(json!({ "output": "ok" })),
+                    requested_at_ms: 1000,
+                    responded_at_ms: Some(1100),
+                }),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn process_message_normalizes_audit_provider_to_resolved_provider_id() {
+        let provider = Arc::new(AuditNameMismatchProvider) as Arc<dyn LlmProvider>;
+        let agent = AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 1,
+                max_tool_calls: 1,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(1),
+                tool_timeout: Duration::from_secs(1),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 1,
+                lock_ttl: Duration::from_secs(1),
+            },
+            Arc::clone(&provider),
+            "custom-openai".to_string(),
+            "gpt-4.1-mini".to_string(),
+            ToolRegistry::default(),
+        )
+        .with_provider_registry(BTreeMap::from([("custom-openai".to_string(), provider)]));
+
+        let inbound = crate::protocol::Envelope {
+            header: EnvelopeHeader::new("im:chat-audit-provider"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "im".to_string(),
+                sender_id: "u1".to_string(),
+                chat_id: "chat-audit-provider".to_string(),
+                session_key: "im:chat-audit-provider".to_string(),
+                content: "hello".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        };
+
+        let outcome = agent.process_message(inbound, false).await;
+        assert_eq!(outcome.llm_audits.len(), 1);
+        assert_eq!(outcome.llm_audits[0].provider, "custom-openai");
+
+        let response = outcome.final_response.expect("response should be present");
+        let audit_records = response
+            .payload
+            .metadata
+            .get(META_LLM_AUDIT_RECORDS_KEY)
+            .and_then(serde_json::Value::as_array)
+            .expect("llm audit records should be present");
+        assert_eq!(audit_records.len(), 1);
+        assert_eq!(
+            audit_records[0].get("provider"),
+            Some(&json!("custom-openai"))
+        );
     }
 
     #[tokio::test]

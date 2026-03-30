@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-30
+
+### Fixed
+- `AgentLoop` now normalizes persisted/outbound LLM audit `provider` values to the resolved provider id instead of the provider implementation name, so downstream runtime storage and GUI panels can map audit rows back to configured provider display names
+
 ## 2026-03-28
 
 ### Changed
