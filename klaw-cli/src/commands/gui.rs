@@ -413,11 +413,14 @@ impl GuiCommand {
                                                 let _ = response.send(env_check);
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetGatewayStatus { response }) => {
-                                                let mut gateway_manager = gateway_manager.lock().await;
-                                                if let Err(err) = gateway_manager.refresh_from_store() {
-                                                    warn!(error = %err, "failed to refresh gateway config metadata");
-                                                }
-                                                let _ = response.send(gateway_manager.snapshot());
+                                                let gateway_manager = Arc::clone(&gateway_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let mut gateway_manager = gateway_manager.lock().await;
+                                                    if let Err(err) = gateway_manager.refresh_from_store() {
+                                                        warn!(error = %err, "failed to refresh gateway config metadata");
+                                                    }
+                                                    let _ = response.send(gateway_manager.snapshot());
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::StartGateway { response }) => {
                                                 let gateway_manager = Arc::clone(&gateway_manager);

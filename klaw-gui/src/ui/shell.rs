@@ -97,6 +97,11 @@ impl ShellUi {
         self.pending_provider_override_target = None;
     }
 
+    fn should_emit_provider_override_action(&self, state: &UiState) -> bool {
+        self.pending_provider_override_target.is_none()
+            && self.runtime_provider_override != state.runtime_provider_override
+    }
+
     fn sync_provider_choices(&mut self) {
         if let Some(request) = self.provider_status_request.as_mut()
             && let Some(result) = request.try_take_result()
@@ -134,7 +139,7 @@ impl ShellUi {
         let mut actions = Vec::new();
         self.panels.tick(ctx);
         self.sync_provider_choices();
-        if self.runtime_provider_override != state.runtime_provider_override {
+        if self.should_emit_provider_override_action(state) {
             actions.push(UiAction::SetRuntimeProviderOverride(
                 self.runtime_provider_override.clone(),
             ));
@@ -664,5 +669,25 @@ mod tests {
             supervisor.next_task(&settings, 62_000),
             Some(SyncRuntimeTaskKind::AutoBackup)
         );
+    }
+
+    #[test]
+    fn pending_provider_override_suppresses_duplicate_action() {
+        let mut shell = ShellUi::default();
+        let state = UiState::default();
+
+        shell.set_pending_provider_override(Some("anthropic".to_string()));
+
+        assert!(!shell.should_emit_provider_override_action(&state));
+    }
+
+    #[test]
+    fn provider_override_action_emits_when_no_request_is_pending() {
+        let mut shell = ShellUi::default();
+        let state = UiState::default();
+
+        shell.set_runtime_provider_override(Some("anthropic".to_string()));
+
+        assert!(shell.should_emit_provider_override_action(&state));
     }
 }
