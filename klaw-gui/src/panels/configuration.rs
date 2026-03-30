@@ -204,6 +204,18 @@ impl ConfigurationPanel {
         self.set_search_match(&matches, next_index);
     }
 
+    fn jump_to_first_search_match(&mut self, notifications: &mut NotificationCenter) {
+        let matches = self.search_matches();
+        if matches.is_empty() {
+            if !self.search_query.trim().is_empty() {
+                notifications.error("No matches found in configuration");
+            }
+            return;
+        }
+
+        self.set_search_match(&matches, 0);
+    }
+
     fn jump_to_previous_search_match(&mut self, notifications: &mut NotificationCenter) {
         let matches = self.search_matches();
         if matches.is_empty() {
@@ -496,11 +508,7 @@ impl PanelRenderer for ConfigurationPanel {
                     this.sync_search_with_query();
                 }
                 if search_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if ui.input(|i| i.modifiers.shift) {
-                        this.jump_to_previous_search_match(notifications);
-                    } else {
-                        this.jump_to_next_search_match(notifications);
-                    }
+                    this.jump_to_first_search_match(notifications);
                 }
 
                 let matches = this.search_matches();
@@ -779,5 +787,21 @@ limit = 42
 
         assert_eq!(panel.search_match_index, 0);
         assert!(panel.pending_search_range.is_none());
+    }
+
+    #[test]
+    fn enter_confirmation_targets_first_search_match() {
+        let mut panel = ConfigurationPanel {
+            editor_raw: "alpha\nbeta\nalpha\n".to_string(),
+            search_query: "alpha".to_string(),
+            search_match_index: 1,
+            ..Default::default()
+        };
+        let mut notifications = NotificationCenter::default();
+
+        panel.jump_to_first_search_match(&mut notifications);
+
+        assert_eq!(panel.search_match_index, 0);
+        assert_eq!(panel.pending_search_range, Some((0, 5)));
     }
 }
