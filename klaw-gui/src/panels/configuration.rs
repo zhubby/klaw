@@ -354,7 +354,6 @@ impl PanelRenderer for ConfigurationPanel {
     ) {
         const MIN_TOTAL_HEIGHT: f32 = 520.0;
         const MIN_EDITOR_HEIGHT: f32 = 320.0;
-        const FOOTER_HEIGHT: f32 = 48.0;
 
         self.ensure_store_loaded(notifications);
 
@@ -377,12 +376,28 @@ impl PanelRenderer for ConfigurationPanel {
                 };
                 ui.colored_label(color, dirty_label);
             });
+            ui.horizontal(|ui| {
+                if ui.button("Save").clicked() {
+                    this.handle_save(notifications);
+                }
+                if ui.button("Validate").clicked() {
+                    this.handle_validate(notifications);
+                }
+                if ui.button("Reset").clicked() {
+                    this.request_or_execute(ConfirmAction::Reset, notifications);
+                }
+                if ui.button("Migrate").clicked() {
+                    this.request_or_execute(ConfirmAction::Migrate, notifications);
+                }
+                if ui.button("Reload").clicked() {
+                    this.try_reload(notifications);
+                }
+            });
 
             ui.separator();
 
             StripBuilder::new(ui)
                 .size(Size::remainder().at_least(MIN_EDITOR_HEIGHT))
-                .size(Size::exact(FOOTER_HEIGHT))
                 .vertical(|mut strip| {
                     strip.cell(|ui| {
                         let editor_height = ui.available_height();
@@ -402,27 +417,6 @@ impl PanelRenderer for ConfigurationPanel {
                                         .layouter(&mut layouter),
                                 );
                             });
-                    });
-
-                    strip.cell(|ui| {
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            if ui.button("Save").clicked() {
-                                this.handle_save(notifications);
-                            }
-                            if ui.button("Validate").clicked() {
-                                this.handle_validate(notifications);
-                            }
-                            if ui.button("Reset").clicked() {
-                                this.request_or_execute(ConfirmAction::Reset, notifications);
-                            }
-                            if ui.button("Migrate").clicked() {
-                                this.request_or_execute(ConfirmAction::Migrate, notifications);
-                            }
-                            if ui.button("Reload").clicked() {
-                                this.try_reload(notifications);
-                            }
-                        });
                     });
                 });
         };
