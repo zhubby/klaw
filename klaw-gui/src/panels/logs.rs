@@ -324,12 +324,22 @@ impl PanelRenderer for LogsPanel {
         });
 
         self.refresh_visible_cache();
+        let transport_stats = runtime_bridge::log_stats_snapshot();
         ui.label(format!(
-            "Buffered: {} | Visible: {} | Dropped: {}",
+            "Buffered: {} | Visible: {} | Panel dropped: {} | Transport dropped: {} | Bridge dropped: {}",
             self.entries.len(),
             self.filtered_indices.len(),
-            self.dropped_lines
+            self.dropped_lines,
+            transport_stats.transport_dropped_chunks,
+            transport_stats.bridge_dropped_chunks,
         ));
+        if transport_stats.transport_dropped_chunks > 0 {
+            ui.label(format!(
+                "GUI transport has dropped {} chunks ({} bytes). Runtime logging continued, but the GUI sink fell behind.",
+                transport_stats.transport_dropped_chunks,
+                transport_stats.transport_dropped_bytes
+            ));
+        }
         ui.separator();
 
         let row_height = ui.text_style_height(&egui::TextStyle::Monospace).max(1.0);

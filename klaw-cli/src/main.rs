@@ -290,7 +290,9 @@ impl Write for GuiTracingWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // GUI sink must never block or fail the primary logging path.
         let payload = String::from_utf8_lossy(buf).to_string();
-        let _ = self.sender.try_send(payload);
+        if self.sender.try_send(payload).is_err() {
+            klaw_gui::record_dropped_log_chunk(buf.len());
+        }
         Ok(buf.len())
     }
 

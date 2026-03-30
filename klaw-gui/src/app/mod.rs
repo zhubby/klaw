@@ -1,4 +1,4 @@
-use crate::runtime_bridge::request_set_provider_override;
+use crate::runtime_bridge::{RuntimeRequestHandle, begin_set_provider_override_request};
 use crate::state::persistence;
 use crate::state::{UiAction, UiState, WindowSize};
 use crate::theme;
@@ -24,6 +24,12 @@ pub struct KlawGuiApp {
     state_dirty: bool,
     last_state_save_at: Instant,
     should_quit: bool,
+    pending_provider_override: Option<PendingProviderOverride>,
+}
+
+struct PendingProviderOverride {
+    requested_provider_id: Option<String>,
+    request: RuntimeRequestHandle<(String, String)>,
 }
 
 impl KlawGuiApp {
@@ -36,6 +42,7 @@ impl KlawGuiApp {
             state_dirty: false,
             last_state_save_at: Instant::now(),
             should_quit: false,
+            pending_provider_override: None,
         };
         theme::install_fonts(&creation_ctx.egui_ctx);
         theme::apply_theme(&creation_ctx.egui_ctx, &app.state);
@@ -87,22 +94,17 @@ impl KlawGuiApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
             UiAction::SetRuntimeProviderOverride(provider_id) => {
-                match request_set_provider_override(provider_id.clone()) {
-                    Ok((active_provider, active_model)) => {
-                        self.shell
-                            .set_runtime_provider_override(provider_id.clone());
-                        self.state
-                            .apply(UiAction::SetRuntimeProviderOverride(provider_id));
-                        self.shell.show_info(format!(
-                            "Runtime provider set to '{active_provider}' ({active_model})"
-                        ));
-                        self.mark_state_dirty();
-                    }
-                    Err(err) => {
-                        self.shell
-                            .show_error(format!("Failed to update runtime provider: {err}"));
-                    }
+                if self.pending_provider_override.is_some() {
+                    self.shell
+                        .show_info("Runtime provider update is already in progress");
+                    return;
                 }
+                let requested_provider_id = provider_id.clone();
+                self.shell.set_pending_provider_override(provider_id.clone());
+                self.pending_provider_override = Some(PendingProviderOverride {
+                    requested_provider_id,
+                    request: begin_set_provider_override_request(provider_id),
+                });
             }
             UiAction::ShowAbout
             | UiAction::HideAbout
@@ -203,11 +205,44 @@ impl KlawGuiApp {
             self.mark_state_dirty();
         }
     }
+
+    fn poll_pending_actions(&mut self) {
+        let Some(pending) = self.pending_provider_override.as_mut() else {
+            return;
+        };
+        let Some(result) = pending.request.try_take_result() else {
+            return;
+        };
+
+        let requested_provider_id = pending.requested_provider_id.clone();
+        self.pending_provider_override = None;
+        self.shell.clear_pending_provider_override();
+
+        match result {
+            Ok((active_provider, active_model)) => {
+                self.shell
+                    .set_runtime_provider_override(requested_provider_id.clone());
+                self.state
+                    .apply(UiAction::SetRuntimeProviderOverride(requested_provider_id));
+                self.shell.show_info(format!(
+                    "Runtime provider set to '{active_provider}' ({active_model})"
+                ));
+                self.mark_state_dirty();
+            }
+            Err(err) => {
+                self.shell
+                    .set_runtime_provider_override(self.state.runtime_provider_override.clone());
+                self.shell
+                    .show_error(format!("Failed to update runtime provider: {err}"));
+            }
+        }
+    }
 }
 
 impl eframe::App for KlawGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_tray_commands(ctx);
+        self.poll_pending_actions();
         self.sync_fullscreen_from_viewport(ctx);
         self.sync_window_size_from_viewport(ctx);
         let actions = self.shell.render(ctx, &self.state);
