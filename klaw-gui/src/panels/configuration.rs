@@ -1,7 +1,11 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use egui::{Color32, FontId, TextFormat, text::LayoutJob};
+use egui::{
+    Color32, FontId, RichText, TextFormat,
+    text::{CCursor, CCursorRange, LayoutJob},
+};
 use egui_extras::{Size, StripBuilder};
+use egui_phosphor::regular;
 use klaw_config::{ConfigSnapshot, ConfigStore};
 use std::path::{Path, PathBuf};
 
@@ -17,10 +21,16 @@ pub struct ConfigurationPanel {
     config_path: Option<PathBuf>,
     editor_raw: String,
     saved_raw: String,
+    search_query: String,
+    search_match_index: usize,
+    pending_search_range: Option<(usize, usize)>,
     pending_confirm: Option<ConfirmAction>,
 }
 
 impl ConfigurationPanel {
+    const EDITOR_ID_SALT: &'static str = "configuration-editor";
+    const RESET_TEXT_COLOR: Color32 = Color32::from_rgb(200, 150, 50);
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -138,6 +148,76 @@ impl ConfigurationPanel {
             Some(path) => format!("Path: {}", path.display()),
             None => "Path: (not loaded)".to_string(),
         }
+    }
+
+    fn find_matches(text: &str, query: &str) -> Vec<(usize, usize)> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        text.match_indices(query)
+            .map(|(byte_start, matched)| {
+                let start = text[..byte_start].chars().count();
+                let end = start + matched.chars().count();
+                (start, end)
+            })
+            .collect()
+    }
+
+    fn search_matches(&self) -> Vec<(usize, usize)> {
+        Self::find_matches(&self.editor_raw, self.search_query.trim())
+    }
+
+    fn set_search_match(&mut self, matches: &[(usize, usize)], index: usize) {
+        if matches.is_empty() {
+            self.search_match_index = 0;
+            self.pending_search_range = None;
+            return;
+        }
+
+        let index = index % matches.len();
+        self.search_match_index = index;
+        self.pending_search_range = Some(matches[index]);
+    }
+
+    fn sync_search_with_query(&mut self) {
+        let matches = self.search_matches();
+        self.pending_search_range = None;
+        if matches.is_empty() {
+            self.search_match_index = 0;
+            return;
+        }
+
+        self.search_match_index = self.search_match_index.min(matches.len() - 1);
+    }
+
+    fn jump_to_next_search_match(&mut self, notifications: &mut NotificationCenter) {
+        let matches = self.search_matches();
+        if matches.is_empty() {
+            if !self.search_query.trim().is_empty() {
+                notifications.error("No matches found in configuration");
+            }
+            return;
+        }
+
+        let next_index = (self.search_match_index + 1) % matches.len();
+        self.set_search_match(&matches, next_index);
+    }
+
+    fn jump_to_previous_search_match(&mut self, notifications: &mut NotificationCenter) {
+        let matches = self.search_matches();
+        if matches.is_empty() {
+            if !self.search_query.trim().is_empty() {
+                notifications.error("No matches found in configuration");
+            }
+            return;
+        }
+
+        let previous_index = self
+            .search_match_index
+            .checked_sub(1)
+            .unwrap_or(matches.len() - 1);
+        self.set_search_match(&matches, previous_index);
     }
 
     fn syntax_highlight_job(code: &str) -> LayoutJob {
@@ -376,21 +456,93 @@ impl PanelRenderer for ConfigurationPanel {
                 };
                 ui.colored_label(color, dirty_label);
             });
-            ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .button(format!("{} Save", regular::FLOPPY_DISK))
+                    .clicked()
+                {
                     this.handle_save(notifications);
                 }
-                if ui.button("Validate").clicked() {
+                if ui.button(format!("{} Validate", regular::CHECK)).clicked() {
                     this.handle_validate(notifications);
                 }
-                if ui.button("Reset").clicked() {
+                if ui
+                    .button(
+                        RichText::new(format!("{} Reset", regular::ARROW_COUNTER_CLOCKWISE))
+                            .color(Self::RESET_TEXT_COLOR),
+                    )
+                    .clicked()
+                {
                     this.request_or_execute(ConfirmAction::Reset, notifications);
                 }
-                if ui.button("Migrate").clicked() {
+                if ui.button(format!("{} Migrate", regular::BROOM)).clicked() {
                     this.request_or_execute(ConfirmAction::Migrate, notifications);
                 }
-                if ui.button("Reload").clicked() {
+                if ui
+                    .button(format!("{} Reload", regular::ARROW_CLOCKWISE))
+                    .clicked()
+                {
                     this.try_reload(notifications);
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(format!("{} Find", regular::MAGNIFYING_GLASS));
+                let search_response = ui.add(
+                    egui::TextEdit::singleline(&mut this.search_query)
+                        .desired_width(220.0)
+                        .hint_text("Search TOML"),
+                );
+                if search_response.changed() {
+                    this.sync_search_with_query();
+                }
+                if search_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if ui.input(|i| i.modifiers.shift) {
+                        this.jump_to_previous_search_match(notifications);
+                    } else {
+                        this.jump_to_next_search_match(notifications);
+                    }
+                }
+
+                let matches = this.search_matches();
+                let has_matches = !matches.is_empty();
+                if has_matches && this.search_match_index >= matches.len() {
+                    this.search_match_index = matches.len() - 1;
+                } else if !has_matches {
+                    this.search_match_index = 0;
+                }
+                let status_text = if this.search_query.trim().is_empty() {
+                    "Type to search".to_string()
+                } else if has_matches {
+                    format!("{}/{}", this.search_match_index + 1, matches.len())
+                } else {
+                    "0 matches".to_string()
+                };
+                let status_color = if this.search_query.trim().is_empty() {
+                    ui.visuals().weak_text_color()
+                } else if has_matches {
+                    Color32::LIGHT_GREEN
+                } else {
+                    Self::RESET_TEXT_COLOR
+                };
+                ui.label(RichText::new(status_text).color(status_color));
+
+                if ui
+                    .add_enabled(
+                        has_matches,
+                        egui::Button::new(format!("{} Prev", regular::ARROW_UP)),
+                    )
+                    .clicked()
+                {
+                    this.jump_to_previous_search_match(notifications);
+                }
+                if ui
+                    .add_enabled(
+                        has_matches,
+                        egui::Button::new(format!("{} Next", regular::ARROW_DOWN)),
+                    )
+                    .clicked()
+                {
+                    this.jump_to_next_search_match(notifications);
                 }
             });
 
@@ -401,21 +553,32 @@ impl PanelRenderer for ConfigurationPanel {
                 .vertical(|mut strip| {
                     strip.cell(|ui| {
                         let editor_height = ui.available_height();
+                        let editor_id = ui.make_persistent_id(Self::EDITOR_ID_SALT);
+                        if let Some((start, end)) = this.pending_search_range.take() {
+                            let mut state =
+                                egui::TextEdit::load_state(ui.ctx(), editor_id).unwrap_or_default();
+                            state.cursor.set_char_range(Some(CCursorRange::two(
+                                CCursor::new(start),
+                                CCursor::new(end),
+                            )));
+                            egui::TextEdit::store_state(ui.ctx(), editor_id, state);
+                            ui.memory_mut(|mem| mem.request_focus(editor_id));
+                        }
                         egui::ScrollArea::both()
                             .id_salt("configuration-editor-scroll")
                             .auto_shrink([false, false])
                             .max_height(editor_height)
                             .show(ui, |ui| {
                                 let editor_width = ui.available_width();
-                                ui.add_sized(
-                                    [editor_width, editor_height],
-                                    egui::TextEdit::multiline(&mut this.editor_raw)
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_rows(26)
-                                        .desired_width(f32::INFINITY)
-                                        .code_editor()
-                                        .layouter(&mut layouter),
-                                );
+                                egui::TextEdit::multiline(&mut this.editor_raw)
+                                    .id(editor_id)
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_rows(26)
+                                    .desired_width(f32::INFINITY)
+                                    .min_size(egui::vec2(editor_width, editor_height))
+                                    .code_editor()
+                                    .layouter(&mut layouter)
+                                    .show(ui);
                             });
                     });
                 });
@@ -593,5 +756,28 @@ limit = 42
             .join("");
         assert_eq!(text, code);
         assert!(ConfigurationPanel::find_comment_start(r##""#not-comment" # comment"##).is_some());
+    }
+
+    #[test]
+    fn search_matches_return_character_ranges() {
+        let matches = ConfigurationPanel::find_matches("aβc aβc", "βc");
+        assert_eq!(matches, vec![(1, 3), (5, 7)]);
+        assert!(ConfigurationPanel::find_matches("abc", "").is_empty());
+    }
+
+    #[test]
+    fn sync_search_with_query_does_not_schedule_editor_jump() {
+        let mut panel = ConfigurationPanel {
+            editor_raw: "alpha\nbeta\nalpha\n".to_string(),
+            search_query: "alpha".to_string(),
+            search_match_index: 0,
+            pending_search_range: Some((0, 5)),
+            ..Default::default()
+        };
+
+        panel.sync_search_with_query();
+
+        assert_eq!(panel.search_match_index, 0);
+        assert!(panel.pending_search_range.is_none());
     }
 }
