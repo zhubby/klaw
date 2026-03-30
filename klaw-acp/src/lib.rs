@@ -7,6 +7,6 @@ pub use client::{AcpSessionUpdateLog, KlawAcpClient};
 pub use hub::AcpAgentHub;
 pub use manager::{
     AcpAgentKey, AcpAgentStatus, AcpBootstrapError, AcpConfigSnapshot, AcpInitHandle,
-    AcpLifecycleState, AcpManager, AcpSyncResult,
+    AcpLifecycleState, AcpManager, AcpRuntimeSnapshot, AcpSyncResult,
 };
 pub use runtime::{AcpExecutionError, AcpProxyTool, AcpToolDescriptor};

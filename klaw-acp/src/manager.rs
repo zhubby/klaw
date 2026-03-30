@@ -50,12 +50,31 @@ pub enum AcpLifecycleState {
     Failed,
 }
 
+impl AcpLifecycleState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Stopped => "stopped",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpAgentStatus {
     pub key: AcpAgentKey,
     pub enabled: bool,
     pub state: AcpLifecycleState,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AcpRuntimeSnapshot {
+    pub statuses: Vec<AcpAgentStatus>,
+    pub active_agents: Vec<String>,
+    pub tool_count: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -243,6 +262,19 @@ impl AcpManager {
         let keys = self.agents.keys().cloned().collect::<Vec<_>>();
         for key in keys {
             self.stop_agent(&key);
+        }
+    }
+
+    #[must_use]
+    pub fn runtime_snapshot(&self, snapshot: &AcpConfigSnapshot) -> AcpRuntimeSnapshot {
+        AcpRuntimeSnapshot {
+            statuses: self.snapshot_statuses(snapshot),
+            active_agents: self
+                .agents
+                .keys()
+                .map(|key| key.as_str().to_string())
+                .collect(),
+            tool_count: self.agents.len(),
         }
     }
 

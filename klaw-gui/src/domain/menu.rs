@@ -50,6 +50,7 @@ pub enum WorkbenchMenu {
     Gateway,
     Webhook,
     Mcp,
+    Acp,
     Skill,
     #[serde(alias = "SkillManage")]
     SkillsManager,
@@ -63,7 +64,7 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 24] = [
+    pub const ALL: [WorkbenchMenu; 25] = [
         WorkbenchMenu::Profile,
         WorkbenchMenu::System,
         WorkbenchMenu::Setting,
@@ -79,6 +80,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Gateway,
         WorkbenchMenu::Webhook,
         WorkbenchMenu::Mcp,
+        WorkbenchMenu::Acp,
         WorkbenchMenu::Skill,
         WorkbenchMenu::SkillsManager,
         WorkbenchMenu::Memory,
@@ -107,6 +109,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Gateway => "gateway",
             WorkbenchMenu::Webhook => "webhook",
             WorkbenchMenu::Mcp => "mcp",
+            WorkbenchMenu::Acp => "acp",
             WorkbenchMenu::Skill => "skill-registry",
             WorkbenchMenu::SkillsManager => "skills-manager",
             WorkbenchMenu::Memory => "memory",
@@ -136,6 +139,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Gateway => "Gateway",
             WorkbenchMenu::Webhook => "Webhook",
             WorkbenchMenu::Mcp => "MCP",
+            WorkbenchMenu::Acp => "ACP",
             WorkbenchMenu::Skill => "Skills Registry",
             WorkbenchMenu::SkillsManager => "Skills Manager",
             WorkbenchMenu::Memory => "Memory",
@@ -165,6 +169,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Gateway => regular::PLUG,
             WorkbenchMenu::Webhook => regular::PLUG,
             WorkbenchMenu::Mcp => regular::PLUG,
+            WorkbenchMenu::Acp => regular::PLUG,
             WorkbenchMenu::Skill => regular::PUZZLE_PIECE,
             WorkbenchMenu::SkillsManager => regular::PUZZLE_PIECE,
             WorkbenchMenu::Memory => regular::MEMORY,
@@ -190,6 +195,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Provider
             | WorkbenchMenu::Llm
             | WorkbenchMenu::Mcp
+            | WorkbenchMenu::Acp
             | WorkbenchMenu::Skill
             | WorkbenchMenu::SkillsManager
             | WorkbenchMenu::Tool

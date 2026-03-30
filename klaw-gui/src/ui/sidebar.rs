@@ -81,6 +81,7 @@ mod tests {
         assert_eq!(
             titles,
             vec![
+                "ACP",
                 "LLM",
                 "MCP",
                 "Model Provider",

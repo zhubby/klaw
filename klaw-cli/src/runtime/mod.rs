@@ -3336,8 +3336,8 @@ mod tests {
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, parse_outbound_attachments, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, submit_webhook_agent,
-        submit_webhook_event, sync_runtime_providers, sync_runtime_tools,
+        spawn_acp_init, spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output,
+        submit_webhook_agent, submit_webhook_event, sync_runtime_providers, sync_runtime_tools,
         trim_conversation_history, voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};

@@ -777,7 +777,7 @@ fn default_mcp_server_enabled() -> bool {
 pub struct AcpConfig {
     #[serde(default = "default_acp_startup_timeout_seconds")]
     pub startup_timeout_seconds: u64,
-    #[serde(default)]
+    #[serde(default = "default_acp_agents")]
     pub agents: Vec<AcpAgentConfig>,
 }
 
@@ -785,7 +785,7 @@ impl Default for AcpConfig {
     fn default() -> Self {
         Self {
             startup_timeout_seconds: default_acp_startup_timeout_seconds(),
-            agents: Vec::new(),
+            agents: default_acp_agents(),
         }
     }
 }
@@ -809,19 +809,23 @@ pub struct AcpAgentConfig {
 impl Default for AcpAgentConfig {
     fn default() -> Self {
         Self {
-            id: String::new(),
+            id: "claude_code".to_string(),
             enabled: default_acp_agent_enabled(),
-            command: String::new(),
+            command: "claude".to_string(),
             args: Vec::new(),
             env: BTreeMap::new(),
-            cwd: None,
-            description: String::new(),
+            cwd: Some(".".to_string()),
+            description: "Claude Code agent for complex coding tasks".to_string(),
         }
     }
 }
 
 fn default_acp_startup_timeout_seconds() -> u64 {
     30
+}
+
+fn default_acp_agents() -> Vec<AcpAgentConfig> {
+    vec![AcpAgentConfig::default()]
 }
 
 fn default_acp_agent_enabled() -> bool {

@@ -3939,6 +3939,7 @@ dependencies = [
  "hostname",
  "hound",
  "image",
+ "klaw-acp",
  "klaw-approval",
  "klaw-archive",
  "klaw-channel",

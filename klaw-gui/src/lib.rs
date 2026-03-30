@@ -18,13 +18,14 @@ pub mod widgets;
 pub use domain::menu::WorkbenchMenu;
 pub use panels::{PanelRenderer, RenderCtx};
 pub use runtime_bridge::{
-    GatewayStatusSnapshot, ProviderRuntimeSnapshot, RuntimeCommand, clear_log_receiver,
-    clear_runtime_command_sender, drain_log_chunks, install_log_receiver,
-    install_runtime_command_sender, request_env_check, request_gateway_status, request_mcp_status,
+    AcpPromptResult, GatewayStatusSnapshot, ProviderRuntimeSnapshot, RuntimeCommand,
+    clear_log_receiver, clear_runtime_command_sender, drain_log_chunks, install_log_receiver,
+    install_runtime_command_sender, request_acp_status, request_env_check,
+    request_execute_acp_prompt, request_gateway_status, request_mcp_status,
     request_provider_status, request_restart_gateway, request_run_cron_now,
     request_run_heartbeat_now, request_set_gateway_enabled, request_set_tailscale_mode,
-    request_start_gateway, request_sync_channels, request_sync_mcp, request_sync_providers,
-    request_sync_tools, request_tool_definitions,
+    request_start_gateway, request_sync_acp, request_sync_channels, request_sync_mcp,
+    request_sync_providers, request_sync_tools, request_tool_definitions,
 };
 pub use state::UiAction;
 pub use state::workbench::{TabId, WorkbenchState, WorkbenchTab};
