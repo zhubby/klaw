@@ -636,8 +636,14 @@ mod tests {
             _offset: i64,
             _updated_from_ms: Option<i64>,
             _updated_to_ms: Option<i64>,
+            _channel: Option<&str>,
+            _sort_order: klaw_storage::SessionSortOrder,
         ) -> Result<Vec<SessionIndex>, StorageError> {
             Ok(self.sessions.lock().expect("lock").clone())
+        }
+
+        async fn list_session_channels(&self) -> Result<Vec<String>, StorageError> {
+            Ok(Vec::new())
         }
 
         async fn append_llm_usage(

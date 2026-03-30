@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-30
+
+### Added
+- added distinct session-channel listing APIs in both SQLx and Turso backends so callers can populate session filter dropdowns from SQL
+
+### Changed
+- session listing APIs in both SQLx and Turso backends now accept an optional `channel` filter and explicit `updated_at` sort order, pushing both behaviors into SQL `WHERE` / `ORDER BY`
+
 ## 2026-03-26
 
 ### Added

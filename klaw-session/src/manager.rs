@@ -4,18 +4,20 @@ use klaw_storage::{
     ChatRecord, DefaultSessionStore, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
     LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord,
     NewLlmUsageRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    SessionCompressionState, SessionIndex, SessionStorage, ToolAuditFilterOptions,
-    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateWebhookAgentResult,
-    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
-    WebhookEventRecord, open_default_store,
+    SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
+    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
+    WebhookEventQuery, WebhookEventRecord, open_default_store,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SessionListQuery {
     pub limit: i64,
     pub offset: i64,
     pub updated_from_ms: Option<i64>,
     pub updated_to_ms: Option<i64>,
+    pub channel: Option<String>,
+    pub sort_order: SessionSortOrder,
 }
 
 impl Default for SessionListQuery {
@@ -25,6 +27,8 @@ impl Default for SessionListQuery {
             offset: 0,
             updated_from_ms: None,
             updated_to_ms: None,
+            channel: None,
+            sort_order: SessionSortOrder::UpdatedAtDesc,
         }
     }
 }
@@ -119,6 +123,8 @@ pub trait SessionManager: Send + Sync {
         &self,
         query: SessionListQuery,
     ) -> Result<Vec<SessionIndex>, SessionError>;
+
+    async fn list_session_channels(&self) -> Result<Vec<String>, SessionError>;
 
     async fn append_llm_usage(
         &self,
@@ -376,8 +382,19 @@ impl SessionManager for SqliteSessionManager {
         let offset = query.offset.max(0);
         Ok(self
             .store
-            .list_sessions(limit, offset, query.updated_from_ms, query.updated_to_ms)
+            .list_sessions(
+                limit,
+                offset,
+                query.updated_from_ms,
+                query.updated_to_ms,
+                query.channel.as_deref(),
+                query.sort_order,
+            )
             .await?)
+    }
+
+    async fn list_session_channels(&self) -> Result<Vec<String>, SessionError> {
+        Ok(self.store.list_session_channels().await?)
     }
 
     async fn append_llm_usage(
@@ -514,6 +531,7 @@ impl SessionManager for SqliteSessionManager {
 #[cfg(test)]
 mod tests {
     use super::{SessionListQuery, SessionManager, SqliteSessionManager};
+    use crate::SessionSortOrder;
     use klaw_storage::{ChatRecord, DefaultSessionStore, SessionStorage, StoragePaths};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -551,6 +569,8 @@ mod tests {
                 offset: 0,
                 updated_from_ms: None,
                 updated_to_ms: None,
+                channel: None,
+                sort_order: SessionSortOrder::UpdatedAtDesc,
             })
             .await
             .expect("sessions should load");
@@ -575,12 +595,49 @@ mod tests {
                 offset: -5,
                 updated_from_ms: None,
                 updated_to_ms: None,
+                channel: None,
+                sort_order: SessionSortOrder::UpdatedAtDesc,
             })
             .await
             .expect("sessions should load");
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_key, "stdio:only");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn list_sessions_filters_by_channel_and_sorts_in_sql_order() {
+        let store = create_store().await;
+        let _ = store
+            .touch_session("stdio:first", "chat-1", "stdio")
+            .await
+            .expect("stdio session should be created");
+        let _ = store
+            .touch_session("telegram:second", "chat-2", "telegram")
+            .await
+            .expect("telegram session should be created");
+
+        let manager = SqliteSessionManager::from_store(store);
+        let sessions = manager
+            .list_sessions(SessionListQuery {
+                limit: 10,
+                offset: 0,
+                updated_from_ms: None,
+                updated_to_ms: None,
+                channel: Some("stdio".to_string()),
+                sort_order: SessionSortOrder::UpdatedAtAsc,
+            })
+            .await
+            .expect("filtered sessions should load");
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_key, "stdio:first");
+
+        let channels = manager
+            .list_session_channels()
+            .await
+            .expect("session channels should load");
+        assert_eq!(channels, vec!["stdio".to_string(), "telegram".to_string()]);
     }
 
     #[tokio::test(flavor = "current_thread")]

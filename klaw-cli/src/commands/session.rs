@@ -51,6 +51,8 @@ impl SessionListCommand {
                 offset: self.offset,
                 updated_from_ms: None,
                 updated_to_ms: None,
+                channel: None,
+                sort_order: Default::default(),
             })
             .await?;
         if sessions.is_empty() {

@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2026-03-30
+
+### Added
+- added session-manager support for distinct session-channel option loading so GUI callers can populate SQL-backed channel filters
+
+### Changed
+- `SessionListQuery` now carries optional `channel` filtering plus `updated_at` sort order so callers can request database-side filtering and ordering instead of post-processing in memory
+
 ## 2026-03-26
 
 ### Added

@@ -48,6 +48,24 @@ pub struct SessionIndex {
     pub jsonl_path: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSortOrder {
+    UpdatedAtAsc,
+    #[default]
+    UpdatedAtDesc,
+}
+
+impl SessionSortOrder {
+    #[must_use]
+    pub fn sql_order_by(self) -> &'static str {
+        match self {
+            Self::UpdatedAtAsc => "updated_at_ms ASC, session_key ASC",
+            Self::UpdatedAtDesc => "updated_at_ms DESC, session_key DESC",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct SessionCompressionState {
     pub last_compressed_len: i64,

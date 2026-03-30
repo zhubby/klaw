@@ -6,7 +6,7 @@ use crate::{
     LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
     NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
     NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-    SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
+    SessionSortOrder, SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
     ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, ToolAuditStatus,
     UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
     UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
@@ -976,6 +976,8 @@ impl SessionStorage for TursoSessionStore {
         offset: i64,
         updated_from_ms: Option<i64>,
         updated_to_ms: Option<i64>,
+        channel: Option<&str>,
+        sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let mut sql = String::from(
             "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
@@ -987,8 +989,12 @@ impl SessionStorage for TursoSessionStore {
         if let Some(to) = updated_to_ms {
             sql.push_str(&format!(" AND updated_at_ms <= {}", to));
         }
+        if let Some(channel) = channel {
+            sql.push_str(&format!(" AND channel = '{}'", escape_sql_text(channel)));
+        }
         sql.push_str(&format!(
-            " ORDER BY updated_at_ms DESC LIMIT {} OFFSET {}",
+            " ORDER BY {} LIMIT {} OFFSET {}",
+            sort_order.sql_order_by(),
             limit.max(1),
             offset.max(0)
         ));
@@ -997,6 +1003,26 @@ impl SessionStorage for TursoSessionStore {
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
             out.push(row_to_session_index(&row)?);
+        }
+        Ok(out)
+    }
+
+    async fn list_session_channels(&self) -> Result<Vec<String>, StorageError> {
+        let conn = self.connection().await?;
+        let mut rows = conn
+            .query(
+                "SELECT DISTINCT channel
+                 FROM sessions
+                 ORDER BY channel ASC",
+                (),
+            )
+            .await
+            .map_err(StorageError::backend)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
+            out.push(value_to_string(
+                row.get_value(0).map_err(StorageError::backend)?,
+            )?);
         }
         Ok(out)
     }

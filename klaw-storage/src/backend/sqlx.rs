@@ -6,7 +6,7 @@ use crate::{
     LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
     NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
     NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-    SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
+    SessionSortOrder, SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
     ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, ToolAuditSortOrder,
     ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
     UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
@@ -1641,6 +1641,8 @@ impl SessionStorage for SqlxSessionStore {
         offset: i64,
         updated_from_ms: Option<i64>,
         updated_to_ms: Option<i64>,
+        channel: Option<&str>,
+        sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let mut query = String::from(
             "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
@@ -1652,7 +1654,13 @@ impl SessionStorage for SqlxSessionStore {
         if updated_to_ms.is_some() {
             query.push_str(" AND updated_at_ms <= ?");
         }
-        query.push_str(" ORDER BY updated_at_ms DESC LIMIT ? OFFSET ?");
+        if channel.is_some() {
+            query.push_str(" AND channel = ?");
+        }
+        query.push_str(&format!(
+            " ORDER BY {} LIMIT ? OFFSET ?",
+            sort_order.sql_order_by()
+        ));
 
         let mut q = sqlx::query_as::<_, SessionIndexRow>(&query);
         if let Some(from) = updated_from_ms {
@@ -1661,6 +1669,9 @@ impl SessionStorage for SqlxSessionStore {
         if let Some(to) = updated_to_ms {
             q = q.bind(to);
         }
+        if let Some(channel) = channel {
+            q = q.bind(channel);
+        }
         q = q.bind(limit.max(1)).bind(offset.max(0));
 
         let rows = q
@@ -1668,6 +1679,18 @@ impl SessionStorage for SqlxSessionStore {
             .await
             .map_err(StorageError::backend)?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn list_session_channels(&self) -> Result<Vec<String>, StorageError> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT channel
+             FROM sessions
+             ORDER BY channel ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(rows)
     }
 
     async fn append_llm_usage(
