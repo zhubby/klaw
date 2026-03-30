@@ -8,4 +8,4 @@ pub use error::CronError;
 pub use klaw_storage::{CronJob, CronScheduleKind, CronTaskRun, NewCronJob, UpdateCronJobPatch};
 pub use manager::{CronListQuery, SqliteCronManager};
 pub use schedule::ScheduleSpec;
-pub use worker::{CronWorker, CronWorkerConfig};
+pub use worker::{CronWorker, CronWorkerConfig, MissedRunPolicy};

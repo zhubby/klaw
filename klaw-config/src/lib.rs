@@ -1551,6 +1551,8 @@ pub struct CronConfig {
     pub runtime_drain_batch: usize,
     #[serde(default = "default_cron_batch_limit")]
     pub batch_limit: i64,
+    #[serde(default)]
+    pub missed_run_policy: CronMissedRunPolicy,
 }
 
 impl Default for CronConfig {
@@ -1560,8 +1562,17 @@ impl Default for CronConfig {
             runtime_tick_ms: default_cron_runtime_tick_ms(),
             runtime_drain_batch: default_cron_runtime_drain_batch(),
             batch_limit: default_cron_batch_limit(),
+            missed_run_policy: CronMissedRunPolicy::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CronMissedRunPolicy {
+    #[default]
+    Skip,
+    CatchUp,
 }
 
 fn default_cron_tick_ms() -> u64 {

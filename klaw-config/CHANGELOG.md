@@ -11,6 +11,7 @@
 
 - 默认 ACP agent 模板现在预填两套 Zed adapter：`npx -y @zed-industries/claude-agent-acp` 与 `npx -y @zed-industries/codex-acp`
 - ACP agent 配置不再持久化独立 `cwd`；实际运行目录统一由调用时传入的 `working_directory` 决定
+- `cron` 配置新增 `missed_run_policy`，默认值为 `skip`，用于控制服务停机后重启时是否补偿错过的定时触发
 
 ## 2026-03-29
 

@@ -103,6 +103,10 @@ fn parse_default_template_succeeds() {
     assert_eq!(parsed.cron.runtime_tick_ms, 200);
     assert_eq!(parsed.cron.runtime_drain_batch, 8);
     assert_eq!(parsed.cron.batch_limit, 64);
+    assert_eq!(
+        parsed.cron.missed_run_policy,
+        crate::CronMissedRunPolicy::Skip
+    );
     assert!(parsed.heartbeat.defaults.enabled);
     assert_eq!(parsed.heartbeat.defaults.every, "30m");
     assert_eq!(parsed.heartbeat.defaults.silent_ack_token, "HEARTBEAT_OK");
@@ -143,6 +147,14 @@ fn parse_default_template_succeeds() {
     assert!(!parsed.gateway.webhook.agents.enabled);
     assert_eq!(parsed.gateway.webhook.agents.max_body_bytes, 262_144);
     validate(&parsed).expect("default template should be valid");
+}
+
+#[test]
+fn parse_cron_missed_run_policy_override() {
+    let parsed: CronConfig =
+        toml::from_str("missed_run_policy = \"catch_up\"").expect("cron config should parse");
+    assert_eq!(parsed.missed_run_policy, CronMissedRunPolicy::CatchUp);
+    assert_eq!(parsed.tick_ms, 1_000);
 }
 
 #[test]

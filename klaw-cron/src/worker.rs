@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub struct CronWorkerConfig {
     pub poll_interval: Duration,
     pub batch_limit: i64,
+    pub missed_run_policy: MissedRunPolicy,
 }
 
 impl Default for CronWorkerConfig {
@@ -15,8 +16,16 @@ impl Default for CronWorkerConfig {
         Self {
             poll_interval: Duration::from_secs(1),
             batch_limit: 64,
+            missed_run_policy: MissedRunPolicy::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MissedRunPolicy {
+    #[default]
+    Skip,
+    CatchUp,
 }
 
 #[derive(Clone)]
@@ -49,8 +58,12 @@ where
 
         for job in due_jobs {
             let schedule = ScheduleSpec::from_job(&job)?;
+            let next_run_seed_ms = match self.config.missed_run_policy {
+                MissedRunPolicy::Skip => now,
+                MissedRunPolicy::CatchUp => job.next_run_at_ms,
+            };
             let next_run_at_ms =
-                schedule.next_run_after_ms_in_timezone(job.next_run_at_ms, &job.timezone)?;
+                schedule.next_run_after_ms_in_timezone(next_run_seed_ms, &job.timezone)?;
             let claimed = self
                 .storage
                 .claim_next_run(&job.id, job.next_run_at_ms, next_run_at_ms, now)
@@ -253,7 +266,8 @@ fn infer_telegram_base_session_key(session_key: &str, chat_id: &str) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::{
-        CronWorker, CronWorkerConfig, infer_base_session_key, infer_dingtalk_base_session_key,
+        CronWorker, CronWorkerConfig, MissedRunPolicy, infer_base_session_key,
+        infer_dingtalk_base_session_key,
         infer_telegram_base_session_key,
     };
     use crate::time::now_ms;
@@ -1018,10 +1032,21 @@ mod tests {
         storage: &Arc<FakeStorage>,
         transport: &Arc<TestTransport>,
     ) -> CronWorker<FakeStorage, TestTransport> {
+        test_worker_with_policy(storage, transport, MissedRunPolicy::Skip)
+    }
+
+    fn test_worker_with_policy(
+        storage: &Arc<FakeStorage>,
+        transport: &Arc<TestTransport>,
+        missed_run_policy: MissedRunPolicy,
+    ) -> CronWorker<FakeStorage, TestTransport> {
         CronWorker::new(
             storage.clone(),
             transport.clone(),
-            CronWorkerConfig::default(),
+            CronWorkerConfig {
+                missed_run_policy,
+                ..CronWorkerConfig::default()
+            },
         )
     }
 
@@ -1080,11 +1105,68 @@ mod tests {
             .await
             .expect("create job");
 
-        let worker = test_worker(&storage, &transport);
+        let worker = test_worker_with_policy(&storage, &transport, MissedRunPolicy::CatchUp);
         worker.run_tick().await.expect("tick");
 
         let job = storage.get_cron("job-tz").await.expect("job");
         assert_eq!(job.next_run_at_ms, 3_600_000);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_tick_skips_missed_runs_by_default() {
+        let storage = Arc::new(FakeStorage::default());
+        let transport = Arc::new(InMemoryTransport::new());
+        let overdue_next_run_at_ms = now_ms().saturating_sub(60_000);
+        insert_job_with_next_run(
+            &storage,
+            "job-skip",
+            "cron",
+            "cron:chat1",
+            "{}",
+            overdue_next_run_at_ms,
+        )
+        .await;
+
+        let before_tick = now_ms();
+        let worker = test_worker(&storage, &transport);
+        worker.run_tick().await.expect("tick");
+
+        let job = storage.get_cron("job-skip").await.expect("job");
+        assert!(job.next_run_at_ms >= before_tick + 5_000);
+        assert!(job.next_run_at_ms > overdue_next_run_at_ms + 5_000);
+
+        let runs = storage.list_task_runs("job-skip", 10, 0).await.expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].scheduled_at_ms, overdue_next_run_at_ms);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_tick_can_catch_up_missed_runs_when_enabled() {
+        let storage = Arc::new(FakeStorage::default());
+        let transport = Arc::new(InMemoryTransport::new());
+        let overdue_next_run_at_ms = now_ms().saturating_sub(60_000);
+        insert_job_with_next_run(
+            &storage,
+            "job-catch-up",
+            "cron",
+            "cron:chat1",
+            "{}",
+            overdue_next_run_at_ms,
+        )
+        .await;
+
+        let worker = test_worker_with_policy(&storage, &transport, MissedRunPolicy::CatchUp);
+        worker.run_tick().await.expect("tick");
+
+        let job = storage.get_cron("job-catch-up").await.expect("job");
+        assert_eq!(job.next_run_at_ms, overdue_next_run_at_ms + 5_000);
+
+        let runs = storage
+            .list_task_runs("job-catch-up", 10, 0)
+            .await
+            .expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].scheduled_at_ms, overdue_next_run_at_ms);
     }
 
     #[tokio::test(flavor = "current_thread")]
