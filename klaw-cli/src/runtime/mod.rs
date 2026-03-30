@@ -60,7 +60,7 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tokio::{sync::Mutex, time::timeout};
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 use uuid::Uuid;
 
 const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
@@ -2669,7 +2669,13 @@ pub async fn submit_and_get_output(
             metadata
         },
     };
-    info!(inbound = ?inbound_payload, "channel inbound normalized");
+    info!(
+        channel = %inbound_payload.channel,
+        chat_id = %inbound_payload.chat_id,
+        session_key = %inbound_payload.session_key,
+        "channel inbound normalized"
+    );
+    trace!(inbound = ?inbound_payload, "channel inbound normalized");
 
     runtime
         .inbound_transport
@@ -3056,7 +3062,16 @@ pub async fn submit_and_stream_output(
             metadata
         },
     };
-    info!(inbound = ?inbound_payload, "channel inbound normalized (streaming)");
+    info!(
+        channel = %inbound_payload.channel,
+        chat_id = %inbound_payload.chat_id,
+        session_key = %inbound_payload.session_key,
+        "channel inbound normalized (streaming)"
+    );
+    trace!(
+        inbound = ?inbound_payload,
+        "channel inbound normalized (streaming)"
+    );
 
     let envelope = Envelope {
         header,
