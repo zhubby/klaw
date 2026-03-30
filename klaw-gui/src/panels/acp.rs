@@ -92,6 +92,7 @@ struct AcpRuntimeStatusRow {
 
 #[derive(Debug, Clone, Default)]
 struct PromptTestState {
+    agent_id: String,
     prompt: String,
     working_directory: String,
     timeout_seconds: String,
@@ -100,12 +101,18 @@ struct PromptTestState {
     running: bool,
 }
 
+#[derive(Debug, Clone)]
+struct AcpAgentDetailWindow {
+    agent_id: String,
+}
+
 #[derive(Default)]
 pub struct AcpPanel {
     store: Option<ConfigStore>,
     config: AppConfig,
     form: Option<AcpAgentForm>,
     global_settings_form: Option<String>,
+    detail_window: Option<AcpAgentDetailWindow>,
     selected_agent: Option<String>,
     delete_confirm: Option<String>,
     runtime_statuses: BTreeMap<String, AcpRuntimeStatusRow>,
@@ -138,6 +145,34 @@ impl AcpPanel {
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
         self.config = snapshot.config;
+        self.ensure_prompt_target_agent();
+    }
+
+    fn ensure_prompt_target_agent(&mut self) {
+        let available = self
+            .config
+            .acp
+            .agents
+            .iter()
+            .map(|agent| agent.id.as_str())
+            .collect::<Vec<_>>();
+        if available.is_empty() {
+            self.prompt_test.agent_id.clear();
+            return;
+        }
+        if available
+            .iter()
+            .any(|agent_id| *agent_id == self.prompt_test.agent_id)
+        {
+            return;
+        }
+        if let Some(selected) = self.selected_agent.as_deref()
+            && available.iter().any(|agent_id| *agent_id == selected)
+        {
+            self.prompt_test.agent_id = selected.to_string();
+            return;
+        }
+        self.prompt_test.agent_id = available[0].to_string();
     }
 
     fn schedule_status_refresh(&mut self, announce: bool) {
@@ -348,6 +383,12 @@ impl AcpPanel {
         }
     }
 
+    fn open_detail_window(&mut self, id: &str) {
+        self.detail_window = Some(AcpAgentDetailWindow {
+            agent_id: id.to_string(),
+        });
+    }
+
     fn delete_agent(&mut self, id: &str, notifications: &mut NotificationCenter) {
         let id = id.to_string();
         let id_for_config = id.clone();
@@ -363,6 +404,14 @@ impl AcpPanel {
         if self.selected_agent.as_deref() == Some(id.as_str()) {
             self.selected_agent = None;
         }
+        if self
+            .detail_window
+            .as_ref()
+            .is_some_and(|detail| detail.agent_id == id)
+        {
+            self.detail_window = None;
+        }
+        self.ensure_prompt_target_agent();
     }
 
     fn save_form(&mut self, notifications: &mut NotificationCenter) {
@@ -411,20 +460,6 @@ impl AcpPanel {
         Ok(config)
     }
 
-    fn selected_agent_config(&self) -> Option<&AcpAgentConfig> {
-        let selected = self.selected_agent.as_deref()?;
-        self.config
-            .acp
-            .agents
-            .iter()
-            .find(|agent| agent.id == selected)
-    }
-
-    fn selected_runtime_status(&self) -> Option<&AcpRuntimeStatusRow> {
-        let selected = self.selected_agent.as_deref()?;
-        self.runtime_statuses.get(selected)
-    }
-
     fn enabled_agents_count(&self) -> usize {
         self.config
             .acp
@@ -460,10 +495,11 @@ impl AcpPanel {
     }
 
     fn trigger_test_prompt(&mut self, notifications: &mut NotificationCenter) {
-        let Some(agent_id) = self.selected_agent.clone() else {
-            notifications.error("Select an ACP agent first");
+        let agent_id = self.prompt_test.agent_id.trim().to_string();
+        if agent_id.is_empty() {
+            notifications.error("Select a target ACP agent first");
             return;
-        };
+        }
         let prompt = self.prompt_test.prompt.trim().to_string();
         if prompt.is_empty() {
             notifications.error("Test prompt cannot be empty");
@@ -546,6 +582,7 @@ impl AcpPanel {
                 .collect::<Vec<_>>();
             let table_width = ui.available_width();
             let max_height = 220.0;
+            let mut detail_agent_id = None;
             let mut edit_agent_id = None;
             let mut delete_agent_id = None;
 
@@ -654,13 +691,28 @@ impl AcpPanel {
                                     } else {
                                         Some(agent_id.clone())
                                     };
+                                    self.ensure_prompt_target_agent();
                                 }
                                 if response.secondary_clicked() && !is_selected {
                                     self.selected_agent = Some(agent_id.clone());
+                                    self.ensure_prompt_target_agent();
+                                }
+                                if response.double_clicked() {
+                                    self.selected_agent = Some(agent_id.clone());
+                                    self.ensure_prompt_target_agent();
+                                    detail_agent_id = Some(agent_id.clone());
                                 }
 
                                 let agent_id_clone = agent_id.clone();
                                 response.context_menu(|ui| {
+                                    if ui
+                                        .button(format!("{} Detail", regular::FILE_TEXT))
+                                        .clicked()
+                                    {
+                                        detail_agent_id = Some(agent_id_clone.clone());
+                                        ui.close();
+                                    }
+                                    ui.separator();
                                     if ui
                                         .button(format!("{} Edit", regular::PENCIL_SIMPLE))
                                         .clicked()
@@ -686,78 +738,18 @@ impl AcpPanel {
 
             if let Some(id) = edit_agent_id {
                 self.selected_agent = Some(id.clone());
+                self.ensure_prompt_target_agent();
                 self.open_edit_agent(&id);
+            }
+            if let Some(id) = detail_agent_id {
+                self.selected_agent = Some(id.clone());
+                self.ensure_prompt_target_agent();
+                self.open_detail_window(&id);
             }
             if let Some(id) = delete_agent_id {
                 self.selected_agent = Some(id.clone());
+                self.ensure_prompt_target_agent();
                 self.delete_confirm = Some(id);
-            }
-        });
-    }
-
-    fn render_agent_detail(&self, ui: &mut egui::Ui) {
-        ui.group(|ui| {
-            ui.set_min_height(180.0);
-            ui.label(RichText::new("Agent Detail").strong());
-            ui.separator();
-            let Some(agent) = self.selected_agent_config() else {
-                ui.label("Select an ACP agent to inspect its configuration and runtime state.");
-                return;
-            };
-            let status = self.selected_runtime_status();
-            egui::Grid::new("acp-agent-detail-grid")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("ID");
-                    ui.monospace(&agent.id);
-                    ui.end_row();
-
-                    ui.label("Enabled");
-                    ui.label(if agent.enabled { "yes" } else { "no" });
-                    ui.end_row();
-
-                    ui.label("Tool Name");
-                    ui.monospace(Self::tool_name_for_agent(&agent.id));
-                    ui.end_row();
-
-                    ui.label("Command");
-                    ui.monospace(&agent.command);
-                    ui.end_row();
-
-                    ui.label("CWD");
-                    ui.monospace(agent.cwd.as_deref().unwrap_or("(inherit runtime cwd)"));
-                    ui.end_row();
-
-                    ui.label("Args");
-                    ui.label(if agent.args.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        agent.args.join(" ")
-                    });
-                    ui.end_row();
-
-                    ui.label("Env Vars");
-                    ui.label(agent.env.len().to_string());
-                    ui.end_row();
-
-                    ui.label("State");
-                    ui.label(status.map(|item| item.state.as_str()).unwrap_or("stopped"));
-                    ui.end_row();
-                });
-            if !agent.description.trim().is_empty() {
-                ui.add_space(8.0);
-                ui.label(RichText::new("Description").strong());
-                ui.label(agent.description.trim());
-            }
-            if let Some(last_error) = status.and_then(|item| item.last_error.as_deref()) {
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new("Last Error")
-                        .strong()
-                        .color(Color32::LIGHT_RED),
-                );
-                ui.colored_label(Color32::LIGHT_RED, last_error);
             }
         });
     }
@@ -765,17 +757,26 @@ impl AcpPanel {
     fn render_test_prompt(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         ui.group(|ui| {
             ui.label(RichText::new("Test Prompt").strong());
-            ui.label("Run one real ACP prompt against the selected external agent.");
+            ui.label("Run one real ACP prompt against a selected external agent.");
             ui.add_space(4.0);
 
-            let selected_label = self
-                .selected_agent
-                .as_deref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "(no agent selected)".to_string());
             ui.horizontal(|ui| {
                 ui.label("Target Agent");
-                ui.monospace(selected_label);
+                if self.config.acp.agents.is_empty() {
+                    ui.monospace("(no agent configured)");
+                } else {
+                    egui::ComboBox::from_id_salt("acp-test-prompt-agent")
+                        .selected_text(self.prompt_test.agent_id.as_str())
+                        .show_ui(ui, |ui| {
+                            for agent in &self.config.acp.agents {
+                                ui.selectable_value(
+                                    &mut self.prompt_test.agent_id,
+                                    agent.id.clone(),
+                                    agent.id.as_str(),
+                                );
+                            }
+                        });
+                }
             });
 
             ui.label("Prompt");
@@ -1011,6 +1012,93 @@ impl AcpPanel {
             self.delete_confirm = None;
         }
     }
+
+    fn render_detail_window(&mut self, ctx: &egui::Context) {
+        let Some(detail_window) = self.detail_window.as_ref() else {
+            return;
+        };
+        let Some(agent) = self
+            .config
+            .acp
+            .agents
+            .iter()
+            .find(|agent| agent.id == detail_window.agent_id)
+        else {
+            self.detail_window = None;
+            return;
+        };
+        let status = self.runtime_statuses.get(&detail_window.agent_id);
+
+        let mut open = true;
+        egui::Window::new(format!("ACP Detail: {}", detail_window.agent_id))
+            .open(&mut open)
+            .resizable(true)
+            .default_width(720.0)
+            .default_height(460.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Grid::new("acp-detail-window-grid")
+                        .num_columns(2)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.label("ID");
+                            ui.monospace(&agent.id);
+                            ui.end_row();
+
+                            ui.label("Enabled");
+                            ui.label(if agent.enabled { "yes" } else { "no" });
+                            ui.end_row();
+
+                            ui.label("State");
+                            ui.label(status.map(|item| item.state.as_str()).unwrap_or("stopped"));
+                            ui.end_row();
+
+                            ui.label("Tool Name");
+                            ui.monospace(Self::tool_name_for_agent(&agent.id));
+                            ui.end_row();
+
+                            ui.label("Command");
+                            ui.monospace(&agent.command);
+                            ui.end_row();
+
+                            ui.label("CWD");
+                            ui.monospace(agent.cwd.as_deref().unwrap_or("(inherit runtime cwd)"));
+                            ui.end_row();
+
+                            ui.label("Args");
+                            ui.label(if agent.args.is_empty() {
+                                "(none)".to_string()
+                            } else {
+                                agent.args.join(" ")
+                            });
+                            ui.end_row();
+
+                            ui.label("Env Vars");
+                            ui.label(agent.env.len().to_string());
+                            ui.end_row();
+                        });
+
+                    if !agent.description.trim().is_empty() {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Description").strong());
+                        ui.label(agent.description.trim());
+                    }
+                    if let Some(last_error) = status.and_then(|item| item.last_error.as_deref()) {
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new("Last Error")
+                                .strong()
+                                .color(Color32::LIGHT_RED),
+                        );
+                        ui.colored_label(Color32::LIGHT_RED, last_error);
+                    }
+                });
+            });
+
+        if !open {
+            self.detail_window = None;
+        }
+    }
 }
 
 impl PanelRenderer for AcpPanel {
@@ -1033,7 +1121,10 @@ impl PanelRenderer for AcpPanel {
             .show(ui, |ui| {
                 ui.heading(ctx.tab_title);
                 ui.label(
-                    "ACP lets klaw call external ACP-compatible coding agents such as Claude Code or Codex.",
+                    "ACP lets klaw call external ACP-compatible coding agents through adapter commands such as acpx.",
+                );
+                ui.small(
+                    "The default Claude template uses `npx -y acpx@latest claude`, not the bare `claude` command.",
                 );
                 ui.add_space(8.0);
                 self.render_stats(ui);
@@ -1068,11 +1159,10 @@ impl PanelRenderer for AcpPanel {
                 ui.add_space(12.0);
                 self.render_agent_table(ui);
                 ui.add_space(12.0);
-                self.render_agent_detail(ui);
-                ui.add_space(12.0);
                 self.render_test_prompt(ui, notifications);
             });
 
+        self.render_detail_window(ui.ctx());
         self.render_form_window(ui, notifications);
         self.render_global_settings_window(ui, notifications);
         self.render_delete_confirm_dialog(ui.ctx(), notifications);

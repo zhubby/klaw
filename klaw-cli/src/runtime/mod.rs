@@ -2159,31 +2159,53 @@ fn spawn_tool_audit_writer(
 }
 
 pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<dyn Error>> {
-    info!("shutting down runtime mcp servers");
-    let guard = runtime.mcp_init.lock().await;
-    let manager = guard.manager();
-    let mut manager_guard = manager.lock().await;
     let shutdown_deadline = Duration::from_secs(2);
-    match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
-        Ok(()) => {}
+
+    info!("shutting down runtime mcp servers");
+    let mcp_manager = {
+        let guard = runtime.mcp_init.lock().await;
+        guard.manager()
+    };
+    match timeout(shutdown_deadline, mcp_manager.lock()).await {
+        Ok(mut manager_guard) => {
+            match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
+                Ok(()) => {}
+                Err(_) => {
+                    warn!(
+                        timeout_seconds = shutdown_deadline.as_secs(),
+                        "mcp shutdown timed out; continuing process exit"
+                    );
+                }
+            }
+        }
         Err(_) => {
             warn!(
                 timeout_seconds = shutdown_deadline.as_secs(),
-                "mcp shutdown timed out; continuing process exit"
+                "mcp manager busy during shutdown; continuing process exit"
             );
         }
     }
     info!("shutting down runtime acp agents");
-    let guard = runtime.acp_init.lock().await;
-    let manager = guard.manager();
-    let mut manager_guard = manager.lock().await;
-    let shutdown_deadline = Duration::from_secs(2);
-    match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
-        Ok(()) => {}
+    let acp_manager = {
+        let guard = runtime.acp_init.lock().await;
+        guard.manager()
+    };
+    match timeout(shutdown_deadline, acp_manager.lock()).await {
+        Ok(mut manager_guard) => {
+            match timeout(shutdown_deadline, manager_guard.shutdown_all()).await {
+                Ok(()) => {}
+                Err(_) => {
+                    warn!(
+                        timeout_seconds = shutdown_deadline.as_secs(),
+                        "acp shutdown timed out; continuing process exit"
+                    );
+                }
+            }
+        }
         Err(_) => {
             warn!(
                 timeout_seconds = shutdown_deadline.as_secs(),
-                "acp shutdown timed out; continuing process exit"
+                "acp manager busy during shutdown; continuing process exit"
             );
         }
     }
@@ -3336,9 +3358,9 @@ mod tests {
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, parse_outbound_attachments, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        spawn_acp_init, spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output,
-        submit_webhook_agent, submit_webhook_event, sync_runtime_providers, sync_runtime_tools,
-        trim_conversation_history, voice_tool_is_enabled,
+        shutdown_runtime_bundle, spawn_acp_init, spawn_llm_audit_writer, spawn_mcp_init,
+        submit_and_get_output, submit_webhook_agent, submit_webhook_event, sync_runtime_providers,
+        sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
     use klaw_channel::OutboundAttachmentSource;
@@ -3709,6 +3731,31 @@ mod tests {
         assert!(summary.active_servers.is_empty());
         assert!(summary.statuses.is_empty());
         assert_eq!(summary.tool_count, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_runtime_bundle_returns_when_acp_manager_is_busy() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+        let acp_manager = {
+            let guard = runtime.acp_init.lock().await;
+            guard.manager()
+        };
+        let _busy_guard = acp_manager.lock().await;
+
+        let shutdown_result =
+            tokio::time::timeout(Duration::from_secs(5), shutdown_runtime_bundle(&runtime)).await;
+
+        assert!(
+            shutdown_result.is_ok(),
+            "shutdown should not hang while acp manager is busy"
+        );
+        assert!(
+            shutdown_result
+                .expect("shutdown future should complete")
+                .is_ok(),
+            "shutdown should continue even when acp manager lock is unavailable"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

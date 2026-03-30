@@ -19,7 +19,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AcpAgentKey(String);
@@ -278,6 +278,39 @@ impl AcpManager {
         }
     }
 
+    pub fn agent_execution_config(
+        &self,
+        agent_id: &str,
+    ) -> Result<(AcpAgentConfig, Duration), AcpExecutionError> {
+        self.agents
+            .get(&AcpAgentKey::new(agent_id))
+            .map(|handle| {
+                (
+                    handle.config.clone(),
+                    Duration::from_secs(self.config.startup_timeout_seconds.max(1)),
+                )
+            })
+            .ok_or_else(|| AcpExecutionError::AgentNotFound {
+                agent_id: agent_id.to_string(),
+            })
+    }
+
+    pub async fn execute_prompt_with_config(
+        config: AcpAgentConfig,
+        startup_timeout: Duration,
+        prompt: &str,
+        working_directory: Option<&str>,
+        timeout: Option<Duration>,
+    ) -> Result<String, AcpExecutionError> {
+        let prompt = prompt.to_string();
+        let working_directory = working_directory.map(ToString::to_string);
+        tokio::task::spawn_blocking(move || {
+            run_prompt_blocking(config, startup_timeout, prompt, working_directory, timeout)
+        })
+        .await
+        .map_err(|err| AcpExecutionError::WorkerJoin(err.to_string()))?
+    }
+
     pub async fn execute_prompt(
         &mut self,
         agent_id: &str,
@@ -285,19 +318,15 @@ impl AcpManager {
         working_directory: Option<&str>,
         timeout: Option<Duration>,
     ) -> Result<String, AcpExecutionError> {
-        let Some(handle) = self.agents.get(&AcpAgentKey::new(agent_id)) else {
-            return Err(AcpExecutionError::AgentNotFound {
-                agent_id: agent_id.to_string(),
-            });
-        };
-        let config = handle.config.clone();
-        let prompt = prompt.to_string();
-        let working_directory = working_directory.map(ToString::to_string);
-        tokio::task::spawn_blocking(move || {
-            run_prompt_blocking(config, prompt, working_directory, timeout)
-        })
+        let (config, startup_timeout) = self.agent_execution_config(agent_id)?;
+        Self::execute_prompt_with_config(
+            config,
+            startup_timeout,
+            prompt,
+            working_directory,
+            timeout,
+        )
         .await
-        .map_err(|err| AcpExecutionError::WorkerJoin(err.to_string()))?
     }
 
     async fn start_agent(
@@ -431,6 +460,7 @@ impl AcpManager {
 
 fn run_prompt_blocking(
     config: AcpAgentConfig,
+    startup_timeout: Duration,
     prompt: String,
     working_directory: Option<String>,
     timeout: Option<Duration>,
@@ -441,19 +471,28 @@ fn run_prompt_blocking(
         .map_err(|err| AcpExecutionError::Runtime(err.to_string()))?;
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async move {
-        run_prompt_async(config, prompt, working_directory, timeout).await
+        run_prompt_async(config, startup_timeout, prompt, working_directory, timeout).await
     })
 }
 
 async fn run_prompt_async(
     config: AcpAgentConfig,
+    startup_timeout: Duration,
     prompt: String,
     working_directory: Option<String>,
     timeout: Option<Duration>,
 ) -> Result<String, AcpExecutionError> {
     use acp::Agent as _;
 
+    debug!(
+        agent = %config.id,
+        command = %config.command,
+        startup_timeout_secs = startup_timeout.as_secs(),
+        prompt_timeout_secs = timeout.map(|value| value.as_secs()),
+        "starting acp prompt execution"
+    );
     let session_root = resolve_session_root(&config, working_directory.as_deref())?;
+    debug!(agent = %config.id, session_root = %session_root.display(), "resolved acp session root");
     let client = KlawAcpClient::new(session_root.clone());
 
     let mut command = tokio::process::Command::new(config.command.trim());
@@ -474,6 +513,7 @@ async fn run_prompt_async(
     let mut child = command
         .spawn()
         .map_err(|err| AcpExecutionError::Spawn(err.to_string()))?;
+    debug!(agent = %config.id, "spawned acp agent child process");
     let stdin = child
         .stdin
         .take()
@@ -511,26 +551,64 @@ async fn run_prompt_async(
                 .terminal(true),
         )
         .client_info(acp::Implementation::new("klaw", env!("CARGO_PKG_VERSION")).title("Klaw"));
-    if let Err(err) = conn.initialize(init_request).await {
-        return Err(AcpExecutionError::Initialize(
-            with_stderr(err, &stderr_tail).await,
-        ));
+    debug!(agent = %config.id, "sending acp initialize request");
+    match tokio::time::timeout(startup_timeout, conn.initialize(init_request)).await {
+        Ok(Ok(_)) => {
+            debug!(agent = %config.id, "acp initialize completed");
+        }
+        Ok(Err(err)) => {
+            return Err(AcpExecutionError::Initialize(
+                with_stderr(err, &stderr_tail).await,
+            ));
+        }
+        Err(_) => {
+            return Err(AcpExecutionError::Initialize(
+                initialize_timeout_message(&config, startup_timeout, &stderr_tail).await,
+            ));
+        }
     }
 
-    let new_session = match conn
-        .new_session(acp::NewSessionRequest::new(session_root.clone()))
-        .await
+    debug!(agent = %config.id, "sending acp new_session request");
+    let new_session = match tokio::time::timeout(
+        startup_timeout,
+        conn.new_session(acp::NewSessionRequest::new(session_root.clone())),
+    )
+    .await
     {
-        Ok(session) => session,
-        Err(err) => {
+        Ok(Ok(session)) => session,
+        Ok(Err(err)) => {
             return Err(AcpExecutionError::NewSession(
                 with_stderr(err, &stderr_tail).await,
             ));
         }
+        Err(_) => {
+            let stderr = stderr_tail.lock().await.clone();
+            let message = if stderr.trim().is_empty() {
+                format!(
+                    "timed out after {:?} waiting for new_session response from `{}`",
+                    startup_timeout,
+                    config.command.trim()
+                )
+            } else {
+                format!(
+                    "timed out after {:?} waiting for new_session response from `{}`; stderr: {}",
+                    startup_timeout,
+                    config.command.trim(),
+                    stderr.trim()
+                )
+            };
+            return Err(AcpExecutionError::NewSession(message));
+        }
     };
+    debug!(
+        agent = %config.id,
+        session_id = %new_session.session_id,
+        "acp new_session completed"
+    );
 
     let prompt_request =
         acp::PromptRequest::new(new_session.session_id.clone(), vec![prompt.into()]);
+    debug!(agent = %config.id, "sending acp prompt request");
     let prompt_result = if let Some(timeout) = timeout {
         tokio::time::timeout(timeout, conn.prompt(prompt_request))
             .await
@@ -546,6 +624,7 @@ async fn run_prompt_async(
             with_stderr(err, &stderr_tail).await,
         ));
     }
+    debug!(agent = %config.id, "acp prompt request completed");
 
     let session_id = new_session.session_id.to_string();
     let session_log = client
@@ -553,9 +632,11 @@ async fn run_prompt_async(
         .await
         .unwrap_or_default()
         .final_output();
+    debug!(agent = %config.id, output_len = session_log.len(), "acp session output aggregated");
 
     terminate_child(&mut child).await;
     let _ = io_handle.await;
+    debug!(agent = %config.id, "acp agent child terminated");
 
     if session_log.trim().is_empty() {
         return Err(AcpExecutionError::EmptyResponse {
@@ -620,6 +701,33 @@ async fn with_stderr(err: acp::Error, stderr_tail: &Arc<Mutex<String>>) -> Strin
     }
 }
 
+async fn initialize_timeout_message(
+    config: &AcpAgentConfig,
+    startup_timeout: Duration,
+    stderr_tail: &Arc<Mutex<String>>,
+) -> String {
+    let tail = stderr_tail.lock().await.clone();
+    let hint = if config.command.trim() == "claude" && config.args.is_empty() {
+        " hint: `claude` CLI does not appear to expose a native ACP server entrypoint; use an ACP adapter command instead."
+    } else {
+        ""
+    };
+    if tail.trim().is_empty() {
+        format!(
+            "timed out after {:?} waiting for initialize response from `{}`. The process may not be speaking ACP over stdio.{hint}",
+            startup_timeout,
+            config.command.trim(),
+        )
+    } else {
+        format!(
+            "timed out after {:?} waiting for initialize response from `{}`. The process may not be speaking ACP over stdio; stderr: {}.{hint}",
+            startup_timeout,
+            config.command.trim(),
+            tail.trim(),
+        )
+    }
+}
+
 async fn capture_stderr(mut stderr: tokio::process::ChildStderr, stderr_tail: Arc<Mutex<String>>) {
     use tokio::io::AsyncReadExt;
 
@@ -629,6 +737,10 @@ async fn capture_stderr(mut stderr: tokio::process::ChildStderr, stderr_tail: Ar
             Ok(0) => break,
             Ok(read_bytes) => {
                 let fragment = String::from_utf8_lossy(&buf[..read_bytes]).to_string();
+                let trimmed = fragment.trim();
+                if !trimmed.is_empty() {
+                    debug!(stderr = trimmed, "acp agent stderr");
+                }
                 let mut guard = stderr_tail.lock().await;
                 guard.push_str(&fragment);
                 if guard.len() > 4000 {

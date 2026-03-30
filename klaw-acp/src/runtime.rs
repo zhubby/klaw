@@ -116,16 +116,20 @@ impl Tool for AcpProxyTool {
             .and_then(Value::as_u64)
             .map(Duration::from_secs);
 
-        let mut manager = self.manager.lock().await;
-        let content = manager
-            .execute_prompt(
-                &self.descriptor.agent_id,
-                prompt,
-                working_directory.as_deref(),
-                timeout,
-            )
-            .await
-            .map_err(|err| ToolError::ExecutionFailed(err.to_string()))?;
+        let (config, startup_timeout) = {
+            let manager = self.manager.lock().await;
+            manager.agent_execution_config(&self.descriptor.agent_id)
+        }
+        .map_err(|err| ToolError::ExecutionFailed(err.to_string()))?;
+        let content = AcpManager::execute_prompt_with_config(
+            config,
+            startup_timeout,
+            prompt,
+            working_directory.as_deref(),
+            timeout,
+        )
+        .await
+        .map_err(|err| ToolError::ExecutionFailed(err.to_string()))?;
 
         Ok(ToolOutput {
             content_for_model: content.clone(),

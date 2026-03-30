@@ -7,6 +7,10 @@
 - 新增顶层 `acp` 配置块，支持声明 ACP agent 启动超时和 agent 列表
 - 新增 `AcpAgentConfig`，用于描述外部 ACP agent 的 `id`、`command`、`args`、`env`、`cwd` 和描述信息
 
+### Changed
+
+- 默认 ACP agent 模板不再使用裸 `claude` 命令，而是预填为基于 `acpx` 的 Claude adapter 启动参数：`npx -y acpx@latest claude`
+
 ## 2026-03-29
 
 ### Changed

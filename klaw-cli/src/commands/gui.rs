@@ -273,19 +273,30 @@ impl GuiCommand {
                                             }) => {
                                                 let manager = Arc::clone(&acp_manager);
                                                 tokio::task::spawn_local(async move {
+                                                    tracing::debug!(
+                                                        agent = %agent_id,
+                                                        working_directory = ?working_directory,
+                                                        timeout_seconds,
+                                                        prompt_len = prompt.len(),
+                                                        "gui requested acp test prompt"
+                                                    );
                                                     let timeout = timeout_seconds.map(std::time::Duration::from_secs);
-                                                    let result = {
-                                                        let mut guard = manager.lock().await;
-                                                        guard
-                                                            .execute_prompt(
-                                                                &agent_id,
-                                                                &prompt,
-                                                                working_directory.as_deref(),
-                                                                timeout,
-                                                            )
-                                                            .await
-                                                            .map(|output| klaw_gui::AcpPromptResult { output })
-                                                            .map_err(|err| err.to_string())
+                                                    let execution_config = {
+                                                        let guard = manager.lock().await;
+                                                        guard.agent_execution_config(&agent_id)
+                                                    };
+                                                    let result = match execution_config {
+                                                        Ok((config, startup_timeout)) => klaw_acp::AcpManager::execute_prompt_with_config(
+                                                            config,
+                                                            startup_timeout,
+                                                            &prompt,
+                                                            working_directory.as_deref(),
+                                                            timeout,
+                                                        )
+                                                        .await
+                                                        .map(|output| klaw_gui::AcpPromptResult { output })
+                                                        .map_err(|err| err.to_string()),
+                                                        Err(err) => Err(err.to_string()),
                                                     };
                                                     let _ = response.send(result);
                                                 });

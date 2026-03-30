@@ -811,11 +811,15 @@ impl Default for AcpAgentConfig {
         Self {
             id: "claude_code".to_string(),
             enabled: default_acp_agent_enabled(),
-            command: "claude".to_string(),
-            args: Vec::new(),
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "acpx@latest".to_string(),
+                "claude".to_string(),
+            ],
             env: BTreeMap::new(),
             cwd: Some(".".to_string()),
-            description: "Claude Code agent for complex coding tasks".to_string(),
+            description: "Claude Code ACP adapter template via acpx".to_string(),
         }
     }
 }

@@ -112,6 +112,8 @@ static RUNTIME_COMMAND_SENDER: OnceLock<Mutex<Option<UnboundedSender<RuntimeComm
 static LOG_RECEIVER: OnceLock<Mutex<Option<mpsc::Receiver<String>>>> = OnceLock::new();
 const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(1);
 const RUNTIME_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_ACP_PROMPT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
+const ACP_PROMPT_TIMEOUT_BUFFER_SECONDS: u64 = 10;
 
 fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
     RUNTIME_COMMAND_SENDER.get_or_init(|| Mutex::new(None))
@@ -133,6 +135,12 @@ fn recv_response<T>(
         mpsc::RecvTimeoutError::Disconnected => {
             "runtime command response channel closed".to_string()
         }
+    })
+}
+
+fn acp_prompt_response_timeout(timeout_seconds: Option<u64>) -> Duration {
+    timeout_seconds.map_or(DEFAULT_ACP_PROMPT_RESPONSE_TIMEOUT, |seconds| {
+        Duration::from_secs(seconds.saturating_add(ACP_PROMPT_TIMEOUT_BUFFER_SECONDS))
     })
 }
 
@@ -531,5 +539,34 @@ pub fn request_execute_acp_prompt(
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "execute acp prompt")?
+    recv_response(
+        response_rx,
+        acp_prompt_response_timeout(timeout_seconds),
+        "execute acp prompt",
+    )?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ACP_PROMPT_TIMEOUT_BUFFER_SECONDS, DEFAULT_ACP_PROMPT_RESPONSE_TIMEOUT,
+        acp_prompt_response_timeout,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn acp_prompt_timeout_uses_long_default_when_not_provided() {
+        assert_eq!(
+            acp_prompt_response_timeout(None),
+            DEFAULT_ACP_PROMPT_RESPONSE_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn acp_prompt_timeout_adds_buffer_to_user_timeout() {
+        assert_eq!(
+            acp_prompt_response_timeout(Some(45)),
+            Duration::from_secs(45 + ACP_PROMPT_TIMEOUT_BUFFER_SECONDS)
+        );
+    }
 }
