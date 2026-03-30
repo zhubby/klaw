@@ -1,13 +1,16 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use egui::{
-    Color32, FontId, RichText, TextFormat,
-    text::{CCursor, CCursorRange, LayoutJob},
+    Align, Color32, FontId, Rect, RichText, TextFormat,
+    text::{CCursor, CCursorRange, LayoutJob, LayoutSection},
 };
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular;
 use klaw_config::{ConfigSnapshot, ConfigStore};
-use std::path::{Path, PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConfirmAction {
@@ -23,6 +26,7 @@ pub struct ConfigurationPanel {
     saved_raw: String,
     search_query: String,
     search_match_index: usize,
+    search_match_committed: bool,
     pending_search_range: Option<(usize, usize)>,
     pending_confirm: Option<ConfirmAction>,
 }
@@ -52,6 +56,9 @@ impl ConfigurationPanel {
         self.config_path = Some(snapshot.path);
         self.editor_raw = snapshot.raw_toml.clone();
         self.saved_raw = snapshot.raw_toml;
+        self.search_match_index = 0;
+        self.search_match_committed = false;
+        self.pending_search_range = None;
     }
 
     fn is_dirty(&self) -> bool {
@@ -171,24 +178,25 @@ impl ConfigurationPanel {
     fn set_search_match(&mut self, matches: &[(usize, usize)], index: usize) {
         if matches.is_empty() {
             self.search_match_index = 0;
+            self.search_match_committed = false;
             self.pending_search_range = None;
             return;
         }
 
         let index = index % matches.len();
         self.search_match_index = index;
+        self.search_match_committed = true;
         self.pending_search_range = Some(matches[index]);
     }
 
     fn sync_search_with_query(&mut self) {
         let matches = self.search_matches();
+        self.search_match_index = 0;
+        self.search_match_committed = false;
         self.pending_search_range = None;
         if matches.is_empty() {
-            self.search_match_index = 0;
             return;
         }
-
-        self.search_match_index = self.search_match_index.min(matches.len() - 1);
     }
 
     fn jump_to_next_search_match(&mut self, notifications: &mut NotificationCenter) {
@@ -204,7 +212,7 @@ impl ConfigurationPanel {
         self.set_search_match(&matches, next_index);
     }
 
-    fn jump_to_first_search_match(&mut self, notifications: &mut NotificationCenter) {
+    fn activate_search_match(&mut self, notifications: &mut NotificationCenter, reverse: bool) {
         let matches = self.search_matches();
         if matches.is_empty() {
             if !self.search_query.trim().is_empty() {
@@ -213,7 +221,18 @@ impl ConfigurationPanel {
             return;
         }
 
-        self.set_search_match(&matches, 0);
+        let index = if self.search_match_committed {
+            if reverse {
+                self.search_match_index
+                    .checked_sub(1)
+                    .unwrap_or(matches.len() - 1)
+            } else {
+                (self.search_match_index + 1) % matches.len()
+            }
+        } else {
+            self.search_match_index.min(matches.len() - 1)
+        };
+        self.set_search_match(&matches, index);
     }
 
     fn jump_to_previous_search_match(&mut self, notifications: &mut NotificationCenter) {
@@ -232,7 +251,11 @@ impl ConfigurationPanel {
         self.set_search_match(&matches, previous_index);
     }
 
-    fn syntax_highlight_job(code: &str) -> LayoutJob {
+    fn syntax_highlight_job_with_matches(
+        code: &str,
+        search_matches: &[(usize, usize)],
+        current_match_index: Option<usize>,
+    ) -> LayoutJob {
         let mut job = LayoutJob::default();
         for line in code.split_inclusive('\n') {
             Self::highlight_line(&mut job, line);
@@ -240,6 +263,12 @@ impl ConfigurationPanel {
         if code.is_empty() {
             Self::append(&mut job, "", Self::fmt_default());
         }
+        Self::apply_search_highlights_with_matches(
+            &mut job,
+            code,
+            search_matches,
+            current_match_index,
+        );
         job
     }
 
@@ -404,6 +433,84 @@ impl ConfigurationPanel {
         job.append(text, 0.0, format);
     }
 
+    fn apply_search_highlights_with_matches(
+        job: &mut LayoutJob,
+        code: &str,
+        search_matches: &[(usize, usize)],
+        current_match_index: Option<usize>,
+    ) {
+        let highlight_ranges = search_matches
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &(start, end))| {
+                Self::char_range_to_byte_range(code, start, end)
+                    .map(|byte_range| (byte_range, current_match_index == Some(index)))
+            })
+            .collect::<Vec<_>>();
+
+        if highlight_ranges.is_empty() {
+            return;
+        }
+
+        let mut sections = Vec::with_capacity(job.sections.len() + highlight_ranges.len() * 2);
+        for section in &job.sections {
+            let mut split_points = vec![section.byte_range.start, section.byte_range.end];
+            for (range, _) in &highlight_ranges {
+                let overlap_start = range.start.max(section.byte_range.start);
+                let overlap_end = range.end.min(section.byte_range.end);
+                if overlap_start < overlap_end {
+                    split_points.push(overlap_start);
+                    split_points.push(overlap_end);
+                }
+            }
+            split_points.sort_unstable();
+            split_points.dedup();
+
+            for window in split_points.windows(2) {
+                let byte_range = window[0]..window[1];
+                if byte_range.is_empty() {
+                    continue;
+                }
+                let mut format = section.format.clone();
+                if let Some((_, is_current)) = highlight_ranges.iter().find(|(range, _)| {
+                    range.start <= byte_range.start && byte_range.end <= range.end
+                }) {
+                    format.background = if *is_current {
+                        Self::search_current_match_color()
+                    } else {
+                        Self::search_match_color()
+                    };
+                }
+                sections.push(LayoutSection {
+                    leading_space: if byte_range.start == section.byte_range.start {
+                        section.leading_space
+                    } else {
+                        0.0
+                    },
+                    byte_range,
+                    format,
+                });
+            }
+        }
+        job.sections = sections;
+    }
+
+    fn char_range_to_byte_range(text: &str, start: usize, end: usize) -> Option<Range<usize>> {
+        if start >= end {
+            return None;
+        }
+        let start_byte = Self::char_to_byte_index(text, start);
+        let end_byte = Self::char_to_byte_index(text, end);
+        (start_byte < end_byte).then_some(start_byte..end_byte)
+    }
+
+    fn char_to_byte_index(text: &str, char_index: usize) -> usize {
+        text.char_indices()
+            .map(|(byte_index, _)| byte_index)
+            .nth(char_index)
+            .unwrap_or(text.len())
+    }
+
     fn fmt_default() -> TextFormat {
         TextFormat::simple(FontId::monospace(13.0), Color32::LIGHT_GRAY)
     }
@@ -435,6 +542,31 @@ impl ConfigurationPanel {
     fn fmt_bool() -> TextFormat {
         TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(214, 154, 255))
     }
+
+    fn search_match_color() -> Color32 {
+        Color32::from_rgb(56, 92, 68)
+    }
+
+    fn search_current_match_color() -> Color32 {
+        Color32::from_rgb(130, 96, 36)
+    }
+
+    fn search_match_rect(
+        output: &egui::text_edit::TextEditOutput,
+        start: usize,
+        end: usize,
+    ) -> Rect {
+        let start_rect = output
+            .galley
+            .pos_from_cursor(CCursor::new(start))
+            .translate(output.galley_pos.to_vec2());
+        let end_rect = output
+            .galley
+            .pos_from_cursor(CCursor::new(end))
+            .translate(output.galley_pos.to_vec2());
+
+        start_rect.union(end_rect).expand2(egui::vec2(8.0, 6.0))
+    }
 }
 
 impl PanelRenderer for ConfigurationPanel {
@@ -449,8 +581,20 @@ impl PanelRenderer for ConfigurationPanel {
 
         self.ensure_store_loaded(notifications);
 
+        let search_matches = self.search_matches();
+        if search_matches.is_empty() {
+            self.search_match_index = 0;
+            self.search_match_committed = false;
+        } else if self.search_match_index >= search_matches.len() {
+            self.search_match_index = search_matches.len() - 1;
+        }
+        let current_match_index = (!search_matches.is_empty()).then_some(self.search_match_index);
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-            let mut job = Self::syntax_highlight_job(text.as_str());
+            let mut job = Self::syntax_highlight_job_with_matches(
+                text.as_str(),
+                &search_matches,
+                current_match_index,
+            );
             job.wrap.max_width = wrap_width;
             ui.fonts_mut(|fonts| fonts.layout_job(job))
         };
@@ -508,7 +652,8 @@ impl PanelRenderer for ConfigurationPanel {
                     this.sync_search_with_query();
                 }
                 if search_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    this.jump_to_first_search_match(notifications);
+                    let reverse = ui.input(|i| i.modifiers.shift);
+                    this.activate_search_match(notifications, reverse);
                 }
 
                 let matches = this.search_matches();
@@ -517,6 +662,7 @@ impl PanelRenderer for ConfigurationPanel {
                     this.search_match_index = matches.len() - 1;
                 } else if !has_matches {
                     this.search_match_index = 0;
+                    this.search_match_committed = false;
                 }
                 let status_text = if this.search_query.trim().is_empty() {
                     "Type to search".to_string()
@@ -562,6 +708,7 @@ impl PanelRenderer for ConfigurationPanel {
                     strip.cell(|ui| {
                         let editor_height = ui.available_height();
                         let editor_id = ui.make_persistent_id(Self::EDITOR_ID_SALT);
+                        let mut scroll_to_search_range = None;
                         if let Some((start, end)) = this.pending_search_range.take() {
                             let mut state =
                                 egui::TextEdit::load_state(ui.ctx(), editor_id).unwrap_or_default();
@@ -571,6 +718,7 @@ impl PanelRenderer for ConfigurationPanel {
                             )));
                             egui::TextEdit::store_state(ui.ctx(), editor_id, state);
                             ui.memory_mut(|mem| mem.request_focus(editor_id));
+                            scroll_to_search_range = Some((start, end));
                         }
                         egui::ScrollArea::both()
                             .id_salt("configuration-editor-scroll")
@@ -578,7 +726,7 @@ impl PanelRenderer for ConfigurationPanel {
                             .max_height(editor_height)
                             .show(ui, |ui| {
                                 let editor_width = ui.available_width();
-                                egui::TextEdit::multiline(&mut this.editor_raw)
+                                let output = egui::TextEdit::multiline(&mut this.editor_raw)
                                     .id(editor_id)
                                     .font(egui::TextStyle::Monospace)
                                     .desired_rows(26)
@@ -587,6 +735,12 @@ impl PanelRenderer for ConfigurationPanel {
                                     .code_editor()
                                     .layouter(&mut layouter)
                                     .show(ui);
+                                if let Some((start, end)) = scroll_to_search_range {
+                                    ui.scroll_to_rect(
+                                        Self::search_match_rect(&output, start, end),
+                                        Some(Align::Center),
+                                    );
+                                }
                             });
                     });
                 });
@@ -751,7 +905,7 @@ root_dir = "/tmp/klaw" # inline
 enabled = true
 limit = 42
 "#;
-        let job = ConfigurationPanel::syntax_highlight_job(code);
+        let job = ConfigurationPanel::syntax_highlight_job_with_matches(code, &[], None);
         let text = job
             .sections
             .iter()
@@ -790,7 +944,60 @@ limit = 42
     }
 
     #[test]
-    fn enter_confirmation_targets_first_search_match() {
+    fn activate_search_match_selects_first_result_initially() {
+        let mut panel = ConfigurationPanel {
+            editor_raw: "alpha\nbeta\nalpha\n".to_string(),
+            search_query: "alpha".to_string(),
+            ..Default::default()
+        };
+        let mut notifications = NotificationCenter::default();
+
+        panel.activate_search_match(&mut notifications, false);
+
+        assert_eq!(panel.search_match_index, 0);
+        assert!(panel.search_match_committed);
+        assert_eq!(panel.pending_search_range, Some((0, 5)));
+    }
+
+    #[test]
+    fn sync_search_with_query_resets_navigation_to_first_match() {
+        let mut panel = ConfigurationPanel {
+            editor_raw: "alpha\nbeta\nalpha\n".to_string(),
+            search_query: "alpha".to_string(),
+            search_match_index: 1,
+            search_match_committed: true,
+            pending_search_range: Some((11, 16)),
+            ..Default::default()
+        };
+
+        panel.sync_search_with_query();
+
+        assert_eq!(panel.search_match_index, 0);
+        assert!(!panel.search_match_committed);
+        assert!(panel.pending_search_range.is_none());
+    }
+
+    #[test]
+    fn enter_activation_jumps_current_then_next_match() {
+        let mut panel = ConfigurationPanel {
+            editor_raw: "alpha\nbeta\nalpha\n".to_string(),
+            search_query: "alpha".to_string(),
+            ..Default::default()
+        };
+        let mut notifications = NotificationCenter::default();
+
+        panel.activate_search_match(&mut notifications, false);
+        assert_eq!(panel.search_match_index, 0);
+        assert_eq!(panel.pending_search_range, Some((0, 5)));
+
+        panel.pending_search_range = None;
+        panel.activate_search_match(&mut notifications, false);
+        assert_eq!(panel.search_match_index, 1);
+        assert_eq!(panel.pending_search_range, Some((11, 16)));
+    }
+
+    #[test]
+    fn shift_enter_activation_jumps_current_then_previous_match() {
         let mut panel = ConfigurationPanel {
             editor_raw: "alpha\nbeta\nalpha\n".to_string(),
             search_query: "alpha".to_string(),
@@ -799,9 +1006,64 @@ limit = 42
         };
         let mut notifications = NotificationCenter::default();
 
-        panel.jump_to_first_search_match(&mut notifications);
+        panel.activate_search_match(&mut notifications, true);
+        assert_eq!(panel.search_match_index, 1);
+        assert_eq!(panel.pending_search_range, Some((11, 16)));
 
+        panel.pending_search_range = None;
+        panel.activate_search_match(&mut notifications, true);
         assert_eq!(panel.search_match_index, 0);
         assert_eq!(panel.pending_search_range, Some((0, 5)));
+    }
+
+    #[test]
+    fn search_match_rect_covers_selected_range() {
+        egui::__run_test_ui(|ui| {
+            let mut text = "alpha\nbeta\nalpha\n".to_string();
+            let output = egui::TextEdit::multiline(&mut text)
+                .desired_width(f32::INFINITY)
+                .show(ui);
+
+            let rect = ConfigurationPanel::search_match_rect(&output, 6, 10);
+            let start_rect = output
+                .galley
+                .pos_from_cursor(CCursor::new(6))
+                .translate(output.galley_pos.to_vec2());
+            let end_rect = output
+                .galley
+                .pos_from_cursor(CCursor::new(10))
+                .translate(output.galley_pos.to_vec2());
+
+            assert!(rect.contains(start_rect.center()));
+            assert!(rect.contains(end_rect.center()));
+        });
+    }
+
+    #[test]
+    fn syntax_highlight_marks_all_search_matches_and_current_match() {
+        let job = ConfigurationPanel::syntax_highlight_job_with_matches(
+            "alpha\nbeta\nalpha\n",
+            &[(0, 5), (11, 16)],
+            Some(1),
+        );
+
+        let highlighted = job
+            .sections
+            .iter()
+            .filter(|section| section.format.background != Color32::TRANSPARENT)
+            .map(|section| {
+                let text = &job.text[section.byte_range.clone()];
+                (text.to_string(), section.format.background)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(highlighted.contains(&(
+            "alpha".to_string(),
+            ConfigurationPanel::search_match_color()
+        )));
+        assert!(highlighted.contains(&(
+            "alpha".to_string(),
+            ConfigurationPanel::search_current_match_color()
+        )));
     }
 }
