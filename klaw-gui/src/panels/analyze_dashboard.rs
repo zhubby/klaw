@@ -508,19 +508,21 @@ impl AnalyzeDashboardPanel {
                 return;
             }
 
-            for row in &snapshot.error_breakdown {
-                ui.horizontal(|ui| {
-                    ui.monospace(&row.error_code);
-                    ui.add(
+            render_progress_grid(
+                ui,
+                "tool_error_breakdown_grid",
+                snapshot.error_breakdown.iter().map(|row| {
+                    (
+                        egui::RichText::new(&row.error_code).monospace(),
                         egui::ProgressBar::new(
                             (row.failures as f32 / max_tool_failures(snapshot) as f32)
                                 .clamp(0.0, 1.0),
                         )
                         .show_percentage()
                         .text(row.failures.to_string()),
-                    );
-                });
-            }
+                    )
+                }),
+            );
         });
     }
 
@@ -538,18 +540,20 @@ impl AnalyzeDashboardPanel {
                 .map(|row| row.failures)
                 .max()
                 .unwrap_or(1);
-            for row in &snapshot.error_breakdown {
-                ui.horizontal(|ui| {
-                    ui.monospace(&row.error_code);
-                    ui.add(
+            render_progress_grid(
+                ui,
+                "model_error_breakdown_grid",
+                snapshot.error_breakdown.iter().map(|row| {
+                    (
+                        egui::RichText::new(&row.error_code).monospace(),
                         egui::ProgressBar::new(
                             (row.failures as f32 / max_failures as f32).clamp(0.0, 1.0),
                         )
                         .show_percentage()
                         .text(row.failures.to_string()),
-                    );
-                });
-            }
+                    )
+                }),
+            );
         });
     }
 
@@ -721,27 +725,31 @@ impl AnalyzeDashboardPanel {
             ui.strong("Token Composition");
             ui.separator();
             let total = snapshot.summary.total_tokens.max(1);
-            for (label, value) in [
-                ("Input Tokens", snapshot.token_composition.input_tokens),
-                ("Output Tokens", snapshot.token_composition.output_tokens),
-                (
-                    "Cached Input Tokens",
-                    snapshot.token_composition.cached_input_tokens,
-                ),
-                (
-                    "Reasoning Tokens",
-                    snapshot.token_composition.reasoning_tokens,
-                ),
-            ] {
-                ui.horizontal(|ui| {
-                    ui.label(label);
-                    ui.add(
+            render_progress_grid(
+                ui,
+                "model_token_composition_grid",
+                [
+                    ("Input Tokens", snapshot.token_composition.input_tokens),
+                    ("Output Tokens", snapshot.token_composition.output_tokens),
+                    (
+                        "Cached Input Tokens",
+                        snapshot.token_composition.cached_input_tokens,
+                    ),
+                    (
+                        "Reasoning Tokens",
+                        snapshot.token_composition.reasoning_tokens,
+                    ),
+                ]
+                .into_iter()
+                .map(|(label, value)| {
+                    (
+                        egui::WidgetText::from(label),
                         egui::ProgressBar::new((value as f32 / total as f32).clamp(0.0, 1.0))
                             .show_percentage()
                             .text(value.to_string()),
-                    );
-                });
-            }
+                    )
+                }),
+            );
         });
     }
 
@@ -781,6 +789,23 @@ impl AnalyzeDashboardPanel {
         ui.add_space(8.0);
         self.render_model_timeseries(ui, snapshot);
     }
+}
+
+fn render_progress_grid<I, T>(ui: &mut egui::Ui, id_salt: &str, rows: I)
+where
+    I: IntoIterator<Item = (T, egui::ProgressBar)>,
+    T: Into<egui::WidgetText>,
+{
+    egui::Grid::new(id_salt)
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            for (label, bar) in rows {
+                ui.label(label);
+                ui.add_sized([ui.available_width().max(0.0), 0.0], bar);
+                ui.end_row();
+            }
+        });
 }
 
 impl PanelRenderer for AnalyzeDashboardPanel {
