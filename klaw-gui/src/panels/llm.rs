@@ -6,6 +6,7 @@ use chrono::{Datelike, Local, NaiveDate};
 use egui::Color32;
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
+use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_session::{
     LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord,
     LlmAuditSortOrder, LlmAuditStatus, SessionError, SessionManager, SqliteSessionManager,
@@ -55,6 +56,8 @@ pub struct LlmPanel {
     detail_tab: DetailTab,
     load_request: Option<PendingLlmAuditLoad>,
     refresh_queued: bool,
+    store: Option<ConfigStore>,
+    config: AppConfig,
 }
 
 impl Default for LlmPanel {
@@ -72,18 +75,50 @@ impl Default for LlmPanel {
             start_date: Some(one_year_ago),
             end_date: Some(today),
             page: 1,
-            size: 100,
+            size: 50,
             sort_order: LlmAuditSortOrder::RequestedAtDesc,
             selected_id: None,
             detail_record: None,
             detail_tab: DetailTab::default(),
             load_request: None,
             refresh_queued: false,
+            store: None,
+            config: AppConfig::default(),
         }
     }
 }
 
 impl LlmPanel {
+    fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
+        if self.store.is_some() {
+            return;
+        }
+
+        match ConfigStore::open(None) {
+            Ok(store) => {
+                let snapshot = store.snapshot();
+                self.store = Some(store);
+                self.apply_config_snapshot(snapshot);
+            }
+            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+        }
+    }
+
+    fn apply_config_snapshot(&mut self, snapshot: ConfigSnapshot) {
+        self.config = snapshot.config;
+    }
+
+    fn reload_config(&mut self, notifications: &mut NotificationCenter) {
+        let Some(store) = self.store.as_ref() else {
+            return;
+        };
+
+        match store.reload() {
+            Ok(snapshot) => self.apply_config_snapshot(snapshot),
+            Err(err) => notifications.error(format!("Failed to reload config: {err}")),
+        }
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.loaded || self.load_request.is_some() {
             return;
@@ -176,6 +211,15 @@ impl LlmPanel {
             LlmAuditSortOrder::RequestedAtDesc => "Time ↓",
         }
     }
+
+    fn provider_display_name<'a>(&'a self, provider_id: &'a str) -> &'a str {
+        self.config
+            .model_providers
+            .get(provider_id)
+            .and_then(|provider| provider.name.as_deref())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(provider_id)
+    }
 }
 
 impl PanelRenderer for LlmPanel {
@@ -185,6 +229,7 @@ impl PanelRenderer for LlmPanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
+        self.ensure_store_loaded(notifications);
         self.ensure_loaded(notifications);
         self.poll_load_request(notifications);
         if self.load_request.is_some() {
@@ -194,6 +239,7 @@ impl PanelRenderer for LlmPanel {
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
+                self.reload_config(notifications);
                 self.refresh(notifications);
             }
             ui.label(format!("Rows: {}", self.rows.len()));
@@ -237,7 +283,12 @@ impl PanelRenderer for LlmPanel {
             }
             ui.label("provider");
             let combo_resp = egui::ComboBox::from_id_salt("llm-audit-provider-filter")
-                .selected_text(self.provider_filter.as_deref().unwrap_or("All"))
+                .selected_text(
+                    self.provider_filter
+                        .as_deref()
+                        .map(|provider| self.provider_display_name(provider))
+                        .unwrap_or("All"),
+                )
                 .width(FILTER_INPUT_WIDTH)
                 .show_ui(ui, |ui| {
                     let mut changed = false;
@@ -248,11 +299,12 @@ impl PanelRenderer for LlmPanel {
                         changed = true;
                     }
                     for provider in &self.provider_options {
+                        let provider_label = self.provider_display_name(provider).to_string();
                         if ui
                             .selectable_value(
                                 &mut self.provider_filter,
                                 Some(provider.clone()),
-                                provider,
+                                provider_label,
                             )
                             .changed()
                         {
@@ -298,6 +350,7 @@ impl PanelRenderer for LlmPanel {
             }
         });
         if need_refresh {
+            self.reload_config(notifications);
             self.refresh(notifications);
         }
 
@@ -375,7 +428,10 @@ impl PanelRenderer for LlmPanel {
                                 render_truncated_cell(ui, &item.session_key);
                             });
                             row.col(|ui| {
-                                render_truncated_cell(ui, &item.provider);
+                                render_truncated_cell(
+                                    ui,
+                                    self.provider_display_name(&item.provider),
+                                );
                             });
                             row.col(|ui| {
                                 render_truncated_cell(ui, &item.model);
@@ -447,8 +503,9 @@ impl PanelRenderer for LlmPanel {
         if let Some(record) = open_detail {
             self.detail_record = Some(record);
         }
-        if let Some(record) = &mut self.detail_record {
+        if let Some(record) = self.detail_record.clone() {
             let mut open = true;
+            let provider_display_name = self.provider_display_name(&record.provider).to_string();
             egui::Window::new("LLM Audit Detail")
                 .id(egui::Id::new("llm-audit-detail"))
                 .open(&mut open)
@@ -461,7 +518,7 @@ impl PanelRenderer for LlmPanel {
                         "Time: {}",
                         format_timestamp_millis(record.requested_at_ms)
                     ));
-                    ui.label(format!("Provider: {}", record.provider));
+                    ui.label(format!("Provider: {provider_display_name}"));
                     ui.label(format!("Model: {}", record.model));
                     ui.label(format!("Wire API: {}", record.wire_api));
                     let (icon, color, text) = llm_status_display(record.status);
@@ -639,6 +696,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_config::ModelProviderConfig;
 
     fn sample_record() -> LlmAuditRecord {
         LlmAuditRecord {
@@ -662,6 +720,34 @@ mod tests {
             responded_at_ms: Some(1_700_000_000_100),
             created_at_ms: 1_700_000_000_000,
         }
+    }
+
+    #[test]
+    fn default_page_size_is_fifty() {
+        assert_eq!(LlmPanel::default().size, 50);
+    }
+
+    #[test]
+    fn provider_display_name_prefers_config_name_and_falls_back_to_id() {
+        let mut panel = LlmPanel::default();
+        panel.config.model_providers.insert(
+            "openai".to_string(),
+            ModelProviderConfig {
+                name: Some("OpenAI Prod".to_string()),
+                ..ModelProviderConfig::default()
+            },
+        );
+        panel.config.model_providers.insert(
+            "anthropic".to_string(),
+            ModelProviderConfig {
+                name: Some("   ".to_string()),
+                ..ModelProviderConfig::default()
+            },
+        );
+
+        assert_eq!(panel.provider_display_name("openai"), "OpenAI Prod");
+        assert_eq!(panel.provider_display_name("anthropic"), "anthropic");
+        assert_eq!(panel.provider_display_name("missing"), "missing");
     }
 
     #[test]

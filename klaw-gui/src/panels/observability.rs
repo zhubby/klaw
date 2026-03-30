@@ -186,7 +186,6 @@ impl PanelRenderer for ObservabilityPanel {
         notifications: &mut NotificationCenter,
     ) {
         const MIN_TOTAL_HEIGHT: f32 = 480.0;
-        const FOOTER_HEIGHT: f32 = 48.0;
 
         self.ensure_loaded(notifications);
 
@@ -201,12 +200,20 @@ impl PanelRenderer for ObservabilityPanel {
                     ui.colored_label(Color32::YELLOW, "(unsaved changes)");
                 }
             });
+            ui.horizontal(|ui| {
+                if ui.button("Save").clicked() {
+                    this.handle_save(notifications);
+                }
+                if ui.button("Reload").clicked() {
+                    this.handle_reload(notifications);
+                }
+                ui.label("Note: Changes require restart to take effect.");
+            });
 
             ui.separator();
 
             StripBuilder::new(ui)
                 .size(Size::remainder().at_least(200.0))
-                .size(Size::exact(FOOTER_HEIGHT))
                 .vertical(|mut strip| {
                     strip.cell(|ui| {
                         egui::ScrollArea::vertical()
@@ -406,19 +413,6 @@ impl PanelRenderer for ObservabilityPanel {
                                     });
                                 });
                             });
-                    });
-
-                    strip.cell(|ui| {
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            if ui.button("Save").clicked() {
-                                this.handle_save(notifications);
-                            }
-                            if ui.button("Reload").clicked() {
-                                this.handle_reload(notifications);
-                            }
-                            ui.label("  Note: Changes require restart to take effect.");
-                        });
                     });
                 });
         };
