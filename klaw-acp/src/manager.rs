@@ -669,6 +669,7 @@ fn plan_agent_updates(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use uuid::Uuid;
 
     fn agent(id: &str, enabled: bool) -> AcpAgentConfig {
         AcpAgentConfig {
@@ -680,6 +681,123 @@ mod tests {
             cwd: None,
             description: String::new(),
         }
+    }
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("{prefix}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn ensure_python3() {
+        let status = std::process::Command::new("python3")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("python3 should be installed for ACP mock agent tests");
+        assert!(status.success(), "python3 --version should succeed");
+    }
+
+    fn write_mock_agent_script(dir: &PathBuf) -> PathBuf {
+        let script = dir.join("mock_acp_agent.py");
+        std::fs::write(
+            &script,
+            r#"#!/usr/bin/env python3
+import json
+import sys
+
+session_id = "mock-session"
+
+def send(message):
+    sys.stdout.write(json.dumps(message) + "\n")
+    sys.stdout.flush()
+
+for raw_line in sys.stdin:
+    line = raw_line.strip()
+    if not line:
+        continue
+    message = json.loads(line)
+    method = message.get("method")
+    msg_id = message.get("id")
+    if method == "initialize":
+        send({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "protocolVersion": 1,
+                "agentCapabilities": {},
+                "authMethods": [],
+                "agentInfo": {
+                    "name": "mock-agent",
+                    "version": "0.1.0"
+                }
+            }
+        })
+    elif method == "session/new":
+        send({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "sessionId": session_id
+            }
+        })
+    elif method == "session/prompt":
+        prompt_blocks = message.get("params", {}).get("prompt", [])
+        prompt_text = ""
+        if prompt_blocks:
+            first = prompt_blocks[0]
+            if first.get("type") == "text":
+                prompt_text = first.get("text", "")
+        send({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "agent_thought_chunk",
+                    "content": {
+                        "type": "text",
+                        "text": "thinking about " + prompt_text
+                    }
+                }
+            }
+        })
+        send({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {
+                        "type": "text",
+                        "text": "mock response for: " + prompt_text
+                    }
+                }
+            }
+        })
+        send({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "stopReason": "end_turn"
+            }
+        })
+        break
+    else:
+        send({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {
+                "code": -32601,
+                "message": "method not found"
+            }
+        })
+"#,
+        )
+        .expect("write mock ACP agent script");
+        script
     }
 
     #[test]
@@ -742,6 +860,42 @@ mod tests {
             resolved,
             std::fs::canonicalize(&nested).expect("canonical nested")
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn execute_prompt_runs_end_to_end_against_mock_acp_agent() {
+        ensure_python3();
+        let root = temp_dir("klaw-acp-e2e");
+        let script = write_mock_agent_script(&root);
+
+        let mut config = agent("mock", true);
+        config.command = "python3".to_string();
+        config.args = vec![script.display().to_string()];
+        config.cwd = Some(root.display().to_string());
+
+        let mut manager = AcpManager::new(ToolRegistry::default());
+        manager.agents.insert(
+            AcpAgentKey::new("mock"),
+            AcpAgentHandle {
+                config,
+                tool_name: "acp_agent_mock".to_string(),
+            },
+        );
+        let working_directory = root.display().to_string();
+
+        let result = manager
+            .execute_prompt(
+                "mock",
+                "summarize the mock plan",
+                Some(working_directory.as_str()),
+                Some(Duration::from_secs(5)),
+            )
+            .await
+            .expect("mock ACP agent prompt should succeed");
+
+        assert_eq!(result, "mock response for: summarize the mock plan");
 
         let _ = std::fs::remove_dir_all(root);
     }
