@@ -35,7 +35,7 @@
   - cron (db-bound list + add/edit window)
   - heartbeat (db-backed heartbeat list + add/edit/delete/run-now)
 - gateway (runtime-backed gateway status, disk-config reload sync, start, restart, base address display, independent Tailscale host status, background gateway/tailscale actions, explicit Tailscale mode apply flow, Tailscale-only refresh/apply guards when the local service is unavailable, and `auth.token` random-secret generation from the config dialog)
-  - webhook (db-backed webhook event list, filters, detail inspection, `gateway.webhook.events` / `gateway.webhook.agents` config editing, local `hooks/prompts/*.md` template management with create/edit/view/delete flows, and generated `/webhook/agents` trick URLs based on current gateway/tailscale runtime state)
+  - webhook (db-backed webhook event list, filters, detail inspection, `gateway.webhook.events` / `gateway.webhook.agents` config editing, local `hooks/prompts/*.md` template management with shared markdown editor highlighting plus CommonMark preview, and generated `/webhook/agents` trick URLs based on current gateway/tailscale runtime state)
   - mcp (config-bound list + add/edit window)
   - skill (installed skill management with list/detail/remove/sync actions)
   - skills registry (config-bound list + add/edit window)
@@ -60,7 +60,7 @@
   - show workspace docs in a table with file summary, modified time, and path
   - render a read-only runtime system prompt preview that loads asynchronously and fills the remaining panel height
   - create a new workspace-root file from a popup with `file name` and `body`
-  - edit a document in a fixed-height markdown-highlighted popup editor
+  - edit and create workspace markdown files with a shared markdown-highlighted `TextEdit` layouter
   - save, cancel, reset-to-original, or reset-to-default in the editor footer
   - expose row context actions for preview, edit, guarded reset-to-default, and delete
 - Provider panel features:
@@ -122,7 +122,7 @@
   - render configured servers in a selectable `TableBuilder` list with right-click `Detail` / `Edit` / `Config` / `Delete` actions
   - poll runtime MCP status asynchronously from a manager snapshot so GUI refreshes do not block the egui thread or retrigger MCP sync
   - show per-server runtime state and discovered tool counts directly in the table
-  - open a detail popup that renders the cached MCP `tools/list` response for the selected server
+  - open a detail popup that renders the cached MCP `tools/list` response through a shared CommonMark viewer
 - Settings panel features:
   - configure GUI theme presets in `General`, with `Default`/`Latte`/`Crab` for light mode and `Default`/`Frappé`/`Macchiato`/`Mocha` for dark mode
   - persist sync settings in `settings.json`, including S3 endpoint/region/bucket/prefix, backup scope, retention, schedule, hostname-based device ID, and both direct or env-backed credentials
@@ -164,6 +164,7 @@
 - `panels/`: module-specific workbench panels
   - includes `logs` panel backed by a non-blocking runtime log chunk bridge
 - `widgets/`: shared reusable UI widgets
+  - includes shared markdown helpers for code-style `TextEdit` layouters and CommonMark rich rendering
 - `theme.rs`: centralized theme setup
   - system-follow mode selection plus configurable light/dark theme presets, including the custom `Crab` light palette derived from the Klaw gateway logo
 - `state/persistence.rs`: local UI state load/save with schema versioning and atomic writes

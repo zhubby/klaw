@@ -4,6 +4,8 @@
 
 ### Changed
 
+- GUI markdown 编辑高亮已抽成共享 `widgets::markdown` 模块，`Profile Prompt`、`Webhook` 和 `Skills Manager` 中的 markdown `TextEdit` 现在统一复用同一套 layouter
+- GUI markdown 富文本预览已切换到兼容 `egui 0.33.x` 的 `egui_commonmark 0.22.0`，`Profile Prompt`、`Webhook` 与 `MCP Detail` 不再各自维护手写 markdown 渲染逻辑
 - GUI 共享 `json tree` widget 已切换为 `egui_json_tree 0.14.2`，`LLM Audit Detail` 与 `Tool Logs` 等所有复用展示统一使用第三方交互式 JSON 树渲染
 - `About Klaw` 弹窗现改为居中标题布局，展示内嵌应用图标、当前版本、构建时写入的 git commit sha，以及仓库 GitHub 地址
 - `klaw-gui` 新增 crate 级 `build.rs`，在编译时把当前 `HEAD` commit sha 注入到 GUI 程序变量中供 `About` 弹窗显示
