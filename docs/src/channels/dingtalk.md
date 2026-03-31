@@ -434,6 +434,11 @@ let session_key = format!("dingtalk:{}:{}", account_id, chat_id);
 
 - 同一会话（相同 `account_id` + `chat_id`）保证串行执行
 - 私聊会话 `chat_id = sender_id`
+- 群聊消息只有在命中当前 bot 时才会进入 runtime：
+  - 优先识别事件里的结构化 `@` 信息（如 `atUsers` / `atOpenIds`）
+  - 富文本消息会识别 mention / at block
+  - 如果事件没有结构化 `@`，则回退到正文中的显式 `@{bot_title}`
+- 命中的 `@{bot_title}` 会在提交给 runtime 前从正文中剥离，避免模型看到多余称呼
 
 ### 会话 Webhook
 

@@ -530,7 +530,7 @@ impl DingtalkChannel {
             return send_ack(ws, envelope, "").await;
         }
 
-        let Some(mut inbound) = parse_inbound_event(&payload) else {
+        let Some(mut inbound) = parse_inbound_event(&payload, &self.config.bot_title) else {
             return send_ack(ws, envelope, "").await;
         };
 
@@ -1632,6 +1632,12 @@ struct InboundEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DingtalkConversationType {
+    Private,
+    Group,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApprovalAction {
     Approve,
     Reject,
@@ -1753,15 +1759,7 @@ fn dingtalk_command_action_url(action: &str, approval_id: &str) -> String {
 }
 
 fn resolve_chat_id(data: &Value, sender_id: &str) -> String {
-    let is_private_chat = data
-        .get("conversationType")
-        .and_then(|value| {
-            value
-                .as_str()
-                .map(|v| v == "1")
-                .or_else(|| value.as_i64().map(|v| v == 1))
-        })
-        .unwrap_or(true);
+    let is_private_chat = conversation_type(data) == DingtalkConversationType::Private;
 
     if is_private_chat {
         sender_id.to_string()
@@ -1773,7 +1771,24 @@ fn resolve_chat_id(data: &Value, sender_id: &str) -> String {
     }
 }
 
-fn parse_inbound_event(value: &Value) -> Option<InboundEvent> {
+fn conversation_type(data: &Value) -> DingtalkConversationType {
+    let is_private_chat = data
+        .get("conversationType")
+        .and_then(|value| {
+            value
+                .as_str()
+                .map(|v| v == "1")
+                .or_else(|| value.as_i64().map(|v| v == 1))
+        })
+        .unwrap_or(true);
+    if is_private_chat {
+        DingtalkConversationType::Private
+    } else {
+        DingtalkConversationType::Group
+    }
+}
+
+fn parse_inbound_event(value: &Value, bot_title: &str) -> Option<InboundEvent> {
     let sender_id = value
         .get("senderStaffId")
         .and_then(Value::as_str)
@@ -1806,7 +1821,13 @@ fn parse_inbound_event(value: &Value) -> Option<InboundEvent> {
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_else(|| "text".to_string());
     let audio_recognition = extract_audio_recognition_text(value);
-    let text = extract_dingtalk_message_text(value, &msg_type, audio_recognition.as_deref())?;
+    let text = extract_dingtalk_message_text(
+        value,
+        &msg_type,
+        audio_recognition.as_deref(),
+        &robot_code,
+        bot_title,
+    )?;
     let media_references = extract_dingtalk_media_references(value, &msg_type, &event_id);
 
     Some(InboundEvent {
@@ -1949,14 +1970,23 @@ fn extract_dingtalk_message_text(
     value: &Value,
     msg_type: &str,
     audio_recognition: Option<&str>,
+    robot_code: &str,
+    bot_title: &str,
 ) -> Option<String> {
+    let conversation_type = conversation_type(value);
+    if conversation_type == DingtalkConversationType::Group
+        && !group_message_targets_bot(value, msg_type, robot_code, bot_title)
+    {
+        return None;
+    }
+
     if msg_type == "text" {
         return value
             .pointer("/text/content")
             .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned);
+            .map(|text| normalize_dingtalk_text_content(text, bot_title))
+            .map(|text| text.trim().to_string())
+            .filter(|s| !s.is_empty());
     }
     if msg_type == "richtext" || msg_type == "rich_text" {
         if let Some(rich_blocks) = value.pointer("/content/richText").and_then(Value::as_array) {
@@ -1969,13 +1999,18 @@ fn extract_dingtalk_message_text(
                         .map(str::trim)
                         .map(|ty| ty.to_ascii_lowercase())
                         .unwrap_or_default();
+                    if matches!(block_type.as_str(), "at" | "mention")
+                        && block_targets_bot(block, robot_code, bot_title)
+                    {
+                        return None;
+                    }
                     if block_type != "text" {
                         return None;
                     }
                     block
                         .get("text")
                         .and_then(Value::as_str)
-                        .map(ToOwned::to_owned)
+                        .map(|text| normalize_dingtalk_text_content(text, bot_title))
                 })
                 .collect::<Vec<_>>()
                 .join("");
@@ -2064,6 +2099,149 @@ fn extract_dingtalk_message_text(
     };
 
     Some(fallback)
+}
+
+fn group_message_targets_bot(
+    value: &Value,
+    msg_type: &str,
+    robot_code: &str,
+    bot_title: &str,
+) -> bool {
+    if has_structured_bot_mention(value, robot_code, bot_title) {
+        return true;
+    }
+
+    if (msg_type == "richtext" || msg_type == "rich_text")
+        && value
+            .pointer("/content/richText")
+            .and_then(Value::as_array)
+            .is_some_and(|blocks| {
+                blocks.iter().any(|block| {
+                    let block_type = block
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .map(|ty| ty.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    matches!(block_type.as_str(), "at" | "mention")
+                        && block_targets_bot(block, robot_code, bot_title)
+                })
+            })
+    {
+        return true;
+    }
+
+    let Some(bot_title) = normalized_match_target(bot_title) else {
+        return false;
+    };
+
+    first_string_value(
+        value,
+        &[
+            "/text/content",
+            "/content/text",
+            "/content/title",
+            "/content/markdown",
+        ],
+    )
+    .is_some_and(|text| contains_textual_bot_mention(&text, &bot_title))
+}
+
+fn has_structured_bot_mention(value: &Value, robot_code: &str, bot_title: &str) -> bool {
+    [
+        "/atUsers",
+        "/atOpenIds",
+        "/atMobiles",
+        "/text/atUsers",
+        "/text/atOpenIds",
+        "/text/atMobiles",
+        "/content/atUsers",
+        "/content/atOpenIds",
+        "/content/atMobiles",
+    ]
+    .iter()
+    .filter_map(|pointer| value.pointer(pointer))
+    .any(|node| node_contains_bot_target(node, robot_code, bot_title))
+}
+
+fn block_targets_bot(block: &Value, robot_code: &str, bot_title: &str) -> bool {
+    node_contains_bot_target(block, robot_code, bot_title)
+}
+
+fn node_contains_bot_target(node: &Value, robot_code: &str, bot_title: &str) -> bool {
+    let targets = [
+        normalized_match_target(robot_code),
+        normalized_match_target(bot_title),
+    ];
+    collect_strings(node)
+        .into_iter()
+        .filter_map(|value| normalized_match_target(value.as_str()))
+        .any(|candidate| targets.iter().flatten().any(|target| candidate == *target))
+}
+
+fn collect_strings(node: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    match node {
+        Value::String(text) => out.push(text.to_string()),
+        Value::Array(items) => {
+            for item in items {
+                out.extend(collect_strings(item));
+            }
+        }
+        Value::Object(map) => {
+            for value in map.values() {
+                out.extend(collect_strings(value));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+fn normalized_match_target(value: &str) -> Option<String> {
+    let trimmed = value
+        .trim()
+        .trim_start_matches('@')
+        .trim_start_matches('＠');
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_ascii_lowercase())
+    }
+}
+
+fn contains_textual_bot_mention(text: &str, bot_title: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    lowered.contains(format!("@{bot_title}").as_str())
+        || lowered.contains(format!("＠{bot_title}").as_str())
+}
+
+fn normalize_dingtalk_text_content(text: &str, bot_title: &str) -> String {
+    let Some(bot_title) = normalized_match_target(bot_title) else {
+        return text.to_string();
+    };
+    let lowered = text.to_ascii_lowercase();
+    let mentions = [format!("@{bot_title}"), format!("＠{bot_title}")];
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+
+    while cursor < text.len() {
+        let haystack = &lowered[cursor..];
+        let matched = mentions
+            .iter()
+            .filter_map(|mention| haystack.find(mention).map(|offset| (offset, mention.len())))
+            .min_by_key(|(offset, _)| *offset);
+        let Some((offset, len)) = matched else {
+            output.push_str(&text[cursor..]);
+            break;
+        };
+        let start = cursor + offset;
+        output.push_str(&text[cursor..start]);
+        output.push(' ');
+        cursor = start + len;
+    }
+
+    output.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn extract_dingtalk_media_references(
@@ -2696,8 +2874,9 @@ mod tests {
         extract_approval_command_preview, extract_approval_id_for_action_card,
         extract_dingtalk_media_references, extract_dingtalk_message_text,
         extract_shell_approval_id, infer_dingtalk_file_type, is_sender_allowed,
-        parse_card_callback_event, parse_inbound_event, parse_stream_data, resolve_chat_id,
-        resolve_download_code_candidates, supported_dingtalk_file_type,
+        normalize_dingtalk_text_content, parse_card_callback_event, parse_inbound_event,
+        parse_stream_data, resolve_chat_id, resolve_download_code_candidates,
+        supported_dingtalk_file_type,
     };
     use crate::{
         ChannelResponse,
@@ -2707,10 +2886,12 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    const BOT_TITLE: &str = "Klaw";
+
     #[test]
     fn parse_inbound_text_event_reads_dingtalk_shape() {
         let payload = serde_json::json!({
-            "conversationType": 2,
+            "conversationType": 1,
             "conversationId": "cid_1",
             "sessionWebhook": "https://example/session",
             "msgId": "mid_1",
@@ -2719,12 +2900,12 @@ mod tests {
             "text": { "content": "hello" }
         });
 
-        let parsed = parse_inbound_event(&payload).expect("should parse");
+        let parsed = parse_inbound_event(&payload, BOT_TITLE).expect("should parse");
         assert_eq!(
             parsed,
             InboundEvent {
                 event_id: "mid_1".to_string(),
-                chat_id: "cid_1".to_string(),
+                chat_id: "staff_1".to_string(),
                 robot_code: "robot_1".to_string(),
                 msg_type: "text".to_string(),
                 sender_id: "staff_1".to_string(),
@@ -2737,9 +2918,75 @@ mod tests {
     }
 
     #[test]
-    fn parse_inbound_picture_event_as_fallback_text() {
+    fn parse_inbound_group_text_requires_bot_mention() {
         let payload = serde_json::json!({
             "conversationType": 2,
+            "conversationId": "cid_group",
+            "sessionWebhook": "https://example/session-group",
+            "msgId": "mid_group",
+            "robotCode": "robot_group",
+            "senderStaffId": "staff_group",
+            "text": { "content": "hello everyone" }
+        });
+
+        assert_eq!(parse_inbound_event(&payload, BOT_TITLE), None);
+    }
+
+    #[test]
+    fn parse_inbound_group_text_accepts_structured_bot_mention() {
+        let payload = serde_json::json!({
+            "conversationType": 2,
+            "conversationId": "cid_group_mention",
+            "sessionWebhook": "https://example/session-group-mention",
+            "msgId": "mid_group_mention",
+            "robotCode": "robot_group_mention",
+            "senderStaffId": "staff_group_mention",
+            "atUsers": [
+                { "dingtalkId": "robot_group_mention", "staffId": "ignored" }
+            ],
+            "text": { "content": "@Klaw 帮我查一下" }
+        });
+
+        let parsed =
+            parse_inbound_event(&payload, BOT_TITLE).expect("should parse mentioned group text");
+        assert_eq!(parsed.chat_id, "cid_group_mention");
+        assert_eq!(parsed.text, "帮我查一下");
+    }
+
+    #[test]
+    fn parse_inbound_group_richtext_skips_bot_mention_block() {
+        let payload = serde_json::json!({
+            "conversationType": 2,
+            "conversationId": "cid_rich_at",
+            "sessionWebhook": "https://example/session-rich-at",
+            "msgId": "mid_rich_at",
+            "robotCode": "robot_rich_at",
+            "senderStaffId": "staff_rich_at",
+            "msgtype": "richText",
+            "content": {
+                "richText": [
+                    { "type": "at", "text": "@Klaw", "title": "Klaw", "robotCode": "robot_rich_at" },
+                    { "type": "text", "text": " 帮我总结下" }
+                ]
+            }
+        });
+
+        let parsed = parse_inbound_event(&payload, BOT_TITLE).expect("should parse richText at");
+        assert_eq!(parsed.text, "帮我总结下");
+    }
+
+    #[test]
+    fn normalize_dingtalk_text_content_strips_fullwidth_and_ascii_mentions() {
+        assert_eq!(
+            normalize_dingtalk_text_content("@Klaw 你好 ＠Klaw 再问一次", BOT_TITLE),
+            "你好 再问一次"
+        );
+    }
+
+    #[test]
+    fn parse_inbound_picture_event_as_fallback_text() {
+        let payload = serde_json::json!({
+            "conversationType": 1,
             "conversationId": "cid_2",
             "sessionWebhook": "https://example/session2",
             "msgId": "mid_2",
@@ -2749,8 +2996,8 @@ mod tests {
             "picture": { "fileName": "screen.png" }
         });
 
-        let parsed = parse_inbound_event(&payload).expect("should parse picture");
-        assert_eq!(parsed.chat_id, "cid_2");
+        let parsed = parse_inbound_event(&payload, BOT_TITLE).expect("should parse picture");
+        assert_eq!(parsed.chat_id, "staff_2");
         assert!(parsed.text.contains("图片消息"));
         assert_eq!(parsed.media_references.len(), 1);
         assert_eq!(
@@ -2774,7 +3021,8 @@ mod tests {
             }
         });
 
-        let parsed = parse_inbound_event(&payload).expect("should parse picture content");
+        let parsed =
+            parse_inbound_event(&payload, BOT_TITLE).expect("should parse picture content");
         assert_eq!(parsed.media_references.len(), 1);
         assert_eq!(
             parsed.media_references[0]
@@ -2795,7 +3043,7 @@ mod tests {
     #[test]
     fn parse_inbound_richtext_event_extracts_text_and_pictures() {
         let payload = serde_json::json!({
-            "conversationType": 2,
+            "conversationType": 1,
             "conversationId": "cid_3",
             "sessionWebhook": "https://example/session3",
             "msgId": "mid_3",
@@ -2812,7 +3060,7 @@ mod tests {
             }
         });
 
-        let parsed = parse_inbound_event(&payload).expect("should parse richText");
+        let parsed = parse_inbound_event(&payload, BOT_TITLE).expect("should parse richText");
         assert_eq!(parsed.text, "这是啥");
         assert_eq!(parsed.media_references.len(), 2);
         assert_eq!(
@@ -2834,7 +3082,7 @@ mod tests {
     #[test]
     fn parse_inbound_video_event_extracts_media_reference() {
         let payload = serde_json::json!({
-            "conversationType": 2,
+            "conversationType": 1,
             "conversationId": "cid_video",
             "sessionWebhook": "https://example/session-video",
             "msgId": "mid_video",
@@ -2849,7 +3097,7 @@ mod tests {
             }
         });
 
-        let parsed = parse_inbound_event(&payload).expect("should parse video");
+        let parsed = parse_inbound_event(&payload, BOT_TITLE).expect("should parse video");
         assert!(parsed.text.contains("视频消息"));
         assert_eq!(parsed.media_references.len(), 1);
         assert_eq!(
@@ -2879,7 +3127,7 @@ mod tests {
     #[test]
     fn parse_inbound_file_event_extracts_media_reference() {
         let payload = serde_json::json!({
-            "conversationType": 2,
+            "conversationType": 1,
             "conversationId": "cid_file",
             "sessionWebhook": "https://example/session-file",
             "msgId": "mid_file",
@@ -2894,7 +3142,7 @@ mod tests {
             }
         });
 
-        let parsed = parse_inbound_event(&payload).expect("should parse file");
+        let parsed = parse_inbound_event(&payload, BOT_TITLE).expect("should parse file");
         assert!(parsed.text.contains("文件消息"));
         assert_eq!(parsed.media_references.len(), 1);
         assert_eq!(
@@ -2924,7 +3172,7 @@ mod tests {
     #[test]
     fn parse_inbound_richtext_event_extracts_non_image_attachments() {
         let payload = serde_json::json!({
-            "conversationType": 2,
+            "conversationType": 1,
             "conversationId": "cid_rich_file",
             "sessionWebhook": "https://example/session-rich-file",
             "msgId": "mid_rich_file",
@@ -2950,7 +3198,8 @@ mod tests {
             }
         });
 
-        let parsed = parse_inbound_event(&payload).expect("should parse richText file/video");
+        let parsed =
+            parse_inbound_event(&payload, BOT_TITLE).expect("should parse richText file/video");
         assert_eq!(parsed.media_references.len(), 2);
         assert_eq!(
             parsed.media_references[0]
@@ -3155,7 +3404,8 @@ mod tests {
         let payload = serde_json::json!({
             "audio": { "duration": 8 }
         });
-        let text = extract_dingtalk_message_text(&payload, "audio", None).expect("audio fallback");
+        let text = extract_dingtalk_message_text(&payload, "audio", None, "robot-a1", BOT_TITLE)
+            .expect("audio fallback");
         assert!(text.contains("语音消息"));
     }
 
@@ -3202,8 +3452,14 @@ mod tests {
             "content": { "recognition": "这是一段语音转文字" },
             "audio": { "duration": 5 }
         });
-        let text = extract_dingtalk_message_text(&payload, "audio", Some("这是一段语音转文字"))
-            .expect("audio recognition");
+        let text = extract_dingtalk_message_text(
+            &payload,
+            "audio",
+            Some("这是一段语音转文字"),
+            "robot-a2",
+            BOT_TITLE,
+        )
+        .expect("audio recognition");
         assert_eq!(text, "这是一段语音转文字");
     }
 

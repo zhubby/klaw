@@ -31,6 +31,7 @@
 - 统一会话命令（`/new`、`/start`、`/help`、`/model_provider`、`/model`）由 runtime 处理，不在 channel 层实现业务分支
 - channel 仅消费 `ChannelResponse` 并回发，不持有 provider/model 路由策略
 - `dingtalk` 通道会在响应中检测 `approval_id` 并渲染 ActionCard，把卡片回调映射为 `/approve` 或 `/reject` 指令回送 runtime
+- `dingtalk` 入站现在会区分私聊与群聊：私聊保持直接对话，群聊仅在结构化 `@` 字段、富文本 mention block，或正文中显式 `@{bot_title}` 命中当前机器人时才触发 runtime，并会在提交前剥离命中的 bot mention
 - `telegram` 通道现在使用目录模块拆分（`telegram/`），并提供 Telegram 专用 HTML 渲染、面向常见 Markdown 的格式映射（标题、引用、列表、链接、行内样式、代码块）、`/start` 新会话兼容、图片/文件/音视频媒体入站、基于 inline keyboard 的审批回调，以及 archive 驱动的出站图片/文件回复
 - `telegram` 入站现在会解析 `chat.type`、`entities` / `caption_entities`、以及 `reply_to_message`：私聊保持直接对话，群组 / 超级群仅在显式 `@bot`、`/command@bot` 或回复 bot 消息时才触发 runtime，并会把命中的 mention / 定向命令规范化为干净输入
 - `dingtalk` 应用机器人现支持 archive 驱动的出站附件回复：图片会先上传媒体并在 Markdown 中直接显示；文件仅对 `pdf/doc/docx/xlsx/zip/rar` 发送原生文件消息，并按文件名/MIME 自动补齐 webhook `fileType`，其他类型降级为 Markdown 提示
