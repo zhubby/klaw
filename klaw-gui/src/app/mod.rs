@@ -100,7 +100,8 @@ impl KlawGuiApp {
                     return;
                 }
                 let requested_provider_id = provider_id.clone();
-                self.shell.set_pending_provider_override(provider_id.clone());
+                self.shell
+                    .set_pending_provider_override(provider_id.clone());
                 self.pending_provider_override = Some(PendingProviderOverride {
                     requested_provider_id,
                     request: begin_set_provider_override_request(provider_id),
@@ -109,9 +110,13 @@ impl KlawGuiApp {
             UiAction::ShowAbout
             | UiAction::HideAbout
             | UiAction::OpenMenu(_)
-            | UiAction::ActivateTab(_)
-            | UiAction::CloseTab(_) => {
+            | UiAction::ActivateTab(_) => {
                 self.state.apply(action);
+                self.mark_state_dirty();
+            }
+            UiAction::CloseTab(tab_id) => {
+                self.shell.handle_tab_closed(tab_id);
+                self.state.apply(UiAction::CloseTab(tab_id));
                 self.mark_state_dirty();
             }
         }

@@ -2,6 +2,10 @@
 
 ## 2026-03-31
 
+### Added
+
+- GUI `WORKSPACE` 分组新增 `Terminal` 一级面板，基于 `egui_term` 在 workbench 内嵌本地 shell 终端，并提供 Start / Restart / Stop 控制、默认 workspace 工作目录和 shell 退出提示
+
 ### Changed
 
 - GUI markdown 编辑高亮已抽成共享 `widgets::markdown` 模块，`Profile Prompt`、`Webhook` 和 `Skills Manager` 中的 markdown `TextEdit` 现在统一复用同一套 layouter
@@ -9,6 +13,7 @@
 - GUI 共享 `json tree` widget 已切换为 `egui_json_tree 0.14.2`，`LLM Audit Detail` 与 `Tool Logs` 等所有复用展示统一使用第三方交互式 JSON 树渲染
 - `About Klaw` 弹窗现改为居中标题布局，展示内嵌应用图标、当前版本、构建时写入的 git commit sha，以及仓库 GitHub 地址
 - `klaw-gui` 新增 crate 级 `build.rs`，在编译时把当前 `HEAD` commit sha 注入到 GUI 程序变量中供 `About` 弹窗显示
+- GUI workbench 的 panel registry 现在支持 tab 关闭回调，`Terminal` tab 关闭时会主动释放 PTY 会话，避免后台 shell 在面板关闭后继续存活
 
 ## 2026-03-30
 

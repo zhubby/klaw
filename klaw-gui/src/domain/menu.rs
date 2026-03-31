@@ -38,6 +38,7 @@ pub enum WorkbenchMenu {
     Profile,
     System,
     Setting,
+    Terminal,
     Session,
     Approval,
     Configuration,
@@ -64,10 +65,11 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 25] = [
+    pub const ALL: [WorkbenchMenu; 26] = [
         WorkbenchMenu::Profile,
         WorkbenchMenu::System,
         WorkbenchMenu::Setting,
+        WorkbenchMenu::Terminal,
         WorkbenchMenu::Session,
         WorkbenchMenu::Approval,
         WorkbenchMenu::Configuration,
@@ -97,6 +99,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Profile => "profile",
             WorkbenchMenu::System => "system",
             WorkbenchMenu::Setting => "setting",
+            WorkbenchMenu::Terminal => "terminal",
             WorkbenchMenu::Session => "session",
             WorkbenchMenu::Approval => "approval",
             WorkbenchMenu::Configuration => "configuration",
@@ -127,6 +130,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Profile => "Profile Prompt",
             WorkbenchMenu::System => "System",
             WorkbenchMenu::Setting => "Settings",
+            WorkbenchMenu::Terminal => "Terminal",
             WorkbenchMenu::Session => "Session",
             WorkbenchMenu::Approval => "Approval",
             WorkbenchMenu::Configuration => "Configuration",
@@ -157,6 +161,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Profile => regular::USER_CIRCLE,
             WorkbenchMenu::System => regular::DATABASE,
             WorkbenchMenu::Setting => regular::GEAR,
+            WorkbenchMenu::Terminal => regular::TERMINAL,
             WorkbenchMenu::Session => regular::USERS,
             WorkbenchMenu::Approval => regular::SEAL_CHECK,
             WorkbenchMenu::Configuration => regular::TOOLBOX,
@@ -191,6 +196,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Profile
             | WorkbenchMenu::System
             | WorkbenchMenu::Setting
+            | WorkbenchMenu::Terminal
             | WorkbenchMenu::Configuration => WorkbenchMenuGroup::Workspace,
             WorkbenchMenu::Provider
             | WorkbenchMenu::Llm
@@ -271,6 +277,17 @@ mod tests {
     fn voice_menu_is_registered() {
         assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Voice));
         assert_eq!(WorkbenchMenu::Voice.id_key(), "voice");
+    }
+
+    #[test]
+    fn terminal_menu_is_registered() {
+        assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Terminal));
+        assert_eq!(WorkbenchMenu::Terminal.id_key(), "terminal");
+        assert_eq!(WorkbenchMenu::Terminal.title(), "Terminal");
+        assert_eq!(
+            WorkbenchMenu::Terminal.group(),
+            WorkbenchMenuGroup::Workspace
+        );
     }
 
     #[test]

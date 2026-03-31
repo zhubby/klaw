@@ -6,6 +6,7 @@ use crate::runtime_bridge::{
     ProviderRuntimeSnapshot, RuntimeRequestHandle, begin_provider_status_request,
 };
 use crate::settings::{AppSettings, SyncMode, load_settings, save_settings};
+use crate::state::workbench::TabId;
 use crate::state::{ThemeMode, UiAction, UiState};
 use crate::sync_runtime::{
     SyncRuntimeTaskKind, sync_runtime_finish_task, sync_runtime_set_last_snapshot,
@@ -105,6 +106,10 @@ impl ShellUi {
 
     pub fn clear_pending_provider_override(&mut self) {
         self.pending_provider_override_target = None;
+    }
+
+    pub fn handle_tab_closed(&mut self, tab_id: TabId) {
+        self.panels.handle_tab_closed(tab_id.menu);
     }
 
     fn should_emit_provider_override_action(&self, state: &UiState) -> bool {
@@ -362,9 +367,7 @@ impl ShellUi {
                     ui.set_min_width(360.0);
                     ui.vertical_centered(|ui| {
                         ui.add_space(10.0);
-                        ui.label(
-                            egui::RichText::new("Klaw").strong().size(22.0),
-                        );
+                        ui.label(egui::RichText::new("Klaw").strong().size(22.0));
                         ui.add_space(18.0);
 
                         if let Some(texture) = self.about_icon_texture(ctx) {
