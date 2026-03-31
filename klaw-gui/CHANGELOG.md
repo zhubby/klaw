@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-03-31
+
+### Changed
+
+- `About Klaw` 弹窗现改为居中标题布局，展示内嵌应用图标、当前版本、构建时写入的 git commit sha，以及仓库 GitHub 地址
+- `klaw-gui` 新增 crate 级 `build.rs`，在编译时把当前 `HEAD` commit sha 注入到 GUI 程序变量中供 `About` 弹窗显示
+
 ## 2026-03-30
 
 ### Changed

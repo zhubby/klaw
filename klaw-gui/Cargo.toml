@@ -57,3 +57,7 @@ objc2-core-location = { workspace = true, features = ["CLLocationManager"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 image = { workspace = true, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
+
+[build-dependencies]
+vergen = { workspace = true }
+vergen-gitcl = { workspace = true }

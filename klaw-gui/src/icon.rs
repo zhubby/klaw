@@ -23,6 +23,17 @@ pub fn viewport_icon() -> Option<egui::IconData> {
     })
 }
 
+pub fn about_icon_texture(ctx: &egui::Context) -> anyhow::Result<egui::TextureHandle> {
+    let decoded = decode_png_icon(APP_ICON_PNG)?;
+    let size = [decoded.width as usize, decoded.height as usize];
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &decoded.rgba);
+    Ok(ctx.load_texture(
+        "about-dialog-app-icon",
+        color_image,
+        egui::TextureOptions::LINEAR,
+    ))
+}
+
 pub fn tray_icon() -> anyhow::Result<tray_icon::Icon> {
     let decoded = decode_png_icon(TRAY_ICON_PNG)?;
     tray_icon::Icon::from_rgba(decoded.rgba, decoded.width, decoded.height)
