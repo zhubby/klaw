@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-31
+
+### Fixed
+
+- background channel outbound dispatch 现在会在 `header.session_key` 不是目标 channel 时，回退读取 outbound metadata 里的 `channel.delivery_session_key` / `channel.base_session_key` 来解析 Telegram / DingTalk 账号，避免 cron 独立 execution session 让后台投递静默丢失目标账号
+
 ## 2026-03-30
 
 ### Fixed
