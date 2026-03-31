@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-03-31
+
+### Fixed
+
+- `CronWorker` 现在会为每次任务触发生成独立的 execution `session_key`，并显式注入空的 `agent.conversation_history`，让 cron turn 像 webhook 一样按轮隔离，避免长时间运行后把上下文无限叠加到同一个 session
+
 ## 2026-03-30
 
 ### Fixed

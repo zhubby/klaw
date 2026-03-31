@@ -223,7 +223,9 @@ pub fn log_stats_snapshot() -> GuiLogStatsSnapshot {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().map(Arc::clone)
     };
-    bridge.map_or_else(GuiLogStatsSnapshot::default, |bridge| bridge.stats_snapshot())
+    bridge.map_or_else(GuiLogStatsSnapshot::default, |bridge| {
+        bridge.stats_snapshot()
+    })
 }
 
 #[derive(Debug)]
@@ -301,7 +303,8 @@ impl GuiLogBridge {
     }
 
     fn record_transport_drop(&self, len_bytes: usize) {
-        self.transport_dropped_chunks.fetch_add(1, Ordering::Relaxed);
+        self.transport_dropped_chunks
+            .fetch_add(1, Ordering::Relaxed);
         self.transport_dropped_bytes
             .fetch_add(len_bytes as u64, Ordering::Relaxed);
     }

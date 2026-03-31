@@ -224,8 +224,14 @@ impl ProviderPanel {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
                 self.begin_runtime_sync(
-                    format!("Set active provider to '{}' and synced running runtime", provider_id),
-                    format!("Saved active provider to '{}', but failed to sync running runtime", provider_id),
+                    format!(
+                        "Set active provider to '{}' and synced running runtime",
+                        provider_id
+                    ),
+                    format!(
+                        "Saved active provider to '{}', but failed to sync running runtime",
+                        provider_id
+                    ),
                 );
             }
             Err(err) => notifications.error(format!("Save failed: {err}")),
@@ -296,7 +302,10 @@ impl ProviderPanel {
                 }
                 self.begin_runtime_sync(
                     format!("Deleted provider '{}' and synced runtime", provider_id),
-                    format!("Deleted provider '{}', but failed to sync running runtime", provider_id),
+                    format!(
+                        "Deleted provider '{}', but failed to sync running runtime",
+                        provider_id
+                    ),
                 );
             }
             Err(err) => notifications.error(format!("Save failed: {err}")),
