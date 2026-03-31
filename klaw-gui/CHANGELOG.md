@@ -5,6 +5,8 @@
 ### Added
 
 - GUI `WORKSPACE` 分组新增 `Terminal` 一级面板，基于 `egui_term` 在 workbench 内嵌本地 shell 终端，并提供 Start / Restart / Stop 控制、默认 workspace 工作目录和 shell 退出提示
+- `Memory` 面板的 `Top Scopes` 现在支持整行选中，并在工具栏与右键菜单中提供带图标的 `Detail` 入口
+- `Memory` 面板新增固定尺寸 `Scope Detail` 弹窗，可展示所选 scope 的全部 memory 记录，并在内容超出时同时支持横向与纵向滚动
 
 ### Changed
 
