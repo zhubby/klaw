@@ -1,7 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::request_run_cron_now;
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
+use crate::{RuntimeRequestHandle, begin_run_cron_now_request};
 use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
@@ -13,6 +13,7 @@ use klaw_storage::CronTaskStatus;
 use klaw_util::system_timezone_name;
 use std::future::Future;
 use std::thread;
+use std::time::Duration;
 use tokio::runtime::Builder;
 use uuid::Uuid;
 
@@ -73,9 +74,33 @@ pub struct CronPanel {
     form: Option<CronForm>,
     delete_confirm_id: Option<String>,
     selected_cron: Option<String>,
+    run_now_request: Option<RuntimeRequestHandle<String>>,
+    pending_run_now_cron_id: Option<String>,
 }
 
 impl CronPanel {
+    fn poll_run_now_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.run_now_request.as_mut() else {
+            return;
+        };
+        let Some(result) = request.try_take_result() else {
+            return;
+        };
+
+        let cron_id = self.pending_run_now_cron_id.take();
+        self.run_now_request = None;
+        match result {
+            Ok(message_id) => {
+                notifications.success(format!("Cron executed: {message_id}"));
+                self.refresh_jobs(notifications);
+                if let Some(cron_id) = cron_id {
+                    self.load_runs(&cron_id, notifications);
+                }
+            }
+            Err(err) => notifications.error(format!("Failed to run cron now: {err}")),
+        }
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.loaded {
             return;
@@ -277,14 +302,13 @@ impl CronPanel {
     }
 
     fn run_cron_now(&mut self, cron_id: &str, notifications: &mut NotificationCenter) {
-        match request_run_cron_now(cron_id) {
-            Ok(message_id) => {
-                notifications.success(format!("Cron executed: {message_id}"));
-                self.refresh_jobs(notifications);
-                self.load_runs(cron_id, notifications);
-            }
-            Err(err) => notifications.error(format!("Failed to run cron now: {err}")),
+        if self.run_now_request.is_some() {
+            notifications.info("A cron run is already in progress");
+            return;
         }
+        self.pending_run_now_cron_id = Some(cron_id.to_string());
+        self.run_now_request = Some(begin_run_cron_now_request(cron_id.to_string()));
+        notifications.info(format!("Running cron '{cron_id}' in background..."));
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
@@ -392,7 +416,10 @@ impl CronPanel {
                     if ui.button("Refresh Runs").clicked() {
                         self.load_runs(&cron_id, notifications);
                     }
-                    if ui.button("Run Now").clicked() {
+                    if ui
+                        .add_enabled(self.run_now_request.is_none(), egui::Button::new("Run Now"))
+                        .clicked()
+                    {
                         self.run_cron_now(&cron_id, notifications);
                     }
                 });
@@ -450,7 +477,11 @@ impl PanelRenderer for CronPanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
+        self.poll_run_now_request(notifications);
         self.ensure_loaded(notifications);
+        if self.run_now_request.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(100));
+        }
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
@@ -459,6 +490,13 @@ impl PanelRenderer for CronPanel {
             }
             if ui.button("Add Cron Job").clicked() {
                 self.open_add_form();
+            }
+            if let Some(cron_id) = self.pending_run_now_cron_id.as_deref() {
+                ui.label(
+                    RichText::new(format!("Running: {cron_id}"))
+                        .color(Color32::from_rgb(70, 130, 200))
+                        .strong(),
+                );
             }
         });
 
@@ -569,7 +607,13 @@ impl PanelRenderer for CronPanel {
                                         runs_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    if ui.button(format!("{} Run Now", regular::PLAY)).clicked() {
+                                    if ui
+                                        .add_enabled(
+                                            self.run_now_request.is_none(),
+                                            egui::Button::new(format!("{} Run Now", regular::PLAY)),
+                                        )
+                                        .clicked()
+                                    {
                                         run_now_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }

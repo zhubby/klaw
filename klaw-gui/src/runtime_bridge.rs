@@ -371,6 +371,10 @@ pub fn request_run_cron_now(cron_id: &str) -> Result<String, String> {
     recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "run cron")?
 }
 
+pub fn begin_run_cron_now_request(cron_id: String) -> RuntimeRequestHandle<String> {
+    spawn_request(move || request_run_cron_now(&cron_id))
+}
+
 pub fn request_run_heartbeat_now(heartbeat_id: &str) -> Result<String, String> {
     let sender = sender_slot()
         .lock()

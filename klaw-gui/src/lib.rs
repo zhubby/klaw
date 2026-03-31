@@ -20,8 +20,8 @@ pub use panels::{PanelRenderer, RenderCtx};
 pub use runtime_bridge::{
     AcpPromptEvent, GatewayStatusSnapshot, GuiLogStatsSnapshot, ProviderRuntimeSnapshot,
     RuntimeCommand, RuntimeRequestHandle, begin_env_check_request, begin_provider_status_request,
-    begin_set_provider_override_request, begin_sync_providers_request, clear_log_receiver,
-    clear_runtime_command_sender, drain_log_chunks, install_log_receiver,
+    begin_run_cron_now_request, begin_set_provider_override_request, begin_sync_providers_request,
+    clear_log_receiver, clear_runtime_command_sender, drain_log_chunks, install_log_receiver,
     install_runtime_command_sender, log_stats_snapshot, record_dropped_log_chunk,
     request_acp_status, request_env_check, request_execute_acp_prompt_stream,
     request_gateway_status, request_mcp_status, request_provider_status, request_restart_gateway,
