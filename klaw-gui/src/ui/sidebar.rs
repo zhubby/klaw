@@ -72,6 +72,25 @@ mod tests {
     #[test]
     fn grouped_menus_are_sorted_and_keep_skills_adjacent() {
         let groups = grouped_menus();
+        let (_, workspace_group) = groups
+            .iter()
+            .find(|(group, _)| *group == WorkbenchMenuGroup::Workspace)
+            .expect("workspace group should exist");
+        let workspace_titles = workspace_group
+            .iter()
+            .map(|menu| menu.title())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            workspace_titles,
+            vec![
+                "Configuration",
+                "Profile Prompt",
+                "Settings",
+                "System",
+                "Terminal",
+            ]
+        );
+
         let (_, ai_group) = groups
             .into_iter()
             .find(|(group, _)| *group == WorkbenchMenuGroup::AiAndCapability)

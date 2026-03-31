@@ -20,6 +20,7 @@ mod setting;
 mod skills_manager;
 mod skills_registry;
 mod system;
+mod terminal;
 mod tool;
 mod voice;
 mod webhook;
@@ -39,6 +40,8 @@ pub trait PanelRenderer {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     );
+
+    fn on_tab_closed(&mut self) {}
 }
 
 #[derive(Default)]
@@ -46,6 +49,7 @@ pub struct PanelRegistry {
     profile: profile::ProfilePanel,
     system: system::SystemPanel,
     setting: setting::SettingPanel,
+    terminal: terminal::TerminalPanel,
     session: session::SessionPanel,
     approval: approval::ApprovalPanel,
     acp: acp::AcpPanel,
@@ -85,6 +89,7 @@ impl PanelRegistry {
             WorkbenchMenu::Profile => self.profile.render(ui, ctx, notifications),
             WorkbenchMenu::System => self.system.render(ui, ctx, notifications),
             WorkbenchMenu::Setting => self.setting.render(ui, ctx, notifications),
+            WorkbenchMenu::Terminal => self.terminal.render(ui, ctx, notifications),
             WorkbenchMenu::Session => self.session.render(ui, ctx, notifications),
             WorkbenchMenu::Approval => self.approval.render(ui, ctx, notifications),
             WorkbenchMenu::Acp => self.acp.render(ui, ctx, notifications),
@@ -109,6 +114,37 @@ impl PanelRegistry {
                 self.analyze_dashboard.render(ui, ctx, notifications)
             }
             WorkbenchMenu::Observability => self.observability.render(ui, ctx, notifications),
+        }
+    }
+
+    pub fn handle_tab_closed(&mut self, menu: WorkbenchMenu) {
+        match menu {
+            WorkbenchMenu::Profile => self.profile.on_tab_closed(),
+            WorkbenchMenu::System => self.system.on_tab_closed(),
+            WorkbenchMenu::Setting => self.setting.on_tab_closed(),
+            WorkbenchMenu::Terminal => self.terminal.on_tab_closed(),
+            WorkbenchMenu::Session => self.session.on_tab_closed(),
+            WorkbenchMenu::Approval => self.approval.on_tab_closed(),
+            WorkbenchMenu::Configuration => self.configuration.on_tab_closed(),
+            WorkbenchMenu::Provider => self.provider.on_tab_closed(),
+            WorkbenchMenu::Llm => self.llm.on_tab_closed(),
+            WorkbenchMenu::Channel => self.channel.on_tab_closed(),
+            WorkbenchMenu::Voice => self.voice.on_tab_closed(),
+            WorkbenchMenu::Cron => self.cron.on_tab_closed(),
+            WorkbenchMenu::Heartbeat => self.heartbeat.on_tab_closed(),
+            WorkbenchMenu::Gateway => self.gateway.on_tab_closed(),
+            WorkbenchMenu::Webhook => self.webhook.on_tab_closed(),
+            WorkbenchMenu::Mcp => self.mcp.on_tab_closed(),
+            WorkbenchMenu::Acp => self.acp.on_tab_closed(),
+            WorkbenchMenu::Skill => self.skills_registry.on_tab_closed(),
+            WorkbenchMenu::SkillsManager => self.skills_manager.on_tab_closed(),
+            WorkbenchMenu::Memory => self.memory.on_tab_closed(),
+            WorkbenchMenu::Archive => self.archive.on_tab_closed(),
+            WorkbenchMenu::Tool => self.tool.on_tab_closed(),
+            WorkbenchMenu::Monitor => self.monitor.on_tab_closed(),
+            WorkbenchMenu::Logs => self.logs.on_tab_closed(),
+            WorkbenchMenu::AnalyzeDashboard => self.analyze_dashboard.on_tab_closed(),
+            WorkbenchMenu::Observability => self.observability.on_tab_closed(),
         }
     }
 }

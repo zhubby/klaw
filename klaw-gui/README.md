@@ -6,7 +6,7 @@
 
 - Workbench shell with left navigation and center tab workspace
 - Left navigation groups sidebar menus by domain and sorts items alphabetically within each group
-- Workbench sidebar now includes `System` and `Settings`
+- Workbench sidebar now includes `System`, `Settings`, and `Terminal`
 - Workbench sidebar now includes dedicated `Gateway` and `Webhook` panels
 - Workbench sidebar now includes a dedicated `Voice` panel for voice config editing and split STT/TTS testing
 - Top menu bar (File/View/Window/Help)
@@ -29,6 +29,7 @@
 - Workbench panel renderers for:
   - profile (workspace markdown doc cards + editor window + runtime system prompt preview)
   - configuration
+  - terminal (embedded `egui_term` PTY view with start/restart/stop controls, default workspace working directory, and tab-close cleanup)
   - model provider (config-bound list + add/edit window)
   - channel (config-bound list + add/edit window)
   - voice (config-bound voice settings + split STT/TTS test workspace)
@@ -163,6 +164,7 @@
 - `ui/`: shell/sidebar/workbench composition
 - `panels/`: module-specific workbench panels
   - includes `logs` panel backed by a non-blocking runtime log chunk bridge
+  - includes `terminal` panel backed by `egui_term` and a lazily started local PTY session
 - `widgets/`: shared reusable UI widgets
   - includes shared markdown helpers for code-style `TextEdit` layouters and CommonMark rich rendering
 - `theme.rs`: centralized theme setup
