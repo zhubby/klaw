@@ -1,4 +1,5 @@
 use crate::autostart::{self, ReconcileOutcome};
+use crate::icon;
 use crate::notifications::NotificationCenter;
 use crate::panels::PanelRegistry;
 use crate::runtime_bridge::{
@@ -25,6 +26,8 @@ use time::OffsetDateTime;
 pub struct ShellUi {
     panels: PanelRegistry,
     notifications: NotificationCenter,
+    about_icon: Option<egui::TextureHandle>,
+    about_icon_load_failed: bool,
     provider_ids: Vec<String>,
     config_default_provider: String,
     provider_default_models: BTreeMap<String, String>,
@@ -37,6 +40,11 @@ pub struct ShellUi {
 
 const PROVIDER_SYNC_INTERVAL: Duration = Duration::from_secs(2);
 const SYNC_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const ABOUT_GITHUB_URL: &str = "https://github.com/zhubby/klaw";
+
+fn about_git_commit_sha() -> &'static str {
+    option_env!("KLAW_GIT_COMMIT_SHA").unwrap_or("unknown")
+}
 
 impl Default for ShellUi {
     fn default() -> Self {
@@ -63,6 +71,8 @@ impl Default for ShellUi {
         Self {
             panels: PanelRegistry::default(),
             notifications,
+            about_icon: None,
+            about_icon_load_failed: false,
             provider_ids: Vec::new(),
             config_default_provider: String::new(),
             provider_default_models: BTreeMap::new(),
@@ -133,6 +143,20 @@ impl ShellUi {
             .collect::<Vec<_>>();
         self.provider_ids.sort();
         self.provider_default_models = snapshot.provider_default_models;
+    }
+
+    fn about_icon_texture(&mut self, ctx: &egui::Context) -> Option<&egui::TextureHandle> {
+        if self.about_icon.is_none() && !self.about_icon_load_failed {
+            match icon::about_icon_texture(ctx) {
+                Ok(texture) => self.about_icon = Some(texture),
+                Err(err) => {
+                    self.about_icon_load_failed = true;
+                    self.notifications
+                        .warning(format!("Failed to load About dialog icon: {err}"));
+                }
+            }
+        }
+        self.about_icon.as_ref()
     }
 
     pub fn render(&mut self, ctx: &egui::Context, state: &UiState) -> Vec<UiAction> {
@@ -335,13 +359,36 @@ impl ShellUi {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label(format!("{} Klaw", regular::INFO));
-                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                    ui.label("Desktop UI shell built with egui.");
-                    ui.add_space(8.0);
-                    if ui.button("Close").clicked() {
-                        actions.push(UiAction::HideAbout);
-                    }
+                    ui.set_min_width(360.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{} Klaw", regular::INFO))
+                                .strong()
+                                .size(22.0),
+                        );
+                        ui.add_space(12.0);
+
+                        if let Some(texture) = self.about_icon_texture(ctx) {
+                            let source_size = texture.size_vec2();
+                            let max_side = 160.0;
+                            let scale = (max_side / source_size.x.max(source_size.y)).min(1.0);
+                            let display_size = source_size * scale;
+                            ui.add(
+                                egui::Image::from_texture(texture).fit_to_exact_size(display_size),
+                            );
+                            ui.add_space(12.0);
+                        }
+
+                        ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                        ui.monospace(format!("Git Commit {}", about_git_commit_sha()));
+                        ui.add_space(4.0);
+                        ui.hyperlink_to(ABOUT_GITHUB_URL, ABOUT_GITHUB_URL);
+                        ui.add_space(12.0);
+
+                        if ui.button("Close").clicked() {
+                            actions.push(UiAction::HideAbout);
+                        }
+                    });
                 });
         }
 
