@@ -1236,6 +1236,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_returns_error_for_missing_cron_job() {
+        let tool = CronManagerTool::from_storage(Arc::new(MockCronStorage::default()));
+
+        let err = tool
+            .execute(
+                json!({"action":"update","id":"missing-job","name":"renamed"}),
+                &ctx(),
+            )
+            .await
+            .expect_err("missing cron should fail");
+
+        assert!(err.to_string().contains("cron not found"));
+    }
+
+    #[tokio::test]
     async fn set_enabled_returns_error_for_missing_cron_job() {
         let tool = CronManagerTool::from_storage(Arc::new(MockCronStorage::default()));
 
