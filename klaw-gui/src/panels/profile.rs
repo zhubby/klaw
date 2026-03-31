@@ -284,12 +284,15 @@ impl ProfilePanel {
                         });
 
                         let response = row.response();
-                        if response.clicked() {
-                            self.selected_doc = if is_selected {
-                                None
-                            } else {
-                                Some(doc.file_name.clone())
-                            };
+                        let interaction = handle_workspace_doc_row_interaction(
+                            is_selected,
+                            doc.file_name.clone(),
+                            response.clicked(),
+                            response.double_clicked(),
+                        );
+                        self.selected_doc = interaction.selected_doc;
+                        if interaction.open_preview {
+                            preview_target = Some(doc.clone());
                         }
 
                         let doc_clone = doc.clone();
@@ -1317,6 +1320,24 @@ mod tests {
         let preview = panel.preview.as_ref().expect("preview should remain open");
         assert_eq!(preview.content, "new");
     }
+
+    #[test]
+    fn double_click_selects_row_and_opens_preview() {
+        let interaction =
+            handle_workspace_doc_row_interaction(false, "AGENTS.md".to_string(), true, true);
+
+        assert_eq!(interaction.selected_doc.as_deref(), Some("AGENTS.md"));
+        assert!(interaction.open_preview);
+    }
+
+    #[test]
+    fn single_click_toggles_selection_without_opening_preview() {
+        let interaction =
+            handle_workspace_doc_row_interaction(true, "AGENTS.md".to_string(), true, false);
+
+        assert_eq!(interaction.selected_doc, None);
+        assert!(!interaction.open_preview);
+    }
 }
 
 fn format_bytes(value: u64) -> String {
@@ -1333,5 +1354,37 @@ fn format_bytes(value: u64) -> String {
         format!("{:.2} KB", raw / KB)
     } else {
         format!("{value} B")
+    }
+}
+
+struct WorkspaceDocRowInteraction {
+    selected_doc: Option<String>,
+    open_preview: bool,
+}
+
+fn handle_workspace_doc_row_interaction(
+    is_selected: bool,
+    file_name: String,
+    clicked: bool,
+    double_clicked: bool,
+) -> WorkspaceDocRowInteraction {
+    if double_clicked {
+        return WorkspaceDocRowInteraction {
+            selected_doc: Some(file_name),
+            open_preview: true,
+        };
+    }
+
+    let selected_doc = if clicked {
+        if is_selected { None } else { Some(file_name) }
+    } else if is_selected {
+        Some(file_name)
+    } else {
+        None
+    };
+
+    WorkspaceDocRowInteraction {
+        selected_doc,
+        open_preview: false,
     }
 }

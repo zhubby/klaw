@@ -30,7 +30,6 @@ const FILTER_INPUT_WIDTH: f32 = 220.0;
 const PAGING_INPUT_WIDTH: f32 = 50.0;
 const PROMPT_LIST_HEIGHT: f32 = 320.0;
 const PROMPT_TEXT_HEIGHT: f32 = 260.0;
-const PREVIEW_HEIGHT: f32 = 260.0;
 const SUMMARY_WINDOW_HEIGHT: f32 = 260.0;
 
 struct PendingWebhookRowsRequest {
@@ -197,7 +196,6 @@ pub struct WebhookPanel {
     prompt_dir: Option<PathBuf>,
     create_prompt_open: bool,
     create_prompt: CreatePromptState,
-    create_prompt_preview_cache: markdown::MarkdownCache,
     prompt_editor_mode: PromptEditorMode,
     inspect_prompt_open: bool,
     inspect_prompt: InspectPromptState,
@@ -239,7 +237,6 @@ impl Default for WebhookPanel {
             prompt_dir: None,
             create_prompt_open: false,
             create_prompt: CreatePromptState::default(),
-            create_prompt_preview_cache: markdown::MarkdownCache::default(),
             prompt_editor_mode: PromptEditorMode::Create,
             inspect_prompt_open: false,
             inspect_prompt: InspectPromptState::default(),
@@ -1077,29 +1074,16 @@ impl PanelRenderer for WebhookPanel {
                     ui.colored_label(ui.visuals().error_fg_color, message);
                 }
                 ui.separator();
-                ui.columns(2, |columns| {
-                    let mut layouter = markdown::text_layouter;
-                    columns[0].label("Markdown");
-                    columns[0].add_sized(
-                        [columns[0].available_width(), PROMPT_TEXT_HEIGHT],
-                        egui::TextEdit::multiline(&mut self.create_prompt.markdown)
-                            .font(egui::TextStyle::Monospace)
-                            .desired_width(f32::INFINITY)
-                            .code_editor()
-                            .layouter(&mut layouter),
-                    );
-                    columns[1].label("Preview");
-                    egui::ScrollArea::vertical()
-                        .id_salt("webhook-create-prompt-preview")
-                        .max_height(PREVIEW_HEIGHT)
-                        .show(&mut columns[1], |ui| {
-                            markdown::render(
-                                ui,
-                                &mut self.create_prompt_preview_cache,
-                                &self.create_prompt.markdown,
-                            );
-                        });
-                });
+                let mut layouter = markdown::text_layouter;
+                ui.label("Markdown");
+                ui.add_sized(
+                    [ui.available_width(), PROMPT_TEXT_HEIGHT],
+                    egui::TextEdit::multiline(&mut self.create_prompt.markdown)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY)
+                        .code_editor()
+                        .layouter(&mut layouter),
+                );
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui
@@ -1273,33 +1257,20 @@ impl PanelRenderer for WebhookPanel {
                 .id(egui::Id::new(("webhook-view-prompt", &view_state.hook_id)))
                 .open(&mut open)
                 .resizable(true)
-                .default_width(920.0)
+                .default_width(720.0)
                 .default_height(620.0)
                 .show(ui.ctx(), |ui| {
-                    ui.columns(2, |columns| {
-                        let mut layouter = markdown::text_layouter;
-                        columns[0].label("Markdown");
-                        columns[0].add_sized(
-                            [columns[0].available_width(), PROMPT_TEXT_HEIGHT],
-                            egui::TextEdit::multiline(&mut view_state.markdown)
-                                .font(egui::TextStyle::Monospace)
-                                .desired_width(f32::INFINITY)
-                                .interactive(false)
-                                .code_editor()
-                                .layouter(&mut layouter),
-                        );
-                        columns[1].label("Preview");
-                        egui::ScrollArea::vertical()
-                            .id_salt(("webhook-view-prompt-preview", &view_state.hook_id))
-                            .max_height(PREVIEW_HEIGHT)
-                            .show(&mut columns[1], |ui| {
-                                markdown::render(
-                                    ui,
-                                    &mut self.view_prompt_preview_cache,
-                                    &view_state.markdown,
-                                );
-                            });
-                    });
+                    ui.label("Preview");
+                    egui::ScrollArea::vertical()
+                        .id_salt(("webhook-view-prompt-preview", &view_state.hook_id))
+                        .max_height(ui.available_height())
+                        .show(ui, |ui| {
+                            markdown::render(
+                                ui,
+                                &mut self.view_prompt_preview_cache,
+                                &view_state.markdown,
+                            );
+                        });
                 });
             if !open {
                 self.view_prompt = None;
