@@ -43,7 +43,7 @@ const SYNC_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const ABOUT_GITHUB_URL: &str = "https://github.com/zhubby/klaw";
 
 fn about_git_commit_sha() -> &'static str {
-    option_env!("KLAW_GIT_COMMIT_SHA").unwrap_or("unknown")
+    option_env!("VERGEN_GIT_SHA").unwrap_or("unknown")
 }
 
 impl Default for ShellUi {
@@ -361,12 +361,11 @@ impl ShellUi {
                 .show(ctx, |ui| {
                     ui.set_min_width(360.0);
                     ui.vertical_centered(|ui| {
+                        ui.add_space(10.0);
                         ui.label(
-                            egui::RichText::new(format!("{} Klaw", regular::INFO))
-                                .strong()
-                                .size(22.0),
+                            egui::RichText::new("Klaw").strong().size(22.0),
                         );
-                        ui.add_space(12.0);
+                        ui.add_space(18.0);
 
                         if let Some(texture) = self.about_icon_texture(ctx) {
                             let source_size = texture.size_vec2();
