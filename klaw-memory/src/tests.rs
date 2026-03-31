@@ -1,6 +1,6 @@
 use crate::{
-    EmbeddingProvider, MemorySearchQuery, MemoryService, SqliteMemoryService, UpsertMemoryInput,
-    build_embedding_provider_from_config,
+    EmbeddingProvider, MemorySearchQuery, MemoryService, SqliteMemoryService,
+    SqliteMemoryStatsService, UpsertMemoryInput, build_embedding_provider_from_config,
     util::{now_ms, rrf_score},
 };
 use async_trait::async_trait;
@@ -161,6 +161,61 @@ async fn works_without_embedding_provider() {
         .await
         .expect("search should fallback to text");
     assert!(!hits.is_empty());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stats_service_lists_scope_records_in_detail_order() {
+    let db = create_db().await;
+    let service = SqliteMemoryService::new(db.clone(), Some(Arc::new(MockEmbeddingProvider)))
+        .await
+        .expect("service should init");
+
+    let older = service
+        .upsert(UpsertMemoryInput {
+            id: Some("scope-old".to_string()),
+            scope: "session:detail".to_string(),
+            content: "older record".to_string(),
+            metadata: serde_json::json!({"seq": 1}),
+            pinned: false,
+        })
+        .await
+        .expect("upsert should work");
+    let newer = service
+        .upsert(UpsertMemoryInput {
+            id: Some("scope-new".to_string()),
+            scope: "session:detail".to_string(),
+            content: "newer record".to_string(),
+            metadata: serde_json::json!({"seq": 2}),
+            pinned: false,
+        })
+        .await
+        .expect("upsert should work");
+    let _pinned = service
+        .upsert(UpsertMemoryInput {
+            id: Some("scope-pinned".to_string()),
+            scope: "session:detail".to_string(),
+            content: "pinned record".to_string(),
+            metadata: serde_json::json!({"seq": 3}),
+            pinned: true,
+        })
+        .await
+        .expect("upsert should work");
+
+    assert!(newer.updated_at_ms >= older.updated_at_ms);
+
+    let stats = SqliteMemoryStatsService::new(db);
+    let records = stats
+        .list_scope_records("session:detail")
+        .await
+        .expect("scope detail query should work");
+
+    let ids = records
+        .iter()
+        .map(|record| record.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["scope-pinned", "scope-new", "scope-old"]);
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0].metadata["seq"], 3);
 }
 
 #[test]

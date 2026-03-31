@@ -1,4 +1,7 @@
-use crate::{MemoryError, util::now_ms};
+use crate::{
+    MemoryError, MemoryRecord,
+    util::{now_ms, row_to_record},
+};
 use klaw_storage::{DbValue, MemoryDb, open_default_memory_db};
 use std::sync::Arc;
 
@@ -101,6 +104,21 @@ impl SqliteMemoryStatsService {
             vector_index_enabled,
             top_scopes,
         })
+    }
+
+    pub async fn list_scope_records(&self, scope: &str) -> Result<Vec<MemoryRecord>, MemoryError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT id, scope, content, metadata_json, pinned, created_at_ms, updated_at_ms
+                 FROM memories
+                 WHERE scope = ?1
+                 ORDER BY pinned DESC, updated_at_ms DESC, created_at_ms DESC, id ASC",
+                &[DbValue::Text(scope.to_string())],
+            )
+            .await?;
+
+        rows.iter().map(row_to_record).collect()
     }
 
     async fn count_updated_since(&self, from_ms: i64) -> Result<i64, MemoryError> {

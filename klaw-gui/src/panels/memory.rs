@@ -2,14 +2,21 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, EmbeddingConfig};
-use klaw_memory::{MemoryError, MemoryStats, SqliteMemoryStatsService};
+use klaw_memory::{MemoryError, MemoryRecord, MemoryStats, SqliteMemoryStatsService};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::thread;
 use tokio::runtime::Builder;
 
 const TOP_SCOPES_TABLE_MAX_HEIGHT: f32 = 240.0;
+const SCOPE_DETAIL_WINDOW_WIDTH: f32 = 960.0;
+const SCOPE_DETAIL_WINDOW_HEIGHT: f32 = 540.0;
+const SCOPE_DETAIL_WINDOW_MARGIN: f32 = 48.0;
+const SCOPE_DETAIL_MIN_WIDTH: f32 = 480.0;
+const SCOPE_DETAIL_MIN_HEIGHT: f32 = 320.0;
+const SCOPE_DETAIL_TABLE_MIN_WIDTH: f32 = 1360.0;
 
 #[derive(Debug, Clone)]
 struct MemoryConfigForm {
@@ -69,6 +76,12 @@ impl MemoryConfigForm {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ScopeDetailWindow {
+    scope: String,
+    records: Vec<MemoryRecord>,
+}
+
 #[derive(Default)]
 pub struct MemoryPanel {
     loaded: bool,
@@ -77,6 +90,8 @@ pub struct MemoryPanel {
     config_path: Option<PathBuf>,
     config: AppConfig,
     form: Option<MemoryConfigForm>,
+    selected_scope: Option<String>,
+    scope_detail: Option<ScopeDetailWindow>,
 }
 
 impl MemoryPanel {
@@ -90,8 +105,17 @@ impl MemoryPanel {
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
         match run_memory_task(|service| async move { service.collect(8).await }) {
             Ok(stats) => {
+                let selected_scope = self.selected_scope.clone();
                 self.stats = Some(stats);
                 self.loaded = true;
+                if let Some(scope) = selected_scope
+                    && self.stats.as_ref().is_none_or(|stats| {
+                        !stats.top_scopes.iter().any(|item| item.scope == scope)
+                    })
+                {
+                    self.selected_scope = None;
+                    self.scope_detail = None;
+                }
             }
             Err(err) => notifications.error(format!("Failed to load memory stats: {err}")),
         }
@@ -255,6 +279,107 @@ impl MemoryPanel {
             self.form = None;
         }
     }
+
+    fn open_scope_detail(&mut self, scope: &str, notifications: &mut NotificationCenter) {
+        let scope = scope.to_string();
+        match run_memory_task({
+            let scope = scope.clone();
+            move |service| async move { service.list_scope_records(&scope).await }
+        }) {
+            Ok(records) => {
+                self.selected_scope = Some(scope.clone());
+                self.scope_detail = Some(ScopeDetailWindow { scope, records });
+            }
+            Err(err) => notifications.error(format!("Failed to load scope detail: {err}")),
+        }
+    }
+
+    fn render_scope_detail_window(&mut self, ctx: &egui::Context) {
+        let Some(detail) = self.scope_detail.clone() else {
+            return;
+        };
+
+        let mut open = true;
+        let window_size = clamp_scope_detail_window_size(ctx.content_rect().size());
+        egui::Window::new(format!("Scope Detail: {}", detail.scope))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .fixed_size(window_size)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_width(window_size.x);
+                ui.label(format!("Scope: {}", detail.scope));
+                ui.label(format!("Records: {}", detail.records.len()));
+                ui.separator();
+
+                egui::ScrollArea::both()
+                    .id_salt(("memory-scope-detail", detail.scope.as_str()))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_min_width(SCOPE_DETAIL_TABLE_MIN_WIDTH);
+                        TableBuilder::new(ui)
+                            .striped(true)
+                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                            .column(Column::auto().at_least(220.0))
+                            .column(Column::auto().at_least(70.0))
+                            .column(Column::remainder().at_least(340.0))
+                            .column(Column::remainder().at_least(360.0))
+                            .column(Column::auto().at_least(170.0))
+                            .column(Column::auto().at_least(170.0))
+                            .header(22.0, |mut header| {
+                                header.col(|ui| {
+                                    ui.strong("ID");
+                                });
+                                header.col(|ui| {
+                                    ui.strong("Pinned");
+                                });
+                                header.col(|ui| {
+                                    ui.strong("Content");
+                                });
+                                header.col(|ui| {
+                                    ui.strong("Metadata");
+                                });
+                                header.col(|ui| {
+                                    ui.strong("Created At");
+                                });
+                                header.col(|ui| {
+                                    ui.strong("Updated At");
+                                });
+                            })
+                            .body(|body| {
+                                body.rows(24.0, detail.records.len(), |mut row| {
+                                    let record = &detail.records[row.index()];
+                                    let metadata = serde_json::to_string(&record.metadata)
+                                        .unwrap_or_else(|_| "<invalid metadata>".to_string());
+
+                                    row.col(|ui| {
+                                        ui.monospace(&record.id);
+                                    });
+                                    row.col(|ui| {
+                                        ui.monospace(if record.pinned { "yes" } else { "no" });
+                                    });
+                                    row.col(|ui| {
+                                        ui.label(&record.content);
+                                    });
+                                    row.col(|ui| {
+                                        ui.monospace(metadata);
+                                    });
+                                    row.col(|ui| {
+                                        ui.monospace(format_timestamp_millis(record.created_at_ms));
+                                    });
+                                    row.col(|ui| {
+                                        ui.monospace(format_timestamp_millis(record.updated_at_ms));
+                                    });
+                                });
+                            });
+                    });
+            });
+
+        if !open {
+            self.scope_detail = None;
+        }
+    }
 }
 
 impl PanelRenderer for MemoryPanel {
@@ -278,7 +403,7 @@ impl PanelRenderer for MemoryPanel {
         });
         ui.separator();
 
-        let Some(stats) = self.stats.as_ref() else {
+        let Some(stats) = self.stats.clone() else {
             ui.label("No memory stats available.");
             return;
         };
@@ -365,6 +490,27 @@ impl PanelRenderer for MemoryPanel {
         if stats.top_scopes.is_empty() {
             ui.label("No scope data.");
         } else {
+            let selected_scope = self.selected_scope.clone();
+            let mut open_detail_scope = None;
+
+            ui.horizontal(|ui| {
+                let detail_enabled = selected_scope.is_some();
+                let selected_label = selected_scope
+                    .as_deref()
+                    .map(|scope| format!("Selected: {scope}"))
+                    .unwrap_or_else(|| "Selected: -".to_string());
+                ui.label(selected_label);
+                if ui
+                    .add_enabled(
+                        detail_enabled,
+                        egui::Button::new(format!("{} Detail", regular::FILE_TEXT)),
+                    )
+                    .clicked()
+                {
+                    open_detail_scope = selected_scope.clone();
+                }
+            });
+
             let table_width = ui.available_width();
             egui::ScrollArea::both()
                 .auto_shrink([false, false])
@@ -379,7 +525,7 @@ impl PanelRenderer for MemoryPanel {
                         .column(Column::auto().at_least(80.0))
                         .min_scrolled_height(0.0)
                         .max_scroll_height(TOP_SCOPES_TABLE_MAX_HEIGHT)
-                        .sense(egui::Sense::hover())
+                        .sense(egui::Sense::click())
                         .header(20.0, |mut header| {
                             header.col(|ui| {
                                 ui.strong("Scope");
@@ -391,19 +537,60 @@ impl PanelRenderer for MemoryPanel {
                         .body(|body| {
                             body.rows(22.0, stats.top_scopes.len(), |mut row| {
                                 let scope = &stats.top_scopes[row.index()];
+                                let is_selected =
+                                    self.selected_scope.as_deref() == Some(scope.scope.as_str());
+
+                                row.set_selected(is_selected);
                                 row.col(|ui| {
                                     ui.label(&scope.scope);
                                 });
                                 row.col(|ui| {
                                     ui.monospace(scope.count.to_string());
                                 });
+
+                                let response = row.response();
+                                if response.clicked()
+                                    || (response.secondary_clicked() && !is_selected)
+                                {
+                                    self.selected_scope = Some(scope.scope.clone());
+                                }
+                                if response.double_clicked() {
+                                    self.selected_scope = Some(scope.scope.clone());
+                                    open_detail_scope = Some(scope.scope.clone());
+                                }
+
+                                let scope_name = scope.scope.clone();
+                                response.context_menu(|ui| {
+                                    if ui
+                                        .button(format!("{} Detail", regular::FILE_TEXT))
+                                        .clicked()
+                                    {
+                                        self.selected_scope = Some(scope_name.clone());
+                                        open_detail_scope = Some(scope_name.clone());
+                                        ui.close();
+                                    }
+                                });
                             });
                         });
                 });
+
+            if let Some(scope) = open_detail_scope {
+                self.open_scope_detail(&scope, notifications);
+            }
         }
 
         self.render_form_window(ui, notifications);
+        self.render_scope_detail_window(ui.ctx());
     }
+}
+
+fn clamp_scope_detail_window_size(available: egui::Vec2) -> egui::Vec2 {
+    let max_width = (available.x - SCOPE_DETAIL_WINDOW_MARGIN).max(SCOPE_DETAIL_MIN_WIDTH);
+    let max_height = (available.y - SCOPE_DETAIL_WINDOW_MARGIN).max(SCOPE_DETAIL_MIN_HEIGHT);
+    egui::vec2(
+        SCOPE_DETAIL_WINDOW_WIDTH.min(max_width),
+        SCOPE_DETAIL_WINDOW_HEIGHT.min(max_height),
+    )
 }
 
 fn run_memory_task<T, F, Fut>(op: F) -> Result<T, String>
@@ -535,5 +722,22 @@ mod tests {
         let err = MemoryPanel::apply_form(config, &form).expect_err("provider should be rejected");
 
         assert!(err.contains("not available"));
+    }
+
+    #[test]
+    fn scope_detail_window_size_clamps_to_available_space() {
+        let size = clamp_scope_detail_window_size(egui::vec2(720.0, 420.0));
+
+        assert_eq!(size, egui::vec2(672.0, 372.0));
+    }
+
+    #[test]
+    fn scope_detail_window_size_uses_default_when_space_allows() {
+        let size = clamp_scope_detail_window_size(egui::vec2(1600.0, 900.0));
+
+        assert_eq!(
+            size,
+            egui::vec2(SCOPE_DETAIL_WINDOW_WIDTH, SCOPE_DETAIL_WINDOW_HEIGHT)
+        );
     }
 }
