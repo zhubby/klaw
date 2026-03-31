@@ -5,6 +5,7 @@
 ### Changed
 
 - `dingtalk` 入站现在会区分私聊与群聊；群聊仅在结构化 `@` 字段、富文本 mention block 或正文显式 `@bot_title` 命中当前机器人时才提交给 runtime，并会在提交前剥离 bot mention
+- `dingtalk` 实现已拆分为 `klaw-channel/src/dingtalk/` 目录模块，按配置、HTTP client、消息解析、附件发送和测试分层，便于继续演进
 - `telegram` 入站现在会解析 `chat.type`、`entities` / `caption_entities` 与 `reply_to_message`；私聊保持直接回复，群组 / 超级群仅在显式 `@bot`、`/command@bot` 或回复 bot 消息时才提交给 runtime
 - `telegram` 群组命中当前 bot 的 `mention` 会在入站阶段从正文中剥离，定向 `bot_command`（如 `/help@my_bot`）会规范化为 runtime 可直接处理的 `/help`
 

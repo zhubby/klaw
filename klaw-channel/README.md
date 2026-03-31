@@ -5,7 +5,7 @@
 当前包含：
 
 - `stdio`：本地终端交互通道
-- `dingtalk`：钉钉事件与 websocket 通道
+- `dingtalk`：钉钉事件与 websocket 通道（已按目录模块拆分为 `dingtalk/`）
 - `telegram`：Telegram Bot API long polling 通道
 - `manager`：运行中的 channel 实例生命周期管理与配置快照同步
 
