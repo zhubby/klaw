@@ -99,9 +99,10 @@ where
         Ok(())
     }
 
-    async fn publish_inbound(&self, job: &CronJob) -> Result<String, CronError> {
+    async fn publish_inbound(&self, job: &CronJob, run_id: &str) -> Result<String, CronError> {
         let mut payload: InboundMessage = serde_json::from_str(&job.payload_json)?;
         let original_session_key = payload.session_key.clone();
+        let execution_session_key = build_execution_session_key(&job.id, run_id);
         let base_session_key = infer_base_session_key(&payload);
         let delivery_session_key = self
             .resolve_delivery_session_key(&payload)
@@ -109,6 +110,7 @@ where
             .unwrap_or_else(|| original_session_key.clone());
         self.refresh_session_delivery_metadata(&mut payload, &delivery_session_key)
             .await?;
+        payload.session_key = execution_session_key.clone();
         payload.metadata.insert(
             "cron_id".to_string(),
             serde_json::Value::String(job.id.clone()),
@@ -119,7 +121,11 @@ where
         );
         payload.metadata.insert(
             "cron.resolved_session_key".to_string(),
-            serde_json::Value::String(original_session_key.clone()),
+            serde_json::Value::String(execution_session_key.clone()),
+        );
+        payload.metadata.insert(
+            "agent.conversation_history".to_string(),
+            serde_json::Value::Array(Vec::new()),
         );
         if let Some(base_session_key) = base_session_key {
             payload.metadata.insert(
@@ -133,7 +139,7 @@ where
         );
 
         let envelope = Envelope {
-            header: EnvelopeHeader::new(original_session_key),
+            header: EnvelopeHeader::new(execution_session_key),
             metadata: BTreeMap::new(),
             payload,
         };
@@ -181,7 +187,7 @@ where
             .await?;
         self.storage.mark_task_running(&run_id, now_ms()).await?;
 
-        match self.publish_inbound(job).await {
+        match self.publish_inbound(job, &run_id).await {
             Ok(message_id) => {
                 self.storage
                     .mark_task_result(
@@ -224,6 +230,10 @@ where
             Err(_) => Ok(None),
         }
     }
+}
+
+fn build_execution_session_key(job_id: &str, run_id: &str) -> String {
+    format!("cron:{job_id}:{run_id}")
 }
 
 fn infer_base_session_key(payload: &InboundMessage) -> Option<String> {
@@ -1060,14 +1070,9 @@ mod tests {
         )
     }
 
-    async fn assert_single_message_session(
-        transport: &Arc<TestTransport>,
-        expected_session_key: &str,
-    ) {
-        let messages = transport.published_messages().await;
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].header.session_key, expected_session_key);
-        assert_eq!(messages[0].payload.session_key, expected_session_key);
+    fn assert_generated_execution_session_key(session_key: &str, job_id: &str) {
+        assert!(session_key.starts_with(&format!("cron:{job_id}:")));
+        assert!(session_key.len() > format!("cron:{job_id}:").len());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1083,6 +1088,11 @@ mod tests {
         let messages = transport.published_messages().await;
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].payload.channel, "cron");
+        assert_generated_execution_session_key(&messages[0].header.session_key, "job-1");
+        assert_eq!(
+            messages[0].header.session_key,
+            messages[0].payload.session_key
+        );
         assert_eq!(
             messages[0]
                 .payload
@@ -1090,6 +1100,29 @@ mod tests {
                 .get("cron_id")
                 .and_then(|v| v.as_str()),
             Some("job-1")
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .metadata
+                .get("cron.original_session_key")
+                .and_then(|v| v.as_str()),
+            Some("cron:chat1")
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .metadata
+                .get("cron.resolved_session_key")
+                .and_then(|v| v.as_str()),
+            Some(messages[0].header.session_key.as_str())
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .metadata
+                .get("agent.conversation_history"),
+            Some(&serde_json::Value::Array(Vec::new()))
         );
 
         let runs = storage.list_task_runs("job-1", 10, 0).await.expect("runs");
@@ -1220,8 +1253,11 @@ mod tests {
 
         let messages = transport.published_messages().await;
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].header.session_key, "cron:job-dingtalk");
-        assert_eq!(messages[0].payload.session_key, "cron:job-dingtalk");
+        assert_generated_execution_session_key(&messages[0].header.session_key, "job-dingtalk");
+        assert_eq!(
+            messages[0].header.session_key,
+            messages[0].payload.session_key
+        );
         assert_eq!(
             messages[0]
                 .payload
@@ -1236,7 +1272,7 @@ mod tests {
                 .metadata
                 .get("cron.resolved_session_key")
                 .and_then(|value| value.as_str()),
-            Some("cron:job-dingtalk")
+            Some(messages[0].header.session_key.as_str())
         );
         assert_eq!(
             messages[0]
@@ -1291,8 +1327,11 @@ mod tests {
 
         let messages = transport.published_messages().await;
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].header.session_key, "cron:job-telegram");
-        assert_eq!(messages[0].payload.session_key, "cron:job-telegram");
+        assert_generated_execution_session_key(&messages[0].header.session_key, "job-telegram");
+        assert_eq!(
+            messages[0].header.session_key,
+            messages[0].payload.session_key
+        );
         assert_eq!(
             messages[0]
                 .payload
@@ -1307,12 +1346,12 @@ mod tests {
                 .metadata
                 .get("cron.resolved_session_key")
                 .and_then(|value| value.as_str()),
-            Some("cron:job-telegram")
+            Some(messages[0].header.session_key.as_str())
         );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn run_tick_falls_back_to_original_session_when_no_active_route_exists() {
+    async fn run_tick_uses_isolated_execution_session_when_no_active_route_exists() {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
         insert_due_job(
@@ -1327,11 +1366,17 @@ mod tests {
         let worker = test_worker(&storage, &transport);
         worker.run_tick().await.expect("tick");
 
-        assert_single_message_session(&transport, "cron:job-fallback").await;
+        let messages = transport.published_messages().await;
+        assert_eq!(messages.len(), 1);
+        assert_generated_execution_session_key(&messages[0].header.session_key, "job-fallback");
+        assert_eq!(
+            messages[0].header.session_key,
+            messages[0].payload.session_key
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn run_tick_keeps_stdio_session_unchanged() {
+    async fn run_tick_isolates_stdio_session_per_run() {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
         insert_due_job(&storage, "job-stdio", "stdio", "stdio:chat1", "{}").await;
@@ -1339,7 +1384,74 @@ mod tests {
         let worker = test_worker(&storage, &transport);
         worker.run_tick().await.expect("tick");
 
-        assert_single_message_session(&transport, "stdio:chat1").await;
+        let messages = transport.published_messages().await;
+        assert_eq!(messages.len(), 1);
+        assert_generated_execution_session_key(&messages[0].header.session_key, "job-stdio");
+        assert_eq!(
+            messages[0].header.session_key,
+            messages[0].payload.session_key
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .metadata
+                .get("cron.original_session_key")
+                .and_then(|value| value.as_str()),
+            Some("stdio:chat1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_job_now_generates_fresh_execution_session_each_time() {
+        let storage = Arc::new(FakeStorage::default());
+        let transport = Arc::new(InMemoryTransport::new());
+        let next_run_at_ms = now_ms() + 60_000;
+        insert_job_with_next_run(
+            &storage,
+            "job-repeat",
+            "cron",
+            "cron:repeat",
+            "{}",
+            next_run_at_ms,
+        )
+        .await;
+
+        let worker = test_worker(&storage, &transport);
+        worker
+            .run_job_now("job-repeat")
+            .await
+            .expect("first manual run");
+        worker
+            .run_job_now("job-repeat")
+            .await
+            .expect("second manual run");
+
+        let messages = transport.published_messages().await;
+        assert_eq!(messages.len(), 2);
+        assert_ne!(
+            messages[0].header.session_key,
+            messages[1].header.session_key
+        );
+        assert_generated_execution_session_key(&messages[0].header.session_key, "job-repeat");
+        assert_generated_execution_session_key(&messages[1].header.session_key, "job-repeat");
+        for message in messages {
+            assert_eq!(
+                message
+                    .payload
+                    .metadata
+                    .get("cron.original_session_key")
+                    .and_then(|value| value.as_str()),
+                Some("cron:repeat")
+            );
+            assert_eq!(
+                message
+                    .payload
+                    .metadata
+                    .get("cron.resolved_session_key")
+                    .and_then(|value| value.as_str()),
+                Some(message.header.session_key.as_str())
+            );
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

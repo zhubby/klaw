@@ -297,12 +297,12 @@ async fn dispatch_dingtalk_outbound_message(
         .filter(|value| !value.trim().is_empty())
         .map(ToString::to_string)
         .or_else(|| {
-            infer_account_id(&msg.header.session_key, "dingtalk")
+            resolve_outbound_account_id(msg, "dingtalk")
                 .and_then(|account_id| config.dingtalk_titles.get(account_id).cloned())
         })
         .unwrap_or_else(|| "Klaw".to_string());
 
-    let proxy = infer_account_id(&msg.header.session_key, "dingtalk")
+    let proxy = resolve_outbound_account_id(msg, "dingtalk")
         .and_then(|account_id| config.dingtalk_proxies.get(account_id))
         .cloned()
         .unwrap_or_default();
@@ -360,7 +360,7 @@ async fn dispatch_telegram_outbound_message(
     msg: &Envelope<OutboundMessage>,
     config: &BackgroundServiceConfig,
 ) -> Result<(), String> {
-    let Some(account_id) = infer_account_id(&msg.header.session_key, "telegram") else {
+    let Some(account_id) = resolve_outbound_account_id(msg, "telegram") else {
         return Ok(());
     };
     let Some(telegram_config) = config.telegram_configs.get(account_id) else {
@@ -387,6 +387,36 @@ fn infer_account_id<'a>(session_key: &'a str, expected_channel: &str) -> Option<
         return None;
     }
     parts.next()
+}
+
+fn resolve_outbound_account_id<'a>(
+    msg: &'a Envelope<OutboundMessage>,
+    expected_channel: &str,
+) -> Option<&'a str> {
+    resolve_outbound_channel_session_key(msg, expected_channel)
+        .and_then(|session_key| infer_account_id(session_key, expected_channel))
+}
+
+fn resolve_outbound_channel_session_key<'a>(
+    msg: &'a Envelope<OutboundMessage>,
+    expected_channel: &str,
+) -> Option<&'a str> {
+    let header_session_key = msg.header.session_key.as_str();
+    if infer_account_id(header_session_key, expected_channel).is_some() {
+        return Some(header_session_key);
+    }
+
+    ["channel.delivery_session_key", "channel.base_session_key"]
+        .into_iter()
+        .find_map(|key| {
+            msg.payload
+                .metadata
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .filter(|value| infer_account_id(value, expected_channel).is_some())
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -458,10 +488,14 @@ fn render_outbound_markdown(output: &OutboundMessage) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_dingtalk_session_not_found_error, refresh_dingtalk_delivery_target};
+    use super::{
+        is_dingtalk_session_not_found_error, refresh_dingtalk_delivery_target,
+        resolve_outbound_account_id,
+    };
+    use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
     use klaw_session::{SessionManager, SqliteSessionManager};
     use klaw_storage::{DefaultSessionStore, StoragePaths};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::{collections::BTreeMap, path::PathBuf};
     use uuid::Uuid;
 
@@ -471,6 +505,89 @@ mod tests {
         DefaultSessionStore::open(StoragePaths::from_root(root))
             .await
             .expect("store should open")
+    }
+
+    fn outbound_message(
+        header_session_key: &str,
+        channel: &str,
+        metadata: BTreeMap<String, Value>,
+    ) -> Envelope<OutboundMessage> {
+        Envelope {
+            header: EnvelopeHeader::new(header_session_key),
+            metadata: BTreeMap::new(),
+            payload: OutboundMessage {
+                channel: channel.to_string(),
+                chat_id: "chat-1".to_string(),
+                content: "hello".to_string(),
+                reply_to: None,
+                metadata,
+            },
+        }
+    }
+
+    #[test]
+    fn resolve_outbound_account_id_prefers_header_session_key() {
+        let msg = outbound_message(
+            "telegram:acc-header:chat-1",
+            "telegram",
+            BTreeMap::from([(
+                "channel.delivery_session_key".to_string(),
+                json!("telegram:acc-meta:chat-1"),
+            )]),
+        );
+
+        assert_eq!(
+            resolve_outbound_account_id(&msg, "telegram"),
+            Some("acc-header")
+        );
+    }
+
+    #[test]
+    fn resolve_outbound_account_id_falls_back_to_delivery_session_key() {
+        let msg = outbound_message(
+            "cron:job-1:run-1",
+            "telegram",
+            BTreeMap::from([(
+                "channel.delivery_session_key".to_string(),
+                json!("telegram:acc-delivery:chat-1:child"),
+            )]),
+        );
+
+        assert_eq!(
+            resolve_outbound_account_id(&msg, "telegram"),
+            Some("acc-delivery")
+        );
+    }
+
+    #[test]
+    fn resolve_outbound_account_id_falls_back_to_base_session_key() {
+        let msg = outbound_message(
+            "cron:job-1:run-1",
+            "telegram",
+            BTreeMap::from([(
+                "channel.base_session_key".to_string(),
+                json!("telegram:acc-base:chat-1"),
+            )]),
+        );
+
+        assert_eq!(
+            resolve_outbound_account_id(&msg, "telegram"),
+            Some("acc-base")
+        );
+    }
+
+    #[test]
+    fn resolve_outbound_account_id_rejects_wrong_channel_metadata() {
+        let msg = outbound_message(
+            "cron:job-1:run-1",
+            "telegram",
+            BTreeMap::from([(
+                "channel.delivery_session_key".to_string(),
+                json!("dingtalk:acc-delivery:chat-1"),
+            )]),
+        );
+
+        assert_eq!(resolve_outbound_account_id(&msg, "telegram"), None);
     }
 
     #[tokio::test(flavor = "current_thread")]

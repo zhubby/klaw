@@ -144,7 +144,7 @@
 - Cron panel features:
   - read/manage cron jobs and task runs via `klaw-cron` manager abstraction
   - add/edit cron jobs via `egui::Window`
-  - manually trigger `Run Now` from the jobs table or runs section through the live GUI runtime
+  - manually trigger `Run Now` from the jobs table or runs section through the live GUI runtime, with the request polled asynchronously so the egui thread stays responsive while the runtime drains the triggered turn
 - Heartbeat panel features:
   - read/manage persisted heartbeat jobs and run history via `klaw-heartbeat`
   - add/edit heartbeat jobs via `egui::Window`

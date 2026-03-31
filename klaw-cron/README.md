@@ -19,4 +19,4 @@
 
 `SqliteCronManager` opens default storage handles internally and centralizes cron data operations, so callers (such as GUI) do not need to query storage tables directly.
 
-`CronWorker` consults persisted session routing state only to refresh channel delivery metadata when possible. Channel-aware cron payloads keep their stored `session_key` as the published execution session so scheduled runs remain isolated from normal chat history. The worker records the published key in payload metadata as `cron.original_session_key` and `cron.resolved_session_key`.
+`CronWorker` consults persisted session routing state only to refresh channel delivery metadata when possible. Each scheduled run now publishes with a fresh execution `session_key`, while preserving the configured payload key in `cron.original_session_key` and the per-run execution key in `cron.resolved_session_key`. This keeps cron turns isolated from prior cron history without breaking channel delivery via `channel.base_session_key` / `channel.delivery_session_key`.
