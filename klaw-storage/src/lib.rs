@@ -784,6 +784,29 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn cron_missing_id_mutations_return_not_found_errors() {
+        let store = create_store().await;
+
+        let err = store
+            .set_enabled("missing-cron", false)
+            .await
+            .expect_err("set_enabled should fail for missing cron");
+        assert!(
+            err.to_string()
+                .contains("cron job 'missing-cron' not found when setting enabled")
+        );
+
+        let err = store
+            .delete_cron("missing-cron")
+            .await
+            .expect_err("delete should fail for missing cron");
+        assert!(
+            err.to_string()
+                .contains("cron job 'missing-cron' not found when deleting")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn cron_task_lifecycle_transitions() {
         let store = create_store().await;
         store

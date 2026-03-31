@@ -1020,7 +1020,10 @@ mod tests {
         }
 
         async fn delete_cron(&self, cron_id: &str) -> Result<(), StorageError> {
-            self.jobs.lock().await.remove(cron_id);
+            let removed = self.jobs.lock().await.remove(cron_id);
+            if removed.is_none() {
+                return Err(StorageError::backend("cron not found"));
+            }
             Ok(())
         }
 
@@ -1230,6 +1233,33 @@ mod tests {
             .await
             .expect("delete");
         assert!(out.content_for_model.contains("\"deleted\": true"));
+    }
+
+    #[tokio::test]
+    async fn set_enabled_returns_error_for_missing_cron_job() {
+        let tool = CronManagerTool::from_storage(Arc::new(MockCronStorage::default()));
+
+        let err = tool
+            .execute(
+                json!({"action":"set_enabled","id":"missing-job","enabled":false}),
+                &ctx(),
+            )
+            .await
+            .expect_err("missing cron should fail");
+
+        assert!(err.to_string().contains("cron not found"));
+    }
+
+    #[tokio::test]
+    async fn delete_returns_error_for_missing_cron_job() {
+        let tool = CronManagerTool::from_storage(Arc::new(MockCronStorage::default()));
+
+        let err = tool
+            .execute(json!({"action":"delete","id":"missing-job"}), &ctx())
+            .await
+            .expect_err("missing cron should fail");
+
+        assert!(err.to_string().contains("cron not found"));
     }
 
     #[tokio::test]

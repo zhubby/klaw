@@ -2476,22 +2476,32 @@ impl CronStorage for SqlxSessionStore {
     }
 
     async fn set_enabled(&self, cron_id: &str, enabled: bool) -> Result<(), StorageError> {
-        sqlx::query("UPDATE cron SET enabled = ?1, updated_at_ms = ?2 WHERE id = ?3")
+        let updated = sqlx::query("UPDATE cron SET enabled = ?1, updated_at_ms = ?2 WHERE id = ?3")
             .bind(if enabled { 1_i64 } else { 0_i64 })
             .bind(now_ms())
             .bind(cron_id)
             .execute(&self.pool)
             .await
             .map_err(StorageError::backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "cron job '{cron_id}' not found when setting enabled"
+            )));
+        }
         Ok(())
     }
 
     async fn delete_cron(&self, cron_id: &str) -> Result<(), StorageError> {
-        sqlx::query("DELETE FROM cron WHERE id = ?1")
+        let deleted = sqlx::query("DELETE FROM cron WHERE id = ?1")
             .bind(cron_id)
             .execute(&self.pool)
             .await
             .map_err(StorageError::backend)?;
+        if deleted.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "cron job '{cron_id}' not found when deleting"
+            )));
+        }
         Ok(())
     }
 

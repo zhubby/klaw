@@ -2044,18 +2044,30 @@ impl CronStorage for TursoSessionStore {
             escape_sql_text(cron_id)
         );
         let conn = self.connection().await?;
-        conn.execute(&sql, ())
+        let affected = conn
+            .execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
+        if affected == 0 {
+            return Err(StorageError::backend(format!(
+                "cron job '{cron_id}' not found when setting enabled"
+            )));
+        }
         Ok(())
     }
 
     async fn delete_cron(&self, cron_id: &str) -> Result<(), StorageError> {
         let sql = format!("DELETE FROM cron WHERE id = '{}'", escape_sql_text(cron_id));
         let conn = self.connection().await?;
-        conn.execute(&sql, ())
+        let affected = conn
+            .execute(&sql, ())
             .await
             .map_err(StorageError::backend)?;
+        if affected == 0 {
+            return Err(StorageError::backend(format!(
+                "cron job '{cron_id}' not found when deleting"
+            )));
+        }
         Ok(())
     }
 

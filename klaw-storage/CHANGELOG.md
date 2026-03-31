@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-31
+
+### Fixed
+- cron `set_enabled` and `delete` mutations in both SQLx and Turso backends now fail with explicit not-found errors when the target cron id does not exist, instead of silently reporting success after a zero-row write
+
 ## 2026-03-30
 
 ### Added
