@@ -1,7 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::{request_mcp_status, request_sync_mcp};
-use crate::widgets::{ArrayEditor, KeyValueEditor};
+use crate::widgets::{ArrayEditor, KeyValueEditor, markdown};
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
@@ -116,6 +116,7 @@ pub struct McpPanel {
     server_statuses: BTreeMap<String, ServerRuntimeStatus>,
     server_details: BTreeMap<String, McpServerDetail>,
     detail_window: Option<McpServerDetailWindow>,
+    detail_markdown_cache: markdown::MarkdownCache,
     status_fetch_rx: Option<Receiver<Result<McpRuntimeSnapshot, String>>>,
     sync_fetch_rx: Option<Receiver<Result<McpSyncResult, String>>>,
     last_status_refresh_at: Option<Instant>,
@@ -580,7 +581,13 @@ impl McpPanel {
                 egui::ScrollArea::vertical()
                     .id_salt(("mcp-detail-scroll", &detail_window.server_id))
                     .auto_shrink([false, false])
-                    .show(ui, |ui| render_markdown(ui, &detail_window.markdown));
+                    .show(ui, |ui| {
+                        markdown::render(
+                            ui,
+                            &mut self.detail_markdown_cache,
+                            &detail_window.markdown,
+                        )
+                    });
             });
 
         if !open {
@@ -851,59 +858,6 @@ fn command_display(server: &McpServerConfig) -> String {
             }
         }
         McpServerMode::Sse => server.url.clone().unwrap_or_else(|| "-".to_string()),
-    }
-}
-
-fn render_markdown(ui: &mut egui::Ui, markdown: &str) {
-    let mut in_code_block = false;
-    let mut code_block = String::new();
-
-    for line in markdown.lines() {
-        if line.trim_start().starts_with("```") {
-            if in_code_block {
-                ui.add_sized(
-                    [ui.available_width(), 220.0],
-                    egui::TextEdit::multiline(&mut code_block)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace)
-                        .interactive(false),
-                );
-                code_block.clear();
-                in_code_block = false;
-            } else {
-                in_code_block = true;
-            }
-            continue;
-        }
-
-        if in_code_block {
-            code_block.push_str(line);
-            code_block.push('\n');
-            continue;
-        }
-
-        if let Some(text) = line.strip_prefix("# ") {
-            ui.heading(text);
-            continue;
-        }
-        if let Some(text) = line.strip_prefix("## ") {
-            ui.add_space(6.0);
-            ui.strong(text);
-            continue;
-        }
-        if let Some(text) = line.strip_prefix("- ") {
-            ui.horizontal(|ui| {
-                ui.label("-");
-                ui.label(text);
-            });
-            continue;
-        }
-        if line.is_empty() {
-            ui.add_space(4.0);
-            continue;
-        }
-
-        ui.label(line);
     }
 }
 

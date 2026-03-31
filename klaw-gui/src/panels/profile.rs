@@ -1,7 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_seconds;
-use egui::{Color32, FontId, RichText, TextFormat, text::LayoutJob};
+use crate::widgets::markdown;
+use egui::{Color32, RichText};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigStore};
@@ -76,10 +77,12 @@ pub struct ProfilePanel {
     docs: Vec<WorkspaceMarkdownDoc>,
     selected_doc: Option<String>,
     system_prompt_preview: String,
+    system_prompt_preview_cache: markdown::MarkdownCache,
     system_prompt_preview_loading: bool,
     system_prompt_preview_rx: Option<Receiver<String>>,
     editor: Option<WorkspaceMarkdownEditor>,
     preview: Option<WorkspaceMarkdownPreview>,
+    preview_cache: markdown::MarkdownCache,
     create_form: WorkspaceFileCreateForm,
     loaded: bool,
     pending_default_confirm: Option<PendingDefaultReset>,
@@ -345,7 +348,7 @@ impl ProfilePanel {
         }
     }
 
-    fn render_system_prompt_preview(&self, ui: &mut egui::Ui) {
+    fn render_system_prompt_preview(&mut self, ui: &mut egui::Ui) {
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_min_height(ui.available_height());
             ui.horizontal(|ui| {
@@ -363,7 +366,11 @@ impl ProfilePanel {
                 .max_height(ui.available_height())
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    render_markdown(ui, &self.system_prompt_preview);
+                    markdown::render(
+                        ui,
+                        &mut self.system_prompt_preview_cache,
+                        &self.system_prompt_preview,
+                    );
                 });
         });
     }
@@ -377,11 +384,7 @@ impl ProfilePanel {
             return;
         };
 
-        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-            let mut job = markdown_highlight_job(text.as_str());
-            job.wrap.max_width = wrap_width;
-            ui.fonts_mut(|fonts| fonts.layout_job(job))
-        };
+        let mut layouter = markdown::text_layouter;
 
         let viewport_height = ctx.input(|input| {
             input
@@ -580,6 +583,8 @@ impl ProfilePanel {
         ctx: &egui::Context,
         notifications: &mut NotificationCenter,
     ) {
+        let mut layouter = markdown::text_layouter;
+
         if !self.create_form.open {
             return;
         }
@@ -633,7 +638,8 @@ impl ProfilePanel {
                                 .font(egui::TextStyle::Monospace)
                                 .desired_rows(16)
                                 .desired_width(f32::INFINITY)
-                                .code_editor(),
+                                .code_editor()
+                                .layouter(&mut layouter),
                         );
                     });
 
@@ -684,7 +690,9 @@ impl ProfilePanel {
                 egui::ScrollArea::vertical()
                     .id_salt(("workspace-markdown-preview", &preview.file_name))
                     .auto_shrink([false, false])
-                    .show(ui, |ui| render_markdown(ui, &preview.content));
+                    .show(ui, |ui| {
+                        markdown::render(ui, &mut self.preview_cache, &preview.content)
+                    });
             });
 
         if self.preview.as_ref().is_some_and(|preview| !preview.open) {
@@ -1122,152 +1130,6 @@ fn format_skill_source(
         source.push_str(" (stale)");
     }
     source
-}
-
-fn render_markdown(ui: &mut egui::Ui, markdown: &str) {
-    let mut in_code_block = false;
-    let mut code_block = String::new();
-
-    for line in markdown.lines() {
-        if line.trim_start().starts_with("```") {
-            if in_code_block {
-                ui.add_sized(
-                    [ui.available_width(), 220.0],
-                    egui::TextEdit::multiline(&mut code_block)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace)
-                        .interactive(false),
-                );
-                code_block.clear();
-                in_code_block = false;
-            } else {
-                in_code_block = true;
-            }
-            continue;
-        }
-
-        if in_code_block {
-            code_block.push_str(line);
-            code_block.push('\n');
-            continue;
-        }
-
-        if let Some(text) = line.strip_prefix("# ") {
-            ui.heading(text);
-            continue;
-        }
-        if let Some(text) = line.strip_prefix("## ") {
-            ui.add_space(6.0);
-            ui.strong(text);
-            continue;
-        }
-        if let Some(text) = line.strip_prefix("- ") {
-            ui.horizontal(|ui| {
-                ui.label("-");
-                ui.label(text);
-            });
-            continue;
-        }
-        if line.is_empty() {
-            ui.add_space(4.0);
-            continue;
-        }
-
-        ui.label(line);
-    }
-
-    if in_code_block && !code_block.is_empty() {
-        ui.add_sized(
-            [ui.available_width(), 220.0],
-            egui::TextEdit::multiline(&mut code_block)
-                .desired_width(f32::INFINITY)
-                .font(egui::TextStyle::Monospace)
-                .interactive(false),
-        );
-    }
-}
-
-fn markdown_highlight_job(markdown: &str) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    for line in markdown.split_inclusive('\n') {
-        highlight_markdown_line(&mut job, line);
-    }
-    if markdown.is_empty() {
-        append_text(&mut job, "", fmt_md_default());
-    }
-    job
-}
-
-fn highlight_markdown_line(job: &mut LayoutJob, line: &str) {
-    let (body, has_newline) = match line.strip_suffix('\n') {
-        Some(stripped) => (stripped, true),
-        None => (line, false),
-    };
-    let trimmed = body.trim_start();
-
-    if trimmed.starts_with("```") {
-        append_text(job, body, fmt_md_code());
-    } else if trimmed.starts_with('#') {
-        append_text(job, body, fmt_md_heading());
-    } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-        append_text(job, body, fmt_md_list());
-    } else if trimmed.starts_with('>') {
-        append_text(job, body, fmt_md_quote());
-    } else {
-        highlight_markdown_inline(job, body);
-    }
-
-    if has_newline {
-        append_text(job, "\n", fmt_md_default());
-    }
-}
-
-fn highlight_markdown_inline(job: &mut LayoutJob, line: &str) {
-    let mut rest = line;
-    while let Some(start) = rest.find('`') {
-        let (prefix, after_prefix) = rest.split_at(start);
-        if !prefix.is_empty() {
-            append_text(job, prefix, fmt_md_default());
-        }
-
-        let after_tick = &after_prefix[1..];
-        if let Some(end) = after_tick.find('`') {
-            let code = &after_prefix[..end + 2];
-            append_text(job, code, fmt_md_code());
-            rest = &after_tick[end + 1..];
-        } else {
-            append_text(job, after_prefix, fmt_md_default());
-            return;
-        }
-    }
-
-    if !rest.is_empty() {
-        append_text(job, rest, fmt_md_default());
-    }
-}
-
-fn append_text(job: &mut LayoutJob, text: &str, format: TextFormat) {
-    job.append(text, 0.0, format);
-}
-
-fn fmt_md_default() -> TextFormat {
-    TextFormat::simple(FontId::monospace(13.0), Color32::LIGHT_GRAY)
-}
-
-fn fmt_md_heading() -> TextFormat {
-    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(132, 197, 255))
-}
-
-fn fmt_md_code() -> TextFormat {
-    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(255, 196, 126))
-}
-
-fn fmt_md_list() -> TextFormat {
-    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(159, 216, 159))
-}
-
-fn fmt_md_quote() -> TextFormat {
-    TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(180, 180, 255))
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::request_gateway_status;
 use crate::time_format::format_timestamp_millis;
+use crate::widgets::markdown;
 use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
@@ -196,10 +197,12 @@ pub struct WebhookPanel {
     prompt_dir: Option<PathBuf>,
     create_prompt_open: bool,
     create_prompt: CreatePromptState,
+    create_prompt_preview_cache: markdown::MarkdownCache,
     prompt_editor_mode: PromptEditorMode,
     inspect_prompt_open: bool,
     inspect_prompt: InspectPromptState,
     view_prompt: Option<ViewPromptState>,
+    view_prompt_preview_cache: markdown::MarkdownCache,
     delete_prompt: Option<DeletePromptState>,
     trick_prompt: Option<TrickPromptState>,
 }
@@ -236,10 +239,12 @@ impl Default for WebhookPanel {
             prompt_dir: None,
             create_prompt_open: false,
             create_prompt: CreatePromptState::default(),
+            create_prompt_preview_cache: markdown::MarkdownCache::default(),
             prompt_editor_mode: PromptEditorMode::Create,
             inspect_prompt_open: false,
             inspect_prompt: InspectPromptState::default(),
             view_prompt: None,
+            view_prompt_preview_cache: markdown::MarkdownCache::default(),
             delete_prompt: None,
             trick_prompt: None,
         }
@@ -1073,18 +1078,26 @@ impl PanelRenderer for WebhookPanel {
                 }
                 ui.separator();
                 ui.columns(2, |columns| {
+                    let mut layouter = markdown::text_layouter;
                     columns[0].label("Markdown");
                     columns[0].add_sized(
                         [columns[0].available_width(), PROMPT_TEXT_HEIGHT],
                         egui::TextEdit::multiline(&mut self.create_prompt.markdown)
-                            .desired_width(f32::INFINITY),
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .code_editor()
+                            .layouter(&mut layouter),
                     );
                     columns[1].label("Preview");
                     egui::ScrollArea::vertical()
                         .id_salt("webhook-create-prompt-preview")
                         .max_height(PREVIEW_HEIGHT)
                         .show(&mut columns[1], |ui| {
-                            render_markdown(ui, &self.create_prompt.markdown);
+                            markdown::render(
+                                ui,
+                                &mut self.create_prompt_preview_cache,
+                                &self.create_prompt.markdown,
+                            );
                         });
                 });
                 ui.separator();
@@ -1264,19 +1277,27 @@ impl PanelRenderer for WebhookPanel {
                 .default_height(620.0)
                 .show(ui.ctx(), |ui| {
                     ui.columns(2, |columns| {
+                        let mut layouter = markdown::text_layouter;
                         columns[0].label("Markdown");
                         columns[0].add_sized(
                             [columns[0].available_width(), PROMPT_TEXT_HEIGHT],
                             egui::TextEdit::multiline(&mut view_state.markdown)
+                                .font(egui::TextStyle::Monospace)
                                 .desired_width(f32::INFINITY)
-                                .interactive(false),
+                                .interactive(false)
+                                .code_editor()
+                                .layouter(&mut layouter),
                         );
                         columns[1].label("Preview");
                         egui::ScrollArea::vertical()
                             .id_salt(("webhook-view-prompt-preview", &view_state.hook_id))
                             .max_height(PREVIEW_HEIGHT)
                             .show(&mut columns[1], |ui| {
-                                render_markdown(ui, &view_state.markdown);
+                                markdown::render(
+                                    ui,
+                                    &mut self.view_prompt_preview_cache,
+                                    &view_state.markdown,
+                                );
                             });
                     });
                 });
@@ -1803,59 +1824,6 @@ fn is_markdown_path(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-}
-
-fn render_markdown(ui: &mut egui::Ui, markdown: &str) {
-    let mut in_code_block = false;
-    let mut code_block = String::new();
-
-    for line in markdown.lines() {
-        if line.trim_start().starts_with("```") {
-            if in_code_block {
-                ui.add_sized(
-                    [ui.available_width(), 220.0],
-                    egui::TextEdit::multiline(&mut code_block)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace)
-                        .interactive(false),
-                );
-                code_block.clear();
-                in_code_block = false;
-            } else {
-                in_code_block = true;
-            }
-            continue;
-        }
-
-        if in_code_block {
-            code_block.push_str(line);
-            code_block.push('\n');
-            continue;
-        }
-
-        if let Some(text) = line.strip_prefix("# ") {
-            ui.heading(text);
-            continue;
-        }
-        if let Some(text) = line.strip_prefix("## ") {
-            ui.add_space(6.0);
-            ui.strong(text);
-            continue;
-        }
-        if let Some(text) = line.strip_prefix("### ") {
-            ui.label(RichText::new(text).strong());
-            continue;
-        }
-        if let Some(text) = line.strip_prefix("- ") {
-            ui.label(format!("• {text}"));
-            continue;
-        }
-        if line.trim().is_empty() {
-            ui.add_space(4.0);
-            continue;
-        }
-        ui.label(line);
-    }
 }
 
 fn parse_status_filter(raw: &str) -> Option<WebhookEventStatus> {

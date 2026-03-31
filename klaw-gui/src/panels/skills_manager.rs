@@ -2,6 +2,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
 use crate::time_format::format_timestamp_millis;
+use crate::widgets::markdown;
 use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use egui_file_dialog::FileDialog;
@@ -521,6 +522,7 @@ impl SkillsManagerPanel {
                 ui.separator();
 
                 let mut content = record.content.clone();
+                let mut layouter = markdown::text_layouter;
                 egui::ScrollArea::vertical()
                     .id_salt(("skill-detail-markdown", &record.name))
                     .max_height(markdown_height)
@@ -531,7 +533,9 @@ impl SkillsManagerPanel {
                             egui::TextEdit::multiline(&mut content)
                                 .desired_width(f32::INFINITY)
                                 .font(egui::TextStyle::Monospace)
-                                .interactive(false),
+                                .interactive(false)
+                                .code_editor()
+                                .layouter(&mut layouter),
                         );
                     });
             });
