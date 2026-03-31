@@ -788,6 +788,18 @@ mod tests {
         let store = create_store().await;
 
         let err = store
+            .update_cron(
+                "missing-cron",
+                &UpdateCronJobPatch {
+                    name: Some("renamed".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("update should fail for missing cron");
+        assert!(err.to_string().contains("cron job not found"));
+
+        let err = store
             .set_enabled("missing-cron", false)
             .await
             .expect_err("set_enabled should fail for missing cron");

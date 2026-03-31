@@ -3,7 +3,7 @@
 ## 2026-03-31
 
 ### Fixed
-- `cron_manager` test coverage now asserts that `delete` and `set_enabled` surface errors for missing cron ids, protecting the tool layer from regressing back to false-success responses
+- `cron_manager` test coverage now asserts that `update`, `delete`, and `set_enabled` surface errors for missing cron ids, protecting the tool layer from regressing back to false-success responses
 
 ## 2026-03-30
 

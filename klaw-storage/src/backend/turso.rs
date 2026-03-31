@@ -2027,9 +2027,15 @@ impl CronStorage for TursoSessionStore {
         );
         {
             let conn = self.connection().await?;
-            conn.execute(&sql, ())
+            let affected = conn
+                .execute(&sql, ())
                 .await
                 .map_err(StorageError::backend)?;
+            if affected == 0 {
+                return Err(StorageError::backend(format!(
+                    "cron job '{cron_id}' not found when updating"
+                )));
+            }
         }
         self.get_cron(cron_id).await
     }

@@ -2440,7 +2440,7 @@ impl CronStorage for SqlxSessionStore {
     ) -> Result<CronJob, StorageError> {
         let current = self.get_cron(cron_id).await?;
         let now = now_ms();
-        sqlx::query(
+        let updated = sqlx::query(
             "UPDATE cron
              SET name = ?1,
                  schedule_kind = ?2,
@@ -2472,6 +2472,11 @@ impl CronStorage for SqlxSessionStore {
         .execute(&self.pool)
         .await
         .map_err(StorageError::backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "cron job '{cron_id}' not found when updating"
+            )));
+        }
         self.get_cron(cron_id).await
     }
 
