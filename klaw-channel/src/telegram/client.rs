@@ -1,5 +1,7 @@
 use super::render::TelegramParseMode;
-use super::types::{TelegramFile, TelegramInlineKeyboardMarkup, TelegramMessage, TelegramUpdate};
+use super::types::{
+    TelegramFile, TelegramInlineKeyboardMarkup, TelegramMessage, TelegramUpdate, TelegramUser,
+};
 use crate::ChannelResult;
 use klaw_config::TelegramProxyConfig;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -49,6 +51,10 @@ impl TelegramApiClient {
 
     pub async fn get_file(&self, file_id: &str) -> ChannelResult<TelegramFile> {
         self.post("getFile", &GetFileRequest { file_id }).await
+    }
+
+    pub async fn get_me(&self) -> ChannelResult<TelegramUser> {
+        self.post("getMe", &TelegramEmptyRequest {}).await
     }
 
     pub async fn set_my_commands(&self, commands: Vec<BotCommand>) -> ChannelResult<()> {
@@ -251,6 +257,9 @@ struct GetUpdatesRequest {
 struct GetFileRequest<'a> {
     file_id: &'a str,
 }
+
+#[derive(Debug, Clone, Serialize)]
+struct TelegramEmptyRequest {}
 
 #[derive(Debug, Clone, Serialize)]
 struct SetMyCommandsRequest {

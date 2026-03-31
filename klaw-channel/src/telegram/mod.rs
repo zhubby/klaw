@@ -5,7 +5,8 @@ mod types;
 use self::client::{BotCommand, EditMessageTextRequest, SendMessageRequest, TelegramApiClient};
 use self::render::{build_approval_message, extract_approval_id, render_telegram_response};
 use self::types::{
-    EventDeduper, TelegramCallbackInbound, TelegramInbound, TelegramUpdate, is_sender_allowed,
+    EventDeduper, TelegramBotProfile, TelegramCallbackInbound, TelegramInbound, TelegramUpdate,
+    is_sender_allowed,
 };
 use crate::{
     Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
@@ -50,6 +51,7 @@ pub struct TelegramChannel {
     config: TelegramChannelConfig,
     client: TelegramApiClient,
     update_deduper: EventDeduper,
+    bot_profile: Option<TelegramBotProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +102,7 @@ impl TelegramChannel {
             config,
             client,
             update_deduper: EventDeduper::new(UPDATE_DEDUP_TTL, UPDATE_DEDUP_MAX_ENTRIES),
+            bot_profile: None,
         })
     }
 
@@ -150,6 +153,26 @@ impl TelegramChannel {
                 "telegram bot commands registered"
             );
         }
+        self.bot_profile = match self.client.get_me().await {
+            Ok(user) => {
+                let profile = TelegramBotProfile::from_user(user);
+                if profile.is_none() {
+                    warn!(
+                        account_id = self.config.account_id.as_str(),
+                        "telegram getMe returned bot profile without username; group mentions disabled"
+                    );
+                }
+                profile
+            }
+            Err(err) => {
+                warn!(
+                    account_id = self.config.account_id.as_str(),
+                    error = %err,
+                    "failed to fetch telegram bot profile; group mention routing disabled"
+                );
+                None
+            }
+        };
 
         let (updates_tx, mut updates_rx) = mpsc::unbounded_channel::<TelegramPollResult>();
         let mut poll_shutdown = shutdown.clone();
@@ -318,7 +341,9 @@ impl TelegramChannel {
             return Ok(());
         }
 
-        let Some(mut inbound) = TelegramInbound::from_message(update.update_id, message) else {
+        let Some(mut inbound) =
+            TelegramInbound::from_message(update.update_id, message, self.bot_profile.as_ref())
+        else {
             return Ok(());
         };
         let session_key = format!("telegram:{}:{}", self.config.account_id, inbound.chat_id);
@@ -951,29 +976,40 @@ mod tests {
     use super::render::{build_approval_message, render_telegram_response};
     use super::types::{
         TelegramAudio, TelegramCallbackInbound, TelegramCallbackQuery, TelegramChat,
-        TelegramDocument, TelegramInlineKeyboardMarkup, TelegramMessage, TelegramPhotoSize,
-        TelegramUser, extract_media_references, is_sender_allowed, message_text,
+        TelegramChatType, TelegramDocument, TelegramInlineKeyboardMarkup, TelegramMessage,
+        TelegramPhotoSize, TelegramUser, extract_media_references, is_sender_allowed, message_text,
     };
     use crate::ChannelResponse;
     use serde_json::Value;
     use std::collections::BTreeMap;
 
+    fn private_chat() -> TelegramChat {
+        TelegramChat {
+            id: 10,
+            kind: TelegramChatType::Private,
+        }
+    }
+
     #[test]
     fn message_text_prefers_text_over_caption() {
         let message = TelegramMessage {
             message_id: 1,
-            chat: TelegramChat { id: 10 },
+            chat: private_chat(),
             from: Some(TelegramUser {
                 id: 100,
                 is_bot: false,
+                username: None,
             }),
             text: Some("hello".to_string()),
+            entities: Vec::new(),
             caption: Some("caption".to_string()),
+            caption_entities: Vec::new(),
             photo: Vec::new(),
             document: None,
             audio: None,
             voice: None,
             video: None,
+            reply_to_message: None,
         };
         assert_eq!(message_text(&message).as_deref(), Some("hello"));
     }
@@ -982,10 +1018,12 @@ mod tests {
     fn message_text_falls_back_to_caption_and_attachment_summary() {
         let caption_message = TelegramMessage {
             message_id: 1,
-            chat: TelegramChat { id: 10 },
+            chat: private_chat(),
             from: None,
             text: None,
+            entities: Vec::new(),
             caption: Some("photo caption".to_string()),
+            caption_entities: Vec::new(),
             photo: vec![TelegramPhotoSize {
                 file_id: "f1".to_string(),
                 file_unique_id: "u1".to_string(),
@@ -996,6 +1034,7 @@ mod tests {
             audio: None,
             voice: None,
             video: None,
+            reply_to_message: None,
         };
         assert_eq!(
             message_text(&caption_message).as_deref(),
@@ -1004,10 +1043,12 @@ mod tests {
 
         let audio_only = TelegramMessage {
             message_id: 2,
-            chat: TelegramChat { id: 10 },
+            chat: private_chat(),
             from: None,
             text: None,
+            entities: Vec::new(),
             caption: None,
+            caption_entities: Vec::new(),
             photo: Vec::new(),
             document: None,
             audio: Some(TelegramAudio {
@@ -1018,6 +1059,7 @@ mod tests {
             }),
             voice: None,
             video: None,
+            reply_to_message: None,
         };
         assert_eq!(
             message_text(&audio_only).as_deref(),
@@ -1029,10 +1071,12 @@ mod tests {
     fn extract_media_references_builds_photo_and_document() {
         let message = TelegramMessage {
             message_id: 22,
-            chat: TelegramChat { id: 10 },
+            chat: private_chat(),
             from: None,
             text: None,
+            entities: Vec::new(),
             caption: None,
+            caption_entities: Vec::new(),
             photo: vec![TelegramPhotoSize {
                 file_id: "photo-1".to_string(),
                 file_unique_id: "uniq-photo".to_string(),
@@ -1048,6 +1092,7 @@ mod tests {
             audio: None,
             voice: None,
             video: None,
+            reply_to_message: None,
         };
 
         let media = extract_media_references(&message);
@@ -1075,19 +1120,23 @@ mod tests {
             from: TelegramUser {
                 id: 1,
                 is_bot: false,
+                username: None,
             },
             data: Some("approve:approval-1".to_string()),
             message: Some(TelegramMessage {
                 message_id: 1,
-                chat: TelegramChat { id: 10 },
+                chat: private_chat(),
                 from: None,
                 text: None,
+                entities: Vec::new(),
                 caption: None,
+                caption_entities: Vec::new(),
                 photo: Vec::new(),
                 document: None,
                 audio: None,
                 voice: None,
                 video: None,
+                reply_to_message: None,
             }),
         })
         .expect("callback inbound");

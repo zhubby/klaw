@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-03-31
+
+### Changed
+
+- `telegram` 入站现在会解析 `chat.type`、`entities` / `caption_entities` 与 `reply_to_message`；私聊保持直接回复，群组 / 超级群仅在显式 `@bot`、`/command@bot` 或回复 bot 消息时才提交给 runtime
+- `telegram` 群组命中当前 bot 的 `mention` 会在入站阶段从正文中剥离，定向 `bot_command`（如 `/help@my_bot`）会规范化为 runtime 可直接处理的 `/help`
+
 ## 2026-03-28
 
 ### Added

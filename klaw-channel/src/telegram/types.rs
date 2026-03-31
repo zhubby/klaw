@@ -3,6 +3,7 @@ use klaw_core::{MediaReference, MediaSourceKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::ops::Range;
 use std::time::Instant;
 use tokio::time::Duration;
 
@@ -24,7 +25,11 @@ pub struct TelegramMessage {
     #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
+    pub entities: Vec<TelegramMessageEntity>,
+    #[serde(default)]
     pub caption: Option<String>,
+    #[serde(default)]
+    pub caption_entities: Vec<TelegramMessageEntity>,
     #[serde(default)]
     pub photo: Vec<TelegramPhotoSize>,
     #[serde(default)]
@@ -35,6 +40,8 @@ pub struct TelegramMessage {
     pub voice: Option<TelegramVoice>,
     #[serde(default)]
     pub video: Option<TelegramVideo>,
+    #[serde(default)]
+    pub reply_to_message: Option<Box<TelegramMessage>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +57,8 @@ pub struct TelegramCallbackQuery {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramChat {
     pub id: i64,
+    #[serde(rename = "type")]
+    pub kind: TelegramChatType,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -57,6 +66,57 @@ pub struct TelegramUser {
     pub id: i64,
     #[serde(default)]
     pub is_bot: bool,
+    #[serde(default)]
+    pub username: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TelegramChatType {
+    Private,
+    Group,
+    Supergroup,
+    Channel,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TelegramMessageEntityType {
+    Mention,
+    BotCommand,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TelegramMessageEntity {
+    #[serde(rename = "type")]
+    pub kind: TelegramMessageEntityType,
+    pub offset: usize,
+    pub length: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelegramBotProfile {
+    pub user_id: i64,
+    pub username: String,
+}
+
+impl TelegramBotProfile {
+    pub fn from_user(user: TelegramUser) -> Option<Self> {
+        let username = user.username?.trim().to_string();
+        if username.is_empty() {
+            return None;
+        }
+        Some(Self {
+            user_id: user.id,
+            username,
+        })
+    }
+
+    pub fn mention_handle(&self) -> String {
+        format!("@{}", self.username)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -136,8 +196,12 @@ pub struct TelegramCallbackInbound {
 }
 
 impl TelegramInbound {
-    pub fn from_message(update_id: i64, message: TelegramMessage) -> Option<Self> {
-        let text = message_text(&message)?;
+    pub fn from_message(
+        update_id: i64,
+        message: TelegramMessage,
+        bot_profile: Option<&TelegramBotProfile>,
+    ) -> Option<Self> {
+        let text = normalized_message_text(&message, bot_profile)?;
         Some(Self {
             update_id,
             message_id: message.message_id.to_string(),
@@ -202,6 +266,247 @@ pub fn message_text(message: &TelegramMessage) -> Option<String> {
         return Some("Received video attachment.".to_string());
     }
     None
+}
+
+pub fn normalized_message_text(
+    message: &TelegramMessage,
+    bot_profile: Option<&TelegramBotProfile>,
+) -> Option<String> {
+    if should_ignore_chat_kind(message.chat.kind) {
+        return None;
+    }
+
+    let is_group_chat = matches!(
+        message.chat.kind,
+        TelegramChatType::Group | TelegramChatType::Supergroup
+    );
+    if is_group_chat && !group_message_targets_bot(message, bot_profile) {
+        return None;
+    }
+
+    let text = normalized_text_or_caption(message, bot_profile)
+        .or_else(|| message_text(message))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())?;
+    Some(text)
+}
+
+fn normalized_text_or_caption(
+    message: &TelegramMessage,
+    bot_profile: Option<&TelegramBotProfile>,
+) -> Option<String> {
+    let (content, entities) = text_with_entities(message)?;
+    let normalized = normalize_message_content(content, entities, bot_profile);
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn text_with_entities(message: &TelegramMessage) -> Option<(&str, &[TelegramMessageEntity])> {
+    if let Some(text) = message.text.as_deref() {
+        return Some((text, &message.entities));
+    }
+    if let Some(caption) = message.caption.as_deref() {
+        return Some((caption, &message.caption_entities));
+    }
+    None
+}
+
+fn should_ignore_chat_kind(kind: TelegramChatType) -> bool {
+    matches!(kind, TelegramChatType::Channel)
+}
+
+pub fn group_message_targets_bot(
+    message: &TelegramMessage,
+    bot_profile: Option<&TelegramBotProfile>,
+) -> bool {
+    let Some(bot_profile) = bot_profile else {
+        return false;
+    };
+
+    if message
+        .reply_to_message
+        .as_deref()
+        .and_then(|reply| reply.from.as_ref())
+        .is_some_and(|from| from.is_bot && from.id == bot_profile.user_id)
+    {
+        return true;
+    }
+
+    let Some((content, entities)) = text_with_entities(message) else {
+        return false;
+    };
+
+    entities
+        .iter()
+        .any(|entity| entity_targets_bot(content, entity, bot_profile))
+}
+
+fn entity_targets_bot(
+    content: &str,
+    entity: &TelegramMessageEntity,
+    bot_profile: &TelegramBotProfile,
+) -> bool {
+    let Some(fragment) = entity_text(content, entity) else {
+        return false;
+    };
+
+    match entity.kind {
+        TelegramMessageEntityType::Mention => {
+            fragment.eq_ignore_ascii_case(bot_profile.mention_handle().as_str())
+        }
+        TelegramMessageEntityType::BotCommand => command_targets_bot(fragment, bot_profile),
+        TelegramMessageEntityType::Unknown => false,
+    }
+}
+
+fn normalize_message_content(
+    content: &str,
+    entities: &[TelegramMessageEntity],
+    bot_profile: Option<&TelegramBotProfile>,
+) -> String {
+    let mut ranges = Vec::new();
+    let mut replacements: Vec<(Range<usize>, String)> = Vec::new();
+
+    for entity in entities {
+        let Some(range) = entity_byte_range(content, entity) else {
+            continue;
+        };
+        match entity.kind {
+            TelegramMessageEntityType::Mention => {
+                if bot_profile.is_some_and(|profile| {
+                    content[range.clone()].eq_ignore_ascii_case(profile.mention_handle().as_str())
+                }) {
+                    ranges.push(range);
+                }
+            }
+            TelegramMessageEntityType::BotCommand => {
+                if let Some(profile) = bot_profile {
+                    let fragment = &content[range.clone()];
+                    if let Some(normalized) = normalized_targeted_command(fragment, profile) {
+                        replacements.push((range, normalized));
+                    }
+                }
+            }
+            TelegramMessageEntityType::Unknown => {}
+        }
+    }
+
+    ranges.sort_by_key(|range| range.start);
+    replacements.sort_by_key(|(range, _)| range.start);
+
+    let stripped = strip_ranges(content, &ranges);
+    apply_replacements(&stripped, &adjusted_replacements(&ranges, replacements))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn adjusted_replacements(
+    removed_ranges: &[Range<usize>],
+    replacements: Vec<(Range<usize>, String)>,
+) -> Vec<(Range<usize>, String)> {
+    replacements
+        .into_iter()
+        .filter_map(|(range, replacement)| {
+            let mut removed_before_start = 0usize;
+            let mut removed_before_end = 0usize;
+            for removed in removed_ranges {
+                if removed.end <= range.start {
+                    removed_before_start += removed.len();
+                }
+                if removed.end <= range.end {
+                    removed_before_end += removed.len();
+                }
+            }
+            let start = range.start.checked_sub(removed_before_start)?;
+            let end = range.end.checked_sub(removed_before_end)?;
+            Some((start..end, replacement))
+        })
+        .collect()
+}
+
+fn apply_replacements(content: &str, replacements: &[(Range<usize>, String)]) -> String {
+    if replacements.is_empty() {
+        return content.to_string();
+    }
+
+    let mut output = String::with_capacity(content.len());
+    let mut cursor = 0usize;
+    for (range, replacement) in replacements {
+        if range.start < cursor || range.end > content.len() {
+            continue;
+        }
+        output.push_str(&content[cursor..range.start]);
+        output.push_str(replacement);
+        cursor = range.end;
+    }
+    output.push_str(&content[cursor..]);
+    output
+}
+
+fn strip_ranges(content: &str, ranges: &[Range<usize>]) -> String {
+    if ranges.is_empty() {
+        return content.to_string();
+    }
+
+    let mut output = String::with_capacity(content.len());
+    let mut cursor = 0usize;
+    for range in ranges {
+        if range.start < cursor || range.end > content.len() {
+            continue;
+        }
+        output.push_str(&content[cursor..range.start]);
+        cursor = range.end;
+    }
+    output.push_str(&content[cursor..]);
+    output
+}
+
+fn command_targets_bot(fragment: &str, bot_profile: &TelegramBotProfile) -> bool {
+    normalized_targeted_command(fragment, bot_profile).is_some()
+}
+
+fn normalized_targeted_command(fragment: &str, bot_profile: &TelegramBotProfile) -> Option<String> {
+    let (command, target) = fragment.split_once('@')?;
+    if target.eq_ignore_ascii_case(bot_profile.username.as_str()) {
+        Some(command.to_string())
+    } else {
+        None
+    }
+}
+
+fn entity_text<'a>(content: &'a str, entity: &TelegramMessageEntity) -> Option<&'a str> {
+    let range = entity_byte_range(content, entity)?;
+    content.get(range)
+}
+
+fn entity_byte_range(content: &str, entity: &TelegramMessageEntity) -> Option<Range<usize>> {
+    let start = utf16_offset_to_byte_index(content, entity.offset)?;
+    let end = utf16_offset_to_byte_index(content, entity.offset + entity.length)?;
+    Some(start..end)
+}
+
+fn utf16_offset_to_byte_index(content: &str, target: usize) -> Option<usize> {
+    if target == 0 {
+        return Some(0);
+    }
+
+    let mut seen = 0usize;
+    for (index, ch) in content.char_indices() {
+        if seen == target {
+            return Some(index);
+        }
+        seen += ch.len_utf16();
+    }
+    if seen == target {
+        Some(content.len())
+    } else {
+        None
+    }
 }
 
 pub fn extract_media_references(message: &TelegramMessage) -> Vec<MediaReference> {
@@ -423,14 +728,45 @@ impl TelegramInlineKeyboardMarkup {
 mod tests {
     use super::*;
 
+    fn private_chat() -> TelegramChat {
+        TelegramChat {
+            id: 10,
+            kind: TelegramChatType::Private,
+        }
+    }
+
+    fn group_chat() -> TelegramChat {
+        TelegramChat {
+            id: 10,
+            kind: TelegramChatType::Supergroup,
+        }
+    }
+
+    fn bot_profile() -> TelegramBotProfile {
+        TelegramBotProfile {
+            user_id: 42,
+            username: "klawbot".to_string(),
+        }
+    }
+
+    fn bot_user() -> TelegramUser {
+        TelegramUser {
+            id: 42,
+            is_bot: true,
+            username: Some("klawbot".to_string()),
+        }
+    }
+
     #[test]
     fn message_text_falls_back_for_additional_media_types() {
         let message = TelegramMessage {
             message_id: 1,
-            chat: TelegramChat { id: 10 },
+            chat: private_chat(),
             from: None,
             text: None,
+            entities: Vec::new(),
             caption: None,
+            caption_entities: Vec::new(),
             photo: Vec::new(),
             document: None,
             audio: Some(TelegramAudio {
@@ -441,6 +777,7 @@ mod tests {
             }),
             voice: None,
             video: None,
+            reply_to_message: None,
         };
         assert_eq!(
             message_text(&message).as_deref(),
@@ -455,24 +792,207 @@ mod tests {
             from: TelegramUser {
                 id: 1,
                 is_bot: false,
+                username: None,
             },
             data: Some("approve:approval-1".to_string()),
             message: Some(TelegramMessage {
                 message_id: 1,
-                chat: TelegramChat { id: 10 },
+                chat: private_chat(),
                 from: None,
                 text: None,
+                entities: Vec::new(),
                 caption: None,
+                caption_entities: Vec::new(),
                 photo: Vec::new(),
                 document: None,
                 audio: None,
                 voice: None,
                 video: None,
+                reply_to_message: None,
             }),
         })
         .expect("callback inbound");
 
         assert_eq!(inbound.chat_id, "10");
         assert_eq!(inbound.command, "/approve approval-1");
+    }
+
+    #[test]
+    fn normalized_message_text_strips_group_mention() {
+        let message = TelegramMessage {
+            message_id: 7,
+            chat: group_chat(),
+            from: None,
+            text: Some("@klawbot 帮我看下".to_string()),
+            entities: vec![TelegramMessageEntity {
+                kind: TelegramMessageEntityType::Mention,
+                offset: 0,
+                length: 8,
+            }],
+            caption: None,
+            caption_entities: Vec::new(),
+            photo: Vec::new(),
+            document: None,
+            audio: None,
+            voice: None,
+            video: None,
+            reply_to_message: None,
+        };
+
+        assert_eq!(
+            normalized_message_text(&message, Some(&bot_profile())).as_deref(),
+            Some("帮我看下")
+        );
+    }
+
+    #[test]
+    fn normalized_message_text_strips_targeted_group_command() {
+        let message = TelegramMessage {
+            message_id: 8,
+            chat: group_chat(),
+            from: None,
+            text: Some("/help@klawbot".to_string()),
+            entities: vec![TelegramMessageEntity {
+                kind: TelegramMessageEntityType::BotCommand,
+                offset: 0,
+                length: 13,
+            }],
+            caption: None,
+            caption_entities: Vec::new(),
+            photo: Vec::new(),
+            document: None,
+            audio: None,
+            voice: None,
+            video: None,
+            reply_to_message: None,
+        };
+
+        assert_eq!(
+            normalized_message_text(&message, Some(&bot_profile())).as_deref(),
+            Some("/help")
+        );
+    }
+
+    #[test]
+    fn normalized_message_text_ignores_untargeted_group_messages() {
+        let message = TelegramMessage {
+            message_id: 9,
+            chat: group_chat(),
+            from: None,
+            text: Some("大家好".to_string()),
+            entities: Vec::new(),
+            caption: None,
+            caption_entities: Vec::new(),
+            photo: Vec::new(),
+            document: None,
+            audio: None,
+            voice: None,
+            video: None,
+            reply_to_message: None,
+        };
+
+        assert_eq!(
+            normalized_message_text(&message, Some(&bot_profile())),
+            None
+        );
+    }
+
+    #[test]
+    fn normalized_message_text_accepts_reply_to_bot_in_group() {
+        let message = TelegramMessage {
+            message_id: 10,
+            chat: group_chat(),
+            from: None,
+            text: Some("继续说".to_string()),
+            entities: Vec::new(),
+            caption: None,
+            caption_entities: Vec::new(),
+            photo: Vec::new(),
+            document: None,
+            audio: None,
+            voice: None,
+            video: None,
+            reply_to_message: Some(Box::new(TelegramMessage {
+                message_id: 11,
+                chat: group_chat(),
+                from: Some(bot_user()),
+                text: Some("前文".to_string()),
+                entities: Vec::new(),
+                caption: None,
+                caption_entities: Vec::new(),
+                photo: Vec::new(),
+                document: None,
+                audio: None,
+                voice: None,
+                video: None,
+                reply_to_message: None,
+            })),
+        };
+
+        assert_eq!(
+            normalized_message_text(&message, Some(&bot_profile())).as_deref(),
+            Some("继续说")
+        );
+    }
+
+    #[test]
+    fn normalized_message_text_uses_caption_entities() {
+        let message = TelegramMessage {
+            message_id: 12,
+            chat: group_chat(),
+            from: None,
+            text: None,
+            entities: Vec::new(),
+            caption: Some("@klawbot 看图".to_string()),
+            caption_entities: vec![TelegramMessageEntity {
+                kind: TelegramMessageEntityType::Mention,
+                offset: 0,
+                length: 8,
+            }],
+            photo: vec![TelegramPhotoSize {
+                file_id: "f1".to_string(),
+                file_unique_id: "u1".to_string(),
+                width: 10,
+                height: 10,
+            }],
+            document: None,
+            audio: None,
+            voice: None,
+            video: None,
+            reply_to_message: None,
+        };
+
+        assert_eq!(
+            normalized_message_text(&message, Some(&bot_profile())).as_deref(),
+            Some("看图")
+        );
+    }
+
+    #[test]
+    fn normalized_message_text_handles_utf16_offsets() {
+        let message = TelegramMessage {
+            message_id: 13,
+            chat: group_chat(),
+            from: None,
+            text: Some("🙂 @klawbot 帮忙".to_string()),
+            entities: vec![TelegramMessageEntity {
+                kind: TelegramMessageEntityType::Mention,
+                offset: 3,
+                length: 8,
+            }],
+            caption: None,
+            caption_entities: Vec::new(),
+            photo: Vec::new(),
+            document: None,
+            audio: None,
+            voice: None,
+            video: None,
+            reply_to_message: None,
+        };
+
+        assert_eq!(
+            normalized_message_text(&message, Some(&bot_profile())).as_deref(),
+            Some("🙂 帮忙")
+        );
     }
 }

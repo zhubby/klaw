@@ -39,6 +39,11 @@ url = "http://127.0.0.1:8888"
 - 支持 `photo`、`document`、`audio`、`voice`、`video` 附件
 - 支持 `callback_query`，可将 inline keyboard 审批按钮映射为 `/approve` / `/reject`
 - 会忽略机器人自身消息、无可处理正文的更新、以及非 `message` 类更新
+- 会解析 `chat.type` 区分私聊 / 群组 / 超级群 / 频道：
+  - 私聊：普通文本与命令直接进入 runtime
+  - 群组 / 超级群：仅当消息通过 `entities` / `caption_entities` 明确 `@bot`，或用户是在回复 bot 自己的上一条消息时才进入 runtime
+  - 频道：忽略，不建立 agent 对话
+- 群组里的 `mention` 与 `bot_command` 会按实体解析，而不是依赖原始字符串匹配；命中当前 bot 的 `@username` 会从提交给 runtime 的正文里剥离，`/help@botname` 会规范化为 `/help`
 - `allowlist` 规则与 dingtalk 一致：空表示全放行，`"*"` 表示通配，其余按 `sender_id` 精确匹配
 
 ## 媒体处理
