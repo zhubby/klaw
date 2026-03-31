@@ -9,6 +9,7 @@ anyhow = { workspace = true }
 catppuccin-egui = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+egui_json_tree = { workspace = true }
 egui-file-dialog = { workspace = true }
 egui-phosphor = { workspace = true }
 egui_extras = { workspace = true, features = ["chrono"] }
