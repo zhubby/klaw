@@ -5,6 +5,9 @@ on:
     types:
       - published
 
+permissions:
+  contents: write
+
 jobs:
   build-macos-package:
     runs-on: macos-latest
@@ -16,9 +19,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Resolve app version
+        id: version
         run: |
           VERSION="$(awk -F' *= *' '/^version = / {gsub(/"/,"",$2); print $2; exit}' Cargo.toml)"
-          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "app_version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -31,14 +35,29 @@ jobs:
       - name: Build macOS dmg
         run: make package-macos-dmg
 
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          cp "target/${{ env.MACOS_TARGET }}/release/klaw" \
+            "release-assets/klaw-${{ steps.version.outputs.app_version }}-${{ env.MACOS_TARGET }}"
+          cp dist/macos/*.dmg release-assets/
+
       - name: Upload macOS binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Klaw-bin-${{ env.APP_VERSION }}-${{ env.MACOS_TARGET }}
+          name: Klaw-bin-${{ steps.version.outputs.app_version }}-${{ env.MACOS_TARGET }}
           path: target/${{ env.MACOS_TARGET }}/release/klaw
 
       - name: Upload dmg artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Klaw-dmg-${{ env.APP_VERSION }}-aarch64-apple-darwin
+          name: Klaw-dmg-${{ steps.version.outputs.app_version }}-aarch64-apple-darwin
           path: dist/macos/*.dmg
+
+      - name: Upload assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            release-assets/*
+          fail_on_unmatched_files: true
