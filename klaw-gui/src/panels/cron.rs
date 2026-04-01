@@ -571,16 +571,23 @@ impl PanelRenderer for CronPanel {
                                     ui.label(job.name.clone());
                                 });
                                 row.col(|ui| {
-                                    ui.label(match job.schedule_kind {
-                                        CronScheduleKind::Cron => "cron",
-                                        CronScheduleKind::Every => "every",
-                                    });
+                                    let (icon, color, label) = cron_kind_display(job.schedule_kind);
+                                    ui.label(
+                                        RichText::new(format!("{icon} {label}"))
+                                            .color(color)
+                                            .strong(),
+                                    );
                                 });
                                 row.col(|ui| {
                                     ui.label(job.schedule_expr.clone());
                                 });
                                 row.col(|ui| {
-                                    ui.label(if job.enabled { "yes" } else { "no" });
+                                    let (icon, color, label) = enabled_display(job.enabled);
+                                    ui.label(
+                                        RichText::new(format!("{icon} {label}"))
+                                            .color(color)
+                                            .strong(),
+                                    );
                                 });
                                 row.col(|ui| {
                                     ui.label(format_timestamp_millis(job.next_run_at_ms));
@@ -704,6 +711,25 @@ fn cron_status_display(status: CronTaskStatus) -> (&'static str, Color32, &'stat
         CronTaskStatus::Running => ("◑", Color32::from_rgb(70, 130, 200), "running"),
         CronTaskStatus::Success => ("✓", Color32::from_rgb(50, 180, 80), "success"),
         CronTaskStatus::Failed => ("✗", Color32::from_rgb(220, 60, 60), "failed"),
+    }
+}
+
+fn cron_kind_display(kind: CronScheduleKind) -> (&'static str, Color32, &'static str) {
+    match kind {
+        CronScheduleKind::Cron => ("C", Color32::from_rgb(0xF5, 0x9E, 0x0B), "cron"),
+        CronScheduleKind::Every => ("E", Color32::from_rgb(0x38, 0xBD, 0xF8), "every"),
+    }
+}
+
+fn enabled_display(enabled: bool) -> (&'static str, Color32, &'static str) {
+    if enabled {
+        (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(0x22, 0xC5, 0x5E),
+            "yes",
+        )
+    } else {
+        (regular::X_CIRCLE, Color32::from_rgb(0xEF, 0x44, 0x44), "no")
     }
 }
 
