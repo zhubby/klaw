@@ -28,7 +28,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT"
-version = "0.8.2"
+version = "0.8.3"
 
 [workspace.dependencies]
 agent-client-protocol = "0.10.3"
