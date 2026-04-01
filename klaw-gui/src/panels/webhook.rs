@@ -698,6 +698,8 @@ impl PanelRenderer for WebhookPanel {
         }
 
         ui.heading(ctx.tab_title);
+        render_webhook_config_summary(ui, &self.config);
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
                 self.refresh_gateway_status();
@@ -716,8 +718,6 @@ impl PanelRenderer for WebhookPanel {
             ui.label(format!("Rows: {}", self.rows.len()));
         });
 
-        ui.separator();
-        render_webhook_config_summary(ui, &self.config, self.gateway_status.as_ref());
         ui.separator();
         let mut need_refresh = false;
         ui.horizontal(|ui| {
@@ -1464,37 +1464,19 @@ impl PanelRenderer for WebhookPanel {
     }
 }
 
-fn render_webhook_config_summary(
-    ui: &mut egui::Ui,
-    config: &AppConfig,
-    _gateway_status: Option<&GatewayStatusSnapshot>,
-) {
+fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig) {
     let webhook = &config.gateway.webhook;
 
-    egui::Grid::new("webhook-config-summary-grid")
-        .num_columns(2)
-        .spacing([16.0, 8.0])
-        .show(ui, |ui| {
-            ui.label("Webhook Enabled");
-            render_boolean_status(ui, webhook.enabled);
-            ui.end_row();
-
-            ui.label("Events Enabled");
-            render_boolean_status(ui, webhook.events.enabled);
-            ui.end_row();
-
-            ui.label("Events Path");
-            ui.monospace(WEBHOOK_EVENTS_PATH);
-            ui.end_row();
-
-            ui.label("Agents Enabled");
-            render_boolean_status(ui, webhook.agents.enabled);
-            ui.end_row();
-
-            ui.label("Agents Path");
-            ui.monospace(WEBHOOK_AGENTS_PATH);
-            ui.end_row();
-        });
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Webhook");
+        render_boolean_status(ui, webhook.enabled);
+        ui.separator();
+        ui.label("Events");
+        render_boolean_status(ui, webhook.events.enabled);
+        ui.separator();
+        ui.label("Agents");
+        render_boolean_status(ui, webhook.agents.enabled);
+    });
 }
 
 fn webhook_summary_state(item: &WebhookListRow) -> Option<WebhookSummaryState> {
