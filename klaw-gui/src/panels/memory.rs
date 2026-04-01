@@ -90,6 +90,7 @@ pub struct MemoryPanel {
     config_path: Option<PathBuf>,
     config: AppConfig,
     form: Option<MemoryConfigForm>,
+    stats_window_open: bool,
     selected_scope: Option<String>,
     scope_detail: Option<ScopeDetailWindow>,
 }
@@ -380,6 +381,25 @@ impl MemoryPanel {
             self.scope_detail = None;
         }
     }
+
+    fn render_stats_window(&mut self, ctx: &egui::Context) {
+        let Some(stats) = self.stats.clone() else {
+            return;
+        };
+
+        let mut open = self.stats_window_open;
+        egui::Window::new("Memory Info")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(560.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(480.0);
+                render_memory_stats_grid(ui, &stats);
+            });
+        self.stats_window_open = open;
+    }
 }
 
 impl PanelRenderer for MemoryPanel {
@@ -400,6 +420,9 @@ impl PanelRenderer for MemoryPanel {
             if ui.button("Config").clicked() {
                 self.open_config_form();
             }
+            if ui.button(format!("{} Info", regular::INFO)).clicked() {
+                self.stats_window_open = true;
+            }
         });
         ui.separator();
 
@@ -407,85 +430,6 @@ impl PanelRenderer for MemoryPanel {
             ui.label("No memory stats available.");
             return;
         };
-
-        egui::Grid::new("memory-stats-grid")
-            .num_columns(2)
-            .spacing([14.0, 8.0])
-            .show(ui, |ui| {
-                ui.label("Total Records");
-                ui.monospace(stats.total_records.to_string());
-                ui.end_row();
-
-                ui.label("Pinned Records");
-                ui.monospace(stats.pinned_records.to_string());
-                ui.end_row();
-
-                ui.label("Embedded Records");
-                ui.monospace(stats.embedded_records.to_string());
-                ui.end_row();
-
-                ui.label("Distinct Scopes");
-                ui.monospace(stats.distinct_scopes.to_string());
-                ui.end_row();
-
-                ui.label("Updated Last 24h");
-                ui.monospace(stats.updated_last_24h.to_string());
-                ui.end_row();
-
-                ui.label("Updated Last 7d");
-                ui.monospace(stats.updated_last_7d.to_string());
-                ui.end_row();
-
-                ui.label("FTS Enabled");
-                ui.monospace(if stats.fts_enabled { "yes" } else { "no" });
-                ui.end_row();
-
-                ui.label("Vector Index Enabled");
-                ui.monospace(if stats.vector_index_enabled {
-                    "yes"
-                } else {
-                    "no"
-                });
-                ui.end_row();
-
-                ui.label("Avg Content Length");
-                ui.monospace(
-                    stats
-                        .avg_content_len
-                        .map(|value| format!("{value:.2}"))
-                        .unwrap_or_else(|| "-".to_string()),
-                );
-                ui.end_row();
-
-                ui.label("Created Min");
-                ui.monospace(
-                    stats
-                        .created_min_ms
-                        .map(format_timestamp_millis)
-                        .unwrap_or_else(|| "-".to_string()),
-                );
-                ui.end_row();
-
-                ui.label("Created Max");
-                ui.monospace(
-                    stats
-                        .created_max_ms
-                        .map(format_timestamp_millis)
-                        .unwrap_or_else(|| "-".to_string()),
-                );
-                ui.end_row();
-
-                ui.label("Updated Max");
-                ui.monospace(
-                    stats
-                        .updated_max_ms
-                        .map(format_timestamp_millis)
-                        .unwrap_or_else(|| "-".to_string()),
-                );
-                ui.end_row();
-            });
-
-        ui.separator();
         ui.label("Top Scopes");
         if stats.top_scopes.is_empty() {
             ui.label("No scope data.");
@@ -581,7 +525,89 @@ impl PanelRenderer for MemoryPanel {
 
         self.render_form_window(ui, notifications);
         self.render_scope_detail_window(ui.ctx());
+        if self.stats_window_open {
+            self.render_stats_window(ui.ctx());
+        }
     }
+}
+
+fn render_memory_stats_grid(ui: &mut egui::Ui, stats: &MemoryStats) {
+    egui::Grid::new("memory-stats-grid")
+        .num_columns(2)
+        .spacing([14.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("Total Records");
+            ui.monospace(stats.total_records.to_string());
+            ui.end_row();
+
+            ui.label("Pinned Records");
+            ui.monospace(stats.pinned_records.to_string());
+            ui.end_row();
+
+            ui.label("Embedded Records");
+            ui.monospace(stats.embedded_records.to_string());
+            ui.end_row();
+
+            ui.label("Distinct Scopes");
+            ui.monospace(stats.distinct_scopes.to_string());
+            ui.end_row();
+
+            ui.label("Updated Last 24h");
+            ui.monospace(stats.updated_last_24h.to_string());
+            ui.end_row();
+
+            ui.label("Updated Last 7d");
+            ui.monospace(stats.updated_last_7d.to_string());
+            ui.end_row();
+
+            ui.label("FTS Enabled");
+            ui.monospace(if stats.fts_enabled { "yes" } else { "no" });
+            ui.end_row();
+
+            ui.label("Vector Index Enabled");
+            ui.monospace(if stats.vector_index_enabled {
+                "yes"
+            } else {
+                "no"
+            });
+            ui.end_row();
+
+            ui.label("Avg Content Length");
+            ui.monospace(
+                stats
+                    .avg_content_len
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "-".to_string()),
+            );
+            ui.end_row();
+
+            ui.label("Created Min");
+            ui.monospace(
+                stats
+                    .created_min_ms
+                    .map(format_timestamp_millis)
+                    .unwrap_or_else(|| "-".to_string()),
+            );
+            ui.end_row();
+
+            ui.label("Created Max");
+            ui.monospace(
+                stats
+                    .created_max_ms
+                    .map(format_timestamp_millis)
+                    .unwrap_or_else(|| "-".to_string()),
+            );
+            ui.end_row();
+
+            ui.label("Updated Max");
+            ui.monospace(
+                stats
+                    .updated_max_ms
+                    .map(format_timestamp_millis)
+                    .unwrap_or_else(|| "-".to_string()),
+            );
+            ui.end_row();
+        });
 }
 
 fn clamp_scope_detail_window_size(available: egui::Vec2) -> egui::Vec2 {
