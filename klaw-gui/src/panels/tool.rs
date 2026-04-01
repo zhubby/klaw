@@ -67,26 +67,30 @@ enum ToolLogSummaryTab {
 enum ToolForm {
     ApplyPatch(ApplyPatchForm),
     Shell(ShellForm),
-    Archive(ToggleForm),
+    Toggle(ToggleToolKind, ToggleForm),
     ChannelAttachment(ChannelAttachmentForm),
-    Voice(ToggleForm),
-    Approval(ToggleForm),
-    Geo(ToggleForm),
-    LocalSearch(ToggleForm),
-    TerminalMultiplexers(ToggleForm),
-    CronManager(ToggleForm),
-    HeartbeatManager(ToggleForm),
-    SkillsRegistry(ToggleForm),
-    SkillsManager(ToggleForm),
     Memory(MemoryForm),
     WebFetch(WebFetchForm),
     WebSearch(WebSearchForm),
     SubAgent(SubAgentForm),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToggleToolKind {
+    Archive,
+    Voice,
+    Approval,
+    Geo,
+    LocalSearch,
+    TerminalMultiplexers,
+    CronManager,
+    HeartbeatManager,
+    SkillsRegistry,
+    SkillsManager,
+}
+
 #[derive(Debug, Clone)]
 struct ToggleForm {
-    title: &'static str,
     enabled: bool,
 }
 
@@ -170,10 +174,27 @@ struct SubAgentForm {
 
 #[derive(Clone, Copy)]
 struct ToolDescriptor {
-    key: &'static str,
-    name: &'static str,
-    description: &'static str,
+    config_key: &'static str,
+    runtime_name: &'static str,
     enabled: bool,
+}
+
+impl ToolDescriptor {
+    const fn new(config_key: &'static str, enabled: bool) -> Self {
+        Self::with_runtime_name(config_key, config_key, enabled)
+    }
+
+    const fn with_runtime_name(
+        config_key: &'static str,
+        runtime_name: &'static str,
+        enabled: bool,
+    ) -> Self {
+        Self {
+            config_key,
+            runtime_name,
+            enabled,
+        }
+    }
 }
 
 const INSPECT_WINDOW_WIDTH: f32 = 760.0;
@@ -476,21 +497,75 @@ impl ToolForm {
         match self {
             ToolForm::ApplyPatch(_) => "Edit Tool: apply_patch",
             ToolForm::Shell(_) => "Edit Tool: shell",
-            ToolForm::Archive(form)
-            | ToolForm::Voice(form)
-            | ToolForm::Approval(form)
-            | ToolForm::Geo(form)
-            | ToolForm::LocalSearch(form)
-            | ToolForm::TerminalMultiplexers(form)
-            | ToolForm::CronManager(form)
-            | ToolForm::HeartbeatManager(form)
-            | ToolForm::SkillsRegistry(form)
-            | ToolForm::SkillsManager(form) => form.title,
+            ToolForm::Toggle(kind, _) => kind.title(),
             ToolForm::ChannelAttachment(_) => "Edit Tool: channel_attachment",
             ToolForm::Memory(_) => "Edit Tool: memory",
             ToolForm::WebFetch(_) => "Edit Tool: web_fetch",
             ToolForm::WebSearch(_) => "Edit Tool: web_search",
             ToolForm::SubAgent(_) => "Edit Tool: sub_agent",
+        }
+    }
+}
+
+impl ToggleToolKind {
+    fn from_config_key(key: &str) -> Option<Self> {
+        match key {
+            "archive" => Some(Self::Archive),
+            "voice" => Some(Self::Voice),
+            "approval" => Some(Self::Approval),
+            "geo" => Some(Self::Geo),
+            "local_search" => Some(Self::LocalSearch),
+            "terminal_multiplexers" => Some(Self::TerminalMultiplexers),
+            "cron_manager" => Some(Self::CronManager),
+            "heartbeat_manager" => Some(Self::HeartbeatManager),
+            "skills_registry" => Some(Self::SkillsRegistry),
+            "skills_manager" => Some(Self::SkillsManager),
+            _ => None,
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Archive => "Edit Tool: archive",
+            Self::Voice => "Edit Tool: voice",
+            Self::Approval => "Edit Tool: approval",
+            Self::Geo => "Edit Tool: geo",
+            Self::LocalSearch => "Edit Tool: local_search",
+            Self::TerminalMultiplexers => "Edit Tool: terminal_multiplexers",
+            Self::CronManager => "Edit Tool: cron_manager",
+            Self::HeartbeatManager => "Edit Tool: heartbeat_manager",
+            Self::SkillsRegistry => "Edit Tool: skills_registry",
+            Self::SkillsManager => "Edit Tool: skills_manager",
+        }
+    }
+
+    fn enabled(self, config: &AppConfig) -> bool {
+        match self {
+            Self::Archive => config.tools.archive.enabled,
+            Self::Voice => config.tools.voice.enabled,
+            Self::Approval => config.tools.approval.enabled,
+            Self::Geo => config.tools.geo.enabled,
+            Self::LocalSearch => config.tools.local_search.enabled,
+            Self::TerminalMultiplexers => config.tools.terminal_multiplexers.enabled,
+            Self::CronManager => config.tools.cron_manager.enabled,
+            Self::HeartbeatManager => config.tools.heartbeat_manager.enabled,
+            Self::SkillsRegistry => config.tools.skills_registry.enabled,
+            Self::SkillsManager => config.tools.skills_manager.enabled,
+        }
+    }
+
+    fn apply_enabled(self, config: &mut AppConfig, enabled: bool) {
+        match self {
+            Self::Archive => config.tools.archive.enabled = enabled,
+            Self::Voice => config.tools.voice.enabled = enabled,
+            Self::Approval => config.tools.approval.enabled = enabled,
+            Self::Geo => config.tools.geo.enabled = enabled,
+            Self::LocalSearch => config.tools.local_search.enabled = enabled,
+            Self::TerminalMultiplexers => config.tools.terminal_multiplexers.enabled = enabled,
+            Self::CronManager => config.tools.cron_manager.enabled = enabled,
+            Self::HeartbeatManager => config.tools.heartbeat_manager.enabled = enabled,
+            Self::SkillsRegistry => config.tools.skills_registry.enabled = enabled,
+            Self::SkillsManager => config.tools.skills_manager.enabled = enabled,
         }
     }
 }
@@ -575,168 +650,72 @@ impl ToolPanel {
 
     fn tools(&self) -> Vec<ToolDescriptor> {
         let mut tools = vec![
-            ToolDescriptor {
-                key: "apply_patch",
-                name: "apply_patch",
-                description: "Patch workspace files with constrained path policy.",
-                enabled: self.config.tools.apply_patch.enabled,
-            },
-            ToolDescriptor {
-                key: "shell",
-                name: "shell",
-                description: "Execute local shell commands with approval policy.",
-                enabled: self.config.tools.shell.enabled,
-            },
-            ToolDescriptor {
-                key: "archive",
-                name: "archive",
-                description: "Manage archived attachments from conversations.",
-                enabled: self.config.tools.archive.enabled,
-            },
-            ToolDescriptor {
-                key: "channel_attachment",
-                name: "channel_attachment",
-                description: "Send archived or approved local files back into the current chat.",
-                enabled: self.config.tools.channel_attachment.enabled,
-            },
-            ToolDescriptor {
-                key: "voice",
-                name: "voice",
-                description: "Transcribe audio and synthesize text into speech.",
-                enabled: self.config.tools.voice.enabled,
-            },
-            ToolDescriptor {
-                key: "approval",
-                name: "approval",
-                description: "Manage approval lifecycle for high-risk actions.",
-                enabled: self.config.tools.approval.enabled,
-            },
-            ToolDescriptor {
-                key: "geo",
-                name: "geo",
-                description: "Get current coordinates from available system location services.",
-                enabled: self.config.tools.geo.enabled,
-            },
-            ToolDescriptor {
-                key: "local_search",
-                name: "local_search",
-                description: "Search local workspace files and snippets.",
-                enabled: self.config.tools.local_search.enabled,
-            },
-            ToolDescriptor {
-                key: "terminal_multiplexers",
-                name: "terminal_multiplexers",
-                description: "Operate tmux/zellij sessions for long-running tasks.",
-                enabled: self.config.tools.terminal_multiplexers.enabled,
-            },
-            ToolDescriptor {
-                key: "cron_manager",
-                name: "cron_manager",
-                description: "Create and control scheduled cron jobs.",
-                enabled: self.config.tools.cron_manager.enabled,
-            },
-            ToolDescriptor {
-                key: "heartbeat_manager",
-                name: "heartbeat_manager",
-                description: "Manage session-bound heartbeat jobs.",
-                enabled: self.config.tools.heartbeat_manager.enabled,
-            },
-            ToolDescriptor {
-                key: "skills_registry",
-                name: "skills_registry",
-                description: "Browse and inspect read-only registry catalogs.",
-                enabled: self.config.tools.skills_registry.enabled,
-            },
-            ToolDescriptor {
-                key: "skills_manager",
-                name: "skills_manager",
-                description: "Install, uninstall, and load installed skills.",
-                enabled: self.config.tools.skills_manager.enabled,
-            },
-            ToolDescriptor {
-                key: "memory",
-                name: "memory",
-                description: "Persist and retrieve long-term memory records.",
-                enabled: self.config.tools.memory.enabled,
-            },
-            ToolDescriptor {
-                key: "web_fetch",
-                name: "web_fetch",
-                description: "Fetch and extract web page content safely.",
-                enabled: self.config.tools.web_fetch.enabled,
-            },
-            ToolDescriptor {
-                key: "web_search",
-                name: "web_search",
-                description: "Search web results via configured provider.",
-                enabled: self.config.tools.web_search.enabled,
-            },
-            ToolDescriptor {
-                key: "sub_agent",
-                name: "sub_agent",
-                description: "Delegate focused tasks to a bounded child agent.",
-                enabled: self.config.tools.sub_agent.enabled,
-            },
+            ToolDescriptor::new("apply_patch", self.config.tools.apply_patch.enabled),
+            ToolDescriptor::new("shell", self.config.tools.shell.enabled),
+            ToolDescriptor::new("archive", self.config.tools.archive.enabled),
+            ToolDescriptor::new(
+                "channel_attachment",
+                self.config.tools.channel_attachment.enabled,
+            ),
+            ToolDescriptor::new("voice", self.config.tools.voice.enabled),
+            ToolDescriptor::new("approval", self.config.tools.approval.enabled),
+            ToolDescriptor::new("geo", self.config.tools.geo.enabled),
+            ToolDescriptor::new("local_search", self.config.tools.local_search.enabled),
+            ToolDescriptor::with_runtime_name(
+                "terminal_multiplexers",
+                "terminal_multiplexer",
+                self.config.tools.terminal_multiplexers.enabled,
+            ),
+            ToolDescriptor::new("cron_manager", self.config.tools.cron_manager.enabled),
+            ToolDescriptor::new(
+                "heartbeat_manager",
+                self.config.tools.heartbeat_manager.enabled,
+            ),
+            ToolDescriptor::new("skills_registry", self.config.tools.skills_registry.enabled),
+            ToolDescriptor::new("skills_manager", self.config.tools.skills_manager.enabled),
+            ToolDescriptor::new("memory", self.config.tools.memory.enabled),
+            ToolDescriptor::new("web_fetch", self.config.tools.web_fetch.enabled),
+            ToolDescriptor::new("web_search", self.config.tools.web_search.enabled),
+            ToolDescriptor::new("sub_agent", self.config.tools.sub_agent.enabled),
         ];
-        tools.sort_unstable_by(|left, right| left.name.cmp(right.name));
+        tools.sort_unstable_by(|left, right| left.runtime_name.cmp(right.runtime_name));
         tools
     }
 
-    fn runtime_definition(&self, key: &str) -> Option<&ToolDefinition> {
+    fn tool_by_config_key(&self, config_key: &str) -> Option<ToolDescriptor> {
+        self.tools()
+            .into_iter()
+            .find(|tool| tool.config_key == config_key)
+    }
+
+    fn runtime_definition(&self, tool: &ToolDescriptor) -> Option<&ToolDefinition> {
         self.runtime_definitions
             .iter()
-            .find(|item| item.name == key)
+            .find(|item| item.name == tool.runtime_name)
+    }
+
+    fn tool_display_name<'a>(&'a self, tool: &'a ToolDescriptor) -> &'a str {
+        self.runtime_definition(tool)
+            .map(|item| item.name.as_str())
+            .unwrap_or(tool.runtime_name)
+    }
+
+    fn tool_description<'a>(&'a self, tool: &'a ToolDescriptor) -> &'a str {
+        self.runtime_definition(tool)
+            .map(|item| item.description.as_str())
+            .unwrap_or("Runtime metadata unavailable for this tool.")
     }
 
     fn open_editor(&mut self, key: &str) {
+        if let Some(kind) = ToggleToolKind::from_config_key(key) {
+            self.open_toggle(kind);
+            return;
+        }
+
         match key {
             "apply_patch" => self.open_apply_patch(),
             "shell" => self.open_shell(),
-            "archive" => self.open_toggle(
-                "archive",
-                "Edit Tool: archive",
-                self.config.tools.archive.enabled,
-            ),
             "channel_attachment" => self.open_channel_attachment(),
-            "voice" => {
-                self.open_toggle("voice", "Edit Tool: voice", self.config.tools.voice.enabled)
-            }
-            "approval" => self.open_toggle(
-                "approval",
-                "Edit Tool: approval",
-                self.config.tools.approval.enabled,
-            ),
-            "geo" => self.open_toggle("geo", "Edit Tool: geo", self.config.tools.geo.enabled),
-            "local_search" => self.open_toggle(
-                "local_search",
-                "Edit Tool: local_search",
-                self.config.tools.local_search.enabled,
-            ),
-            "terminal_multiplexers" => self.open_toggle(
-                "terminal_multiplexers",
-                "Edit Tool: terminal_multiplexers",
-                self.config.tools.terminal_multiplexers.enabled,
-            ),
-            "cron_manager" => self.open_toggle(
-                "cron_manager",
-                "Edit Tool: cron_manager",
-                self.config.tools.cron_manager.enabled,
-            ),
-            "heartbeat_manager" => self.open_toggle(
-                "heartbeat_manager",
-                "Edit Tool: heartbeat_manager",
-                self.config.tools.heartbeat_manager.enabled,
-            ),
-            "skills_registry" => self.open_toggle(
-                "skills_registry",
-                "Edit Tool: skills_registry",
-                self.config.tools.skills_registry.enabled,
-            ),
-            "skills_manager" => self.open_toggle(
-                "skills_manager",
-                "Edit Tool: skills_manager",
-                self.config.tools.skills_manager.enabled,
-            ),
             "memory" => self.open_memory(),
             "web_fetch" => self.open_web_fetch(),
             "web_search" => self.open_web_search(),
@@ -763,20 +742,11 @@ impl ToolPanel {
         ));
     }
 
-    fn open_toggle(&mut self, key: &str, title: &'static str, enabled: bool) {
-        let form = ToggleForm { title, enabled };
-        self.form = Some(match key {
-            "archive" => ToolForm::Archive(form),
-            "voice" => ToolForm::Voice(form),
-            "approval" => ToolForm::Approval(form),
-            "geo" => ToolForm::Geo(form),
-            "local_search" => ToolForm::LocalSearch(form),
-            "terminal_multiplexers" => ToolForm::TerminalMultiplexers(form),
-            "cron_manager" => ToolForm::CronManager(form),
-            "heartbeat_manager" => ToolForm::HeartbeatManager(form),
-            "skills_registry" => ToolForm::SkillsRegistry(form),
-            _ => ToolForm::SkillsManager(form),
-        });
+    fn open_toggle(&mut self, kind: ToggleToolKind) {
+        let form = ToggleForm {
+            enabled: kind.enabled(&self.config),
+        };
+        self.form = Some(ToolForm::Toggle(kind, form));
     }
 
     fn open_memory(&mut self) {
@@ -820,48 +790,12 @@ impl ToolPanel {
                     config.tools.shell = form.to_config()?;
                     Ok(())
                 }
-                ToolForm::Archive(form) => {
-                    config.tools.archive.enabled = form.enabled;
+                ToolForm::Toggle(kind, form) => {
+                    kind.apply_enabled(config, form.enabled);
                     Ok(())
                 }
                 ToolForm::ChannelAttachment(form) => {
                     config.tools.channel_attachment = form.to_config()?;
-                    Ok(())
-                }
-                ToolForm::Voice(form) => {
-                    config.tools.voice.enabled = form.enabled;
-                    Ok(())
-                }
-                ToolForm::Approval(form) => {
-                    config.tools.approval.enabled = form.enabled;
-                    Ok(())
-                }
-                ToolForm::Geo(form) => {
-                    config.tools.geo.enabled = form.enabled;
-                    Ok(())
-                }
-                ToolForm::LocalSearch(form) => {
-                    config.tools.local_search.enabled = form.enabled;
-                    Ok(())
-                }
-                ToolForm::TerminalMultiplexers(form) => {
-                    config.tools.terminal_multiplexers.enabled = form.enabled;
-                    Ok(())
-                }
-                ToolForm::CronManager(form) => {
-                    config.tools.cron_manager.enabled = form.enabled;
-                    Ok(())
-                }
-                ToolForm::HeartbeatManager(form) => {
-                    config.tools.heartbeat_manager.enabled = form.enabled;
-                    Ok(())
-                }
-                ToolForm::SkillsRegistry(form) => {
-                    config.tools.skills_registry.enabled = form.enabled;
-                    Ok(())
-                }
-                ToolForm::SkillsManager(form) => {
-                    config.tools.skills_manager.enabled = form.enabled;
                     Ok(())
                 }
                 ToolForm::Memory(form) => {
@@ -978,16 +912,7 @@ impl ToolPanel {
                                 .desired_width(f32::INFINITY),
                         );
                     }
-                    ToolForm::Archive(form)
-                    | ToolForm::Voice(form)
-                    | ToolForm::Approval(form)
-                    | ToolForm::Geo(form)
-                    | ToolForm::LocalSearch(form)
-                    | ToolForm::TerminalMultiplexers(form)
-                    | ToolForm::CronManager(form)
-                    | ToolForm::HeartbeatManager(form)
-                    | ToolForm::SkillsRegistry(form)
-                    | ToolForm::SkillsManager(form) => {
+                    ToolForm::Toggle(_, form) => {
                         ui.horizontal(|ui| {
                             ui.label("enabled");
                             ui.checkbox(&mut form.enabled, "");
@@ -1226,12 +1151,12 @@ impl ToolPanel {
     fn render_inspect_window(&mut self, ui: &mut egui::Ui) {
         let Some(tool) = self
             .inspect_key
-            .and_then(|key| self.tools().into_iter().find(|item| item.key == key))
+            .and_then(|key| self.tool_by_config_key(key))
         else {
             self.inspect_key = None;
             return;
         };
-        let definition = self.runtime_definition(tool.key);
+        let definition = self.runtime_definition(&tool);
         let mut schema_json = definition
             .map(|item| serde_json::to_string_pretty(&item.parameters).unwrap_or_default())
             .unwrap_or_default();
@@ -1250,8 +1175,8 @@ impl ToolPanel {
             (window_size.y - INSPECT_WINDOW_CHROME_HEIGHT).max(INSPECT_SCHEMA_HEIGHT);
 
         let mut open = true;
-        egui::Window::new(format!("Inspect Tool: {}", tool.name))
-            .id(egui::Id::new(("tool-inspect", tool.key)))
+        egui::Window::new(format!("Inspect Tool: {}", self.tool_display_name(&tool)))
+            .id(egui::Id::new(("tool-inspect", tool.config_key)))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -1263,11 +1188,9 @@ impl ToolPanel {
             .min_height(window_size.y)
             .max_height(window_size.y)
             .show(ui.ctx(), |ui| {
-                let description = definition
-                    .map(|item| item.description.as_str())
-                    .unwrap_or(tool.description);
+                let description = self.tool_description(&tool);
                 egui::ScrollArea::vertical()
-                    .id_salt(("tool-inspect-body", tool.key))
+                    .id_salt(("tool-inspect-body", tool.config_key))
                     .max_height(inspect_body_height)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -1286,7 +1209,10 @@ impl ToolPanel {
                                         ui.set_min_height(INSPECT_DESCRIPTION_HEIGHT);
                                         ui.set_max_height(INSPECT_DESCRIPTION_HEIGHT);
                                         egui::ScrollArea::vertical()
-                                            .id_salt(("tool-inspect-description", tool.key))
+                                            .id_salt((
+                                                "tool-inspect-description",
+                                                tool.config_key,
+                                            ))
                                             .max_height(INSPECT_DESCRIPTION_HEIGHT)
                                             .auto_shrink([false, false])
                                             .show(ui, |ui| {
@@ -1304,7 +1230,10 @@ impl ToolPanel {
                                         ui.set_max_height(INSPECT_SCHEMA_HEIGHT);
                                         if definition.is_none() {
                                             egui::ScrollArea::vertical()
-                                                .id_salt(("tool-inspect-schema-empty", tool.key))
+                                                .id_salt((
+                                                    "tool-inspect-schema-empty",
+                                                    tool.config_key,
+                                                ))
                                                 .max_height(INSPECT_SCHEMA_HEIGHT)
                                                 .auto_shrink([false, false])
                                                 .show(ui, |ui| {
@@ -1316,7 +1245,7 @@ impl ToolPanel {
                                         }
 
                                         egui::ScrollArea::both()
-                                            .id_salt(("tool-inspect-schema", tool.key))
+                                            .id_salt(("tool-inspect-schema", tool.config_key))
                                             .max_height(INSPECT_SCHEMA_HEIGHT)
                                             .auto_shrink([false, false])
                                             .show(ui, |ui| {
@@ -1343,13 +1272,17 @@ impl ToolPanel {
     }
 
     fn refresh_tool_logs(&mut self, key: &'static str, notifications: &mut NotificationCenter) {
+        let Some(tool) = self.tool_by_config_key(key) else {
+            notifications.error(format!("Unknown tool config key: {key}"));
+            return;
+        };
         let filter_query = ToolAuditFilterOptionsQuery {
             started_from_ms: self.log_start_date.and_then(date_start_ms),
             started_to_ms: self.log_end_date.and_then(date_end_ms),
         };
         let query = ToolAuditQuery {
             session_key: self.log_session_filter.clone(),
-            tool_name: Some(key.to_string()),
+            tool_name: Some(tool.runtime_name.to_string()),
             started_from_ms: filter_query.started_from_ms,
             started_to_ms: filter_query.started_to_ms,
             limit: TOOL_LOG_PAGE_SIZE,
@@ -1367,7 +1300,7 @@ impl ToolPanel {
             Ok((filter_options, rows))
         }) {
             Ok((filter_options, rows)) => {
-                self.logs_key = Some(key);
+                self.logs_key = Some(tool.config_key);
                 self.log_session_options = filter_options.session_keys;
                 self.log_selected_id = rows.first().map(|row| row.id.clone());
                 self.log_rows = rows;
@@ -1411,7 +1344,7 @@ impl ToolPanel {
         let Some(tool_key) = self.logs_key else {
             return;
         };
-        let Some(tool) = self.tools().into_iter().find(|item| item.key == tool_key) else {
+        let Some(tool) = self.tool_by_config_key(tool_key) else {
             self.logs_key = None;
             self.log_rows.clear();
             self.log_selected_id = None;
@@ -1421,8 +1354,8 @@ impl ToolPanel {
 
         let window_size = viewport_ratio_window_size(ui.ctx(), LOGS_WINDOW_VIEWPORT_RATIO);
         let mut open = true;
-        egui::Window::new(format!("Tool Logs: {}", tool.name))
-            .id(egui::Id::new(("tool-logs", tool.key)))
+        egui::Window::new(format!("Tool Logs: {}", self.tool_display_name(&tool)))
+            .id(egui::Id::new(("tool-logs", tool.config_key)))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -1436,7 +1369,7 @@ impl ToolPanel {
             .show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Refresh").clicked() {
-                        self.refresh_tool_logs(tool.key, notifications);
+                        self.refresh_tool_logs(tool.config_key, notifications);
                     }
                     ui.label(format!("Rows: {}", self.log_rows.len()));
                     ui.separator();
@@ -1446,7 +1379,7 @@ impl ToolPanel {
                 ui.horizontal(|ui| {
                     ui.label("session");
                     let combo_resp =
-                        egui::ComboBox::from_id_salt(("tool-log-session-filter", tool.key))
+                        egui::ComboBox::from_id_salt(("tool-log-session-filter", tool.config_key))
                             .selected_text(self.log_session_filter.as_deref().unwrap_or("All"))
                             .width(220.0)
                             .show_ui(ui, |ui| {
@@ -1485,7 +1418,7 @@ impl ToolPanel {
                     }
 
                     ui.label("status");
-                    egui::ComboBox::from_id_salt(("tool-log-status-filter", tool.key))
+                    egui::ComboBox::from_id_salt(("tool-log-status-filter", tool.config_key))
                         .selected_text(match self.log_status_filter {
                             LogStatusFilter::All => "All",
                             LogStatusFilter::FailedOnly => "Failed only",
@@ -1505,7 +1438,7 @@ impl ToolPanel {
                 });
                 ui.separator();
                 if need_refresh {
-                    self.refresh_tool_logs(tool.key, notifications);
+                    self.refresh_tool_logs(tool.config_key, notifications);
                 }
                 let filtered_rows = self.filtered_log_rows();
                 if filtered_rows.is_empty() {
@@ -1513,7 +1446,7 @@ impl ToolPanel {
                     return;
                 }
                 egui::ScrollArea::both()
-                    .id_salt(("tool-logs-list", tool.key))
+                    .id_salt(("tool-logs-list", tool.config_key))
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let row_height = ui.spacing().interact_size.y;
@@ -1530,7 +1463,7 @@ impl ToolPanel {
                                 header.col(|ui| {
                                     if ui.button(self.log_sort_label()).clicked() {
                                         self.toggle_log_sort_order();
-                                        self.refresh_tool_logs(tool.key, notifications);
+                                        self.refresh_tool_logs(tool.config_key, notifications);
                                     }
                                 });
                                 header.col(|ui| {
@@ -1747,17 +1680,13 @@ impl PanelRenderer for ToolPanel {
                         body.rows(row_height, tools.len(), |mut row| {
                             let tool = tools[row.index()];
                             row.col(|ui| {
-                                ui.monospace(tool.name);
+                                ui.monospace(self.tool_display_name(&tool));
                             });
                             row.col(|ui| {
                                 render_boolean_status(ui, tool.enabled, "Enabled", "Disabled");
                             });
                             row.col(|ui| {
-                                ui.label(
-                                    self.runtime_definition(tool.key)
-                                        .map(|item| item.description.as_str())
-                                        .unwrap_or(tool.description),
-                                );
+                                ui.label(self.tool_description(&tool));
                             });
 
                             let response = row.response();
@@ -1766,18 +1695,18 @@ impl PanelRenderer for ToolPanel {
                                     .button(format!("{} Edit", regular::PENCIL_SIMPLE))
                                     .clicked()
                                 {
-                                    edit_key = Some(tool.key);
+                                    edit_key = Some(tool.config_key);
                                     ui.close();
                                 }
                                 if ui.button(format!("{} Inspect", regular::EYE)).clicked() {
-                                    inspect_key = Some(tool.key);
+                                    inspect_key = Some(tool.config_key);
                                     ui.close();
                                 }
                                 if ui
                                     .button(format!("{} Logs", regular::LIST_BULLETS))
                                     .clicked()
                                 {
-                                    logs_key = Some(tool.key);
+                                    logs_key = Some(tool.config_key);
                                     ui.close();
                                 }
                             });
@@ -2316,9 +2245,50 @@ mod tests {
     fn tool_descriptors_are_sorted_alphabetically() {
         let panel = ToolPanel::default();
         let tools = panel.tools();
-        let names = tools.iter().map(|tool| tool.name).collect::<Vec<_>>();
+        let names = tools
+            .iter()
+            .map(|tool| tool.runtime_name)
+            .collect::<Vec<_>>();
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
+    }
+
+    #[test]
+    fn runtime_definition_uses_runtime_name_override() {
+        let mut panel = ToolPanel::default();
+        panel.runtime_definitions = vec![ToolDefinition {
+            name: "terminal_multiplexer".to_string(),
+            description: "tmux metadata".to_string(),
+            parameters: serde_json::json!({}),
+        }];
+
+        let tool = panel
+            .tool_by_config_key("terminal_multiplexers")
+            .expect("terminal multiplexers descriptor should exist");
+
+        let definition = panel
+            .runtime_definition(&tool)
+            .expect("runtime definition should be matched by runtime name");
+
+        assert_eq!(definition.name, "terminal_multiplexer");
+        assert_eq!(panel.tool_display_name(&tool), "terminal_multiplexer");
+        assert_eq!(panel.tool_description(&tool), "tmux metadata");
+    }
+
+    #[test]
+    fn open_editor_routes_toggle_tools_through_toggle_form() {
+        let mut panel = ToolPanel::default();
+        panel.config.tools.skills_registry.enabled = true;
+
+        panel.open_editor("skills_registry");
+
+        let Some(ToolForm::Toggle(kind, form)) = panel.form else {
+            panic!("expected toggle form");
+        };
+
+        assert_eq!(kind, ToggleToolKind::SkillsRegistry);
+        assert_eq!(kind.title(), "Edit Tool: skills_registry");
+        assert!(form.enabled);
     }
 }
