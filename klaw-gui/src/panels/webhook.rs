@@ -698,6 +698,8 @@ impl PanelRenderer for WebhookPanel {
         }
 
         ui.heading(ctx.tab_title);
+        render_webhook_config_summary(ui, &self.config);
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
                 self.refresh_gateway_status();
@@ -717,83 +719,95 @@ impl PanelRenderer for WebhookPanel {
         });
 
         ui.separator();
-        render_webhook_config_summary(ui, &self.config, self.gateway_status.as_ref());
-        ui.separator();
         let mut need_refresh = false;
-        ui.horizontal(|ui| {
-            ui.label("type");
-            let events_selected = self.query_kind == WebhookQueryKind::Events;
-            if ui.selectable_label(events_selected, "Events").clicked() && !events_selected {
-                self.query_kind = WebhookQueryKind::Events;
-                self.page = 1;
-                self.selected_id = None;
-                self.summary_popup = None;
-                need_refresh = true;
-            }
-            let agents_selected = self.query_kind == WebhookQueryKind::Agents;
-            if ui.selectable_label(agents_selected, "Agents").clicked() && !agents_selected {
-                self.query_kind = WebhookQueryKind::Agents;
-                self.page = 1;
-                self.selected_id = None;
-                self.summary_popup = None;
-                need_refresh = true;
-            }
-        });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("type");
+                let events_selected = self.query_kind == WebhookQueryKind::Events;
+                if ui.selectable_label(events_selected, "Events").clicked() && !events_selected {
+                    self.query_kind = WebhookQueryKind::Events;
+                    self.page = 1;
+                    self.selected_id = None;
+                    self.summary_popup = None;
+                    need_refresh = true;
+                }
+                let agents_selected = self.query_kind == WebhookQueryKind::Agents;
+                if ui.selectable_label(agents_selected, "Agents").clicked() && !agents_selected {
+                    self.query_kind = WebhookQueryKind::Agents;
+                    self.page = 1;
+                    self.selected_id = None;
+                    self.summary_popup = None;
+                    need_refresh = true;
+                }
+            });
             if self.query_kind == WebhookQueryKind::Events {
-                ui.label("source");
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("source");
+                    if ui
+                        .add_sized(
+                            [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.source_filter),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                });
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(query_mode_primary_label(self.query_kind));
                 if ui
                     .add_sized(
                         [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.source_filter),
+                        egui::TextEdit::singleline(&mut self.event_type_filter),
                     )
                     .changed()
                 {
                     need_refresh = true;
                 }
-            }
-            ui.label(query_mode_primary_label(self.query_kind));
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.event_type_filter),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("session");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.session_filter),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-            ui.label("status");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.status_filter),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("start date");
-            if render_date_picker(ui, &mut self.start_date, "webhook-start-date") {
-                need_refresh = true;
-            }
-            ui.label("end date");
-            if render_date_picker(ui, &mut self.end_date, "webhook-end-date") {
-                need_refresh = true;
-            }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("session");
+                if ui
+                    .add_sized(
+                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut self.session_filter),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("status");
+                if ui
+                    .add_sized(
+                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut self.status_filter),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("start date");
+                if render_date_picker(ui, &mut self.start_date, "webhook-start-date") {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("end date");
+                if render_date_picker(ui, &mut self.end_date, "webhook-end-date") {
+                    need_refresh = true;
+                }
+            });
         });
         ui.horizontal(|ui| {
             ui.label("page");
@@ -1464,37 +1478,19 @@ impl PanelRenderer for WebhookPanel {
     }
 }
 
-fn render_webhook_config_summary(
-    ui: &mut egui::Ui,
-    config: &AppConfig,
-    _gateway_status: Option<&GatewayStatusSnapshot>,
-) {
+fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig) {
     let webhook = &config.gateway.webhook;
 
-    egui::Grid::new("webhook-config-summary-grid")
-        .num_columns(2)
-        .spacing([16.0, 8.0])
-        .show(ui, |ui| {
-            ui.label("Webhook Enabled");
-            render_boolean_status(ui, webhook.enabled);
-            ui.end_row();
-
-            ui.label("Events Enabled");
-            render_boolean_status(ui, webhook.events.enabled);
-            ui.end_row();
-
-            ui.label("Events Path");
-            ui.monospace(WEBHOOK_EVENTS_PATH);
-            ui.end_row();
-
-            ui.label("Agents Enabled");
-            render_boolean_status(ui, webhook.agents.enabled);
-            ui.end_row();
-
-            ui.label("Agents Path");
-            ui.monospace(WEBHOOK_AGENTS_PATH);
-            ui.end_row();
-        });
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Webhook");
+        render_boolean_status(ui, webhook.enabled);
+        ui.separator();
+        ui.label("Events");
+        render_boolean_status(ui, webhook.events.enabled);
+        ui.separator();
+        ui.label("Agents");
+        render_boolean_status(ui, webhook.agents.enabled);
+    });
 }
 
 fn webhook_summary_state(item: &WebhookListRow) -> Option<WebhookSummaryState> {
