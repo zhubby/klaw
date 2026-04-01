@@ -330,8 +330,8 @@ impl ShellUi {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(update) = self.release_update.as_ref() {
                         let version_label = egui::RichText::new(format!(
-                            "{} v{}",
-                            regular::WARNING_CIRCLE,
+                            "{} Update v{}",
+                            regular::DOWNLOAD_SIMPLE,
                             env!("CARGO_PKG_VERSION")
                         ))
                         .color(ui.visuals().warn_fg_color);
