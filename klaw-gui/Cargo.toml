@@ -38,6 +38,8 @@ klaw-voice = { workspace = true }
 klaw-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+reqwest = { workspace = true }
+semver = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
 sysinfo = { workspace = true }

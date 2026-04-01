@@ -4,6 +4,7 @@ mod domain;
 mod icon;
 mod notifications;
 mod panels;
+mod release_check;
 mod runtime_bridge;
 mod settings;
 mod state;
