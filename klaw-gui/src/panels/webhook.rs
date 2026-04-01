@@ -720,80 +720,94 @@ impl PanelRenderer for WebhookPanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal(|ui| {
-            ui.label("type");
-            let events_selected = self.query_kind == WebhookQueryKind::Events;
-            if ui.selectable_label(events_selected, "Events").clicked() && !events_selected {
-                self.query_kind = WebhookQueryKind::Events;
-                self.page = 1;
-                self.selected_id = None;
-                self.summary_popup = None;
-                need_refresh = true;
-            }
-            let agents_selected = self.query_kind == WebhookQueryKind::Agents;
-            if ui.selectable_label(agents_selected, "Agents").clicked() && !agents_selected {
-                self.query_kind = WebhookQueryKind::Agents;
-                self.page = 1;
-                self.selected_id = None;
-                self.summary_popup = None;
-                need_refresh = true;
-            }
-        });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("type");
+                let events_selected = self.query_kind == WebhookQueryKind::Events;
+                if ui.selectable_label(events_selected, "Events").clicked() && !events_selected {
+                    self.query_kind = WebhookQueryKind::Events;
+                    self.page = 1;
+                    self.selected_id = None;
+                    self.summary_popup = None;
+                    need_refresh = true;
+                }
+                let agents_selected = self.query_kind == WebhookQueryKind::Agents;
+                if ui.selectable_label(agents_selected, "Agents").clicked() && !agents_selected {
+                    self.query_kind = WebhookQueryKind::Agents;
+                    self.page = 1;
+                    self.selected_id = None;
+                    self.summary_popup = None;
+                    need_refresh = true;
+                }
+            });
             if self.query_kind == WebhookQueryKind::Events {
-                ui.label("source");
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("source");
+                    if ui
+                        .add_sized(
+                            [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.source_filter),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                });
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(query_mode_primary_label(self.query_kind));
                 if ui
                     .add_sized(
                         [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.source_filter),
+                        egui::TextEdit::singleline(&mut self.event_type_filter),
                     )
                     .changed()
                 {
                     need_refresh = true;
                 }
-            }
-            ui.label(query_mode_primary_label(self.query_kind));
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.event_type_filter),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("session");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.session_filter),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-            ui.label("status");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.status_filter),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("start date");
-            if render_date_picker(ui, &mut self.start_date, "webhook-start-date") {
-                need_refresh = true;
-            }
-            ui.label("end date");
-            if render_date_picker(ui, &mut self.end_date, "webhook-end-date") {
-                need_refresh = true;
-            }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("session");
+                if ui
+                    .add_sized(
+                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut self.session_filter),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("status");
+                if ui
+                    .add_sized(
+                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut self.status_filter),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("start date");
+                if render_date_picker(ui, &mut self.start_date, "webhook-start-date") {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("end date");
+                if render_date_picker(ui, &mut self.end_date, "webhook-end-date") {
+                    need_refresh = true;
+                }
+            });
         });
         ui.horizontal(|ui| {
             ui.label("page");

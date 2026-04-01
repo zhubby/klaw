@@ -131,127 +131,143 @@ impl PanelRenderer for ArchivePanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal(|ui| {
-            ui.label("session_key");
-            let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
-            let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
-                .selected_text(selected_text)
-                .width(FILTER_INPUT_WIDTH)
-                .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    if ui
-                        .selectable_value(&mut self.session_key_filter, None, "All")
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                    for key in &self.session_keys {
+        ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("session_key");
+                let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
+                let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
+                    .selected_text(selected_text)
+                    .width(FILTER_INPUT_WIDTH)
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
                         if ui
-                            .selectable_value(&mut self.session_key_filter, Some(key.clone()), key)
+                            .selectable_value(&mut self.session_key_filter, None, "All")
                             .changed()
                         {
                             changed = true;
                         }
-                    }
-                    changed
-                });
-            if combo_resp.inner.unwrap_or(false) {
-                need_refresh = true;
-            }
-            ui.label("chat_id");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.chat_id_filter),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
+                        for key in &self.session_keys {
+                            if ui
+                                .selectable_value(
+                                    &mut self.session_key_filter,
+                                    Some(key.clone()),
+                                    key,
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        }
+                        changed
+                    });
+                if combo_resp.inner.unwrap_or(false) {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("chat_id");
+                if ui
+                    .add_sized(
+                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut self.chat_id_filter),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("source_kind");
+                let selected_text = self.source_kind_filter.map_or("All", |s| s.as_str());
+                let combo_resp = egui::ComboBox::from_id_salt("source_kind_filter")
+                    .selected_text(selected_text)
+                    .width(FILTER_INPUT_WIDTH)
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        if ui
+                            .selectable_value(&mut self.source_kind_filter, None, "All")
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                        for kind in [
+                            ArchiveSourceKind::UserUpload,
+                            ArchiveSourceKind::ChannelInbound,
+                            ArchiveSourceKind::ModelGenerated,
+                        ] {
+                            if ui
+                                .selectable_value(
+                                    &mut self.source_kind_filter,
+                                    Some(kind),
+                                    kind.as_str(),
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        }
+                        changed
+                    });
+                if combo_resp.inner.unwrap_or(false) {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("media_kind");
+                let selected_text = self.media_kind_filter.map_or("All", |s| s.as_str());
+                let combo_resp = egui::ComboBox::from_id_salt("media_kind_filter")
+                    .selected_text(selected_text)
+                    .width(FILTER_INPUT_WIDTH)
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        if ui
+                            .selectable_value(&mut self.media_kind_filter, None, "All")
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                        for kind in [
+                            ArchiveMediaKind::Pdf,
+                            ArchiveMediaKind::Image,
+                            ArchiveMediaKind::Video,
+                            ArchiveMediaKind::Audio,
+                            ArchiveMediaKind::Other,
+                        ] {
+                            if ui
+                                .selectable_value(
+                                    &mut self.media_kind_filter,
+                                    Some(kind),
+                                    kind.as_str(),
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        }
+                        changed
+                    });
+                if combo_resp.inner.unwrap_or(false) {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("filename");
+                if ui
+                    .add_sized(
+                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut self.filename_filter),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
         });
         ui.horizontal(|ui| {
-            ui.label("source_kind");
-            let selected_text = self.source_kind_filter.map_or("All", |s| s.as_str());
-            let combo_resp = egui::ComboBox::from_id_salt("source_kind_filter")
-                .selected_text(selected_text)
-                .width(FILTER_INPUT_WIDTH)
-                .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    if ui
-                        .selectable_value(&mut self.source_kind_filter, None, "All")
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                    for kind in [
-                        ArchiveSourceKind::UserUpload,
-                        ArchiveSourceKind::ChannelInbound,
-                        ArchiveSourceKind::ModelGenerated,
-                    ] {
-                        if ui
-                            .selectable_value(
-                                &mut self.source_kind_filter,
-                                Some(kind),
-                                kind.as_str(),
-                            )
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                    }
-                    changed
-                });
-            if combo_resp.inner.unwrap_or(false) {
-                need_refresh = true;
-            }
-            ui.label("media_kind");
-            let selected_text = self.media_kind_filter.map_or("All", |s| s.as_str());
-            let combo_resp = egui::ComboBox::from_id_salt("media_kind_filter")
-                .selected_text(selected_text)
-                .width(FILTER_INPUT_WIDTH)
-                .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    if ui
-                        .selectable_value(&mut self.media_kind_filter, None, "All")
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                    for kind in [
-                        ArchiveMediaKind::Pdf,
-                        ArchiveMediaKind::Image,
-                        ArchiveMediaKind::Video,
-                        ArchiveMediaKind::Audio,
-                        ArchiveMediaKind::Other,
-                    ] {
-                        if ui
-                            .selectable_value(
-                                &mut self.media_kind_filter,
-                                Some(kind),
-                                kind.as_str(),
-                            )
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                    }
-                    changed
-                });
-            if combo_resp.inner.unwrap_or(false) {
-                need_refresh = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("filename");
-            if ui
-                .add_sized(
-                    [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::TextEdit::singleline(&mut self.filename_filter),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
             ui.label("page");
             if ui
                 .add_sized(

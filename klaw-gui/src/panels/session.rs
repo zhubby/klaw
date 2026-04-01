@@ -157,47 +157,53 @@ impl PanelRenderer for SessionPanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal(|ui| {
-            ui.label("start date");
-            if render_date_picker(ui, &mut self.start_date, "session-start-date") {
-                need_refresh = true;
-            }
-            ui.label("end date");
-            if render_date_picker(ui, &mut self.end_date, "session-end-date") {
-                need_refresh = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("channel");
-            let combo_resp = egui::ComboBox::from_id_salt("session-channel-filter")
-                .selected_text(self.channel_filter.as_deref().unwrap_or("All"))
-                .width(140.0)
-                .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    if ui
-                        .selectable_value(&mut self.channel_filter, None, "All")
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                    for channel in &self.channels {
+        ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("start date");
+                if render_date_picker(ui, &mut self.start_date, "session-start-date") {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("end date");
+                if render_date_picker(ui, &mut self.end_date, "session-end-date") {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("channel");
+                let combo_resp = egui::ComboBox::from_id_salt("session-channel-filter")
+                    .selected_text(self.channel_filter.as_deref().unwrap_or("All"))
+                    .width(140.0)
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
                         if ui
-                            .selectable_value(
-                                &mut self.channel_filter,
-                                Some(channel.clone()),
-                                channel,
-                            )
+                            .selectable_value(&mut self.channel_filter, None, "All")
                             .changed()
                         {
                             changed = true;
                         }
-                    }
-                    changed
-                });
-            if combo_resp.inner.unwrap_or(false) {
-                self.page = 1;
-                need_refresh = true;
-            }
+                        for channel in &self.channels {
+                            if ui
+                                .selectable_value(
+                                    &mut self.channel_filter,
+                                    Some(channel.clone()),
+                                    channel,
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        }
+                        changed
+                    });
+                if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
+                    need_refresh = true;
+                }
+            });
         });
         ui.horizontal(|ui| {
             ui.label("page");
