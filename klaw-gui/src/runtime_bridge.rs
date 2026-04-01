@@ -436,18 +436,7 @@ pub fn begin_channel_status_request() -> RuntimeRequestHandle<Vec<ChannelInstanc
 }
 
 pub fn request_restart_channel(instance_key: &str) -> Result<ChannelSyncResult, String> {
-    let key = ChannelInstanceKey::new(
-        match instance_key.split(':').next() {
-            Some("dingtalk") => klaw_channel::ChannelKind::Dingtalk,
-            Some("telegram") => klaw_channel::ChannelKind::Telegram,
-            Some("feishu") => klaw_channel::ChannelKind::Feishu,
-            _ => return Err(format!("invalid channel instance key '{instance_key}'")),
-        },
-        instance_key
-            .split_once(':')
-            .map(|(_, id)| id)
-            .unwrap_or_default(),
-    );
+    let key = ChannelInstanceKey::parse(instance_key)?;
     let sender = sender_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

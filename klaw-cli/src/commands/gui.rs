@@ -250,25 +250,16 @@ impl GuiCommand {
                                                             let snapshot = store.snapshot();
                                                             match ChannelConfigSnapshot::from_channels_config(&snapshot.config.channels) {
                                                                 Ok(channel_snapshot) => {
-                                                                    let Some((kind_raw, id)) = instance_key.split_once(':') else {
-                                                                        let _ = response.send(Err(format!("invalid channel instance key '{}'", instance_key)));
-                                                                        return;
-                                                                    };
-                                                                    let kind = match kind_raw {
-                                                                        "dingtalk" => klaw_channel::ChannelKind::Dingtalk,
-                                                                        "telegram" => klaw_channel::ChannelKind::Telegram,
-                                                                        "feishu" => klaw_channel::ChannelKind::Feishu,
-                                                                        _ => {
-                                                                            let _ = response.send(Err(format!("invalid channel kind '{}'", kind_raw)));
-                                                                            return;
+                                                                    match klaw_channel::ChannelInstanceKey::parse(&instance_key) {
+                                                                        Ok(key) => {
+                                                                            channel_manager
+                                                                                .lock()
+                                                                                .await
+                                                                                .restart_channel(&key, &channel_snapshot)
+                                                                                .await
                                                                         }
-                                                                    };
-                                                                    let key = klaw_channel::ChannelInstanceKey::new(kind, id);
-                                                                    channel_manager
-                                                                        .lock()
-                                                                        .await
-                                                                        .restart_channel(&key, &channel_snapshot)
-                                                                        .await
+                                                                        Err(err) => Err(err),
+                                                                    }
                                                                 }
                                                                 Err(err) => Err(err),
                                                             }

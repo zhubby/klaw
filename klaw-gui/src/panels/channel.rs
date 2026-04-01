@@ -328,20 +328,16 @@ impl ChannelPanel {
             return;
         };
         self.restart_request = None;
+        let target = self
+            .restart_target_key
+            .take()
+            .unwrap_or_else(|| "selected channel".to_string());
         match result {
             Ok(sync_result) => {
                 self.apply_runtime_statuses(&sync_result.statuses);
-                let target = self
-                    .restart_target_key
-                    .take()
-                    .unwrap_or_else(|| "selected channel".to_string());
                 notifications.success(format!("Restarted channel {}", target));
             }
             Err(err) => {
-                let target = self
-                    .restart_target_key
-                    .take()
-                    .unwrap_or_else(|| "selected channel".to_string());
                 notifications.error(format!("Failed to restart {}: {}", target, err));
             }
         }
@@ -1134,11 +1130,7 @@ impl PanelRenderer for ChannelPanel {
                                     if ui
                                         .button(format!(
                                             "{} {}",
-                                            if enabled {
-                                                regular::POWER
-                                            } else {
-                                                regular::POWER
-                                            },
+                                            regular::POWER,
                                             if enabled { "Disable" } else { "Enable" }
                                         ))
                                         .clicked()

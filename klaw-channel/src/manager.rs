@@ -44,6 +44,20 @@ impl ChannelInstanceKey {
         Self(format!("{}:{}", kind.as_str(), id.as_ref().trim()))
     }
 
+    /// Parses a stable instance key (`"{kind}:{id}"`).
+    pub fn parse(instance_key: &str) -> Result<Self, String> {
+        let (kind_raw, id) = instance_key
+            .split_once(':')
+            .ok_or_else(|| format!("invalid channel instance key '{instance_key}'"))?;
+        let kind = match kind_raw {
+            "dingtalk" => ChannelKind::Dingtalk,
+            "telegram" => ChannelKind::Telegram,
+            "feishu" => ChannelKind::Feishu,
+            _ => return Err(format!("invalid channel kind '{kind_raw}'")),
+        };
+        Ok(Self::new(kind, id))
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -104,20 +118,18 @@ impl ChannelConfigSnapshot {
         let mut instances = Vec::new();
 
         for config in &channels.dingtalk {
-            let instance = ChannelInstanceConfig::Dingtalk(config.clone());
-            let key = instance.key();
-            if !keys.insert(key.clone()) {
-                return Err(format!("duplicated channel instance '{}'", key.as_str()));
-            }
-            instances.push(instance);
+            push_unique_instance(
+                &mut instances,
+                &mut keys,
+                ChannelInstanceConfig::Dingtalk(config.clone()),
+            )?;
         }
         for config in &channels.telegram {
-            let instance = ChannelInstanceConfig::Telegram(config.clone());
-            let key = instance.key();
-            if !keys.insert(key.clone()) {
-                return Err(format!("duplicated channel instance '{}'", key.as_str()));
-            }
-            instances.push(instance);
+            push_unique_instance(
+                &mut instances,
+                &mut keys,
+                ChannelInstanceConfig::Telegram(config.clone()),
+            )?;
         }
 
         Ok(Self { instances })
@@ -225,13 +237,7 @@ impl ChannelSupervisorReporter {
     }
 
     pub fn record_activity(&self, event: impl Into<String>) {
-        self.update_state(
-            ChannelLifecycleState::Running,
-            None,
-            Some(event.into()),
-            true,
-            None,
-        );
+        self.mark_running(event);
     }
 
     pub fn mark_degraded(&self, reason: impl Into<String>) {
@@ -396,11 +402,11 @@ where
         let plan = plan_channel_updates(&current, snapshot.instances());
 
         for key in &plan.stop {
-            self.stop_channel(key, false).await;
+            self.stop_channel(key).await;
         }
 
         for config in &plan.restart {
-            self.stop_channel(&config.key(), false).await;
+            self.stop_channel(&config.key()).await;
         }
 
         for config in plan.start.iter().chain(plan.restart.iter()) {
@@ -425,7 +431,7 @@ where
     pub async fn shutdown_all(&mut self) {
         let keys = self.channels.keys().cloned().collect::<Vec<_>>();
         for key in keys {
-            self.stop_channel(&key, true).await;
+            self.stop_channel(&key).await;
         }
     }
 
@@ -447,7 +453,7 @@ where
         }
 
         if self.channels.contains_key(key) {
-            self.stop_channel(key, false).await;
+            self.stop_channel(key).await;
         }
         self.start_channel(config);
         self.reconcile_statuses(snapshot);
@@ -566,7 +572,7 @@ where
         );
     }
 
-    async fn stop_channel(&mut self, key: &ChannelInstanceKey, shutdown_all: bool) {
+    async fn stop_channel(&mut self, key: &ChannelInstanceKey) {
         let Some(managed) = self.channels.remove(key) else {
             return;
         };
@@ -599,9 +605,6 @@ where
                 None,
             ),
         );
-        if shutdown_all {
-            return;
-        }
     }
 
     fn reconcile_statuses(&mut self, snapshot: &ChannelConfigSnapshot) {
@@ -627,12 +630,14 @@ where
                     }
                 }
                 None => {
-                    let state = if config.enabled() {
-                        ChannelLifecycleState::Stopped
-                    } else {
-                        ChannelLifecycleState::Stopped
-                    };
-                    guard.insert(key, ChannelInstanceStatus::from_config(config, state, None));
+                    guard.insert(
+                        key,
+                        ChannelInstanceStatus::from_config(
+                            config,
+                            ChannelLifecycleState::Stopped,
+                            None,
+                        ),
+                    );
                 }
             }
         }
@@ -657,6 +662,19 @@ struct ChannelSyncPlan {
     start: Vec<ChannelInstanceConfig>,
     restart: Vec<ChannelInstanceConfig>,
     stop: Vec<ChannelInstanceKey>,
+}
+
+fn push_unique_instance(
+    instances: &mut Vec<ChannelInstanceConfig>,
+    keys: &mut BTreeSet<ChannelInstanceKey>,
+    instance: ChannelInstanceConfig,
+) -> Result<(), String> {
+    let key = instance.key();
+    if !keys.insert(key.clone()) {
+        return Err(format!("duplicated channel instance '{}'", key.as_str()));
+    }
+    instances.push(instance);
+    Ok(())
 }
 
 fn plan_channel_updates(
@@ -1019,6 +1037,18 @@ mod tests {
         .expect_err("duplicate ids should fail");
 
         assert!(err.contains("duplicated channel instance"));
+    }
+
+    #[test]
+    fn channel_instance_key_parse_round_trips() {
+        let key = ChannelInstanceKey::new(ChannelKind::Dingtalk, "alpha");
+        assert_eq!(ChannelInstanceKey::parse(key.as_str()).expect("parse"), key);
+    }
+
+    #[test]
+    fn channel_instance_key_parse_rejects_unknown_kind() {
+        let err = ChannelInstanceKey::parse("unknown:x").expect_err("unknown kind");
+        assert!(err.contains("invalid channel kind"));
     }
 
     #[test]

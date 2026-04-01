@@ -45,6 +45,24 @@ const WS_STALL_TIMEOUT: Duration = Duration::from_secs(35);
 const EVENT_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const EVENT_DEDUP_MAX_ENTRIES: usize = 20_000;
 
+/// Returns `true` when shutdown was requested during the delay.
+async fn wait_reconnect_delay_or_shutdown(
+    shutdown: &mut watch::Receiver<bool>,
+    delay: Duration,
+) -> bool {
+    tokio::select! {
+        _ = time::sleep(delay) => false,
+        changed = shutdown.changed() => {
+            if changed.is_ok() && *shutdown.borrow() {
+                info!("dingtalk shutdown requested while reconnect waiting");
+                true
+            } else {
+                false
+            }
+        }
+    }
+}
+
 fn callback_runtime_metadata(
     session_webhook: Option<&str>,
     bot_title: &str,
@@ -145,14 +163,8 @@ impl DingtalkChannel {
                     let message = format!("failed to open dingtalk stream connection: {err}");
                     reporter.mark_reconnecting(reconnect_attempt, message.clone());
                     warn!(error = %err, "failed to open dingtalk stream connection");
-                    tokio::select! {
-                        _ = time::sleep(RECONNECT_DELAY) => {}
-                        changed = shutdown.changed() => {
-                            if changed.is_ok() && *shutdown.borrow() {
-                                info!("dingtalk shutdown requested while reconnect waiting");
-                                return Ok(());
-                            }
-                        }
+                    if wait_reconnect_delay_or_shutdown(shutdown, RECONNECT_DELAY).await {
+                        return Ok(());
                     }
                     continue;
                 }
@@ -174,14 +186,8 @@ impl DingtalkChannel {
                         timeout_secs = CONNECT_TIMEOUT.as_secs(),
                         "dingtalk stream connection timed out"
                     );
-                    tokio::select! {
-                        _ = time::sleep(RECONNECT_DELAY) => {}
-                        changed = shutdown.changed() => {
-                            if changed.is_ok() && *shutdown.borrow() {
-                                info!("dingtalk shutdown requested while reconnect waiting");
-                                return Ok(());
-                            }
-                        }
+                    if wait_reconnect_delay_or_shutdown(shutdown, RECONNECT_DELAY).await {
+                        return Ok(());
                     }
                     continue;
                 }
@@ -343,14 +349,8 @@ impl DingtalkChannel {
                 }
             }
 
-            tokio::select! {
-                _ = time::sleep(RECONNECT_DELAY) => {}
-                changed = shutdown.changed() => {
-                    if changed.is_ok() && *shutdown.borrow() {
-                        info!("dingtalk shutdown requested while reconnect waiting");
-                        return Ok(());
-                    }
-                }
+            if wait_reconnect_delay_or_shutdown(shutdown, RECONNECT_DELAY).await {
+                return Ok(());
             }
         }
     }
