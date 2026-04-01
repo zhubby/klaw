@@ -95,6 +95,7 @@ tar = "0.4"
 zstd = "0.13"
 hostname = "0.4"
 regex = "1"
+semver = "1"
 vergen = "9.1.0"
 vergen-gitcl = "9.1.0"
 

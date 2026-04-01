@@ -2,6 +2,7 @@ use crate::autostart::{self, ReconcileOutcome};
 use crate::icon;
 use crate::notifications::NotificationCenter;
 use crate::panels::PanelRegistry;
+use crate::release_check::{ReleaseCheckOutcome, ReleaseUpdateInfo, check_for_release_update};
 use crate::runtime_bridge::{
     ProviderRuntimeSnapshot, RuntimeRequestHandle, begin_provider_status_request,
 };
@@ -36,6 +37,8 @@ pub struct ShellUi {
     pending_provider_override_target: Option<Option<String>>,
     last_provider_sync_at: Instant,
     provider_status_request: Option<RuntimeRequestHandle<ProviderRuntimeSnapshot>>,
+    release_check_request: Option<Receiver<Result<ReleaseCheckOutcome, String>>>,
+    release_update: Option<ReleaseUpdateInfo>,
     sync_supervisor: SyncSupervisor,
 }
 
@@ -81,6 +84,8 @@ impl Default for ShellUi {
             pending_provider_override_target: None,
             last_provider_sync_at: Instant::now() - PROVIDER_SYNC_INTERVAL,
             provider_status_request: None,
+            release_check_request: Some(spawn_release_check()),
+            release_update: None,
             sync_supervisor: SyncSupervisor::default(),
         }
     }
@@ -150,6 +155,36 @@ impl ShellUi {
         self.provider_default_models = snapshot.provider_default_models;
     }
 
+    fn poll_release_check(&mut self) {
+        let Some(rx) = self.release_check_request.as_ref() else {
+            return;
+        };
+
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.release_check_request = None;
+                tracing::warn!("release update check worker disconnected before sending a result");
+                return;
+            }
+        };
+        self.release_check_request = None;
+
+        match result {
+            Ok(ReleaseCheckOutcome::UpToDate) => {
+                self.release_update = None;
+            }
+            Ok(ReleaseCheckOutcome::UpdateAvailable(update)) => {
+                self.release_update = Some(update);
+            }
+            Err(err) => {
+                self.release_update = None;
+                tracing::warn!("release update check failed: {err}");
+            }
+        }
+    }
+
     fn about_icon_texture(&mut self, ctx: &egui::Context) -> Option<&egui::TextureHandle> {
         if self.about_icon.is_none() && !self.about_icon_load_failed {
             match icon::about_icon_texture(ctx) {
@@ -168,6 +203,7 @@ impl ShellUi {
         let mut actions = Vec::new();
         self.panels.tick(ctx);
         self.sync_provider_choices();
+        self.poll_release_check();
         if self.should_emit_provider_override_action(state) {
             actions.push(UiAction::SetRuntimeProviderOverride(
                 self.runtime_provider_override.clone(),
@@ -175,6 +211,9 @@ impl ShellUi {
         }
         self.sync_supervisor.tick(&mut self.notifications);
         ctx.request_repaint_after(SYNC_POLL_INTERVAL);
+        if self.release_check_request.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
 
         egui::TopBottomPanel::top("klaw-menu-bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -289,8 +328,23 @@ impl ShellUi {
                     });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let version_label = format!("{} v{}", regular::INFO, env!("CARGO_PKG_VERSION"));
-                    ui.label(version_label);
+                    if let Some(update) = self.release_update.as_ref() {
+                        let version_label = egui::RichText::new(format!(
+                            "{} v{}",
+                            regular::WARNING_CIRCLE,
+                            env!("CARGO_PKG_VERSION")
+                        ))
+                        .color(ui.visuals().warn_fg_color);
+                        ui.hyperlink_to(version_label, &update.release_url)
+                            .on_hover_text(format!(
+                                "发现新版本：v{} -> v{}\n{}\n点击打开 Release 页面",
+                                update.current_version, update.latest_version, update.release_name
+                            ));
+                    } else {
+                        let version_label =
+                            format!("{} v{}", regular::INFO, env!("CARGO_PKG_VERSION"));
+                        ui.label(version_label);
+                    }
 
                     ui.separator();
                     if self.provider_ids.is_empty() {
@@ -398,6 +452,14 @@ impl ShellUi {
 
         actions
     }
+}
+
+fn spawn_release_check() -> Receiver<Result<ReleaseCheckOutcome, String>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(check_for_release_update());
+    });
+    rx
 }
 
 #[derive(Default)]
