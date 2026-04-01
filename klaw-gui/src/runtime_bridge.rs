@@ -1,5 +1,5 @@
 use klaw_acp::{AcpRuntimeSnapshot, AcpSyncResult};
-use klaw_channel::ChannelSyncResult;
+use klaw_channel::{ChannelInstanceKey, ChannelInstanceStatus, ChannelSyncResult};
 use klaw_config::TailscaleMode;
 use klaw_gateway::{GatewayRuntimeInfo, TailscaleHostInfo};
 use klaw_llm::ToolDefinition;
@@ -54,6 +54,13 @@ pub enum RuntimeCommand {
         response: mpsc::Sender<Result<ProviderRuntimeSnapshot, String>>,
     },
     SyncChannels {
+        response: mpsc::Sender<Result<ChannelSyncResult, String>>,
+    },
+    GetChannelStatus {
+        response: mpsc::Sender<Result<Vec<ChannelInstanceStatus>, String>>,
+    },
+    RestartChannel {
+        instance_key: String,
         response: mpsc::Sender<Result<ChannelSyncResult, String>>,
     },
     SyncMcp {
@@ -406,6 +413,61 @@ pub fn request_sync_channels() -> Result<ChannelSyncResult, String> {
         .map_err(|_| "failed to send runtime command".to_string())?;
 
     recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync channels")?
+}
+
+pub fn request_channel_status() -> Result<Vec<ChannelInstanceStatus>, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::GetChannelStatus {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "channel status")?
+}
+
+pub fn begin_channel_status_request() -> RuntimeRequestHandle<Vec<ChannelInstanceStatus>> {
+    spawn_request(request_channel_status)
+}
+
+pub fn request_restart_channel(instance_key: &str) -> Result<ChannelSyncResult, String> {
+    let key = ChannelInstanceKey::new(
+        match instance_key.split(':').next() {
+            Some("dingtalk") => klaw_channel::ChannelKind::Dingtalk,
+            Some("telegram") => klaw_channel::ChannelKind::Telegram,
+            Some("feishu") => klaw_channel::ChannelKind::Feishu,
+            _ => return Err(format!("invalid channel instance key '{instance_key}'")),
+        },
+        instance_key
+            .split_once(':')
+            .map(|(_, id)| id)
+            .unwrap_or_default(),
+    );
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::RestartChannel {
+            instance_key: key.as_str().to_string(),
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "restart channel")?
+}
+
+pub fn begin_restart_channel_request(
+    instance_key: String,
+) -> RuntimeRequestHandle<ChannelSyncResult> {
+    spawn_request(move || request_restart_channel(&instance_key))
 }
 
 pub fn request_sync_providers() -> Result<ProviderRuntimeSnapshot, String> {

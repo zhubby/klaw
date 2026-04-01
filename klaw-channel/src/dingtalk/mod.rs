@@ -17,7 +17,9 @@ use self::parsing::{
 };
 use crate::{
     Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, LocalAttachmentPolicy,
-    manager::{ChannelKind, ManagedChannelDriver},
+    manager::{
+        ChannelInstanceConfig, ChannelKind, ChannelSupervisorReporter, ManagedChannelDriver,
+    },
     media::{
         ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES, ingest_media_reference_bytes,
     },
@@ -29,14 +31,17 @@ use klaw_config::{DingtalkConfig, LocalAttachmentConfig};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
-use tokio::time::{self, Duration};
+use tokio::time::{self, Duration, Instant};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{debug, info, trace, warn};
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const WS_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const WS_WATCHDOG_INTERVAL: Duration = Duration::from_secs(5);
+const WS_STALL_TIMEOUT: Duration = Duration::from_secs(35);
 const EVENT_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const EVENT_DEDUP_MAX_ENTRIES: usize = 20_000;
 
@@ -116,10 +121,13 @@ impl DingtalkChannel {
         &mut self,
         runtime: &dyn ChannelRuntime,
         shutdown: &mut watch::Receiver<bool>,
+        reporter: ChannelSupervisorReporter,
     ) -> ChannelResult<()> {
         self.validate_config()?;
         DingtalkApiClient::ensure_rustls_crypto_provider();
         info!("dingtalk channel started");
+        reporter.mark_running("dingtalk channel initialized");
+        let mut reconnect_attempt = 0_u32;
 
         loop {
             if *shutdown.borrow() {
@@ -133,6 +141,9 @@ impl DingtalkChannel {
             {
                 Ok(ticket) => ticket,
                 Err(err) => {
+                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                    let message = format!("failed to open dingtalk stream connection: {err}");
+                    reporter.mark_reconnecting(reconnect_attempt, message.clone());
                     warn!(error = %err, "failed to open dingtalk stream connection");
                     tokio::select! {
                         _ = time::sleep(RECONNECT_DELAY) => {}
@@ -152,6 +163,12 @@ impl DingtalkChannel {
             let connect_result = match connect {
                 Ok(result) => result,
                 Err(_) => {
+                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                    let message = format!(
+                        "dingtalk stream connection timed out after {}s",
+                        CONNECT_TIMEOUT.as_secs()
+                    );
+                    reporter.mark_reconnecting(reconnect_attempt, message);
                     warn!(
                         ws_endpoint = ws_url.as_str(),
                         timeout_secs = CONNECT_TIMEOUT.as_secs(),
@@ -172,6 +189,8 @@ impl DingtalkChannel {
 
             match connect_result {
                 Ok((mut ws, response)) => {
+                    reconnect_attempt = 0;
+                    reporter.mark_running("dingtalk websocket connected");
                     info!(
                         ws_endpoint = ws_url.as_str(),
                         handshake_status = response.status().as_u16(),
@@ -180,8 +199,10 @@ impl DingtalkChannel {
                     let mut cron_tick = time::interval(runtime.cron_tick_interval());
                     let mut runtime_tick = time::interval(runtime.runtime_tick_interval());
                     let mut keepalive_tick = time::interval(WS_KEEPALIVE_INTERVAL);
+                    let mut watchdog_tick = time::interval(WS_WATCHDOG_INTERVAL);
                     let mut cron_job: Option<Pin<Box<dyn Future<Output = ()> + '_>>> = None;
                     let mut runtime_job: Option<Pin<Box<dyn Future<Output = ()> + '_>>> = None;
+                    let mut last_activity_at = Instant::now();
 
                     loop {
                         tokio::select! {
@@ -221,18 +242,44 @@ impl DingtalkChannel {
                             }
                             _ = keepalive_tick.tick() => {
                                 if let Err(err) = ws.send(Message::Ping(Vec::new().into())).await {
+                                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                    reporter.mark_reconnecting(
+                                        reconnect_attempt,
+                                        format!("dingtalk websocket keepalive ping failed: {err}"),
+                                    );
                                     warn!(error = %err, "failed to send dingtalk websocket keepalive ping");
+                                    break;
+                                }
+                            }
+                            _ = watchdog_tick.tick() => {
+                                let idle_for = last_activity_at.elapsed();
+                                if idle_for >= WS_STALL_TIMEOUT {
+                                    let message = format!(
+                                        "dingtalk websocket stalled after {}s without activity",
+                                        idle_for.as_secs()
+                                    );
+                                    reporter.mark_degraded(message.clone());
+                                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                    reporter.mark_reconnecting(reconnect_attempt, message.clone());
+                                    warn!(idle_secs = idle_for.as_secs(), "{}", message);
                                     break;
                                 }
                             }
                             message = ws.next() => {
                                 let Some(message) = message else {
+                                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                    reporter.mark_reconnecting(
+                                        reconnect_attempt,
+                                        "dingtalk stream connection closed by remote".to_string(),
+                                    );
                                     warn!("dingtalk stream connection closed by remote");
                                     break;
                                 };
 
                                 match message {
                                     Ok(Message::Text(text)) => {
+                                        last_activity_at = Instant::now();
+                                        reporter.record_activity("dingtalk inbound event received");
                                         if let Err(err) = self
                                             .handle_text_message(runtime, &mut ws, text.as_str())
                                             .await
@@ -241,20 +288,39 @@ impl DingtalkChannel {
                                         }
                                     }
                                     Ok(Message::Ping(payload)) => {
+                                        last_activity_at = Instant::now();
+                                        reporter.record_activity("dingtalk ping received");
                                         if let Err(err) = ws.send(Message::Pong(payload)).await {
+                                            reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                            reporter.mark_reconnecting(
+                                                reconnect_attempt,
+                                                format!("failed to send websocket pong: {err}"),
+                                            );
                                             warn!(error = %err, "failed to send websocket pong");
                                             break;
                                         }
                                     }
                                     Ok(Message::Pong(_)) => {
+                                        last_activity_at = Instant::now();
+                                        reporter.record_activity("dingtalk pong received");
                                         trace!("received dingtalk websocket pong");
                                     }
                                     Ok(Message::Close(frame)) => {
+                                        reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                        reporter.mark_reconnecting(
+                                            reconnect_attempt,
+                                            format!("dingtalk stream connection closed: {frame:?}"),
+                                        );
                                         info!(close_frame = ?frame, "dingtalk stream connection closed");
                                         break;
                                     }
                                     Ok(Message::Binary(_)) | Ok(Message::Frame(_)) => {}
                                     Err(err) => {
+                                        reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                        reporter.mark_reconnecting(
+                                            reconnect_attempt,
+                                            format!("dingtalk stream receive failed: {err}"),
+                                        );
                                         warn!(error = %err, "dingtalk stream receive failed");
                                         break;
                                     }
@@ -264,6 +330,11 @@ impl DingtalkChannel {
                     }
                 }
                 Err(err) => {
+                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                    reporter.mark_reconnecting(
+                        reconnect_attempt,
+                        format!("dingtalk stream connect failed: {err}"),
+                    );
                     warn!(
                         ws_endpoint = ws_url.as_str(),
                         error = %err,
@@ -299,8 +370,9 @@ impl ManagedChannelDriver for DingtalkChannel {
         &mut self,
         runtime: &dyn ChannelRuntime,
         shutdown: &mut watch::Receiver<bool>,
+        reporter: ChannelSupervisorReporter,
     ) -> ChannelResult<()> {
-        DingtalkChannel::run_until_shutdown(self, runtime, shutdown).await
+        DingtalkChannel::run_until_shutdown(self, runtime, shutdown, reporter).await
     }
 }
 
@@ -324,7 +396,27 @@ impl Channel for DingtalkChannel {
 
     async fn run(&mut self, runtime: &dyn ChannelRuntime) -> ChannelResult<()> {
         let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
-        self.run_until_shutdown(runtime, &mut shutdown_rx).await
+        let config = ChannelInstanceConfig::Dingtalk(DingtalkConfig {
+            id: self.config.account_id.clone(),
+            enabled: true,
+            client_id: self.config.client_id.clone(),
+            client_secret: self.config.client_secret.clone(),
+            bot_title: self.config.bot_title.clone(),
+            show_reasoning: self.config.show_reasoning,
+            stream_output: self.config.stream_output,
+            allowlist: self.config.allowlist.clone(),
+            proxy: klaw_config::DingtalkProxyConfig {
+                enabled: self.config.proxy.enabled,
+                url: self.config.proxy.url.clone(),
+            },
+        });
+        let reporter = ChannelSupervisorReporter::new(
+            config.key(),
+            config,
+            Arc::new(Mutex::new(BTreeMap::new())),
+        );
+        self.run_until_shutdown(runtime, &mut shutdown_rx, reporter)
+            .await
     }
 }
 

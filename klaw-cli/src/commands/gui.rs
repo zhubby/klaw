@@ -235,6 +235,49 @@ impl GuiCommand {
                                                     let _ = response.send(result);
                                                 });
                                             }
+                                            Some(klaw_gui::RuntimeCommand::GetChannelStatus { response }) => {
+                                                let channel_manager = Arc::clone(&channel_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let statuses = channel_manager.lock().await.snapshot();
+                                                    let _ = response.send(Ok(statuses));
+                                                });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::RestartChannel { instance_key, response }) => {
+                                                let channel_manager = Arc::clone(&channel_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            match ChannelConfigSnapshot::from_channels_config(&snapshot.config.channels) {
+                                                                Ok(channel_snapshot) => {
+                                                                    let Some((kind_raw, id)) = instance_key.split_once(':') else {
+                                                                        let _ = response.send(Err(format!("invalid channel instance key '{}'", instance_key)));
+                                                                        return;
+                                                                    };
+                                                                    let kind = match kind_raw {
+                                                                        "dingtalk" => klaw_channel::ChannelKind::Dingtalk,
+                                                                        "telegram" => klaw_channel::ChannelKind::Telegram,
+                                                                        "feishu" => klaw_channel::ChannelKind::Feishu,
+                                                                        _ => {
+                                                                            let _ = response.send(Err(format!("invalid channel kind '{}'", kind_raw)));
+                                                                            return;
+                                                                        }
+                                                                    };
+                                                                    let key = klaw_channel::ChannelInstanceKey::new(kind, id);
+                                                                    channel_manager
+                                                                        .lock()
+                                                                        .await
+                                                                        .restart_channel(&key, &channel_snapshot)
+                                                                        .await
+                                                                }
+                                                                Err(err) => Err(err),
+                                                            }
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
+                                            }
                                             Some(klaw_gui::RuntimeCommand::SyncMcp { response }) => {
                                                 let manager = Arc::clone(&mcp_manager);
                                                 tokio::task::spawn_local(async move {

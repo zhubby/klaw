@@ -1,16 +1,23 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::request_sync_channels;
+use crate::time_format::format_timestamp_seconds;
 use crate::widgets::ArrayEditor;
+use crate::{
+    RuntimeRequestHandle, begin_channel_status_request, begin_restart_channel_request,
+    request_sync_channels,
+};
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
-use klaw_channel::{ChannelInstanceStatus, ChannelKind};
+use klaw_channel::{ChannelInstanceStatus, ChannelKind, ChannelSyncResult};
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig,
     TelegramConfig, TelegramProxyConfig,
 };
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
+
+const CHANNEL_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
 struct DingtalkForm {
@@ -244,6 +251,16 @@ fn channel_status_style(
             "running",
             egui::Color32::from_rgb(0x22, 0xC5, 0x5E),
         ),
+        Some(klaw_channel::ChannelLifecycleState::Degraded) => (
+            regular::WARNING,
+            "degraded",
+            egui::Color32::from_rgb(0xF5, 0x9E, 0x0B),
+        ),
+        Some(klaw_channel::ChannelLifecycleState::Reconnecting) => (
+            regular::ARROW_CLOCKWISE,
+            "reconnecting",
+            egui::Color32::from_rgb(0x38, 0xB, 0xDF),
+        ),
         Some(klaw_channel::ChannelLifecycleState::Starting) => (
             regular::ARROW_CLOCKWISE,
             "starting",
@@ -277,9 +294,59 @@ pub struct ChannelPanel {
     statuses: BTreeMap<String, ChannelInstanceStatus>,
     selected_channel: Option<(ChannelKind, String)>,
     delete_confirm: Option<(ChannelKind, String)>,
+    last_runtime_status_at: Option<Instant>,
+    runtime_status_request: Option<RuntimeRequestHandle<Vec<ChannelInstanceStatus>>>,
+    restart_request: Option<RuntimeRequestHandle<ChannelSyncResult>>,
+    restart_target_key: Option<String>,
 }
 
 impl ChannelPanel {
+    fn refresh_runtime_status(&mut self) {
+        if let Some(request) = self.runtime_status_request.as_mut()
+            && let Some(result) = request.try_take_result()
+        {
+            self.runtime_status_request = None;
+            if let Ok(statuses) = result {
+                self.apply_runtime_statuses(&statuses);
+            }
+        }
+        let should_refresh = self
+            .last_runtime_status_at
+            .is_none_or(|last| last.elapsed() >= CHANNEL_STATUS_POLL_INTERVAL);
+        if !should_refresh || self.runtime_status_request.is_some() {
+            return;
+        }
+        self.last_runtime_status_at = Some(Instant::now());
+        self.runtime_status_request = Some(begin_channel_status_request());
+    }
+
+    fn poll_restart_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.restart_request.as_mut() else {
+            return;
+        };
+        let Some(result) = request.try_take_result() else {
+            return;
+        };
+        self.restart_request = None;
+        match result {
+            Ok(sync_result) => {
+                self.apply_runtime_statuses(&sync_result.statuses);
+                let target = self
+                    .restart_target_key
+                    .take()
+                    .unwrap_or_else(|| "selected channel".to_string());
+                notifications.success(format!("Restarted channel {}", target));
+            }
+            Err(err) => {
+                let target = self
+                    .restart_target_key
+                    .take()
+                    .unwrap_or_else(|| "selected channel".to_string());
+                notifications.error(format!("Failed to restart {}: {}", target, err));
+            }
+        }
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -358,6 +425,21 @@ impl ChannelPanel {
             .cloned()
             .map(|status| (status.key.as_str().to_string(), status))
             .collect();
+    }
+
+    fn restart_channel(
+        &mut self,
+        kind: ChannelKind,
+        id: &str,
+        notifications: &mut NotificationCenter,
+    ) {
+        if self.restart_request.is_some() {
+            notifications.info("A channel restart is already in progress");
+            return;
+        }
+        let key = Self::instance_key(kind, id);
+        self.restart_target_key = Some(key.clone());
+        self.restart_request = Some(begin_restart_channel_request(key));
     }
 
     fn save_config<F>(
@@ -837,12 +919,17 @@ impl PanelRenderer for ChannelPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
+        self.refresh_runtime_status();
+        self.poll_restart_request(notifications);
 
         let rows = self.all_rows();
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
             ui.label(format!("Channel instances: {}", rows.len()));
+            if self.restart_request.is_some() {
+                ui.label("Restarting channel...");
+            }
         });
         ui.separator();
 
@@ -871,6 +958,13 @@ impl PanelRenderer for ChannelPanel {
             {
                 self.reload(notifications);
             }
+            if ui
+                .button(format!("{} Refresh Status", regular::ARROWS_CLOCKWISE))
+                .clicked()
+            {
+                self.last_runtime_status_at = None;
+                self.refresh_runtime_status();
+            }
         });
 
         ui.add_space(8.0);
@@ -881,6 +975,7 @@ impl PanelRenderer for ChannelPanel {
             let table_width = ui.available_width();
             let mut edit_channel: Option<(ChannelKind, String)> = None;
             let mut toggle_channel: Option<(ChannelKind, String, bool)> = None;
+            let mut restart_channel: Option<(ChannelKind, String)> = None;
 
             egui::ScrollArea::both()
                 .auto_shrink([false, false])
@@ -895,6 +990,8 @@ impl PanelRenderer for ChannelPanel {
                         .column(Column::auto().at_least(80.0))
                         .column(Column::auto().at_least(60.0))
                         .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(130.0))
+                        .column(Column::auto().at_least(85.0))
                         .column(Column::auto().at_least(80.0))
                         .column(Column::auto().at_least(70.0))
                         .column(Column::auto().at_least(70.0))
@@ -914,6 +1011,12 @@ impl PanelRenderer for ChannelPanel {
                             });
                             header.col(|ui| {
                                 ui.strong("Status");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Last Activity");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Reconnect");
                             });
                             header.col(|ui| {
                                 ui.strong("Title");
@@ -962,10 +1065,30 @@ impl PanelRenderer for ChannelPanel {
                                     let status_response =
                                         ui.colored_label(color, format!("{} {}", icon, label));
                                     if let Some(s) = status {
+                                        let mut hover_lines = Vec::new();
+                                        if let Some(event) = s.last_event.as_deref() {
+                                            hover_lines.push(format!("last event: {event}"));
+                                        }
                                         if let Some(error) = s.last_error.as_deref() {
-                                            status_response.on_hover_text(error);
+                                            hover_lines.push(format!("last error: {error}"));
+                                        }
+                                        if !hover_lines.is_empty() {
+                                            status_response.on_hover_text(hover_lines.join("\n"));
                                         }
                                     }
+                                });
+                                row.col(|ui| {
+                                    let label = status
+                                        .and_then(|status| status.last_activity_at_unix_seconds)
+                                        .map(format_timestamp_seconds)
+                                        .unwrap_or_else(|| "-".to_string());
+                                    ui.label(label);
+                                });
+                                row.col(|ui| {
+                                    let reconnect_label = status
+                                        .map(|status| status.reconnect_attempt.to_string())
+                                        .unwrap_or_else(|| "-".to_string());
+                                    ui.label(reconnect_label);
                                 });
                                 row.col(|ui| {
                                     ui.label(channel_row.title_label());
@@ -999,6 +1122,13 @@ impl PanelRenderer for ChannelPanel {
                                         .clicked()
                                     {
                                         edit_channel = Some((kind, id.clone()));
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(format!("{} Restart", regular::ARROW_CLOCKWISE))
+                                        .clicked()
+                                    {
+                                        restart_channel = Some((kind, id.clone()));
                                         ui.close();
                                     }
                                     if ui
@@ -1045,6 +1175,9 @@ impl PanelRenderer for ChannelPanel {
             }
             if let Some((kind, id, enable)) = toggle_channel {
                 self.toggle_channel(kind, &id, enable, notifications);
+            }
+            if let Some((kind, id)) = restart_channel {
+                self.restart_channel(kind, &id, notifications);
             }
         }
 
