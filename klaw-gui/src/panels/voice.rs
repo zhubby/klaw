@@ -967,11 +967,7 @@ impl PanelRenderer for VoicePanel {
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 ui.label("Enabled");
-                ui.label(if self.config.voice.enabled {
-                    "true"
-                } else {
-                    "false"
-                });
+                render_enabled_status(ui, self.config.voice.enabled);
                 ui.end_row();
 
                 ui.label("STT Provider");
@@ -988,27 +984,6 @@ impl PanelRenderer for VoicePanel {
 
                 ui.label("Default Voice ID");
                 ui.label(self.config.voice.default_voice_id.as_deref().unwrap_or("-"));
-                ui.end_row();
-
-                ui.label("Deepgram Key Source");
-                ui.label(key_source_label(
-                    self.config.voice.providers.deepgram.api_key.as_deref(),
-                    &self.config.voice.providers.deepgram.api_key_env,
-                ));
-                ui.end_row();
-
-                ui.label("AssemblyAI Key Source");
-                ui.label(key_source_label(
-                    self.config.voice.providers.assemblyai.api_key.as_deref(),
-                    &self.config.voice.providers.assemblyai.api_key_env,
-                ));
-                ui.end_row();
-
-                ui.label("ElevenLabs Key Source");
-                ui.label(key_source_label(
-                    self.config.voice.providers.elevenlabs.api_key.as_deref(),
-                    &self.config.voice.providers.elevenlabs.api_key_env,
-                ));
                 ui.end_row();
             });
 
@@ -1086,14 +1061,25 @@ fn normalize_optional(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-fn key_source_label(direct_key: Option<&str>, env_key: &str) -> String {
-    if direct_key.is_some_and(|value| !value.trim().is_empty()) {
-        "direct api_key".to_string()
-    } else if !env_key.trim().is_empty() {
-        format!("env {}", env_key.trim())
+fn render_enabled_status(ui: &mut egui::Ui, enabled: bool) {
+    let (icon, color, label) = if enabled {
+        (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(0x22, 0xC5, 0x5E),
+            "true",
+        )
     } else {
-        "not configured".to_string()
-    }
+        (
+            regular::X_CIRCLE,
+            Color32::from_rgb(0xEF, 0x44, 0x44),
+            "false",
+        )
+    };
+    ui.label(
+        RichText::new(format!("{icon} {label}"))
+            .color(color)
+            .strong(),
+    );
 }
 
 fn validate_stt_test_config(config: &AppConfig) -> Result<(), String> {
