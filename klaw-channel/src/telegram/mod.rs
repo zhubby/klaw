@@ -11,7 +11,9 @@ use self::types::{
 use crate::{
     Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
     ChannelStreamWriter, LocalAttachmentPolicy, OutboundAttachment,
-    manager::{ChannelKind, ManagedChannelDriver},
+    manager::{
+        ChannelInstanceConfig, ChannelKind, ChannelSupervisorReporter, ManagedChannelDriver,
+    },
     media::{
         ArchiveMediaIngestContext, DEFAULT_INLINE_MEDIA_MAX_BYTES, ingest_media_reference_bytes,
     },
@@ -27,6 +29,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
@@ -135,12 +138,14 @@ impl TelegramChannel {
         &mut self,
         runtime: &dyn ChannelRuntime,
         shutdown: &mut watch::Receiver<bool>,
+        reporter: ChannelSupervisorReporter,
     ) -> ChannelResult<()> {
         self.validate_config()?;
         info!(
             account_id = self.config.account_id.as_str(),
             "telegram channel started"
         );
+        reporter.mark_running("telegram channel initialized");
         if let Err(err) = self.register_bot_commands().await {
             warn!(
                 account_id = self.config.account_id.as_str(),
@@ -180,8 +185,10 @@ impl TelegramChannel {
         let account_id = self.config.account_id.clone();
         let bot_token = self.config.bot_token.clone();
         let proxy = self.config.proxy.clone();
+        let poll_reporter = reporter.clone();
         let poll_task = tokio::spawn(async move {
             let mut offset: Option<i64> = None;
+            let mut reconnect_attempt = 0_u32;
             loop {
                 if *poll_shutdown.borrow() {
                     break;
@@ -193,6 +200,8 @@ impl TelegramChannel {
                     .map_err(|err| err.to_string())
                 {
                     Ok(updates) => {
+                        reconnect_attempt = 0;
+                        poll_reporter.record_activity("telegram polling request succeeded");
                         if let Some(last_update_id) = updates.last().map(|update| update.update_id)
                         {
                             offset = Some(last_update_id + 1);
@@ -202,6 +211,11 @@ impl TelegramChannel {
                         }
                     }
                     Err(error) => {
+                        reconnect_attempt = reconnect_attempt.saturating_add(1);
+                        poll_reporter.mark_reconnecting(
+                            reconnect_attempt,
+                            format!("failed to fetch telegram updates: {error}"),
+                        );
                         match TelegramApiClient::new(&bot_token, &proxy) {
                             Ok(rebuilt_client) => {
                                 client = rebuilt_client;
@@ -954,8 +968,9 @@ impl ManagedChannelDriver for TelegramChannel {
         &mut self,
         runtime: &dyn ChannelRuntime,
         shutdown: &mut watch::Receiver<bool>,
+        reporter: ChannelSupervisorReporter,
     ) -> ChannelResult<()> {
-        TelegramChannel::run_until_shutdown(self, runtime, shutdown).await
+        TelegramChannel::run_until_shutdown(self, runtime, shutdown, reporter).await
     }
 }
 
@@ -967,7 +982,22 @@ impl Channel for TelegramChannel {
 
     async fn run(&mut self, runtime: &dyn ChannelRuntime) -> ChannelResult<()> {
         let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
-        self.run_until_shutdown(runtime, &mut shutdown_rx).await
+        let config = ChannelInstanceConfig::Telegram(TelegramConfig {
+            id: self.config.account_id.clone(),
+            enabled: true,
+            bot_token: self.config.bot_token.clone(),
+            show_reasoning: self.config.show_reasoning,
+            stream_output: self.config.stream_output,
+            allowlist: self.config.allowlist.clone(),
+            proxy: self.config.proxy.clone(),
+        });
+        let reporter = ChannelSupervisorReporter::new(
+            config.key(),
+            config,
+            Arc::new(Mutex::new(BTreeMap::new())),
+        );
+        self.run_until_shutdown(runtime, &mut shutdown_rx, reporter)
+            .await
     }
 }
 

@@ -235,6 +235,40 @@ impl GuiCommand {
                                                     let _ = response.send(result);
                                                 });
                                             }
+                                            Some(klaw_gui::RuntimeCommand::GetChannelStatus { response }) => {
+                                                let channel_manager = Arc::clone(&channel_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let statuses = channel_manager.lock().await.snapshot();
+                                                    let _ = response.send(Ok(statuses));
+                                                });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::RestartChannel { instance_key, response }) => {
+                                                let channel_manager = Arc::clone(&channel_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            match ChannelConfigSnapshot::from_channels_config(&snapshot.config.channels) {
+                                                                Ok(channel_snapshot) => {
+                                                                    match klaw_channel::ChannelInstanceKey::parse(&instance_key) {
+                                                                        Ok(key) => {
+                                                                            channel_manager
+                                                                                .lock()
+                                                                                .await
+                                                                                .restart_channel(&key, &channel_snapshot)
+                                                                                .await
+                                                                        }
+                                                                        Err(err) => Err(err),
+                                                                    }
+                                                                }
+                                                                Err(err) => Err(err),
+                                                            }
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
+                                            }
                                             Some(klaw_gui::RuntimeCommand::SyncMcp { response }) => {
                                                 let manager = Arc::clone(&mcp_manager);
                                                 tokio::task::spawn_local(async move {

@@ -5,6 +5,7 @@ use std::{
     fmt,
     sync::{Arc, Mutex},
 };
+use ::time::OffsetDateTime;
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::{info, warn};
 
@@ -41,6 +42,20 @@ impl ChannelInstanceKey {
     #[must_use]
     pub fn new(kind: ChannelKind, id: impl AsRef<str>) -> Self {
         Self(format!("{}:{}", kind.as_str(), id.as_ref().trim()))
+    }
+
+    /// Parses a stable instance key (`"{kind}:{id}"`).
+    pub fn parse(instance_key: &str) -> Result<Self, String> {
+        let (kind_raw, id) = instance_key
+            .split_once(':')
+            .ok_or_else(|| format!("invalid channel instance key '{instance_key}'"))?;
+        let kind = match kind_raw {
+            "dingtalk" => ChannelKind::Dingtalk,
+            "telegram" => ChannelKind::Telegram,
+            "feishu" => ChannelKind::Feishu,
+            _ => return Err(format!("invalid channel kind '{kind_raw}'")),
+        };
+        Ok(Self::new(kind, id))
     }
 
     #[must_use]
@@ -103,20 +118,18 @@ impl ChannelConfigSnapshot {
         let mut instances = Vec::new();
 
         for config in &channels.dingtalk {
-            let instance = ChannelInstanceConfig::Dingtalk(config.clone());
-            let key = instance.key();
-            if !keys.insert(key.clone()) {
-                return Err(format!("duplicated channel instance '{}'", key.as_str()));
-            }
-            instances.push(instance);
+            push_unique_instance(
+                &mut instances,
+                &mut keys,
+                ChannelInstanceConfig::Dingtalk(config.clone()),
+            )?;
         }
         for config in &channels.telegram {
-            let instance = ChannelInstanceConfig::Telegram(config.clone());
-            let key = instance.key();
-            if !keys.insert(key.clone()) {
-                return Err(format!("duplicated channel instance '{}'", key.as_str()));
-            }
-            instances.push(instance);
+            push_unique_instance(
+                &mut instances,
+                &mut keys,
+                ChannelInstanceConfig::Telegram(config.clone()),
+            )?;
         }
 
         Ok(Self { instances })
@@ -132,6 +145,8 @@ impl ChannelConfigSnapshot {
 pub enum ChannelLifecycleState {
     Starting,
     Running,
+    Degraded,
+    Reconnecting,
     Stopped,
     Failed,
 }
@@ -142,6 +157,8 @@ impl ChannelLifecycleState {
         match self {
             Self::Starting => "starting",
             Self::Running => "running",
+            Self::Degraded => "degraded",
+            Self::Reconnecting => "reconnecting",
             Self::Stopped => "stopped",
             Self::Failed => "failed",
         }
@@ -156,6 +173,10 @@ pub struct ChannelInstanceStatus {
     pub enabled: bool,
     pub state: ChannelLifecycleState,
     pub last_error: Option<String>,
+    pub reconnect_attempt: u32,
+    pub last_event: Option<String>,
+    pub last_event_at_unix_seconds: Option<u64>,
+    pub last_activity_at_unix_seconds: Option<u64>,
 }
 
 impl ChannelInstanceStatus {
@@ -172,6 +193,104 @@ impl ChannelInstanceStatus {
             enabled: config.enabled(),
             state,
             last_error,
+            reconnect_attempt: 0,
+            last_event: None,
+            last_event_at_unix_seconds: None,
+            last_activity_at_unix_seconds: None,
+        }
+    }
+}
+
+fn now_unix_seconds() -> u64 {
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    u64::try_from(now.max(0)).unwrap_or_default()
+}
+
+#[derive(Debug, Clone)]
+pub struct ChannelSupervisorReporter {
+    key: ChannelInstanceKey,
+    config: ChannelInstanceConfig,
+    statuses: Arc<Mutex<BTreeMap<ChannelInstanceKey, ChannelInstanceStatus>>>,
+}
+
+impl ChannelSupervisorReporter {
+    pub(crate) fn new(
+        key: ChannelInstanceKey,
+        config: ChannelInstanceConfig,
+        statuses: Arc<Mutex<BTreeMap<ChannelInstanceKey, ChannelInstanceStatus>>>,
+    ) -> Self {
+        Self {
+            key,
+            config,
+            statuses,
+        }
+    }
+
+    pub fn mark_running(&self, event: impl Into<String>) {
+        self.update_state(
+            ChannelLifecycleState::Running,
+            None,
+            Some(event.into()),
+            true,
+            None,
+        );
+    }
+
+    pub fn record_activity(&self, event: impl Into<String>) {
+        self.mark_running(event);
+    }
+
+    pub fn mark_degraded(&self, reason: impl Into<String>) {
+        let reason = reason.into();
+        self.update_state(
+            ChannelLifecycleState::Degraded,
+            Some(reason.clone()),
+            Some(reason),
+            false,
+            None,
+        );
+    }
+
+    pub fn mark_reconnecting(&self, attempt: u32, reason: impl Into<String>) {
+        let reason = reason.into();
+        self.update_state(
+            ChannelLifecycleState::Reconnecting,
+            Some(reason.clone()),
+            Some(reason),
+            false,
+            Some(attempt),
+        );
+    }
+
+    fn update_state(
+        &self,
+        next_state: ChannelLifecycleState,
+        last_error: Option<String>,
+        event: Option<String>,
+        update_activity: bool,
+        reconnect_attempt: Option<u32>,
+    ) {
+        let now = now_unix_seconds();
+        let mut guard = self.statuses.lock().unwrap_or_else(|err| err.into_inner());
+        let status = guard.entry(self.key.clone()).or_insert_with(|| {
+            ChannelInstanceStatus::from_config(&self.config, ChannelLifecycleState::Starting, None)
+        });
+        status.kind = self.config.kind();
+        status.id = self.config.id().to_string();
+        status.enabled = self.config.enabled();
+        status.state = next_state;
+        status.last_error = last_error;
+        if let Some(reconnect_attempt) = reconnect_attempt {
+            status.reconnect_attempt = reconnect_attempt;
+        } else if matches!(next_state, ChannelLifecycleState::Running) {
+            status.reconnect_attempt = 0;
+        }
+        if let Some(event) = event {
+            status.last_event = Some(event);
+            status.last_event_at_unix_seconds = Some(now);
+        }
+        if update_activity {
+            status.last_activity_at_unix_seconds = Some(now);
         }
     }
 }
@@ -195,6 +314,7 @@ pub trait ManagedChannelDriver {
         &mut self,
         runtime: &dyn ChannelRuntime,
         shutdown: &mut watch::Receiver<bool>,
+        reporter: ChannelSupervisorReporter,
     ) -> ChannelResult<()>;
 }
 
@@ -282,11 +402,11 @@ where
         let plan = plan_channel_updates(&current, snapshot.instances());
 
         for key in &plan.stop {
-            self.stop_channel(key, false).await;
+            self.stop_channel(key).await;
         }
 
         for config in &plan.restart {
-            self.stop_channel(&config.key(), false).await;
+            self.stop_channel(&config.key()).await;
         }
 
         for config in plan.start.iter().chain(plan.restart.iter()) {
@@ -311,8 +431,40 @@ where
     pub async fn shutdown_all(&mut self) {
         let keys = self.channels.keys().cloned().collect::<Vec<_>>();
         for key in keys {
-            self.stop_channel(&key, true).await;
+            self.stop_channel(&key).await;
         }
+    }
+
+    pub async fn restart_channel(
+        &mut self,
+        key: &ChannelInstanceKey,
+        snapshot: &ChannelConfigSnapshot,
+    ) -> Result<ChannelSyncResult, String> {
+        let Some(config) = snapshot
+            .instances()
+            .iter()
+            .find(|config| &config.key() == key)
+            .cloned()
+        else {
+            return Err(format!("channel '{}' not found in config", key.as_str()));
+        };
+        if !config.enabled() {
+            return Err(format!("channel '{}' is disabled in config", key.as_str()));
+        }
+
+        if self.channels.contains_key(key) {
+            self.stop_channel(key).await;
+        }
+        self.start_channel(config);
+        self.reconcile_statuses(snapshot);
+
+        Ok(ChannelSyncResult {
+            keep: Vec::new(),
+            start: Vec::new(),
+            restart: vec![key.clone()],
+            stop: Vec::new(),
+            statuses: self.snapshot_statuses(snapshot.instances()),
+        })
     }
 
     #[must_use]
@@ -331,6 +483,8 @@ where
         let runtime = Arc::clone(&self.runtime);
         let statuses = Arc::clone(&self.statuses);
         let config_for_task = config.clone();
+        let reporter =
+            ChannelSupervisorReporter::new(key.clone(), config.clone(), Arc::clone(&statuses));
         let (shutdown_tx, mut channel_shutdown) = watch::channel(false);
 
         {
@@ -367,6 +521,7 @@ where
                 ChannelInstanceStatus::from_config(&config, ChannelLifecycleState::Running, None),
             );
         }
+        reporter.mark_running("channel task started");
 
         let handle = tokio::task::spawn_local(async move {
             info!(
@@ -377,7 +532,7 @@ where
             );
 
             let result = driver
-                .run_until_shutdown(runtime.as_ref(), &mut channel_shutdown)
+                .run_until_shutdown(runtime.as_ref(), &mut channel_shutdown, reporter)
                 .await;
             let stopping = *channel_shutdown.borrow();
 
@@ -417,7 +572,7 @@ where
         );
     }
 
-    async fn stop_channel(&mut self, key: &ChannelInstanceKey, shutdown_all: bool) {
+    async fn stop_channel(&mut self, key: &ChannelInstanceKey) {
         let Some(managed) = self.channels.remove(key) else {
             return;
         };
@@ -450,9 +605,6 @@ where
                 None,
             ),
         );
-        if shutdown_all {
-            return;
-        }
     }
 
     fn reconcile_statuses(&mut self, snapshot: &ChannelConfigSnapshot) {
@@ -474,15 +626,18 @@ where
                     if !config.enabled() {
                         status.state = ChannelLifecycleState::Stopped;
                         status.last_error = None;
+                        status.reconnect_attempt = 0;
                     }
                 }
                 None => {
-                    let state = if config.enabled() {
-                        ChannelLifecycleState::Stopped
-                    } else {
-                        ChannelLifecycleState::Stopped
-                    };
-                    guard.insert(key, ChannelInstanceStatus::from_config(config, state, None));
+                    guard.insert(
+                        key,
+                        ChannelInstanceStatus::from_config(
+                            config,
+                            ChannelLifecycleState::Stopped,
+                            None,
+                        ),
+                    );
                 }
             }
         }
@@ -507,6 +662,19 @@ struct ChannelSyncPlan {
     start: Vec<ChannelInstanceConfig>,
     restart: Vec<ChannelInstanceConfig>,
     stop: Vec<ChannelInstanceKey>,
+}
+
+fn push_unique_instance(
+    instances: &mut Vec<ChannelInstanceConfig>,
+    keys: &mut BTreeSet<ChannelInstanceKey>,
+    instance: ChannelInstanceConfig,
+) -> Result<(), String> {
+    let key = instance.key();
+    if !keys.insert(key.clone()) {
+        return Err(format!("duplicated channel instance '{}'", key.as_str()));
+    }
+    instances.push(instance);
+    Ok(())
 }
 
 fn plan_channel_updates(
@@ -599,6 +767,7 @@ mod tests {
             &mut self,
             _runtime: &dyn ChannelRuntime,
             shutdown: &mut watch::Receiver<bool>,
+            _reporter: ChannelSupervisorReporter,
         ) -> ChannelResult<()> {
             shutdown
                 .changed()
@@ -871,6 +1040,18 @@ mod tests {
     }
 
     #[test]
+    fn channel_instance_key_parse_round_trips() {
+        let key = ChannelInstanceKey::new(ChannelKind::Dingtalk, "alpha");
+        assert_eq!(ChannelInstanceKey::parse(key.as_str()).expect("parse"), key);
+    }
+
+    #[test]
+    fn channel_instance_key_parse_rejects_unknown_kind() {
+        let err = ChannelInstanceKey::parse("unknown:x").expect_err("unknown kind");
+        assert!(err.contains("invalid channel kind"));
+    }
+
+    #[test]
     fn snapshot_from_channels_config_rejects_duplicate_telegram_ids() {
         let err = ChannelConfigSnapshot::from_channels_config(&ChannelsConfig {
             dingtalk: Vec::new(),
@@ -915,5 +1096,56 @@ mod tests {
                 assert!(result.stop.is_empty());
             })
             .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn restart_channel_restarts_unchanged_instance() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let factory = TestFactory::new();
+                let shutdowns = Arc::clone(&factory.shutdowns);
+                let runtime = Arc::new(DummyRuntime);
+                let mut manager = ChannelManager::with_factory(runtime, factory);
+                let snapshot = ChannelConfigSnapshot {
+                    instances: vec![dingtalk("alpha", true)],
+                };
+
+                manager.sync(snapshot.clone()).await;
+                let result = manager
+                    .restart_channel(
+                        &ChannelInstanceKey::new(ChannelKind::Dingtalk, "alpha"),
+                        &snapshot,
+                    )
+                    .await
+                    .expect("restart should succeed");
+
+                assert_eq!(
+                    result.restart,
+                    vec![ChannelInstanceKey::new(ChannelKind::Dingtalk, "alpha")]
+                );
+                assert_eq!(shutdowns.load(Ordering::SeqCst), 1);
+            })
+            .await;
+    }
+
+    #[test]
+    fn supervisor_reporter_updates_health_fields() {
+        let statuses = Arc::new(Mutex::new(BTreeMap::new()));
+        let config = dingtalk("alpha", true);
+        let key = config.key();
+        let reporter =
+            ChannelSupervisorReporter::new(key.clone(), config.clone(), Arc::clone(&statuses));
+
+        reporter.mark_running("connected");
+        reporter.mark_reconnecting(2, "network lost");
+
+        let guard = statuses.lock().unwrap_or_else(|err| err.into_inner());
+        let status = guard.get(&key).expect("status should exist");
+        assert_eq!(status.state, ChannelLifecycleState::Reconnecting);
+        assert_eq!(status.reconnect_attempt, 2);
+        assert_eq!(status.last_event.as_deref(), Some("network lost"));
+        assert!(status.last_event_at_unix_seconds.is_some());
+        assert!(status.last_activity_at_unix_seconds.is_some());
     }
 }
