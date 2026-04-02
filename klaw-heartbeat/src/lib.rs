@@ -18,8 +18,6 @@ pub const DEFAULT_SILENT_ACK_TOKEN: &str = "HEARTBEAT_OK";
 pub const DEFAULT_TIMEZONE: &str = "UTC";
 pub const DEFAULT_RECENT_MESSAGES_LIMIT: i64 = 12;
 pub const DEFAULT_HEARTBEAT_EVERY: &str = "30m";
-pub const DEFAULT_HEARTBEAT_PROMPT: &str =
-    "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.";
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -389,7 +387,7 @@ pub fn build_inbound_message(job: &HeartbeatJob) -> InboundMessage {
         sender_id: "system-heartbeat".to_string(),
         chat_id: job.chat_id.clone(),
         session_key: job.session_key.clone(),
-        content: build_heartbeat_content(&job.prompt),
+        content: build_heartbeat_content(&job.prompt, &job.silent_ack_token),
         metadata: BTreeMap::from([
             (
                 TRIGGER_KIND_KEY.to_string(),
@@ -418,7 +416,7 @@ pub fn build_payload_json(job: &HeartbeatJob) -> Result<String, HeartbeatError> 
         "sender_id": "system-heartbeat",
         "chat_id": job.chat_id,
         "session_key": job.session_key,
-        "content": build_heartbeat_content(&job.prompt),
+        "content": build_heartbeat_content(&job.prompt, &job.silent_ack_token),
         "metadata": {
             TRIGGER_KIND_KEY: TRIGGER_KIND_HEARTBEAT,
             HEARTBEAT_SESSION_KEY: job.session_key,
@@ -481,12 +479,25 @@ fn normalize_input(input: &HeartbeatInput) -> Result<HeartbeatInput, HeartbeatEr
     })
 }
 
-fn build_heartbeat_content(custom_prompt: &str) -> String {
+fn heartbeat_instruction(silent_ack_token: &str) -> String {
+    let token = silent_ack_token.trim();
+    let token = if token.is_empty() {
+        DEFAULT_SILENT_ACK_TOKEN
+    } else {
+        token
+    };
+    format!(
+        "Review the session state. If no user-visible action is needed, reply with exactly {token} and nothing else."
+    )
+}
+
+fn build_heartbeat_content(custom_prompt: &str, silent_ack_token: &str) -> String {
+    let instruction = heartbeat_instruction(silent_ack_token);
     let custom_prompt = custom_prompt.trim();
     if custom_prompt.is_empty() {
-        return DEFAULT_HEARTBEAT_PROMPT.to_string();
+        return instruction;
     }
-    format!("{custom_prompt}\n\n{DEFAULT_HEARTBEAT_PROMPT}")
+    format!("{custom_prompt}\n\n{instruction}")
 }
 
 fn build_conversation_history_value(
@@ -633,7 +644,7 @@ mod tests {
         );
         assert_eq!(
             payload["content"],
-            format!("Focus on stale tasks.\n\n{DEFAULT_HEARTBEAT_PROMPT}")
+            "Focus on stale tasks.\n\nReview the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else."
         );
     }
 
@@ -758,7 +769,7 @@ mod tests {
         assert_eq!(messages[0].payload.session_key, "stdio:main:child");
         assert_eq!(
             messages[0].payload.content,
-            format!("Keep an eye on follow-ups.\n\n{DEFAULT_HEARTBEAT_PROMPT}")
+            "Keep an eye on follow-ups.\n\nReview the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else."
         );
         assert_eq!(
             messages[0]
@@ -845,5 +856,13 @@ mod tests {
         );
         assert_eq!(history[1]["content"].as_str(), Some("keep-1"));
         assert_eq!(history[2]["content"].as_str(), Some("keep-2"));
+    }
+
+    #[test]
+    fn heartbeat_content_uses_configured_silent_ack_token() {
+        assert_eq!(
+            build_heartbeat_content("Watch stale approvals.", "ACK_DONE"),
+            "Watch stale approvals.\n\nReview the session state. If no user-visible action is needed, reply with exactly ACK_DONE and nothing else."
+        );
     }
 }
