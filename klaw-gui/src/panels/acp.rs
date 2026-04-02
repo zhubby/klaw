@@ -1,14 +1,17 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::{
-    AcpPromptEvent, request_acp_status, request_execute_acp_prompt_stream, request_stop_acp_prompt,
-    request_sync_acp,
+    AcpPromptEvent, request_acp_status, request_execute_acp_prompt_stream,
+    request_resolve_acp_permission, request_stop_acp_prompt, request_sync_acp,
 };
 use crate::widgets::{ArrayEditor, KeyValueEditor};
 use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
-use klaw_acp::{AcpRuntimeSnapshot, AcpSyncResult};
+use klaw_acp::{
+    AcpAvailableCommand, AcpConfigOption, AcpContentBlockEvent, AcpPermissionDecision,
+    AcpPermissionRequest, AcpRuntimeSnapshot, AcpSessionEvent, AcpSessionEventKind, AcpSyncResult,
+};
 use klaw_config::{AcpAgentConfig, AppConfig, ConfigError, ConfigSnapshot, ConfigStore};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{self, Receiver};
@@ -95,10 +98,25 @@ struct PromptTestState {
     working_directory: String,
     timeout_seconds: String,
     output: String,
+    session_events: Vec<AcpSessionEvent>,
+    available_commands: Vec<AcpAvailableCommand>,
+    current_mode_id: Option<String>,
+    config_options: Vec<AcpConfigOption>,
+    session_title: Option<String>,
+    session_updated_at: Option<String>,
+    permission_history: Vec<String>,
+    pending_permissions: Vec<PendingPermissionState>,
     last_error: Option<String>,
     running: bool,
     stopped: bool,
     window_open: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PendingPermissionState {
+    request_id: u64,
+    request: AcpPermissionRequest,
+    resolving: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +137,7 @@ pub struct AcpPanel {
     status_fetch_rx: Option<Receiver<Result<AcpRuntimeSnapshot, String>>>,
     sync_fetch_rx: Option<Receiver<Result<AcpSyncResult, String>>>,
     prompt_fetch_rx: Option<Receiver<AcpPromptEvent>>,
+    permission_action_rx: Option<Receiver<(u64, Result<(), String>)>>,
     prompt_test: PromptTestState,
     last_status_refresh_at: Option<Instant>,
     status_refresh_announce: bool,
@@ -290,15 +309,136 @@ impl AcpPanel {
         }
     }
 
-    fn poll_prompt_test(&mut self, notifications: &mut NotificationCenter) {
-        let Some(rx) = self.prompt_fetch_rx.as_ref() else {
+    fn apply_session_event(&mut self, event: AcpSessionEvent) {
+        self.append_output_for_event(&event);
+        match &event.update {
+            AcpSessionEventKind::AvailableCommandsUpdate { commands } => {
+                self.prompt_test.available_commands = commands.clone();
+            }
+            AcpSessionEventKind::CurrentModeUpdate { current_mode_id } => {
+                self.prompt_test.current_mode_id = Some(current_mode_id.clone());
+            }
+            AcpSessionEventKind::ConfigOptionUpdate { config_options } => {
+                self.prompt_test.config_options = config_options.clone();
+            }
+            AcpSessionEventKind::SessionInfoUpdate { title, updated_at } => {
+                if let Some(title) = title {
+                    self.prompt_test.session_title = title.clone();
+                }
+                if let Some(updated_at) = updated_at {
+                    self.prompt_test.session_updated_at = updated_at.clone();
+                }
+            }
+            _ => {}
+        }
+        self.prompt_test.session_events.push(event);
+    }
+
+    fn append_output_for_event(&mut self, event: &AcpSessionEvent) {
+        match &event.update {
+            AcpSessionEventKind::AgentMessageChunk { content } => {
+                self.prompt_test
+                    .output
+                    .push_str(&render_content_block(content));
+            }
+            AcpSessionEventKind::AgentThoughtChunk { content } => {
+                self.push_output_line(&format!("[thought] {}", render_content_block(content)));
+            }
+            AcpSessionEventKind::UserMessageChunk { content } => {
+                self.push_output_line(&format!("[user] {}", render_content_block(content)));
+            }
+            _ => self.push_output_line(&format!("[{}]", event.summary)),
+        }
+    }
+
+    fn push_output_line(&mut self, line: &str) {
+        if !self.prompt_test.output.is_empty() && !self.prompt_test.output.ends_with('\n') {
+            self.prompt_test.output.push('\n');
+        }
+        self.prompt_test.output.push_str(line);
+        if !self.prompt_test.output.ends_with('\n') {
+            self.prompt_test.output.push('\n');
+        }
+    }
+
+    fn poll_permission_action(&mut self, notifications: &mut NotificationCenter) {
+        let Some(rx) = self.permission_action_rx.as_ref() else {
             return;
         };
         let mut clear_receiver = false;
-        for _ in 0..64 {
+        loop {
             match rx.try_recv() {
-                Ok(AcpPromptEvent::Chunk(chunk)) => {
-                    self.prompt_test.output.push_str(&chunk);
+                Ok((request_id, Ok(()))) => {
+                    if let Some(permission) = pending_permission_mut(
+                        &mut self.prompt_test.pending_permissions,
+                        request_id,
+                    ) {
+                        permission.resolving = false;
+                    }
+                    self.prompt_test
+                        .permission_history
+                        .push(format!("permission resolved: request #{request_id}"));
+                    self.prompt_test
+                        .pending_permissions
+                        .retain(|permission| permission.request_id != request_id);
+                    notifications.success("ACP permission response sent");
+                    clear_receiver = true;
+                }
+                Ok((request_id, Err(err))) => {
+                    if let Some(permission) = pending_permission_mut(
+                        &mut self.prompt_test.pending_permissions,
+                        request_id,
+                    ) {
+                        permission.resolving = false;
+                    }
+                    notifications.error(format!("Failed to resolve ACP permission: {err}"));
+                    clear_receiver = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    for permission in &mut self.prompt_test.pending_permissions {
+                        permission.resolving = false;
+                    }
+                    notifications.error("ACP permission response task disconnected unexpectedly");
+                    clear_receiver = true;
+                    break;
+                }
+            }
+        }
+        if clear_receiver {
+            self.permission_action_rx = None;
+        }
+    }
+
+    fn poll_prompt_test(&mut self, notifications: &mut NotificationCenter) {
+        let mut clear_receiver = false;
+        for _ in 0..64 {
+            let next_event = {
+                let Some(rx) = self.prompt_fetch_rx.as_ref() else {
+                    return;
+                };
+                rx.try_recv()
+            };
+            match next_event {
+                Ok(AcpPromptEvent::SessionEvent(event)) => {
+                    self.apply_session_event(event);
+                    self.prompt_test.window_open = true;
+                }
+                Ok(AcpPromptEvent::PermissionRequested {
+                    request_id,
+                    request,
+                }) => {
+                    self.prompt_test
+                        .pending_permissions
+                        .push(PendingPermissionState {
+                            request_id,
+                            request: request.clone(),
+                            resolving: false,
+                        });
+                    self.prompt_test.permission_history.push(format!(
+                        "permission requested: {}",
+                        permission_title(&request)
+                    ));
                     self.prompt_test.window_open = true;
                 }
                 Ok(AcpPromptEvent::Completed { final_output }) => {
@@ -317,6 +457,7 @@ impl AcpPanel {
                     self.prompt_test.running = false;
                     self.prompt_test.stopped = true;
                     self.prompt_test.last_error = None;
+                    self.prompt_test.pending_permissions.clear();
                     if !self.prompt_test.output.ends_with("\n[prompt stopped]\n") {
                         if !self.prompt_test.output.ends_with('\n')
                             && !self.prompt_test.output.is_empty()
@@ -333,6 +474,7 @@ impl AcpPanel {
                 Ok(AcpPromptEvent::Failed(err)) => {
                     self.prompt_test.running = false;
                     self.prompt_test.stopped = false;
+                    self.prompt_test.pending_permissions.clear();
                     self.prompt_test.last_error = Some(err.clone());
                     self.prompt_test.window_open = true;
                     clear_receiver = true;
@@ -342,6 +484,7 @@ impl AcpPanel {
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.prompt_test.running = false;
+                    self.prompt_test.pending_permissions.clear();
                     self.prompt_test.last_error =
                         Some("ACP test prompt task disconnected unexpectedly".to_string());
                     self.prompt_test.window_open = true;
@@ -585,6 +728,15 @@ impl AcpPanel {
                 self.prompt_test.stopped = false;
                 self.prompt_test.last_error = None;
                 self.prompt_test.output.clear();
+                self.prompt_test.session_events.clear();
+                self.prompt_test.available_commands.clear();
+                self.prompt_test.current_mode_id = None;
+                self.prompt_test.config_options.clear();
+                self.prompt_test.session_title = None;
+                self.prompt_test.session_updated_at = None;
+                self.prompt_test.permission_history.clear();
+                self.prompt_test.pending_permissions.clear();
+                self.permission_action_rx = None;
                 self.prompt_test.window_open = true;
             }
             Err(err) => {
@@ -606,6 +758,34 @@ impl AcpPanel {
                 notifications.error(format!("Failed to stop ACP test prompt: {err}"));
             }
         }
+    }
+
+    fn resolve_permission(
+        &mut self,
+        request_id: u64,
+        decision: AcpPermissionDecision,
+        notifications: &mut NotificationCenter,
+    ) {
+        if self.permission_action_rx.is_some() {
+            notifications.info("An ACP permission response is already in progress");
+            return;
+        }
+        let Some(permission) = self
+            .prompt_test
+            .pending_permissions
+            .iter_mut()
+            .find(|permission| permission.request_id == request_id)
+        else {
+            notifications.error("ACP permission request is no longer pending");
+            return;
+        };
+        permission.resolving = true;
+        let (tx, rx) = mpsc::channel();
+        self.permission_action_rx = Some(rx);
+        thread::spawn(move || {
+            let result = request_resolve_acp_permission(request_id, decision);
+            let _ = tx.send((request_id, result));
+        });
     }
 
     fn render_stats(&self, ui: &mut egui::Ui) {
@@ -943,7 +1123,167 @@ impl AcpPanel {
                 }
 
                 ui.add_space(8.0);
-                ui.label(RichText::new("Stream").strong());
+                ui.label(RichText::new("Session Snapshot").strong());
+                egui::Grid::new("acp-test-prompt-snapshot-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Title");
+                        ui.label(
+                            self.prompt_test
+                                .session_title
+                                .as_deref()
+                                .unwrap_or("(not set)"),
+                        );
+                        ui.end_row();
+
+                        ui.label("Mode");
+                        ui.label(
+                            self.prompt_test
+                                .current_mode_id
+                                .as_deref()
+                                .unwrap_or("(unknown)"),
+                        );
+                        ui.end_row();
+
+                        ui.label("Updated At");
+                        ui.label(
+                            self.prompt_test
+                                .session_updated_at
+                                .as_deref()
+                                .unwrap_or("(not set)"),
+                        );
+                        ui.end_row();
+
+                        ui.label("Commands");
+                        if self.prompt_test.available_commands.is_empty() {
+                            ui.weak("(none)");
+                        } else {
+                            ui.label(
+                                self.prompt_test
+                                    .available_commands
+                                    .iter()
+                                    .map(|command| command.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                            );
+                        }
+                        ui.end_row();
+                    });
+
+                if !self.prompt_test.config_options.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Config Options").strong());
+                    egui::Grid::new("acp-test-prompt-config-options-grid")
+                        .num_columns(2)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            for option in &self.prompt_test.config_options {
+                                ui.label(option.name.as_str());
+                                let mut value = option.current_value.clone();
+                                if !option.values.is_empty() {
+                                    value.push_str("  [");
+                                    value.push_str(&option.values.join(", "));
+                                    value.push(']');
+                                }
+                                ui.label(value);
+                                ui.end_row();
+                            }
+                        });
+                }
+
+                if !self.prompt_test.pending_permissions.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Pending Permissions").strong());
+                    let pending_permissions = self.prompt_test.pending_permissions.clone();
+                    for permission in pending_permissions {
+                        ui.group(|ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(format!(
+                                    "#{} {}",
+                                    permission.request_id,
+                                    permission_title(&permission.request)
+                                ))
+                                .strong());
+                                if permission.resolving {
+                                    ui.spinner();
+                                    ui.weak("sending response...");
+                                }
+                            });
+                            if let Some(kind) = permission.request.kind.as_deref() {
+                                ui.small(format!("tool kind: {kind}"));
+                            }
+                            if let Some(status) = permission.request.status.as_deref() {
+                                ui.small(format!("tool status: {status}"));
+                            }
+                            if let Some(raw_input) = permission.request.raw_input.as_deref() {
+                                ui.small(format!("raw input: {raw_input}"));
+                            }
+                            ui.add_space(4.0);
+                            ui.horizontal_wrapped(|ui| {
+                                for option in &permission.request.options {
+                                    let button = egui::Button::new(format!(
+                                        "{} ({})",
+                                        option.label, option.kind
+                                    ));
+                                    if ui
+                                        .add_enabled(!permission.resolving, button)
+                                        .clicked()
+                                    {
+                                        self.resolve_permission(
+                                            permission.request_id,
+                                            AcpPermissionDecision::SelectOption {
+                                                option_id: option.option_id.clone(),
+                                            },
+                                            notifications,
+                                        );
+                                    }
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !permission.resolving,
+                                        egui::Button::new("Cancel").fill(Color32::DARK_RED),
+                                    )
+                                    .clicked()
+                                {
+                                    self.resolve_permission(
+                                        permission.request_id,
+                                        AcpPermissionDecision::Cancelled,
+                                        notifications,
+                                    );
+                                }
+                            });
+                        });
+                    }
+                }
+
+                if !self.prompt_test.permission_history.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Permission Timeline").strong());
+                    for item in self.prompt_test.permission_history.iter().rev().take(8) {
+                        ui.small(item);
+                    }
+                }
+
+                ui.add_space(8.0);
+                ui.label(RichText::new("Structured Events").strong());
+                egui::ScrollArea::vertical()
+                    .id_salt("acp-test-prompt-events-window")
+                    .max_height(180.0)
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        if self.prompt_test.session_events.is_empty() {
+                            ui.weak("Waiting for ACP session updates...");
+                        } else {
+                            for event in self.prompt_test.session_events.iter().rev().take(32).rev() {
+                                ui.small(event.summary.as_str());
+                            }
+                        }
+                    });
+
+                ui.add_space(8.0);
+                ui.label(RichText::new("Raw Stream").strong());
                 egui::ScrollArea::vertical()
                     .id_salt("acp-test-prompt-stream-window")
                     .auto_shrink([false, false])
@@ -1214,6 +1554,47 @@ impl AcpPanel {
                         );
                         ui.colored_label(Color32::LIGHT_RED, last_error);
                     }
+                    if self.prompt_test.agent_id == detail_window.agent_id
+                        && !self.prompt_test.session_events.is_empty()
+                    {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Latest Prompt Snapshot").strong());
+                        if let Some(mode) = self.prompt_test.current_mode_id.as_deref() {
+                            ui.small(format!("mode: {mode}"));
+                        }
+                        if let Some(title) = self.prompt_test.session_title.as_deref() {
+                            ui.small(format!("title: {title}"));
+                        }
+                        if let Some(updated_at) = self.prompt_test.session_updated_at.as_deref() {
+                            ui.small(format!("updated_at: {updated_at}"));
+                        }
+                        if !self.prompt_test.available_commands.is_empty() {
+                            ui.small(format!(
+                                "available commands: {}",
+                                self.prompt_test
+                                    .available_commands
+                                    .iter()
+                                    .map(|command| command.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+                        }
+                        if !self.prompt_test.config_options.is_empty() {
+                            ui.small(format!(
+                                "config options: {}",
+                                self.prompt_test
+                                    .config_options
+                                    .iter()
+                                    .map(|option| format!("{}={}", option.id, option.current_value))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+                        }
+                        ui.add_space(6.0);
+                        for event in self.prompt_test.session_events.iter().rev().take(12).rev() {
+                            ui.small(event.summary.as_str());
+                        }
+                    }
                 });
             });
 
@@ -1234,6 +1615,7 @@ impl PanelRenderer for AcpPanel {
         self.poll_manager_sync(notifications);
         self.poll_status_refresh(notifications);
         self.poll_prompt_test(notifications);
+        self.poll_permission_action(notifications);
         self.refresh_status_if_due();
         ui.ctx().request_repaint_after(ACP_STATUS_POLL_INTERVAL);
         ui.heading(ctx.tab_title);
@@ -1288,6 +1670,65 @@ impl PanelRenderer for AcpPanel {
     }
 }
 
+fn pending_permission_mut(
+    pending_permissions: &mut Vec<PendingPermissionState>,
+    request_id: u64,
+) -> Option<&mut PendingPermissionState> {
+    pending_permissions
+        .iter_mut()
+        .find(|permission| permission.request_id == request_id)
+}
+
+fn render_content_block(content: &AcpContentBlockEvent) -> String {
+    match content {
+        AcpContentBlockEvent::Text { text } => text.clone(),
+        AcpContentBlockEvent::Image {
+            mime_type,
+            uri,
+            data_len,
+        } => match uri {
+            Some(uri) => format!("[image {mime_type} {data_len} bytes {uri}]"),
+            None => format!("[image {mime_type} {data_len} bytes]"),
+        },
+        AcpContentBlockEvent::Audio {
+            mime_type,
+            data_len,
+        } => format!("[audio {mime_type} {data_len} bytes]"),
+        AcpContentBlockEvent::ResourceLink {
+            name, uri, title, ..
+        } => match title {
+            Some(title) => format!("[resource {name} {title} {uri}]"),
+            None => format!("[resource {name} {uri}]"),
+        },
+        AcpContentBlockEvent::EmbeddedTextResource {
+            uri,
+            mime_type,
+            text,
+        } => match mime_type {
+            Some(mime_type) => format!("[embedded text {uri} {mime_type}] {text}"),
+            None => format!("[embedded text {uri}] {text}"),
+        },
+        AcpContentBlockEvent::EmbeddedBlobResource {
+            uri,
+            mime_type,
+            byte_len,
+        } => match mime_type {
+            Some(mime_type) => format!("[embedded blob {uri} {mime_type} {byte_len} bytes]"),
+            None => format!("[embedded blob {uri} {byte_len} bytes]"),
+        },
+        AcpContentBlockEvent::Unsupported { description } => {
+            format!("[unsupported content {description}]")
+        }
+    }
+}
+
+fn permission_title(request: &AcpPermissionRequest) -> String {
+    request
+        .title
+        .clone()
+        .unwrap_or_else(|| request.tool_call_id.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1325,5 +1766,37 @@ mod tests {
         };
 
         assert_eq!(AcpPanel::command_display(&agent), "-");
+    }
+
+    #[test]
+    fn render_content_block_formats_resource_link() {
+        let rendered = super::render_content_block(&AcpContentBlockEvent::ResourceLink {
+            name: "README".to_string(),
+            uri: "file:///workspace/README.md".to_string(),
+            title: Some("Workspace README".to_string()),
+            description: None,
+            mime_type: Some("text/markdown".to_string()),
+        });
+
+        assert_eq!(
+            rendered,
+            "[resource README Workspace README file:///workspace/README.md]"
+        );
+    }
+
+    #[test]
+    fn permission_title_prefers_explicit_title() {
+        let request = AcpPermissionRequest {
+            session_id: "session-1".to_string(),
+            tool_call_id: "tool-1".to_string(),
+            title: Some("Write output.txt".to_string()),
+            kind: Some("edit".to_string()),
+            status: Some("pending".to_string()),
+            raw_input: None,
+            raw_output: None,
+            options: Vec::new(),
+        };
+
+        assert_eq!(super::permission_title(&request), "Write output.txt");
     }
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-04-02
+
+### Added
+
+- ACP `session/update` 现在会保留结构化事件快照，覆盖消息、thought、tool、plan、mode、config、available commands 与 session info 等标准更新类型
+- ACP client 现在支持结构化权限请求模型和外部异步 permission handler，为 GUI 往返审批链路提供协议层基础
+
+### Changed
+
+- `ContentBlock` 渲染已从仅支持 `Text` 扩展为可读摘要输出，`ResourceLink` 与嵌入式 `Resource` 不再静默丢失
+- ACP prompt 流式 update 现在统一透传结构化 session 事件，而不是只产出回答/thought/tool 的字符串片段
+
 ## 2026-03-30
 
 ### Added
