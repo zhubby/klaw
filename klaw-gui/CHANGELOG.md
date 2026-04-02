@@ -2,6 +2,14 @@
 
 ## 2026-04-02
 
+### Added
+
+- `Heartbeat` 面板现在支持查看和编辑每个 heartbeat job 的最近消息继承窗口，用于控制单次 heartbeat 会继承多少条近期会话消息
+
+### Changed
+
+- `Heartbeat` 面板中的自定义 heartbeat prompt 现在会与运行时固定 heartbeat 指令组合执行；无用户可见动作时，固定指令会要求模型只返回静默 ack token
+
 ### Changed
 
 - `ACP` 面板的 `Test Prompt` 弹窗现在会展示结构化 session 快照，包括当前 mode、available commands、config options、session info 与最近事件时间线

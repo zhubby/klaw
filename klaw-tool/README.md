@@ -23,10 +23,9 @@
 - the `shell` tool now supports two rule lists: `blocked_patterns` reject immediately, while `unsafe_patterns` require approval; commands that match neither execute directly
 - the `cron_manager` tool accepts planner-friendly schedule inputs such as 5-field cron (`0 8 * * *`), `every 24h`, and daily time shorthand (`8:00`), then normalizes them before persistence
 - the `cron_manager` tool also accepts either a JSON object or a JSON string for payloads, and tolerates common boolean strings like `"true"` / `"false"` for `enabled`
-- the `cron_manager` and `heartbeat_manager` tools now default `timezone` to the detected system timezone when callers omit it
 - the `cron_manager` tool supports a high-level `message` shortcut for scheduled prompts in the current conversation, auto-filling channel/chat/session defaults from tool context unless explicitly overridden
 - the `message` shortcut now defaults to an isolated cron session key like `cron:<job_id>` so scheduled runs do not silently accumulate the current chat's conversation history
-- the `heartbeat_manager` tool manages session-bound heartbeat jobs directly from storage, with session/channel/chat defaults inferred from current tool context when possible
+- the `heartbeat_manager` tool is scoped to the current conversation heartbeat, with `get` for inspection and `update` for editing only the persisted custom prompt that precedes the fixed runtime heartbeat instruction
 - sub-agent execution currently opts out of live streaming, inherits parent provider/model/system prompt and live tool availability, auto-generates an isolated child session key, re-surfaces delegated `approval_required` / `stop` signals back to the parent agent, and can forward delegated LLM audits through a runtime-provided sink
 - delegated sub-agent execution now also carries structured tool audit records in `AgentExecutionOutput`, allowing runtimes to persist child tool-call diagnostics against the parent session
 - `skills_registry` now manages registry sources end to end: `add` persists `[skills.<source>]` into config, `sync` refreshes local mirrors, `delete` removes config + local clone + manifest state, and `list/show/search` browse synced registry skills

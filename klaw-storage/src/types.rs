@@ -739,6 +739,7 @@ pub struct HeartbeatJob {
     pub every: String,
     pub prompt: String,
     pub silent_ack_token: String,
+    pub recent_messages_limit: i64,
     pub timezone: String,
     pub next_run_at_ms: i64,
     pub last_run_at_ms: Option<i64>,
@@ -756,6 +757,7 @@ pub struct NewHeartbeatJob {
     pub every: String,
     pub prompt: String,
     pub silent_ack_token: String,
+    pub recent_messages_limit: i64,
     pub timezone: String,
     pub next_run_at_ms: i64,
 }
@@ -768,6 +770,7 @@ pub struct UpdateHeartbeatJobPatch {
     pub every: Option<String>,
     pub prompt: Option<String>,
     pub silent_ack_token: Option<String>,
+    pub recent_messages_limit: Option<i64>,
     pub timezone: Option<String>,
     pub next_run_at_ms: Option<i64>,
 }

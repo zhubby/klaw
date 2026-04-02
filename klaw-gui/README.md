@@ -148,6 +148,7 @@
 - Heartbeat panel features:
   - read/manage persisted heartbeat jobs and run history via `klaw-heartbeat`
   - add/edit heartbeat jobs via `egui::Window`
+  - view and edit the per-job inherited recent-message window used for bounded heartbeat context
   - keep form-only heartbeat defaults locally in the GUI instead of writing back to config
   - manually trigger `Run Now` through the live GUI runtime
 - Archive panel features:

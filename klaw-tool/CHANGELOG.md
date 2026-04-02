@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-02
+
+### Changed
+- `heartbeat_manager` is now scoped to the current conversation heartbeat only, exposing just `get` and `update` instead of generic CRUD/list operations
+- `heartbeat_manager.update` now resolves the base-session heartbeat from the current active session and only edits the persisted custom prompt, while the fixed system heartbeat prompt stays runtime-managed
+
 ## 2026-03-31
 
 ### Fixed

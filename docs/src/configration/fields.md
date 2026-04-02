@@ -1441,14 +1441,14 @@ every = "1d"    # 1 天
 ### `heartbeat.defaults.prompt`
 
 **类型**: `string`
-**默认值**: `"Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK."`
+**默认值**: `"Review the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else."`
 **必填**: 否
 
-心跳提示词。
+心跳的默认自定义提示词。运行时会在这段内容后面追加固定 heartbeat 指令，并要求在无需用户可见动作时只返回静默 token。
 
 ```toml
 [heartbeat.defaults]
-prompt = "检查当前会话状态，如果有待处理任务请继续，否则回复 HEARTBEAT_OK。"
+prompt = "检查是否有新的待处理提醒、未读消息或需要主动告知用户的事项。"
 ```
 
 ### `heartbeat.defaults.silent_ack_token`

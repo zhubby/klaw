@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-02
+
+### Added
+- added a persisted `recent_messages_limit` heartbeat-job field (default `12`) so each run can inject a bounded slice of recent session history into `agent.conversation_history`
+
+### Changed
+- heartbeat runs now always append the fixed review prompt at publish time, while persisted heartbeat records only carry the optional custom prompt prepended ahead of that fixed instruction
+- `HeartbeatManager` can now auto-sync a one-per-session heartbeat binding for supported channel sessions without clobbering user-edited schedule settings
+
 ## 2026-03-21
 
 ### Added

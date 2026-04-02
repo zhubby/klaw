@@ -265,6 +265,7 @@ impl TursoSessionStore {
                     every TEXT NOT NULL,
                     prompt TEXT NOT NULL,
                     silent_ack_token TEXT NOT NULL,
+                    recent_messages_limit INTEGER NOT NULL DEFAULT 12,
                     timezone TEXT NOT NULL DEFAULT 'UTC',
                     next_run_at_ms INTEGER NOT NULL,
                     last_run_at_ms INTEGER,
@@ -332,6 +333,8 @@ impl TursoSessionStore {
             .await?;
         self.ensure_session_column("compression_summary_json", "TEXT")
             .await?;
+        self.ensure_heartbeat_column("recent_messages_limit", "INTEGER NOT NULL DEFAULT 12")
+            .await?;
         self.ensure_approval_column("command_text", "TEXT NOT NULL DEFAULT ''")
             .await?;
         Ok(())
@@ -383,6 +386,32 @@ impl TursoSessionStore {
                 }
                 Err(StorageError::backend(format!(
                     "failed to ensure approvals.{column} column: {message}"
+                )))
+            }
+        }
+    }
+
+    async fn ensure_heartbeat_column(
+        &self,
+        column: &str,
+        column_type: &str,
+    ) -> Result<(), StorageError> {
+        let sql = format!("ALTER TABLE heartbeat ADD COLUMN {column} {column_type}");
+        let conn = self.connection().await?;
+        let result = conn.execute(&sql, ()).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("duplicate column name")
+                    || message.contains("already exists")
+                    || message.contains("duplicate")
+                    || message.contains("no such table")
+                {
+                    return Ok(());
+                }
+                Err(StorageError::backend(format!(
+                    "failed to ensure heartbeat.{column} column: {message}"
                 )))
             }
         }
@@ -684,6 +713,28 @@ impl SessionStorage for TursoSessionStore {
              WHERE session_key = '{}'
              LIMIT 1",
             escape_sql_text(session_key)
+        );
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(StorageError::backend)?
+            .ok_or_else(|| StorageError::backend("session not found"))?;
+        row_to_session_index(&row)
+    }
+
+    async fn get_session_by_active_session_key(
+        &self,
+        active_session_key: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let sql = format!(
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+             FROM sessions
+             WHERE active_session_key = '{}'
+             ORDER BY CASE WHEN session_key = active_session_key THEN 1 ELSE 0 END, updated_at_ms DESC
+             LIMIT 1",
+            escape_sql_text(active_session_key)
         );
         let conn = self.connection().await?;
         let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
@@ -2293,8 +2344,8 @@ impl HeartbeatStorage for TursoSessionStore {
         let sql = format!(
             "INSERT INTO heartbeat (
                 id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
-            ) VALUES ('{}', '{}', '{}', '{}', {}, '{}', '{}', '{}', '{}', {}, NULL, {}, {})",
+                recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+            ) VALUES ('{}', '{}', '{}', '{}', {}, '{}', '{}', '{}', {}, '{}', {}, NULL, {}, {})",
             escape_sql_text(&input.id),
             escape_sql_text(&input.session_key),
             escape_sql_text(&input.channel),
@@ -2303,6 +2354,7 @@ impl HeartbeatStorage for TursoSessionStore {
             escape_sql_text(&input.every),
             escape_sql_text(&input.prompt),
             escape_sql_text(&input.silent_ack_token),
+            input.recent_messages_limit,
             escape_sql_text(&input.timezone),
             input.next_run_at_ms,
             now,
@@ -2331,6 +2383,7 @@ impl HeartbeatStorage for TursoSessionStore {
                  every = '{}',
                  prompt = '{}',
                  silent_ack_token = '{}',
+                 recent_messages_limit = {},
                  timezone = '{}',
                  next_run_at_ms = {},
                  updated_at_ms = {}
@@ -2346,6 +2399,9 @@ impl HeartbeatStorage for TursoSessionStore {
                     .as_deref()
                     .unwrap_or(&current.silent_ack_token)
             ),
+            patch
+                .recent_messages_limit
+                .unwrap_or(current.recent_messages_limit),
             escape_sql_text(patch.timezone.as_deref().unwrap_or(&current.timezone)),
             patch.next_run_at_ms.unwrap_or(current.next_run_at_ms),
             now_ms(),
@@ -2395,7 +2451,7 @@ impl HeartbeatStorage for TursoSessionStore {
     async fn get_heartbeat(&self, heartbeat_id: &str) -> Result<HeartbeatJob, StorageError> {
         let sql = format!(
             "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+                    recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
              FROM heartbeat
              WHERE id = '{}'
              LIMIT 1",
@@ -2417,7 +2473,7 @@ impl HeartbeatStorage for TursoSessionStore {
     ) -> Result<HeartbeatJob, StorageError> {
         let sql = format!(
             "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+                    recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
              FROM heartbeat
              WHERE session_key = '{}'
              LIMIT 1",
@@ -2440,7 +2496,7 @@ impl HeartbeatStorage for TursoSessionStore {
     ) -> Result<Vec<HeartbeatJob>, StorageError> {
         let sql = format!(
             "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+                    recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
              FROM heartbeat
              ORDER BY updated_at_ms DESC
              LIMIT {}
@@ -2464,7 +2520,7 @@ impl HeartbeatStorage for TursoSessionStore {
     ) -> Result<Vec<HeartbeatJob>, StorageError> {
         let sql = format!(
             "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+                    recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
              FROM heartbeat
              WHERE enabled = 1 AND next_run_at_ms <= {}
              ORDER BY next_run_at_ms ASC
@@ -2739,11 +2795,12 @@ fn row_to_heartbeat_job(row: &Row) -> Result<HeartbeatJob, StorageError> {
         every: value_to_string(row.get_value(5).map_err(StorageError::backend)?)?,
         prompt: value_to_string(row.get_value(6).map_err(StorageError::backend)?)?,
         silent_ack_token: value_to_string(row.get_value(7).map_err(StorageError::backend)?)?,
-        timezone: value_to_string(row.get_value(8).map_err(StorageError::backend)?)?,
-        next_run_at_ms: value_to_i64(row.get_value(9).map_err(StorageError::backend)?)?,
-        last_run_at_ms: value_to_opt_i64(row.get_value(10).map_err(StorageError::backend)?)?,
-        created_at_ms: value_to_i64(row.get_value(11).map_err(StorageError::backend)?)?,
-        updated_at_ms: value_to_i64(row.get_value(12).map_err(StorageError::backend)?)?,
+        recent_messages_limit: value_to_i64(row.get_value(8).map_err(StorageError::backend)?)?,
+        timezone: value_to_string(row.get_value(9).map_err(StorageError::backend)?)?,
+        next_run_at_ms: value_to_i64(row.get_value(10).map_err(StorageError::backend)?)?,
+        last_run_at_ms: value_to_opt_i64(row.get_value(11).map_err(StorageError::backend)?)?,
+        created_at_ms: value_to_i64(row.get_value(12).map_err(StorageError::backend)?)?,
+        updated_at_ms: value_to_i64(row.get_value(13).map_err(StorageError::backend)?)?,
     })
 }
 

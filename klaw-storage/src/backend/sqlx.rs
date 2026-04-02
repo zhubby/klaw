@@ -95,6 +95,7 @@ struct HeartbeatJobRow {
     every: String,
     prompt: String,
     silent_ack_token: String,
+    recent_messages_limit: i64,
     timezone: String,
     next_run_at_ms: i64,
     last_run_at_ms: Option<i64>,
@@ -332,6 +333,7 @@ impl From<HeartbeatJobRow> for HeartbeatJob {
             every: value.every,
             prompt: value.prompt,
             silent_ack_token: value.silent_ack_token,
+            recent_messages_limit: value.recent_messages_limit,
             timezone: value.timezone,
             next_run_at_ms: value.next_run_at_ms,
             last_run_at_ms: value.last_run_at_ms,
@@ -941,6 +943,7 @@ impl SqlxSessionStore {
                 every TEXT NOT NULL,
                 prompt TEXT NOT NULL,
                 silent_ack_token TEXT NOT NULL,
+                recent_messages_limit INTEGER NOT NULL DEFAULT 12,
                 timezone TEXT NOT NULL DEFAULT 'UTC',
                 next_run_at_ms INTEGER NOT NULL,
                 last_run_at_ms INTEGER,
@@ -1039,6 +1042,11 @@ impl SqlxSessionStore {
             "ALTER TABLE approvals ADD COLUMN command_text TEXT NOT NULL DEFAULT ''",
         )
         .await?;
+        self.ensure_heartbeat_column(
+            "recent_messages_limit",
+            "ALTER TABLE heartbeat ADD COLUMN recent_messages_limit INTEGER NOT NULL DEFAULT 12",
+        )
+        .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_approvals_session_status
              ON approvals(session_key, status, created_at_ms DESC)",
@@ -1083,6 +1091,22 @@ impl SqlxSessionStore {
                 }
                 Err(StorageError::backend(format!(
                     "failed to ensure approvals.{column} column: {message}"
+                )))
+            }
+        }
+    }
+
+    async fn ensure_heartbeat_column(&self, column: &str, sql: &str) -> Result<(), StorageError> {
+        let result = sqlx::query(sql).execute(&self.pool).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("duplicate column name") || message.contains("already exists") {
+                    return Ok(());
+                }
+                Err(StorageError::backend(format!(
+                    "failed to ensure heartbeat.{column} column: {message}"
                 )))
             }
         }
@@ -1378,6 +1402,24 @@ impl SessionStorage for SqlxSessionStore {
              WHERE session_key = ?1",
         )
         .bind(session_key)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(row.into())
+    }
+
+    async fn get_session_by_active_session_key(
+        &self,
+        active_session_key: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let row = sqlx::query_as::<_, SessionIndexRow>(
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+             FROM sessions
+             WHERE active_session_key = ?1
+             ORDER BY CASE WHEN session_key = active_session_key THEN 1 ELSE 0 END, updated_at_ms DESC
+             LIMIT 1",
+        )
+        .bind(active_session_key)
         .fetch_one(&self.pool)
         .await
         .map_err(StorageError::backend)?;
@@ -2692,8 +2734,8 @@ impl HeartbeatStorage for SqlxSessionStore {
         sqlx::query(
             "INSERT INTO heartbeat (
                 id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12)",
+                recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, ?12, ?13)",
         )
         .bind(&input.id)
         .bind(&input.session_key)
@@ -2703,6 +2745,7 @@ impl HeartbeatStorage for SqlxSessionStore {
         .bind(&input.every)
         .bind(&input.prompt)
         .bind(&input.silent_ack_token)
+        .bind(input.recent_messages_limit)
         .bind(&input.timezone)
         .bind(input.next_run_at_ms)
         .bind(now)
@@ -2727,10 +2770,11 @@ impl HeartbeatStorage for SqlxSessionStore {
                  every = ?4,
                  prompt = ?5,
                  silent_ack_token = ?6,
-                 timezone = ?7,
-                 next_run_at_ms = ?8,
-                 updated_at_ms = ?9
-             WHERE id = ?10",
+                 recent_messages_limit = ?7,
+                 timezone = ?8,
+                 next_run_at_ms = ?9,
+                 updated_at_ms = ?10
+             WHERE id = ?11",
         )
         .bind(patch.session_key.as_ref().unwrap_or(&current.session_key))
         .bind(patch.channel.as_ref().unwrap_or(&current.channel))
@@ -2742,6 +2786,11 @@ impl HeartbeatStorage for SqlxSessionStore {
                 .silent_ack_token
                 .as_ref()
                 .unwrap_or(&current.silent_ack_token),
+        )
+        .bind(
+            patch
+                .recent_messages_limit
+                .unwrap_or(current.recent_messages_limit),
         )
         .bind(patch.timezone.as_ref().unwrap_or(&current.timezone))
         .bind(patch.next_run_at_ms.unwrap_or(current.next_run_at_ms))
@@ -2784,7 +2833,7 @@ impl HeartbeatStorage for SqlxSessionStore {
     async fn get_heartbeat(&self, heartbeat_id: &str) -> Result<HeartbeatJob, StorageError> {
         let row = sqlx::query_as::<_, HeartbeatJobRow>(
             "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+                    recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
              FROM heartbeat
              WHERE id = ?1",
         )
@@ -2801,7 +2850,7 @@ impl HeartbeatStorage for SqlxSessionStore {
     ) -> Result<HeartbeatJob, StorageError> {
         let row = sqlx::query_as::<_, HeartbeatJobRow>(
             "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+                    recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
              FROM heartbeat
              WHERE session_key = ?1",
         )
@@ -2819,7 +2868,7 @@ impl HeartbeatStorage for SqlxSessionStore {
     ) -> Result<Vec<HeartbeatJob>, StorageError> {
         let rows = sqlx::query_as::<_, HeartbeatJobRow>(
             "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+                    recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
              FROM heartbeat
              ORDER BY updated_at_ms DESC
              LIMIT ?1 OFFSET ?2",
@@ -2839,7 +2888,7 @@ impl HeartbeatStorage for SqlxSessionStore {
     ) -> Result<Vec<HeartbeatJob>, StorageError> {
         let rows = sqlx::query_as::<_, HeartbeatJobRow>(
             "SELECT id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token,
-                    timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
+                    recent_messages_limit, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
              FROM heartbeat
              WHERE enabled = 1 AND next_run_at_ms <= ?1
              ORDER BY next_run_at_ms ASC

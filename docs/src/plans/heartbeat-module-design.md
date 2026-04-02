@@ -130,7 +130,7 @@ HEARTBEAT_OK
 [heartbeat.defaults]
 enabled = true
 every = "30m"
-prompt = "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK."
+prompt = "Review the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else."
 silent_ack_token = "HEARTBEAT_OK"
 timezone = "Asia/Shanghai"
 
