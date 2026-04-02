@@ -4,6 +4,7 @@
 
 ### Added
 - added a persisted `recent_messages_limit` field to heartbeat jobs in both SQLx and Turso backends, with default/backfill support for existing databases
+- added `get_session_by_active_session_key` session lookups in both SQLx and Turso backends so higher layers can resolve a conversation's base session from the current active session key
 
 ## 2026-03-31
 

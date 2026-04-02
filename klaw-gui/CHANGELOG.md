@@ -6,6 +6,10 @@
 
 - `Heartbeat` 面板现在支持查看和编辑每个 heartbeat job 的最近消息继承窗口，用于控制单次 heartbeat 会继承多少条近期会话消息
 
+### Changed
+
+- `Heartbeat` 面板不再编辑持久化 heartbeat prompt；固定系统 heartbeat prompt 改为仅在实际触发时由运行时动态注入
+
 ## 2026-04-02
 
 ### Changed

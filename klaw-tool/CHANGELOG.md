@@ -5,6 +5,10 @@
 ### Added
 - `heartbeat_manager` now exposes `recent_messages_limit`, letting callers configure how many recent messages a heartbeat run should inherit from the resolved session context
 
+### Changed
+- `heartbeat_manager` is now scoped to the current conversation heartbeat only, exposing just `get` and `update` instead of generic CRUD/list operations
+- `heartbeat_manager.update` now resolves the base-session heartbeat from the current active session and only edits the persisted custom prompt, while the fixed system heartbeat prompt stays runtime-managed
+
 ## 2026-03-31
 
 ### Fixed

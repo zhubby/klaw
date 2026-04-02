@@ -26,7 +26,7 @@ use klaw_core::{
     TransportError, build_runtime_system_prompt, ensure_workspace_prompt_templates,
 };
 use klaw_gateway::{GatewayWebhookAgentRequest, GatewayWebhookRequest};
-use klaw_heartbeat::should_suppress_output;
+use klaw_heartbeat::{HeartbeatManager, should_suppress_output};
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
 use klaw_mcp::{McpConfigSnapshot, McpInitHandle, McpManager, McpSyncResult};
 use klaw_observability::{
@@ -805,6 +805,7 @@ async fn resolve_session_route(
         &default_model,
     )
     .await?;
+    sync_base_session_heartbeat(runtime, &base).await?;
     let active_session_key = base
         .active_session_key
         .clone()
@@ -1375,6 +1376,24 @@ fn approval_manager(runtime: &RuntimeBundle) -> SqliteApprovalManager {
 
 fn session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {
     SqliteSessionManager::from_store(runtime.session_store.clone())
+}
+
+fn supports_channel_heartbeat(channel: &str) -> bool {
+    matches!(channel, "telegram" | "dingtalk")
+}
+
+async fn sync_base_session_heartbeat(
+    runtime: &RuntimeBundle,
+    session: &SessionIndex,
+) -> Result<(), Box<dyn Error>> {
+    if !supports_channel_heartbeat(&session.channel) {
+        return Ok(());
+    }
+    let manager = HeartbeatManager::new(Arc::new(runtime.session_store.clone()));
+    manager
+        .sync_job_to_session(&session.session_key, &session.channel, &session.chat_id)
+        .await?;
+    Ok(())
 }
 
 fn persistable_session_delivery_metadata_json(
@@ -3405,7 +3424,7 @@ mod tests {
     use klaw_gateway::{GatewayWebhookAgentRequest, GatewayWebhookRequest};
     use klaw_llm::{ChatOptions, LlmAuditPayload, LlmError, LlmProvider};
     use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
-    use klaw_storage::ApprovalStatus;
+    use klaw_storage::{ApprovalStatus, HeartbeatStorage};
     use klaw_storage::{DefaultSessionStore, StoragePaths};
     use klaw_tool::{SubAgentAuditSink, ToolRegistry};
     use klaw_util::EnvironmentCheckReport;
@@ -4307,6 +4326,41 @@ A .docx file is a ZIP archive containing XML files.
 
         assert_eq!(route.model_provider, "fresh");
         assert_eq!(route.model, "fresh-model");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resolve_session_route_syncs_heartbeat_for_supported_channels() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+
+        resolve_session_route(&runtime, "telegram", "telegram:test", "chat-1")
+            .await
+            .expect("route should resolve");
+
+        let heartbeat = runtime
+            .session_store
+            .get_heartbeat_by_session_key("telegram:test")
+            .await
+            .expect("heartbeat should be created");
+        assert_eq!(heartbeat.channel, "telegram");
+        assert_eq!(heartbeat.chat_id, "chat-1");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resolve_session_route_skips_heartbeat_for_unsupported_channels() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+
+        resolve_session_route(&runtime, "stdio", "stdio:test", "chat-1")
+            .await
+            .expect("route should resolve");
+
+        let err = runtime
+            .session_store
+            .get_heartbeat_by_session_key("stdio:test")
+            .await
+            .expect_err("heartbeat should not be created");
+        assert!(format!("{err}").contains("not found"));
     }
 
     #[test]

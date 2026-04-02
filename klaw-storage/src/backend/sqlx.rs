@@ -1408,6 +1408,24 @@ impl SessionStorage for SqlxSessionStore {
         Ok(row.into())
     }
 
+    async fn get_session_by_active_session_key(
+        &self,
+        active_session_key: &str,
+    ) -> Result<SessionIndex, StorageError> {
+        let row = sqlx::query_as::<_, SessionIndexRow>(
+            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+             FROM sessions
+             WHERE active_session_key = ?1
+             ORDER BY CASE WHEN session_key = active_session_key THEN 1 ELSE 0 END, updated_at_ms DESC
+             LIMIT 1",
+        )
+        .bind(active_session_key)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        Ok(row.into())
+    }
+
     async fn get_or_create_session_state(
         &self,
         session_key: &str,

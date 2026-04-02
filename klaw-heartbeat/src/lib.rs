@@ -17,6 +17,9 @@ pub const HEARTBEAT_RECENT_MESSAGES_LIMIT_KEY: &str = "heartbeat.recent_messages
 pub const DEFAULT_SILENT_ACK_TOKEN: &str = "HEARTBEAT_OK";
 pub const DEFAULT_TIMEZONE: &str = "UTC";
 pub const DEFAULT_RECENT_MESSAGES_LIMIT: i64 = 12;
+pub const DEFAULT_HEARTBEAT_EVERY: &str = "30m";
+pub const DEFAULT_HEARTBEAT_PROMPT: &str =
+    "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.";
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +138,52 @@ where
                 },
             )
             .await?)
+    }
+
+    pub async fn sync_job_to_session(
+        &self,
+        session_key: &str,
+        channel: &str,
+        chat_id: &str,
+    ) -> Result<HeartbeatJob, HeartbeatError> {
+        let session_key = require_trimmed(session_key, "session_key")?;
+        let channel = require_trimmed(channel, "channel")?;
+        let chat_id = require_trimmed(chat_id, "chat_id")?;
+
+        match self
+            .storage
+            .get_heartbeat_by_session_key(&session_key)
+            .await
+        {
+            Ok(existing) => Ok(self
+                .storage
+                .update_heartbeat(
+                    &existing.id,
+                    &UpdateHeartbeatJobPatch {
+                        session_key: Some(session_key),
+                        channel: Some(channel),
+                        chat_id: Some(chat_id),
+                        ..UpdateHeartbeatJobPatch::default()
+                    },
+                )
+                .await?),
+            Err(_) => Ok(self
+                .storage
+                .create_heartbeat(&NewHeartbeatJob {
+                    id: Uuid::new_v4().to_string(),
+                    session_key,
+                    channel,
+                    chat_id,
+                    enabled: true,
+                    every: DEFAULT_HEARTBEAT_EVERY.to_string(),
+                    prompt: String::new(),
+                    silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+                    recent_messages_limit: DEFAULT_RECENT_MESSAGES_LIMIT,
+                    timezone: DEFAULT_TIMEZONE.to_string(),
+                    next_run_at_ms: compute_next_run_at_ms(DEFAULT_HEARTBEAT_EVERY)?,
+                })
+                .await?),
+        }
     }
 
     pub async fn set_enabled(
@@ -340,7 +389,7 @@ pub fn build_inbound_message(job: &HeartbeatJob) -> InboundMessage {
         sender_id: "system-heartbeat".to_string(),
         chat_id: job.chat_id.clone(),
         session_key: job.session_key.clone(),
-        content: job.prompt.clone(),
+        content: build_heartbeat_content(&job.prompt),
         metadata: BTreeMap::from([
             (
                 TRIGGER_KIND_KEY.to_string(),
@@ -369,7 +418,7 @@ pub fn build_payload_json(job: &HeartbeatJob) -> Result<String, HeartbeatError> 
         "sender_id": "system-heartbeat",
         "chat_id": job.chat_id,
         "session_key": job.session_key,
-        "content": job.prompt,
+        "content": build_heartbeat_content(&job.prompt),
         "metadata": {
             TRIGGER_KIND_KEY: TRIGGER_KIND_HEARTBEAT,
             HEARTBEAT_SESSION_KEY: job.session_key,
@@ -408,7 +457,7 @@ fn normalize_input(input: &HeartbeatInput) -> Result<HeartbeatInput, HeartbeatEr
     let channel = require_trimmed(&input.channel, "channel")?;
     let chat_id = require_trimmed(&input.chat_id, "chat_id")?;
     let every = require_trimmed(&input.every, "every")?;
-    let prompt = require_trimmed(&input.prompt, "prompt")?;
+    let prompt = input.prompt.trim().to_string();
     let silent_ack_token = require_trimmed(&input.silent_ack_token, "silent_ack_token")?;
     if input.recent_messages_limit <= 0 {
         return Err(HeartbeatError::InvalidInput(
@@ -430,6 +479,14 @@ fn normalize_input(input: &HeartbeatInput) -> Result<HeartbeatInput, HeartbeatEr
         recent_messages_limit: input.recent_messages_limit,
         timezone,
     })
+}
+
+fn build_heartbeat_content(custom_prompt: &str) -> String {
+    let custom_prompt = custom_prompt.trim();
+    if custom_prompt.is_empty() {
+        return DEFAULT_HEARTBEAT_PROMPT.to_string();
+    }
+    format!("{custom_prompt}\n\n{DEFAULT_HEARTBEAT_PROMPT}")
 }
 
 fn build_conversation_history_value(
@@ -553,7 +610,7 @@ mod tests {
             chat_id: "main".to_string(),
             enabled: true,
             every: "30m".to_string(),
-            prompt: "ping".to_string(),
+            prompt: "Focus on stale tasks.".to_string(),
             silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
             recent_messages_limit: DEFAULT_RECENT_MESSAGES_LIMIT,
             timezone: "UTC".to_string(),
@@ -573,6 +630,10 @@ mod tests {
         assert_eq!(
             payload["metadata"][HEARTBEAT_SILENT_ACK_TOKEN_KEY],
             DEFAULT_SILENT_ACK_TOKEN
+        );
+        assert_eq!(
+            payload["content"],
+            format!("Focus on stale tasks.\n\n{DEFAULT_HEARTBEAT_PROMPT}")
         );
     }
 
@@ -602,6 +663,24 @@ mod tests {
         assert_eq!(stored.id, created.id);
         assert_eq!(stored.prompt, "review state");
         assert_eq!(stored.recent_messages_limit, DEFAULT_RECENT_MESSAGES_LIMIT);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_job_to_session_creates_default_binding() {
+        let store = Arc::new(create_store().await);
+        let manager = HeartbeatManager::new(store.clone());
+
+        let job = manager
+            .sync_job_to_session("telegram:main", "telegram", "chat-1")
+            .await
+            .expect("sync heartbeat");
+
+        assert_eq!(job.session_key, "telegram:main");
+        assert_eq!(job.every, DEFAULT_HEARTBEAT_EVERY);
+        assert_eq!(job.prompt, "");
+        assert_eq!(job.silent_ack_token, DEFAULT_SILENT_ACK_TOKEN);
+        assert_eq!(job.recent_messages_limit, DEFAULT_RECENT_MESSAGES_LIMIT);
+        assert_eq!(job.timezone, DEFAULT_TIMEZONE);
     }
 
     #[test]
@@ -654,7 +733,7 @@ mod tests {
                 chat_id: "main".to_string(),
                 enabled: true,
                 every: "1m".to_string(),
-                prompt: "review".to_string(),
+                prompt: "Keep an eye on follow-ups.".to_string(),
                 silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
                 recent_messages_limit: DEFAULT_RECENT_MESSAGES_LIMIT,
                 timezone: "UTC".to_string(),
@@ -677,6 +756,10 @@ mod tests {
         let messages = transport.published_messages().await;
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].payload.session_key, "stdio:main:child");
+        assert_eq!(
+            messages[0].payload.content,
+            format!("Keep an eye on follow-ups.\n\n{DEFAULT_HEARTBEAT_PROMPT}")
+        );
         assert_eq!(
             messages[0]
                 .payload
@@ -728,7 +811,7 @@ mod tests {
                 chat_id: "main".to_string(),
                 enabled: true,
                 every: "1m".to_string(),
-                prompt: "review".to_string(),
+                prompt: String::new(),
                 silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
                 recent_messages_limit: 2,
                 timezone: "UTC".to_string(),

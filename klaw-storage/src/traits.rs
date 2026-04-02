@@ -38,6 +38,11 @@ pub trait SessionStorage: Send + Sync {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError>;
 
+    async fn get_session_by_active_session_key(
+        &self,
+        active_session_key: &str,
+    ) -> Result<SessionIndex, StorageError>;
+
     async fn get_or_create_session_state(
         &self,
         session_key: &str,

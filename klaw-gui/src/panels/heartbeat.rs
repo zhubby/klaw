@@ -45,7 +45,7 @@ impl HeartbeatForm {
             chat_id: String::new(),
             enabled: defaults.enabled,
             every: "30m".to_string(),
-            prompt: "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.".to_string(),
+            prompt: String::new(),
             silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
             recent_messages_limit: defaults.recent_messages_limit,
             timezone: defaults.timezone.clone(),
@@ -245,10 +245,6 @@ impl HeartbeatPanel {
             notifications.error("Every cannot be empty");
             return;
         }
-        if input.prompt.is_empty() {
-            notifications.error("Prompt cannot be empty");
-            return;
-        }
         if input.silent_ack_token.is_empty() {
             notifications.error("Silent Ack Token cannot be empty");
             return;
@@ -433,15 +429,6 @@ impl HeartbeatPanel {
                         "No indexed sessions found. Heartbeat must target an existing session.",
                     );
                 }
-
-                ui.separator();
-                ui.label("Prompt");
-                ui.add(
-                    egui::TextEdit::multiline(&mut form.prompt)
-                        .desired_rows(6)
-                        .desired_width(f32::INFINITY),
-                );
-
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
