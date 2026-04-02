@@ -576,6 +576,19 @@ mod tests {
                 .ok_or_else(|| StorageError::backend("not found"))
         }
 
+        async fn get_session_by_active_session_key(
+            &self,
+            active_session_key: &str,
+        ) -> Result<SessionIndex, StorageError> {
+            self.sessions
+                .lock()
+                .expect("lock")
+                .iter()
+                .find(|session| session.active_session_key.as_deref() == Some(active_session_key))
+                .cloned()
+                .ok_or_else(|| StorageError::backend("not found"))
+        }
+
         async fn get_or_create_session_state(
             &self,
             session_key: &str,

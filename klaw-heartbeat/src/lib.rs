@@ -165,7 +165,7 @@ where
                     },
                 )
                 .await?),
-            Err(_) => Ok(self
+            Err(err) if is_not_found_error(&err) => Ok(self
                 .storage
                 .create_heartbeat(&NewHeartbeatJob {
                     id: Uuid::new_v4().to_string(),
@@ -181,6 +181,7 @@ where
                     next_run_at_ms: compute_next_run_at_ms(DEFAULT_HEARTBEAT_EVERY)?,
                 })
                 .await?),
+            Err(err) => Err(err.into()),
         }
     }
 
@@ -493,11 +494,41 @@ fn heartbeat_instruction(silent_ack_token: &str) -> String {
 
 fn build_heartbeat_content(custom_prompt: &str, silent_ack_token: &str) -> String {
     let instruction = heartbeat_instruction(silent_ack_token);
-    let custom_prompt = custom_prompt.trim();
+    let custom_prompt = normalize_legacy_custom_prompt(custom_prompt, silent_ack_token);
     if custom_prompt.is_empty() {
         return instruction;
     }
     format!("{custom_prompt}\n\n{instruction}")
+}
+
+fn normalize_legacy_custom_prompt(custom_prompt: &str, silent_ack_token: &str) -> String {
+    let instruction = heartbeat_instruction(silent_ack_token);
+    let legacy_default = "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.";
+    let legacy_current_token = format!(
+        "Review the session state. If no user-visible action is needed, reply exactly {}.",
+        silent_ack_token.trim()
+    );
+    let trimmed = custom_prompt.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    for suffix in [
+        instruction.as_str(),
+        legacy_default,
+        legacy_current_token.as_str(),
+    ] {
+        if trimmed == suffix {
+            return String::new();
+        }
+        if let Some(prefix) = trimmed.strip_suffix(suffix) {
+            return prefix.trim().trim_end_matches(':').trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn is_not_found_error(err: &StorageError) -> bool {
+    matches!(err, StorageError::Backend(message) if message.contains("not found"))
 }
 
 fn build_conversation_history_value(
@@ -863,6 +894,17 @@ mod tests {
         assert_eq!(
             build_heartbeat_content("Watch stale approvals.", "ACK_DONE"),
             "Watch stale approvals.\n\nReview the session state. If no user-visible action is needed, reply with exactly ACK_DONE and nothing else."
+        );
+    }
+
+    #[test]
+    fn heartbeat_content_strips_legacy_default_instruction_suffix() {
+        assert_eq!(
+            build_heartbeat_content(
+                "Watch mentions.\n\nReview the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.",
+                "HEARTBEAT_OK"
+            ),
+            "Watch mentions.\n\nReview the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else."
         );
     }
 }

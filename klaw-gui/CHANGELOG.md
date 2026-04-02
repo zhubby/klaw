@@ -8,9 +8,7 @@
 
 ### Changed
 
-- `Heartbeat` 面板不再编辑持久化 heartbeat prompt；固定系统 heartbeat prompt 改为仅在实际触发时由运行时动态注入
-
-## 2026-04-02
+- `Heartbeat` 面板中的自定义 heartbeat prompt 现在会与运行时固定 heartbeat 指令组合执行；无用户可见动作时，固定指令会要求模型只返回静默 ack token
 
 ### Changed
 

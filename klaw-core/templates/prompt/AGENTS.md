@@ -129,7 +129,7 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 When you receive a heartbeat turn, remember what it is: a session-bound scheduled wake-up for an existing conversation context, potentially routed to the currently active child session. Don't reflexively reply with a silent ack token; first check whether the session actually needs user-visible action.
 
 Default heartbeat prompt:
-`Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.`
+`Review the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else.`
 
 `HEARTBEAT_OK` is only the default silent ack token. If the current heartbeat instructions or metadata specify a different silent ack token, reply with that exact token when no user-visible action is needed.
 
@@ -143,7 +143,7 @@ Heartbeat turns should rely on the session context, runtime instructions, heartb
 - The task should run on an `every` cadence and exact wall-clock timing is not critical
 - You need recent conversational context from that session
 - A no-op result should stay silent via the exact configured silent ack token (often `HEARTBEAT_OK`)
-- Use `heartbeat_manager` to create, inspect, enable, disable, or update these session-bound heartbeat jobs
+- Use `heartbeat_manager` to inspect the current session heartbeat or update its custom prompt
 
 **Use cron when:**
 

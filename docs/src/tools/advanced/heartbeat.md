@@ -321,7 +321,7 @@ struct HeartbeatForm {
 ### 默认提示词
 
 ```text
-Review the session state and recent context. If everything is working correctly and no user-visible action is needed, reply exactly: HEARTBEAT_OK
+Review the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else.
 ```
 
 ## heartbeat_manager 工具
@@ -330,7 +330,7 @@ Review the session state and recent context. If everything is working correctly 
 
 ```rust
 fn description(&self) -> &str {
-    "Manage session-bound heartbeat jobs. Use this to create, update, list, enable, disable, or delete heartbeats that wake up an existing conversation context."
+    "Get or update the heartbeat bound to the current conversation. Use `get` to inspect the current session heartbeat, or `update` to change only the custom prompt that is prepended before the fixed heartbeat instruction."
 }
 ```
 
@@ -338,38 +338,28 @@ fn description(&self) -> &str {
 
 | Action | 描述 | 必需参数 |
 |--------|------|----------|
-| `create` | 创建新心跳任务 | `session_key`, `every`, `prompt` |
-| `update` | 更新现有任务 | `id`, 可选字段 |
-| `delete` | 删除任务 | `id` |
-| `get` | 获取任务详情 | `id` |
-| `list` | 列出所有任务 | - |
-| `list_runs` | 列出执行记录 | `id` |
-| `set_enabled` | 设置启用状态 | `id`, `enabled` |
-| `enable` | 启用任务 | `id` |
-| `disable` | 禁用任务 | `id` |
+| `get` | 获取当前会话绑定的 heartbeat | - |
+| `update` | 更新当前会话 heartbeat 的自定义 prompt | `prompt` |
 
 ### 工具调用示例
 
 ```json
 {
-  "action": "create",
-  "session_key": "stdio:main",
-  "every": "30m",
-  "prompt": "Check if there are any pending tasks or reminders to notify the user about.",
-  "silent_ack_token": "HEARTBEAT_OK"
+  "action": "get"
 }
 ```
 
 ```json
 {
-  "action": "list"
+  "action": "update",
+  "prompt": "Check unread mentions and recent follow-ups before deciding whether to stay silent."
 }
 ```
 
 ```json
 {
-  "action": "enable",
-  "id": "heartbeat-123"
+  "action": "update",
+  "prompt": ""
 }
 ```
 
