@@ -494,7 +494,7 @@ fn default_heartbeat_every() -> String {
 }
 
 fn default_heartbeat_prompt() -> String {
-    "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK."
+    "Review the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else."
         .to_string()
 }
 

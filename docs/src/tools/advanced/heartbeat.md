@@ -457,24 +457,29 @@ Agent Response: "You have 3 unread emails and a meeting in 30 minutes."
 2. 点击 "Add" 按钮
 3. 选择目标 Session
 4. 配置执行间隔（如 `30m`）
-5. 编写提示词
+5. 编写自定义提示词
 6. 点击 "Create"
 
-### 通过工具调用创建
+### 通过工具读取当前会话 heartbeat
 
 ```json
 {
-  "action": "create",
-  "session_key": "telegram:bot:chat-123",
-  "every": "1h",
-  "prompt": "Summarize recent activity and notify user if anything important happened.",
-  "silent_ack_token": "ALL_GOOD"
+  "action": "get"
+}
+```
+
+### 通过工具更新当前会话 heartbeat 的自定义提示词
+
+```json
+{
+  "action": "update",
+  "prompt": "Summarize recent activity and notify the user if anything important changed."
 }
 ```
 
 ### 立即执行心跳
 
-通过 GUI 右键菜单选择 "Run Now"，或通过工具调用：
+通过 GUI 右键菜单选择 "Run Now"：
 
 ```rust
 // 运行时 API
