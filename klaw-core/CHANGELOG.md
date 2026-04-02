@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-02
+
+### Removed
+- removed the `HEARTBEAT.md` workspace prompt template so runtime prompt setup no longer auto-creates or references a heartbeat-only markdown sidecar
+
 ## 2026-03-30
 
 ### Fixed

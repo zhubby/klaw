@@ -11,7 +11,7 @@ Before doing anything else:
 1. Treat the inlined `SOUL.md`, `IDENTITY.md`, and `TOOLS.md` content as baseline workspace context
 2. Read `USER.md` when you need user-specific preferences, profile, or ongoing context
 3. Use the `memory` tool for durable recall instead of local markdown memory files
-4. Only load extra docs (`HEARTBEAT.md`, `BOOTSTRAP.md`) when the task requires them
+4. Only load extra docs (`BOOTSTRAP.md`) when the task requires them
 
 Act decisively inside the workspace. Ask before external or destructive actions.
 
@@ -131,7 +131,7 @@ When you receive a heartbeat turn, remember what it is: a session-bound schedule
 Default heartbeat prompt:
 `Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.`
 
-If your runtime or workspace instructions tell you to read `HEARTBEAT.md`, do that on demand. You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it small to limit token burn.
+Heartbeat turns should rely on the session context, runtime instructions, and durable memory instead of a separate heartbeat markdown file.
 
 ### Heartbeat vs Cron: When to Use Each
 
