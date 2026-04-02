@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-02
+
+### Added
+- `heartbeat_manager` now exposes `recent_messages_limit`, letting callers configure how many recent messages a heartbeat run should inherit from the resolved session context
+
 ## 2026-03-31
 
 ### Fixed

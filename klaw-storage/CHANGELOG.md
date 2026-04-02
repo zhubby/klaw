@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-02
+
+### Added
+- added a persisted `recent_messages_limit` field to heartbeat jobs in both SQLx and Turso backends, with default/backfill support for existing databases
+
 ## 2026-03-31
 
 ### Fixed

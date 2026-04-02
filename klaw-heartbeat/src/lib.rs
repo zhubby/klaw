@@ -1,7 +1,7 @@
 use klaw_core::{Envelope, EnvelopeHeader, InboundMessage, MessageTopic, MessageTransport};
 use klaw_storage::{
-    HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun, HeartbeatTaskStatus, NewHeartbeatJob,
-    NewHeartbeatTaskRun, SessionStorage, StorageError, UpdateHeartbeatJobPatch,
+    ChatRecord, HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun, HeartbeatTaskStatus,
+    NewHeartbeatJob, NewHeartbeatTaskRun, SessionStorage, StorageError, UpdateHeartbeatJobPatch,
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -13,8 +13,11 @@ pub const TRIGGER_KIND_HEARTBEAT: &str = "heartbeat";
 pub const HEARTBEAT_SESSION_KEY: &str = "heartbeat.session_key";
 pub const HEARTBEAT_SILENT_ACK_TOKEN_KEY: &str = "heartbeat.silent_ack_token";
 pub const HEARTBEAT_RESOLVED_SESSION_KEY: &str = "heartbeat.resolved_session_key";
+pub const HEARTBEAT_RECENT_MESSAGES_LIMIT_KEY: &str = "heartbeat.recent_messages_limit";
 pub const DEFAULT_SILENT_ACK_TOKEN: &str = "HEARTBEAT_OK";
 pub const DEFAULT_TIMEZONE: &str = "UTC";
+pub const DEFAULT_RECENT_MESSAGES_LIMIT: i64 = 12;
+const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeartbeatInput {
@@ -26,6 +29,7 @@ pub struct HeartbeatInput {
     pub every: String,
     pub prompt: String,
     pub silent_ack_token: String,
+    pub recent_messages_limit: i64,
     pub timezone: String,
 }
 
@@ -100,6 +104,7 @@ where
                 every: normalized.every,
                 prompt: normalized.prompt,
                 silent_ack_token: normalized.silent_ack_token,
+                recent_messages_limit: normalized.recent_messages_limit,
                 timezone: normalized.timezone,
                 next_run_at_ms,
             })
@@ -124,6 +129,7 @@ where
                     every: Some(normalized.every),
                     prompt: Some(normalized.prompt),
                     silent_ack_token: Some(normalized.silent_ack_token),
+                    recent_messages_limit: Some(normalized.recent_messages_limit),
                     timezone: Some(normalized.timezone),
                     next_run_at_ms: Some(next_run_at_ms),
                 },
@@ -285,6 +291,19 @@ where
         let mut payload = build_inbound_message(job);
         payload.session_key = resolved_session_key.clone();
         payload.metadata.insert(
+            META_CONVERSATION_HISTORY_KEY.to_string(),
+            build_conversation_history_value(
+                self.storage
+                    .read_chat_records(&resolved_session_key)
+                    .await?,
+                self.storage
+                    .get_session_compression_state(&resolved_session_key)
+                    .await?
+                    .and_then(|state| state.summary_json),
+                job.recent_messages_limit,
+            )?,
+        );
+        payload.metadata.insert(
             HEARTBEAT_RESOLVED_SESSION_KEY.to_string(),
             Value::String(resolved_session_key.clone()),
         );
@@ -335,6 +354,10 @@ pub fn build_inbound_message(job: &HeartbeatJob) -> InboundMessage {
                 HEARTBEAT_SILENT_ACK_TOKEN_KEY.to_string(),
                 Value::String(job.silent_ack_token.clone()),
             ),
+            (
+                HEARTBEAT_RECENT_MESSAGES_LIMIT_KEY.to_string(),
+                Value::Number(job.recent_messages_limit.into()),
+            ),
         ]),
         media_references: Vec::new(),
     }
@@ -351,6 +374,7 @@ pub fn build_payload_json(job: &HeartbeatJob) -> Result<String, HeartbeatError> 
             TRIGGER_KIND_KEY: TRIGGER_KIND_HEARTBEAT,
             HEARTBEAT_SESSION_KEY: job.session_key,
             HEARTBEAT_SILENT_ACK_TOKEN_KEY: job.silent_ack_token,
+            HEARTBEAT_RECENT_MESSAGES_LIMIT_KEY: job.recent_messages_limit,
         }
     }))?)
 }
@@ -386,6 +410,11 @@ fn normalize_input(input: &HeartbeatInput) -> Result<HeartbeatInput, HeartbeatEr
     let every = require_trimmed(&input.every, "every")?;
     let prompt = require_trimmed(&input.prompt, "prompt")?;
     let silent_ack_token = require_trimmed(&input.silent_ack_token, "silent_ack_token")?;
+    if input.recent_messages_limit <= 0 {
+        return Err(HeartbeatError::InvalidInput(
+            "recent_messages_limit must be greater than zero".to_string(),
+        ));
+    }
     let timezone = require_trimmed(&input.timezone, "timezone")?;
     compute_next_run_at_ms(&every)?;
 
@@ -398,8 +427,65 @@ fn normalize_input(input: &HeartbeatInput) -> Result<HeartbeatInput, HeartbeatEr
         every,
         prompt,
         silent_ack_token,
+        recent_messages_limit: input.recent_messages_limit,
         timezone,
     })
+}
+
+fn build_conversation_history_value(
+    full_history: Vec<ChatRecord>,
+    summary_json: Option<String>,
+    recent_messages_limit: i64,
+) -> Result<Value, HeartbeatError> {
+    let limit = usize::try_from(recent_messages_limit).map_err(|_| {
+        HeartbeatError::InvalidInput("recent_messages_limit is out of range".to_string())
+    })?;
+    let history = build_history_for_model(full_history, limit, summary_json.as_deref());
+    Ok(serde_json::to_value(
+        history
+            .into_iter()
+            .map(|record| {
+                json!({
+                    "role": record.role,
+                    "content": record.content,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )?)
+}
+
+fn build_history_for_model(
+    full_history: Vec<ChatRecord>,
+    limit: usize,
+    summary_json: Option<&str>,
+) -> Vec<ChatRecord> {
+    let trimmed = trim_conversation_history(full_history, limit);
+    let Some(summary_json) = summary_json
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return trimmed;
+    };
+
+    let mut merged = Vec::with_capacity(trimmed.len() + 1);
+    merged.push(ChatRecord::new(
+        "system",
+        format!("Conversation Summary (JSON): {summary_json}"),
+        None,
+    ));
+    merged.extend(trimmed);
+    merged
+}
+
+fn trim_conversation_history(
+    mut conversation_history: Vec<ChatRecord>,
+    limit: usize,
+) -> Vec<ChatRecord> {
+    if conversation_history.len() <= limit {
+        return conversation_history;
+    }
+    let keep_from = conversation_history.len().saturating_sub(limit);
+    conversation_history.split_off(keep_from)
 }
 
 fn require_trimmed(value: &str, field_name: &str) -> Result<String, HeartbeatError> {
@@ -469,6 +555,7 @@ mod tests {
             every: "30m".to_string(),
             prompt: "ping".to_string(),
             silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+            recent_messages_limit: DEFAULT_RECENT_MESSAGES_LIMIT,
             timezone: "UTC".to_string(),
             next_run_at_ms: 1,
             last_run_at_ms: None,
@@ -503,6 +590,7 @@ mod tests {
                 every: "10m".to_string(),
                 prompt: "review state".to_string(),
                 silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+                recent_messages_limit: DEFAULT_RECENT_MESSAGES_LIMIT,
                 timezone: "UTC".to_string(),
             })
             .await
@@ -513,6 +601,7 @@ mod tests {
             .expect("stored heartbeat");
         assert_eq!(stored.id, created.id);
         assert_eq!(stored.prompt, "review state");
+        assert_eq!(stored.recent_messages_limit, DEFAULT_RECENT_MESSAGES_LIMIT);
     }
 
     #[test]
@@ -567,6 +656,7 @@ mod tests {
                 every: "1m".to_string(),
                 prompt: "review".to_string(),
                 silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+                recent_messages_limit: DEFAULT_RECENT_MESSAGES_LIMIT,
                 timezone: "UTC".to_string(),
                 next_run_at_ms: now_ms(),
             })
@@ -595,5 +685,82 @@ mod tests {
                 .and_then(Value::as_str),
             Some("stdio:main")
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn worker_injects_summary_and_recent_messages_into_history_metadata() {
+        let store = Arc::new(create_store().await);
+        store
+            .get_or_create_session_state("stdio:main", "main", "stdio", "openai", "gpt-4o-mini")
+            .await
+            .expect("session");
+        store
+            .append_chat_record("stdio:main", &ChatRecord::new("user", "old-1", None))
+            .await
+            .expect("old-1");
+        store
+            .append_chat_record("stdio:main", &ChatRecord::new("assistant", "old-2", None))
+            .await
+            .expect("old-2");
+        store
+            .append_chat_record("stdio:main", &ChatRecord::new("user", "keep-1", None))
+            .await
+            .expect("keep-1");
+        store
+            .append_chat_record("stdio:main", &ChatRecord::new("assistant", "keep-2", None))
+            .await
+            .expect("keep-2");
+        store
+            .set_session_compression_state(
+                "stdio:main",
+                &klaw_storage::SessionCompressionState {
+                    last_compressed_len: 2,
+                    summary_json: Some("{\"important\":\"summary\"}".to_string()),
+                },
+            )
+            .await
+            .expect("summary");
+        let heartbeat = store
+            .create_heartbeat(&NewHeartbeatJob {
+                id: "hb-history".to_string(),
+                session_key: "stdio:main".to_string(),
+                channel: "stdio".to_string(),
+                chat_id: "main".to_string(),
+                enabled: true,
+                every: "1m".to_string(),
+                prompt: "review".to_string(),
+                silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+                recent_messages_limit: 2,
+                timezone: "UTC".to_string(),
+                next_run_at_ms: now_ms(),
+            })
+            .await
+            .expect("create heartbeat");
+        let transport = Arc::new(InMemoryTransport::<InboundMessage>::default());
+        let worker = HeartbeatWorker::new(
+            store.clone(),
+            transport.clone(),
+            HeartbeatWorkerConfig::default(),
+        );
+
+        worker
+            .run_job_now(&heartbeat.id)
+            .await
+            .expect("run now should succeed");
+
+        let messages = transport.published_messages().await;
+        let history = messages[0]
+            .payload
+            .metadata
+            .get(META_CONVERSATION_HISTORY_KEY)
+            .and_then(Value::as_array)
+            .expect("history metadata should exist");
+        assert_eq!(history.len(), 3);
+        assert_eq!(
+            history[0]["content"].as_str(),
+            Some("Conversation Summary (JSON): {\"important\":\"summary\"}")
+        );
+        assert_eq!(history[1]["content"].as_str(), Some("keep-1"));
+        assert_eq!(history[2]["content"].as_str(), Some("keep-2"));
     }
 }

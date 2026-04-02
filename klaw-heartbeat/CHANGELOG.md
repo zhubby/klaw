@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-02
+
+### Added
+- added a persisted `recent_messages_limit` heartbeat-job field (default `12`) so each run can inject a bounded slice of recent session history into `agent.conversation_history`
+
 ## 2026-03-21
 
 ### Added

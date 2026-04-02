@@ -6,7 +6,9 @@ use chrono::NaiveDate;
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
-use klaw_heartbeat::{DEFAULT_SILENT_ACK_TOKEN, HeartbeatInput, HeartbeatManager};
+use klaw_heartbeat::{
+    DEFAULT_RECENT_MESSAGES_LIMIT, DEFAULT_SILENT_ACK_TOKEN, HeartbeatInput, HeartbeatManager,
+};
 use klaw_storage::{
     DefaultSessionStore, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, SessionIndex,
     SessionStorage, open_default_store,
@@ -29,6 +31,7 @@ struct HeartbeatForm {
     every: String,
     prompt: String,
     silent_ack_token: String,
+    recent_messages_limit: i64,
     timezone: String,
 }
 
@@ -44,6 +47,7 @@ impl HeartbeatForm {
             every: "30m".to_string(),
             prompt: "Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.".to_string(),
             silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+            recent_messages_limit: defaults.recent_messages_limit,
             timezone: defaults.timezone.clone(),
         }
     }
@@ -59,6 +63,7 @@ impl HeartbeatForm {
             every: item.every.clone(),
             prompt: item.prompt.clone(),
             silent_ack_token: item.silent_ack_token.clone(),
+            recent_messages_limit: item.recent_messages_limit,
             timezone: item.timezone.clone(),
         }
     }
@@ -81,6 +86,7 @@ impl HeartbeatForm {
             every: self.every.trim().to_string(),
             prompt: self.prompt.trim().to_string(),
             silent_ack_token: self.silent_ack_token.trim().to_string(),
+            recent_messages_limit: self.recent_messages_limit,
             timezone: self.timezone.trim().to_string(),
         }
     }
@@ -89,6 +95,7 @@ impl HeartbeatForm {
 #[derive(Debug, Clone)]
 struct HeartbeatDefaults {
     enabled: bool,
+    recent_messages_limit: i64,
     timezone: String,
 }
 
@@ -96,6 +103,7 @@ impl Default for HeartbeatDefaults {
     fn default() -> Self {
         Self {
             enabled: true,
+            recent_messages_limit: DEFAULT_RECENT_MESSAGES_LIMIT,
             timezone: system_timezone_name(),
         }
     }
@@ -243,6 +251,10 @@ impl HeartbeatPanel {
         }
         if input.silent_ack_token.is_empty() {
             notifications.error("Silent Ack Token cannot be empty");
+            return;
+        }
+        if input.recent_messages_limit <= 0 {
+            notifications.error("Recent Messages must be greater than zero");
             return;
         }
         if input.timezone.is_empty() {
@@ -405,6 +417,12 @@ impl HeartbeatPanel {
 
                         ui.label("Silent Ack Token");
                         ui.text_edit_singleline(&mut form.silent_ack_token);
+                        ui.end_row();
+
+                        ui.label("Recent Messages");
+                        ui.add(
+                            egui::DragValue::new(&mut form.recent_messages_limit).range(1..=10_000),
+                        );
                         ui.end_row();
                     });
 
@@ -581,6 +599,7 @@ impl PanelRenderer for HeartbeatPanel {
                         .column(Column::auto().at_least(60.0))
                         .column(Column::auto().at_least(80.0))
                         .column(Column::auto().at_least(120.0))
+                        .column(Column::auto().at_least(70.0))
                         .column(Column::auto().at_least(120.0))
                         .column(Column::remainder().at_least(120.0))
                         .min_scrolled_height(0.0)
@@ -601,6 +620,9 @@ impl PanelRenderer for HeartbeatPanel {
                             });
                             header.col(|ui| {
                                 ui.strong("Every");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Recent Msgs");
                             });
                             header.col(|ui| {
                                 ui.strong("Next Run At");
@@ -635,6 +657,9 @@ impl PanelRenderer for HeartbeatPanel {
                                 });
                                 row.col(|ui| {
                                     ui.label(job.every.clone());
+                                });
+                                row.col(|ui| {
+                                    ui.label(job.recent_messages_limit.to_string());
                                 });
                                 row.col(|ui| {
                                     ui.label(format_timestamp_millis(job.next_run_at_ms));
@@ -753,8 +778,15 @@ impl PanelRenderer for HeartbeatPanel {
                     ui.label("Form Defaults");
                     ui.add_space(6.0);
                     ui.checkbox(&mut self.defaults.enabled, "Enabled by default");
+                    ui.horizontal(|ui| {
+                        ui.label("Recent messages");
+                        ui.add(
+                            egui::DragValue::new(&mut self.defaults.recent_messages_limit)
+                                .range(1..=10_000),
+                        );
+                    });
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Only the default enabled state is kept locally in the GUI.\nOther heartbeat fields use built-in defaults.").small().weak());
+                    ui.label(RichText::new("Only the default enabled state and recent-message window are kept locally in the GUI.\nOther heartbeat fields use built-in defaults.").small().weak());
                 });
         }
     }

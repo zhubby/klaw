@@ -26,7 +26,7 @@
 - the `cron_manager` and `heartbeat_manager` tools now default `timezone` to the detected system timezone when callers omit it
 - the `cron_manager` tool supports a high-level `message` shortcut for scheduled prompts in the current conversation, auto-filling channel/chat/session defaults from tool context unless explicitly overridden
 - the `message` shortcut now defaults to an isolated cron session key like `cron:<job_id>` so scheduled runs do not silently accumulate the current chat's conversation history
-- the `heartbeat_manager` tool manages session-bound heartbeat jobs directly from storage, with session/channel/chat defaults inferred from current tool context when possible
+- the `heartbeat_manager` tool manages session-bound heartbeat jobs directly from storage, with session/channel/chat defaults inferred from current tool context when possible and a per-job recent-message window for bounded inherited context
 - sub-agent execution currently opts out of live streaming, inherits parent provider/model/system prompt and live tool availability, auto-generates an isolated child session key, re-surfaces delegated `approval_required` / `stop` signals back to the parent agent, and can forward delegated LLM audits through a runtime-provided sink
 - delegated sub-agent execution now also carries structured tool audit records in `AgentExecutionOutput`, allowing runtimes to persist child tool-call diagnostics against the parent session
 - `skills_registry` now manages registry sources end to end: `add` persists `[skills.<source>]` into config, `sync` refreshes local mirrors, `delete` removes config + local clone + manifest state, and `list/show/search` browse synced registry skills

@@ -39,7 +39,7 @@
 - `model_provider` / `model` now represent per-session routing state, and the persisted explicitness flags let runtimes distinguish user-chosen overrides from legacy default-route residue during normalization
 - `llm_audit` records support optional `metadata_json`, which runtimes can use to annotate model requests with delegated execution context such as sub-agent parent/child session lineage
 - `tool_audit` records capture per-call arguments, full tool result/error payloads, signals, timing, and optional execution metadata such as tool call ids or sub-agent lineage
-- heartbeat records keep session-bound autonomous wakeups separate from isolated cron jobs
+- heartbeat records keep session-bound autonomous wakeups separate from isolated cron jobs, including a per-job recent-message window for bounded inherited context
 - `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`
 - `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`
 - `BackupService` stages managed SQLite/filesystem state into versioned manifests plus content-addressed blobs, uploads only missing blobs, and restores historical manifests after checksum verification

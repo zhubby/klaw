@@ -102,6 +102,7 @@ impl HeartbeatManagerTool {
             String,
             String,
             String,
+            i64,
             String,
         ),
         ToolError,
@@ -138,13 +139,29 @@ impl HeartbeatManagerTool {
             Self::require_str(args, "prompt")?,
             Self::optional_str(args, "silent_ack_token")?
                 .unwrap_or_else(|| "HEARTBEAT_OK".to_string()),
+            Self::optional_i64(args, "recent_messages_limit")?.unwrap_or(12),
             Self::optional_str(args, "timezone")?.unwrap_or_else(system_timezone_name),
         ))
     }
 
     async fn do_create(&self, args: &Value, ctx: &ToolContext) -> Result<Value, ToolError> {
-        let (id, session_key, channel, chat_id, enabled, every, prompt, silent_ack_token, timezone) =
-            Self::build_input(args, ctx)?;
+        let (
+            id,
+            session_key,
+            channel,
+            chat_id,
+            enabled,
+            every,
+            prompt,
+            silent_ack_token,
+            recent_messages_limit,
+            timezone,
+        ) = Self::build_input(args, ctx)?;
+        if recent_messages_limit <= 0 {
+            return Err(ToolError::InvalidArgs(
+                "`recent_messages_limit` must be greater than zero".to_string(),
+            ));
+        }
         let heartbeat_id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let job = self
             .storage
@@ -157,6 +174,7 @@ impl HeartbeatManagerTool {
                 every: every.clone(),
                 prompt,
                 silent_ack_token,
+                recent_messages_limit,
                 timezone,
                 next_run_at_ms: compute_next_run_at_ms(&every)?,
             })
@@ -170,8 +188,23 @@ impl HeartbeatManagerTool {
 
     async fn do_update(&self, args: &Value, ctx: &ToolContext) -> Result<Value, ToolError> {
         let heartbeat_id = Self::require_str(args, "id")?;
-        let (_, session_key, channel, chat_id, _enabled, every, prompt, silent_ack_token, timezone) =
-            Self::build_input(args, ctx)?;
+        let (
+            _,
+            session_key,
+            channel,
+            chat_id,
+            _enabled,
+            every,
+            prompt,
+            silent_ack_token,
+            recent_messages_limit,
+            timezone,
+        ) = Self::build_input(args, ctx)?;
+        if recent_messages_limit <= 0 {
+            return Err(ToolError::InvalidArgs(
+                "`recent_messages_limit` must be greater than zero".to_string(),
+            ));
+        }
         self.storage
             .update_heartbeat(
                 &heartbeat_id,
@@ -182,6 +215,7 @@ impl HeartbeatManagerTool {
                     every: Some(every.clone()),
                     prompt: Some(prompt),
                     silent_ack_token: Some(silent_ack_token),
+                    recent_messages_limit: Some(recent_messages_limit),
                     timezone: Some(timezone),
                     next_run_at_ms: Some(compute_next_run_at_ms(&every)?),
                 },
@@ -311,6 +345,7 @@ impl Tool for HeartbeatManagerTool {
                         "every": { "type": "string", "description": "Repeat interval such as `10m`, `1h`, or `24h`." },
                         "prompt": { "type": "string", "description": "Prompt injected into the bound session on each heartbeat." },
                         "silent_ack_token": { "type": "string", "description": "Exact token used to suppress no-op heartbeat output. Defaults to HEARTBEAT_OK." },
+                        "recent_messages_limit": { "type": "integer", "description": "How many recent chat messages from the resolved session to inject into heartbeat context. Defaults to 12." },
                         "timezone": { "type": "string", "description": "Timezone label. Defaults to the detected system timezone." }
                     },
                     "required": ["action", "every", "prompt"],
@@ -327,6 +362,7 @@ impl Tool for HeartbeatManagerTool {
                         "every": { "type": "string" },
                         "prompt": { "type": "string" },
                         "silent_ack_token": { "type": "string" },
+                        "recent_messages_limit": { "type": "integer" },
                         "timezone": { "type": "string" }
                     },
                     "required": ["action", "id", "every", "prompt"],
@@ -457,6 +493,7 @@ fn heartbeat_job_to_json(job: HeartbeatJob) -> Value {
         "every": job.every,
         "prompt": job.prompt,
         "silent_ack_token": job.silent_ack_token,
+        "recent_messages_limit": job.recent_messages_limit,
         "timezone": job.timezone,
         "next_run_at_ms": job.next_run_at_ms,
         "last_run_at_ms": job.last_run_at_ms,
@@ -529,6 +566,11 @@ mod tests {
             output
                 .content_for_model
                 .contains(&format!("\"timezone\": \"{}\"", system_timezone_name()))
+        );
+        assert!(
+            output
+                .content_for_model
+                .contains("\"recent_messages_limit\": 12")
         );
     }
 }
