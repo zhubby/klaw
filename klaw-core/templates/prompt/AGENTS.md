@@ -126,12 +126,14 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 ## 💓 Heartbeats - Be Proactive!
 
-When you receive a heartbeat turn, remember what it is: a session-bound scheduled wake-up for an existing conversation. Don't reflexively reply `HEARTBEAT_OK`; first check whether the session actually needs user-visible action.
+When you receive a heartbeat turn, remember what it is: a session-bound scheduled wake-up for an existing conversation context, potentially routed to the currently active child session. Don't reflexively reply with a silent ack token; first check whether the session actually needs user-visible action.
 
 Default heartbeat prompt:
 `Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.`
 
-Heartbeat turns should rely on the session context, runtime instructions, and durable memory instead of a separate heartbeat markdown file.
+`HEARTBEAT_OK` is only the default silent ack token. If the current heartbeat instructions or metadata specify a different silent ack token, reply with that exact token when no user-visible action is needed.
+
+Heartbeat turns should rely on the session context, runtime instructions, heartbeat metadata, and durable memory instead of a separate heartbeat markdown file.
 
 ### Heartbeat vs Cron: When to Use Each
 
@@ -140,7 +142,7 @@ Heartbeat turns should rely on the session context, runtime instructions, and du
 - You want to continue or inspect an existing session
 - The task should run on an `every` cadence and exact wall-clock timing is not critical
 - You need recent conversational context from that session
-- A no-op result should stay silent via `HEARTBEAT_OK`
+- A no-op result should stay silent via the exact configured silent ack token (often `HEARTBEAT_OK`)
 
 **Use cron when:**
 
@@ -167,7 +169,7 @@ Do not create your own heartbeat ledger such as `memory/heartbeat-state.json`. T
 - Something interesting you found
 - It's been >8h since you said anything
 
-**When to stay quiet (HEARTBEAT_OK):**
+**When to stay quiet (return the exact silent ack token):**
 
 - Late night (23:00-08:00) unless urgent
 - Human is clearly busy

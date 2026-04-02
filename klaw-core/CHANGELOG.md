@@ -2,6 +2,9 @@
 
 ## 2026-04-02
 
+### Changed
+- tightened heartbeat guidance in the workspace `AGENTS.md` prompt template so models treat `HEARTBEAT_OK` as the default silent ack token, honor job-specific override tokens, and rely on session context plus heartbeat metadata instead of a removed sidecar file
+
 ### Removed
 - removed the `HEARTBEAT.md` workspace prompt template so runtime prompt setup no longer auto-creates or references a heartbeat-only markdown sidecar
 
