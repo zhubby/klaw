@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-04-02
+
+### Changed
+
+- GUI runtime 的 ACP prompt 执行链路现在会透传结构化 session 事件，而不是在 CLI 层提前压扁成字符串 chunk
+- GUI runtime 现在维护 pending ACP permission waiter，并在停止 prompt 或 prompt 结束时统一向未完成的权限请求返回 `Cancelled`
+
+### Added
+
+- GUI runtime 新增 ACP permission resolve command，允许面板把用户选择的 permission option 回写到正在运行的 ACP 会话
+
 ## 2026-03-31
 
 ### Fixed

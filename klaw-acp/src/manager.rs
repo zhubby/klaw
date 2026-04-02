@@ -1,5 +1,5 @@
 use crate::{
-    client::{AcpPromptUpdate, KlawAcpClient},
+    client::{AcpPermissionRequestHandler, AcpPromptUpdate, KlawAcpClient},
     hub::AcpAgentHub,
     runtime::{AcpExecutionError, AcpProxyTool, AcpToolDescriptor},
 };
@@ -312,6 +312,7 @@ impl AcpManager {
             timeout,
             None,
             None,
+            None,
         )
         .await
     }
@@ -323,11 +324,13 @@ impl AcpManager {
         working_directory: Option<&str>,
         timeout: Option<Duration>,
         prompt_update_sink: Option<Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>>,
+        permission_request_handler: Option<AcpPermissionRequestHandler>,
         cancel_receiver: Option<watch::Receiver<bool>>,
     ) -> Result<String, AcpExecutionError> {
         let prompt = prompt.to_string();
         let working_directory = working_directory.map(ToString::to_string);
         let prompt_update_sink = prompt_update_sink.clone();
+        let permission_request_handler = permission_request_handler.clone();
         let cancel_receiver = cancel_receiver.clone();
         tokio::task::spawn_blocking(move || {
             run_prompt_blocking(
@@ -337,6 +340,7 @@ impl AcpManager {
                 working_directory,
                 timeout,
                 prompt_update_sink,
+                permission_request_handler,
                 cancel_receiver,
             )
         })
@@ -498,6 +502,7 @@ fn run_prompt_blocking(
     working_directory: Option<String>,
     timeout: Option<Duration>,
     prompt_update_sink: Option<Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>>,
+    permission_request_handler: Option<AcpPermissionRequestHandler>,
     cancel_receiver: Option<watch::Receiver<bool>>,
 ) -> Result<String, AcpExecutionError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -513,6 +518,7 @@ fn run_prompt_blocking(
             working_directory,
             timeout,
             prompt_update_sink,
+            permission_request_handler,
             cancel_receiver,
         )
         .await
@@ -526,6 +532,7 @@ async fn run_prompt_async(
     working_directory: Option<String>,
     timeout: Option<Duration>,
     prompt_update_sink: Option<Arc<dyn Fn(AcpPromptUpdate) + Send + Sync>>,
+    permission_request_handler: Option<AcpPermissionRequestHandler>,
     mut cancel_receiver: Option<watch::Receiver<bool>>,
 ) -> Result<String, AcpExecutionError> {
     use acp::Agent as _;
@@ -539,7 +546,11 @@ async fn run_prompt_async(
     );
     let session_root = resolve_session_root(working_directory.as_deref())?;
     debug!(agent = %config.id, session_root = %session_root.display(), "resolved acp session root");
-    let client = KlawAcpClient::with_prompt_update_sink(session_root.clone(), prompt_update_sink);
+    let client = KlawAcpClient::with_event_handlers(
+        session_root.clone(),
+        prompt_update_sink,
+        permission_request_handler,
+    );
 
     let mut command = tokio::process::Command::new(config.command.trim());
     command
@@ -625,22 +636,12 @@ async fn run_prompt_async(
             ));
         }
         Err(_) => {
-            let stderr = stderr_tail.lock().await.clone();
-            let message = if stderr.trim().is_empty() {
-                format!(
-                    "timed out after {:?} waiting for new_session response from `{}`",
-                    startup_timeout,
-                    config.command.trim()
-                )
-            } else {
-                format!(
-                    "timed out after {:?} waiting for new_session response from `{}`; stderr: {}",
-                    startup_timeout,
-                    config.command.trim(),
-                    stderr.trim()
-                )
-            };
-            return Err(AcpExecutionError::NewSession(message));
+            let stderr = stderr_tail.lock().await;
+            return Err(AcpExecutionError::NewSession(new_session_timeout_message(
+                startup_timeout,
+                config.command.trim(),
+                stderr.as_str(),
+            )));
         }
     };
     debug!(
@@ -774,6 +775,21 @@ fn resolve_session_root(
     std::fs::canonicalize(&candidate).map_err(|err| {
         AcpExecutionError::InvalidWorkingDirectory(format!("{} ({err})", candidate.display()))
     })
+}
+
+fn new_session_timeout_message(startup_timeout: Duration, command: &str, stderr: &str) -> String {
+    if stderr.trim().is_empty() {
+        format!(
+            "timed out after {:?} waiting for new_session response from `{command}`",
+            startup_timeout
+        )
+    } else {
+        format!(
+            "timed out after {:?} waiting for new_session response from `{command}`; stderr: {}",
+            startup_timeout,
+            stderr.trim()
+        )
+    }
 }
 
 async fn with_stderr(err: acp::Error, stderr_tail: &Arc<Mutex<String>>) -> String {
@@ -1211,6 +1227,7 @@ for raw_line in sys.stdin:
             Duration::from_secs(5),
             "please keep running",
             Some(working_directory.as_str()),
+            None,
             None,
             None,
             Some(cancel_rx),

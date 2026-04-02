@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-04-02
+
+### Changed
+
+- `ACP` 面板的 `Test Prompt` 弹窗现在会展示结构化 session 快照，包括当前 mode、available commands、config options、session info 与最近事件时间线
+- `ACP` 面板的 detail 窗口现在会附带最近一次测试 prompt 的结构化状态摘要，便于排查外部 ACP agent 的模式切换和配置更新
+
+### Added
+
+- `ACP` 面板现在支持直接响应外部 agent 的权限请求，可在弹窗内查看 pending permission、选择返回的 option 或主动 cancel
+- `ACP` prompt 流现在同时保留原始文本视图和结构化事件视图，方便区分调试信息与最终回答内容
+
 ## 2026-04-01
 
 ### Added

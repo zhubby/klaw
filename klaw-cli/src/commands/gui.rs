@@ -4,8 +4,16 @@ use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
 use klaw_llm::ToolDefinition;
 use klaw_mcp::McpConfigSnapshot;
-use std::{io, sync::Arc, time::Duration};
-use tokio::sync::{Mutex as AsyncMutex, watch};
+use std::{
+    collections::BTreeMap,
+    io,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+use tokio::sync::{Mutex as AsyncMutex, oneshot, watch};
 
 use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
@@ -18,6 +26,18 @@ use crate::runtime::{
 };
 use klaw_config::ConfigStore;
 use tracing::{info, warn};
+
+async fn cancel_pending_acp_permissions(
+    pending: &AsyncMutex<BTreeMap<u64, oneshot::Sender<klaw_acp::AcpPermissionDecision>>>,
+) {
+    let waiters = {
+        let mut guard = pending.lock().await;
+        std::mem::take(&mut *guard)
+    };
+    for (_, waiter) in waiters {
+        let _ = waiter.send(klaw_acp::AcpPermissionDecision::Cancelled);
+    }
+}
 
 fn wait_for_worker_shutdown<T>(
     worker: std::thread::JoinHandle<T>,
@@ -88,6 +108,100 @@ fn tool_definitions(runtime: &crate::runtime::RuntimeBundle) -> Vec<ToolDefiniti
     definitions
 }
 
+async fn run_execute_acp_prompt_stream_command(
+    agent_id: String,
+    prompt: String,
+    working_directory: Option<String>,
+    timeout_seconds: Option<u64>,
+    events: std::sync::mpsc::Sender<klaw_gui::AcpPromptEvent>,
+    acp_manager: Arc<AsyncMutex<klaw_acp::AcpManager>>,
+    pending_permissions: Arc<
+        AsyncMutex<BTreeMap<u64, oneshot::Sender<klaw_acp::AcpPermissionDecision>>>,
+    >,
+    permission_counter: Arc<AtomicU64>,
+    cancel_rx: watch::Receiver<bool>,
+) {
+    tracing::debug!(
+        agent = %agent_id,
+        working_directory = ?working_directory,
+        timeout_seconds,
+        prompt_len = prompt.len(),
+        "gui requested acp test prompt"
+    );
+    let timeout = timeout_seconds.map(Duration::from_secs);
+    let execution_config = {
+        let guard = acp_manager.lock().await;
+        guard.agent_execution_config(&agent_id)
+    };
+    let result = match execution_config {
+        Ok((config, startup_timeout)) => {
+            let chunk_events = events.clone();
+            let session_permission_counter = Arc::clone(&permission_counter);
+            let sink = Arc::new(move |update: klaw_acp::AcpPromptUpdate| match update {
+                klaw_acp::AcpPromptUpdate::SessionEvent(event) => {
+                    let _ = chunk_events.send(klaw_gui::AcpPromptEvent::SessionEvent(event));
+                }
+                klaw_acp::AcpPromptUpdate::PermissionRequest(request) => {
+                    let request_id = session_permission_counter.fetch_add(1, Ordering::Relaxed);
+                    let _ = chunk_events.send(klaw_gui::AcpPromptEvent::PermissionRequested {
+                        request_id,
+                        request,
+                    });
+                }
+            });
+            let permission_events = events.clone();
+            let interactive_permission_counter = Arc::clone(&permission_counter);
+            let permission_waiters_for_handler = Arc::clone(&pending_permissions);
+            let permission_handler: klaw_acp::AcpPermissionRequestHandler = Arc::new(
+                move |request: klaw_acp::AcpPermissionRequest| -> klaw_acp::AcpPermissionRequestFuture {
+                    let pending_permissions = Arc::clone(&permission_waiters_for_handler);
+                    let permission_events = permission_events.clone();
+                    let request_id = interactive_permission_counter.fetch_add(1, Ordering::Relaxed);
+                    Box::pin(async move {
+                        let (decision_tx, decision_rx) = oneshot::channel();
+                        pending_permissions
+                            .lock()
+                            .await
+                            .insert(request_id, decision_tx);
+                        let _ = permission_events.send(klaw_gui::AcpPromptEvent::PermissionRequested {
+                            request_id,
+                            request,
+                        });
+                        match decision_rx.await {
+                            Ok(decision) => decision,
+                            Err(_) => klaw_acp::AcpPermissionDecision::Cancelled,
+                        }
+                    })
+                },
+            );
+            klaw_acp::AcpManager::execute_prompt_with_config_stream(
+                config,
+                startup_timeout,
+                &prompt,
+                working_directory.as_deref(),
+                timeout,
+                Some(sink),
+                Some(permission_handler),
+                Some(cancel_rx),
+            )
+            .await
+        }
+        Err(err) => Err(err),
+    };
+    cancel_pending_acp_permissions(pending_permissions.as_ref()).await;
+    match result {
+        Ok(final_output) => {
+            let _ = events.send(klaw_gui::AcpPromptEvent::Completed { final_output });
+        }
+        Err(klaw_acp::AcpExecutionError::Cancelled { .. }) => {
+            let _ = events.send(klaw_gui::AcpPromptEvent::Stopped);
+        }
+        Err(err) => {
+            let _ = events.send(klaw_gui::AcpPromptEvent::Failed(err.to_string()));
+        }
+    }
+}
+
 #[derive(Debug, Args)]
 pub struct GuiCommand {}
 
@@ -156,6 +270,13 @@ impl GuiCommand {
                             let mut runtime_cmd_rx = runtime_cmd_rx;
                             let mut runtime_cmd_open = true;
                             let mut active_acp_prompt_cancel: Option<watch::Sender<bool>> = None;
+                            let active_acp_permission_waiters = Arc::new(AsyncMutex::new(
+                                BTreeMap::<
+                                    u64,
+                                    oneshot::Sender<klaw_acp::AcpPermissionDecision>,
+                                >::new(),
+                            ));
+                            let next_acp_permission_id = Arc::new(AtomicU64::new(1));
                             let channel_factory = build_channel_driver_factory(&config_for_thread)
                                 .map_err(|err| err.to_string())?;
                             let channel_manager = Arc::new(AsyncMutex::new(
@@ -354,69 +475,60 @@ impl GuiCommand {
                                             }) => {
                                                 let (cancel_tx, cancel_rx) = watch::channel(false);
                                                 active_acp_prompt_cancel = Some(cancel_tx);
+                                                cancel_pending_acp_permissions(
+                                                    active_acp_permission_waiters.as_ref(),
+                                                )
+                                                .await;
                                                 let manager = Arc::clone(&acp_manager);
-                                                tokio::task::spawn_local(async move {
-                                                    tracing::debug!(
-                                                        agent = %agent_id,
-                                                        working_directory = ?working_directory,
-                                                        timeout_seconds,
-                                                        prompt_len = prompt.len(),
-                                                        "gui requested acp test prompt"
-                                                    );
-                                                    let timeout = timeout_seconds.map(std::time::Duration::from_secs);
-                                                    let execution_config = {
-                                                        let guard = manager.lock().await;
-                                                        guard.agent_execution_config(&agent_id)
-                                                    };
-                                                    let result = match execution_config {
-                                                        Ok((config, startup_timeout)) => {
-                                                            let chunk_events = events.clone();
-                                                            let sink = Arc::new(move |update: klaw_acp::AcpPromptUpdate| {
-                                                                let chunk = match update {
-                                                                    klaw_acp::AcpPromptUpdate::AnswerChunk(text) => text,
-                                                                    klaw_acp::AcpPromptUpdate::ThoughtChunk(text) => {
-                                                                        format!("\n[thought] {text}\n")
-                                                                    }
-                                                                    klaw_acp::AcpPromptUpdate::ToolUpdate(text) => {
-                                                                        format!("\n[{text}]\n")
-                                                                    }
-                                                                };
-                                                                let _ = chunk_events.send(klaw_gui::AcpPromptEvent::Chunk(chunk));
-                                                            });
-                                                            klaw_acp::AcpManager::execute_prompt_with_config_stream(
-                                                                config,
-                                                                startup_timeout,
-                                                                &prompt,
-                                                                working_directory.as_deref(),
-                                                                timeout,
-                                                                Some(sink),
-                                                                Some(cancel_rx),
-                                                            )
-                                                            .await
-                                                        }
-                                                        Err(err) => Err(err),
-                                                    };
-                                                    match result {
-                                                        Ok(final_output) => {
-                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Completed {
-                                                                final_output,
-                                                            });
-                                                        }
-                                                        Err(klaw_acp::AcpExecutionError::Cancelled { .. }) => {
-                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Stopped);
-                                                        }
-                                                        Err(err) => {
-                                                            let _ = events.send(klaw_gui::AcpPromptEvent::Failed(err.to_string()));
-                                                        }
-                                                    }
-                                                });
+                                                let pending_permissions = Arc::clone(
+                                                    &active_acp_permission_waiters,
+                                                );
+                                                let permission_counter =
+                                                    Arc::clone(&next_acp_permission_id);
+                                                tokio::task::spawn_local(run_execute_acp_prompt_stream_command(
+                                                    agent_id,
+                                                    prompt,
+                                                    working_directory,
+                                                    timeout_seconds,
+                                                    events,
+                                                    manager,
+                                                    pending_permissions,
+                                                    permission_counter,
+                                                    cancel_rx,
+                                                ));
                                             }
                                             Some(klaw_gui::RuntimeCommand::StopAcpPrompt { response }) => {
+                                                cancel_pending_acp_permissions(
+                                                    active_acp_permission_waiters.as_ref(),
+                                                )
+                                                .await;
                                                 let result = match active_acp_prompt_cancel.take() {
                                                     Some(cancel) => cancel
                                                         .send(true)
                                                         .map_err(|_| "acp prompt is no longer running".to_string()),
                                                     None => Err("no ACP test prompt is currently running".to_string()),
+                                                };
+                                                let _ = response.send(result.map(|_| ()));
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::ResolveAcpPermission {
+                                                request_id,
+                                                decision,
+                                                response,
+                                            }) => {
+                                                let waiter = active_acp_permission_waiters
+                                                    .lock()
+                                                    .await
+                                                    .remove(&request_id);
+                                                let result = match waiter {
+                                                    Some(waiter) => waiter
+                                                        .send(decision)
+                                                        .map_err(|_| {
+                                                            "acp permission request is no longer waiting"
+                                                                .to_string()
+                                                        }),
+                                                    None => Err(format!(
+                                                        "unknown acp permission request `{request_id}`"
+                                                    )),
                                                 };
                                                 let _ = response.send(result.map(|_| ()));
                                             }

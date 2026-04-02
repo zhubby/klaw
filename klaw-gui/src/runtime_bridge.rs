@@ -1,4 +1,6 @@
-use klaw_acp::{AcpRuntimeSnapshot, AcpSyncResult};
+use klaw_acp::{
+    AcpPermissionDecision, AcpPermissionRequest, AcpRuntimeSnapshot, AcpSessionEvent, AcpSyncResult,
+};
 use klaw_channel::{ChannelInstanceKey, ChannelInstanceStatus, ChannelSyncResult};
 use klaw_config::TailscaleMode;
 use klaw_gateway::{GatewayRuntimeInfo, TailscaleHostInfo};
@@ -34,8 +36,14 @@ pub struct ProviderRuntimeSnapshot {
 
 #[derive(Debug, Clone)]
 pub enum AcpPromptEvent {
-    Chunk(String),
-    Completed { final_output: String },
+    SessionEvent(AcpSessionEvent),
+    PermissionRequested {
+        request_id: u64,
+        request: AcpPermissionRequest,
+    },
+    Completed {
+        final_output: String,
+    },
     Stopped,
     Failed(String),
 }
@@ -89,6 +97,11 @@ pub enum RuntimeCommand {
         events: mpsc::Sender<AcpPromptEvent>,
     },
     StopAcpPrompt {
+        response: mpsc::Sender<Result<(), String>>,
+    },
+    ResolveAcpPermission {
+        request_id: u64,
+        decision: AcpPermissionDecision,
         response: mpsc::Sender<Result<(), String>>,
     },
     RunCronNow {
@@ -691,23 +704,17 @@ pub fn request_mcp_status() -> Result<McpRuntimeSnapshot, String> {
 }
 
 pub fn request_acp_status() -> Result<AcpRuntimeSnapshot, String> {
-    let sender = match sender_slot()
+    let sender = sender_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone()
-    {
-        Some(s) => s,
-        None => return Err("runtime command channel is not available".to_string()),
-    };
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
     let (response_tx, response_rx) = mpsc::channel();
-    if sender
+    sender
         .send(RuntimeCommand::GetAcpStatus {
             response: response_tx,
         })
-        .is_err()
-    {
-        return Err("failed to send runtime command".to_string());
-    }
+        .map_err(|_| "failed to send runtime command".to_string())?;
 
     match recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "acp status") {
         Ok(result) => result,
@@ -754,12 +761,38 @@ pub fn request_stop_acp_prompt() -> Result<(), String> {
     recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "stop acp prompt")?
 }
 
+pub fn request_resolve_acp_permission(
+    request_id: u64,
+    decision: AcpPermissionDecision,
+) -> Result<(), String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::ResolveAcpPermission {
+            request_id,
+            decision,
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+    recv_response(
+        response_rx,
+        RUNTIME_ACTION_TIMEOUT,
+        "resolve acp permission",
+    )?
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AcpPromptEvent, RuntimeRequestHandle, drain_log_chunks, install_log_receiver,
-        log_stats_snapshot, record_dropped_log_chunk,
+        AcpPromptEvent, RuntimeCommand, RuntimeRequestHandle, clear_runtime_command_sender,
+        drain_log_chunks, install_log_receiver, install_runtime_command_sender, log_stats_snapshot,
+        record_dropped_log_chunk, request_resolve_acp_permission,
     };
+    use klaw_acp::AcpPermissionDecision;
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -777,6 +810,39 @@ mod tests {
     #[test]
     fn acp_prompt_event_stopped_is_distinct() {
         assert!(matches!(AcpPromptEvent::Stopped, AcpPromptEvent::Stopped));
+    }
+
+    #[test]
+    fn request_resolve_acp_permission_sends_runtime_command() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        install_runtime_command_sender(sender);
+
+        let worker = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            runtime.block_on(async move {
+                match receiver.recv().await {
+                    Some(RuntimeCommand::ResolveAcpPermission {
+                        request_id,
+                        decision,
+                        response,
+                    }) => {
+                        assert_eq!(request_id, 42);
+                        assert!(matches!(decision, AcpPermissionDecision::Cancelled));
+                        response.send(Ok(())).expect("send response");
+                    }
+                    other => panic!("unexpected runtime command: {other:?}"),
+                }
+            });
+        });
+
+        let result = request_resolve_acp_permission(42, AcpPermissionDecision::Cancelled);
+        clear_runtime_command_sender();
+        worker.join().expect("worker thread joins");
+
+        assert_eq!(result, Ok(()));
     }
 
     #[test]
