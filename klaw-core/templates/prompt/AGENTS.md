@@ -11,7 +11,7 @@ Before doing anything else:
 1. Treat the inlined `SOUL.md`, `IDENTITY.md`, and `TOOLS.md` content as baseline workspace context
 2. Read `USER.md` when you need user-specific preferences, profile, or ongoing context
 3. Use the `memory` tool for durable recall instead of local markdown memory files
-4. Only load extra docs (`HEARTBEAT.md`, `BOOTSTRAP.md`) when the task requires them
+4. Only load extra docs (`BOOTSTRAP.md`) when the task requires them
 
 Act decisively inside the workspace. Ask before external or destructive actions.
 
@@ -126,12 +126,14 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 ## 💓 Heartbeats - Be Proactive!
 
-When you receive a heartbeat turn, remember what it is: a session-bound scheduled wake-up for an existing conversation. Don't reflexively reply `HEARTBEAT_OK`; first check whether the session actually needs user-visible action.
+When you receive a heartbeat turn, remember what it is: a session-bound scheduled wake-up for an existing conversation context, potentially routed to the currently active child session. Don't reflexively reply with a silent ack token; first check whether the session actually needs user-visible action.
 
 Default heartbeat prompt:
 `Review the session state. If no user-visible action is needed, reply exactly HEARTBEAT_OK.`
 
-If your runtime or workspace instructions tell you to read `HEARTBEAT.md`, do that on demand. You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it small to limit token burn.
+`HEARTBEAT_OK` is only the default silent ack token. If the current heartbeat instructions or metadata specify a different silent ack token, reply with that exact token when no user-visible action is needed.
+
+Heartbeat turns should rely on the session context, runtime instructions, heartbeat metadata, and durable memory instead of a separate heartbeat markdown file.
 
 ### Heartbeat vs Cron: When to Use Each
 
@@ -140,7 +142,8 @@ If your runtime or workspace instructions tell you to read `HEARTBEAT.md`, do th
 - You want to continue or inspect an existing session
 - The task should run on an `every` cadence and exact wall-clock timing is not critical
 - You need recent conversational context from that session
-- A no-op result should stay silent via `HEARTBEAT_OK`
+- A no-op result should stay silent via the exact configured silent ack token (often `HEARTBEAT_OK`)
+- Use `heartbeat_manager` to create, inspect, enable, disable, or update these session-bound heartbeat jobs
 
 **Use cron when:**
 
@@ -149,7 +152,7 @@ If your runtime or workspace instructions tell you to read `HEARTBEAT.md`, do th
 - The job should send a specific message or payload on a schedule
 - You want to list, enable, disable, or delete standalone scheduled jobs
 
-**Tip:** Use heartbeat for session-bound nudges. Use cron for explicit scheduled jobs.
+**Tip:** Use `heartbeat_manager` for session-bound recurring nudges. Use `cron_manager` for explicit scheduled jobs with stronger timing requirements.
 
 **Things to check (rotate through these, 2-4 times per day):**
 
@@ -167,7 +170,7 @@ Do not create your own heartbeat ledger such as `memory/heartbeat-state.json`. T
 - Something interesting you found
 - It's been >8h since you said anything
 
-**When to stay quiet (HEARTBEAT_OK):**
+**When to stay quiet (return the exact silent ack token):**
 
 - Late night (23:00-08:00) unless urgent
 - Human is clearly busy

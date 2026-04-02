@@ -10,19 +10,15 @@ use tokio::fs;
 const SKILLS_LAZY_LOAD_INSTRUCTIONS: &str = "When a task may require a skill, consult the available skills list first.\nBefore using a skill, read the SKILL.md file at the listed path.\nOnly load skill files when needed.";
 const INLINED_WORKSPACE_PROMPT_DOC_FILES: [&str; 4] =
     ["AGENTS.md", "SOUL.md", "IDENTITY.md", "TOOLS.md"];
-const ON_DEMAND_WORKSPACE_PROMPT_DOC_FILES: [&str; 3] = ["USER.md", "HEARTBEAT.md", "BOOTSTRAP.md"];
+const ON_DEMAND_WORKSPACE_PROMPT_DOC_FILES: [&str; 2] = ["USER.md", "BOOTSTRAP.md"];
 const RUNTIME_PROMPT_RULES: &str = "Treat the inlined workspace docs below as baseline instructions. Lazy-load only the remaining workspace docs and skills when they are relevant to the current user request.";
 const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = "Do not re-read `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, or `TOOLS.md` just to recover instructions already inlined into this system prompt.\nWhen additional workspace context is needed, read only the remaining on-demand docs from disk before acting.\nWhen a task requires remembering or recalling prior context, use the memory tool. Do not rely on ad-hoc markdown memory files.\nFiles under archives/ are read-only source material. Never edit, move, or delete them in place. If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.\nWhen the user wants a file or image sent back into chat, use the `channel_attachment` tool instead of only describing the file in plain text. Use `archive_id` when you already have a valid archived file id. Use `path` only for an absolute local file path that is inside the workspace or a configured channel allowlist. Prefer `kind=image` for screenshots or images that should render inline, and `kind=file` for generic documents or downloads. Never pass a list index like `1` as `archive_id`, and never use a relative path.";
 
-const PROMPT_TEMPLATE_FILES: [(&str, &str); 7] = [
+const PROMPT_TEMPLATE_FILES: [(&str, &str); 6] = [
     ("AGENTS.md", include_str!("../templates/prompt/AGENTS.md")),
     (
         "BOOTSTRAP.md",
         include_str!("../templates/prompt/BOOTSTRAP.md"),
-    ),
-    (
-        "HEARTBEAT.md",
-        include_str!("../templates/prompt/HEARTBEAT.md"),
     ),
     (
         "IDENTITY.md",
@@ -32,12 +28,8 @@ const PROMPT_TEMPLATE_FILES: [(&str, &str); 7] = [
     ("TOOLS.md", include_str!("../templates/prompt/TOOLS.md")),
     ("USER.md", include_str!("../templates/prompt/USER.md")),
 ];
-const AUTO_CREATE_PROMPT_TEMPLATE_FILES: [(&str, &str); 6] = [
+const AUTO_CREATE_PROMPT_TEMPLATE_FILES: [(&str, &str); 5] = [
     ("AGENTS.md", include_str!("../templates/prompt/AGENTS.md")),
-    (
-        "HEARTBEAT.md",
-        include_str!("../templates/prompt/HEARTBEAT.md"),
-    ),
     (
         "IDENTITY.md",
         include_str!("../templates/prompt/IDENTITY.md"),
@@ -199,7 +191,6 @@ fn format_workspace_docs_for_prompt_in_dir(data_dir: &Path) -> String {
         "Read these workspace docs only when relevant:\n{docs}\n\
 \n\
 Recommended usage:\n\
-- Read `HEARTBEAT.md` only for heartbeat/autonomous polling turns.\n\
 - Read `BOOTSTRAP.md` only during first-run initialization or cold-start setup.\n\
 - Use the memory tool for durable memory; do not use markdown files as memory storage."
     )
@@ -349,7 +340,7 @@ mod tests {
             .await
             .expect("should initialize workspace templates");
 
-        assert_eq!(report.created_files.len(), 7);
+        assert_eq!(report.created_files.len(), 6);
         assert!(report.skipped_files.is_empty());
 
         for (file_name, _) in PROMPT_TEMPLATE_FILES {
@@ -470,9 +461,9 @@ mod tests {
         assert!(docs_prompt.contains("Read these workspace docs only when relevant:"));
         assert!(docs_prompt.contains("Recommended usage:"));
         assert!(docs_prompt.contains("USER.md"));
-        assert!(docs_prompt.contains("HEARTBEAT.md"));
         assert!(docs_prompt.contains("BOOTSTRAP.md"));
         assert!(!docs_prompt.contains("Read `USER.md` when user-specific preferences"));
+        assert!(!docs_prompt.contains("HEARTBEAT.md"));
         assert!(!docs_prompt.contains("AGENTS.md"));
         assert!(!docs_prompt.contains("SOUL.md"));
         assert!(!docs_prompt.contains("IDENTITY.md"));
@@ -561,8 +552,8 @@ mod tests {
 
         assert!(prompt.contains("- "));
         assert!(prompt.contains("USER.md"));
-        assert!(prompt.contains("HEARTBEAT.md"));
         assert!(prompt.contains("BOOTSTRAP.md"));
+        assert!(!prompt.contains("HEARTBEAT.md"));
         assert!(!prompt.contains("Read `TOOLS.md`"));
         assert!(!prompt.contains("Read `SOUL.md`"));
         assert!(
