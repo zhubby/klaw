@@ -143,6 +143,7 @@ Heartbeat turns should rely on the session context, runtime instructions, heartb
 - The task should run on an `every` cadence and exact wall-clock timing is not critical
 - You need recent conversational context from that session
 - A no-op result should stay silent via the exact configured silent ack token (often `HEARTBEAT_OK`)
+- Use `heartbeat_manager` to create, inspect, enable, disable, or update these session-bound heartbeat jobs
 
 **Use cron when:**
 
@@ -151,7 +152,7 @@ Heartbeat turns should rely on the session context, runtime instructions, heartb
 - The job should send a specific message or payload on a schedule
 - You want to list, enable, disable, or delete standalone scheduled jobs
 
-**Tip:** Use heartbeat for session-bound nudges. Use cron for explicit scheduled jobs.
+**Tip:** Use `heartbeat_manager` for session-bound recurring nudges. Use `cron_manager` for explicit scheduled jobs with stronger timing requirements.
 
 **Things to check (rotate through these, 2-4 times per day):**
 
