@@ -1517,6 +1517,8 @@ impl AgentLoop {
     }
 }
 
+// Retry policies operate on a small set of stable buckets, so the runtime
+// normalizes concrete protocol error codes before delegating to the policy.
 fn classify_error_kind(code: Option<ErrorCode>) -> &'static str {
     match code {
         Some(ErrorCode::ValidationFailed | ErrorCode::InvalidSchema) => "validation",
@@ -1528,6 +1530,8 @@ fn classify_error_kind(code: Option<ErrorCode>) -> &'static str {
     }
 }
 
+// Provider-layer failures are converted into protocol-level error codes so the
+// rest of the runtime can make retry, telemetry, and DLQ decisions uniformly.
 fn map_llm_error_to_code(err: &LlmError) -> ErrorCode {
     match err {
         LlmError::ProviderUnavailable { .. }

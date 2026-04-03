@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use std::{collections::HashSet, collections::VecDeque, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
-/// 内存传输实现，用于本地与测试。
+/// In-memory transport implementation for local runs and tests.
 #[derive(Debug, Clone)]
 pub struct InMemoryTransport<T> {
     queue: Arc<Mutex<VecDeque<Envelope<T>>>>,
@@ -28,19 +28,19 @@ impl<T> Default for InMemoryTransport<T> {
 }
 
 impl<T> InMemoryTransport<T> {
-    /// 创建空队列传输实例。
+    /// Creates an empty transport instance.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 注入一条待消费消息。
+    /// Enqueues a message so it can be consumed later.
     pub async fn enqueue(&self, msg: Envelope<T>) {
         self.queue.lock().await.push_back(msg);
     }
 }
 
 impl<T: Clone> InMemoryTransport<T> {
-    /// 获取已发布消息快照。
+    /// Returns a snapshot of all messages published so far.
     pub async fn published_messages(&self) -> Vec<Envelope<T>> {
         self.published.lock().await.clone()
     }
@@ -51,7 +51,7 @@ impl<T> MessageTransport<T> for InMemoryTransport<T>
 where
     T: Send + Sync + Clone + 'static,
 {
-    /// 内存实现默认采用 at-least-once 语义。
+    /// The in-memory transport models at-least-once delivery semantics.
     fn mode(&self) -> DeliveryMode {
         DeliveryMode::AtLeastOnce
     }
@@ -94,7 +94,7 @@ where
     }
 }
 
-/// 内存会话调度器，提供最小可用调度行为。
+/// In-memory session scheduler with the smallest useful behavior surface.
 #[derive(Debug, Clone)]
 pub struct InMemorySessionScheduler {
     max_depth: usize,
@@ -102,7 +102,7 @@ pub struct InMemorySessionScheduler {
 }
 
 impl InMemorySessionScheduler {
-    /// 创建调度器。
+    /// Creates a new scheduler instance.
     pub fn new(max_depth: usize, lock_ttl: Duration) -> Self {
         Self {
             max_depth,
@@ -146,7 +146,7 @@ where
     }
 }
 
-/// 内存幂等存储实现。
+/// In-memory idempotency store implementation.
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryIdempotencyStore {
     keys: Arc<Mutex<HashSet<String>>>,
