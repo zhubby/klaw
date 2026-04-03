@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-03
+
+### Changed
+- strengthened the runtime system prompt with an explicit truthfulness rule that forbids claiming files were read, commands were run, searches were performed, or other tool-backed actions were completed unless they were actually verified by a tool result in the current turn or directly provided by the user
+
 ## 2026-04-02
 
 ### Changed
