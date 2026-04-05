@@ -41,6 +41,7 @@
 - [设计计划](./plans/README.md)
   - [Daemon Management](./plans/daemon-management.md)
   - [Memory Turso Hybrid](./plans/memory-turso-hybrid.md)
+  - [两层 Memory 设计](./plans/two-layer-memory-design.md)
   - [Heartbeat 模块设计](./plans/heartbeat-module-design.md)
   - [ACP Client 集成设计](./plans/acp-client-integration.md)
   - [Voice 模块设计](./plans/voice-module-design.md)

@@ -25,6 +25,14 @@ Memory 模块实施计划（Turso/libSQL 优先）：
 - `klaw-storage` - memory.db 管理
 - `klaw-memory` - MemoryService trait 与实现
 
+### [两层 Memory 设计](./two-layer-memory-design.md)
+
+当前 memory 架构调整方案：
+
+- **长期记忆**：写入 `long_term`，每轮整理后注入 `system prompt`
+- **治理规则**：`kind/status/topic/supersedes` 正式化，支持冲突替换
+- **session 记忆**：复用现有 `session/chat` 存储，仅通过 `search scope=session` 检索
+
 ### [Heartbeat 模块设计](./heartbeat-module-design.md)
 
 自主心跳心跳机制设计：
