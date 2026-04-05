@@ -64,6 +64,7 @@ pub trait EmbeddingProvider: Send + Sync {
 #[async_trait]
 pub trait MemoryService: Send + Sync {
     async fn upsert(&self, input: UpsertMemoryInput) -> Result<MemoryRecord, MemoryError>;
+    async fn list_scope_records(&self, scope: &str) -> Result<Vec<MemoryRecord>, MemoryError>;
     async fn search(&self, query: MemorySearchQuery) -> Result<Vec<MemoryHit>, MemoryError>;
     async fn get(&self, id: &str) -> Result<Option<MemoryRecord>, MemoryError>;
     async fn delete(&self, id: &str) -> Result<bool, MemoryError>;
