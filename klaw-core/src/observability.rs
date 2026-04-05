@@ -3,20 +3,20 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use uuid::Uuid;
 
-/// 健康状态枚举。
+/// Health status values reported by runtime components.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthStatus {
-    /// 依赖就绪，可接流量。
+    /// Dependencies are ready and the component can serve traffic.
     Ready,
-    /// 进程存活。
+    /// The process is alive.
     Live,
-    /// 可用但功能受限。
+    /// The component is available but running in a degraded mode.
     Degraded,
-    /// 不可用。
+    /// The component is unavailable.
     Unavailable,
 }
 
-/// 统一指标名称。
+/// Canonical metric names emitted by the runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MetricName {
     InboundConsumedTotal,
@@ -30,7 +30,7 @@ pub enum MetricName {
 }
 
 impl MetricName {
-    /// 返回指标的标准字符串名称。
+    /// Returns the stable metric name string.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::InboundConsumedTotal => "agent_inbound_consumed_total",
@@ -113,25 +113,25 @@ pub struct TurnOutcomeRecord {
     pub tool_loop_exhausted: bool,
 }
 
-/// 审计事件负载。
+/// Structured payload recorded for audit events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
-    /// 事件名称。
+    /// Event name.
     pub event_name: String,
-    /// 追踪 ID。
+    /// Trace identifier.
     pub trace_id: Uuid,
-    /// 会话键（可选）。
+    /// Session key, when available.
     pub session_key: Option<String>,
-    /// 错误码（可选）。
+    /// Error code, when available.
     pub error_code: Option<String>,
-    /// 扩展负载。
+    /// Additional event payload.
     pub payload: serde_json::Value,
 }
 
-/// 可观测性上报抽象。
+/// Observability reporting abstraction used by the runtime.
 #[async_trait]
 pub trait AgentTelemetry: Send + Sync {
-    /// 记录工具调用结果。
+    /// Records the outcome of a tool invocation.
     async fn record_tool_outcome(
         &self,
         session_key: &str,
@@ -140,28 +140,28 @@ pub trait AgentTelemetry: Send + Sync {
         error_code: Option<&str>,
         duration: Duration,
     );
-    /// 记录模型请求结果。
+    /// Records an LLM request result.
     async fn record_model_request(&self, record: ModelRequestRecord);
-    /// 记录按模型归因的工具调用结果。
+    /// Records a tool result attributed to a specific provider/model pair.
     async fn record_model_tool_outcome(&self, record: ModelToolOutcomeRecord);
-    /// 记录单轮 agent 执行结果。
+    /// Records the outcome of a single agent turn.
     async fn record_turn_outcome(&self, record: TurnOutcomeRecord);
-    /// 增加计数器。
+    /// Increments a counter metric.
     async fn incr_counter(&self, name: &'static str, labels: &[(&str, &str)], value: u64);
-    /// 上报直方图时延。
+    /// Observes a duration in a histogram metric.
     async fn observe_histogram(
         &self,
         name: &'static str,
         labels: &[(&str, &str)],
         duration: Duration,
     );
-    /// 记录审计事件。
+    /// Emits an audit event.
     async fn emit_audit_event(
         &self,
         event_name: &'static str,
         trace_id: Uuid,
         payload: serde_json::Value,
     );
-    /// 设置组件健康状态。
+    /// Updates component health state.
     async fn set_health(&self, component: &'static str, status: HealthStatus);
 }

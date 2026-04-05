@@ -2,8 +2,12 @@
 
 ## 2026-04-03
 
+### Removed
+- removed the unused `ErrorClass` enum from `reliability.rs` because runtime error handling already flows through `ErrorCode` and normalized retry buckets
+
 ### Changed
 - strengthened the runtime system prompt with an explicit truthfulness rule that forbids claiming files were read, commands were run, searches were performed, or other tool-backed actions were completed unless they were actually verified by a tool result in the current turn or directly provided by the user
+- translated remaining `klaw-core` Rust doc comments to English and added clarifying comments around runtime error normalization
 
 ## 2026-04-02
 

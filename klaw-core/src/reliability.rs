@@ -30,32 +30,11 @@ pub trait RetryPolicy: Send + Sync {
     /// Defines the upper bound for retry attempts.
     fn max_attempts(&self) -> u32;
     /// Classifies the error and returns the appropriate retry decision.
-    /// @param error_kind - String identifier for the error category (e.g., "timeout", "validation")
-    /// @param attempt - Current attempt number (starting from 1)
+    /// `error_kind` is the normalized retry bucket selected by the runtime for
+    /// the current failure (for example, `validation` or
+    /// `provider_unavailable`).
+    /// `attempt` starts at 1 for the first failure.
     fn classify(&self, error_kind: &str, attempt: u32) -> RetryDecision;
-}
-
-/// Error classification categories for systematic error handling.
-/// Provides a structured way to categorize errors based on their nature and recoverability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ErrorClass {
-    /// Validation errors - payload or input doesn't meet requirements.
-    /// These are typically permanent and should not be retried.
-    Validation,
-    /// Temporary dependency failures - external service temporarily unavailable.
-    /// These are typically recoverable after a short delay.
-    DependencyTemporary,
-    /// Permanent dependency failures - external service returning persistent errors.
-    /// These may require intervention and should not be blindly retried.
-    DependencyPermanent,
-    /// Temporary infrastructure failures - network or resource issues.
-    /// These are typically recoverable after infrastructure recovers.
-    InfrastructureTemporary,
-    /// Permanent infrastructure failures - persistent system-level issues.
-    InfrastructurePermanent,
-    /// Budget or quota limit exceeded errors.
-    /// These require quota increase or throttling adjustments to resolve.
-    BudgetExceeded,
 }
 
 /// Dead letter policy configuration for handling permanently failed messages.
@@ -140,6 +119,8 @@ impl RetryPolicy for ExponentialBackoffRetryPolicy {
             return RetryDecision::SendToDeadLetter;
         }
 
+        // Keep retry buckets coarse so runtime code can map multiple concrete
+        // error codes onto one retry decision path.
         match error_kind {
             "validation" | "schema" | "duplicate" => RetryDecision::Abort,
             "provider_unavailable" | "transport_unavailable" | "tool_timeout" => {

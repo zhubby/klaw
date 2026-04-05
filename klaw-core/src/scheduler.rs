@@ -1,55 +1,55 @@
 use async_trait::async_trait;
 use std::time::Duration;
 
-/// 可被会话调度器调度的任务。
+/// A task that can be scheduled by the session scheduler.
 pub trait SessionTask: Send + Sync {
-    /// 返回该任务的会话键。
+    /// Returns the session key that serializes this task.
     fn session_key(&self) -> &str;
-    /// 返回该任务唯一 ID。
+    /// Returns the unique identifier for this task.
     fn task_id(&self) -> &str;
 }
 
-/// 会话队列溢出策略。
+/// Overflow policy applied when a session queue is already saturated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueOverflowPolicy {
-    /// 聚合并继续排队。
+    /// Collect the work and keep it in the same queue.
     Collect,
-    /// 转化为 follow-up 任务。
+    /// Convert the work into a follow-up task.
     FollowUp,
-    /// 直接拒绝。
+    /// Reject the work immediately.
     Drop,
 }
 
-/// 调度决策结果。
+/// Scheduling decision returned by a session scheduler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskScheduleDecision {
-    /// 立即执行。
+    /// Execute the task immediately.
     ExecuteNow,
-    /// 已入队，返回当前队列深度。
+    /// The task was enqueued and the current queue depth is returned.
     Enqueued { queue_depth: usize },
-    /// 被拒绝并附带原因。
+    /// The task was rejected with a stable reason string.
     Rejected { reason: &'static str },
 }
 
-/// 会话串行调度抽象。
+/// Serial scheduling abstraction for session-scoped work.
 #[async_trait]
 pub trait SessionScheduler<T>: Send + Sync
 where
     T: SessionTask,
 {
-    /// 调度任务并返回决策。
+    /// Schedules a task and returns the resulting decision.
     async fn schedule(&self, task: T, overflow_policy: QueueOverflowPolicy)
     -> TaskScheduleDecision;
 
-    /// 标记任务执行完成，释放会话占用。
+    /// Marks a task as complete and releases any session lock.
     async fn complete(&self, session_key: &str, task_id: &str);
 
-    /// 查询会话队列深度。
+    /// Returns the current queue depth for the session.
     async fn queue_depth(&self, session_key: &str) -> usize;
 
-    /// 返回允许的最大队列深度。
+    /// Returns the maximum queue depth allowed by this scheduler.
     fn max_queue_depth(&self) -> usize;
 
-    /// 返回会话锁 TTL。
+    /// Returns the lock TTL used for session serialization.
     fn session_lock_ttl(&self) -> Duration;
 }
