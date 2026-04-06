@@ -1982,6 +1982,7 @@ mod tests {
                     "mock_approval",
                     &ctx.session_key,
                     None,
+                    None,
                 )],
             ))
         }

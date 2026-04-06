@@ -252,6 +252,7 @@ impl ShellTool {
                     "shell",
                     session_key,
                     Some("unsafe"),
+                    Some(&approval.command_preview),
                 )],
             ));
         }
@@ -782,11 +783,14 @@ mod tests {
         let err = tool_err.to_string();
         assert!(err.contains("Approval ID: "), "unexpected error: {err}");
         assert_eq!(tool_err.code(), "approval_required");
-        assert!(
-            tool_err
-                .signals()
-                .iter()
-                .any(|signal| signal.kind == "approval_required")
+        let approval_signal = tool_err
+            .signals()
+            .iter()
+            .find(|signal| signal.kind == "approval_required")
+            .expect("approval signal should be present");
+        assert_eq!(
+            approval_signal.payload.get("command_preview"),
+            Some(&json!("rm -rf /"))
         );
     }
 
