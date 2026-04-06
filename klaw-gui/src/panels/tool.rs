@@ -1666,6 +1666,9 @@ impl PanelRenderer for ToolPanel {
                             });
 
                             let response = row.response();
+                            if response.double_clicked() {
+                                inspect_key = Some(tool.config_key);
+                            }
                             response.context_menu(|ui| {
                                 if ui
                                     .button(format!("{} Edit", regular::PENCIL_SIMPLE))
@@ -1841,15 +1844,6 @@ fn json_fmt_null() -> TextFormat {
 
 fn json_fmt_punct() -> TextFormat {
     TextFormat::simple(FontId::monospace(13.0), Color32::from_rgb(210, 210, 210))
-}
-
-fn parse_lines(value: &str) -> Vec<String> {
-    value
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .collect()
 }
 
 fn optional_string(value: &str) -> Option<String> {
@@ -2158,12 +2152,6 @@ fn offset_to_ms(datetime: OffsetDateTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_lines_ignores_blanks() {
-        let lines = parse_lines("a\n\n b \n  ");
-        assert_eq!(lines, vec!["a".to_string(), "b".to_string()]);
-    }
 
     #[test]
     fn shell_form_rejects_invalid_numbers() {
