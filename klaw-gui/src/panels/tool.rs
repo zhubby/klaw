@@ -1,7 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
-use crate::widgets::show_json_tree_with_id;
+use crate::widgets::{ArrayEditor, show_json_tree_with_id};
 use crate::{request_sync_tools, request_tool_definitions};
 use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, FontId, TextFormat, text::LayoutJob};
@@ -99,15 +99,15 @@ struct ApplyPatchForm {
     enabled: bool,
     workspace: String,
     allow_absolute_paths: bool,
-    allowed_roots_text: String,
+    allowed_roots: ArrayEditor,
 }
 
 #[derive(Debug, Clone)]
 struct ShellForm {
     enabled: bool,
     workspace: String,
-    blocked_patterns_text: String,
-    unsafe_patterns_text: String,
+    blocked_patterns: ArrayEditor,
+    unsafe_patterns: ArrayEditor,
     allow_login_shell: bool,
     max_timeout_ms: String,
     max_output_bytes: String,
@@ -116,7 +116,7 @@ struct ShellForm {
 #[derive(Debug, Clone)]
 struct ChannelAttachmentForm {
     enabled: bool,
-    allowlist_text: String,
+    allowlist: ArrayEditor,
     max_bytes: String,
 }
 
@@ -137,7 +137,7 @@ struct WebFetchForm {
     cache_ttl_minutes: String,
     max_redirects: String,
     readability: bool,
-    ssrf_allowlist_text: String,
+    ssrf_allowlist: ArrayEditor,
 }
 
 #[derive(Debug, Clone)]
@@ -169,7 +169,7 @@ struct SubAgentForm {
     max_iterations: String,
     max_tool_calls: String,
     inherit_parent_tools: bool,
-    exclude_tools_text: String,
+    exclude_tools: ArrayEditor,
 }
 
 #[derive(Clone, Copy)]
@@ -244,7 +244,7 @@ impl ApplyPatchForm {
             enabled: config.enabled,
             workspace: config.workspace.clone().unwrap_or_default(),
             allow_absolute_paths: config.allow_absolute_paths,
-            allowed_roots_text: config.allowed_roots.join("\n"),
+            allowed_roots: ArrayEditor::from_vec("allowed_roots", &config.allowed_roots),
         }
     }
 
@@ -254,7 +254,7 @@ impl ApplyPatchForm {
             enabled: self.enabled,
             workspace: (!workspace.is_empty()).then(|| workspace.to_string()),
             allow_absolute_paths: self.allow_absolute_paths,
-            allowed_roots: parse_lines(&self.allowed_roots_text),
+            allowed_roots: self.allowed_roots.to_vec(),
         }
     }
 }
@@ -264,8 +264,11 @@ impl ShellForm {
         Self {
             enabled: config.enabled,
             workspace: config.workspace.clone().unwrap_or_default(),
-            blocked_patterns_text: config.blocked_patterns.join("\n"),
-            unsafe_patterns_text: config.unsafe_patterns.join("\n"),
+            blocked_patterns: ArrayEditor::from_vec(
+                "blocked_patterns",
+                &config.blocked_patterns,
+            ),
+            unsafe_patterns: ArrayEditor::from_vec("unsafe_patterns", &config.unsafe_patterns),
             allow_login_shell: config.allow_login_shell,
             max_timeout_ms: config.max_timeout_ms.to_string(),
             max_output_bytes: config.max_output_bytes.to_string(),
@@ -288,8 +291,8 @@ impl ShellForm {
         Ok(ShellConfig {
             enabled: self.enabled,
             workspace: (!workspace.is_empty()).then(|| workspace.to_string()),
-            blocked_patterns: parse_lines(&self.blocked_patterns_text),
-            unsafe_patterns: parse_lines(&self.unsafe_patterns_text),
+            blocked_patterns: self.blocked_patterns.to_vec(),
+            unsafe_patterns: self.unsafe_patterns.to_vec(),
             allow_login_shell: self.allow_login_shell,
             max_timeout_ms,
             max_output_bytes,
@@ -301,7 +304,10 @@ impl ChannelAttachmentForm {
     fn from_config(config: &ChannelAttachmentToolConfig) -> Self {
         Self {
             enabled: config.enabled,
-            allowlist_text: config.local_attachments.allowlist.join("\n"),
+            allowlist: ArrayEditor::from_vec(
+                "allowlist",
+                &config.local_attachments.allowlist,
+            ),
             max_bytes: config.local_attachments.max_bytes.to_string(),
         }
     }
@@ -316,7 +322,7 @@ impl ChannelAttachmentForm {
         Ok(ChannelAttachmentToolConfig {
             enabled: self.enabled,
             local_attachments: LocalAttachmentConfig {
-                allowlist: parse_lines(&self.allowlist_text),
+                allowlist: self.allowlist.to_vec(),
                 max_bytes,
             },
         })
@@ -370,7 +376,7 @@ impl WebFetchForm {
             cache_ttl_minutes: config.cache_ttl_minutes.to_string(),
             max_redirects: config.max_redirects.to_string(),
             readability: config.readability,
-            ssrf_allowlist_text: config.ssrf_allowlist.join("\n"),
+            ssrf_allowlist: ArrayEditor::from_vec("ssrf_allowlist", &config.ssrf_allowlist),
         }
     }
 
@@ -403,7 +409,7 @@ impl WebFetchForm {
             cache_ttl_minutes,
             max_redirects,
             readability: self.readability,
-            ssrf_allowlist: parse_lines(&self.ssrf_allowlist_text),
+            ssrf_allowlist: self.ssrf_allowlist.to_vec(),
         })
     }
 }
@@ -466,7 +472,7 @@ impl SubAgentForm {
             max_iterations: config.max_iterations.to_string(),
             max_tool_calls: config.max_tool_calls.to_string(),
             inherit_parent_tools: config.inherit_parent_tools,
-            exclude_tools_text: config.exclude_tools.join("\n"),
+            exclude_tools: ArrayEditor::from_vec("exclude_tools", &config.exclude_tools),
         }
     }
 
@@ -487,7 +493,7 @@ impl SubAgentForm {
             max_iterations,
             max_tool_calls,
             inherit_parent_tools: self.inherit_parent_tools,
-            exclude_tools: parse_lines(&self.exclude_tools_text),
+            exclude_tools: self.exclude_tools.to_vec(),
         })
     }
 }
@@ -864,12 +870,7 @@ impl ToolPanel {
                                 ui.end_row();
                             });
                         ui.separator();
-                        ui.label("allowed_roots (one path per line)");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut form.allowed_roots_text)
-                                .desired_rows(5)
-                                .desired_width(f32::INFINITY),
-                        );
+                        form.allowed_roots.show(ui);
                     }
                     ToolForm::Shell(form) => {
                         egui::Grid::new("tool-shell-grid")
@@ -898,19 +899,9 @@ impl ToolPanel {
                             });
 
                         ui.separator();
-                        ui.label("blocked_patterns (one per line)");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut form.blocked_patterns_text)
-                                .desired_rows(3)
-                                .desired_width(f32::INFINITY),
-                        );
-
-                        ui.label("unsafe_patterns (one per line)");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut form.unsafe_patterns_text)
-                                .desired_rows(5)
-                                .desired_width(f32::INFINITY),
-                        );
+                        form.blocked_patterns.show(ui);
+                        ui.separator();
+                        form.unsafe_patterns.show(ui);
                     }
                     ToolForm::Toggle(_, form) => {
                         ui.horizontal(|ui| {
@@ -932,12 +923,7 @@ impl ToolPanel {
                                 ui.end_row();
                             });
                         ui.separator();
-                        ui.label("allowlist (absolute paths, one per line)");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut form.allowlist_text)
-                                .desired_rows(5)
-                                .desired_width(f32::INFINITY),
-                        );
+                        form.allowlist.show(ui);
                     }
                     ToolForm::Memory(form) => {
                         egui::Grid::new("tool-memory-grid")
@@ -995,12 +981,7 @@ impl ToolPanel {
                                 ui.end_row();
                             });
                         ui.separator();
-                        ui.label("ssrf_allowlist (CIDR/IP, one per line)");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut form.ssrf_allowlist_text)
-                                .desired_rows(5)
-                                .desired_width(f32::INFINITY),
-                        );
+                        form.ssrf_allowlist.show(ui);
                     }
                     ToolForm::WebSearch(form) => {
                         egui::Grid::new("tool-web-search-grid")
@@ -1120,12 +1101,7 @@ impl ToolPanel {
                                 ui.end_row();
                             });
                         ui.separator();
-                        ui.label("exclude_tools (one per line)");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut form.exclude_tools_text)
-                                .desired_rows(5)
-                                .desired_width(f32::INFINITY),
-                        );
+                        form.exclude_tools.show(ui);
                     }
                 }
 
@@ -2194,8 +2170,8 @@ mod tests {
         let form = ShellForm {
             enabled: true,
             workspace: String::new(),
-            blocked_patterns_text: String::new(),
-            unsafe_patterns_text: String::new(),
+            blocked_patterns: ArrayEditor::new("blocked_patterns"),
+            unsafe_patterns: ArrayEditor::new("unsafe_patterns"),
             allow_login_shell: true,
             max_timeout_ms: "abc".to_string(),
             max_output_bytes: "1024".to_string(),
@@ -2209,7 +2185,10 @@ mod tests {
     fn channel_attachment_form_parses_values() {
         let form = ChannelAttachmentForm {
             enabled: true,
-            allowlist_text: "/tmp\n /Users/zhubby/Downloads ".to_string(),
+            allowlist: ArrayEditor::from_vec(
+                "allowlist",
+                &["/tmp".to_string(), " /Users/zhubby/Downloads ".to_string()],
+            ),
             max_bytes: "2048".to_string(),
         };
 
@@ -2229,7 +2208,10 @@ mod tests {
             max_iterations: "6".to_string(),
             max_tool_calls: "12".to_string(),
             inherit_parent_tools: true,
-            exclude_tools_text: "sub_agent\nweb_search".to_string(),
+            exclude_tools: ArrayEditor::from_vec(
+                "exclude_tools",
+                &["sub_agent".to_string(), "web_search".to_string()],
+            ),
         };
 
         let config = form.to_config().expect("should parse");
