@@ -103,5 +103,4 @@ mod tests {
 
         assert_eq!(vec[0], "value");
     }
-
 }

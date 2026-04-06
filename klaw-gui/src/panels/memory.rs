@@ -284,11 +284,16 @@ impl MemoryPanel {
             receiver: spawn_memory_task(|service| async move {
                 let stats = service.collect(8).await?;
                 let long_term_records = service.list_scope_records("long_term").await?;
-                let session_store = open_default_store()
-                    .await
-                    .map_err(MemoryError::Storage)?;
+                let session_store = open_default_store().await.map_err(MemoryError::Storage)?;
                 let sessions = session_store
-                    .list_sessions(1000, 0, None, None, None, klaw_storage::SessionSortOrder::UpdatedAtDesc)
+                    .list_sessions(
+                        1000,
+                        0,
+                        None,
+                        None,
+                        None,
+                        klaw_storage::SessionSortOrder::UpdatedAtDesc,
+                    )
                     .await
                     .map_err(MemoryError::Storage)?;
                 let session_key_options = aggregate_session_key_options(&sessions);
@@ -731,7 +736,9 @@ impl MemoryPanel {
                                 ui.monospace(kind_label(record));
                             });
                             row.col(|ui| {
-                                ui.label(read_long_term_topic(record).unwrap_or_else(|| "-".to_string()));
+                                ui.label(
+                                    read_long_term_topic(record).unwrap_or_else(|| "-".to_string()),
+                                );
                             });
                             row.col(|ui| {
                                 ui.monospace(if record.pinned { "yes" } else { "no" });
@@ -837,7 +844,10 @@ impl MemoryPanel {
             });
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button(format!("{} Search", regular::MAGNIFYING_GLASS)).clicked() {
+            if ui
+                .button(format!("{} Search", regular::MAGNIFYING_GLASS))
+                .clicked()
+            {
                 self.begin_session_search(notifications);
             }
             if self.session_search_loading {
@@ -848,13 +858,21 @@ impl MemoryPanel {
         ui.add_space(8.0);
 
         let Some(result) = self.session_search_result.clone() else {
-            ui.small("Run a session search to inspect the resolved base session and matching history.");
+            ui.small(
+                "Run a session search to inspect the resolved base session and matching history.",
+            );
             return;
         };
 
         ui.label(format!("Input session: {}", result.input_session_key));
-        ui.label(format!("Resolved base session: {}", result.base_session_key));
-        ui.label(format!("Resolved sessions: {}", result.session_keys.join(", ")));
+        ui.label(format!(
+            "Resolved base session: {}",
+            result.base_session_key
+        ));
+        ui.label(format!(
+            "Resolved sessions: {}",
+            result.session_keys.join(", ")
+        ));
         ui.label(format!(
             "Window: {} day(s), limit {}",
             result.within_days, result.limit
@@ -1020,7 +1038,9 @@ impl PanelRenderer for MemoryPanel {
 
         match self.tab {
             MemoryTab::LongTerm => self.render_long_term_tab(ui, &overview),
-            MemoryTab::SessionSearch => self.render_session_search_tab(ui, notifications, &overview),
+            MemoryTab::SessionSearch => {
+                self.render_session_search_tab(ui, notifications, &overview)
+            }
             MemoryTab::Diagnostics => self.render_diagnostics_tab(ui, &overview),
         }
 
@@ -1065,7 +1085,11 @@ fn render_memory_stats_grid(ui: &mut egui::Ui, stats: &MemoryStats) {
             ui.end_row();
 
             ui.label("Vector Index Enabled");
-            ui.monospace(if stats.vector_index_enabled { "yes" } else { "no" });
+            ui.monospace(if stats.vector_index_enabled {
+                "yes"
+            } else {
+                "no"
+            });
             ui.end_row();
 
             ui.label("Avg Content Length");
@@ -1132,7 +1156,12 @@ fn selected_long_term_record<'a>(
     selected_id: Option<&str>,
 ) -> Option<&'a MemoryRecord> {
     selected_id
-        .and_then(|selected_id| records.iter().copied().find(|record| record.id == selected_id))
+        .and_then(|selected_id| {
+            records
+                .iter()
+                .copied()
+                .find(|record| record.id == selected_id)
+        })
         .or_else(|| records.first().copied())
 }
 
@@ -1153,7 +1182,10 @@ fn aggregate_session_key_options(sessions: &[klaw_storage::SessionIndex]) -> Vec
     options
 }
 
-fn count_records_with_status(records: &[MemoryRecord], status: Option<LongTermMemoryStatus>) -> usize {
+fn count_records_with_status(
+    records: &[MemoryRecord],
+    status: Option<LongTermMemoryStatus>,
+) -> usize {
     records
         .iter()
         .filter(|record| {
@@ -1189,7 +1221,10 @@ fn governance_summary(record: &MemoryRecord) -> String {
     let superseded_by = read_string_field(&record.metadata, "superseded_by");
     match (supersedes.is_empty(), superseded_by) {
         (false, Some(superseded_by)) => {
-            format!("supersedes: {}; superseded_by: {superseded_by}", supersedes.join(", "))
+            format!(
+                "supersedes: {}; superseded_by: {superseded_by}",
+                supersedes.join(", ")
+            )
         }
         (false, None) => format!("supersedes: {}", supersedes.join(", ")),
         (true, Some(superseded_by)) => format!("superseded_by: {superseded_by}"),
@@ -1262,7 +1297,8 @@ fn spawn_session_search_task(
                     let store = open_default_store()
                         .await
                         .map_err(|err| format!("failed to open session store: {err}"))?;
-                    search_session_history(store, input_session_key, query, within_days, limit).await
+                    search_session_history(store, input_session_key, query, within_days, limit)
+                        .await
                 })
             });
         let _ = tx.send(result);
@@ -1277,7 +1313,10 @@ async fn search_session_history(
     within_days: i64,
     limit: usize,
 ) -> Result<SessionSearchOutput, String> {
-    let base_session_key = match store.get_session_by_active_session_key(&input_session_key).await {
+    let base_session_key = match store
+        .get_session_by_active_session_key(&input_session_key)
+        .await
+    {
         Ok(base) => base.session_key,
         Err(_) => input_session_key.clone(),
     };
@@ -1525,9 +1564,27 @@ mod tests {
     #[test]
     fn filter_long_term_records_applies_status_kind_and_topic() {
         let records = vec![
-            long_term_record("1", "Default language is Chinese", "preference", "active", Some("reply_language")),
-            long_term_record("2", "Default language is English", "preference", "superseded", Some("reply_language")),
-            long_term_record("3", "Follow project rule", "project_rule", "active", Some("code_style")),
+            long_term_record(
+                "1",
+                "Default language is Chinese",
+                "preference",
+                "active",
+                Some("reply_language"),
+            ),
+            long_term_record(
+                "2",
+                "Default language is English",
+                "preference",
+                "superseded",
+                Some("reply_language"),
+            ),
+            long_term_record(
+                "3",
+                "Follow project rule",
+                "project_rule",
+                "active",
+                Some("code_style"),
+            ),
         ];
 
         let filtered = filter_long_term_records(
@@ -1576,7 +1633,8 @@ mod tests {
             message_id: None,
         };
 
-        let assistant_score = session_match_score(&assistant, "deploy rollback").unwrap_or_default();
+        let assistant_score =
+            session_match_score(&assistant, "deploy rollback").unwrap_or_default();
         let user_score = session_match_score(&user, "rollback").unwrap_or_default();
         assert!(assistant_score > user_score);
     }

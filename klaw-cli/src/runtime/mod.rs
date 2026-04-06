@@ -1888,7 +1888,7 @@ async fn handle_im_command(
                         route.model_provider.clone(),
                         route.model.clone(),
                         Vec::new(),
-                        BTreeMap::new(),
+                        request_metadata.clone(),
                     )
                     .await?;
                     match maybe_output {
@@ -3499,7 +3499,7 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        RuntimeBundle, StartupReport, build_history_for_model,
+        RuntimeBundle, StartupReport, approval_manager, build_history_for_model,
         build_new_session_bootstrap_user_message, build_unavailable_provider, builtin_tool_names,
         compression_trigger_interval, configured_default_model, extract_skill_short_description,
         first_arg_token, format_approve_already_handled_message,
@@ -3511,6 +3511,7 @@ mod tests {
         sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
+    use klaw_approval::{ApprovalCreateInput, ApprovalManager};
     use klaw_channel::OutboundAttachmentSource;
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
     use klaw_core::{
@@ -4831,6 +4832,60 @@ A .docx file is a ZIP archive containing XML files.
                 .unwrap_or_else(|err| err.into_inner())
                 .clone(),
             None
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approve_command_preserves_direct_reply_metadata_for_followup() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+        let channel = "telegram".to_string();
+        let base_session_key = "telegram:tg7:chat-approval".to_string();
+        let chat_id = "chat-approval".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &base_session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+
+        let manager = approval_manager(&runtime);
+        let approval = manager
+            .create_approval(ApprovalCreateInput {
+                session_key: base_session_key.clone(),
+                tool_name: "shell".to_string(),
+                command_text: "gh issue list --state open".to_string(),
+                command_preview: Some("gh issue list --state open".to_string()),
+                command_hash: Some("command-hash-1".to_string()),
+                risk_level: Some("unsafe".to_string()),
+                requested_by: Some("agent".to_string()),
+                justification: None,
+                expires_in_minutes: Some(10),
+            })
+            .await
+            .expect("approval should be created");
+
+        let response = handle_im_command(
+            &runtime,
+            channel,
+            base_session_key,
+            chat_id,
+            format!("/approve {}", approval.id),
+            BTreeMap::from([("channel.delivery_mode".to_string(), json!("direct_reply"))]),
+        )
+        .await
+        .expect("approve command should succeed")
+        .expect("approve command should return a response");
+
+        assert_eq!(response.content, "bootstrap reply");
+        assert_eq!(
+            response.metadata.get("channel.delivery_mode"),
+            Some(&json!("direct_reply"))
         );
     }
 

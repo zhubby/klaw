@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-06
+
+### Fixed
+
+- `/approve <approval_id>` 在 shell 审批通过后重新进入 `submit_and_get_output` 生成总结回复时，现会继承原始 channel reply metadata，避免 Telegram 这类 `direct_reply` 会话把同一条 follow-up 同时走“直接回复”和后台 dispatcher 而重复发送
+
 ## 2026-04-02
 
 ### Changed

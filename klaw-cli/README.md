@@ -63,6 +63,7 @@
 - runtime 内置通用 IM 会话命令路由：`/help`、`/stop`、`/new`、`/start`、`/model-provider`、`/model`
 - runtime 内置审批命令：`/approve <approval_id>`、`/reject <approval_id>`
 - runtime 审批命令与工具审批流统一通过 `klaw-approval` manager 层处理状态流转与消费
+- `/approve <approval_id>` 在 shell 审批执行后重新让模型生成总结回复时，会继续透传当前 channel reply metadata，避免 Telegram `direct_reply` 等会话重复投递同一条 follow-up
 - runtime 对 `approval_required` 工具结果会直接透传审批提示，不再包装成通用的 tool failure 文案
 - runtime 对 `stop` 工具信号会立即结束当前轮次，并在 outbound metadata 中写入 `turn.stopped` / `turn.stop_signal`
 - runtime 现支持从 outbound metadata 的 `channel.attachments` 解析结构化附件，并把 archive 驱动的图片/文件回复透传给 Telegram 与 DingTalk channel adapter
