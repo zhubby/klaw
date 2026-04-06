@@ -28,3 +28,4 @@
 - `AgentLoop` treats `approval_required` tool outcomes as approval handoff states for user-facing messaging, instead of wrapping them as generic tool failures
 - `AgentLoop` treats tool `stop` signals as successful turn short-circuits and forwards `turn.stopped` / `turn.stop_signal` metadata to outbound messages
 - outbound metadata now also carries `turn.disposition` for approval/stopped short-circuits so callers can distinguish normal final messages from execution handoff states
+- `AgentLoop` can also honor per-turn execution limit overrides from inbound metadata (`agent.max_tool_iterations`, `agent.max_tool_calls`, `agent.token_budget`) when a runtime needs to allow a narrowly bounded retry loop without relaxing the global runtime limits

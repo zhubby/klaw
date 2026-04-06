@@ -32,6 +32,9 @@ use tracing::{debug, error, info, warn};
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 const META_LLM_USAGE_RECORDS_KEY: &str = "llm.usage.records";
 const META_LLM_AUDIT_RECORDS_KEY: &str = "llm.audit.records";
+const META_MAX_TOOL_ITERATIONS_KEY: &str = "agent.max_tool_iterations";
+const META_MAX_TOOL_CALLS_KEY: &str = "agent.max_tool_calls";
+const META_TOKEN_BUDGET_KEY: &str = "agent.token_budget";
 const TOOL_RESULT_LOG_LIMIT: usize = 4000;
 const STOP_SIGNAL: &str = "stop";
 
@@ -787,6 +790,7 @@ impl AgentLoop {
             current_attachments,
             tool_metadata,
         };
+        let execution_limits = execution_limits_from_metadata(&self.limits, &msg.payload.metadata);
 
         let executor = RegistryToolExecutor {
             tools: &self.tools,
@@ -802,11 +806,7 @@ impl AgentLoop {
                 session_key: msg.payload.session_key.clone(),
                 execution_context,
             },
-            AgentExecutionLimits {
-                max_tool_iterations: self.limits.max_tool_iterations,
-                max_tool_calls: self.limits.max_tool_calls,
-                token_budget: self.limits.token_budget,
-            },
+            execution_limits,
             stream,
         )
         .await;
@@ -1527,6 +1527,40 @@ fn heartbeat_response_metadata(
     response_metadata
 }
 
+fn execution_limits_from_metadata(
+    defaults: &RunLimits,
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> AgentExecutionLimits {
+    AgentExecutionLimits {
+        max_tool_iterations: metadata_u32(metadata, META_MAX_TOOL_ITERATIONS_KEY)
+            .unwrap_or(defaults.max_tool_iterations),
+        max_tool_calls: metadata_u32(metadata, META_MAX_TOOL_CALLS_KEY)
+            .unwrap_or(defaults.max_tool_calls),
+        token_budget: metadata_u64(metadata, META_TOKEN_BUDGET_KEY)
+            .unwrap_or(defaults.token_budget),
+    }
+}
+
+fn metadata_u32(metadata: &BTreeMap<String, serde_json::Value>, key: &str) -> Option<u32> {
+    let value = metadata.get(key)?;
+    match value {
+        serde_json::Value::Number(number) => {
+            number.as_u64().and_then(|value| value.try_into().ok())
+        }
+        serde_json::Value::String(text) => text.trim().parse::<u32>().ok(),
+        _ => None,
+    }
+}
+
+fn metadata_u64(metadata: &BTreeMap<String, serde_json::Value>, key: &str) -> Option<u64> {
+    let value = metadata.get(key)?;
+    match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::String(text) => text.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
 fn extract_conversation_history(
     metadata: &BTreeMap<String, serde_json::Value>,
 ) -> Vec<ConversationMessage> {
@@ -1731,7 +1765,7 @@ mod tests {
     use super::{
         AgentLoop, META_LLM_AUDIT_RECORDS_KEY, QueueStrategy, RunLimits, SessionSchedulingPolicy,
         augment_user_content_with_attachment_context, current_attachment_contexts,
-        heartbeat_response_metadata,
+        execution_limits_from_metadata, heartbeat_response_metadata,
     };
     use crate::{
         domain::InboundMessage,
@@ -1770,6 +1804,28 @@ mod tests {
             Some(&json!("stdio:test"))
         );
         assert!(!metadata.contains_key("reasoning"));
+    }
+
+    #[test]
+    fn execution_limits_allow_metadata_overrides() {
+        let defaults = RunLimits {
+            max_tool_iterations: 8,
+            max_tool_calls: 16,
+            token_budget: 1024,
+            agent_timeout: Duration::from_secs(1),
+            tool_timeout: Duration::from_secs(1),
+        };
+        let metadata = BTreeMap::from([
+            ("agent.max_tool_iterations".to_string(), json!(2)),
+            ("agent.max_tool_calls".to_string(), json!("1")),
+            ("agent.token_budget".to_string(), json!("64")),
+        ]);
+
+        let limits = execution_limits_from_metadata(&defaults, &metadata);
+
+        assert_eq!(limits.max_tool_iterations, 2);
+        assert_eq!(limits.max_tool_calls, 1);
+        assert_eq!(limits.token_budget, 64);
     }
 
     #[test]
