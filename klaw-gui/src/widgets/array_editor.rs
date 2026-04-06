@@ -34,12 +34,9 @@ impl ArrayEditor {
         ui.label(&self.label);
 
         let mut to_remove: Option<usize> = None;
-        for (idx, item) in self.entries.iter().enumerate() {
+        for (idx, item) in self.entries.iter_mut().enumerate() {
             ui.horizontal(|ui| {
-                ui.add_enabled(
-                    false,
-                    egui::TextEdit::singleline(&mut item.clone()).desired_width(320.0),
-                );
+                ui.add(egui::TextEdit::singleline(item).desired_width(320.0));
                 if ui.small_button("×").clicked() {
                     to_remove = Some(idx);
                 }
@@ -106,4 +103,5 @@ mod tests {
 
         assert_eq!(vec[0], "value");
     }
+
 }

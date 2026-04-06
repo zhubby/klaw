@@ -13,9 +13,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use klaw_agent::{
-    AgentExecutionError, AgentExecutionInput, AgentExecutionLimits, AgentExecutionStreamEvent,
-    AgentToolAudit, ConversationMessage, ToolExecutor, ToolInvocationResult, ToolInvocationSignal,
-    run_agent_execution,
+    AgentExecutionContext, AgentExecutionDisposition, AgentExecutionError, AgentExecutionInput,
+    AgentExecutionLimits, AgentExecutionStreamEvent, AgentToolAudit, ConversationMessage,
+    ToolExecutor, ToolInvocationResult, ToolInvocationSignal, run_agent_execution,
 };
 use klaw_llm::{LlmAuditPayload, LlmError, LlmMedia, LlmProvider, ToolDefinition};
 use klaw_tool::{ToolContext, ToolRegistry};
@@ -29,9 +29,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
-const META_CURRENT_ATTACHMENTS_KEY: &str = "agent.current_attachments";
 const META_LLM_USAGE_RECORDS_KEY: &str = "llm.usage.records";
 const META_LLM_AUDIT_RECORDS_KEY: &str = "llm.audit.records";
 const TOOL_RESULT_LOG_LIMIT: usize = 4000;
@@ -41,11 +39,7 @@ const STOP_SIGNAL: &str = "stop";
 pub enum AgentRunState {
     Received,
     Validating,
-    Scheduling,
-    BuildingContext,
-    CallingModel,
-    ToolLoop,
-    Finalizing,
+    Executing,
     Publishing,
     Completed,
     Degraded,
@@ -71,13 +65,7 @@ pub enum StateTransitionEvent {
     StartValidation,
     ValidationPassed,
     ValidationFailed,
-    Scheduled,
-    QueueAccepted,
-    QueueRejected,
-    ContextBuilt,
-    ModelCalled,
-    ToolRequested,
-    ToolLoopFinished,
+    ExecutionStarted,
     FinalResponseReady,
     Published,
     RecoverableError,
@@ -645,16 +633,10 @@ impl AgentLoop {
         use StateTransitionEvent as E;
         match (state, event) {
             (S::Received, E::StartValidation) => S::Validating,
-            (S::Validating, E::ValidationPassed) => S::Scheduling,
+            (S::Validating, E::ValidationPassed) => S::Executing,
             (S::Validating, E::ValidationFailed) => S::Failed,
-            (S::Scheduling, E::Scheduled) => S::BuildingContext,
-            (S::Scheduling, E::QueueAccepted) => S::Degraded,
-            (S::Scheduling, E::QueueRejected) => S::Failed,
-            (S::BuildingContext, E::ContextBuilt) => S::CallingModel,
-            (S::CallingModel, E::ModelCalled) => S::Finalizing,
-            (S::CallingModel, E::ToolRequested) => S::ToolLoop,
-            (S::ToolLoop, E::ToolLoopFinished) => S::Finalizing,
-            (S::Finalizing, E::FinalResponseReady) => S::Publishing,
+            (S::Executing, E::ExecutionStarted) => S::Executing,
+            (S::Executing, E::FinalResponseReady) => S::Publishing,
             (S::Publishing, E::Published) => S::Completed,
             (_, E::RecoverableError) => S::Degraded,
             (_, E::FatalError) => S::Failed,
@@ -741,8 +723,7 @@ impl AgentLoop {
         let mut state = AgentRunState::Received;
         state = self.transition(state, StateTransitionEvent::StartValidation);
         state = self.transition(state, StateTransitionEvent::ValidationPassed);
-        state = self.transition(state, StateTransitionEvent::Scheduled);
-        state = self.transition(state, StateTransitionEvent::ContextBuilt);
+        state = self.transition(state, StateTransitionEvent::ExecutionStarted);
 
         let conversation_history = extract_conversation_history(&msg.payload.metadata);
         let user_media = extract_user_media(&msg.payload);
@@ -796,36 +777,17 @@ impl AgentLoop {
 
         let mut tool_metadata = msg.payload.metadata.clone();
         tool_metadata.remove(META_CONVERSATION_HISTORY_KEY);
-        tool_metadata.insert(
-            "agent.provider_id".to_string(),
-            serde_json::Value::String(resolved_provider_id.clone()),
-        );
-        tool_metadata.insert(
-            "agent.model".to_string(),
-            serde_json::Value::String(resolved_model.clone()),
-        );
-        tool_metadata.insert(
-            "agent.parent_session_key".to_string(),
-            serde_json::Value::String(msg.payload.session_key.clone()),
-        );
-        tool_metadata.insert(
-            "agent.message_id".to_string(),
-            serde_json::Value::String(msg.header.message_id.to_string()),
-        );
-        if !current_attachments.is_empty() {
-            tool_metadata.insert(
-                META_CURRENT_ATTACHMENTS_KEY.to_string(),
-                serde_json::Value::Array(current_attachments),
-            );
-        }
-        if let Some(system_prompt) = self.system_prompt() {
-            tool_metadata
-                .entry(META_SYSTEM_PROMPT_KEY.to_string())
-                .or_insert_with(|| serde_json::Value::String(system_prompt));
-        }
+        let execution_context = AgentExecutionContext {
+            system_prompt: self.system_prompt(),
+            tool_choice: msg.payload.metadata.get("agent.tool_choice").cloned(),
+            provider_id: Some(resolved_provider_id.clone()),
+            resolved_model: Some(resolved_model.clone()),
+            parent_session_key: Some(msg.payload.session_key.clone()),
+            message_id: Some(msg.header.message_id.to_string()),
+            current_attachments,
+            tool_metadata,
+        };
 
-        state = self.transition(state, StateTransitionEvent::ModelCalled);
-        state = self.transition(state, StateTransitionEvent::ToolRequested);
         let executor = RegistryToolExecutor {
             tools: &self.tools,
             telemetry: self.telemetry.as_ref(),
@@ -838,8 +800,7 @@ impl AgentLoop {
                 user_media,
                 conversation_history,
                 session_key: msg.payload.session_key.clone(),
-                tool_metadata,
-                model: Some(resolved_model.clone()),
+                execution_context,
             },
             AgentExecutionLimits {
                 max_tool_iterations: self.limits.max_tool_iterations,
@@ -849,7 +810,6 @@ impl AgentLoop {
             stream,
         )
         .await;
-        state = self.transition(state, StateTransitionEvent::ToolLoopFinished);
 
         match result {
             Ok(output) => {
@@ -931,6 +891,20 @@ impl AgentLoop {
                 }
 
                 let mut response_metadata = heartbeat_response_metadata(&msg.payload.metadata);
+                if matches!(
+                    output.disposition,
+                    AgentExecutionDisposition::ApprovalRequired
+                ) {
+                    response_metadata.insert(
+                        "turn.disposition".to_string(),
+                        serde_json::Value::String("approval_required".to_string()),
+                    );
+                } else if matches!(output.disposition, AgentExecutionDisposition::Stopped) {
+                    response_metadata.insert(
+                        "turn.disposition".to_string(),
+                        serde_json::Value::String("stopped".to_string()),
+                    );
+                }
                 if !output.tool_signals.is_empty() {
                     response_metadata.insert(
                         "tool.signals".to_string(),

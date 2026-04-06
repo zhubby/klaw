@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use klaw_agent::{
-    AgentExecutionError, AgentExecutionInput, AgentExecutionLimits, AgentExecutionOutput,
-    ToolExecutor, ToolInvocationResult, ToolInvocationSignal, build_provider_from_config,
-    run_agent_execution,
+    AgentExecutionContext, AgentExecutionError, AgentExecutionInput, AgentExecutionLimits,
+    AgentExecutionOutput, ToolExecutor, ToolInvocationResult, ToolInvocationSignal,
+    build_provider_from_config, run_agent_execution,
 };
 use klaw_config::{AppConfig, SubAgentConfig};
 use klaw_llm::ToolDefinition;
@@ -349,7 +349,10 @@ impl Tool for SubAgentTool {
             META_PARENT_SESSION_KEY.to_string(),
             Value::String(parent_session.clone()),
         );
-        child_metadata.insert(META_PROVIDER_KEY.to_string(), Value::String(provider_id));
+        child_metadata.insert(
+            META_PROVIDER_KEY.to_string(),
+            Value::String(provider_id.clone()),
+        );
         child_metadata.insert(META_MODEL_KEY.to_string(), Value::String(model.clone()));
         child_metadata.insert(META_CONTEXT_KEY.to_string(), child_context);
 
@@ -361,8 +364,13 @@ impl Tool for SubAgentTool {
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: child_session_key.clone(),
-                tool_metadata: child_metadata,
-                model: Some(model),
+                execution_context: AgentExecutionContext {
+                    provider_id: Some(provider_id),
+                    resolved_model: Some(model),
+                    parent_session_key: Some(parent_session.clone()),
+                    tool_metadata: child_metadata,
+                    ..AgentExecutionContext::default()
+                },
             },
             AgentExecutionLimits {
                 max_tool_iterations: self.sub_config.max_iterations.max(1),
@@ -535,6 +543,7 @@ mod tests {
         let output = AgentExecutionOutput {
             content: "done".to_string(),
             reasoning: None,
+            disposition: klaw_agent::AgentExecutionDisposition::FinalMessage,
             tool_signals: Vec::new(),
             request_usages: Vec::new(),
             request_audits: Vec::new(),
@@ -551,6 +560,7 @@ mod tests {
         let output = AgentExecutionOutput {
             content: "waiting for approval".to_string(),
             reasoning: None,
+            disposition: klaw_agent::AgentExecutionDisposition::ApprovalRequired,
             tool_signals: vec![ToolInvocationSignal {
                 kind: "approval_required".to_string(),
                 payload: json!({ "approval_id": "appr_123" }),
@@ -575,6 +585,7 @@ mod tests {
         let output = AgentExecutionOutput {
             content: String::new(),
             reasoning: None,
+            disposition: klaw_agent::AgentExecutionDisposition::Stopped,
             tool_signals: vec![ToolInvocationSignal {
                 kind: "stop".to_string(),
                 payload: json!({}),

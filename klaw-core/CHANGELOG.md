@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-04-06
+
+### Changed
+- refactored the agent execution boundary so `AgentLoop` now builds a typed `AgentExecutionContext` and delegates inner turn execution details to `klaw-agent`, instead of pushing system prompt, tool choice, provider/model routing, and attachment context through only a loose metadata map
+- simplified `AgentRunState` into an honest outer lifecycle (`Received` -> `Validating` -> `Executing` -> `Publishing`) so runtime state no longer pretends to mirror each inner tool-loop step
+- `AgentLoop` now records `turn.disposition` metadata for approval and stopped short-circuits alongside the existing `approval.*` and `turn.stop_*` fields
+
 ## 2026-04-03
 
 ### Removed
