@@ -24,6 +24,11 @@ pub use context_compression::{
 
 const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
 const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
+const META_PROVIDER_KEY: &str = "agent.provider_id";
+const META_MODEL_KEY: &str = "agent.model";
+const META_PARENT_SESSION_KEY: &str = "agent.parent_session_key";
+const META_MESSAGE_ID_KEY: &str = "agent.message_id";
+const META_CURRENT_ATTACHMENTS_KEY: &str = "agent.current_attachments";
 const APPROVAL_REQUIRED_SIGNAL: &str = "approval_required";
 const STOP_SIGNAL: &str = "stop";
 const STOPPED_TURN_MESSAGE: &str = "Current turn stopped. No further tool calls were made.";
@@ -41,20 +46,77 @@ pub struct ConversationMessage {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct AgentExecutionContext {
+    pub system_prompt: Option<String>,
+    pub tool_choice: Option<Value>,
+    pub provider_id: Option<String>,
+    pub resolved_model: Option<String>,
+    pub parent_session_key: Option<String>,
+    pub message_id: Option<String>,
+    pub current_attachments: Vec<Value>,
+    pub tool_metadata: BTreeMap<String, Value>,
+}
+
+impl AgentExecutionContext {
+    #[must_use]
+    pub fn merged_tool_metadata(&self) -> BTreeMap<String, Value> {
+        let mut metadata = self.tool_metadata.clone();
+        if let Some(system_prompt) = self.system_prompt.clone() {
+            metadata.insert(
+                META_SYSTEM_PROMPT_KEY.to_string(),
+                Value::String(system_prompt),
+            );
+        }
+        if let Some(tool_choice) = self.tool_choice.clone().filter(|value| !value.is_null()) {
+            metadata.insert(META_TOOL_CHOICE_KEY.to_string(), tool_choice);
+        }
+        if let Some(provider_id) = self.provider_id.clone() {
+            metadata.insert(META_PROVIDER_KEY.to_string(), Value::String(provider_id));
+        }
+        if let Some(resolved_model) = self.resolved_model.clone() {
+            metadata.insert(META_MODEL_KEY.to_string(), Value::String(resolved_model));
+        }
+        if let Some(parent_session_key) = self.parent_session_key.clone() {
+            metadata.insert(
+                META_PARENT_SESSION_KEY.to_string(),
+                Value::String(parent_session_key),
+            );
+        }
+        if let Some(message_id) = self.message_id.clone() {
+            metadata.insert(META_MESSAGE_ID_KEY.to_string(), Value::String(message_id));
+        }
+        if !self.current_attachments.is_empty() {
+            metadata.insert(
+                META_CURRENT_ATTACHMENTS_KEY.to_string(),
+                Value::Array(self.current_attachments.clone()),
+            );
+        }
+        metadata
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentExecutionInput {
     pub user_content: String,
     pub user_media: Vec<LlmMedia>,
     pub conversation_history: Vec<ConversationMessage>,
     pub session_key: String,
-    pub tool_metadata: BTreeMap<String, Value>,
-    pub model: Option<String>,
+    pub execution_context: AgentExecutionContext,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AgentExecutionDisposition {
+    FinalMessage,
+    ApprovalRequired,
+    Stopped,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentExecutionOutput {
     pub content: String,
     pub reasoning: Option<String>,
+    pub disposition: AgentExecutionDisposition,
     pub tool_signals: Vec<ToolInvocationSignal>,
     pub request_usages: Vec<AgentRequestUsage>,
     pub request_audits: Vec<AgentRequestAudit>,
@@ -271,7 +333,7 @@ pub async fn run_agent_execution(
 ) -> Result<AgentExecutionOutput, AgentExecutionError> {
     let tool_defs = tools.definitions();
     let mut llm_messages = Vec::new();
-    if let Some(system_prompt) = extract_system_prompt(&input.tool_metadata) {
+    if let Some(system_prompt) = input.execution_context.system_prompt.clone() {
         llm_messages.push(LlmMessage {
             role: "system".to_string(),
             content: system_prompt,
@@ -324,7 +386,7 @@ pub async fn run_agent_execution(
             include: None,
             store: None,
             parallel_tool_calls: None,
-            tool_choice: extract_tool_choice(&input.tool_metadata),
+            tool_choice: input.execution_context.tool_choice.clone(),
             text: None,
             reasoning: None,
             truncation: None,
@@ -334,12 +396,13 @@ pub async fn run_agent_execution(
         trace!(
             iteration,
             session_key = %input.session_key,
-            model_override = ?input.model,
+            model_override = ?input.execution_context.resolved_model,
             messages = ?llm_messages,
             tools = ?tool_defs,
             options = ?chat_options,
             "sending chat request to model provider"
         );
+        let tool_metadata = input.execution_context.merged_tool_metadata();
         let mut stream_forwarder = None;
         let llm_stream = stream.as_ref().map(|agent_stream| {
             let (llm_tx, mut llm_rx) = mpsc::unbounded_channel::<LlmStreamEvent>();
@@ -364,7 +427,7 @@ pub async fn run_agent_execution(
             .chat_stream(
                 llm_messages.clone(),
                 tool_defs.clone(),
-                input.model.as_deref(),
+                input.execution_context.resolved_model.as_deref(),
                 chat_options,
                 llm_stream,
             )
@@ -407,6 +470,7 @@ pub async fn run_agent_execution(
             return Ok(AgentExecutionOutput {
                 content: llm_response.content,
                 reasoning: llm_response.reasoning,
+                disposition: AgentExecutionDisposition::FinalMessage,
                 tool_signals,
                 request_usages,
                 request_audits,
@@ -431,7 +495,7 @@ pub async fn run_agent_execution(
             &mut llm_messages,
             llm_response.tool_calls,
             &input.session_key,
-            &input.tool_metadata,
+            &tool_metadata,
             &mut tool_calls_used,
             limits.max_tool_calls,
             &mut tool_signals,
@@ -457,6 +521,11 @@ pub async fn run_agent_execution(
                     short_circuit.content_for_model
                 },
                 reasoning: llm_response.reasoning,
+                disposition: if approval_required {
+                    AgentExecutionDisposition::ApprovalRequired
+                } else {
+                    AgentExecutionDisposition::Stopped
+                },
                 tool_signals,
                 request_usages,
                 request_audits,
@@ -473,22 +542,6 @@ pub async fn run_agent_execution(
         "agent tool loop exhausted by iteration limit"
     );
     Err(AgentExecutionError::ToolLoopExhausted)
-}
-
-fn extract_system_prompt(metadata: &BTreeMap<String, Value>) -> Option<String> {
-    metadata
-        .get(META_SYSTEM_PROMPT_KEY)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
-fn extract_tool_choice(metadata: &BTreeMap<String, Value>) -> Option<Value> {
-    metadata
-        .get(META_TOOL_CHOICE_KEY)
-        .cloned()
-        .filter(|value| !value.is_null())
 }
 
 fn is_supported_history_role(role: &str) -> bool {
@@ -601,6 +654,10 @@ mod tests {
         }
     }
 
+    fn test_execution_context() -> AgentExecutionContext {
+        AgentExecutionContext::default()
+    }
+
     #[derive(Default)]
     struct SequencedProvider {
         call_count: Arc<Mutex<u32>>,
@@ -687,8 +744,7 @@ mod tests {
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
-                tool_metadata: BTreeMap::new(),
-                model: None,
+                execution_context: test_execution_context(),
             },
             AgentExecutionLimits {
                 max_tool_iterations: 4,
@@ -702,6 +758,7 @@ mod tests {
 
         assert_eq!(output.content, "done");
         assert_eq!(output.reasoning.as_deref(), Some("inner chain"));
+        assert_eq!(output.disposition, AgentExecutionDisposition::FinalMessage);
         assert_eq!(output.request_usages.len(), 2);
         assert_eq!(output.tool_audits.len(), 1);
         assert_eq!(output.tool_audits[0].request_seq, 1);
@@ -729,8 +786,7 @@ mod tests {
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
-                tool_metadata: BTreeMap::new(),
-                model: None,
+                execution_context: test_execution_context(),
             },
             AgentExecutionLimits {
                 max_tool_iterations: 0,
@@ -743,6 +799,7 @@ mod tests {
         .expect("agent execution should succeed with unbounded limits");
 
         assert_eq!(output.content, "done");
+        assert_eq!(output.disposition, AgentExecutionDisposition::FinalMessage);
     }
 
     #[derive(Default)]
@@ -789,14 +846,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_agent_execution_includes_system_prompt_from_metadata() {
+    async fn run_agent_execution_includes_system_prompt_from_context() {
         let provider = CaptureFirstMessageProvider::default();
         let tools = MockToolExecutor;
-        let mut metadata = BTreeMap::new();
-        metadata.insert(
-            META_SYSTEM_PROMPT_KEY.to_string(),
-            Value::String("skill context".to_string()),
-        );
         let _ = run_agent_execution(
             &provider,
             &tools,
@@ -805,8 +857,10 @@ mod tests {
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
-                tool_metadata: metadata,
-                model: None,
+                execution_context: AgentExecutionContext {
+                    system_prompt: Some("skill context".to_string()),
+                    ..test_execution_context()
+                },
             },
             AgentExecutionLimits {
                 max_tool_iterations: 2,
@@ -827,14 +881,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_agent_execution_includes_tool_choice_from_metadata() {
+    async fn run_agent_execution_includes_tool_choice_from_context() {
         let provider = CaptureFirstMessageProvider::default();
         let tools = MockToolExecutor;
-        let mut metadata = BTreeMap::new();
-        metadata.insert(
-            META_TOOL_CHOICE_KEY.to_string(),
-            Value::String("required".to_string()),
-        );
         let _ = run_agent_execution(
             &provider,
             &tools,
@@ -843,8 +892,10 @@ mod tests {
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
-                tool_metadata: metadata,
-                model: None,
+                execution_context: AgentExecutionContext {
+                    tool_choice: Some(Value::String("required".to_string())),
+                    ..test_execution_context()
+                },
             },
             AgentExecutionLimits {
                 max_tool_iterations: 2,
@@ -919,8 +970,7 @@ mod tests {
                     },
                 ],
                 session_key: "s1".to_string(),
-                tool_metadata: BTreeMap::new(),
-                model: None,
+                execution_context: test_execution_context(),
             },
             AgentExecutionLimits {
                 max_tool_iterations: 1,
@@ -959,8 +1009,7 @@ mod tests {
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
-                tool_metadata: BTreeMap::new(),
-                model: None,
+                execution_context: test_execution_context(),
             },
             AgentExecutionLimits {
                 max_tool_iterations: 4,
@@ -1079,8 +1128,7 @@ mod tests {
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
-                tool_metadata: BTreeMap::new(),
-                model: None,
+                execution_context: test_execution_context(),
             },
             AgentExecutionLimits {
                 max_tool_iterations: 4,
@@ -1093,6 +1141,10 @@ mod tests {
         .expect("agent execution should short-circuit successfully");
 
         assert!(output.content.contains("approval required"));
+        assert_eq!(
+            output.disposition,
+            AgentExecutionDisposition::ApprovalRequired
+        );
         assert_eq!(output.tool_signals.len(), 1);
         assert_eq!(output.tool_signals[0].kind, APPROVAL_REQUIRED_SIGNAL);
         assert_eq!(
@@ -1201,8 +1253,7 @@ mod tests {
                 user_media: Vec::new(),
                 conversation_history: Vec::new(),
                 session_key: "s1".to_string(),
-                tool_metadata: BTreeMap::new(),
-                model: None,
+                execution_context: test_execution_context(),
             },
             AgentExecutionLimits {
                 max_tool_iterations: 4,
@@ -1215,6 +1266,7 @@ mod tests {
         .expect("agent execution should short-circuit successfully");
 
         assert_eq!(output.content, STOPPED_TURN_MESSAGE);
+        assert_eq!(output.disposition, AgentExecutionDisposition::Stopped);
         assert_eq!(output.tool_signals.len(), 1);
         assert_eq!(output.tool_signals[0].kind, STOP_SIGNAL);
         assert_eq!(

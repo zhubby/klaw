@@ -3746,6 +3746,7 @@ mod tests {
         let output = AgentExecutionOutput {
             content: "done".to_string(),
             reasoning: None,
+            disposition: klaw_agent::AgentExecutionDisposition::FinalMessage,
             tool_signals: Vec::new(),
             request_usages: Vec::new(),
             request_audits: vec![AgentRequestAudit {
