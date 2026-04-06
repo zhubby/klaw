@@ -1,121 +1,178 @@
 # Memory Tool 设计与实现
 
-本文档记录 `klaw-tool` 中 `memory` 工具的设计目标、参数收敛策略、配置模型与实现细节。
+本文档记录当前 `memory` 工具的真实语义、长期记忆治理规则，以及 session 记忆的检索边界。
 
-## 目标
+## 当前定位
 
-- 提供长期记忆能力给大模型，用于跨轮次保留关键事实。
-- 仅暴露高价值、低歧义能力，降低模型参数选择复杂度。
-- 将检索策略从工具参数迁移到配置层，保证行为稳定可控。
+`memory` 工具现在承担两件事：
+
+- `add`：写入长期记忆（`long_term`）
+- `search`：检索 session 记忆
+
+它不再承担以下职责：
+
+- 不再让模型直接搜索 `long_term`
+- 不再让模型写入 `session` 作用域记忆
+- 不暴露 `get/delete/pin` 等维护动作给模型
 
 ## 代码位置
 
 - 工具实现：`klaw-tool/src/memory.rs`
-- 记忆服务：`klaw-memory/src/lib.rs`
-- 配置结构：`klaw-config/src/lib.rs`
-- 运行时注册：`klaw-cli/src/commands/runtime.rs`
-
-## 能力边界
-
-当前 `memory` 工具仅支持两种 action：
-
-- `add`：新增记忆
-- `search`：检索当前会话范围内的记忆
-
-不再对模型暴露 `get/delete/pin`，避免让模型在不必要分支上做选择。
+- 长期记忆治理：`klaw-memory/src/governance.rs`
+- 长期记忆 prompt 渲染：`klaw-memory/src/prompt.rs`
+- 记忆服务：`klaw-memory/src/service.rs`
+- runtime 注入：`klaw-cli/src/runtime/mod.rs`
 
 ## Tool Metadata（面向 LLM）
 
-`parameters` 仅保留最小必要字段：
+### `add`
 
-- `action`：`add` 或 `search`
-- `content`：`add` 必填
-- `metadata`：`add` 可选
-- `pinned`：`add` 可选
-- `query`：`search` 必填
+用于写入长期记忆。最小参数集合：
 
-并通过 schema 的 `oneOf` 强约束 action 对应必填：
+- `action`
+- `content`
+- `metadata`
+- `pinned`
 
-- `action=add` 必须包含 `content`
-- `action=search` 必须包含 `query`
+其中 `metadata` 支持的治理字段：
 
-已移除模型侧策略字段：
+- `kind`：`identity | preference | project_rule | workflow | fact | constraint`
+- `topic`：可选，用于冲突替换
+- `supersedes`：可选，字符串或字符串数组
 
+以下字段属于系统托管，不建议模型主动写：
+
+- `status`
+- `superseded_by`
+
+### `search`
+
+仅用于检索 session 记忆。最小参数集合：
+
+- `action`
+- `query`
 - `scope`
+- `within_days`
 - `limit`
-- `fts_limit`
-- `vector_limit`
-- `use_vector`
 
-## 自动回退策略
+约束：
 
-### 作用域回退
+- `scope` 只允许 `session`
+- `within_days` 默认为 `3`
+- `limit` 会被 runtime 上限裁剪
 
-- `add` 自动写入 `ctx.session_key` 作用域。
-- `search` 自动在 `ctx.session_key` 作用域检索。
+## 长期记忆方案
 
-模型不需要也不能指定 scope，减少误用。
+### 写入语义
 
-### 检索策略回退
+`add` 永远写入 `long_term`。旧版通过 `scope` 让模型决定写长期还是会话的做法已经移除。
 
-检索策略来自 `tools.memory` 配置，而不是模型参数。
+长期记忆的 source of truth 仍然是 `memory.db` 中的 `memories.scope = "long_term"` 记录。
+
+### 注入语义
+
+长期记忆不再通过工具检索给模型，而是在 runtime 每轮执行前，整理出一份受控的 `Memory` 章节并拼入 `system prompt`。
+
+渲染规则：
+
+- 仅渲染 `status=active` 的长期记忆
+- 跳过 `superseded`、`archived`、`rejected`
+- 先按 `pinned` 排序
+- 再按 `kind` 优先级排序
+- 最后按更新时间排序
+- 做去重、单条裁剪和整体字符预算控制
+
+### 治理规则
+
+长期记忆写入前会经过正式治理流程：
+
+- 规范化 `content`，去除多余空白
+- 规范化 `kind`
+- 强制 `status=active`
+- 规范化 `supersedes`
+- 如果命中完全重复的 active 记录，则复用原记录 ID
+- 如果命中同一 `kind + topic` 的 active 记录，则把旧记录自动标记为 `superseded`
+
+这套逻辑的目标不是“日志累积”，而是“事实替换”。
+
+例如：
+
+- 旧：`kind=preference`，`topic=reply_language`，内容为“默认使用英文回复”
+- 新：`kind=preference`，`topic=reply_language`，内容为“默认使用中文回复”
+
+则新记录会生效，旧记录会被标记为 `superseded`，不再进入 prompt。
+
+## Session 记忆方案
+
+session 记忆不再单独持久化到第二套 memory 表，而是直接复用现有 session/chat 存储。
+
+实现要点：
+
+- source of truth 是 `SessionStorage` 的 chat JSONL
+- `search` 时优先解析 `channel.base_session_key`
+- 若存在 active session，则会合并 base 与 active 的相关历史
+- 只读取 `user` / `assistant` 消息
+- 只检索 `within_days` 时间窗内的数据
+- 只返回裁剪后的命中条数
+
+因此：
+
+- session 记忆是“检索视图”
+- 不是新的独立写入实体
+- 也不会进入 `system prompt`
+
+## 配置
+
+当前 `memory` 工具仍受 `tools.memory.enabled` 与 `tools.memory.search_limit` 控制。
 
 ```toml
 [tools.memory]
 enabled = true
 search_limit = 8
-fts_limit = 20
-vector_limit = 20
-use_vector = true
 ```
 
-实现中会进行上限保护（最大 50），并在配置校验阶段保证值大于 0。
+其中：
 
-## 配置模型
+- `search_limit` 现在主要约束 session 检索的返回上限
+- `fts_limit`、`vector_limit`、`use_vector` 仍保留在配置结构中，但不再用于模型侧 session 检索参数
 
-`klaw-config` 中新增：
+## 返回结构
 
-- `tools.memory.enabled`：是否注册 memory tool（默认 `true`）
-- `tools.memory.search_limit`：返回结果上限
-- `tools.memory.fts_limit`：BM25 召回候选池
-- `tools.memory.vector_limit`：向量召回候选池
-- `tools.memory.use_vector`：是否启用向量召回
+### `add`
 
-校验规则：
+返回：
 
-- `search_limit > 0`
-- `fts_limit > 0`
-- `vector_limit > 0`
+- `record`
+- `governance.kind`
+- `governance.reused_existing_id`
+- `governance.supersedes`
 
-## 运行时接入
+### `search`
 
-在 `build_runtime_bundle` 中按开关注册：
+返回：
 
-- `tools.memory.enabled = true` 时注册 `MemoryTool`
-- 否则不注册，模型看不到该工具定义
+- `base_session_key`
+- `session_keys`
+- `within_days`
+- `limit`
+- `hits`
 
-## 错误处理
+其中单个 `hit` 包含：
 
-- 参数缺失/类型错误：`ToolError::InvalidArgs`
-- 存储或 embedding 等执行失败：`ToolError::ExecutionFailed`
-
-当模型传入非支持 action（如 `upsert`、`delete`）会直接返回参数错误。
+- `session_key`
+- `ts_ms`
+- `role`
+- `content`
+- `score`
 
 ## 测试覆盖
 
-`klaw-tool` 的 `memory` 单测覆盖：
+当前测试覆盖了以下核心路径：
 
-- `add` 自动使用 `session_key` 作为 scope，且不允许外部指定 `id`
-- `search` 使用 runtime config 注入的策略参数
-- 非法 action 被拒绝
-
-`klaw-config` 的单测覆盖：
-
-- `tools.memory` 默认值
-- `search_limit/fts_limit/vector_limit` 的非零校验
-
-## 设计收益
-
-- 模型侧参数显著减少，调用决策更简单。
-- 检索行为由配置统一治理，线上稳定性更高。
-- 保留核心能力（写入与检索），避免低价值动作暴露。
+- 长期记忆默认写入 `long_term`
+- 拒绝旧版 `add.scope`
+- 拒绝 `search scope=long_term`
+- session 检索 obey `within_days` 和 `limit`
+- 长期记忆治理支持 `kind/topic`
+- 同一 `kind + topic` 冲突会自动 supersede 旧记录
+- 拒绝外部直接写入系统托管的 `status`

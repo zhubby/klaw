@@ -5,7 +5,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use klaw_config::AppConfig;
-use klaw_storage::{DbValue, MemoryDb, StorageError, open_default_memory_db};
+use klaw_storage::{DbRow, DbValue, MemoryDb, StorageError, open_default_memory_db};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -93,6 +93,81 @@ impl SqliteMemoryService {
         let vector = response.into_iter().next()?;
         Some(f32_vec_to_blob(&vector))
     }
+
+    async fn fts_search_rows(
+        &self,
+        text: &str,
+        scope: Option<&str>,
+        row_limit: i64,
+    ) -> Result<Vec<DbRow>, MemoryError> {
+        let rows = if let Some(scope) = scope {
+            self.db
+                .query(
+                    "SELECT m.id, m.scope, m.content, m.metadata_json, m.pinned, m.created_at_ms, m.updated_at_ms, bm25(memories_fts)
+                     FROM memories_fts
+                     JOIN memories m ON m.id = memories_fts.id
+                     WHERE memories_fts MATCH ?1 AND m.scope = ?2
+                     ORDER BY bm25(memories_fts) ASC
+                     LIMIT ?3",
+                    &[
+                        DbValue::Text(text.to_string()),
+                        DbValue::Text(scope.to_string()),
+                        DbValue::Integer(row_limit),
+                    ],
+                )
+                .await?
+        } else {
+            self.db
+                .query(
+                    "SELECT m.id, m.scope, m.content, m.metadata_json, m.pinned, m.created_at_ms, m.updated_at_ms, bm25(memories_fts)
+                     FROM memories_fts
+                     JOIN memories m ON m.id = memories_fts.id
+                     WHERE memories_fts MATCH ?1
+                     ORDER BY bm25(memories_fts) ASC
+                     LIMIT ?2",
+                    &[DbValue::Text(text.to_string()), DbValue::Integer(row_limit)],
+                )
+                .await?
+        };
+        Ok(rows)
+    }
+
+    async fn like_search_rows(
+        &self,
+        text: &str,
+        scope: Option<&str>,
+        row_limit: i64,
+    ) -> Result<Vec<DbRow>, MemoryError> {
+        let pattern = format!("%{text}%");
+        let rows = if let Some(scope) = scope {
+            self.db
+                .query(
+                    "SELECT id, scope, content, metadata_json, pinned, created_at_ms, updated_at_ms, 0.0
+                     FROM memories
+                     WHERE scope = ?1 AND content LIKE ?2
+                     ORDER BY updated_at_ms DESC
+                     LIMIT ?3",
+                    &[
+                        DbValue::Text(scope.to_string()),
+                        DbValue::Text(pattern),
+                        DbValue::Integer(row_limit),
+                    ],
+                )
+                .await?
+        } else {
+            self.db
+                .query(
+                    "SELECT id, scope, content, metadata_json, pinned, created_at_ms, updated_at_ms, 0.0
+                     FROM memories
+                     WHERE content LIKE ?1
+                     ORDER BY updated_at_ms DESC
+                     LIMIT ?2",
+                    &[DbValue::Text(pattern), DbValue::Integer(row_limit)],
+                )
+                .await?
+        };
+        Ok(rows)
+    }
 }
 
 #[async_trait]
@@ -159,6 +234,21 @@ impl MemoryService for SqliteMemoryService {
         })
     }
 
+    async fn list_scope_records(&self, scope: &str) -> Result<Vec<MemoryRecord>, MemoryError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT id, scope, content, metadata_json, pinned, created_at_ms, updated_at_ms
+                 FROM memories
+                 WHERE scope = ?1
+                 ORDER BY pinned DESC, updated_at_ms DESC, created_at_ms DESC, id ASC",
+                &[DbValue::Text(scope.to_string())],
+            )
+            .await?;
+
+        rows.iter().map(row_to_record).collect()
+    }
+
     async fn search(&self, query: MemorySearchQuery) -> Result<Vec<MemoryHit>, MemoryError> {
         if query.text.trim().is_empty() {
             return Err(MemoryError::InvalidQuery(
@@ -167,67 +257,13 @@ impl MemoryService for SqliteMemoryService {
         }
 
         let limit = query.limit.max(1);
+        let candidate_limit = query.fts_limit.max(limit) as i64;
+        let scope = query.scope.as_deref();
         let fts_rows = if self.fts_enabled {
-            if let Some(scope) = query.scope.as_ref() {
-                self.db
-                    .query(
-                        "SELECT m.id, m.scope, m.content, m.metadata_json, m.pinned, m.created_at_ms, m.updated_at_ms, bm25(memories_fts)
-                         FROM memories_fts
-                         JOIN memories m ON m.id = memories_fts.id
-                         WHERE memories_fts MATCH ?1 AND m.scope = ?2
-                         ORDER BY bm25(memories_fts) ASC
-                         LIMIT ?3",
-                        &[
-                            DbValue::Text(query.text.clone()),
-                            DbValue::Text(scope.clone()),
-                            DbValue::Integer(query.fts_limit.max(limit) as i64),
-                        ],
-                    )
-                    .await?
-            } else {
-                self.db
-                    .query(
-                        "SELECT m.id, m.scope, m.content, m.metadata_json, m.pinned, m.created_at_ms, m.updated_at_ms, bm25(memories_fts)
-                         FROM memories_fts
-                         JOIN memories m ON m.id = memories_fts.id
-                         WHERE memories_fts MATCH ?1
-                         ORDER BY bm25(memories_fts) ASC
-                         LIMIT ?2",
-                        &[
-                            DbValue::Text(query.text.clone()),
-                            DbValue::Integer(query.fts_limit.max(limit) as i64),
-                        ],
-                    )
-                    .await?
-            }
-        } else if let Some(scope) = query.scope.as_ref() {
-            self.db
-                .query(
-                    "SELECT id, scope, content, metadata_json, pinned, created_at_ms, updated_at_ms, 0.0
-                     FROM memories
-                     WHERE scope = ?1 AND content LIKE ?2
-                     ORDER BY updated_at_ms DESC
-                     LIMIT ?3",
-                    &[
-                        DbValue::Text(scope.clone()),
-                        DbValue::Text(format!("%{}%", query.text)),
-                        DbValue::Integer(query.fts_limit.max(limit) as i64),
-                    ],
-                )
+            self.fts_search_rows(&query.text, scope, candidate_limit)
                 .await?
         } else {
-            self.db
-                .query(
-                    "SELECT id, scope, content, metadata_json, pinned, created_at_ms, updated_at_ms, 0.0
-                     FROM memories
-                     WHERE content LIKE ?1
-                     ORDER BY updated_at_ms DESC
-                     LIMIT ?2",
-                    &[
-                        DbValue::Text(format!("%{}%", query.text)),
-                        DbValue::Integer(query.fts_limit.max(limit) as i64),
-                    ],
-                )
+            self.like_search_rows(&query.text, scope, candidate_limit)
                 .await?
         };
 

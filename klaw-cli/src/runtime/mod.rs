@@ -29,6 +29,10 @@ use klaw_gateway::{GatewayWebhookAgentRequest, GatewayWebhookRequest};
 use klaw_heartbeat::{HeartbeatManager, should_suppress_output};
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
 use klaw_mcp::{McpConfigSnapshot, McpInitHandle, McpManager, McpSyncResult};
+use klaw_memory::{
+    LongTermMemoryPromptOptions, SqliteMemoryService, SqliteMemoryStatsService,
+    build_embedding_provider_from_config, render_long_term_memory_section,
+};
 use klaw_observability::{
     ObservabilityConfig, ObservabilityHandle, OtelAgentTelemetry, init_observability,
 };
@@ -40,7 +44,7 @@ use klaw_session::{
 use klaw_skill::{
     InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager, open_default_skills_manager,
 };
-use klaw_storage::{DefaultSessionStore, open_default_store};
+use klaw_storage::{DefaultSessionStore, MemoryDb, open_default_memory_db, open_default_store};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, ArchiveTool, ChannelAttachmentTool, CronManagerTool, GeoTool,
     HeartbeatManagerTool, LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool,
@@ -76,6 +80,8 @@ pub struct StartupReport {
 
 pub struct RuntimeBundle {
     pub runtime: AgentLoop,
+    pub base_system_prompt: Arc<RwLock<Option<String>>>,
+    pub memory_db: Option<Arc<dyn MemoryDb>>,
     pub runtime_provider_override: Arc<RwLock<Option<String>>>,
     pub disable_session_commands_for: BTreeSet<String>,
     pub inbound_transport: InMemoryTransport<InboundMessage>,
@@ -1125,6 +1131,7 @@ async fn register_configured_tools(
     tools: &mut ToolRegistry,
     config: &AppConfig,
     session_store: DefaultSessionStore,
+    memory_db: Option<Arc<dyn MemoryDb>>,
     sub_agent_audit_sink: Option<Arc<dyn SubAgentAuditSink>>,
 ) -> Result<(), Box<dyn Error>> {
     if config.tools.archive.enabled() {
@@ -1190,7 +1197,20 @@ async fn register_configured_tools(
         info!("skills manager tool disabled by config");
     }
     if config.tools.memory.enabled() {
-        tools.register(MemoryTool::open_default(config).await?);
+        let Some(memory_db) = memory_db else {
+            return Err("memory tool enabled but memory db is unavailable".into());
+        };
+        let embedding_provider = if config.memory.embedding.enabled {
+            build_embedding_provider_from_config(config).ok()
+        } else {
+            None
+        };
+        let memory_service = SqliteMemoryService::new(memory_db, embedding_provider).await?;
+        tools.register(MemoryTool::with_store(
+            Arc::new(memory_service),
+            session_store.clone(),
+            config,
+        ));
     }
     if config.tools.web_fetch.enabled() {
         tools.register(WebFetchTool::new(config));
@@ -1260,6 +1280,7 @@ pub async fn sync_runtime_tools(
         &mut next_tools,
         config,
         runtime.session_store.clone(),
+        runtime.memory_db.clone(),
         Some(sub_agent_audit_sink),
     )
     .await?;
@@ -1984,6 +2005,11 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let default_provider = Arc::clone(&provider_runtime.default_provider);
     let default_model = provider_runtime.default_model.clone();
     let session_store = open_default_store().await?;
+    let memory_db = if config.tools.memory.enabled() {
+        Some(Arc::new(open_default_memory_db().await?) as Arc<dyn MemoryDb>)
+    } else {
+        None
+    };
     let llm_audit_tx = spawn_llm_audit_writer(session_store.clone());
     let tool_audit_tx = spawn_tool_audit_writer(session_store.clone());
     let mut tools = ToolRegistry::default();
@@ -1996,6 +2022,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         &mut tools,
         config,
         session_store.clone(),
+        memory_db.clone(),
         Some(sub_agent_audit_sink),
     )
     .await?;
@@ -2028,7 +2055,14 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     ensure_workspace_prompt_templates_if_possible().await;
     let loaded_skills = load_skills_system_prompt(config).await;
     let skill_names = loaded_skills.skill_names.clone();
-    let system_prompt = build_runtime_system_prompt(loaded_skills.skill_entries);
+    let base_system_prompt = build_runtime_system_prompt(loaded_skills.skill_entries);
+    let system_prompt = compose_system_prompt(
+        base_system_prompt.clone(),
+        match memory_db.clone() {
+            Some(memory_db) => render_long_term_memory_prompt(memory_db).await?,
+            None => None,
+        },
+    );
 
     let observability = init_observability_from_config(config).await;
     let telemetry: Option<Arc<dyn AgentTelemetry>> = observability.as_ref().map(|handle| {
@@ -2063,14 +2097,18 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     }
 
     let env_check = env_check::check_environment();
+    let tool_names = runtime.tools.list();
 
     info!(
-        tool_count = runtime.tools.list().len(),
+        tool_count = tool_names.len(),
         observability_enabled = observability.is_some(),
         "runtime bundle ready"
     );
 
     Ok(RuntimeBundle {
+        runtime,
+        base_system_prompt: Arc::new(RwLock::new(base_system_prompt)),
+        memory_db,
         runtime_provider_override: Arc::new(RwLock::new(None)),
         disable_session_commands_for: config
             .channels
@@ -2081,10 +2119,9 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
             .collect(),
         startup_report: StartupReport {
             skill_names,
-            tool_names: runtime.tools.list(),
+            tool_names,
             mcp_summary: None,
         },
-        runtime,
         inbound_transport: InMemoryTransport::new(),
         outbound_transport: InMemoryTransport::new(),
         deadletter_transport: InMemoryTransport::new(),
@@ -2245,10 +2282,69 @@ pub async fn reload_runtime_skills_prompt(
     ensure_workspace_prompt_templates_if_possible().await;
     let loaded_skills = load_skills_system_prompt(&snapshot.config).await;
     let skill_names = loaded_skills.skill_names.clone();
-    let system_prompt = build_runtime_system_prompt(loaded_skills.skill_entries);
-    runtime.runtime.set_system_prompt(system_prompt);
+    let base_system_prompt = build_runtime_system_prompt(loaded_skills.skill_entries);
+    {
+        let mut guard = runtime
+            .base_system_prompt
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = base_system_prompt;
+    }
+    refresh_runtime_system_prompt(runtime).await;
     info!(skills = ?skill_names, "reloaded runtime skills prompt");
     Ok(skill_names)
+}
+
+async fn refresh_runtime_system_prompt(runtime: &RuntimeBundle) {
+    let base_system_prompt = runtime
+        .base_system_prompt
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let memory_section = match runtime.memory_db.clone() {
+        Some(memory_db) => match render_long_term_memory_prompt(memory_db).await {
+            Ok(section) => section,
+            Err(err) => {
+                warn!(error = %err, "failed to render long-term memory prompt section");
+                None
+            }
+        },
+        None => None,
+    };
+    runtime
+        .runtime
+        .set_system_prompt(compose_system_prompt(base_system_prompt, memory_section));
+}
+
+fn cli_long_term_memory_prompt_options() -> LongTermMemoryPromptOptions {
+    LongTermMemoryPromptOptions {
+        max_items: 12,
+        max_chars: 1200,
+        max_item_chars: 240,
+    }
+}
+
+async fn render_long_term_memory_prompt(
+    memory_db: Arc<dyn MemoryDb>,
+) -> Result<Option<String>, Box<dyn Error>> {
+    let stats = SqliteMemoryStatsService::new(memory_db);
+    let records = stats.list_scope_records("long_term").await?;
+    let section = render_long_term_memory_section(&records, &cli_long_term_memory_prompt_options());
+    Ok(section.map(|content| format!("## Memory\n\n{content}")))
+}
+
+fn compose_system_prompt(
+    base_system_prompt: Option<String>,
+    memory_section: Option<String>,
+) -> Option<String> {
+    match (base_system_prompt, memory_section) {
+        (Some(base), Some(memory)) => Some(format!(
+            "{base}\n\n--------------------------------\n\n{memory}"
+        )),
+        (Some(base), None) => Some(base),
+        (None, Some(memory)) => Some(memory),
+        (None, None) => None,
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2814,6 +2910,7 @@ async fn submit_webhook_isolated_turn(
             metadata: inbound_metadata,
         },
     };
+    refresh_runtime_system_prompt(runtime).await;
     let outcome = runtime.runtime.process_message(envelope, false).await;
     enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
 
@@ -3221,6 +3318,7 @@ pub async fn drain_runtime_queue(
 async fn run_runtime_once(
     runtime: &RuntimeBundle,
 ) -> Result<klaw_core::ProcessOutcome, Box<dyn std::error::Error>> {
+    refresh_runtime_system_prompt(runtime).await;
     let result = runtime
         .runtime
         .run_once_reliable(
@@ -3546,6 +3644,19 @@ mod tests {
             .expect("test session store should open")
     }
 
+    #[test]
+    fn compose_system_prompt_appends_memory_section() {
+        let composed = super::compose_system_prompt(
+            Some("## Base\n\nrules".to_string()),
+            Some("## Memory\n\n- fact".to_string()),
+        )
+        .expect("prompt should compose");
+
+        assert!(composed.contains("## Base"));
+        assert!(composed.contains("## Memory"));
+        assert!(composed.contains("--------------------------------"));
+    }
+
     async fn build_test_runtime(provider: Arc<dyn LlmProvider>) -> RuntimeBundle {
         let session_store = create_test_store().await;
         let runtime = klaw_core::AgentLoop::new_with_identity(
@@ -3569,6 +3680,8 @@ mod tests {
         .with_provider_registry(BTreeMap::from([("test-provider".to_string(), provider)]));
         RuntimeBundle {
             runtime,
+            base_system_prompt: Arc::new(RwLock::new(None)),
+            memory_db: None,
             runtime_provider_override: Arc::new(RwLock::new(None)),
             disable_session_commands_for: BTreeSet::new(),
             inbound_transport: InMemoryTransport::new(),
