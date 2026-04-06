@@ -340,6 +340,8 @@ const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 const META_PROVIDER_KEY: &str = "agent.provider_id";
 const META_MODEL_KEY: &str = "agent.model";
 const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
+const META_MAX_TOOL_ITERATIONS_KEY: &str = "agent.max_tool_iterations";
+const META_MAX_TOOL_CALLS_KEY: &str = "agent.max_tool_calls";
 
 #[derive(Debug, Clone)]
 struct SessionRoute {
@@ -877,6 +879,15 @@ fn build_new_session_bootstrap_request_metadata(
         META_TOOL_CHOICE_KEY.to_string(),
         Value::String("required".to_string()),
     );
+    metadata
+}
+
+fn build_approved_shell_followup_request_metadata(
+    request_metadata: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    let mut metadata = inherited_channel_runtime_metadata(request_metadata);
+    metadata.insert(META_MAX_TOOL_ITERATIONS_KEY.to_string(), Value::from(2_u64));
+    metadata.insert(META_MAX_TOOL_CALLS_KEY.to_string(), Value::from(1_u64));
     metadata
 }
 
@@ -1868,11 +1879,12 @@ async fn handle_im_command(
                     )
                     .await?;
                     let model_followup_input = format!(
-                        "审批已通过并已执行命令。请基于以下执行结果给出最终回复。\n\
+                        "审批已通过并已执行命令。请基于以下执行结果继续处理本轮任务。\n\
                         要求：\n\
                         1) 先说明成功/失败\n\
-                        2) 如果失败，指出最关键原因和下一步建议\n\
-                        3) 不要再调用任何工具\n\n\
+                        2) 如果失败且属于明显可修复的命令/参数问题，你可以再调用一次工具进行修复重试\n\
+                        3) 最多只允许一次额外工具调用；若不需要重试，直接给出最终回复\n\
+                        4) 若失败原因不是一次重试可解决的问题，直接总结最关键原因和下一步建议\n\n\
                         approval_id: {}\n\
                         command: {}\n\
                         shell_result:\n{}",
@@ -1888,7 +1900,7 @@ async fn handle_im_command(
                         route.model_provider.clone(),
                         route.model.clone(),
                         Vec::new(),
-                        BTreeMap::new(),
+                        build_approved_shell_followup_request_metadata(&request_metadata),
                     )
                     .await?;
                     match maybe_output {
@@ -3499,7 +3511,8 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        RuntimeBundle, StartupReport, build_history_for_model,
+        RuntimeBundle, StartupReport, approval_manager,
+        build_approved_shell_followup_request_metadata, build_history_for_model,
         build_new_session_bootstrap_user_message, build_unavailable_provider, builtin_tool_names,
         compression_trigger_interval, configured_default_model, extract_skill_short_description,
         first_arg_token, format_approve_already_handled_message,
@@ -3511,6 +3524,7 @@ mod tests {
         sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
+    use klaw_approval::{ApprovalCreateInput, ApprovalManager};
     use klaw_channel::OutboundAttachmentSource;
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
     use klaw_core::{
@@ -4831,6 +4845,84 @@ A .docx file is a ZIP archive containing XML files.
                 .unwrap_or_else(|err| err.into_inner())
                 .clone(),
             None
+        );
+    }
+
+    #[test]
+    fn approved_shell_followup_metadata_inherits_channel_state_and_limits_retries() {
+        let metadata = build_approved_shell_followup_request_metadata(&BTreeMap::from([
+            ("channel.delivery_mode".to_string(), json!("direct_reply")),
+            (
+                "channel.base_session_key".to_string(),
+                json!("telegram:base:chat-1"),
+            ),
+            ("other".to_string(), json!("ignored")),
+        ]));
+
+        assert_eq!(
+            metadata.get("channel.delivery_mode"),
+            Some(&json!("direct_reply"))
+        );
+        assert_eq!(
+            metadata.get("channel.base_session_key"),
+            Some(&json!("telegram:base:chat-1"))
+        );
+        assert_eq!(metadata.get("agent.max_tool_iterations"), Some(&json!(2)));
+        assert_eq!(metadata.get("agent.max_tool_calls"), Some(&json!(1)));
+        assert!(!metadata.contains_key("other"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approve_command_preserves_direct_reply_metadata_for_followup() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider).await;
+        let channel = "telegram".to_string();
+        let base_session_key = "telegram:tg7:chat-approval".to_string();
+        let chat_id = "chat-approval".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &base_session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+
+        let manager = approval_manager(&runtime);
+        let approval = manager
+            .create_approval(ApprovalCreateInput {
+                session_key: base_session_key.clone(),
+                tool_name: "shell".to_string(),
+                command_text: "gh issue list --state open".to_string(),
+                command_preview: Some("gh issue list --state open".to_string()),
+                command_hash: Some("command-hash-1".to_string()),
+                risk_level: Some("unsafe".to_string()),
+                requested_by: Some("agent".to_string()),
+                justification: None,
+                expires_in_minutes: Some(10),
+            })
+            .await
+            .expect("approval should be created");
+
+        let response = handle_im_command(
+            &runtime,
+            channel,
+            base_session_key,
+            chat_id,
+            format!("/approve {}", approval.id),
+            BTreeMap::from([("channel.delivery_mode".to_string(), json!("direct_reply"))]),
+        )
+        .await
+        .expect("approve command should succeed")
+        .expect("approve command should return a response");
+
+        assert_eq!(response.content, "bootstrap reply");
+        assert_eq!(
+            response.metadata.get("channel.delivery_mode"),
+            Some(&json!("direct_reply"))
         );
     }
 

@@ -97,6 +97,7 @@ impl ToolSignal {
         tool_name: &str,
         session_key: &str,
         risk_level: Option<&str>,
+        command_preview: Option<&str>,
     ) -> Self {
         let mut payload = serde_json::json!({
             "approval_id": approval_id,
@@ -105,6 +106,12 @@ impl ToolSignal {
         });
         if let Some(risk_level) = risk_level.map(str::trim).filter(|value| !value.is_empty()) {
             payload["risk_level"] = serde_json::Value::String(risk_level.to_string());
+        }
+        if let Some(command_preview) = command_preview
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            payload["command_preview"] = serde_json::Value::String(command_preview.to_string());
         }
         Self {
             kind: "approval_required".to_string(),

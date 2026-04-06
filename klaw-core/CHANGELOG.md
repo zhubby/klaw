@@ -6,6 +6,7 @@
 - refactored the agent execution boundary so `AgentLoop` now builds a typed `AgentExecutionContext` and delegates inner turn execution details to `klaw-agent`, instead of pushing system prompt, tool choice, provider/model routing, and attachment context through only a loose metadata map
 - simplified `AgentRunState` into an honest outer lifecycle (`Received` -> `Validating` -> `Executing` -> `Publishing`) so runtime state no longer pretends to mirror each inner tool-loop step
 - `AgentLoop` now records `turn.disposition` metadata for approval and stopped short-circuits alongside the existing `approval.*` and `turn.stop_*` fields
+- `AgentLoop` now honors optional per-turn execution limit overrides from inbound metadata (`agent.max_tool_iterations`, `agent.max_tool_calls`, `agent.token_budget`), so runtimes can selectively constrain retry-heavy follow-up turns without changing global defaults
 
 ## 2026-04-03
 

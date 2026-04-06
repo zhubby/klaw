@@ -264,10 +264,7 @@ impl ShellForm {
         Self {
             enabled: config.enabled,
             workspace: config.workspace.clone().unwrap_or_default(),
-            blocked_patterns: ArrayEditor::from_vec(
-                "blocked_patterns",
-                &config.blocked_patterns,
-            ),
+            blocked_patterns: ArrayEditor::from_vec("blocked_patterns", &config.blocked_patterns),
             unsafe_patterns: ArrayEditor::from_vec("unsafe_patterns", &config.unsafe_patterns),
             allow_login_shell: config.allow_login_shell,
             max_timeout_ms: config.max_timeout_ms.to_string(),
@@ -304,10 +301,7 @@ impl ChannelAttachmentForm {
     fn from_config(config: &ChannelAttachmentToolConfig) -> Self {
         Self {
             enabled: config.enabled,
-            allowlist: ArrayEditor::from_vec(
-                "allowlist",
-                &config.local_attachments.allowlist,
-            ),
+            allowlist: ArrayEditor::from_vec("allowlist", &config.local_attachments.allowlist),
             max_bytes: config.local_attachments.max_bytes.to_string(),
         }
     }

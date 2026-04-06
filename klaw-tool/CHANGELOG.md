@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-06
+
+### Fixed
+- `shell` approval signals now carry `command_preview` in the propagated `approval_required` payload, so Telegram and DingTalk approval cards can show the exact pending command instead of only the approval id
+
 ## 2026-04-02
 
 ### Changed
