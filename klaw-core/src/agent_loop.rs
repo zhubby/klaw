@@ -29,12 +29,14 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
+const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
+const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
+const META_PROVIDER_KEY: &str = "agent.provider_id";
+const META_MODEL_KEY: &str = "agent.model";
+const META_AGENT_DISPOSITION_KEY: &str = "agent.disposition";
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 const META_LLM_USAGE_RECORDS_KEY: &str = "llm.usage.records";
 const META_LLM_AUDIT_RECORDS_KEY: &str = "llm.audit.records";
-const META_MAX_TOOL_ITERATIONS_KEY: &str = "agent.max_tool_iterations";
-const META_MAX_TOOL_CALLS_KEY: &str = "agent.max_tool_calls";
-const META_TOKEN_BUDGET_KEY: &str = "agent.token_budget";
 const TOOL_RESULT_LOG_LIMIT: usize = 4000;
 const STOP_SIGNAL: &str = "stop";
 
@@ -42,6 +44,7 @@ const STOP_SIGNAL: &str = "stop";
 pub enum AgentRunState {
     Received,
     Validating,
+    PreparingContext,
     Executing,
     Publishing,
     Completed,
@@ -68,8 +71,9 @@ pub enum StateTransitionEvent {
     StartValidation,
     ValidationPassed,
     ValidationFailed,
+    ContextPrepared,
     ExecutionStarted,
-    FinalResponseReady,
+    ExecutionFinished,
     Published,
     RecoverableError,
     FatalError,
@@ -323,22 +327,31 @@ fn truncate_for_log(value: &str, max_chars: usize) -> String {
     truncated
 }
 
-fn metadata_provider(metadata: &BTreeMap<String, serde_json::Value>) -> &str {
+fn metadata_nonempty_trimmed_str<'a>(
+    metadata: &'a BTreeMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a str> {
     metadata
-        .get("agent.provider_id")
+        .get(key)
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("unknown")
+}
+
+fn metadata_provider(metadata: &BTreeMap<String, serde_json::Value>) -> &str {
+    metadata_nonempty_trimmed_str(metadata, META_PROVIDER_KEY).unwrap_or("unknown")
 }
 
 fn metadata_model(metadata: &BTreeMap<String, serde_json::Value>) -> &str {
-    metadata
-        .get("agent.model")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown")
+    metadata_nonempty_trimmed_str(metadata, META_MODEL_KEY).unwrap_or("unknown")
+}
+
+fn disposition_metadata_token(disposition: AgentExecutionDisposition) -> &'static str {
+    match disposition {
+        AgentExecutionDisposition::FinalMessage => "final_message",
+        AgentExecutionDisposition::ApprovalRequired => "approval_required",
+        AgentExecutionDisposition::Stopped => "stopped",
+    }
 }
 
 async fn record_model_requests(
@@ -634,12 +647,15 @@ impl AgentLoop {
     pub fn transition(&self, state: AgentRunState, event: StateTransitionEvent) -> AgentRunState {
         use AgentRunState as S;
         use StateTransitionEvent as E;
+        // Happy path mirrors `process_message_inner`: validate, assemble execution input, run,
+        // then publish. Error events (`RecoverableError`, `FatalError`) override from any state.
         match (state, event) {
             (S::Received, E::StartValidation) => S::Validating,
-            (S::Validating, E::ValidationPassed) => S::Executing,
+            (S::Validating, E::ValidationPassed) => S::PreparingContext,
             (S::Validating, E::ValidationFailed) => S::Failed,
+            (S::PreparingContext, E::ContextPrepared) => S::Executing,
             (S::Executing, E::ExecutionStarted) => S::Executing,
-            (S::Executing, E::FinalResponseReady) => S::Publishing,
+            (S::Executing, E::ExecutionFinished) => S::Publishing,
             (S::Publishing, E::Published) => S::Completed,
             (_, E::RecoverableError) => S::Degraded,
             (_, E::FatalError) => S::Failed,
@@ -674,7 +690,7 @@ impl AgentLoop {
         let provider_id = msg
             .payload
             .metadata
-            .get("agent.provider_id")
+            .get(META_PROVIDER_KEY)
             .and_then(serde_json::Value::as_str)
             .unwrap_or(provider_runtime.default_provider_id.as_str());
 
@@ -726,7 +742,7 @@ impl AgentLoop {
         let mut state = AgentRunState::Received;
         state = self.transition(state, StateTransitionEvent::StartValidation);
         state = self.transition(state, StateTransitionEvent::ValidationPassed);
-        state = self.transition(state, StateTransitionEvent::ExecutionStarted);
+        state = self.transition(state, StateTransitionEvent::ContextPrepared);
 
         let conversation_history = extract_conversation_history(&msg.payload.metadata);
         let user_media = extract_user_media(&msg.payload);
@@ -743,15 +759,10 @@ impl AgentLoop {
                 "agent inbound media summary"
             );
         }
-        let requested_provider_id = msg
-            .payload
-            .metadata
-            .get("agent.provider_id")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-            .unwrap_or_else(|| provider_runtime.default_provider_id.clone());
+        let requested_provider_id =
+            metadata_nonempty_trimmed_str(&msg.payload.metadata, META_PROVIDER_KEY)
+                .map(ToString::to_string)
+                .unwrap_or_else(|| provider_runtime.default_provider_id.clone());
         let (resolved_provider_id, provider) = if let Some(provider) = provider_runtime
             .provider_registry
             .get(&requested_provider_id)
@@ -768,21 +779,20 @@ impl AgentLoop {
                 Arc::clone(&provider_runtime.default_provider),
             )
         };
-        let resolved_model = msg
-            .payload
-            .metadata
-            .get("agent.model")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
+        let resolved_model = metadata_nonempty_trimmed_str(&msg.payload.metadata, META_MODEL_KEY)
             .map(ToString::to_string)
             .unwrap_or_else(|| provider_runtime.default_model.clone());
 
         let mut tool_metadata = msg.payload.metadata.clone();
         tool_metadata.remove(META_CONVERSATION_HISTORY_KEY);
         let execution_context = AgentExecutionContext {
-            system_prompt: self.system_prompt(),
-            tool_choice: msg.payload.metadata.get("agent.tool_choice").cloned(),
+            system_prompt: metadata_nonempty_trimmed_str(
+                &msg.payload.metadata,
+                META_SYSTEM_PROMPT_KEY,
+            )
+            .map(ToString::to_string)
+            .or_else(|| self.system_prompt()),
+            tool_choice: msg.payload.metadata.get(META_TOOL_CHOICE_KEY).cloned(),
             provider_id: Some(resolved_provider_id.clone()),
             resolved_model: Some(resolved_model.clone()),
             parent_session_key: Some(msg.payload.session_key.clone()),
@@ -790,8 +800,8 @@ impl AgentLoop {
             current_attachments,
             tool_metadata,
         };
-        let execution_limits = execution_limits_from_metadata(&self.limits, &msg.payload.metadata);
 
+        state = self.transition(state, StateTransitionEvent::ExecutionStarted);
         let executor = RegistryToolExecutor {
             tools: &self.tools,
             telemetry: self.telemetry.as_ref(),
@@ -806,10 +816,15 @@ impl AgentLoop {
                 session_key: msg.payload.session_key.clone(),
                 execution_context,
             },
-            execution_limits,
+            AgentExecutionLimits {
+                max_tool_iterations: self.limits.max_tool_iterations,
+                max_tool_calls: self.limits.max_tool_calls,
+                token_budget: self.limits.token_budget,
+            },
             stream,
         )
         .await;
+        state = self.transition(state, StateTransitionEvent::ExecutionFinished);
 
         match result {
             Ok(output) => {
@@ -860,7 +875,6 @@ impl AgentLoop {
                     false,
                 )
                 .await;
-                state = self.transition(state, StateTransitionEvent::FinalResponseReady);
                 state = self.transition(state, StateTransitionEvent::Published);
 
                 if let Some(ref telemetry) = self.telemetry {
@@ -891,20 +905,12 @@ impl AgentLoop {
                 }
 
                 let mut response_metadata = heartbeat_response_metadata(&msg.payload.metadata);
-                if matches!(
-                    output.disposition,
-                    AgentExecutionDisposition::ApprovalRequired
-                ) {
-                    response_metadata.insert(
-                        "turn.disposition".to_string(),
-                        serde_json::Value::String("approval_required".to_string()),
-                    );
-                } else if matches!(output.disposition, AgentExecutionDisposition::Stopped) {
-                    response_metadata.insert(
-                        "turn.disposition".to_string(),
-                        serde_json::Value::String("stopped".to_string()),
-                    );
-                }
+                response_metadata.insert(
+                    META_AGENT_DISPOSITION_KEY.to_string(),
+                    serde_json::Value::String(
+                        disposition_metadata_token(output.disposition).to_string(),
+                    ),
+                );
                 if !output.tool_signals.is_empty() {
                     response_metadata.insert(
                         "tool.signals".to_string(),
@@ -1527,40 +1533,6 @@ fn heartbeat_response_metadata(
     response_metadata
 }
 
-fn execution_limits_from_metadata(
-    defaults: &RunLimits,
-    metadata: &BTreeMap<String, serde_json::Value>,
-) -> AgentExecutionLimits {
-    AgentExecutionLimits {
-        max_tool_iterations: metadata_u32(metadata, META_MAX_TOOL_ITERATIONS_KEY)
-            .unwrap_or(defaults.max_tool_iterations),
-        max_tool_calls: metadata_u32(metadata, META_MAX_TOOL_CALLS_KEY)
-            .unwrap_or(defaults.max_tool_calls),
-        token_budget: metadata_u64(metadata, META_TOKEN_BUDGET_KEY)
-            .unwrap_or(defaults.token_budget),
-    }
-}
-
-fn metadata_u32(metadata: &BTreeMap<String, serde_json::Value>, key: &str) -> Option<u32> {
-    let value = metadata.get(key)?;
-    match value {
-        serde_json::Value::Number(number) => {
-            number.as_u64().and_then(|value| value.try_into().ok())
-        }
-        serde_json::Value::String(text) => text.trim().parse::<u32>().ok(),
-        _ => None,
-    }
-}
-
-fn metadata_u64(metadata: &BTreeMap<String, serde_json::Value>, key: &str) -> Option<u64> {
-    let value = metadata.get(key)?;
-    match value {
-        serde_json::Value::Number(number) => number.as_u64(),
-        serde_json::Value::String(text) => text.trim().parse::<u64>().ok(),
-        _ => None,
-    }
-}
-
 fn extract_conversation_history(
     metadata: &BTreeMap<String, serde_json::Value>,
 ) -> Vec<ConversationMessage> {
@@ -1763,9 +1735,9 @@ fn augment_user_content_with_attachment_context(
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentLoop, META_LLM_AUDIT_RECORDS_KEY, QueueStrategy, RunLimits, SessionSchedulingPolicy,
-        augment_user_content_with_attachment_context, current_attachment_contexts,
-        execution_limits_from_metadata, heartbeat_response_metadata,
+        AgentLoop, META_LLM_AUDIT_RECORDS_KEY, META_MODEL_KEY, META_PROVIDER_KEY, QueueStrategy,
+        RunLimits, SessionSchedulingPolicy, augment_user_content_with_attachment_context,
+        current_attachment_contexts, heartbeat_response_metadata,
     };
     use crate::{
         domain::InboundMessage,
@@ -1804,28 +1776,6 @@ mod tests {
             Some(&json!("stdio:test"))
         );
         assert!(!metadata.contains_key("reasoning"));
-    }
-
-    #[test]
-    fn execution_limits_allow_metadata_overrides() {
-        let defaults = RunLimits {
-            max_tool_iterations: 8,
-            max_tool_calls: 16,
-            token_budget: 1024,
-            agent_timeout: Duration::from_secs(1),
-            tool_timeout: Duration::from_secs(1),
-        };
-        let metadata = BTreeMap::from([
-            ("agent.max_tool_iterations".to_string(), json!(2)),
-            ("agent.max_tool_calls".to_string(), json!("1")),
-            ("agent.token_budget".to_string(), json!("64")),
-        ]);
-
-        let limits = execution_limits_from_metadata(&defaults, &metadata);
-
-        assert_eq!(limits.max_tool_iterations, 2);
-        assert_eq!(limits.max_tool_calls, 1);
-        assert_eq!(limits.token_budget, 64);
     }
 
     #[test]
@@ -2127,8 +2077,8 @@ mod tests {
                 content: "hello".to_string(),
                 media_references: Vec::new(),
                 metadata: BTreeMap::from([
-                    ("agent.provider_id".to_string(), json!("anthropic")),
-                    ("agent.model".to_string(), json!("claude-opus-4")),
+                    (META_PROVIDER_KEY.to_string(), json!("anthropic")),
+                    (META_MODEL_KEY.to_string(), json!("claude-opus-4")),
                 ]),
             },
         };
