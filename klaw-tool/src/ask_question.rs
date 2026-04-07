@@ -197,8 +197,6 @@ struct AskQuestionRequest {
     question: String,
     options: Vec<AskQuestionOption>,
     #[serde(default)]
-    allow_multiple: Option<bool>,
-    #[serde(default)]
     expires_in_minutes: Option<i64>,
 }
 
@@ -255,11 +253,6 @@ impl Tool for AskQuestionTool {
                         "additionalProperties": false
                     }
                 },
-                "allow_multiple": {
-                    "type": "boolean",
-                    "description": "Must be false. Multi-select is not implemented yet.",
-                    "default": false
-                },
                 "expires_in_minutes": {
                     "type": "integer",
                     "description": "Optional TTL for the pending question.",
@@ -280,11 +273,6 @@ impl Tool for AskQuestionTool {
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let request: AskQuestionRequest = serde_json::from_value(args)
             .map_err(|err| ToolError::InvalidArgs(format!("invalid request: {err}")))?;
-        if request.allow_multiple.unwrap_or(false) {
-            return Err(ToolError::InvalidArgs(
-                "`allow_multiple=true` is not supported yet".to_string(),
-            ));
-        }
         let created = self
             .manager
             .create_question(
@@ -525,5 +513,20 @@ mod tests {
             .await
             .expect_err("invalid option should fail");
         assert!(err.to_string().contains("invalid option_id"));
+    }
+
+    #[test]
+    fn request_rejects_allow_multiple_field() {
+        let err = serde_json::from_value::<AskQuestionRequest>(json!({
+            "question": "Pick one",
+            "options": [
+                { "id": "a", "label": "A" },
+                { "id": "b", "label": "B" }
+            ],
+            "allow_multiple": true
+        }))
+        .expect_err("allow_multiple should be rejected as an unknown field");
+
+        assert!(err.to_string().contains("unknown field `allow_multiple`"));
     }
 }
