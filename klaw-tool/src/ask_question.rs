@@ -71,11 +71,10 @@ impl SqliteAskQuestionManager {
         options: Vec<AskQuestionOption>,
         expires_in_minutes: Option<i64>,
     ) -> Result<AskQuestionRecord, ToolError> {
-        let session = self
-            .store
-            .get_session(session_key)
-            .await
-            .map_err(|err| ToolError::ExecutionFailed(format!("failed to load session: {err}")))?;
+        let session =
+            self.store.get_session(session_key).await.map_err(|err| {
+                ToolError::ExecutionFailed(format!("failed to load session: {err}"))
+            })?;
         let question_text = normalize_non_empty(&question_text, "question")?;
         let title = normalize_optional(title);
         let options = normalize_options(options)?;
@@ -85,8 +84,9 @@ impl SqliteAskQuestionManager {
                 "`expires_in_minutes` must be between 1 and {MAX_EXPIRES_IN_MINUTES}"
             )));
         }
-        let options_json = serde_json::to_string(&options)
-            .map_err(|err| ToolError::ExecutionFailed(format!("failed to encode options: {err}")))?;
+        let options_json = serde_json::to_string(&options).map_err(|err| {
+            ToolError::ExecutionFailed(format!("failed to encode options: {err}"))
+        })?;
         let record = self
             .store
             .create_pending_question(&NewPendingQuestionRecord {
@@ -291,8 +291,9 @@ impl Tool for AskQuestionTool {
             options: created.options.clone(),
             expires_at_ms: created.expires_at_ms,
         };
-        let content_for_model = serde_json::to_string_pretty(&response)
-            .map_err(|err| ToolError::ExecutionFailed(format!("failed to serialize output: {err}")))?;
+        let content_for_model = serde_json::to_string_pretty(&response).map_err(|err| {
+            ToolError::ExecutionFailed(format!("failed to serialize output: {err}"))
+        })?;
         let actions = created
             .options
             .iter()
@@ -376,9 +377,10 @@ fn normalize_options(options: Vec<AskQuestionOption>) -> Result<Vec<AskQuestionO
 }
 
 fn record_from_storage(record: PendingQuestionRecord) -> Result<AskQuestionRecord, ToolError> {
-    let options = serde_json::from_str::<Vec<AskQuestionOption>>(&record.options_json).map_err(
-        |err| ToolError::ExecutionFailed(format!("failed to decode stored options: {err}")),
-    )?;
+    let options =
+        serde_json::from_str::<Vec<AskQuestionOption>>(&record.options_json).map_err(|err| {
+            ToolError::ExecutionFailed(format!("failed to decode stored options: {err}"))
+        })?;
     Ok(AskQuestionRecord {
         id: record.id,
         session_key: record.session_key,
@@ -481,7 +483,10 @@ mod tests {
         assert_eq!(outcome.question.status, PendingQuestionStatus::Answered);
         assert_eq!(outcome.question.selected_option_id.as_deref(), Some("b"));
         assert_eq!(
-            outcome.question.selected_option().map(|option| option.label.as_str()),
+            outcome
+                .question
+                .selected_option()
+                .map(|option| option.label.as_str()),
             Some("B")
         );
     }

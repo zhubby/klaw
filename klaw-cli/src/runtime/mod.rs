@@ -2056,7 +2056,8 @@ async fn handle_im_command(
                     )));
                 }
             };
-            if question.session_key != route.active_session_key && question.session_key != base_session_key
+            if question.session_key != route.active_session_key
+                && question.session_key != base_session_key
             {
                 return Ok(Some(channel_response(
                     format!("❌ Question `{question_id}` does not belong to current session."),
@@ -3671,11 +3672,11 @@ mod tests {
         first_arg_token, format_approve_already_handled_message,
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, parse_outbound_attachments, resolve_session_route,
-        resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        second_arg_token, shutdown_runtime_bundle, spawn_acp_init, spawn_llm_audit_writer,
-        spawn_mcp_init,
-        submit_and_get_output, submit_webhook_agent, submit_webhook_event, sync_runtime_providers,
-        sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
+        resolve_webhook_agent_model, second_arg_token, should_emit_outbound,
+        should_trigger_compression, shutdown_runtime_bundle, spawn_acp_init,
+        spawn_llm_audit_writer, spawn_mcp_init, submit_and_get_output, submit_webhook_agent,
+        submit_webhook_event, sync_runtime_providers, sync_runtime_tools,
+        trim_conversation_history, voice_tool_is_enabled,
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
     use klaw_approval::{ApprovalCreateInput, ApprovalManager};
@@ -4326,7 +4327,10 @@ A .docx file is a ZIP archive containing XML files.
 
     #[test]
     fn second_arg_token_reads_second_token_only() {
-        assert_eq!(second_arg_token(Some("q1 option-a trailing")), Some("option-a"));
+        assert_eq!(
+            second_arg_token(Some("q1 option-a trailing")),
+            Some("option-a")
+        );
         assert_eq!(second_arg_token(Some("single")), None);
         assert_eq!(second_arg_token(Some("   ")), None);
     }

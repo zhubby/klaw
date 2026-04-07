@@ -5,12 +5,8 @@ use crate::widgets::markdown;
 use egui::{Color32, RichText};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
-use klaw_config::{AppConfig, ConfigStore};
 use klaw_core::{SkillPromptEntry, build_runtime_system_prompt};
-use klaw_skill::{
-    FileSystemSkillStore, InstalledSkill, RegistrySource, ReqwestSkillFetcher, SkillSourceKind,
-    SkillsManager, open_default_skills_manager,
-};
+use klaw_skill::{SkillSourceKind, SkillsManager, open_default_skills_manager};
 use klaw_util::default_workspace_dir;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -958,23 +954,14 @@ fn format_modified_time(value: Option<std::time::SystemTime>) -> String {
 }
 
 fn load_system_prompt_preview() -> String {
-    let config = match ConfigStore::open(None) {
-        Ok(store) => store.snapshot().config,
-        Err(err) => {
-            return format!(
-                "# System Prompt Preview Unavailable\n\nFailed to load config.toml: {err}"
-            );
-        }
-    };
-
-    let skills = load_runtime_skill_prompt_entries(config).unwrap_or_default();
+    let skills = load_runtime_skill_prompt_entries().unwrap_or_default();
     build_runtime_system_prompt(skills).unwrap_or_else(|| {
         "# System Prompt Preview Unavailable\n\nFailed to assemble the runtime system prompt."
             .to_string()
     })
 }
 
-fn load_runtime_skill_prompt_entries(config: AppConfig) -> Result<Vec<SkillPromptEntry>, String> {
+fn load_runtime_skill_prompt_entries() -> Result<Vec<SkillPromptEntry>, String> {
     let store = open_default_skills_manager()
         .map_err(|err| format!("failed to open skills manager: {err}"))?;
     let runtime = Builder::new_current_thread()
@@ -982,8 +969,6 @@ fn load_runtime_skill_prompt_entries(config: AppConfig) -> Result<Vec<SkillPromp
         .build()
         .map_err(|err| format!("failed to build runtime: {err}"))?;
     runtime.block_on(async move {
-        sync_registry_installed_skills(&store, &config).await;
-
         let skills = store
             .load_all_installed_skill_markdowns()
             .await
@@ -1002,36 +987,6 @@ fn load_runtime_skill_prompt_entries(config: AppConfig) -> Result<Vec<SkillPromp
             })
             .collect())
     })
-}
-
-async fn sync_registry_installed_skills(
-    store: &FileSystemSkillStore<ReqwestSkillFetcher>,
-    config: &AppConfig,
-) {
-    let sources: Vec<RegistrySource> = config
-        .skills
-        .registries
-        .iter()
-        .map(|(name, registry)| RegistrySource {
-            name: name.clone(),
-            address: registry.address.clone(),
-        })
-        .collect();
-    let installed: Vec<InstalledSkill> = config
-        .skills
-        .registries
-        .iter()
-        .flat_map(|(registry_name, registry)| {
-            registry.installed.iter().map(|skill_name| InstalledSkill {
-                registry: registry_name.clone(),
-                name: skill_name.clone(),
-            })
-        })
-        .collect();
-
-    let _ = store
-        .sync_registry_installed_skills(&sources, &installed, config.skills.sync_timeout)
-        .await;
 }
 
 fn extract_skill_short_description(markdown: &str) -> String {
