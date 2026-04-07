@@ -34,20 +34,11 @@ impl Default for DingtalkChannelConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DingtalkProxyConfig {
     pub enabled: bool,
     pub url: String,
-}
-
-impl Default for DingtalkProxyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            url: String::new(),
-        }
-    }
 }
 
 pub(super) fn resolve_local_attachment_policy(

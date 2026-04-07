@@ -3,7 +3,7 @@ mod render;
 mod types;
 
 use self::client::{BotCommand, EditMessageTextRequest, SendMessageRequest, TelegramApiClient};
-use self::render::{build_approval_message, extract_approval_id, render_telegram_response};
+use self::render::{build_im_card_message, render_telegram_response};
 use self::types::{
     EventDeduper, TelegramBotProfile, TelegramCallbackInbound, TelegramInbound, TelegramUpdate,
     is_sender_allowed,
@@ -458,9 +458,13 @@ impl TelegramChannel {
     }
 
     async fn send_output(&self, chat_id: &str, output: &ChannelResponse) -> ChannelResult<()> {
-        let request = if let Some(approval_id) = extract_approval_id(output) {
-            SendMessageRequest::html(chat_id, &build_approval_message(output, &approval_id))
-                .with_reply_markup(types::TelegramInlineKeyboardMarkup::approval(&approval_id))
+        let card = crate::im_card::resolve_im_card(output);
+        let request = if let Some(card) = card.as_ref() {
+            let mut request = SendMessageRequest::html(chat_id, &build_im_card_message(card));
+            if let Some(markup) = types::TelegramInlineKeyboardMarkup::from_im_card(card) {
+                request = request.with_reply_markup(markup);
+            }
+            request
         } else {
             SendMessageRequest::html(
                 chat_id,
@@ -479,7 +483,7 @@ impl TelegramChannel {
                 rebuilt_client.send_message(request).await?
             }
         };
-        if extract_approval_id(output).is_none() {
+        if card.is_none() {
             self.send_attachments(chat_id, output);
         }
         Ok(())
@@ -510,22 +514,22 @@ impl TelegramChannel {
         request: ChannelRequest,
         chat_id: Option<&str>,
     ) -> ChannelResult<Option<ChannelResponse>> {
-        if self.config.stream_output {
-            if let Some(chat_id) = chat_id {
-                let mut writer = TelegramStreamWriter::new(
-                    self.client.clone(),
-                    self.config.bot_token.clone(),
-                    self.config.proxy.clone(),
-                    self.config.local_attachments.clone(),
-                    chat_id.to_string(),
-                    self.config.show_reasoning,
-                );
-                let output = runtime.submit_streaming(request, &mut writer).await?;
-                if let Some(ref output) = output {
-                    writer.finish(output).await?;
-                }
-                return Ok(output);
+        if self.config.stream_output
+            && let Some(chat_id) = chat_id
+        {
+            let mut writer = TelegramStreamWriter::new(
+                self.client.clone(),
+                self.config.bot_token.clone(),
+                self.config.proxy.clone(),
+                self.config.local_attachments.clone(),
+                chat_id.to_string(),
+                self.config.show_reasoning,
+            );
+            let output = runtime.submit_streaming(request, &mut writer).await?;
+            if let Some(ref output) = output {
+                writer.finish(output).await?;
             }
+            return Ok(output);
         }
         runtime.submit(request).await
     }
@@ -707,12 +711,13 @@ pub async fn dispatch_background_outbound(
         metadata: output.metadata.clone(),
         attachments: Vec::new(),
     };
-    let request = if let Some(approval_id) = extract_approval_id(&response) {
-        SendMessageRequest::html(
-            &output.chat_id,
-            &build_approval_message(&response, &approval_id),
-        )
-        .with_reply_markup(types::TelegramInlineKeyboardMarkup::approval(&approval_id))
+    let card = crate::im_card::resolve_im_card(&response);
+    let request = if let Some(card) = card.as_ref() {
+        let mut request = SendMessageRequest::html(&output.chat_id, &build_im_card_message(card));
+        if let Some(markup) = types::TelegramInlineKeyboardMarkup::from_im_card(card) {
+            request = request.with_reply_markup(markup);
+        }
+        request
     } else {
         SendMessageRequest::html(
             &output.chat_id,
@@ -801,10 +806,12 @@ impl TelegramStreamWriter {
     }
 
     async fn finish(&mut self, output: &ChannelResponse) -> ChannelResult<()> {
-        let approval_markup = extract_approval_id(output)
-            .map(|approval_id| types::TelegramInlineKeyboardMarkup::approval(&approval_id));
-        let text = if let Some(approval_id) = extract_approval_id(output) {
-            build_approval_message(output, &approval_id)
+        let card = crate::im_card::resolve_im_card(output);
+        let approval_markup = card
+            .as_ref()
+            .and_then(types::TelegramInlineKeyboardMarkup::from_im_card);
+        let text = if let Some(card) = card.as_ref() {
+            build_im_card_message(card)
         } else {
             render_telegram_response(output, self.show_reasoning)
         };
@@ -830,7 +837,7 @@ impl TelegramStreamWriter {
             }
         }
         self.last_update_at = Some(Instant::now());
-        if extract_approval_id(output).is_none() {
+        if card.is_none() {
             self.send_attachments(output);
         }
         Ok(())
@@ -892,10 +899,12 @@ impl ChannelStreamWriter for TelegramStreamWriter {
     async fn write(&mut self, event: ChannelStreamEvent) -> ChannelResult<()> {
         match event {
             ChannelStreamEvent::Snapshot(output) => {
-                let approval_markup = extract_approval_id(&output)
-                    .map(|approval_id| types::TelegramInlineKeyboardMarkup::approval(&approval_id));
-                let text = if let Some(approval_id) = extract_approval_id(&output) {
-                    build_approval_message(&output, &approval_id)
+                let card = crate::im_card::resolve_im_card(&output);
+                let approval_markup = card
+                    .as_ref()
+                    .and_then(types::TelegramInlineKeyboardMarkup::from_im_card);
+                let text = if let Some(card) = card.as_ref() {
+                    build_im_card_message(card)
                 } else {
                     render_telegram_response(&output, self.show_reasoning)
                 };
@@ -1003,7 +1012,7 @@ impl Channel for TelegramChannel {
 
 #[cfg(test)]
 mod tests {
-    use super::render::{build_approval_message, render_telegram_response};
+    use super::render::{build_im_card_message, render_telegram_response, resolve_approval_card};
     use super::types::{
         TelegramAudio, TelegramCallbackInbound, TelegramCallbackQuery, TelegramChat,
         TelegramChatType, TelegramDocument, TelegramInlineKeyboardMarkup, TelegramMessage,
@@ -1205,13 +1214,14 @@ mod tests {
         assert!(rendered.contains("<b>Title</b>"));
         assert!(rendered.contains("<pre><code class=\"language-text\">/help</code></pre>"));
 
-        let approval = build_approval_message(&output, "approval-1");
+        let card = resolve_approval_card(&output).expect("approval card");
+        let approval = build_im_card_message(&card);
         assert!(approval.contains("Approval Required"));
 
-        let keyboard = TelegramInlineKeyboardMarkup::approval("approval-1");
+        let keyboard = TelegramInlineKeyboardMarkup::from_im_card(&card).expect("keyboard");
         assert_eq!(
             keyboard.inline_keyboard[0][0].callback_data,
-            "approve:approval-1"
+            Some("approve:approval-1".to_string())
         );
     }
 }

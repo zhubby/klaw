@@ -6,15 +6,16 @@ use super::{
     client::DingtalkApiClient,
     parsing::{
         ApprovalAction, CardCallbackEvent, EventDeduper, InboundEvent,
-        build_approval_action_card_body, extract_approval_command_preview,
-        extract_approval_id_for_action_card, extract_dingtalk_media_references,
-        extract_dingtalk_message_text, extract_shell_approval_id, is_sender_allowed,
-        normalize_dingtalk_text_content, parse_card_callback_event, parse_inbound_event,
-        parse_stream_data, resolve_chat_id, resolve_download_code_candidates,
+        build_approval_action_card_body, build_im_card_action_buttons,
+        extract_dingtalk_media_references, extract_dingtalk_message_text,
+        extract_shell_approval_id, is_sender_allowed, normalize_dingtalk_text_content,
+        parse_card_callback_event, parse_inbound_event, parse_stream_data, resolve_approval_card,
+        resolve_chat_id, resolve_download_code_candidates,
     },
 };
 use crate::{
     ChannelResponse,
+    im_card::{ImCard, ImCardAction, ImCardActionKind, ImCardKind},
     render::{OutputRenderStyle, render_agent_output},
 };
 use std::collections::BTreeMap;
@@ -654,8 +655,8 @@ fn extract_approval_id_for_action_card_prefers_structured_metadata() {
         )]),
         attachments: Vec::new(),
     };
-    let approval_id = extract_approval_id_for_action_card(&output).expect("approval id");
-    assert_eq!(approval_id, "from-metadata");
+    let card = resolve_approval_card(&output).expect("approval card");
+    assert_eq!(card.approval_id(), Some("from-metadata"));
 }
 
 #[test]
@@ -666,8 +667,8 @@ fn extract_approval_id_for_action_card_falls_back_to_content() {
         metadata: BTreeMap::new(),
         attachments: Vec::new(),
     };
-    let approval_id = extract_approval_id_for_action_card(&output).expect("approval id");
-    assert_eq!(approval_id, "from-content");
+    let card = resolve_approval_card(&output).expect("approval card");
+    assert_eq!(card.approval_id(), Some("from-content"));
 }
 
 #[test]
@@ -684,8 +685,8 @@ fn extract_approval_command_preview_reads_structured_metadata() {
         )]),
         attachments: Vec::new(),
     };
-    let preview = extract_approval_command_preview(&output).expect("command preview");
-    assert_eq!(preview, "pip3 install pymupdf -q");
+    let card = resolve_approval_card(&output).expect("approval card");
+    assert_eq!(card.command_preview(), Some("pip3 install pymupdf -q"));
 }
 
 #[test]
@@ -702,10 +703,48 @@ fn build_approval_action_card_body_includes_command_preview() {
         )]),
         attachments: Vec::new(),
     };
-    let body = build_approval_action_card_body(&output, "approval-1");
+    let card = resolve_approval_card(&output).expect("approval card");
+    let body = build_approval_action_card_body(&card);
     assert!(body.contains("待执行命令"));
     assert!(body.contains("python3 -c \"print(1)\""));
     assert!(body.contains("审批单: `approval-1`"));
+}
+
+#[test]
+fn build_im_card_action_buttons_supports_commands_and_urls() {
+    let card = ImCard {
+        kind: ImCardKind::QuestionSingleSelect,
+        title: Some("Pick one".to_string()),
+        body: "Question body".to_string(),
+        actions: vec![
+            ImCardAction {
+                kind: ImCardActionKind::SubmitCommand,
+                label: Some("A".to_string()),
+                value: None,
+                url: None,
+                command: Some("/card_answer q-1 a".to_string()),
+            },
+            ImCardAction {
+                kind: ImCardActionKind::OpenUrl,
+                label: Some("Docs".to_string()),
+                value: None,
+                url: Some("https://example.com/docs".to_string()),
+                command: None,
+            },
+        ],
+        fallback_text: None,
+        metadata: BTreeMap::new(),
+    };
+
+    let buttons = build_im_card_action_buttons(&card);
+    assert_eq!(buttons[0].0, "A");
+    assert!(
+        buttons[0]
+            .1
+            .starts_with("dtmd://dingtalkclient/sendMessage?content=")
+    );
+    assert_eq!(buttons[1].0, "Docs");
+    assert_eq!(buttons[1].1, "https://example.com/docs");
 }
 
 #[test]

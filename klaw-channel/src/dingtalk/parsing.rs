@@ -1,5 +1,6 @@
 use crate::{
     ChannelResponse,
+    im_card::{ImCard, ImCardActionKind, ImCardKind, parse_im_card_action_token, resolve_im_card},
     media::{
         attach_declared_media_metadata, build_media_reference, first_object_string_value,
         first_string_value, resolve_metadata_value_candidates,
@@ -11,9 +12,6 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Instant;
 use tokio::time::Duration;
-
-pub(super) const APPROVAL_APPROVE_ACTION: &str = "approve";
-pub(super) const APPROVAL_REJECT_ACTION: &str = "reject";
 
 #[derive(Debug, Deserialize)]
 pub(super) struct StreamEnvelope {
@@ -52,20 +50,7 @@ enum DingtalkConversationType {
     Group,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ApprovalAction {
-    Approve,
-    Reject,
-}
-
-impl ApprovalAction {
-    pub(super) fn as_command(self) -> &'static str {
-        match self {
-            Self::Approve => APPROVAL_APPROVE_ACTION,
-            Self::Reject => APPROVAL_REJECT_ACTION,
-        }
-    }
-}
+pub(super) type ApprovalAction = ImCardActionKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CardCallbackEvent {
@@ -270,23 +255,8 @@ fn extract_callback_action_value(value: &Value) -> Option<String> {
 }
 
 fn parse_approval_action_token(value: &str) -> Option<(ApprovalAction, String)> {
-    let lowered = value.trim().to_ascii_lowercase();
-    for (prefix, action) in [
-        ("approve:", ApprovalAction::Approve),
-        ("approve_", ApprovalAction::Approve),
-        ("approve-", ApprovalAction::Approve),
-        ("reject:", ApprovalAction::Reject),
-        ("reject_", ApprovalAction::Reject),
-        ("reject-", ApprovalAction::Reject),
-    ] {
-        if let Some(rest) = lowered.strip_prefix(prefix) {
-            let approval_id = rest.trim().to_string();
-            if !approval_id.is_empty() {
-                return Some((action, approval_id));
-            }
-        }
-    }
-    None
+    let action = parse_im_card_action_token(value)?;
+    Some((action.kind, action.approval_id()?.to_string()))
 }
 
 fn callback_sender_id(value: &Value) -> String {
@@ -374,53 +344,53 @@ pub(super) fn extract_dingtalk_message_text(
             .map(|text| text.trim().to_string())
             .filter(|s| !s.is_empty());
     }
-    if msg_type == "richtext" || msg_type == "rich_text" {
-        if let Some(rich_blocks) = value.pointer("/content/richText").and_then(Value::as_array) {
-            let rich_text = rich_blocks
-                .iter()
-                .filter_map(|block| {
-                    let block_type = block
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .map(|ty| ty.to_ascii_lowercase())
-                        .unwrap_or_default();
-                    if matches!(block_type.as_str(), "at" | "mention")
-                        && block_targets_bot(block, robot_code, bot_title)
-                    {
-                        return None;
-                    }
-                    if block_type != "text" {
-                        return None;
-                    }
-                    block
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .map(|text| normalize_dingtalk_text_content(text, bot_title))
-                })
-                .collect::<Vec<_>>()
-                .join("");
-            let normalized_text = rich_text.trim();
-            if !normalized_text.is_empty() {
-                return Some(normalized_text.to_string());
-            }
+    if (msg_type == "richtext" || msg_type == "rich_text")
+        && let Some(rich_blocks) = value.pointer("/content/richText").and_then(Value::as_array)
+    {
+        let rich_text = rich_blocks
+            .iter()
+            .filter_map(|block| {
+                let block_type = block
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .map(|ty| ty.to_ascii_lowercase())
+                    .unwrap_or_default();
+                if matches!(block_type.as_str(), "at" | "mention")
+                    && block_targets_bot(block, robot_code, bot_title)
+                {
+                    return None;
+                }
+                if block_type != "text" {
+                    return None;
+                }
+                block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(|text| normalize_dingtalk_text_content(text, bot_title))
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        let normalized_text = rich_text.trim();
+        if !normalized_text.is_empty() {
+            return Some(normalized_text.to_string());
+        }
 
-            let picture_count = rich_blocks
-                .iter()
-                .filter(|block| {
-                    block
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .map(|ty| ty.eq_ignore_ascii_case("picture"))
-                        .unwrap_or(false)
-                })
-                .count();
-            if picture_count > 0 {
-                return Some(format!(
-                    "[DingTalk富文本消息]\n用户发送了 {picture_count} 张图片。请结合图片内容回答用户。"
-                ));
-            }
+        let picture_count = rich_blocks
+            .iter()
+            .filter(|block| {
+                block
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .map(|ty| ty.eq_ignore_ascii_case("picture"))
+                    .unwrap_or(false)
+            })
+            .count();
+        if picture_count > 0 {
+            return Some(format!(
+                "[DingTalk富文本消息]\n用户发送了 {picture_count} 张图片。请结合图片内容回答用户。"
+            ));
         }
     }
 
@@ -1070,182 +1040,106 @@ pub(super) fn is_sender_allowed(allowlist: &[String], sender_id: &str) -> bool {
         .any(|entry| entry == "*" || entry == sender_id)
 }
 
-pub(super) fn extract_approval_id_for_action_card(output: &ChannelResponse) -> Option<String> {
-    if let Some(approval_id) = output
-        .metadata
-        .get("approval.id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Some(approval_id.to_string());
-    }
-    if let Some(approval_id) = output
-        .metadata
-        .get("approval.signal")
-        .and_then(Value::as_object)
-        .and_then(|value| value.get("approval_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Some(approval_id.to_string());
-    }
-    extract_shell_approval_id(&output.content)
+pub(super) fn resolve_channel_card(output: &ChannelResponse) -> Option<ImCard> {
+    resolve_im_card(output)
 }
 
-pub(super) fn extract_approval_command_preview(output: &ChannelResponse) -> Option<String> {
-    output
-        .metadata
-        .get("approval.signal")
-        .and_then(Value::as_object)
-        .and_then(|value| value.get("command_preview"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
+#[cfg(test)]
+pub(super) fn resolve_approval_card(output: &ChannelResponse) -> Option<ImCard> {
+    resolve_channel_card(output).filter(|card| matches!(card.kind, ImCardKind::Approval))
 }
 
-pub(super) fn build_approval_action_card_body(
-    output: &ChannelResponse,
-    approval_id: &str,
-) -> String {
-    let mut sections = vec!["### 需要审批".to_string()];
-    if let Some(command_preview) = extract_approval_command_preview(output) {
-        sections.push(format!(
-            "**待执行命令**\n\n`{}`",
-            escape_markdown_for_action_card(&command_preview)
-        ));
+pub(super) fn build_im_card_action_card_body(card: &ImCard) -> String {
+    match card.kind {
+        ImCardKind::Approval => build_approval_action_card_body(card),
+        ImCardKind::QuestionSingleSelect => build_question_single_select_action_card_body(card),
     }
-    let escaped_content = escape_markdown_for_action_card(&output.content);
-    if !escaped_content.trim().is_empty() {
-        sections.push(escaped_content);
-    }
+}
+
+pub(super) fn build_im_card_action_buttons(card: &ImCard) -> Vec<(String, String)> {
+    card.actions
+        .iter()
+        .filter_map(|action| {
+            let title = action.label_or_default().to_string();
+            match action.kind {
+                ImCardActionKind::Approve | ImCardActionKind::Reject => {
+                    let approval_id = action.approval_id()?;
+                    let verb = action.kind.approval_verb()?;
+                    Some((title, dingtalk_command_action_url(verb, approval_id)))
+                }
+                ImCardActionKind::SubmitCommand => action
+                    .to_runtime_command()
+                    .map(|command| (title, dingtalk_command_message_url(&command))),
+                ImCardActionKind::OpenUrl => action
+                    .url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|url| (title, url.to_string())),
+            }
+        })
+        .collect()
+}
+
+pub(super) fn build_approval_action_card_body(card: &ImCard) -> String {
+    let approval_id = card.approval_id().unwrap_or_default();
+    let mut sections = base_card_sections(card, "需要审批");
     sections.push(format!("审批单: `{approval_id}`"));
     sections.push("点击按钮后将发送审批指令。".to_string());
     sections.join("\n\n---\n\n")
 }
 
+fn build_question_single_select_action_card_body(card: &ImCard) -> String {
+    let mut sections = base_card_sections(card, "问题");
+    let options = card
+        .actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| format!("{}. {}", index + 1, action.label_or_default()))
+        .collect::<Vec<_>>();
+    if !options.is_empty() {
+        sections.push(format!(
+            "**选项**\n\n{}",
+            escape_markdown_for_action_card(&options.join("\n"))
+        ));
+    }
+    sections.join("\n\n---\n\n")
+}
+
+fn base_card_sections(card: &ImCard, fallback_title: &str) -> Vec<String> {
+    let mut sections = vec![format!(
+        "### {}",
+        escape_markdown_for_action_card(card.title_or(fallback_title))
+    )];
+    if let Some(command_preview) = card.command_preview() {
+        sections.push(format!(
+            "**待执行命令**\n\n`{}`",
+            escape_markdown_for_action_card(command_preview)
+        ));
+    }
+    let escaped_content = escape_markdown_for_action_card(card.body_or(card.fallback_text_or("")));
+    if !escaped_content.trim().is_empty() {
+        sections.push(escaped_content);
+    }
+    sections
+}
+
+fn dingtalk_command_message_url(command: &str) -> String {
+    format!(
+        "dtmd://dingtalkclient/sendMessage?content={}",
+        urlencoding::encode(command)
+    )
+}
+
+#[cfg(test)]
 pub(super) fn extract_shell_approval_id(content: &str) -> Option<String> {
-    if let Ok(value) = serde_json::from_str::<Value>(content) {
-        if let Some(token) = value
-            .pointer("/approval/id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            return Some(token.to_string());
-        }
-        if let Some(token) = value
-            .get("approval_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            return Some(token.to_string());
-        }
-        if let Some(token) = value
-            .get("approvalId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            return Some(token.to_string());
-        }
-        if let Some(token) = value
-            .pointer("/approvalId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            return Some(token.to_string());
-        }
-    }
-    let marker = "approval_id=";
-    if let Some(idx) = content.find(marker) {
-        let rest = &content[idx + marker.len()..];
-        let token = rest
-            .chars()
-            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
-            .collect::<String>();
-        if !token.is_empty() {
-            return Some(token);
-        }
-    }
-
-    extract_uuid_like_approval_id(content)
-}
-
-fn extract_uuid_like_approval_id(content: &str) -> Option<String> {
-    let lowered = content.to_ascii_lowercase();
-    let hinted = lowered.contains("approval id")
-        || lowered.contains("approval_id")
-        || content.contains("审批 ID")
-        || content.contains("审批id")
-        || content.contains("审批单")
-        || lowered.contains("批准id")
-        || content.contains("批准 ID");
-    if !hinted {
-        return None;
-    }
-
-    content
-        .split(|ch: char| ch.is_whitespace() || ",.;:，。；：()[]{}<>\"'`".contains(ch))
-        .filter_map(normalize_uuid_token)
-        .find(|token| is_uuid_like(token))
-}
-
-fn normalize_uuid_token(token: &str) -> Option<String> {
-    let trimmed = token.trim_matches(|ch: char| {
-        ch.is_whitespace()
-            || matches!(
-                ch,
-                ',' | '.'
-                    | ';'
-                    | ':'
-                    | '，'
-                    | '。'
-                    | '；'
-                    | '：'
-                    | '('
-                    | ')'
-                    | '['
-                    | ']'
-                    | '{'
-                    | '}'
-                    | '<'
-                    | '>'
-                    | '"'
-                    | '\''
-                    | '`'
-            )
-    });
-    if trimmed.is_empty() {
-        return None;
-    }
-    let normalized = trimmed
-        .chars()
-        .map(|ch| match ch {
-            '–' | '—' | '−' => '-',
-            _ => ch,
-        })
-        .collect::<String>();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-fn is_uuid_like(token: &str) -> bool {
-    let segments = token.split('-').collect::<Vec<_>>();
-    if segments.len() != 5 {
-        return false;
-    }
-    let expected = [8, 4, 4, 4, 12];
-    segments.iter().zip(expected).all(|(segment, len)| {
-        segment.len() == len && segment.chars().all(|ch| ch.is_ascii_hexdigit())
+    resolve_im_card(&ChannelResponse {
+        content: content.to_string(),
+        reasoning: None,
+        metadata: BTreeMap::new(),
+        attachments: Vec::new(),
     })
+    .and_then(|card| card.approval_id().map(ToOwned::to_owned))
 }
 
 fn escape_markdown_for_action_card(input: &str) -> String {

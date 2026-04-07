@@ -1,6 +1,6 @@
 # DingTalk 渠道设计与实现
 
-本文档记录 `klaw-channel` 中 DingTalk（钉钉）渠道的实现：WebSocket 长连接、消息事件处理、审批交互、媒体素材归档与语音转写。
+本文档记录 `klaw-channel` 中 DingTalk（钉钉）渠道的实现：WebSocket 长连接、消息事件处理、基于共享 IM 卡片模型的审批交互、媒体素材归档与语音转写。
 
 ## 目标
 
@@ -9,6 +9,12 @@
 - 集成审批交互卡片，支持 approve/reject 决策回调
 - 支持媒体素材自动下载、归档与语音转写（ASR）
 - 事件去重、发送者白名单、代理支持等安全控制
+
+## 共享卡片抽象
+
+- DingTalk 出站审批消息优先消费 `ChannelResponse.metadata["im.card"]`
+- 若上游仍只提供旧字段，渠道会兼容 `approval.id`、`approval.signal.approval_id`，以及正文里的 `approval_id=...` / 自然语言审批 ID 回退
+- 解析出的共享审批卡片会映射为钉钉 `actionCard`，按钮点击后再归一成 `/approve <id>` 或 `/reject <id>` 提交回 runtime
 
 ## 代码位置
 

@@ -160,6 +160,13 @@ impl ToolSignal {
             payload,
         }
     }
+
+    pub fn im_card(payload: serde_json::Value) -> Self {
+        Self {
+            kind: "im_card".to_string(),
+            payload,
+        }
+    }
 }
 
 /// 工具错误定义。

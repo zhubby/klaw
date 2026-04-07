@@ -1,5 +1,7 @@
-use crate::ChannelResponse;
-use serde_json::Value;
+use crate::{
+    ChannelResponse,
+    im_card::{ImCard, ImCardKind},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TelegramParseMode {
@@ -16,74 +18,77 @@ impl TelegramParseMode {
 
 pub fn render_telegram_response(output: &ChannelResponse, show_reasoning: bool) -> String {
     let mut body = markdownish_to_telegram_html(output.content.trim());
-    if show_reasoning {
-        if let Some(reasoning) = output.reasoning.as_deref().map(str::trim) {
-            if !reasoning.is_empty() {
-                if !body.is_empty() {
-                    body.push_str("\n\n");
-                }
-                body.push_str("<b>Reasoning</b>\n<pre>");
-                body.push_str(&escape_html(reasoning));
-                body.push_str("</pre>");
-            }
+    if show_reasoning
+        && let Some(reasoning) = output.reasoning.as_deref().map(str::trim)
+        && !reasoning.is_empty()
+    {
+        if !body.is_empty() {
+            body.push_str("\n\n");
         }
+        body.push_str("<b>Reasoning</b>\n<pre>");
+        body.push_str(&escape_html(reasoning));
+        body.push_str("</pre>");
     }
     body
 }
 
-pub fn extract_approval_id(output: &ChannelResponse) -> Option<String> {
-    if let Some(approval_id) = output
-        .metadata
-        .get("approval.id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Some(approval_id.to_string());
-    }
-    if let Some(approval_id) = output
-        .metadata
-        .get("approval.signal")
-        .and_then(Value::as_object)
-        .and_then(|value| value.get("approval_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Some(approval_id.to_string());
-    }
-    extract_shell_approval_id(&output.content)
+#[cfg(test)]
+pub fn resolve_approval_card(output: &ChannelResponse) -> Option<ImCard> {
+    crate::im_card::resolve_im_card(output).filter(|card| matches!(card.kind, ImCardKind::Approval))
 }
 
-pub fn extract_approval_command_preview(output: &ChannelResponse) -> Option<String> {
-    output
-        .metadata
-        .get("approval.signal")
-        .and_then(Value::as_object)
-        .and_then(|value| value.get("command_preview"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
+pub fn build_im_card_message(card: &ImCard) -> String {
+    match card.kind {
+        ImCardKind::Approval => build_approval_message(card),
+        ImCardKind::QuestionSingleSelect => build_question_single_select_message(card),
+    }
 }
 
-pub fn build_approval_message(output: &ChannelResponse, approval_id: &str) -> String {
-    let mut parts = vec!["<b>Approval Required</b>".to_string()];
-    if let Some(command_preview) = extract_approval_command_preview(output) {
+fn build_approval_message(card: &ImCard) -> String {
+    let mut parts = vec![format!(
+        "<b>{}</b>",
+        escape_html(card.title_or("Approval Required"))
+    )];
+    append_command_preview(card, &mut parts);
+    append_card_body(card, &mut parts);
+    if let Some(approval_id) = card.approval_id() {
         parts.push(format!(
-            "<b>Command</b>\n<pre>{}</pre>",
-            escape_html(&command_preview)
+            "<b>Approval ID</b>\n<code>{}</code>",
+            escape_html(approval_id)
         ));
     }
-    let content = render_telegram_response(output, false);
+    parts.join("\n\n")
+}
+
+fn build_question_single_select_message(card: &ImCard) -> String {
+    let mut parts = vec![format!("<b>{}</b>", escape_html(card.title_or("Question")))];
+    append_card_body(card, &mut parts);
+    let options = card
+        .actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| format!("{}. {}", index + 1, escape_html(action.label_or_default())))
+        .collect::<Vec<_>>();
+    if !options.is_empty() {
+        parts.push(format!("<b>Options</b>\n{}", options.join("\n")));
+    }
+    parts.join("\n\n")
+}
+
+fn append_command_preview(card: &ImCard, parts: &mut Vec<String>) {
+    if let Some(command_preview) = card.command_preview() {
+        parts.push(format!(
+            "<b>Command</b>\n<pre>{}</pre>",
+            escape_html(command_preview)
+        ));
+    }
+}
+
+fn append_card_body(card: &ImCard, parts: &mut Vec<String>) {
+    let content = markdownish_to_telegram_html(card.body_or(card.fallback_text_or("")));
     if !content.trim().is_empty() {
         parts.push(content);
     }
-    parts.push(format!(
-        "<b>Approval ID</b>\n<code>{}</code>",
-        escape_html(approval_id)
-    ));
-    parts.join("\n\n")
 }
 
 fn markdownish_to_telegram_html(input: &str) -> String {
@@ -198,12 +203,12 @@ fn render_inline_html(input: &str) -> String {
             continue;
         }
 
-        if let Some(stripped) = rest.strip_prefix('\\') {
-            if let Some(ch) = stripped.chars().next() {
-                out.push_str(&escape_html(ch.encode_utf8(&mut [0; 4])));
-                i += 1 + ch.len_utf8();
-                continue;
-            }
+        if let Some(stripped) = rest.strip_prefix('\\')
+            && let Some(ch) = stripped.chars().next()
+        {
+            out.push_str(&escape_html(ch.encode_utf8(&mut [0; 4])));
+            i += 1 + ch.len_utf8();
+            continue;
         }
 
         if let Some(ch) = rest.chars().next() {
@@ -473,49 +478,6 @@ fn parse_list_item(line: &str) -> Option<(Option<String>, &str)> {
     Some((Some(marker), content))
 }
 
-fn extract_shell_approval_id(content: &str) -> Option<String> {
-    if let Ok(value) = serde_json::from_str::<Value>(content) {
-        if let Some(token) = value
-            .pointer("/approval/id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            return Some(token.to_string());
-        }
-        if let Some(token) = value
-            .get("approval_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            return Some(token.to_string());
-        }
-        if let Some(token) = value
-            .get("approvalId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            return Some(token.to_string());
-        }
-    }
-
-    let marker = "approval_id=";
-    if let Some(idx) = content.find(marker) {
-        let rest = &content[idx + marker.len()..];
-        let token = rest
-            .chars()
-            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
-            .collect::<String>();
-        if !token.is_empty() {
-            return Some(token);
-        }
-    }
-
-    None
-}
-
 pub fn escape_html(input: &str) -> String {
     input
         .replace('&', "&amp;")
@@ -530,6 +492,7 @@ fn escape_html_attribute(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use std::collections::BTreeMap;
 
     #[test]
@@ -565,8 +528,9 @@ mod tests {
             attachments: Vec::new(),
         };
 
-        assert_eq!(extract_approval_id(&output).as_deref(), Some("approval-1"));
-        let body = build_approval_message(&output, "approval-1");
+        let card = resolve_approval_card(&output).expect("approval card");
+        assert_eq!(card.approval_id(), Some("approval-1"));
+        let body = build_approval_message(&card);
         assert!(body.contains("Approval Required"));
         assert!(body.contains("python3 -c"));
     }

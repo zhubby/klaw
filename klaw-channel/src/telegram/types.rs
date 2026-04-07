@@ -1,4 +1,7 @@
-use crate::media::{attach_declared_media_metadata, build_media_reference};
+use crate::{
+    im_card::{ImCard, parse_im_card_action_token},
+    media::{attach_declared_media_metadata, build_media_reference},
+};
 use klaw_core::{MediaReference, MediaSourceKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -220,11 +223,7 @@ impl TelegramCallbackInbound {
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())?;
-        let (verb, approval_id) = action.split_once(':')?;
-        let command = match verb {
-            "approve" | "reject" => format!("/{verb} {}", approval_id.trim()),
-            _ => return None,
-        };
+        let command = parse_im_card_action_token(action)?.to_runtime_command()?;
         Some(Self {
             callback_id: query.id,
             chat_id: query.message?.chat.id.to_string(),
@@ -704,22 +703,41 @@ pub struct TelegramInlineKeyboardMarkup {
 #[derive(Debug, Clone, Serialize)]
 pub struct TelegramInlineKeyboardButton {
     pub text: String,
-    pub callback_data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callback_data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 impl TelegramInlineKeyboardMarkup {
-    pub fn approval(approval_id: &str) -> Self {
-        Self {
-            inline_keyboard: vec![vec![
-                TelegramInlineKeyboardButton {
-                    text: "Approve".to_string(),
-                    callback_data: format!("approve:{approval_id}"),
-                },
-                TelegramInlineKeyboardButton {
-                    text: "Reject".to_string(),
-                    callback_data: format!("reject:{approval_id}"),
-                },
-            ]],
+    pub fn from_im_card(card: &ImCard) -> Option<Self> {
+        let buttons = card
+            .actions
+            .iter()
+            .filter_map(|action| {
+                let callback_data = action.callback_token(':');
+                let url = action
+                    .url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned);
+                if callback_data.is_none() && url.is_none() {
+                    return None;
+                }
+                Some(TelegramInlineKeyboardButton {
+                    text: action.label_or_default().to_string(),
+                    callback_data,
+                    url,
+                })
+            })
+            .collect::<Vec<_>>();
+        if buttons.is_empty() {
+            None
+        } else {
+            Some(Self {
+                inline_keyboard: vec![buttons],
+            })
         }
     }
 }
@@ -727,6 +745,7 @@ impl TelegramInlineKeyboardMarkup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::im_card::{ImCard, ImCardAction, ImCardActionKind, ImCardKind};
 
     fn private_chat() -> TelegramChat {
         TelegramChat {
@@ -815,6 +834,87 @@ mod tests {
 
         assert_eq!(inbound.chat_id, "10");
         assert_eq!(inbound.command, "/approve approval-1");
+    }
+
+    #[test]
+    fn callback_query_maps_encoded_command_tokens() {
+        let token = ImCardAction {
+            kind: ImCardActionKind::SubmitCommand,
+            label: Some("Option A".to_string()),
+            value: None,
+            url: None,
+            command: Some("/card_answer q-1 option-a".to_string()),
+        }
+        .callback_token(':')
+        .expect("token");
+        let inbound = TelegramCallbackInbound::from_callback(TelegramCallbackQuery {
+            id: "cb-2".to_string(),
+            from: TelegramUser {
+                id: 1,
+                is_bot: false,
+                username: None,
+            },
+            data: Some(token),
+            message: Some(TelegramMessage {
+                message_id: 1,
+                chat: private_chat(),
+                from: None,
+                text: None,
+                entities: Vec::new(),
+                caption: None,
+                caption_entities: Vec::new(),
+                photo: Vec::new(),
+                document: None,
+                audio: None,
+                voice: None,
+                video: None,
+                reply_to_message: None,
+            }),
+        })
+        .expect("callback inbound");
+
+        assert_eq!(inbound.command, "/card_answer q-1 option-a");
+    }
+
+    #[test]
+    fn inline_keyboard_supports_command_and_url_actions() {
+        let card = ImCard {
+            kind: ImCardKind::QuestionSingleSelect,
+            title: Some("Pick one".to_string()),
+            body: "Question body".to_string(),
+            actions: vec![
+                ImCardAction {
+                    kind: ImCardActionKind::SubmitCommand,
+                    label: Some("A".to_string()),
+                    value: None,
+                    url: None,
+                    command: Some("/card_answer q-1 a".to_string()),
+                },
+                ImCardAction {
+                    kind: ImCardActionKind::OpenUrl,
+                    label: Some("Help".to_string()),
+                    value: None,
+                    url: Some("https://example.com/help".to_string()),
+                    command: None,
+                },
+            ],
+            fallback_text: None,
+            metadata: BTreeMap::new(),
+        };
+
+        let markup = TelegramInlineKeyboardMarkup::from_im_card(&card).expect("markup");
+        assert_eq!(markup.inline_keyboard[0][0].text, "A");
+        assert_eq!(
+            markup.inline_keyboard[0][0]
+                .callback_data
+                .as_deref()
+                .map(|value| value.starts_with("command:")),
+            Some(true)
+        );
+        assert_eq!(
+            markup.inline_keyboard[0][1].url.as_deref(),
+            Some("https://example.com/help")
+        );
     }
 
     #[test]

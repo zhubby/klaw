@@ -431,21 +431,22 @@ impl DingtalkApiClient {
         Ok(())
     }
 
-    pub(super) async fn send_session_webhook_action_card(
+    pub(super) async fn send_session_webhook_generic_action_card(
         &self,
         session_webhook: &str,
         title: &str,
         text: &str,
-        approval_id: &str,
+        buttons: &[(String, String)],
     ) -> ChannelResult<()> {
-        let approve_url = super::parsing::dingtalk_command_action_url(
-            super::parsing::APPROVAL_APPROVE_ACTION,
-            approval_id,
-        );
-        let reject_url = super::parsing::dingtalk_command_action_url(
-            super::parsing::APPROVAL_REJECT_ACTION,
-            approval_id,
-        );
+        let buttons = buttons
+            .iter()
+            .map(|(title, action_url)| {
+                serde_json::json!({
+                    "title": title,
+                    "actionURL": action_url,
+                })
+            })
+            .collect::<Vec<_>>();
         let response = self
             .http
             .post(session_webhook)
@@ -455,16 +456,7 @@ impl DingtalkApiClient {
                     "title": title,
                     "text": text,
                     "btnOrientation": "1",
-                    "btns": [
-                        {
-                            "title": "批准",
-                            "actionURL": approve_url
-                        },
-                        {
-                            "title": "拒绝",
-                            "actionURL": reject_url
-                        }
-                    ]
+                    "btns": buttons
                 }
             }))
             .send()
