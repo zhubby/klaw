@@ -106,7 +106,7 @@ pub async fn ingest_media_reference_bytes(
     inline_flag_key: &str,
     inline_skipped_bytes_key: &str,
 ) -> Result<ArchiveRecord, Box<dyn std::error::Error>> {
-    let metadata = serde_json::to_value(media.metadata.clone()).unwrap_or_else(|_| Value::Null);
+    let metadata = serde_json::to_value(media.metadata.clone()).unwrap_or(Value::Null);
     let ingest_input = ArchiveIngestInput {
         source_kind: archive_source_kind_from_media(media.source_kind),
         filename: media.filename.clone(),

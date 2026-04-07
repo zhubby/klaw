@@ -1,6 +1,6 @@
 # Telegram
 
-本文档记录 `klaw-channel` 中 Telegram channel 的能力：基于 Bot API `getUpdates` 的 long polling、文本/多媒体入站、统一会话命令、Telegram HTML 渲染、以及 inline keyboard 审批回调。
+本文档记录 `klaw-channel` 中 Telegram channel 的能力：基于 Bot API `getUpdates` 的 long polling、文本/多媒体入站、统一会话命令、Telegram HTML 渲染、以及基于共享 IM 卡片模型映射出的 inline keyboard 审批回调。
 
 ## 实现位置
 
@@ -58,5 +58,6 @@ url = "http://127.0.0.1:8888"
 - 渠道会将 `ChannelResponse` 渲染为 Telegram `HTML` 文本，并通过 `sendMessage` 直接回复当前 chat
 - Telegram 渲染层会把常见 Markdown 映射为 Bot API 支持的 HTML：标题、粗体/斜体/下划线/删除线、引用块、列表、行内代码、fenced code block、链接、剧透
 - 继续使用 Telegram `HTML` parse mode，而不是直接把原始 markdown 作为 `MarkdownV2` 发出；这样可以避免 Telegram `MarkdownV2` 在普通文本、链接、代码块场景下大量上下文相关转义带来的错乱
-- 当响应包含 `approval_id` 时，会自动发送带 `Approve` / `Reject` inline keyboard 的审批消息
+- 当响应能解析出共享审批卡片时，会自动发送带 `Approve` / `Reject` inline keyboard 的审批消息
+- 审批卡片优先读取 `metadata["im.card"]`；若上游仍只提供旧字段，Telegram 会兼容 `approval.id`、`approval.signal.approval_id`，以及正文中的 `approval_id=...` / 自然语言审批 ID 回退
 - 仍未实现 Telegram 专属异步 outbound dispatcher；当前仍以“入站请求即时回复”为主

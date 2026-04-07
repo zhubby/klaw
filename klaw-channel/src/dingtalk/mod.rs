@@ -11,9 +11,9 @@ use self::client::DingtalkApiClient;
 use self::config::resolve_local_attachment_policy;
 pub use self::config::{DingtalkChannelConfig, DingtalkProxyConfig};
 use self::parsing::{
-    EventDeduper, InboundEvent, StreamEnvelope, build_approval_action_card_body,
-    extract_approval_id_for_action_card, is_sender_allowed, parse_card_callback_event,
-    parse_inbound_event, parse_stream_data, resolve_download_code_candidates,
+    EventDeduper, InboundEvent, StreamEnvelope, build_im_card_action_buttons,
+    build_im_card_action_card_body, is_sender_allowed, parse_card_callback_event,
+    parse_inbound_event, parse_stream_data, resolve_channel_card, resolve_download_code_candidates,
 };
 use crate::{
     Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, LocalAttachmentPolicy,
@@ -502,11 +502,11 @@ impl DingtalkChannel {
         debug!(payload = ?payload, "received dingtalk raw subscription event");
 
         if let Some(card_callback) = parse_card_callback_event(&payload) {
-            if let Some(event_id) = card_callback.event_id.as_deref() {
-                if !self.event_deduper.insert_if_new(event_id) {
-                    debug!(event_id, "ignoring duplicated dingtalk card callback");
-                    return send_ack(ws, envelope, "").await;
-                }
+            if let Some(event_id) = card_callback.event_id.as_deref()
+                && !self.event_deduper.insert_if_new(event_id)
+            {
+                debug!(event_id, "ignoring duplicated dingtalk card callback");
+                return send_ack(ws, envelope, "").await;
             }
 
             if !is_sender_allowed(&self.config.allowlist, &card_callback.sender_id) {
@@ -517,11 +517,10 @@ impl DingtalkChannel {
                 return send_ack(ws, envelope, "").await;
             }
 
-            let command = format!(
-                "/{} {}",
-                card_callback.action.as_command(),
-                card_callback.approval_id
-            );
+            let Some(verb) = card_callback.action.approval_verb() else {
+                return send_ack(ws, envelope, "").await;
+            };
+            let command = format!("/{verb} {}", card_callback.approval_id);
             let session_key = format!(
                 "dingtalk:{}:{}",
                 self.config.account_id, card_callback.chat_id
@@ -628,23 +627,23 @@ impl DingtalkChannel {
 
         match maybe_output {
             Ok(Some(output)) => {
-                if let Some(approval_id) = extract_approval_id_for_action_card(&output) {
-                    let body = build_approval_action_card_body(&output, &approval_id);
+                if let Some(card) = resolve_channel_card(&output) {
+                    let body = build_im_card_action_card_body(&card);
+                    let buttons = build_im_card_action_buttons(&card);
                     if let Err(err) = self
                         .client
-                        .send_session_webhook_action_card(
+                        .send_session_webhook_generic_action_card(
                             &inbound.session_webhook,
-                            "审批请求",
+                            card.title_or("卡片消息"),
                             &body,
-                            &approval_id,
+                            &buttons,
                         )
                         .await
                     {
                         warn!(
                             chat_id = inbound.chat_id.as_str(),
-                            approval_id = approval_id.as_str(),
                             error = %err,
-                            "failed to send dingtalk approval action card; fallback to markdown"
+                            "failed to send dingtalk action card; fallback to markdown"
                         );
                         let markdown = render_agent_output(
                             &output,
@@ -673,8 +672,8 @@ impl DingtalkChannel {
                         self.config.show_reasoning,
                         OutputRenderStyle::Markdown,
                     );
-                    if !body.trim().is_empty() {
-                        if let Err(err) = self
+                    if !body.trim().is_empty()
+                        && let Err(err) = self
                             .client
                             .send_session_webhook_markdown(
                                 &inbound.session_webhook,
@@ -682,13 +681,12 @@ impl DingtalkChannel {
                                 &body,
                             )
                             .await
-                        {
-                            warn!(
-                                chat_id = inbound.chat_id.as_str(),
-                                error = %err,
-                                "failed to send dingtalk reply"
-                            );
-                        }
+                    {
+                        warn!(
+                            chat_id = inbound.chat_id.as_str(),
+                            error = %err,
+                            "failed to send dingtalk reply"
+                        );
                     }
                     self.send_attachments(&inbound.session_webhook, &inbound.chat_id, &output);
                 }

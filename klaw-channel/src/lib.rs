@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 pub mod dingtalk;
+pub mod im_card;
 pub mod manager;
 pub mod media;
 pub mod outbound;

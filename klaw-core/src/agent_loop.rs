@@ -37,6 +37,7 @@ const META_AGENT_DISPOSITION_KEY: &str = "agent.disposition";
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 const META_LLM_USAGE_RECORDS_KEY: &str = "llm.usage.records";
 const META_LLM_AUDIT_RECORDS_KEY: &str = "llm.audit.records";
+const META_IM_CARD_KEY: &str = "im.card";
 const TOOL_RESULT_LOG_LIMIT: usize = 4000;
 const STOP_SIGNAL: &str = "stop";
 
@@ -352,6 +353,46 @@ fn disposition_metadata_token(disposition: AgentExecutionDisposition) -> &'stati
         AgentExecutionDisposition::ApprovalRequired => "approval_required",
         AgentExecutionDisposition::Stopped => "stopped",
     }
+}
+
+fn approval_im_card_metadata(
+    approval_payload: &serde_json::Value,
+    fallback_body: &str,
+) -> Option<serde_json::Value> {
+    let approval_id = approval_payload
+        .get("approval_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    let mut metadata = serde_json::Map::new();
+    metadata.insert(
+        "approval_id".to_string(),
+        serde_json::Value::String(approval_id.to_string()),
+    );
+    for key in ["command_preview", "tool_name", "session_key", "risk_level"] {
+        if let Some(value) = approval_payload.get(key).cloned() {
+            metadata.insert(key.to_string(), value);
+        }
+    }
+
+    Some(serde_json::json!({
+        "kind": "approval",
+        "title": "Approval Required",
+        "body": fallback_body.trim(),
+        "actions": [
+            {
+                "kind": "approve",
+                "value": approval_id,
+            },
+            {
+                "kind": "reject",
+                "value": approval_id,
+            }
+        ],
+        "fallback_text": fallback_body.trim(),
+        "metadata": metadata,
+    }))
 }
 
 async fn record_model_requests(
@@ -917,6 +958,14 @@ impl AgentLoop {
                         serde_json::to_value(&output.tool_signals)
                             .unwrap_or(serde_json::Value::Null),
                     );
+                    if let Some(im_card_signal) = output
+                        .tool_signals
+                        .iter()
+                        .find(|signal| signal.kind == "im_card")
+                    {
+                        response_metadata
+                            .insert(META_IM_CARD_KEY.to_string(), im_card_signal.payload.clone());
+                    }
                     if let Some(approval_required) = output
                         .tool_signals
                         .iter()
@@ -930,6 +979,14 @@ impl AgentLoop {
                             "approval.signal".to_string(),
                             approval_required.payload.clone(),
                         );
+                        if !response_metadata.contains_key(META_IM_CARD_KEY)
+                            && let Some(im_card) = approval_im_card_metadata(
+                                &approval_required.payload,
+                                &output.content,
+                            )
+                        {
+                            response_metadata.insert(META_IM_CARD_KEY.to_string(), im_card);
+                        }
                         if let Some(approval_id) = approval_required
                             .payload
                             .get("approval_id")
@@ -1735,9 +1792,10 @@ fn augment_user_content_with_attachment_context(
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentLoop, META_LLM_AUDIT_RECORDS_KEY, META_MODEL_KEY, META_PROVIDER_KEY, QueueStrategy,
-        RunLimits, SessionSchedulingPolicy, augment_user_content_with_attachment_context,
-        current_attachment_contexts, heartbeat_response_metadata,
+        AgentLoop, META_IM_CARD_KEY, META_LLM_AUDIT_RECORDS_KEY, META_MODEL_KEY, META_PROVIDER_KEY,
+        QueueStrategy, RunLimits, SessionSchedulingPolicy,
+        augment_user_content_with_attachment_context, current_attachment_contexts,
+        heartbeat_response_metadata,
     };
     use crate::{
         domain::InboundMessage,
@@ -1898,9 +1956,24 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
     struct ToolCallingProvider {
         call_count: Arc<Mutex<u32>>,
+        tool_name: &'static str,
+        final_content: &'static str,
+    }
+
+    impl ToolCallingProvider {
+        fn default() -> Self {
+            Self::for_tool("mock_approval", "approval requested")
+        }
+
+        fn for_tool(tool_name: &'static str, final_content: &'static str) -> Self {
+            Self {
+                call_count: Arc::new(Mutex::new(0)),
+                tool_name,
+                final_content,
+            }
+        }
     }
 
     #[async_trait]
@@ -1928,7 +2001,7 @@ mod tests {
                     reasoning: None,
                     tool_calls: vec![klaw_llm::ToolCall {
                         id: Some("call_approval_1".to_string()),
-                        name: "mock_approval".to_string(),
+                        name: self.tool_name.to_string(),
                         arguments: json!({}),
                     }],
                     usage: None,
@@ -1937,7 +2010,7 @@ mod tests {
                 });
             }
             Ok(LlmResponse {
-                content: "approval requested".to_string(),
+                content: self.final_content.to_string(),
                 reasoning: None,
                 tool_calls: Vec::new(),
                 usage: None,
@@ -1948,6 +2021,8 @@ mod tests {
     }
 
     struct MockApprovalTool;
+
+    struct MockQuestionCardTool;
 
     struct MockStopTool;
 
@@ -1991,6 +2066,56 @@ mod tests {
                     None,
                 )],
             ))
+        }
+    }
+
+    #[async_trait]
+    impl Tool for MockQuestionCardTool {
+        fn name(&self) -> &str {
+            "mock_question_card"
+        }
+
+        fn description(&self) -> &str {
+            "mock question card tool"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            json!({"type":"object"})
+        }
+
+        fn category(&self) -> ToolCategory {
+            ToolCategory::Messaging
+        }
+
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput {
+                content_for_model: "question card emitted".to_string(),
+                content_for_user: None,
+                signals: vec![klaw_tool::ToolSignal::im_card(json!({
+                    "kind": "question_single_select",
+                    "title": "Choose a provider",
+                    "body": "Which provider should I use next?",
+                    "actions": [
+                        {
+                            "kind": "submit_command",
+                            "label": "OpenAI",
+                            "command": "/card_answer provider openai"
+                        },
+                        {
+                            "kind": "submit_command",
+                            "label": "Anthropic",
+                            "command": "/card_answer provider anthropic"
+                        }
+                    ],
+                    "metadata": {
+                        "question_id": "provider"
+                    }
+                }))],
+            })
         }
     }
 
@@ -2405,6 +2530,109 @@ mod tests {
                 .get("approval.id")
                 .and_then(serde_json::Value::as_str),
             Some("approval-core-test")
+        );
+        let im_card = response
+            .payload
+            .metadata
+            .get(META_IM_CARD_KEY)
+            .expect("im.card should exist");
+        assert_eq!(
+            im_card.get("kind").and_then(serde_json::Value::as_str),
+            Some("approval")
+        );
+        assert_eq!(
+            im_card.get("title").and_then(serde_json::Value::as_str),
+            Some("Approval Required")
+        );
+        assert_eq!(
+            im_card.get("body").and_then(serde_json::Value::as_str),
+            Some("approval requested")
+        );
+        assert_eq!(
+            im_card
+                .get("metadata")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|metadata| metadata.get("approval_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("approval-core-test")
+        );
+        let actions = im_card
+            .get("actions")
+            .and_then(serde_json::Value::as_array)
+            .expect("im.card actions should be array");
+        assert_eq!(actions.len(), 2);
+        assert_eq!(
+            actions[0].get("kind").and_then(serde_json::Value::as_str),
+            Some("approve")
+        );
+        assert_eq!(
+            actions[1].get("kind").and_then(serde_json::Value::as_str),
+            Some("reject")
+        );
+    }
+
+    #[tokio::test]
+    async fn process_message_propagates_generic_im_card_signal_to_outbound_metadata() {
+        let provider = Arc::new(ToolCallingProvider::for_tool(
+            "mock_question_card",
+            "question card emitted",
+        )) as Arc<dyn LlmProvider>;
+        let mut tools = ToolRegistry::default();
+        tools.register(MockQuestionCardTool);
+        let agent = AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 2,
+                max_tool_calls: 2,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(1),
+                tool_timeout: Duration::from_secs(1),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 1,
+                lock_ttl: Duration::from_secs(1),
+            },
+            Arc::clone(&provider),
+            "tool-calling".to_string(),
+            "tool-calling-v1".to_string(),
+            tools,
+        )
+        .with_provider_registry(BTreeMap::from([("tool-calling".to_string(), provider)]));
+
+        let inbound = crate::protocol::Envelope {
+            header: EnvelopeHeader::new("im:chat-question"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "im".to_string(),
+                sender_id: "u1".to_string(),
+                chat_id: "chat-question".to_string(),
+                session_key: "im:chat-question".to_string(),
+                content: "ask a question".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        };
+        let outcome = agent.process_message(inbound, false).await;
+        let response = outcome.final_response.expect("response should be present");
+        let im_card = response
+            .payload
+            .metadata
+            .get(META_IM_CARD_KEY)
+            .expect("im.card should exist");
+        assert_eq!(
+            im_card.get("kind").and_then(serde_json::Value::as_str),
+            Some("question_single_select")
+        );
+        assert_eq!(
+            im_card.get("title").and_then(serde_json::Value::as_str),
+            Some("Choose a provider")
+        );
+        assert_eq!(
+            im_card
+                .get("actions")
+                .and_then(serde_json::Value::as_array)
+                .map(|actions| actions.len()),
+            Some(2)
         );
     }
 
