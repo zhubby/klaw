@@ -693,6 +693,7 @@ impl MemoryPanel {
         egui::ScrollArea::vertical()
             .max_height(LONG_TERM_TABLE_HEIGHT)
             .show(ui, |ui| {
+                let row_height = ui.spacing().interact_size.y;
                 TableBuilder::new(ui)
                     .striped(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -703,7 +704,7 @@ impl MemoryPanel {
                     .column(Column::auto().at_least(60.0))
                     .column(Column::remainder().at_least(180.0))
                     .column(Column::auto().at_least(170.0))
-                    .header(22.0, |mut header| {
+                    .header(row_height, |mut header| {
                         header.col(|ui| {
                             ui.strong("Status");
                         });
@@ -724,7 +725,7 @@ impl MemoryPanel {
                         });
                     })
                     .body(|body| {
-                        body.rows(28.0, filtered.len(), |mut row| {
+                        body.rows(row_height, filtered.len(), |mut row| {
                             let record = filtered[row.index()];
                             let is_selected =
                                 self.selected_long_term_id.as_deref() == Some(record.id.as_str());
@@ -887,6 +888,7 @@ impl MemoryPanel {
         egui::ScrollArea::vertical()
             .max_height(SESSION_RESULTS_HEIGHT)
             .show(ui, |ui| {
+                let row_height = ui.spacing().interact_size.y;
                 TableBuilder::new(ui)
                     .striped(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -895,7 +897,7 @@ impl MemoryPanel {
                     .column(Column::auto().at_least(80.0))
                     .column(Column::remainder().at_least(360.0))
                     .column(Column::auto().at_least(80.0))
-                    .header(22.0, |mut header| {
+                    .header(row_height, |mut header| {
                         header.col(|ui| {
                             ui.strong("Session");
                         });
@@ -913,7 +915,7 @@ impl MemoryPanel {
                         });
                     })
                     .body(|body| {
-                        body.rows(28.0, result.hits.len(), |mut row| {
+                        body.rows(row_height, result.hits.len(), |mut row| {
                             let hit = &result.hits[row.index()];
                             row.col(|ui| {
                                 ui.monospace(&hit.session_key);
@@ -949,12 +951,13 @@ impl MemoryPanel {
         egui::ScrollArea::vertical()
             .max_height(DIAGNOSTICS_SCOPES_HEIGHT)
             .show(ui, |ui| {
+                let row_height = ui.spacing().interact_size.y;
                 TableBuilder::new(ui)
                     .striped(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::remainder().at_least(320.0))
                     .column(Column::auto().at_least(80.0))
-                    .header(20.0, |mut header| {
+                    .header(row_height, |mut header| {
                         header.col(|ui| {
                             ui.strong("Scope");
                         });
@@ -963,7 +966,7 @@ impl MemoryPanel {
                         });
                     })
                     .body(|body| {
-                        body.rows(22.0, overview.stats.top_scopes.len(), |mut row| {
+                        body.rows(row_height, overview.stats.top_scopes.len(), |mut row| {
                             let scope = &overview.stats.top_scopes[row.index()];
                             row.col(|ui| {
                                 ui.label(&scope.scope);
