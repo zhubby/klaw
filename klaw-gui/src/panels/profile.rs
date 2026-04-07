@@ -5,12 +5,8 @@ use crate::widgets::markdown;
 use egui::{Color32, RichText};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
-use klaw_config::{AppConfig, ConfigStore};
 use klaw_core::{SkillPromptEntry, build_runtime_system_prompt};
-use klaw_skill::{
-    FileSystemSkillStore, InstalledSkill, RegistrySource, ReqwestSkillFetcher, SkillSourceKind,
-    SkillsManager, open_default_skills_manager,
-};
+use klaw_skill::{SkillSourceKind, SkillsManager, open_default_skills_manager};
 use klaw_util::default_workspace_dir;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -65,12 +61,6 @@ enum DefaultResetTarget {
     File(PathBuf),
 }
 
-#[derive(Debug, Clone, Default)]
-struct SystemPromptPreviewSyncResult {
-    refreshed_preview: Option<String>,
-    warning: Option<String>,
-}
-
 #[derive(Debug, Clone)]
 struct PendingDefaultReset {
     file_name: String,
@@ -86,8 +76,6 @@ pub struct ProfilePanel {
     system_prompt_preview_cache: markdown::MarkdownCache,
     system_prompt_preview_loading: bool,
     system_prompt_preview_rx: Option<Receiver<String>>,
-    system_prompt_preview_syncing: bool,
-    system_prompt_preview_sync_rx: Option<Receiver<SystemPromptPreviewSyncResult>>,
     editor: Option<WorkspaceMarkdownEditor>,
     preview: Option<WorkspaceMarkdownPreview>,
     preview_cache: markdown::MarkdownCache,
@@ -125,11 +113,6 @@ impl ProfilePanel {
     }
 
     fn refresh_system_prompt_preview(&mut self) {
-        self.start_system_prompt_preview_load();
-        self.start_system_prompt_preview_sync();
-    }
-
-    fn start_system_prompt_preview_load(&mut self) {
         let (tx, rx) = mpsc::channel();
         self.system_prompt_preview_loading = true;
         self.system_prompt_preview_rx = Some(rx);
@@ -138,15 +121,6 @@ impl ProfilePanel {
         }
         thread::spawn(move || {
             let _ = tx.send(load_system_prompt_preview());
-        });
-    }
-
-    fn start_system_prompt_preview_sync(&mut self) {
-        let (tx, rx) = mpsc::channel();
-        self.system_prompt_preview_syncing = true;
-        self.system_prompt_preview_sync_rx = Some(rx);
-        thread::spawn(move || {
-            let _ = tx.send(sync_system_prompt_preview());
         });
     }
 
@@ -168,30 +142,6 @@ impl ProfilePanel {
                     "# System Prompt Preview Unavailable\n\nBackground preview task disconnected."
                         .to_string();
                 notifications.warning("System prompt preview loader disconnected");
-            }
-        }
-    }
-
-    fn poll_system_prompt_preview_sync(&mut self, notifications: &mut NotificationCenter) {
-        let Some(rx) = self.system_prompt_preview_sync_rx.take() else {
-            return;
-        };
-        match rx.try_recv() {
-            Ok(result) => {
-                if let Some(preview) = result.refreshed_preview {
-                    self.system_prompt_preview = preview;
-                }
-                if let Some(warning) = result.warning {
-                    notifications.warning(warning);
-                }
-                self.system_prompt_preview_syncing = false;
-            }
-            Err(mpsc::TryRecvError::Empty) => {
-                self.system_prompt_preview_sync_rx = Some(rx);
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.system_prompt_preview_syncing = false;
-                notifications.warning("System prompt preview skill sync task disconnected");
             }
         }
     }
@@ -404,10 +354,7 @@ impl ProfilePanel {
                 ui.strong("System Prompt Preview");
                 if self.system_prompt_preview_loading {
                     ui.add(egui::Spinner::new());
-                    ui.small("Loading preview...");
-                } else if self.system_prompt_preview_syncing {
-                    ui.add(egui::Spinner::new());
-                    ui.small("Syncing skills...");
+                    ui.small("Loading...");
                 }
             });
             ui.small("Rendered from current workspace prompt docs and installed skills.");
@@ -825,8 +772,7 @@ impl PanelRenderer for ProfilePanel {
     ) {
         self.ensure_loaded(notifications);
         self.poll_system_prompt_preview(notifications);
-        self.poll_system_prompt_preview_sync(notifications);
-        if self.system_prompt_preview_loading || self.system_prompt_preview_syncing {
+        if self.system_prompt_preview_loading {
             ui.ctx().request_repaint_after(PREVIEW_POLL_INTERVAL);
         }
 
@@ -1008,57 +954,14 @@ fn format_modified_time(value: Option<std::time::SystemTime>) -> String {
 }
 
 fn load_system_prompt_preview() -> String {
-    let config = match load_system_prompt_preview_config() {
-        Ok(config) => config,
-        Err(message) => return message,
-    };
-    build_system_prompt_preview(&config)
-}
-
-fn load_system_prompt_preview_config() -> Result<AppConfig, String> {
-    ConfigStore::open(None)
-        .map(|store| store.snapshot().config)
-        .map_err(|err| {
-            format!("# System Prompt Preview Unavailable\n\nFailed to load config.toml: {err}")
-        })
-}
-
-fn build_system_prompt_preview(config: &AppConfig) -> String {
-    let skills = load_runtime_skill_prompt_entries(config).unwrap_or_default();
+    let skills = load_runtime_skill_prompt_entries().unwrap_or_default();
     build_runtime_system_prompt(skills).unwrap_or_else(|| {
         "# System Prompt Preview Unavailable\n\nFailed to assemble the runtime system prompt."
             .to_string()
     })
 }
 
-fn sync_system_prompt_preview() -> SystemPromptPreviewSyncResult {
-    let config = match load_system_prompt_preview_config() {
-        Ok(config) => config,
-        Err(err) => {
-            return SystemPromptPreviewSyncResult {
-                warning: Some(err.replace(
-                    "# System Prompt Preview Unavailable\n\n",
-                    "System prompt preview sync skipped: ",
-                )),
-                ..SystemPromptPreviewSyncResult::default()
-            };
-        }
-    };
-    match sync_registry_installed_skills(&config) {
-        Ok(()) => SystemPromptPreviewSyncResult {
-            refreshed_preview: Some(build_system_prompt_preview(&config)),
-            warning: None,
-        },
-        Err(err) => SystemPromptPreviewSyncResult {
-            refreshed_preview: None,
-            warning: Some(format!(
-                "System prompt preview skills sync failed; showing cached preview: {err}"
-            )),
-        },
-    }
-}
-
-fn load_runtime_skill_prompt_entries(_config: &AppConfig) -> Result<Vec<SkillPromptEntry>, String> {
+fn load_runtime_skill_prompt_entries() -> Result<Vec<SkillPromptEntry>, String> {
     let store = open_default_skills_manager()
         .map_err(|err| format!("failed to open skills manager: {err}"))?;
     let runtime = Builder::new_current_thread()
@@ -1084,50 +987,6 @@ fn load_runtime_skill_prompt_entries(_config: &AppConfig) -> Result<Vec<SkillPro
             })
             .collect())
     })
-}
-
-fn sync_registry_installed_skills(config: &AppConfig) -> Result<(), String> {
-    let store = open_default_skills_manager()
-        .map_err(|err| format!("failed to open skills manager: {err}"))?;
-    let runtime = Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to build runtime: {err}"))?;
-    let config = config.clone();
-    runtime
-        .block_on(async move { sync_registry_installed_skills_in_runtime(&store, &config).await })
-}
-
-async fn sync_registry_installed_skills_in_runtime(
-    store: &FileSystemSkillStore<ReqwestSkillFetcher>,
-    config: &AppConfig,
-) -> Result<(), String> {
-    let sources: Vec<RegistrySource> = config
-        .skills
-        .registries
-        .iter()
-        .map(|(name, registry)| RegistrySource {
-            name: name.clone(),
-            address: registry.address.clone(),
-        })
-        .collect();
-    let installed: Vec<InstalledSkill> = config
-        .skills
-        .registries
-        .iter()
-        .flat_map(|(registry_name, registry)| {
-            registry.installed.iter().map(|skill_name| InstalledSkill {
-                registry: registry_name.clone(),
-                name: skill_name.clone(),
-            })
-        })
-        .collect();
-
-    store
-        .sync_registry_installed_skills(&sources, &installed, config.skills.sync_timeout)
-        .await
-        .map(|_| ())
-        .map_err(|err| format!("failed to sync installed skills: {err}"))
 }
 
 fn extract_skill_short_description(markdown: &str) -> String {
@@ -1433,54 +1292,6 @@ mod tests {
 
         assert_eq!(interaction.selected_doc, None);
         assert!(!interaction.open_preview);
-    }
-
-    #[test]
-    fn poll_system_prompt_preview_sync_applies_refreshed_preview() {
-        let (tx, rx) = mpsc::channel();
-        tx.send(SystemPromptPreviewSyncResult {
-            refreshed_preview: Some("new preview".to_string()),
-            warning: None,
-        })
-        .expect("sync result should send");
-
-        let mut panel = ProfilePanel {
-            system_prompt_preview: "old preview".to_string(),
-            system_prompt_preview_syncing: true,
-            system_prompt_preview_sync_rx: Some(rx),
-            ..ProfilePanel::default()
-        };
-        let mut notifications = NotificationCenter::default();
-
-        panel.poll_system_prompt_preview_sync(&mut notifications);
-
-        assert_eq!(panel.system_prompt_preview, "new preview");
-        assert!(!panel.system_prompt_preview_syncing);
-        assert!(panel.system_prompt_preview_sync_rx.is_none());
-    }
-
-    #[test]
-    fn poll_system_prompt_preview_sync_keeps_existing_preview_on_warning() {
-        let (tx, rx) = mpsc::channel();
-        tx.send(SystemPromptPreviewSyncResult {
-            refreshed_preview: None,
-            warning: Some("sync failed".to_string()),
-        })
-        .expect("sync result should send");
-
-        let mut panel = ProfilePanel {
-            system_prompt_preview: "cached preview".to_string(),
-            system_prompt_preview_syncing: true,
-            system_prompt_preview_sync_rx: Some(rx),
-            ..ProfilePanel::default()
-        };
-        let mut notifications = NotificationCenter::default();
-
-        panel.poll_system_prompt_preview_sync(&mut notifications);
-
-        assert_eq!(panel.system_prompt_preview, "cached preview");
-        assert!(!panel.system_prompt_preview_syncing);
-        assert!(panel.system_prompt_preview_sync_rx.is_none());
     }
 }
 
