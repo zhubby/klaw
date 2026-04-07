@@ -1,7 +1,7 @@
 pub mod apply_patch;
-pub mod ask_question;
 pub mod approval;
 pub mod archive;
+pub mod ask_question;
 pub mod channel_attachment;
 pub mod cron_manager;
 pub mod geo;
@@ -24,9 +24,9 @@ use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
 pub use apply_patch::ApplyPatchTool;
-pub use ask_question::{AskQuestionRecord, AskQuestionTool, SqliteAskQuestionManager};
 pub use approval::ApprovalTool;
 pub use archive::ArchiveTool;
+pub use ask_question::{AskQuestionRecord, AskQuestionTool, SqliteAskQuestionManager};
 pub use channel_attachment::ChannelAttachmentTool;
 pub use cron_manager::CronManagerTool;
 pub use geo::GeoTool;

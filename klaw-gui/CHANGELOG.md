@@ -6,6 +6,11 @@
 
 - `Tools` 面板现在支持显示和切换 `ask_question` 工具开关，使交互式单选提问卡片能力可通过 GUI 配置启停
 
+### Fixed
+
+- `Profile Prompt` 面板的 `System Prompt Preview` 现在会先基于本地已缓存的 workspace prompt docs 和已安装 skills 立即生成预览，不再等待 skills registry 同步完成
+- `Profile Prompt` 面板的 skills registry 同步改为独立后台刷新流程；同步失败时会保留当前 cached preview，而不是让预览长时间停留在 `Loading...`
+
 ## 2026-04-02
 
 ### Added
