@@ -1,4 +1,5 @@
 pub mod apply_patch;
+pub mod ask_question;
 pub mod approval;
 pub mod archive;
 pub mod channel_attachment;
@@ -23,6 +24,7 @@ use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
 pub use apply_patch::ApplyPatchTool;
+pub use ask_question::{AskQuestionRecord, AskQuestionTool, SqliteAskQuestionManager};
 pub use approval::ApprovalTool;
 pub use archive::ArchiveTool;
 pub use channel_attachment::ChannelAttachmentTool;

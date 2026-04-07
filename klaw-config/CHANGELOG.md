@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-07
+
+### Added
+
+- 新增 `tools.ask_question.enabled` 配置项，默认开启，用于控制 `ask_question` 交互提问工具是否向 runtime 暴露
+
 ## 2026-03-30
 
 ### Added

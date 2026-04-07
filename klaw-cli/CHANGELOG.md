@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-07
+
+### Added
+
+- runtime IM commands now support `/card_answer <question_id> <option_id>`, which resolves persisted `ask_question` selections and resumes the original conversation turn with structured answer metadata
+
 ## 2026-04-06
 
 ### Fixed

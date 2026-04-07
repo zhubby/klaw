@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-07
+
+### Added
+- added persisted `pending_questions` models and `SessionStorage` APIs in both SQLx and Turso backends so interactive IM question cards can survive asynchronous user replies
+- added `PendingQuestionStatus` tracking plus answer/update fields (`selected_option_id`, `answered_by`, `answered_at_ms`) for resumable single-select user interactions
+
 ## 2026-04-02
 
 ### Added

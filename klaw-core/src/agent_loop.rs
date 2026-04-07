@@ -2095,26 +2095,32 @@ mod tests {
             Ok(ToolOutput {
                 content_for_model: "question card emitted".to_string(),
                 content_for_user: None,
-                signals: vec![klaw_tool::ToolSignal::im_card(json!({
-                    "kind": "question_single_select",
-                    "title": "Choose a provider",
-                    "body": "Which provider should I use next?",
-                    "actions": [
-                        {
-                            "kind": "submit_command",
-                            "label": "OpenAI",
-                            "command": "/card_answer provider openai"
-                        },
-                        {
-                            "kind": "submit_command",
-                            "label": "Anthropic",
-                            "command": "/card_answer provider anthropic"
+                signals: vec![
+                    klaw_tool::ToolSignal::im_card(json!({
+                        "kind": "question_single_select",
+                        "title": "Choose a provider",
+                        "body": "Which provider should I use next?",
+                        "actions": [
+                            {
+                                "kind": "submit_command",
+                                "label": "OpenAI",
+                                "command": "/card_answer provider openai"
+                            },
+                            {
+                                "kind": "submit_command",
+                                "label": "Anthropic",
+                                "command": "/card_answer provider anthropic"
+                            }
+                        ],
+                        "metadata": {
+                            "question_id": "provider"
                         }
-                    ],
-                    "metadata": {
-                        "question_id": "provider"
-                    }
-                }))],
+                    })),
+                    klaw_tool::ToolSignal::stop_current_turn(
+                        Some("awaiting ask_question user selection"),
+                        Some("mock_question_card"),
+                    ),
+                ],
             })
         }
     }
@@ -2572,7 +2578,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_message_propagates_generic_im_card_signal_to_outbound_metadata() {
+    async fn process_message_propagates_generic_im_card_and_stop_signals_to_outbound_metadata() {
         let provider = Arc::new(ToolCallingProvider::for_tool(
             "mock_question_card",
             "question card emitted",
@@ -2633,6 +2639,19 @@ mod tests {
                 .and_then(serde_json::Value::as_array)
                 .map(|actions| actions.len()),
             Some(2)
+        );
+        assert_eq!(
+            response.payload.metadata.get("turn.stopped"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            response
+                .payload
+                .metadata
+                .get("turn.stop_signal")
+                .and_then(|value| value.get("source"))
+                .and_then(serde_json::Value::as_str),
+            Some("mock_question_card")
         );
     }
 

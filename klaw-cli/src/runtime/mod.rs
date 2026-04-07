@@ -46,10 +46,11 @@ use klaw_skill::{
 };
 use klaw_storage::{DefaultSessionStore, MemoryDb, open_default_memory_db, open_default_store};
 use klaw_tool::{
-    ApplyPatchTool, ApprovalTool, ArchiveTool, ChannelAttachmentTool, CronManagerTool, GeoTool,
-    HeartbeatManagerTool, LocalSearchTool, MemoryTool, ShellTool, SkillsManagerTool,
-    SkillsRegistryTool, SubAgentAuditSink, SubAgentTool, TerminalMultiplexerTool, ToolContext,
-    ToolRegistry, VoiceTool, WebFetchTool, WebSearchTool,
+    ApplyPatchTool, ApprovalTool, ArchiveTool, AskQuestionTool, ChannelAttachmentTool,
+    CronManagerTool, GeoTool, HeartbeatManagerTool, LocalSearchTool, MemoryTool, ShellTool,
+    SkillsManagerTool, SkillsRegistryTool, SqliteAskQuestionManager, SubAgentAuditSink,
+    SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool, WebFetchTool,
+    WebSearchTool,
 };
 use klaw_util::EnvironmentCheckReport;
 use serde_json::{Value, json};
@@ -412,6 +413,12 @@ fn parse_im_command(input: &str) -> Option<(&str, Option<&str>)> {
 
 fn first_arg_token(arg: Option<&str>) -> Option<&str> {
     arg.and_then(|raw| raw.split_whitespace().next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn second_arg_token(arg: Option<&str>) -> Option<&str> {
+    arg.and_then(|raw| raw.split_whitespace().nth(1))
         .map(str::trim)
         .filter(|value| !value.is_empty())
 }
@@ -891,6 +898,26 @@ fn build_approved_shell_followup_request_metadata(
     metadata
 }
 
+fn build_ask_question_followup_request_metadata(
+    request_metadata: &BTreeMap<String, Value>,
+    question_id: &str,
+    question_text: &str,
+    selected_option_id: &str,
+    selected_option_label: &str,
+) -> BTreeMap<String, Value> {
+    let mut metadata = inherited_channel_runtime_metadata(request_metadata);
+    metadata.insert(
+        "ask_question.answer".to_string(),
+        json!({
+            "question_id": question_id,
+            "question": question_text,
+            "selected_option_id": selected_option_id,
+            "selected_option_label": selected_option_label,
+        }),
+    );
+    metadata
+}
+
 fn format_new_session_started_message(
     session_key: &str,
     provider: &str,
@@ -1167,6 +1194,9 @@ async fn register_configured_tools(
             SqliteApprovalManager::from_store(session_store.clone()),
         ));
     }
+    if config.tools.ask_question.enabled() {
+        tools.register(AskQuestionTool::with_store(config, session_store.clone()));
+    }
     if config.tools.geo.enabled() {
         tools.register(GeoTool::new());
     }
@@ -1404,6 +1434,10 @@ fn stopped_turn_metadata(reason: &str, source: &str) -> BTreeMap<String, serde_j
 
 fn approval_manager(runtime: &RuntimeBundle) -> SqliteApprovalManager {
     SqliteApprovalManager::from_store(runtime.session_store.clone())
+}
+
+fn ask_question_manager(runtime: &RuntimeBundle) -> SqliteAskQuestionManager {
+    SqliteAskQuestionManager::from_store(runtime.session_store.clone())
 }
 
 fn session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {
@@ -1991,6 +2025,124 @@ async fn handle_im_command(
                         "ℹ️ Approval `{approval_id}` is already `{}`.",
                         other.as_str()
                     ),
+                    None,
+                    BTreeMap::new(),
+                ),
+            }
+        }
+        "card_answer" => {
+            let Some(question_id) = first_arg_token(arg) else {
+                return Ok(Some(channel_response(
+                    "❌ Usage: `/card_answer <question_id> <option_id>`".to_string(),
+                    None,
+                    BTreeMap::new(),
+                )));
+            };
+            let Some(option_id) = second_arg_token(arg) else {
+                return Ok(Some(channel_response(
+                    "❌ Usage: `/card_answer <question_id> <option_id>`".to_string(),
+                    None,
+                    BTreeMap::new(),
+                )));
+            };
+            let manager = ask_question_manager(runtime);
+            let question = match manager.get_question(question_id).await {
+                Ok(question) => question,
+                Err(_) => {
+                    return Ok(Some(channel_response(
+                        format!("❌ Question not found: `{question_id}`"),
+                        None,
+                        BTreeMap::new(),
+                    )));
+                }
+            };
+            if question.session_key != route.active_session_key && question.session_key != base_session_key
+            {
+                return Ok(Some(channel_response(
+                    format!("❌ Question `{question_id}` does not belong to current session."),
+                    None,
+                    BTreeMap::new(),
+                )));
+            }
+            let outcome = manager
+                .answer_question(question_id, option_id, Some("channel-user"), now_ms())
+                .await;
+            let outcome = match outcome {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    return Ok(Some(channel_response(
+                        format!("❌ Failed to record answer: {err}"),
+                        None,
+                        BTreeMap::new(),
+                    )));
+                }
+            };
+            if !outcome.updated {
+                let response = match outcome.question.status {
+                    klaw_storage::PendingQuestionStatus::Answered => {
+                        let selected_label = outcome
+                            .question
+                            .selected_option()
+                            .map(|option| option.label.as_str())
+                            .unwrap_or("unknown");
+                        channel_response(
+                            format!(
+                                "ℹ️ Question `{question_id}` was already answered with `{selected_label}`."
+                            ),
+                            None,
+                            BTreeMap::new(),
+                        )
+                    }
+                    klaw_storage::PendingQuestionStatus::Expired => channel_response(
+                        format!("⌛ Question expired: `{question_id}`"),
+                        None,
+                        BTreeMap::new(),
+                    ),
+                    klaw_storage::PendingQuestionStatus::Pending => channel_response(
+                        format!("ℹ️ Question `{question_id}` is still pending."),
+                        None,
+                        BTreeMap::new(),
+                    ),
+                };
+                return Ok(Some(response));
+            }
+            let Some(selected_option) = outcome.question.selected_option() else {
+                return Ok(Some(channel_response(
+                    format!("❌ Question `{question_id}` was answered without a valid option."),
+                    None,
+                    BTreeMap::new(),
+                )));
+            };
+            let followup_input = format!(
+                "The user answered a pending ask_question prompt.\nQuestion ID: {}\nQuestion: {}\nSelected option ID: {}\nSelected option label: {}",
+                outcome.question.id,
+                outcome.question.question_text,
+                selected_option.id,
+                selected_option.label
+            );
+            let maybe_output = submit_and_get_output(
+                runtime,
+                channel.clone(),
+                followup_input,
+                outcome.question.session_key.clone(),
+                question.chat_id.clone(),
+                "channel-user".to_string(),
+                route.model_provider.clone(),
+                route.model.clone(),
+                Vec::new(),
+                build_ask_question_followup_request_metadata(
+                    &request_metadata,
+                    &outcome.question.id,
+                    &outcome.question.question_text,
+                    &selected_option.id,
+                    &selected_option.label,
+                ),
+            )
+            .await?;
+            match maybe_output {
+                Some(output) => channel_response(output.content, output.reasoning, output.metadata),
+                None => channel_response(
+                    format!("✅ Answer recorded: `{}`", selected_option.label),
                     None,
                     BTreeMap::new(),
                 ),
@@ -3511,15 +3663,17 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        RuntimeBundle, StartupReport, approval_manager,
-        build_approved_shell_followup_request_metadata, build_history_for_model,
+        RuntimeBundle, StartupReport, approval_manager, ask_question_manager,
+        build_approved_shell_followup_request_metadata,
+        build_ask_question_followup_request_metadata, build_history_for_model,
         build_new_session_bootstrap_user_message, build_unavailable_provider, builtin_tool_names,
         compression_trigger_interval, configured_default_model, extract_skill_short_description,
         first_arg_token, format_approve_already_handled_message,
         format_new_session_started_message, handle_im_command, normalize_runtime_provider_override,
         parse_im_command, parse_outbound_attachments, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
-        shutdown_runtime_bundle, spawn_acp_init, spawn_llm_audit_writer, spawn_mcp_init,
+        second_arg_token, shutdown_runtime_bundle, spawn_acp_init, spawn_llm_audit_writer,
+        spawn_mcp_init,
         submit_and_get_output, submit_webhook_agent, submit_webhook_event, sync_runtime_providers,
         sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
     };
@@ -4168,6 +4322,13 @@ A .docx file is a ZIP archive containing XML files.
             Some("qwen-plus")
         );
         assert_eq!(first_arg_token(Some("   ")), None);
+    }
+
+    #[test]
+    fn second_arg_token_reads_second_token_only() {
+        assert_eq!(second_arg_token(Some("q1 option-a trailing")), Some("option-a"));
+        assert_eq!(second_arg_token(Some("single")), None);
+        assert_eq!(second_arg_token(Some("   ")), None);
     }
 
     #[test]
@@ -4870,6 +5031,102 @@ A .docx file is a ZIP archive containing XML files.
         assert_eq!(metadata.get("agent.max_tool_iterations"), Some(&json!(2)));
         assert_eq!(metadata.get("agent.max_tool_calls"), Some(&json!(1)));
         assert!(!metadata.contains_key("other"));
+    }
+
+    #[test]
+    fn ask_question_followup_metadata_inherits_channel_state_and_structured_answer() {
+        let metadata = build_ask_question_followup_request_metadata(
+            &BTreeMap::from([
+                ("channel.delivery_mode".to_string(), json!("direct_reply")),
+                ("other".to_string(), json!("ignored")),
+            ]),
+            "question-1",
+            "Which provider should I use?",
+            "openai",
+            "OpenAI",
+        );
+        assert_eq!(
+            metadata.get("channel.delivery_mode"),
+            Some(&json!("direct_reply"))
+        );
+        assert_eq!(
+            metadata.get("ask_question.answer"),
+            Some(&json!({
+                "question_id": "question-1",
+                "question": "Which provider should I use?",
+                "selected_option_id": "openai",
+                "selected_option_label": "OpenAI",
+            }))
+        );
+        assert!(!metadata.contains_key("other"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn card_answer_command_resumes_session_with_selected_option() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let channel = "telegram".to_string();
+        let session_key = "telegram:chat-ask".to_string();
+        let chat_id = "chat-ask".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("session should exist");
+
+        let manager = ask_question_manager(&runtime);
+        let question = manager
+            .create_question(
+                &session_key,
+                Some("Choose provider".to_string()),
+                "Which provider should I use?".to_string(),
+                vec![
+                    klaw_tool::ask_question::AskQuestionOption {
+                        id: "openai".to_string(),
+                        label: "OpenAI".to_string(),
+                    },
+                    klaw_tool::ask_question::AskQuestionOption {
+                        id: "anthropic".to_string(),
+                        label: "Anthropic".to_string(),
+                    },
+                ],
+                Some(5),
+            )
+            .await
+            .expect("question should be created");
+
+        let response = handle_im_command(
+            &runtime,
+            channel,
+            session_key.clone(),
+            chat_id,
+            format!("/card_answer {} anthropic", question.id),
+            BTreeMap::from([("channel.delivery_mode".to_string(), json!("direct_reply"))]),
+        )
+        .await
+        .expect("card_answer should succeed")
+        .expect("card_answer should return a response");
+
+        assert_eq!(response.content, "bootstrap reply");
+        assert_eq!(
+            response.metadata.get("channel.delivery_mode"),
+            Some(&json!("direct_reply"))
+        );
+        let captured = provider
+            .last_user_message
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
+        let captured = captured.expect("follow-up user message should be captured");
+        assert!(captured.contains("The user answered a pending ask_question prompt."));
+        assert!(captured.contains("Selected option ID: anthropic"));
+        assert!(captured.contains("Selected option label: Anthropic"));
     }
 
     #[tokio::test(flavor = "current_thread")]

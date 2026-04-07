@@ -5,7 +5,7 @@
 ## Responsibilities
 
 - manage the `~/.klaw` data directory layout
-- provide session, cron, and heartbeat persistence stores
+- provide session, pending-question, cron, and heartbeat persistence stores
 - expose generic SQLite access used by higher-level modules such as memory and archive services
 - persist session routing/model state used by IM command routing (`active_session_key`, `model_provider`, `model`)
 - support SQL-backed session listing with optional `channel` filtering, `updated_at` ordering, and distinct channel option queries
@@ -39,6 +39,7 @@
 - `model_provider` / `model` now represent per-session routing state, and the persisted explicitness flags let runtimes distinguish user-chosen overrides from legacy default-route residue during normalization
 - `llm_audit` records support optional `metadata_json`, which runtimes can use to annotate model requests with delegated execution context such as sub-agent parent/child session lineage
 - `tool_audit` records capture per-call arguments, full tool result/error payloads, signals, timing, and optional execution metadata such as tool call ids or sub-agent lineage
+- `pending_questions` persist asynchronous IM question cards so runtime commands like `/card_answer <question_id> <option_id>` can resume the original session after the user clicks later
 - heartbeat records keep session-bound autonomous wakeups separate from isolated cron jobs, including a per-job recent-message window for bounded inherited context
 - `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`
 - `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`

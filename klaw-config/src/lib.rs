@@ -931,6 +931,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub approval: ApprovalToolConfig,
     #[serde(default)]
+    pub ask_question: AskQuestionToolConfig,
+    #[serde(default)]
     pub geo: GeoToolConfig,
     #[serde(default)]
     pub local_search: LocalSearchConfig,
@@ -1091,6 +1093,30 @@ impl ToolEnabled for ApprovalToolConfig {
 }
 
 fn default_approval_tool_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AskQuestionToolConfig {
+    #[serde(default = "default_ask_question_tool_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for AskQuestionToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_ask_question_tool_enabled(),
+        }
+    }
+}
+
+impl ToolEnabled for AskQuestionToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_ask_question_tool_enabled() -> bool {
     true
 }
 

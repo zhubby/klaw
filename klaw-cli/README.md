@@ -62,6 +62,7 @@
 - `stdio` 和 `gateway` 复用 runtime bundle 构建逻辑
 - runtime 内置通用 IM 会话命令路由：`/help`、`/stop`、`/new`、`/start`、`/model-provider`、`/model`
 - runtime 内置审批命令：`/approve <approval_id>`、`/reject <approval_id>`
+- runtime 内置卡片回答命令：`/card_answer <question_id> <option_id>`，用于消费 `ask_question` 发出的单选卡片并恢复原会话
 - runtime 审批命令与工具审批流统一通过 `klaw-approval` manager 层处理状态流转与消费
 - `/approve <approval_id>` 在 shell 审批执行后重新让模型生成总结回复时，会继续透传当前 channel reply metadata，避免 Telegram `direct_reply` 等会话重复投递同一条 follow-up
 - `/approve <approval_id>` 在 shell 执行失败后，现在会把 follow-up turn 限制为最多一次额外工具调用，而不是强制只做文字总结，从而允许模型对明显可修复的命令错误自动重试一次
