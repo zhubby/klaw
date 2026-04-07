@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-07
+
+### Added
+- expanded `AgentLoop` coverage for generic IM question cards so tools that emit both `im_card` and `stop` signals now keep the card metadata and `turn.stop_signal` metadata together in the outbound response
+
 ## 2026-04-06
 
 ### Changed

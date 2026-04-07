@@ -4,9 +4,10 @@ use crate::{
     HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery,
     LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource,
     LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
-    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
-    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-    SessionSortOrder, SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
+    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewPendingQuestionRecord,
+    NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord, PendingQuestionRecord,
+    PendingQuestionStatus, SessionCompressionState, SessionIndex, SessionSortOrder,
+    SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
     ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, ToolAuditStatus,
     UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
     UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
@@ -312,7 +313,28 @@ impl TursoSessionStore {
                 CREATE INDEX IF NOT EXISTS idx_approvals_session_status
                 ON approvals(session_key, status, created_at_ms DESC);
                 CREATE INDEX IF NOT EXISTS idx_approvals_expiry
-                ON approvals(status, expires_at_ms);",
+                ON approvals(status, expires_at_ms);
+                CREATE TABLE IF NOT EXISTS pending_questions (
+                    id TEXT PRIMARY KEY,
+                    session_key TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    title TEXT,
+                    question_text TEXT NOT NULL,
+                    options_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    selected_option_id TEXT,
+                    answered_by TEXT,
+                    expires_at_ms INTEGER NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    answered_at_ms INTEGER,
+                    FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_pending_questions_session_status
+                ON pending_questions(session_key, status, created_at_ms DESC);
+                CREATE INDEX IF NOT EXISTS idx_pending_questions_expiry
+                ON pending_questions(status, expires_at_ms);",
             )
             .await
             .map_err(StorageError::backend)?;
@@ -2003,6 +2025,106 @@ impl SessionStorage for TursoSessionStore {
             .await
     }
 
+    async fn create_pending_question(
+        &self,
+        input: &NewPendingQuestionRecord,
+    ) -> Result<PendingQuestionRecord, StorageError> {
+        let now = now_ms();
+        let sql = format!(
+            "INSERT INTO pending_questions (
+                id, session_key, channel, chat_id, title, question_text, options_json, status,
+                selected_option_id, answered_by, expires_at_ms, created_at_ms, updated_at_ms, answered_at_ms
+            ) VALUES ('{}', '{}', '{}', '{}', {}, '{}', '{}', '{}', NULL, NULL, {}, {}, {}, NULL)",
+            escape_sql_text(&input.id),
+            escape_sql_text(&input.session_key),
+            escape_sql_text(&input.channel),
+            escape_sql_text(&input.chat_id),
+            input.title
+                .as_deref()
+                .map(|value| format!("'{}'", escape_sql_text(value)))
+                .unwrap_or_else(|| "NULL".to_string()),
+            escape_sql_text(&input.question_text),
+            escape_sql_text(&input.options_json),
+            PendingQuestionStatus::Pending.as_str(),
+            input.expires_at_ms,
+            now,
+            now
+        );
+        {
+            let conn = self.connection().await?;
+            conn.execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+        }
+        self.get_pending_question(&input.id).await
+    }
+
+    async fn get_pending_question(
+        &self,
+        question_id: &str,
+    ) -> Result<PendingQuestionRecord, StorageError> {
+        let sql = format!(
+            "SELECT id, session_key, channel, chat_id, title, question_text, options_json, status,
+                    selected_option_id, answered_by, expires_at_ms, created_at_ms, updated_at_ms, answered_at_ms
+             FROM pending_questions
+             WHERE id = '{}'
+             LIMIT 1",
+            escape_sql_text(question_id)
+        );
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(StorageError::backend)?
+            .ok_or_else(|| StorageError::backend("pending question not found"))?;
+        row_to_pending_question(&row)
+    }
+
+    async fn update_pending_question_answer(
+        &self,
+        question_id: &str,
+        status: PendingQuestionStatus,
+        selected_option_id: Option<&str>,
+        answered_by: Option<&str>,
+        answered_at_ms: Option<i64>,
+    ) -> Result<PendingQuestionRecord, StorageError> {
+        let sql = format!(
+            "UPDATE pending_questions
+             SET status = '{}',
+                 selected_option_id = {},
+                 answered_by = {},
+                 answered_at_ms = {},
+                 updated_at_ms = {}
+             WHERE id = '{}'",
+            status.as_str(),
+            selected_option_id
+                .map(|value| format!("'{}'", escape_sql_text(value)))
+                .unwrap_or_else(|| "NULL".to_string()),
+            answered_by
+                .map(|value| format!("'{}'", escape_sql_text(value)))
+                .unwrap_or_else(|| "NULL".to_string()),
+            answered_at_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "NULL".to_string()),
+            now_ms(),
+            escape_sql_text(question_id)
+        );
+        {
+            let conn = self.connection().await?;
+            let affected = conn
+                .execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?;
+            if affected == 0 {
+                return Err(StorageError::backend(format!(
+                    "pending question '{question_id}' not found when updating answer"
+                )));
+            }
+        }
+        self.get_pending_question(question_id).await
+    }
+
     fn session_jsonl_path(&self, session_key: &str) -> PathBuf {
         jsonl::session_jsonl_path(&self.paths, session_key)
     }
@@ -2843,6 +2965,29 @@ fn row_to_approval(row: &Row) -> Result<ApprovalRecord, StorageError> {
         created_at_ms: value_to_i64(row.get_value(12).map_err(StorageError::backend)?)?,
         updated_at_ms: value_to_i64(row.get_value(13).map_err(StorageError::backend)?)?,
         consumed_at_ms: value_to_opt_i64(row.get_value(14).map_err(StorageError::backend)?)?,
+    })
+}
+
+fn row_to_pending_question(row: &Row) -> Result<PendingQuestionRecord, StorageError> {
+    let status_raw = value_to_string(row.get_value(7).map_err(StorageError::backend)?)?;
+    let status = PendingQuestionStatus::parse(&status_raw).ok_or_else(|| {
+        StorageError::backend(format!("invalid pending question status: {status_raw}"))
+    })?;
+    Ok(PendingQuestionRecord {
+        id: value_to_string(row.get_value(0).map_err(StorageError::backend)?)?,
+        session_key: value_to_string(row.get_value(1).map_err(StorageError::backend)?)?,
+        channel: value_to_string(row.get_value(2).map_err(StorageError::backend)?)?,
+        chat_id: value_to_string(row.get_value(3).map_err(StorageError::backend)?)?,
+        title: value_to_opt_string(row.get_value(4).map_err(StorageError::backend)?),
+        question_text: value_to_string(row.get_value(5).map_err(StorageError::backend)?)?,
+        options_json: value_to_string(row.get_value(6).map_err(StorageError::backend)?)?,
+        status,
+        selected_option_id: value_to_opt_string(row.get_value(8).map_err(StorageError::backend)?),
+        answered_by: value_to_opt_string(row.get_value(9).map_err(StorageError::backend)?),
+        expires_at_ms: value_to_i64(row.get_value(10).map_err(StorageError::backend)?)?,
+        created_at_ms: value_to_i64(row.get_value(11).map_err(StorageError::backend)?)?,
+        updated_at_ms: value_to_i64(row.get_value(12).map_err(StorageError::backend)?)?,
+        answered_at_ms: value_to_opt_i64(row.get_value(13).map_err(StorageError::backend)?)?,
     })
 }
 

@@ -5,7 +5,7 @@
 ## Responsibilities
 
 - define tool interfaces through the shared `Tool` trait
-- implement local tools such as `apply_patch`, `shell`, `approval`, `archive`, `channel_attachment`, `voice`, `memory`, `web_fetch`, `web_search`, `cron_manager`, `heartbeat_manager`, `skills_registry`, and `skills_manager`
+- implement local tools such as `apply_patch`, `shell`, `approval`, `ask_question`, `archive`, `channel_attachment`, `voice`, `memory`, `web_fetch`, `web_search`, `cron_manager`, `heartbeat_manager`, `skills_registry`, and `skills_manager`
 - keep tool metadata LLM-friendly so planners can infer when and how to call each tool
 
 ## Architecture
@@ -18,6 +18,7 @@
 
 - the `apply_patch` tool is intentionally patch-oriented and only supports batched file mutations
 - the `approval` tool delegates persisted approval lifecycle actions (`request`, `get`, `resolve`) to the `klaw-approval` manager layer
+- the `ask_question` tool persists a pending single-select question, emits a `question_single_select` IM card, and pairs it with a `stop` signal so the runtime can resume only after the user answers
 - tools can emit structured signals on both success and failure paths; current runtime consumers include `approval_required`, `stop`, and `channel_attachment`
 - `shell` approval-required signals now include `command_preview` so channel-specific approval cards can render the pending command directly from outbound metadata
 - the `channel_attachment` tool is gated by `tools.channel_attachment.enabled`, and its local path policy comes from `tools.channel_attachment.local_attachments`

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-04-07
+
+### Added
+- added an `ask_question` tool that persists a pending single-select question, emits a `question_single_select` IM card, and stops the current turn until the user answers
+
+### Changed
+- `ask_question` now reuses shared session storage so pending card answers survive channel round-trips and can be resumed from the original conversation session
+
 ## 2026-04-06
 
 ### Fixed

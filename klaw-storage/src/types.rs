@@ -616,6 +616,65 @@ pub struct NewApprovalRecord {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum PendingQuestionStatus {
+    Pending,
+    Answered,
+    Expired,
+}
+
+impl PendingQuestionStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Answered => "answered",
+            Self::Expired => "expired",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "answered" => Some(Self::Answered),
+            "expired" => Some(Self::Expired),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingQuestionRecord {
+    pub id: String,
+    pub session_key: String,
+    pub channel: String,
+    pub chat_id: String,
+    pub title: Option<String>,
+    pub question_text: String,
+    pub options_json: String,
+    pub status: PendingQuestionStatus,
+    pub selected_option_id: Option<String>,
+    pub answered_by: Option<String>,
+    pub expires_at_ms: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub answered_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewPendingQuestionRecord {
+    pub id: String,
+    pub session_key: String,
+    pub channel: String,
+    pub chat_id: String,
+    pub title: Option<String>,
+    pub question_text: String,
+    pub options_json: String,
+    pub expires_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum CronScheduleKind {
     Cron,
     Every,

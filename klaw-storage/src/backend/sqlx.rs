@@ -4,9 +4,10 @@ use crate::{
     HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery,
     LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource,
     LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
-    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
-    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-    SessionSortOrder, SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
+    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewPendingQuestionRecord,
+    NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord, PendingQuestionRecord,
+    PendingQuestionStatus, SessionCompressionState, SessionIndex, SessionSortOrder,
+    SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
     ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, ToolAuditSortOrder,
     ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
     UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
@@ -134,6 +135,24 @@ struct ApprovalRow {
     created_at_ms: i64,
     updated_at_ms: i64,
     consumed_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct PendingQuestionRow {
+    id: String,
+    session_key: String,
+    channel: String,
+    chat_id: String,
+    title: Option<String>,
+    question_text: String,
+    options_json: String,
+    status: String,
+    selected_option_id: Option<String>,
+    answered_by: Option<String>,
+    expires_at_ms: i64,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    answered_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -387,6 +406,32 @@ impl TryFrom<ApprovalRow> for ApprovalRecord {
             created_at_ms: value.created_at_ms,
             updated_at_ms: value.updated_at_ms,
             consumed_at_ms: value.consumed_at_ms,
+        })
+    }
+}
+
+impl TryFrom<PendingQuestionRow> for PendingQuestionRecord {
+    type Error = StorageError;
+
+    fn try_from(value: PendingQuestionRow) -> Result<Self, Self::Error> {
+        let status = PendingQuestionStatus::parse(&value.status).ok_or_else(|| {
+            StorageError::backend(format!("invalid pending question status: {}", value.status))
+        })?;
+        Ok(Self {
+            id: value.id,
+            session_key: value.session_key,
+            channel: value.channel,
+            chat_id: value.chat_id,
+            title: value.title,
+            question_text: value.question_text,
+            options_json: value.options_json,
+            status,
+            selected_option_id: value.selected_option_id,
+            answered_by: value.answered_by,
+            expires_at_ms: value.expires_at_ms,
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
+            answered_at_ms: value.answered_at_ms,
         })
     }
 }
@@ -893,6 +938,42 @@ impl SqlxSessionStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_webhook_agents_session_received
              ON webhook_agents(session_key, received_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS pending_questions (
+                id TEXT PRIMARY KEY,
+                session_key TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                title TEXT,
+                question_text TEXT NOT NULL,
+                options_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                selected_option_id TEXT,
+                answered_by TEXT,
+                expires_at_ms INTEGER NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                answered_at_ms INTEGER,
+                FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_pending_questions_session_status
+             ON pending_questions(session_key, status, created_at_ms DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_pending_questions_expiry
+             ON pending_questions(status, expires_at_ms)",
         )
         .execute(&self.pool)
         .await
@@ -2442,6 +2523,86 @@ impl SessionStorage for SqlxSessionStore {
         };
         self.consume_approved_shell_command(&approval_id, session_key, command_hash, now_ms)
             .await
+    }
+
+    async fn create_pending_question(
+        &self,
+        input: &NewPendingQuestionRecord,
+    ) -> Result<PendingQuestionRecord, StorageError> {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO pending_questions (
+                id, session_key, channel, chat_id, title, question_text, options_json, status,
+                selected_option_id, answered_by, expires_at_ms, created_at_ms, updated_at_ms, answered_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, ?9, ?10, ?11, NULL)",
+        )
+        .bind(&input.id)
+        .bind(&input.session_key)
+        .bind(&input.channel)
+        .bind(&input.chat_id)
+        .bind(&input.title)
+        .bind(&input.question_text)
+        .bind(&input.options_json)
+        .bind(PendingQuestionStatus::Pending.as_str())
+        .bind(input.expires_at_ms)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        self.get_pending_question(&input.id).await
+    }
+
+    async fn get_pending_question(
+        &self,
+        question_id: &str,
+    ) -> Result<PendingQuestionRecord, StorageError> {
+        let row = sqlx::query_as::<_, PendingQuestionRow>(
+            "SELECT id, session_key, channel, chat_id, title, question_text, options_json, status,
+                    selected_option_id, answered_by, expires_at_ms, created_at_ms, updated_at_ms, answered_at_ms
+             FROM pending_questions
+             WHERE id = ?1",
+        )
+        .bind(question_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        PendingQuestionRecord::try_from(row)
+    }
+
+    async fn update_pending_question_answer(
+        &self,
+        question_id: &str,
+        status: PendingQuestionStatus,
+        selected_option_id: Option<&str>,
+        answered_by: Option<&str>,
+        answered_at_ms: Option<i64>,
+    ) -> Result<PendingQuestionRecord, StorageError> {
+        let now = now_ms();
+        let updated = sqlx::query(
+            "UPDATE pending_questions
+             SET status = ?1,
+                 selected_option_id = ?2,
+                 answered_by = ?3,
+                 answered_at_ms = ?4,
+                 updated_at_ms = ?5
+             WHERE id = ?6",
+        )
+        .bind(status.as_str())
+        .bind(selected_option_id)
+        .bind(answered_by)
+        .bind(answered_at_ms)
+        .bind(now)
+        .bind(question_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "pending question '{question_id}' not found when updating answer"
+            )));
+        }
+        self.get_pending_question(question_id).await
     }
 
     fn session_jsonl_path(&self, session_key: &str) -> PathBuf {

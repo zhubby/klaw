@@ -3,11 +3,12 @@ use crate::{
     HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
     LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob,
     NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-    NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState,
-    SessionIndex, SessionSortOrder, StorageError, ToolAuditFilterOptions,
-    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch,
-    UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
-    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
+    NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
+    SessionSortOrder, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
+    ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
+    WebhookEventQuery, WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -228,6 +229,25 @@ pub trait SessionStorage: Send + Sync {
         command_hash: &str,
         now_ms: i64,
     ) -> Result<bool, StorageError>;
+
+    async fn create_pending_question(
+        &self,
+        input: &NewPendingQuestionRecord,
+    ) -> Result<PendingQuestionRecord, StorageError>;
+
+    async fn get_pending_question(
+        &self,
+        question_id: &str,
+    ) -> Result<PendingQuestionRecord, StorageError>;
+
+    async fn update_pending_question_answer(
+        &self,
+        question_id: &str,
+        status: PendingQuestionStatus,
+        selected_option_id: Option<&str>,
+        answered_by: Option<&str>,
+        answered_at_ms: Option<i64>,
+    ) -> Result<PendingQuestionRecord, StorageError>;
 
     fn session_jsonl_path(&self, session_key: &str) -> PathBuf;
 }
