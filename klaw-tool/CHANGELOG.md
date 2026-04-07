@@ -5,6 +5,9 @@
 ### Fixed
 - `ask_question` no longer exposes the unsupported `allow_multiple` parameter in its public schema, and now rejects callers that still send it as an unknown field so the tool contract stays strictly single-select
 
+### Changed
+- `ask_question` now describes its preferred use cases in model-facing metadata more explicitly, including when to use it, when not to use it, and how to present a recommended single-select option
+
 ### Added
 - added an `ask_question` tool that persists a pending single-select question, emits a `question_single_select` IM card, and stops the current turn until the user answers
 

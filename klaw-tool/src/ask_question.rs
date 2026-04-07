@@ -217,13 +217,13 @@ impl Tool for AskQuestionTool {
     }
 
     fn description(&self) -> &str {
-        "Ask the user a single-select question in IM, render it as a card with options, then stop the current turn until the user chooses an option."
+        "Use this tool when you need the user to choose one option before you can continue. Best for clarifying ambiguous instructions, gathering a concrete preference, or getting a decision between implementation directions while you work. Only use it for single-select questions with predefined options; do not use it for open-ended questions or free-form text input. If you recommend an option, put it first and append `(Recommended)` to its label."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Use this when the model needs the user to choose one option before continuing.",
+            "description": "Ask the user a single-select question when work is blocked on a decision among predefined options. Good for requirement clarification, implementation trade-offs, or explicit preference selection. Do not use this for open-ended questions or anything that needs free-form text.",
             "properties": {
                 "title": {
                     "type": "string",
@@ -231,22 +231,22 @@ impl Tool for AskQuestionTool {
                 },
                 "question": {
                     "type": "string",
-                    "description": "The question shown to the user."
+                    "description": "A concise question that asks the user to choose exactly one option."
                 },
                 "options": {
                     "type": "array",
-                    "description": "Selectable options. Provide at least 2 unique options.",
+                    "description": "Selectable options for a single choice. Prefer 2-5 short, distinct options. If one option is recommended, place it first and append `(Recommended)` to its label.",
                     "minItems": 2,
                     "items": {
                         "type": "object",
                         "properties": {
                             "id": {
                                 "type": "string",
-                                "description": "Stable option ID used in the structured answer, for example `openai`."
+                                "description": "Stable machine-friendly option ID used in the structured answer, for example `openai`."
                             },
                             "label": {
                                 "type": "string",
-                                "description": "User-visible option label shown on the card."
+                                "description": "Short user-visible option label shown on the card."
                             }
                         },
                         "required": ["id", "label"],
