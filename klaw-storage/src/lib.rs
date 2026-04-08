@@ -23,12 +23,12 @@ pub use types::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronTaskRun,
     CronTaskStatus, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions,
     LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus,
-    LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
-    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-    NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
-    SessionSortOrder, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery,
-    ToolAuditRecord, ToolAuditSortOrder, ToolAuditStatus, UpdateCronJobPatch,
+    LlmAuditSummaryRecord, LlmUsageRecord, LlmUsageSource, LlmUsageSummary, NewApprovalRecord,
+    NewCronJob, NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord,
+    NewLlmUsageRecord, NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord,
+    NewWebhookEventRecord, PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState,
+    SessionIndex, SessionSortOrder, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
+    ToolAuditQuery, ToolAuditRecord, ToolAuditSortOrder, ToolAuditStatus, UpdateCronJobPatch,
     UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
     WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
     WebhookEventStatus,
@@ -495,6 +495,92 @@ mod tests {
         assert_eq!(
             descending[1].metadata_json.as_deref(),
             Some("{\"sub_agent\":true}")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn llm_audit_summaries_exclude_large_json_payloads() {
+        let store = create_store().await;
+        store
+            .touch_session("stdio:audit-summary", "chat-audit-summary", "stdio")
+            .await
+            .expect("session should exist");
+
+        store
+            .append_llm_audit(&NewLlmAuditRecord {
+                id: "audit-summary-1".to_string(),
+                session_key: "stdio:audit-summary".to_string(),
+                chat_id: "chat-audit-summary".to_string(),
+                turn_index: 0,
+                request_seq: 1,
+                provider: "openai".to_string(),
+                model: "gpt-4.1-mini".to_string(),
+                wire_api: "responses".to_string(),
+                status: LlmAuditStatus::Success,
+                error_code: None,
+                error_message: None,
+                provider_request_id: Some("req-summary".to_string()),
+                provider_response_id: Some("resp-summary".to_string()),
+                request_body_json: "{\"input\":\"hello\",\"large\":true}".to_string(),
+                response_body_json: Some("{\"output\":\"world\"}".to_string()),
+                metadata_json: Some("{\"source\":\"detail-only\"}".to_string()),
+                requested_at_ms: 1_000,
+                responded_at_ms: Some(1_100),
+            })
+            .await
+            .expect("audit should append");
+
+        let summaries = store
+            .list_llm_audit_summaries(&LlmAuditQuery {
+                session_key: Some("stdio:audit-summary".to_string()),
+                provider: None,
+                requested_from_ms: None,
+                requested_to_ms: None,
+                limit: 10,
+                offset: 0,
+                sort_order: LlmAuditSortOrder::RequestedAtDesc,
+            })
+            .await
+            .expect("summary rows should load");
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(
+            summaries[0],
+            LlmAuditSummaryRecord {
+                id: "audit-summary-1".to_string(),
+                session_key: "stdio:audit-summary".to_string(),
+                chat_id: "chat-audit-summary".to_string(),
+                turn_index: 0,
+                request_seq: 1,
+                provider: "openai".to_string(),
+                model: "gpt-4.1-mini".to_string(),
+                wire_api: "responses".to_string(),
+                status: LlmAuditStatus::Success,
+                error_code: None,
+                error_message: None,
+                provider_request_id: Some("req-summary".to_string()),
+                provider_response_id: Some("resp-summary".to_string()),
+                requested_at_ms: 1_000,
+                responded_at_ms: Some(1_100),
+                created_at_ms: summaries[0].created_at_ms,
+            }
+        );
+
+        let detail = store
+            .get_llm_audit("audit-summary-1")
+            .await
+            .expect("detail row should load");
+        assert_eq!(
+            detail.request_body_json,
+            "{\"input\":\"hello\",\"large\":true}"
+        );
+        assert_eq!(
+            detail.response_body_json.as_deref(),
+            Some("{\"output\":\"world\"}")
+        );
+        assert_eq!(
+            detail.metadata_json.as_deref(),
+            Some("{\"source\":\"detail-only\"}")
         );
     }
 

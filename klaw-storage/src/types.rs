@@ -223,6 +223,26 @@ pub struct LlmAuditRecord {
     pub created_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmAuditSummaryRecord {
+    pub id: String,
+    pub session_key: String,
+    pub chat_id: String,
+    pub turn_index: i64,
+    pub request_seq: i64,
+    pub provider: String,
+    pub model: String,
+    pub wire_api: String,
+    pub status: LlmAuditStatus,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub provider_request_id: Option<String>,
+    pub provider_response_id: Option<String>,
+    pub requested_at_ms: i64,
+    pub responded_at_ms: Option<i64>,
+    pub created_at_ms: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewLlmAuditRecord {
     pub id: String,
