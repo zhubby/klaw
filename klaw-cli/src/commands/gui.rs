@@ -7,8 +7,8 @@ use klaw_mcp::McpConfigSnapshot;
 use klaw_runtime::gateway_manager::GatewayManager;
 use klaw_runtime::{
     RuntimeBundle, build_channel_driver_factory, build_hosted_runtime,
-    reload_runtime_skills_prompt, set_runtime_provider_override,
-    shutdown_runtime_bundle, sync_runtime_providers, sync_runtime_tools,
+    reload_runtime_skills_prompt, set_runtime_provider_override, shutdown_runtime_bundle,
+    sync_runtime_providers, sync_runtime_tools,
 };
 use std::{
     collections::BTreeMap,

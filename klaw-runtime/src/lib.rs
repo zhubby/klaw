@@ -3884,7 +3884,11 @@ A .docx file is a ZIP archive containing XML files.
 
         assert!(response.content.contains("✅ **Shell command succeeded**"));
         assert!(response.content.contains("- Command: `echo risky`"));
-        assert!(response.content.contains(&format!("- CWD: `{}`", workspace.display())));
+        assert!(
+            response
+                .content
+                .contains(&format!("- CWD: `{}`", workspace.display()))
+        );
         assert!(response.content.contains("- Exit code: `0`"));
         assert!(response.content.contains("````text\nrisky\n````"));
         assert!(!response.content.contains("\"stdout\": \"risky\""));
