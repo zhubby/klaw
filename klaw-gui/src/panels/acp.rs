@@ -852,7 +852,6 @@ impl AcpPanel {
                         .column(Column::auto().at_least(60.0))
                         .column(Column::auto().at_least(120.0))
                         .column(Column::remainder().at_least(220.0))
-                        .column(Column::auto().at_least(80.0))
                         .column(Column::auto().at_least(140.0))
                         .column(Column::remainder().at_least(160.0))
                         .min_scrolled_height(0.0)
@@ -867,9 +866,6 @@ impl AcpPanel {
                             });
                             header.col(|ui| {
                                 ui.strong("Adapter Command");
-                            });
-                            header.col(|ui| {
-                                ui.strong("State");
                             });
                             header.col(|ui| {
                                 ui.strong("Tool");
@@ -904,17 +900,6 @@ impl AcpPanel {
                                 });
                                 row.col(|ui| {
                                     ui.monospace(Self::command_display(agent));
-                                });
-                                row.col(|ui| {
-                                    let state =
-                                        status.map(|item| item.state.as_str()).unwrap_or("stopped");
-                                    let color = match state {
-                                        "running" => Color32::LIGHT_GREEN,
-                                        "failed" => Color32::LIGHT_RED,
-                                        "starting" => Color32::YELLOW,
-                                        _ => Color32::GRAY,
-                                    };
-                                    ui.label(RichText::new(state).color(color));
                                 });
                                 row.col(|ui| {
                                     ui.monospace(Self::tool_name_for_agent(&agent.id));
@@ -1514,10 +1499,6 @@ impl AcpPanel {
 
                             ui.label("Enabled");
                             render_acp_enabled_status(ui, agent.enabled);
-                            ui.end_row();
-
-                            ui.label("State");
-                            ui.label(status.map(|item| item.state.as_str()).unwrap_or("stopped"));
                             ui.end_row();
 
                             ui.label("Tool Name");
