@@ -3839,15 +3839,12 @@ A .docx file is a ZIP archive containing XML files.
         .expect("shell command should succeed")
         .expect("shell command should return a response");
 
-        assert!(response.content.contains("\"command\": \"echo risky\""));
-        assert!(response.content.contains("\"stdout\": \"risky\""));
-        assert!(
-            response
-                .content
-                .contains(&format!("\"cwd\": \"{}\"", workspace.display()))
-        );
-        assert!(response.content.contains("\"approval_required\": true"));
-        assert!(response.content.contains("\"approved\": true"));
+        assert!(response.content.contains("✅ **Shell command succeeded**"));
+        assert!(response.content.contains("- Command: `echo risky`"));
+        assert!(response.content.contains(&format!("- CWD: `{}`", workspace.display())));
+        assert!(response.content.contains("- Exit code: `0`"));
+        assert!(response.content.contains("````text\nrisky\n````"));
+        assert!(!response.content.contains("\"stdout\": \"risky\""));
     }
 
     #[tokio::test(flavor = "current_thread")]
