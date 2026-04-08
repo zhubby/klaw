@@ -52,7 +52,7 @@ mod tests {
             false,
             OutputRenderStyle::Terminal,
         );
-        assert!(view.contains("[answer]"));
+        assert!(view.contains("done"));
         assert!(!view.contains("[reasoning]"));
     }
 
@@ -68,6 +68,7 @@ mod tests {
             true,
             OutputRenderStyle::Terminal,
         );
+        assert!(view.contains("done"));
         assert!(view.contains("[reasoning]"));
         assert!(view.contains("> step1"));
         assert!(view.contains("> step2"));

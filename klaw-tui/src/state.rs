@@ -38,6 +38,13 @@ pub enum AppStatus {
     Submitting,
 }
 
+impl AppStatus {
+    #[must_use]
+    pub fn is_submitting(self) -> bool {
+        matches!(self, Self::Submitting)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     meta: TuiMeta,

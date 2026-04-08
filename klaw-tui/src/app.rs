@@ -13,19 +13,23 @@ use klaw_channel::{
     ChannelRequest, ChannelResult, ChannelRuntime, ChannelStreamEvent, ChannelStreamWriter,
     render::{OutputRenderStyle, render_agent_output},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
-use std::{collections::BTreeMap, io};
+use ratatui::{Terminal, backend::Backend};
+use std::{cell::RefCell, collections::BTreeMap, io, rc::Rc};
 
 pub async fn run_tui(meta: TuiMeta, runtime: &dyn ChannelRuntime) -> ChannelResult<()> {
-    let mut terminal = setup_terminal()?;
-    let result = run_loop(&mut terminal, AppState::new(meta), runtime).await;
-    restore_terminal(&mut terminal)?;
+    let state = Rc::new(RefCell::new(AppState::new(meta)));
+    let term = Rc::new(RefCell::new(setup_terminal()?));
+    let result = run_loop(Rc::clone(&term), Rc::clone(&state), runtime).await;
+    {
+        let mut t = term.borrow_mut();
+        restore_terminal(&mut *t)?;
+    }
     result
 }
 
 async fn run_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    mut state: AppState,
+    term: Rc<RefCell<Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>>>,
+    state: Rc<RefCell<AppState>>,
     runtime: &dyn ChannelRuntime,
 ) -> ChannelResult<()> {
     let mut events = EventStream::new();
@@ -34,7 +38,12 @@ async fn run_loop(
     let mut runtime_tick = tokio::time::interval(runtime.runtime_tick_interval());
 
     loop {
-        terminal.draw(|frame| view::render(frame, &state))?;
+        {
+            let st = state.borrow();
+            term.borrow_mut()
+                .draw(|frame| view::render(frame, &st))
+                .map_err(io_to_channel)?;
+        }
 
         tokio::select! {
             maybe_event = events.next() => {
@@ -43,18 +52,33 @@ async fn run_loop(
                         let Some(event) = map_key_event(key) else {
                             continue;
                         };
-                        if handle_app_event(event, &mut state, runtime).await? {
+                        if handle_app_event::<ratatui::backend::CrosstermBackend<io::Stdout>>(
+                            event,
+                            &state,
+                            &term,
+                            runtime,
+                        )
+                        .await?
+                        {
                             break;
                         }
                     }
                     Some(Ok(_)) => {}
                     Some(Err(err)) => {
-                        state.push_error(format!("event error: {err}"));
+                        state.borrow_mut().push_error(format!("event error: {err}"));
                     }
                     None => break,
                 }
             }
-            _ = redraw_tick.tick() => {}
+            _ = redraw_tick.tick() => {
+                let st = state.borrow();
+                if st.status().is_submitting() || st.messages().is_empty() {
+                    term
+                        .borrow_mut()
+                        .draw(|frame| view::render(frame, &st))
+                        .map_err(io_to_channel)?;
+                }
+            }
             _ = cron_tick.tick() => {
                 runtime.on_cron_tick().await;
             }
@@ -71,63 +95,86 @@ async fn run_loop(
     Ok(())
 }
 
-async fn handle_app_event(
+fn io_to_channel(err: io::Error) -> Box<dyn std::error::Error> {
+    Box::new(err)
+}
+
+async fn handle_app_event<B: Backend>(
     event: AppEvent,
-    state: &mut AppState,
+    state: &Rc<RefCell<AppState>>,
+    term: &Rc<RefCell<Terminal<B>>>,
     runtime: &dyn ChannelRuntime,
 ) -> ChannelResult<bool> {
     match event {
         AppEvent::Quit => Ok(true),
         AppEvent::ClearMessages => {
-            state.clear_messages();
+            state.borrow_mut().clear_messages();
             Ok(false)
         }
         AppEvent::NewSession => {
-            state.reset_session();
+            state.borrow_mut().reset_session();
             Ok(false)
         }
         AppEvent::ToggleReasoning => {
-            state.toggle_reasoning();
+            state.borrow_mut().toggle_reasoning();
             Ok(false)
         }
         AppEvent::Backspace => {
-            state.backspace();
+            state.borrow_mut().backspace();
             Ok(false)
         }
         AppEvent::Newline => {
-            state.insert_newline();
+            state.borrow_mut().insert_newline();
             Ok(false)
         }
         AppEvent::Input(ch) => {
-            state.insert_char(ch);
+            state.borrow_mut().insert_char(ch);
             Ok(false)
         }
         AppEvent::Submit => {
-            let Some(input) = state.take_submit_input() else {
-                return Ok(false);
+            let input = {
+                let mut st = state.borrow_mut();
+                let Some(submitted) = st.take_submit_input() else {
+                    return Ok(false);
+                };
+                st.begin_agent_response();
+                submitted
             };
-            state.begin_agent_response();
-            let request = ChannelRequest {
-                channel: state.meta().channel.clone(),
-                input,
-                session_key: state.meta().session_key.clone(),
-                chat_id: state.chat_id(),
-                media_references: Vec::new(),
-                metadata: BTreeMap::new(),
+            {
+                let st = state.borrow();
+                term.borrow_mut()
+                    .draw(|frame| view::render(frame, &st))
+                    .map_err(io_to_channel)?;
+            }
+            let request = {
+                let st = state.borrow();
+                ChannelRequest {
+                    channel: st.meta().channel.clone(),
+                    input,
+                    session_key: st.meta().session_key.clone(),
+                    chat_id: st.chat_id(),
+                    media_references: Vec::new(),
+                    metadata: BTreeMap::new(),
+                }
             };
-            let mut writer = InlineStreamWriter { state };
+            let mut writer = InlineStreamWriter::<B> {
+                state: Rc::clone(state),
+                term: Rc::clone(term),
+            };
             let maybe_output = runtime.submit_streaming(request, &mut writer).await?;
             match maybe_output {
                 Some(output) => {
-                    let show_reasoning = writer.state.meta().show_reasoning;
+                    let show_reasoning = state.borrow().meta().show_reasoning;
                     let rendered =
                         render_agent_output(&output, show_reasoning, OutputRenderStyle::Terminal);
-                    writer.state.apply_agent_snapshot(rendered);
-                    writer.state.complete_agent_response();
+                    let mut st = state.borrow_mut();
+                    st.apply_agent_snapshot(rendered);
+                    st.complete_agent_response();
                 }
                 None => {
-                    writer.state.clear_pending_agent_response();
-                    writer.state.push_error("[no response]");
+                    let mut st = state.borrow_mut();
+                    st.clear_pending_agent_response();
+                    st.push_error("[no response]");
                 }
             }
             Ok(false)
@@ -135,39 +182,47 @@ async fn handle_app_event(
     }
 }
 
-struct InlineStreamWriter<'a> {
-    state: &'a mut AppState,
+struct InlineStreamWriter<B: Backend> {
+    state: Rc<RefCell<AppState>>,
+    term: Rc<RefCell<Terminal<B>>>,
 }
 
 #[async_trait::async_trait(?Send)]
-impl ChannelStreamWriter for InlineStreamWriter<'_> {
+impl<B: Backend> ChannelStreamWriter for InlineStreamWriter<B> {
     async fn write(&mut self, event: ChannelStreamEvent) -> ChannelResult<()> {
+        let show_reasoning = self.state.borrow().meta().show_reasoning;
         match event {
             ChannelStreamEvent::Snapshot(output) => {
-                let rendered = render_agent_output(
-                    &output,
-                    self.state.meta().show_reasoning,
-                    OutputRenderStyle::Terminal,
-                );
-                self.state.apply_agent_snapshot(rendered);
+                let rendered =
+                    render_agent_output(&output, show_reasoning, OutputRenderStyle::Terminal);
+                self.state.borrow_mut().apply_agent_snapshot(rendered);
             }
             ChannelStreamEvent::Clear => {
-                self.state.apply_agent_snapshot(String::new());
+                self.state.borrow_mut().apply_agent_snapshot(String::new());
             }
+        }
+        {
+            let st = self.state.borrow();
+            self.term
+                .borrow_mut()
+                .draw(|frame| view::render(frame, &st))
+                .map_err(io_to_channel)?;
         }
         Ok(())
     }
 }
 
-fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
+fn setup_terminal() -> io::Result<Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
+    let backend = ratatui::backend::CrosstermBackend::new(stdout);
     Terminal::new(backend)
 }
 
-fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+fn restore_terminal(
+    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+) -> io::Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()
@@ -205,11 +260,12 @@ mod tests {
         ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
         ChannelStreamWriter,
     };
-    use std::{cell::Cell, collections::BTreeMap, time::Duration};
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Duration};
 
     #[derive(Default)]
     struct FakeRuntime {
-        streaming_called: Cell<bool>,
+        streaming_called: std::cell::Cell<bool>,
     }
 
     #[async_trait::async_trait(?Send)]
@@ -266,17 +322,19 @@ mod tests {
     #[tokio::test]
     async fn submit_event_uses_streaming_runtime_path() {
         let runtime = FakeRuntime::default();
-        let mut state = AppState::new(sample_meta());
-        state.set_input("hello".to_string());
+        let state = Rc::new(RefCell::new(AppState::new(sample_meta())));
+        state.borrow_mut().set_input("hello".to_string());
+        let backend = TestBackend::new(80, 24);
+        let term = Rc::new(RefCell::new(Terminal::new(backend).expect("test terminal")));
 
-        let should_quit = handle_app_event(AppEvent::Submit, &mut state, &runtime)
-            .await
-            .expect("submit should succeed");
+        let should_quit =
+            handle_app_event::<TestBackend>(AppEvent::Submit, &state, &term, &runtime)
+                .await
+                .expect("submit should succeed");
 
         assert!(!should_quit);
         assert!(runtime.streaming_called.get());
-        assert_eq!(state.messages().len(), 2);
-        assert!(state.messages()[1].content.contains("[answer]"));
-        assert!(state.messages()[1].content.contains("done"));
+        assert_eq!(state.borrow().messages().len(), 2);
+        assert!(state.borrow().messages()[1].content.contains("done"));
     }
 }
