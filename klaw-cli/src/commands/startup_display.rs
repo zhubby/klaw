@@ -1,5 +1,5 @@
-use crate::runtime::StartupReport;
 use klaw_config::{AppConfig, McpServerConfig, McpServerMode};
+use klaw_runtime::StartupReport;
 
 pub fn print_startup_banner(config: &AppConfig, report: &StartupReport) {
     let version = env!("CARGO_PKG_VERSION");
@@ -89,9 +89,9 @@ fn join_or_dash(items: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::StartupReport;
     use klaw_config::{AppConfig, McpServerConfig, McpServerMode};
     use klaw_mcp::{McpLifecycleState, McpServerKey, McpServerStatus, McpSyncResult};
+    use klaw_runtime::StartupReport;
 
     use super::{format_mcp_status, join_or_dash, tools_for_display};
 

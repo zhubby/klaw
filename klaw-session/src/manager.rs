@@ -2,9 +2,9 @@ use crate::SessionError;
 use async_trait::async_trait;
 use klaw_storage::{
     ChatRecord, DefaultSessionStore, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
-    LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord,
-    NewLlmUsageRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
+    LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord, LlmUsageRecord, LlmUsageSummary,
+    NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord, NewWebhookAgentRecord,
+    NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
     ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
     UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
     WebhookEventQuery, WebhookEventRecord, open_default_store,
@@ -157,6 +157,13 @@ pub trait SessionManager: Send + Sync {
         &self,
         query: &LlmAuditQuery,
     ) -> Result<Vec<LlmAuditRecord>, SessionError>;
+
+    async fn get_llm_audit(&self, audit_id: &str) -> Result<LlmAuditRecord, SessionError>;
+
+    async fn list_llm_audit_summaries(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditSummaryRecord>, SessionError>;
 
     async fn list_llm_audit_filter_options(
         &self,
@@ -447,6 +454,17 @@ impl SessionManager for SqliteSessionManager {
         query: &LlmAuditQuery,
     ) -> Result<Vec<LlmAuditRecord>, SessionError> {
         Ok(self.store.list_llm_audit(query).await?)
+    }
+
+    async fn get_llm_audit(&self, audit_id: &str) -> Result<LlmAuditRecord, SessionError> {
+        Ok(self.store.get_llm_audit(audit_id).await?)
+    }
+
+    async fn list_llm_audit_summaries(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditSummaryRecord>, SessionError> {
+        Ok(self.store.list_llm_audit_summaries(query).await?)
     }
 
     async fn list_llm_audit_filter_options(

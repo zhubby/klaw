@@ -1,14 +1,14 @@
 use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus, HeartbeatJob,
     HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
-    LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob,
-    NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-    NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
-    SessionSortOrder, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
-    ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
-    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
-    WebhookEventQuery, WebhookEventRecord,
+    LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord, LlmUsageRecord, LlmUsageSummary,
+    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun,
+    NewLlmAuditRecord, NewLlmUsageRecord, NewPendingQuestionRecord, NewToolAuditRecord,
+    NewWebhookAgentRecord, NewWebhookEventRecord, PendingQuestionRecord, PendingQuestionStatus,
+    SessionCompressionState, SessionIndex, SessionSortOrder, StorageError, ToolAuditFilterOptions,
+    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch,
+    UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
+    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -148,6 +148,13 @@ pub trait SessionStorage: Send + Sync {
         &self,
         query: &LlmAuditQuery,
     ) -> Result<Vec<LlmAuditRecord>, StorageError>;
+
+    async fn get_llm_audit(&self, audit_id: &str) -> Result<LlmAuditRecord, StorageError>;
+
+    async fn list_llm_audit_summaries(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditSummaryRecord>, StorageError>;
 
     async fn list_llm_audit_filter_options(
         &self,

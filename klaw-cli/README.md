@@ -6,7 +6,7 @@
 - 配置加载与校验
 - 启动交互式、单次请求、网关、会话和归档管理命令
 - 管理 `klaw gateway` 的用户级守护进程安装与生命周期
-- 将 provider streaming、agent 快照和 channel 输出能力接到同一条 runtime 提交通路
+- 把共享宿主/runtime 组装层委托给 `klaw-runtime`
 
 ## Commands
 
@@ -59,23 +59,10 @@
 
 ## Runtime Integration
 
-- `stdio` 和 `gateway` 复用 runtime bundle 构建逻辑
-- runtime 内置通用 IM 会话命令路由：`/help`、`/stop`、`/new`、`/start`、`/model-provider`、`/model`
-- runtime 内置审批命令：`/approve <approval_id>`、`/reject <approval_id>`
-- runtime 内置卡片回答命令：`/card_answer <question_id> <option_id>`，用于消费 `ask_question` 发出的单选卡片并恢复原会话
-- runtime 审批命令与工具审批流统一通过 `klaw-approval` manager 层处理状态流转与消费
-- `/approve <approval_id>` 在 shell 审批执行后重新让模型生成总结回复时，会继续透传当前 channel reply metadata，避免 Telegram `direct_reply` 等会话重复投递同一条 follow-up
-- `/approve <approval_id>` 在 shell 执行失败后，现在会把 follow-up turn 限制为最多一次额外工具调用，而不是强制只做文字总结，从而允许模型对明显可修复的命令错误自动重试一次
-- runtime 对 `approval_required` 工具结果会直接透传审批提示，不再包装成通用的 tool failure 文案
-- runtime 对 `stop` 工具信号会立即结束当前轮次，并在 outbound metadata 中写入 `turn.stopped` / `turn.stop_signal`
-- runtime 现支持从 outbound metadata 的 `channel.attachments` 解析结构化附件，并把 archive 驱动的图片/文件回复透传给 Telegram 与 DingTalk channel adapter
-- 后台 channel dispatcher 现在会优先从 outbound metadata 的 `channel.delivery_session_key` / `channel.base_session_key` 解析账号路由，因此 cron / webhook 这类独立 execution session 仍可把回复投递回原始 Telegram / DingTalk 会话
-- runtime 现在会把 `sub_agent` 的 LLM 审计按父 session 持久化，并在审计记录 metadata 中附带 parent/child session 关联信息
-- runtime 现在会异步写入 `tool_audit`，持久化每次工具调用的完整参数、结果/失败详情、signals 与 tool call metadata，并让 `sub_agent` 的工具调用回写到父 session
-- runtime 和 `klaw session` 命令的会话状态/历史操作统一通过 `klaw-session` manager 层处理
-- 普通消息默认按 Base Session -> Active Session 路由；全局默认 provider/model 从当前配置实时解析，session 里的 `model_provider` / `model` 只表示显式 override，不再在建会话时复制默认值
-- gateway runtime 现同时支持结构化 `POST /webhook/events` 与模板驱动的 `POST /webhook/agents`；后者通过 URL query 接收 `hook_id` / `session_key` / `provider` / `model` 等控制参数，HTTP body 会原样保留，并仅以 request JSON 代码块形式附加到模板尾部，不注入额外字段污染原请求
-- gateway runtime 现在会为 webhook `events` / `agents` 输出接受、落库与异步处理状态的 debug tracing，便于对照 gateway 入站日志排查请求去向
+- `klaw-cli` 不再内嵌共享 runtime 实现；`stdio`、`agent`、`gateway` 与 `gui` 统一通过 `klaw-runtime` 获取宿主能力
+- `klaw-runtime` 暴露统一的 runtime facade，包括 bundle 构建/关闭、submit 流程、channel runtime、后台服务、webhook glue 和 gateway 管理
+- 通用 IM 会话命令路由、审批命令、卡片回答命令与 session policy 已迁入 `klaw-runtime`
+- `klaw-cli` 继续保留纯入口相关逻辑，例如 tracing 初始化、GUI 进程环境准备、`daemon` 命令和子命令分发
 - `stdio` 启动时会在 runtime 与 MCP 完全就绪后打印 ASCII `KLAW` 标记，以及版本、skills、tools、MCP 加载摘要
 - `stdio` 默认会将 tracing 日志写入 `~/.klaw/logs/stdio.log`，避免后台日志覆盖当前输入中的 prompt
 - `stdio --verbose-terminal` 可显式把 tracing 日志重新打回终端，便于排查启动或 MCP 问题

@@ -9,9 +9,8 @@ use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_session::{
     LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord,
-    LlmAuditSortOrder, LlmAuditStatus, SessionError, SessionManager, SqliteSessionManager,
+    LlmAuditSortOrder, LlmAuditStatus, LlmAuditSummaryRecord, SessionManager, SqliteSessionManager,
 };
-use std::future::Future;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::Duration;
@@ -31,17 +30,68 @@ enum DetailTab {
 
 struct LlmAuditLoad {
     filter_options: LlmAuditFilterOptions,
-    rows: Vec<LlmAuditRecord>,
+    rows: Vec<LlmAuditSummaryRecord>,
 }
 
 struct PendingLlmAuditLoad {
     receiver: Receiver<Result<LlmAuditLoad, String>>,
 }
 
+struct PendingLlmAuditDetail {
+    audit_id: String,
+    receiver: Receiver<Result<LlmAuditRecord, String>>,
+}
+
+enum LlmAuditWorkerRequest {
+    Load {
+        filter_query: LlmAuditFilterOptionsQuery,
+        query: LlmAuditQuery,
+        response: mpsc::Sender<Result<LlmAuditLoad, String>>,
+    },
+    LoadDetail {
+        audit_id: String,
+        response: mpsc::Sender<Result<LlmAuditRecord, String>>,
+    },
+}
+
+struct LlmAuditWorker {
+    request_tx: mpsc::Sender<LlmAuditWorkerRequest>,
+}
+
+impl LlmAuditWorker {
+    fn spawn() -> Self {
+        let (request_tx, request_rx) = mpsc::channel();
+        thread::spawn(move || run_llm_audit_worker(request_rx));
+        Self { request_tx }
+    }
+
+    fn load(
+        &self,
+        filter_query: LlmAuditFilterOptionsQuery,
+        query: LlmAuditQuery,
+    ) -> Receiver<Result<LlmAuditLoad, String>> {
+        let (response, receiver) = mpsc::channel();
+        let request = LlmAuditWorkerRequest::Load {
+            filter_query,
+            query,
+            response,
+        };
+        let _ = self.request_tx.send(request);
+        receiver
+    }
+
+    fn load_detail(&self, audit_id: String) -> Receiver<Result<LlmAuditRecord, String>> {
+        let (response, receiver) = mpsc::channel();
+        let request = LlmAuditWorkerRequest::LoadDetail { audit_id, response };
+        let _ = self.request_tx.send(request);
+        receiver
+    }
+}
+
 pub struct LlmPanel {
     loaded: bool,
     loading: bool,
-    rows: Vec<LlmAuditRecord>,
+    rows: Vec<LlmAuditSummaryRecord>,
     session_options: Vec<String>,
     provider_options: Vec<String>,
     session_filter: Option<String>,
@@ -52,9 +102,12 @@ pub struct LlmPanel {
     size: i64,
     sort_order: LlmAuditSortOrder,
     selected_id: Option<String>,
+    detail_summary: Option<LlmAuditSummaryRecord>,
     detail_record: Option<LlmAuditRecord>,
     detail_tab: DetailTab,
+    worker: Option<LlmAuditWorker>,
     load_request: Option<PendingLlmAuditLoad>,
+    detail_request: Option<PendingLlmAuditDetail>,
     refresh_queued: bool,
     store: Option<ConfigStore>,
     config: AppConfig,
@@ -63,7 +116,7 @@ pub struct LlmPanel {
 impl Default for LlmPanel {
     fn default() -> Self {
         let today = Local::now().date_naive();
-        let one_year_ago = today - chrono::Duration::days(365);
+        let seven_days_ago = today - chrono::Duration::days(6);
         Self {
             loaded: false,
             loading: false,
@@ -72,15 +125,18 @@ impl Default for LlmPanel {
             provider_options: Vec::new(),
             session_filter: None,
             provider_filter: None,
-            start_date: Some(one_year_ago),
+            start_date: Some(seven_days_ago),
             end_date: Some(today),
             page: 1,
             size: 50,
             sort_order: LlmAuditSortOrder::RequestedAtDesc,
             selected_id: None,
+            detail_summary: None,
             detail_record: None,
             detail_tab: DetailTab::default(),
+            worker: None,
             load_request: None,
+            detail_request: None,
             refresh_queued: false,
             store: None,
             config: AppConfig::default(),
@@ -126,6 +182,10 @@ impl LlmPanel {
         self.refresh(notifications);
     }
 
+    fn ensure_worker(&mut self) -> &LlmAuditWorker {
+        self.worker.get_or_insert_with(LlmAuditWorker::spawn)
+    }
+
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
         let _ = notifications;
         if self.load_request.is_some() {
@@ -149,15 +209,9 @@ impl LlmPanel {
             sort_order: self.sort_order,
         };
         self.loading = true;
+        let worker = self.ensure_worker();
         self.load_request = Some(PendingLlmAuditLoad {
-            receiver: spawn_session_task(move |manager| async move {
-                let filter_options = manager.list_llm_audit_filter_options(&filter_query).await?;
-                let rows = manager.list_llm_audit(&query).await?;
-                Ok(LlmAuditLoad {
-                    filter_options,
-                    rows,
-                })
-            }),
+            receiver: worker.load(filter_query, query),
         });
     }
 
@@ -198,6 +252,59 @@ impl LlmPanel {
         }
     }
 
+    fn open_detail(&mut self, summary: LlmAuditSummaryRecord) {
+        let selected_id = summary.id.clone();
+        self.selected_id = Some(selected_id.clone());
+        self.detail_summary = Some(summary);
+        self.detail_tab = DetailTab::default();
+
+        if self
+            .detail_record
+            .as_ref()
+            .is_some_and(|record| record.id == selected_id)
+        {
+            return;
+        }
+
+        if self
+            .detail_request
+            .as_ref()
+            .is_some_and(|request| request.audit_id == selected_id)
+        {
+            return;
+        }
+
+        self.detail_record = None;
+        let receiver = self.ensure_worker().load_detail(selected_id.clone());
+        self.detail_request = Some(PendingLlmAuditDetail {
+            audit_id: selected_id,
+            receiver,
+        });
+    }
+
+    fn poll_detail_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.detail_request.take() else {
+            return;
+        };
+
+        match request.receiver.try_recv() {
+            Ok(result) => match result {
+                Ok(record) => {
+                    self.detail_record = Some(record);
+                }
+                Err(err) => {
+                    notifications.error(format!("Failed to load LLM audit detail: {err}"));
+                }
+            },
+            Err(TryRecvError::Empty) => {
+                self.detail_request = Some(request);
+            }
+            Err(TryRecvError::Disconnected) => {
+                notifications.error("LLM audit detail loader closed unexpectedly");
+            }
+        }
+    }
+
     fn toggle_sort_order(&mut self) {
         self.sort_order = match self.sort_order {
             LlmAuditSortOrder::RequestedAtAsc => LlmAuditSortOrder::RequestedAtDesc,
@@ -232,7 +339,8 @@ impl PanelRenderer for LlmPanel {
         self.ensure_store_loaded(notifications);
         self.ensure_loaded(notifications);
         self.poll_load_request(notifications);
-        if self.load_request.is_some() {
+        self.poll_detail_request(notifications);
+        if self.load_request.is_some() || self.detail_request.is_some() {
             ui.ctx().request_repaint_after(LLM_AUDIT_POLL_INTERVAL);
         }
 
@@ -364,7 +472,7 @@ impl PanelRenderer for LlmPanel {
         }
 
         ui.separator();
-        let mut open_detail: Option<LlmAuditRecord> = None;
+        let mut open_detail: Option<LlmAuditSummaryRecord> = None;
         let table_width = ui.available_width();
         egui::ScrollArea::both()
             .auto_shrink([false, false])
@@ -509,12 +617,12 @@ impl PanelRenderer for LlmPanel {
                     });
             });
 
-        if let Some(record) = open_detail {
-            self.detail_record = Some(record);
+        if let Some(summary) = open_detail {
+            self.open_detail(summary);
         }
-        if let Some(record) = self.detail_record.clone() {
+        if let Some(summary) = self.detail_summary.clone() {
             let mut open = true;
-            let provider_display_name = self.provider_display_name(&record.provider).to_string();
+            let provider_display_name = self.provider_display_name(&summary.provider).to_string();
             egui::Window::new("LLM Audit Detail")
                 .id(egui::Id::new("llm-audit-detail"))
                 .open(&mut open)
@@ -522,24 +630,24 @@ impl PanelRenderer for LlmPanel {
                 .default_width(860.0)
                 .default_height(500.0)
                 .show(ui.ctx(), |ui| {
-                    ui.label(format!("Session: {}", record.session_key));
+                    ui.label(format!("Session: {}", summary.session_key));
                     ui.label(format!(
                         "Time: {}",
-                        format_timestamp_millis(record.requested_at_ms)
+                        format_timestamp_millis(summary.requested_at_ms)
                     ));
                     ui.label(format!("Provider: {provider_display_name}"));
-                    ui.label(format!("Model: {}", record.model));
-                    ui.label(format!("Wire API: {}", record.wire_api));
-                    let (icon, color, text) = llm_status_display(record.status);
+                    ui.label(format!("Model: {}", summary.model));
+                    ui.label(format!("Wire API: {}", summary.wire_api));
+                    let (icon, color, text) = llm_status_display(summary.status);
                     ui.label(
                         egui::RichText::new(format!("Status: {icon} {text}"))
                             .color(color)
                             .strong(),
                     );
-                    if let Some(error_code) = &record.error_code {
+                    if let Some(error_code) = &summary.error_code {
                         ui.label(format!("Error Code: {error_code}"));
                     }
-                    if let Some(error_message) = &record.error_message {
+                    if let Some(error_message) = &summary.error_message {
                         ui.label(format!("Error Message: {error_message}"));
                     }
                     ui.separator();
@@ -552,19 +660,31 @@ impl PanelRenderer for LlmPanel {
 
                     match self.detail_tab {
                         DetailTab::Request => {
-                            render_json_payload(ui, &record.request_body_json);
+                            if let Some(record) = self.detail_record.as_ref() {
+                                render_json_payload(ui, &record.request_body_json);
+                            } else {
+                                ui.add(egui::Spinner::new());
+                                ui.small("Loading request payload...");
+                            }
                         }
                         DetailTab::Response => {
-                            if let Some(body) = &record.response_body_json {
-                                render_json_payload(ui, body);
+                            if let Some(record) = self.detail_record.as_ref() {
+                                if let Some(body) = &record.response_body_json {
+                                    render_json_payload(ui, body);
+                                } else {
+                                    ui.monospace("<empty>");
+                                }
                             } else {
-                                ui.monospace("<empty>");
+                                ui.add(egui::Spinner::new());
+                                ui.small("Loading response payload...");
                             }
                         }
                     }
                 });
             if !open {
+                self.detail_summary = None;
                 self.detail_record = None;
+                self.detail_request = None;
             }
         }
     }
@@ -673,39 +793,82 @@ fn offset_to_ms(datetime: OffsetDateTime) -> i64 {
     datetime.unix_timestamp_nanos().saturating_div(1_000_000) as i64
 }
 
-fn spawn_session_task<T, F, Fut>(op: F) -> Receiver<Result<T, String>>
-where
-    T: Send + 'static,
-    F: FnOnce(Box<dyn SessionManager>) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<T, SessionError>> + Send + 'static,
-{
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let result = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|err| format!("failed to build runtime: {err}"))
-            .and_then(|runtime| {
-                runtime.block_on(async move {
-                    let manager: Box<dyn SessionManager> = Box::new(
-                        SqliteSessionManager::open_default()
-                            .await
-                            .map_err(|err| format!("failed to open session manager: {err}"))?,
-                    );
-                    op(manager)
+fn run_llm_audit_worker(request_rx: Receiver<LlmAuditWorkerRequest>) {
+    let runtime = match Builder::new_current_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            let message = format!("failed to build runtime: {err}");
+            while let Ok(request) = request_rx.recv() {
+                send_worker_init_error(request, &message);
+            }
+            return;
+        }
+    };
+
+    let manager = match runtime.block_on(SqliteSessionManager::open_default()) {
+        Ok(manager) => manager,
+        Err(err) => {
+            let message = format!("failed to open session manager: {err}");
+            while let Ok(request) = request_rx.recv() {
+                send_worker_init_error(request, &message);
+            }
+            return;
+        }
+    };
+    let manager: Box<dyn SessionManager> = Box::new(manager);
+
+    while let Ok(request) = request_rx.recv() {
+        match request {
+            LlmAuditWorkerRequest::Load {
+                filter_query,
+                query,
+                response,
+            } => {
+                let result = runtime.block_on(async {
+                    let filter_options = manager
+                        .list_llm_audit_filter_options(&filter_query)
+                        .await
+                        .map_err(|err| format!("session operation failed: {err}"))?;
+                    let rows = manager
+                        .list_llm_audit_summaries(&query)
+                        .await
+                        .map_err(|err| format!("session operation failed: {err}"))?;
+                    Ok(LlmAuditLoad {
+                        filter_options,
+                        rows,
+                    })
+                });
+                let _ = response.send(result);
+            }
+            LlmAuditWorkerRequest::LoadDetail { audit_id, response } => {
+                let result = runtime.block_on(async {
+                    manager
+                        .get_llm_audit(&audit_id)
                         .await
                         .map_err(|err| format!("session operation failed: {err}"))
-                })
-            });
-        let _ = tx.send(result);
-    });
-    rx
+                });
+                let _ = response.send(result);
+            }
+        }
+    }
+}
+
+fn send_worker_init_error(request: LlmAuditWorkerRequest, message: &str) {
+    match request {
+        LlmAuditWorkerRequest::Load { response, .. } => {
+            let _ = response.send(Err(message.to_string()));
+        }
+        LlmAuditWorkerRequest::LoadDetail { response, .. } => {
+            let _ = response.send(Err(message.to_string()));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use klaw_config::ModelProviderConfig;
+    use std::ptr;
 
     fn sample_record() -> LlmAuditRecord {
         LlmAuditRecord {
@@ -731,9 +894,39 @@ mod tests {
         }
     }
 
+    fn sample_summary() -> LlmAuditSummaryRecord {
+        LlmAuditSummaryRecord {
+            id: "audit-1".to_string(),
+            session_key: "session-1".to_string(),
+            chat_id: "chat-1".to_string(),
+            turn_index: 1,
+            request_seq: 1,
+            provider: "openai".to_string(),
+            model: "gpt-5".to_string(),
+            wire_api: "responses".to_string(),
+            status: LlmAuditStatus::Success,
+            error_code: None,
+            error_message: None,
+            provider_request_id: Some("req-1".to_string()),
+            provider_response_id: Some("resp-1".to_string()),
+            requested_at_ms: 1_700_000_000_000,
+            responded_at_ms: Some(1_700_000_000_100),
+            created_at_ms: 1_700_000_000_000,
+        }
+    }
+
     #[test]
     fn default_page_size_is_fifty() {
         assert_eq!(LlmPanel::default().size, 50);
+    }
+
+    #[test]
+    fn default_time_window_is_recent_seven_days() {
+        let panel = LlmPanel::default();
+        let today = Local::now().date_naive();
+
+        assert_eq!(panel.end_date, Some(today));
+        assert_eq!(panel.start_date, Some(today - chrono::Duration::days(6)));
     }
 
     #[test]
@@ -787,7 +980,7 @@ mod tests {
                 session_keys: vec!["session-1".to_string()],
                 providers: vec!["openai".to_string()],
             },
-            rows: vec![sample_record()],
+            rows: vec![sample_summary()],
         }))
         .expect("send load result");
 
@@ -799,6 +992,41 @@ mod tests {
         assert_eq!(panel.session_options, vec!["session-1".to_string()]);
         assert_eq!(panel.provider_options, vec!["openai".to_string()]);
         assert!(panel.load_request.is_none());
+    }
+
+    #[test]
+    fn ensure_worker_reuses_existing_background_worker() {
+        let mut panel = LlmPanel::default();
+
+        let first = panel.ensure_worker() as *const LlmAuditWorker;
+        let second = panel.ensure_worker() as *const LlmAuditWorker;
+
+        assert!(ptr::eq(first, second));
+    }
+
+    #[test]
+    fn poll_detail_request_applies_loaded_record() {
+        let (tx, rx) = mpsc::channel();
+        let mut panel = LlmPanel {
+            detail_request: Some(PendingLlmAuditDetail {
+                audit_id: "audit-1".to_string(),
+                receiver: rx,
+            }),
+            detail_summary: Some(sample_summary()),
+            ..LlmPanel::default()
+        };
+        tx.send(Ok(sample_record())).expect("send detail result");
+
+        panel.poll_detail_request(&mut NotificationCenter::default());
+
+        assert_eq!(
+            panel
+                .detail_record
+                .as_ref()
+                .map(|record| record.id.as_str()),
+            Some("audit-1")
+        );
+        assert!(panel.detail_request.is_none());
     }
 
     #[test]

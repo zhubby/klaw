@@ -2,16 +2,16 @@ use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
     CronTaskRun, CronTaskStatus, HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun,
     HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery,
-    LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource,
-    LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
-    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewPendingQuestionRecord,
-    NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord, PendingQuestionRecord,
-    PendingQuestionStatus, SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
-    StorageError, StoragePaths, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
-    ToolAuditQuery, ToolAuditRecord, ToolAuditSortOrder, ToolAuditStatus, UpdateCronJobPatch,
-    UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
-    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
-    WebhookEventStatus, jsonl,
+    LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmAuditSummaryRecord, LlmUsageRecord,
+    LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
+    SessionSortOrder, SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
+    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, ToolAuditSortOrder,
+    ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
+    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
+    WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus, jsonl,
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
 };
@@ -204,6 +204,26 @@ struct LlmAuditRow {
     request_body_json: String,
     response_body_json: Option<String>,
     metadata_json: Option<String>,
+    requested_at_ms: i64,
+    responded_at_ms: Option<i64>,
+    created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct LlmAuditSummaryRow {
+    id: String,
+    session_key: String,
+    chat_id: String,
+    turn_index: i64,
+    request_seq: i64,
+    provider: String,
+    model: String,
+    wire_api: String,
+    status: String,
+    error_code: Option<String>,
+    error_message: Option<String>,
+    provider_request_id: Option<String>,
+    provider_response_id: Option<String>,
     requested_at_ms: i64,
     responded_at_ms: Option<i64>,
     created_at_ms: i64,
@@ -502,6 +522,34 @@ impl TryFrom<LlmAuditRow> for LlmAuditRecord {
             request_body_json: value.request_body_json,
             response_body_json: value.response_body_json,
             metadata_json: value.metadata_json,
+            requested_at_ms: value.requested_at_ms,
+            responded_at_ms: value.responded_at_ms,
+            created_at_ms: value.created_at_ms,
+        })
+    }
+}
+
+impl TryFrom<LlmAuditSummaryRow> for LlmAuditSummaryRecord {
+    type Error = StorageError;
+
+    fn try_from(value: LlmAuditSummaryRow) -> Result<Self, Self::Error> {
+        let status = LlmAuditStatus::parse(&value.status).ok_or_else(|| {
+            StorageError::backend(format!("invalid llm audit status: {}", value.status))
+        })?;
+        Ok(Self {
+            id: value.id,
+            session_key: value.session_key,
+            chat_id: value.chat_id,
+            turn_index: value.turn_index,
+            request_seq: value.request_seq,
+            provider: value.provider,
+            model: value.model,
+            wire_api: value.wire_api,
+            status,
+            error_code: value.error_code,
+            error_message: value.error_message,
+            provider_request_id: value.provider_request_id,
+            provider_response_id: value.provider_response_id,
             requested_at_ms: value.requested_at_ms,
             responded_at_ms: value.responded_at_ms,
             created_at_ms: value.created_at_ms,
@@ -2010,6 +2058,55 @@ impl SessionStorage for SqlxSessionStore {
         .await
         .map_err(StorageError::backend)?;
         rows.into_iter().map(LlmAuditRecord::try_from).collect()
+    }
+
+    async fn get_llm_audit(&self, audit_id: &str) -> Result<LlmAuditRecord, StorageError> {
+        let row = sqlx::query_as::<_, LlmAuditRow>(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    status, error_code, error_message, provider_request_id, provider_response_id,
+                    request_body_json, response_body_json, metadata_json, requested_at_ms, responded_at_ms, created_at_ms
+             FROM llm_audit
+             WHERE id = ?1",
+        )
+        .bind(audit_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        LlmAuditRecord::try_from(row)
+    }
+
+    async fn list_llm_audit_summaries(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditSummaryRecord>, StorageError> {
+        let sort_order = match query.sort_order {
+            LlmAuditSortOrder::RequestedAtAsc => "requested_at_ms ASC, created_at_ms ASC",
+            LlmAuditSortOrder::RequestedAtDesc => "requested_at_ms DESC, created_at_ms DESC",
+        };
+        let rows = sqlx::query_as::<_, LlmAuditSummaryRow>(&format!(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    status, error_code, error_message, provider_request_id, provider_response_id,
+                    requested_at_ms, responded_at_ms, created_at_ms
+             FROM llm_audit
+             WHERE (?1 IS NULL OR session_key = ?1)
+               AND (?2 IS NULL OR provider = ?2)
+               AND (?3 IS NULL OR requested_at_ms >= ?3)
+               AND (?4 IS NULL OR requested_at_ms <= ?4)
+             ORDER BY {sort_order}
+             LIMIT ?5 OFFSET ?6"
+        ))
+        .bind(query.session_key.as_deref())
+        .bind(query.provider.as_deref())
+        .bind(query.requested_from_ms)
+        .bind(query.requested_to_ms)
+        .bind(query.limit.max(1))
+        .bind(query.offset.max(0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+        rows.into_iter()
+            .map(LlmAuditSummaryRecord::try_from)
+            .collect()
     }
 
     async fn list_llm_audit_filter_options(

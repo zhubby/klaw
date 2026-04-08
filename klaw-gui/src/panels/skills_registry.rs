@@ -579,7 +579,6 @@ impl PanelRenderer for SkillsRegistryPanel {
                 .column(Column::auto().at_least(80.0))
                 .column(Column::auto().at_least(100.0))
                 .column(Column::auto().at_least(80.0))
-                .column(Column::remainder().at_least(120.0))
                 .min_scrolled_height(0.0)
                 .max_scroll_height(available_height)
                 .sense(egui::Sense::click())
@@ -598,9 +597,6 @@ impl PanelRenderer for SkillsRegistryPanel {
                     });
                     header.col(|ui| {
                         ui.strong("Installed");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Skills");
                     });
                 })
                 .body(|body| {
@@ -664,9 +660,6 @@ impl PanelRenderer for SkillsRegistryPanel {
                         });
                         row.col(|ui| {
                             ui.label(registry.installed.len().to_string());
-                        });
-                        row.col(|ui| {
-                            ui.label(registry.installed.join(", "));
                         });
 
                         let response = row.response();

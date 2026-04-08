@@ -2,16 +2,14 @@ use clap::Args;
 use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
 use klaw_gateway::run_gateway_with_options;
+use klaw_runtime::{
+    build_channel_driver_factory, build_hosted_runtime, shutdown_runtime_bundle, webhook,
+};
 use std::{io, sync::Arc};
 use tokio::sync::watch;
 
 use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
-use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
-use crate::runtime::{
-    SharedChannelRuntime, build_channel_driver_factory, build_runtime_bundle,
-    finalize_startup_report, shutdown_runtime_bundle, webhook,
-};
 use tracing::info;
 
 #[derive(Debug, Args)]
@@ -19,16 +17,8 @@ pub struct GatewayCommand {}
 
 impl GatewayCommand {
     pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
-        let mut runtime = build_runtime_bundle(config.as_ref()).await?;
-        let startup_report = finalize_startup_report(&mut runtime).await?;
-        print_startup_banner(config.as_ref(), &startup_report);
-
-        let runtime = Arc::new(runtime);
-        let background = Arc::new(BackgroundServices::new(
-            runtime.as_ref(),
-            BackgroundServiceConfig::from_app_config(config.as_ref()),
-        ));
-        let adapter = Arc::new(SharedChannelRuntime::new(runtime.clone(), background));
+        let hosted = build_hosted_runtime(config.as_ref()).await?;
+        print_startup_banner(config.as_ref(), &hosted.startup_report);
         let channel_snapshot = ChannelConfigSnapshot::from_channels_config(&config.channels)
             .map_err(io::Error::other)?;
         let gateway_config = config.gateway.clone();
@@ -39,9 +29,9 @@ impl GatewayCommand {
                 let (shutdown_tx, _shutdown_rx) = watch::channel(false);
                 let channel_factory = build_channel_driver_factory(config.as_ref())?;
                 let mut channel_manager =
-                    ChannelManager::with_factory(Arc::clone(&adapter), channel_factory);
+                    ChannelManager::with_factory(Arc::clone(&hosted.adapter), channel_factory);
                 channel_manager.sync(channel_snapshot).await;
-                let gateway_options = webhook::gateway_options(runtime.clone());
+                let gateway_options = webhook::gateway_options(Arc::clone(&hosted.runtime));
 
                 let mut gateway_task = tokio::task::spawn_local(async move {
                     run_gateway_with_options(&gateway_config, gateway_options).await
@@ -64,7 +54,7 @@ impl GatewayCommand {
 
                 let _ = shutdown_tx.send(true);
                 channel_manager.shutdown_all().await;
-                let shutdown_result = shutdown_runtime_bundle(runtime.as_ref()).await;
+                let shutdown_result = shutdown_runtime_bundle(hosted.runtime.as_ref()).await;
                 run_result?;
                 shutdown_result
             })

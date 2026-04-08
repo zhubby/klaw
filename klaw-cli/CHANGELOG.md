@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-08
+
+### Changed
+
+- extracted the shared runtime composition layer into the new `klaw-runtime` crate, so `klaw-cli` now focuses on binary entrypoint concerns while `stdio` / `agent` / `gateway` / `gui` reuse the same host-level facade from outside the CLI crate
+
 ## 2026-04-07
 
 ### Added

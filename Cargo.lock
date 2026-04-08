@@ -3923,6 +3923,7 @@ dependencies = [
  "klaw-mcp",
  "klaw-memory",
  "klaw-observability",
+ "klaw-runtime",
  "klaw-session",
  "klaw-skill",
  "klaw-storage",
@@ -4045,6 +4046,7 @@ dependencies = [
  "klaw-mcp",
  "klaw-memory",
  "klaw-observability",
+ "klaw-runtime",
  "klaw-session",
  "klaw-skill",
  "klaw-storage",
@@ -4152,6 +4154,41 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "klaw-runtime"
+version = "0.10.2"
+dependencies = [
+ "async-trait",
+ "klaw-acp",
+ "klaw-agent",
+ "klaw-approval",
+ "klaw-archive",
+ "klaw-channel",
+ "klaw-config",
+ "klaw-core",
+ "klaw-cron",
+ "klaw-gateway",
+ "klaw-heartbeat",
+ "klaw-llm",
+ "klaw-mcp",
+ "klaw-memory",
+ "klaw-observability",
+ "klaw-session",
+ "klaw-skill",
+ "klaw-storage",
+ "klaw-tool",
+ "klaw-util",
+ "klaw-voice",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "toml",
+ "tracing",
  "uuid",
 ]
 

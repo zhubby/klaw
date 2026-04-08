@@ -17,7 +17,7 @@ use klaw_channel::{
     ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
     ChannelStreamWriter, DefaultChannelDriverFactory, OutboundAttachment, OutboundAttachmentSource,
 };
-use klaw_config::{AppConfig, ConfigStore, McpConfig, ToolEnabled};
+use klaw_config::{AppConfig, ConfigStore, McpConfig, TailscaleMode, ToolEnabled};
 use klaw_core::{
     AgentLoop, AgentRuntimeError, AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage,
     DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
@@ -26,7 +26,9 @@ use klaw_core::{
     QueueStrategy, RunLimits, SessionSchedulingPolicy, SkillPromptEntry, Subscription,
     TransportError, build_runtime_system_prompt, ensure_workspace_prompt_templates,
 };
-use klaw_gateway::{GatewayWebhookAgentRequest, GatewayWebhookRequest};
+use klaw_gateway::{
+    GatewayRuntimeInfo, GatewayWebhookAgentRequest, GatewayWebhookRequest, TailscaleHostInfo,
+};
 use klaw_heartbeat::{HeartbeatManager, should_suppress_output};
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
 use klaw_mcp::{McpConfigSnapshot, McpInitHandle, McpManager, McpSyncResult};
@@ -72,6 +74,19 @@ const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const TOOL_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, use the available workspace tools to read it and follow it before anything else. If it does not exist, start with a short, natural greeting and do not recreate or restore `BOOTSTRAP.md`.\nGuide the user through initializing the agent's identity, vibe, and context. When you learn durable bootstrap details, use tools to update `IDENTITY.md` and `USER.md`, and delete `BOOTSTRAP.md` once bootstrap is truly complete. If `BOOTSTRAP.md` is already absent, leave it absent. Do not claim files were updated unless you actually changed them with tools. Do not mention that this message was auto-generated.";
 const META_OUTBOUND_ATTACHMENTS_KEY: &str = "channel.attachments";
+
+#[derive(Debug, Clone, Default)]
+pub struct GatewayStatusSnapshot {
+    pub configured_enabled: bool,
+    pub running: bool,
+    pub transitioning: bool,
+    pub info: Option<GatewayRuntimeInfo>,
+    pub tailscale_host: TailscaleHostInfo,
+    pub last_error: Option<String>,
+    pub auth_configured: bool,
+    pub tailscale_mode: TailscaleMode,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct StartupReport {
     pub skill_names: Vec<String>,
@@ -107,6 +122,14 @@ pub struct RuntimeBundle {
 pub struct SharedChannelRuntime {
     runtime: Arc<RuntimeBundle>,
     background: Arc<service_loop::BackgroundServices>,
+}
+
+#[derive(Clone)]
+pub struct HostedRuntime {
+    pub runtime: Arc<RuntimeBundle>,
+    pub background: Arc<service_loop::BackgroundServices>,
+    pub adapter: Arc<SharedChannelRuntime>,
+    pub startup_report: StartupReport,
 }
 
 #[derive(Debug)]
@@ -152,6 +175,26 @@ impl SharedChannelRuntime {
             background,
         }
     }
+}
+
+pub async fn build_hosted_runtime(config: &AppConfig) -> Result<HostedRuntime, Box<dyn Error>> {
+    let mut runtime = build_runtime_bundle(config).await?;
+    let startup_report = finalize_startup_report(&mut runtime).await?;
+    let runtime = Arc::new(runtime);
+    let background = Arc::new(service_loop::BackgroundServices::new(
+        runtime.as_ref(),
+        service_loop::BackgroundServiceConfig::from_app_config(config),
+    ));
+    let adapter = Arc::new(SharedChannelRuntime::new(
+        Arc::clone(&runtime),
+        Arc::clone(&background),
+    ));
+    Ok(HostedRuntime {
+        runtime,
+        background,
+        adapter,
+        startup_report,
+    })
 }
 
 #[async_trait::async_trait(?Send)]
@@ -3841,7 +3884,11 @@ A .docx file is a ZIP archive containing XML files.
 
         assert!(response.content.contains("✅ **Shell command succeeded**"));
         assert!(response.content.contains("- Command: `echo risky`"));
-        assert!(response.content.contains(&format!("- CWD: `{}`", workspace.display())));
+        assert!(
+            response
+                .content
+                .contains(&format!("- CWD: `{}`", workspace.display()))
+        );
         assert!(response.content.contains("- Exit code: `0`"));
         assert!(response.content.contains("````text\nrisky\n````"));
         assert!(!response.content.contains("\"stdout\": \"risky\""));

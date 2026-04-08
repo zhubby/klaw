@@ -2,15 +2,16 @@ use crate::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
     CronTaskRun, CronTaskStatus, HeartbeatJob, HeartbeatStorage, HeartbeatTaskRun,
     HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery,
-    LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmUsageRecord, LlmUsageSource,
-    LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob,
-    NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewPendingQuestionRecord,
-    NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord, PendingQuestionRecord,
-    PendingQuestionStatus, SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
-    StorageError, StoragePaths, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
-    ToolAuditQuery, ToolAuditRecord, ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
-    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
-    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus, jsonl,
+    LlmAuditRecord, LlmAuditSortOrder, LlmAuditStatus, LlmAuditSummaryRecord, LlmUsageRecord,
+    LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
+    SessionSortOrder, SessionStorage, StorageError, StoragePaths, ToolAuditFilterOptions,
+    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, ToolAuditStatus,
+    UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
+    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
+    WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus, jsonl,
     memory_db::{DbRow, DbValue, MemoryDb},
     util::{now_ms, relative_or_absolute_jsonl},
 };
@@ -1342,6 +1343,82 @@ impl SessionStorage for TursoSessionStore {
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
             out.push(row_to_llm_audit(&row)?);
+        }
+        Ok(out)
+    }
+
+    async fn get_llm_audit(&self, audit_id: &str) -> Result<LlmAuditRecord, StorageError> {
+        let sql = format!(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    status, error_code, error_message, provider_request_id, provider_response_id,
+                    request_body_json, response_body_json, metadata_json, requested_at_ms, responded_at_ms, created_at_ms
+             FROM llm_audit
+             WHERE id = '{}'
+             LIMIT 1",
+            escape_sql_text(audit_id)
+        );
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(StorageError::backend)?
+            .ok_or_else(|| StorageError::backend("llm audit not found"))?;
+        row_to_llm_audit(&row)
+    }
+
+    async fn list_llm_audit_summaries(
+        &self,
+        query: &LlmAuditQuery,
+    ) -> Result<Vec<LlmAuditSummaryRecord>, StorageError> {
+        let sort_order = match query.sort_order {
+            LlmAuditSortOrder::RequestedAtAsc => "requested_at_ms ASC, created_at_ms ASC",
+            LlmAuditSortOrder::RequestedAtDesc => "requested_at_ms DESC, created_at_ms DESC",
+        };
+        let mut conditions = Vec::new();
+        if let Some(session_key) = query
+            .session_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push(format!("session_key = '{}'", escape_sql_text(session_key)));
+        }
+        if let Some(provider) = query
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push(format!("provider = '{}'", escape_sql_text(provider)));
+        }
+        if let Some(from_ms) = query.requested_from_ms {
+            conditions.push(format!("requested_at_ms >= {from_ms}"));
+        }
+        if let Some(to_ms) = query.requested_to_ms {
+            conditions.push(format!("requested_at_ms <= {to_ms}"));
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    status, error_code, error_message, provider_request_id, provider_response_id,
+                    requested_at_ms, responded_at_ms, created_at_ms
+             FROM llm_audit
+             {where_clause}
+             ORDER BY {sort_order}
+             LIMIT {} OFFSET {}",
+            query.limit.max(1),
+            query.offset.max(0)
+        );
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
+            out.push(row_to_llm_audit_summary(&row)?);
         }
         Ok(out)
     }
@@ -3054,6 +3131,32 @@ fn row_to_llm_audit(row: &Row) -> Result<LlmAuditRecord, StorageError> {
         requested_at_ms: value_to_i64(row.get_value(16).map_err(StorageError::backend)?)?,
         responded_at_ms: value_to_opt_i64(row.get_value(17).map_err(StorageError::backend)?)?,
         created_at_ms: value_to_i64(row.get_value(18).map_err(StorageError::backend)?)?,
+    })
+}
+
+fn row_to_llm_audit_summary(row: &Row) -> Result<LlmAuditSummaryRecord, StorageError> {
+    let status_raw = value_to_string(row.get_value(8).map_err(StorageError::backend)?)?;
+    let status = LlmAuditStatus::parse(&status_raw)
+        .ok_or_else(|| StorageError::backend(format!("invalid llm audit status: {status_raw}")))?;
+    Ok(LlmAuditSummaryRecord {
+        id: value_to_string(row.get_value(0).map_err(StorageError::backend)?)?,
+        session_key: value_to_string(row.get_value(1).map_err(StorageError::backend)?)?,
+        chat_id: value_to_string(row.get_value(2).map_err(StorageError::backend)?)?,
+        turn_index: value_to_i64(row.get_value(3).map_err(StorageError::backend)?)?,
+        request_seq: value_to_i64(row.get_value(4).map_err(StorageError::backend)?)?,
+        provider: value_to_string(row.get_value(5).map_err(StorageError::backend)?)?,
+        model: value_to_string(row.get_value(6).map_err(StorageError::backend)?)?,
+        wire_api: value_to_string(row.get_value(7).map_err(StorageError::backend)?)?,
+        status,
+        error_code: value_to_opt_string(row.get_value(9).map_err(StorageError::backend)?),
+        error_message: value_to_opt_string(row.get_value(10).map_err(StorageError::backend)?),
+        provider_request_id: value_to_opt_string(row.get_value(11).map_err(StorageError::backend)?),
+        provider_response_id: value_to_opt_string(
+            row.get_value(12).map_err(StorageError::backend)?,
+        ),
+        requested_at_ms: value_to_i64(row.get_value(13).map_err(StorageError::backend)?)?,
+        responded_at_ms: value_to_opt_i64(row.get_value(14).map_err(StorageError::backend)?)?,
+        created_at_ms: value_to_i64(row.get_value(15).map_err(StorageError::backend)?)?,
     })
 }
 
