@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-04-08
+
+### Fixed
+
+- `ACP` 面板详情弹窗不再单独显示 `Args` 和 `State`；`Command` 字段现直接展示完整拼接后的 adapter 启动命令
+- `ACP` 面板 agents 列表移除了容易误导的 `State` 列，仅保留带图标和颜色高亮的 `Enabled` 状态，并将列表行高恢复为当前主题默认交互高度
+
 ## 2026-04-07
 
 ### Added

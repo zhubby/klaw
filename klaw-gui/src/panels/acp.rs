@@ -843,6 +843,7 @@ impl AcpPanel {
                 .max_width(table_width)
                 .max_height(max_height)
                 .show(ui, |ui| {
+                    let row_height = agent_table_row_height(ui.spacing().interact_size.y);
                     ui.set_min_width(table_width);
                     TableBuilder::new(ui)
                         .striped(true)
@@ -851,13 +852,12 @@ impl AcpPanel {
                         .column(Column::auto().at_least(60.0))
                         .column(Column::auto().at_least(120.0))
                         .column(Column::remainder().at_least(220.0))
-                        .column(Column::auto().at_least(80.0))
                         .column(Column::auto().at_least(140.0))
                         .column(Column::remainder().at_least(160.0))
                         .min_scrolled_height(0.0)
                         .max_scroll_height(max_height)
                         .sense(egui::Sense::click())
-                        .header(22.0, |mut header| {
+                        .header(row_height, |mut header| {
                             header.col(|ui| {
                                 ui.strong("Enabled");
                             });
@@ -868,9 +868,6 @@ impl AcpPanel {
                                 ui.strong("Adapter Command");
                             });
                             header.col(|ui| {
-                                ui.strong("State");
-                            });
-                            header.col(|ui| {
                                 ui.strong("Tool");
                             });
                             header.col(|ui| {
@@ -878,7 +875,7 @@ impl AcpPanel {
                             });
                         })
                         .body(|body| {
-                            body.rows(24.0, agent_ids.len(), |mut row| {
+                            body.rows(row_height, agent_ids.len(), |mut row| {
                                 let idx = row.index();
                                 let agent_id = &agent_ids[idx];
                                 let Some(agent) = self
@@ -896,24 +893,13 @@ impl AcpPanel {
                                 let status = self.runtime_statuses.get(agent_id);
 
                                 row.col(|ui| {
-                                    ui.label(if agent.enabled { "yes" } else { "no" });
+                                    render_acp_enabled_status(ui, agent.enabled);
                                 });
                                 row.col(|ui| {
                                     ui.label(agent_id);
                                 });
                                 row.col(|ui| {
                                     ui.monospace(Self::command_display(agent));
-                                });
-                                row.col(|ui| {
-                                    let state =
-                                        status.map(|item| item.state.as_str()).unwrap_or("stopped");
-                                    let color = match state {
-                                        "running" => Color32::LIGHT_GREEN,
-                                        "failed" => Color32::LIGHT_RED,
-                                        "starting" => Color32::YELLOW,
-                                        _ => Color32::GRAY,
-                                    };
-                                    ui.label(RichText::new(state).color(color));
                                 });
                                 row.col(|ui| {
                                     ui.monospace(Self::tool_name_for_agent(&agent.id));
@@ -1512,11 +1498,7 @@ impl AcpPanel {
                             ui.end_row();
 
                             ui.label("Enabled");
-                            ui.label(if agent.enabled { "yes" } else { "no" });
-                            ui.end_row();
-
-                            ui.label("State");
-                            ui.label(status.map(|item| item.state.as_str()).unwrap_or("stopped"));
+                            render_acp_enabled_status(ui, agent.enabled);
                             ui.end_row();
 
                             ui.label("Tool Name");
@@ -1525,14 +1507,6 @@ impl AcpPanel {
 
                             ui.label("Command");
                             ui.monospace(Self::command_display(agent));
-                            ui.end_row();
-
-                            ui.label("Args");
-                            ui.label(if agent.args.is_empty() {
-                                "(none)".to_string()
-                            } else {
-                                agent.args.join(" ")
-                            });
                             ui.end_row();
 
                             ui.label("Env Vars");
@@ -1729,6 +1703,31 @@ fn permission_title(request: &AcpPermissionRequest) -> String {
         .unwrap_or_else(|| request.tool_call_id.clone())
 }
 
+fn agent_table_row_height(default_interact_height: f32) -> f32 {
+    default_interact_height
+}
+
+fn render_acp_enabled_status(ui: &mut egui::Ui, enabled: bool) {
+    let (icon, color, label) = if enabled {
+        (
+            regular::CHECK_CIRCLE,
+            Color32::from_rgb(0x22, 0xC5, 0x5E),
+            "yes",
+        )
+    } else {
+        (
+            regular::X_CIRCLE,
+            Color32::from_rgb(0xEF, 0x44, 0x44),
+            "no",
+        )
+    };
+    ui.label(
+        RichText::new(format!("{icon} {label}"))
+            .color(color)
+            .strong(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1766,6 +1765,14 @@ mod tests {
         };
 
         assert_eq!(AcpPanel::command_display(&agent), "-");
+    }
+
+    #[test]
+    fn agent_table_row_height_uses_default_interact_height() {
+        assert_eq!(
+            super::agent_table_row_height(31.5),
+            31.5,
+        );
     }
 
     #[test]
