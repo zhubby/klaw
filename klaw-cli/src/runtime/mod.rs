@@ -3902,6 +3902,13 @@ A .docx file is a ZIP archive containing XML files.
     async fn help_command_lists_usage_and_shell_commands() {
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
         let runtime = build_test_runtime(provider).await;
+        let mut config = AppConfig::default();
+        config.model_provider = "fresh".to_string();
+        config.model_providers = BTreeMap::from([
+            ("backup".to_string(), test_provider_config("backup-model")),
+            ("fresh".to_string(), test_provider_config("fresh-model")),
+        ]);
+        sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
 
         let response = im_commands::handle_im_command(
             &runtime,
@@ -3917,6 +3924,7 @@ A .docx file is a ZIP archive containing XML files.
 
         assert!(response.content.contains("/usage"));
         assert!(response.content.contains("/shell <command>"));
+        assert!(!response.content.contains("🧩 Providers:"));
     }
 
     #[test]

@@ -623,15 +623,5 @@ fn render_help_text(runtime: &RuntimeBundle) -> String {
         "/reject <approval_id>", "Reject a pending tool action"
     ));
     lines.push("```".to_string());
-    if provider_runtime.provider_default_models.len() > 1 {
-        let providers = provider_runtime
-            .provider_default_models
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        lines.push(String::new());
-        lines.push(format!("🧩 Providers: {providers}"));
-    }
     lines.join("\n")
 }
