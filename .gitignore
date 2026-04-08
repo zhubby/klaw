@@ -1,5 +1,8 @@
 /target
 **/target
+
+# klaw-webui: wasm-bindgen output embedded by klaw-gateway (generate before `cargo build -p klaw-gateway`)
+klaw-gateway/static/chat/pkg/
 /dist
 .DS_Store
 .crush/

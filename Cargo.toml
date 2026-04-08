@@ -24,6 +24,7 @@ members = [
     "klaw-gui",
     "klaw-observability",
     "klaw-runtime",
+    "klaw-webui",
 ]
 resolver = "2"
 
@@ -102,6 +103,11 @@ regex = "1"
 semver = "1"
 vergen = "9.1.0"
 vergen-gitcl = "9.1.0"
+console_error_panic_hook = "0.1"
+wasm-bindgen = "0.2.114"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3.77"
+web-sys = { version = "0.3.77", default-features = false }
 
 opentelemetry = "0.27"
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
@@ -136,6 +142,7 @@ klaw-tui = { path = "klaw-tui" }
 klaw-gui = { path = "klaw-gui" }
 klaw-observability = { path = "klaw-observability" }
 klaw-runtime = { path = "klaw-runtime" }
+klaw-webui = { path = "klaw-webui" }
 
 [profile.release]
 opt-level = 3

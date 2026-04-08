@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
-        spawn_gateway,
+        CHAT_PATH, CHAT_PKG_JS_PATH, CHAT_PKG_WASM_PATH, HOME_LOGO_PATH, HOME_PATH,
+        WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH, spawn_gateway,
         webhook::{
             GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
             normalize_webhook_request,
@@ -67,7 +67,10 @@ mod tests {
         };
 
         let base_url = format!("http://127.0.0.1:{}", handle.info().actual_port);
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("reqwest client");
 
         let home_response = client
             .get(format!("{base_url}{HOME_PATH}"))
@@ -106,10 +109,82 @@ mod tests {
         handle.shutdown().await.expect("gateway should stop");
     }
 
+    #[tokio::test]
+    async fn gateway_chat_route_serves_embedded_webui_assets() {
+        let config = GatewayConfig {
+            enabled: true,
+            listen_ip: "127.0.0.1".to_string(),
+            listen_port: 0,
+            auth: Default::default(),
+            tailscale: Default::default(),
+            tls: Default::default(),
+            webhook: Default::default(),
+        };
+
+        let handle = match spawn_gateway(&config).await {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let base_url = format!("http://127.0.0.1:{}", handle.info().actual_port);
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("reqwest client");
+
+        let chat_html = client
+            .get(format!("{base_url}{CHAT_PATH}"))
+            .send()
+            .await
+            .expect("chat page should respond");
+        assert_eq!(chat_html.status(), StatusCode::OK);
+        let body = chat_html.text().await.expect("chat body");
+        assert!(body.contains("klaw_chat_canvas"));
+        assert!(body.contains(CHAT_PKG_JS_PATH));
+
+        let js = client
+            .get(format!("{base_url}{CHAT_PKG_JS_PATH}"))
+            .send()
+            .await
+            .expect("chat js should respond");
+        assert_eq!(js.status(), StatusCode::OK);
+        assert_eq!(
+            js.headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("application/javascript; charset=utf-8")
+        );
+        assert!(!js.bytes().await.expect("js body").is_empty());
+
+        let wasm = client
+            .get(format!("{base_url}{CHAT_PKG_WASM_PATH}"))
+            .send()
+            .await
+            .expect("chat wasm should respond");
+        assert_eq!(wasm.status(), StatusCode::OK);
+        assert_eq!(
+            wasm.headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("application/wasm")
+        );
+        assert!(wasm.bytes().await.expect("wasm body").starts_with(b"\0asm"));
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
     #[test]
     fn exported_route_constants_match_expected_paths() {
         assert_eq!(HOME_PATH, "/");
         assert_eq!(HOME_LOGO_PATH, "/assets/logo.webp");
+        assert_eq!(CHAT_PATH, "/chat");
+        assert_eq!(CHAT_PKG_JS_PATH, "/chat/pkg/klaw_webui.js");
+        assert_eq!(CHAT_PKG_WASM_PATH, "/chat/pkg/klaw_webui_bg.wasm");
         assert_eq!(WS_CHAT_PATH, "/ws/chat");
         assert_eq!(WEBHOOK_EVENTS_PATH, "/webhook/events");
         assert_eq!(WEBHOOK_AGENTS_PATH, "/webhook/agents");

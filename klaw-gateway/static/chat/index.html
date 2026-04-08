@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Klaw Web Chat</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #1e1e2e;
+      }
+      #klaw_chat_canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="klaw_chat_canvas"></canvas>
+    <script type="module">
+      import init, { start_chat_ui } from "/chat/pkg/klaw_webui.js";
+      async function main() {
+        await init("/chat/pkg/klaw_webui_bg.wasm");
+        const canvas = document.getElementById("klaw_chat_canvas");
+        start_chat_ui(canvas);
+      }
+      main().catch((err) => console.error("klaw-webui failed to start", err));
+    </script>
+  </body>
+</html>

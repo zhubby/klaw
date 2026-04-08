@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-04-08
+
+### Added
+
+- 新增 `GET /chat` 与 `/chat/pkg/*` 内嵌 `klaw-webui`（egui WASM）聊天界面；`/ws/chat` 在启用 `gateway.auth` 时除 `Authorization: Bearer` 外支持 `token` / `access_token` query，便于浏览器 WebSocket 鉴权
+
+### Changed
+
+- `klaw-gateway/static/chat/pkg/`（wasm-bindgen 生成的 `.js` / `.wasm`）改为 `.gitignore`，构建前需本地生成后再编译 gateway
+
 ## 2026-03-29
 
 ### Added
