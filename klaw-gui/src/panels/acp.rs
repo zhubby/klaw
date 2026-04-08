@@ -1715,11 +1715,7 @@ fn render_acp_enabled_status(ui: &mut egui::Ui, enabled: bool) {
             "yes",
         )
     } else {
-        (
-            regular::X_CIRCLE,
-            Color32::from_rgb(0xEF, 0x44, 0x44),
-            "no",
-        )
+        (regular::X_CIRCLE, Color32::from_rgb(0xEF, 0x44, 0x44), "no")
     };
     ui.label(
         RichText::new(format!("{icon} {label}"))
@@ -1769,10 +1765,7 @@ mod tests {
 
     #[test]
     fn agent_table_row_height_uses_default_interact_height() {
-        assert_eq!(
-            super::agent_table_row_height(31.5),
-            31.5,
-        );
+        assert_eq!(super::agent_table_row_height(31.5), 31.5,);
     }
 
     #[test]
