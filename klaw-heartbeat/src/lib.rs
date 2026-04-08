@@ -647,8 +647,8 @@ mod tests {
     fn build_payload_json_includes_heartbeat_metadata() {
         let job = HeartbeatJob {
             id: "hb-1".to_string(),
-            session_key: "stdio:main".to_string(),
-            channel: "stdio".to_string(),
+            session_key: "terminal:main".to_string(),
+            channel: "terminal".to_string(),
             chat_id: "main".to_string(),
             enabled: true,
             every: "30m".to_string(),
@@ -668,7 +668,7 @@ mod tests {
             payload["metadata"][TRIGGER_KIND_KEY],
             TRIGGER_KIND_HEARTBEAT
         );
-        assert_eq!(payload["metadata"][HEARTBEAT_SESSION_KEY], "stdio:main");
+        assert_eq!(payload["metadata"][HEARTBEAT_SESSION_KEY], "terminal:main");
         assert_eq!(
             payload["metadata"][HEARTBEAT_SILENT_ACK_TOKEN_KEY],
             DEFAULT_SILENT_ACK_TOKEN
@@ -686,8 +686,8 @@ mod tests {
         let created = manager
             .create_job(&HeartbeatInput {
                 id: None,
-                session_key: "stdio:main".to_string(),
-                channel: "stdio".to_string(),
+                session_key: "terminal:main".to_string(),
+                channel: "terminal".to_string(),
                 chat_id: "main".to_string(),
                 enabled: true,
                 every: "10m".to_string(),
@@ -699,7 +699,7 @@ mod tests {
             .await
             .expect("create heartbeat");
         let stored = store
-            .get_heartbeat_by_session_key("stdio:main")
+            .get_heartbeat_by_session_key("terminal:main")
             .await
             .expect("stored heartbeat");
         assert_eq!(stored.id, created.id);
@@ -750,28 +750,34 @@ mod tests {
     async fn worker_uses_active_session_key_when_present() {
         let store = Arc::new(create_store().await);
         store
-            .get_or_create_session_state("stdio:main", "main", "stdio", "openai", "gpt-4o-mini")
+            .get_or_create_session_state(
+                "terminal:main",
+                "main",
+                "terminal",
+                "openai",
+                "gpt-4o-mini",
+            )
             .await
             .expect("base session");
         store
             .get_or_create_session_state(
-                "stdio:main:child",
+                "terminal:main:child",
                 "main",
-                "stdio",
+                "terminal",
                 "openai",
                 "gpt-4o-mini",
             )
             .await
             .expect("child session");
         store
-            .set_active_session("stdio:main", "main", "stdio", "stdio:main:child")
+            .set_active_session("terminal:main", "main", "terminal", "terminal:main:child")
             .await
             .expect("set active session");
         let heartbeat = store
             .create_heartbeat(&NewHeartbeatJob {
                 id: "hb-1".to_string(),
-                session_key: "stdio:main".to_string(),
-                channel: "stdio".to_string(),
+                session_key: "terminal:main".to_string(),
+                channel: "terminal".to_string(),
                 chat_id: "main".to_string(),
                 enabled: true,
                 every: "1m".to_string(),
@@ -797,7 +803,7 @@ mod tests {
 
         let messages = transport.published_messages().await;
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].payload.session_key, "stdio:main:child");
+        assert_eq!(messages[0].payload.session_key, "terminal:main:child");
         assert_eq!(
             messages[0].payload.content,
             "Keep an eye on follow-ups.\n\nReview the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else."
@@ -808,7 +814,7 @@ mod tests {
                 .metadata
                 .get(HEARTBEAT_SESSION_KEY)
                 .and_then(Value::as_str),
-            Some("stdio:main")
+            Some("terminal:main")
         );
     }
 
@@ -816,28 +822,40 @@ mod tests {
     async fn worker_injects_summary_and_recent_messages_into_history_metadata() {
         let store = Arc::new(create_store().await);
         store
-            .get_or_create_session_state("stdio:main", "main", "stdio", "openai", "gpt-4o-mini")
+            .get_or_create_session_state(
+                "terminal:main",
+                "main",
+                "terminal",
+                "openai",
+                "gpt-4o-mini",
+            )
             .await
             .expect("session");
         store
-            .append_chat_record("stdio:main", &ChatRecord::new("user", "old-1", None))
+            .append_chat_record("terminal:main", &ChatRecord::new("user", "old-1", None))
             .await
             .expect("old-1");
         store
-            .append_chat_record("stdio:main", &ChatRecord::new("assistant", "old-2", None))
+            .append_chat_record(
+                "terminal:main",
+                &ChatRecord::new("assistant", "old-2", None),
+            )
             .await
             .expect("old-2");
         store
-            .append_chat_record("stdio:main", &ChatRecord::new("user", "keep-1", None))
+            .append_chat_record("terminal:main", &ChatRecord::new("user", "keep-1", None))
             .await
             .expect("keep-1");
         store
-            .append_chat_record("stdio:main", &ChatRecord::new("assistant", "keep-2", None))
+            .append_chat_record(
+                "terminal:main",
+                &ChatRecord::new("assistant", "keep-2", None),
+            )
             .await
             .expect("keep-2");
         store
             .set_session_compression_state(
-                "stdio:main",
+                "terminal:main",
                 &klaw_storage::SessionCompressionState {
                     last_compressed_len: 2,
                     summary_json: Some("{\"important\":\"summary\"}".to_string()),
@@ -848,8 +866,8 @@ mod tests {
         let heartbeat = store
             .create_heartbeat(&NewHeartbeatJob {
                 id: "hb-history".to_string(),
-                session_key: "stdio:main".to_string(),
-                channel: "stdio".to_string(),
+                session_key: "terminal:main".to_string(),
+                channel: "terminal".to_string(),
                 chat_id: "main".to_string(),
                 enabled: true,
                 every: "1m".to_string(),

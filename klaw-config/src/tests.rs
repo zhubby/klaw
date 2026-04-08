@@ -613,9 +613,9 @@ silent_ack_token = "HEARTBEAT_OK"
 timezone = "Asia/Shanghai"
 
 [[heartbeat.sessions]]
-session_key = "stdio:main"
+session_key = "terminal:main"
 chat_id = "main"
-channel = "stdio"
+channel = "terminal"
 enabled = true
 every = "10m"
 "#;
@@ -624,7 +624,7 @@ every = "10m"
     assert_eq!(parsed.heartbeat.defaults.every, "45m");
     assert_eq!(parsed.heartbeat.defaults.timezone, "Asia/Shanghai");
     assert_eq!(parsed.heartbeat.sessions.len(), 1);
-    assert_eq!(parsed.heartbeat.sessions[0].session_key, "stdio:main");
+    assert_eq!(parsed.heartbeat.sessions[0].session_key, "terminal:main");
     assert_eq!(parsed.heartbeat.sessions[0].every.as_deref(), Some("10m"));
 }
 

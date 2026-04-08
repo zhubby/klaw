@@ -3,7 +3,7 @@ mod commands;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     agent::AgentCommand, archive::ArchiveCommand, config::ConfigCommand, daemon::DaemonCommand,
-    gateway::GatewayCommand, gui::GuiCommand, session::SessionCommand, stdio::StdioCommand,
+    gateway::GatewayCommand, gui::GuiCommand, session::SessionCommand, tui::TuiCommand,
 };
 use klaw_storage::StoragePaths;
 use klaw_util::augment_current_process_command_path;
@@ -58,8 +58,8 @@ enum Commands {
     Config(ConfigCommand),
     /// Manage the user-level gateway daemon.
     Daemon(DaemonCommand),
-    /// Start local stdin/stdout interactive agent loop.
-    Stdio(StdioCommand),
+    /// Start local terminal TUI interactive agent loop.
+    Tui(TuiCommand),
     /// Execute one request and print one response.
     Agent(AgentCommand),
     /// Start websocket gateway service.
@@ -108,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_config = Arc::new(loaded.config);
 
     match command {
-        Commands::Stdio(cmd) => cmd.run(Arc::clone(&app_config)).await?,
+        Commands::Tui(cmd) => cmd.run(Arc::clone(&app_config)).await?,
         Commands::Agent(cmd) => cmd.run(app_config).await?,
         Commands::Gateway(cmd) => cmd.run(Arc::clone(&app_config)).await?,
         Commands::Gui(cmd) => cmd.run(app_config).await?,
@@ -141,18 +141,18 @@ fn init_tracing(
     let env_filter = build_env_filter(command, log_level);
 
     match command {
-        Commands::Stdio(cmd) if cmd.verbose_terminal => {
+        Commands::Tui(cmd) if cmd.verbose_terminal => {
             tracing_subscriber::fmt()
                 .with_env_filter(env_filter)
                 .with_target(false)
                 .compact()
                 .init();
         }
-        Commands::Stdio(_) => {
+        Commands::Tui(_) => {
             let storage_paths = StoragePaths::from_home_dir()?;
             let log_dir = storage_paths.root_dir.join("logs");
             fs::create_dir_all(&log_dir)?;
-            let log_path = log_dir.join("stdio.log");
+            let log_path = log_dir.join("terminal.log");
             let log_file = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -345,21 +345,21 @@ mod tests {
 
     #[test]
     fn parse_global_log_level_before_subcommand() {
-        let cli = Cli::parse_from(["klaw", "--log-level", "debug", "stdio"]);
+        let cli = Cli::parse_from(["klaw", "--log-level", "debug", "tui"]);
         assert_eq!(cli.log_level, Some(LogLevel::Debug));
-        assert!(matches!(cli.command, Some(Commands::Stdio(_))));
+        assert!(matches!(cli.command, Some(Commands::Tui(_))));
     }
 
     #[test]
     fn parse_global_log_level_after_subcommand() {
-        let cli = Cli::parse_from(["klaw", "stdio", "--log-level", "trace"]);
+        let cli = Cli::parse_from(["klaw", "tui", "--log-level", "trace"]);
         assert_eq!(cli.log_level, Some(LogLevel::Trace));
-        assert!(matches!(cli.command, Some(Commands::Stdio(_))));
+        assert!(matches!(cli.command, Some(Commands::Tui(_))));
     }
 
     #[test]
     fn build_env_filter_includes_sqlx_suppression_when_log_level_is_set() {
-        let cli = Cli::parse_from(["klaw", "stdio", "--log-level", "debug"]);
+        let cli = Cli::parse_from(["klaw", "tui", "--log-level", "debug"]);
         let command = cli.command.as_ref().expect("command should be present");
         let filter = build_env_filter(command, cli.log_level);
         let rendered = filter.to_string();

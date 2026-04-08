@@ -4,17 +4,17 @@ use std::collections::BTreeMap;
 
 /// Session unique key for serializing message processing.
 /// Typically composed from channel identifier and chat/conversation identifier,
-/// e.g., "stdio:user123" or "telegram:chat456". Used by the scheduler to ensure
+/// e.g., "terminal:user123" or "telegram:chat456". Used by the scheduler to ensure
 /// all messages within the same session are processed sequentially.
 pub type SessionKey = String;
 
 /// Normalized inbound message structure representing user input entering the agent system.
 /// This is the canonical format after parsing and normalization from various input channels
-/// (stdio, websocket, message queue, webhook, etc.).
+/// (terminal, websocket, message queue, webhook, etc.).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InboundMessage {
     /// The source channel where this message originated.
-    /// Examples: "stdio", "telegram", "discord", "slack", "kafka", etc.
+    /// Examples: "terminal", "telegram", "discord", "slack", "kafka", etc.
     pub channel: String,
     /// Unique identifier of the sender (user, bot, or system).
     /// Format depends on channel type: user ID, session ID, or system identifier.

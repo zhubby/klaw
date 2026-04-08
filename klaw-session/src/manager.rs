@@ -572,11 +572,11 @@ mod tests {
     async fn list_sessions_returns_latest_first() {
         let store = create_store().await;
         let _ = store
-            .touch_session("stdio:first", "chat-1", "stdio")
+            .touch_session("terminal:first", "chat-1", "terminal")
             .await
             .expect("first session should be created");
         let _ = store
-            .touch_session("stdio:second", "chat-2", "stdio")
+            .touch_session("terminal:second", "chat-2", "terminal")
             .await
             .expect("second session should be created");
 
@@ -594,15 +594,15 @@ mod tests {
             .expect("sessions should load");
 
         assert_eq!(sessions.len(), 2);
-        assert_eq!(sessions[0].session_key, "stdio:second");
-        assert_eq!(sessions[1].session_key, "stdio:first");
+        assert_eq!(sessions[0].session_key, "terminal:second");
+        assert_eq!(sessions[1].session_key, "terminal:first");
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn list_sessions_clamps_limit_and_offset() {
         let store = create_store().await;
         let _ = store
-            .touch_session("stdio:only", "chat-1", "stdio")
+            .touch_session("terminal:only", "chat-1", "terminal")
             .await
             .expect("session should be created");
 
@@ -620,16 +620,16 @@ mod tests {
             .expect("sessions should load");
 
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].session_key, "stdio:only");
+        assert_eq!(sessions[0].session_key, "terminal:only");
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn list_sessions_filters_by_channel_and_sorts_in_sql_order() {
         let store = create_store().await;
         let _ = store
-            .touch_session("stdio:first", "chat-1", "stdio")
+            .touch_session("terminal:first", "chat-1", "terminal")
             .await
-            .expect("stdio session should be created");
+            .expect("terminal session should be created");
         let _ = store
             .touch_session("telegram:second", "chat-2", "telegram")
             .await
@@ -642,20 +642,23 @@ mod tests {
                 offset: 0,
                 updated_from_ms: None,
                 updated_to_ms: None,
-                channel: Some("stdio".to_string()),
+                channel: Some("terminal".to_string()),
                 sort_order: SessionSortOrder::UpdatedAtAsc,
             })
             .await
             .expect("filtered sessions should load");
 
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].session_key, "stdio:first");
+        assert_eq!(sessions[0].session_key, "terminal:first");
 
         let channels = manager
             .list_session_channels()
             .await
             .expect("session channels should load");
-        assert_eq!(channels, vec!["stdio".to_string(), "telegram".to_string()]);
+        assert_eq!(
+            channels,
+            vec!["telegram".to_string(), "terminal".to_string()]
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -664,33 +667,39 @@ mod tests {
         let manager = SqliteSessionManager::from_store(store);
 
         let base = manager
-            .get_or_create_session_state("stdio:base", "chat-1", "stdio", "openai", "gpt-4o-mini")
+            .get_or_create_session_state(
+                "terminal:base",
+                "chat-1",
+                "terminal",
+                "openai",
+                "gpt-4o-mini",
+            )
             .await
             .expect("base session should be created");
-        assert_eq!(base.active_session_key.as_deref(), Some("stdio:base"));
+        assert_eq!(base.active_session_key.as_deref(), Some("terminal:base"));
 
         let _ = manager
             .set_model_provider(
-                "stdio:base",
+                "terminal:base",
                 "chat-1",
-                "stdio",
+                "terminal",
                 "anthropic",
                 "claude-3-7-sonnet",
             )
             .await
             .expect("provider should update");
         let updated = manager
-            .set_model("stdio:base", "chat-1", "stdio", "claude-3-7-opus")
+            .set_model("terminal:base", "chat-1", "terminal", "claude-3-7-opus")
             .await
             .expect("model should update");
         assert_eq!(updated.model.as_deref(), Some("claude-3-7-opus"));
 
         manager
-            .append_chat_record("stdio:base", &ChatRecord::new("user", "hello", None))
+            .append_chat_record("terminal:base", &ChatRecord::new("user", "hello", None))
             .await
             .expect("chat record should append");
         let records = manager
-            .read_chat_records("stdio:base")
+            .read_chat_records("terminal:base")
             .await
             .expect("chat records should load");
         assert_eq!(records.len(), 1);

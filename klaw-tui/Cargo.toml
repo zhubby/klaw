@@ -1,0 +1,14 @@
+[package]
+name = "klaw-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+crossterm = { workspace = true }
+futures-util = { workspace = true }
+ratatui = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+klaw-channel = { workspace = true }
+uuid = { workspace = true }

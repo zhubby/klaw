@@ -296,9 +296,10 @@ mod tests {
     use klaw_storage::{
         ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
         CronTaskRun, CronTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
-        LlmAuditQuery, LlmAuditRecord, LlmUsageRecord, LlmUsageSummary, NewApprovalRecord,
-        NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
-        NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
+        LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord, LlmUsageRecord, LlmUsageSummary,
+        NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+        NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
+        PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
         SessionStorage, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
         ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateWebhookAgentResult,
         UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
@@ -776,6 +777,17 @@ mod tests {
             Ok(Vec::new())
         }
 
+        async fn get_llm_audit(&self, _audit_id: &str) -> Result<LlmAuditRecord, StorageError> {
+            Err(StorageError::backend("not found"))
+        }
+
+        async fn list_llm_audit_summaries(
+            &self,
+            _query: &LlmAuditQuery,
+        ) -> Result<Vec<LlmAuditSummaryRecord>, StorageError> {
+            Ok(Vec::new())
+        }
+
         async fn list_llm_audit_filter_options(
             &self,
             _query: &LlmAuditFilterOptionsQuery,
@@ -953,6 +965,31 @@ mod tests {
             Ok(false)
         }
 
+        async fn create_pending_question(
+            &self,
+            _input: &NewPendingQuestionRecord,
+        ) -> Result<PendingQuestionRecord, StorageError> {
+            Err(StorageError::backend("not implemented for test"))
+        }
+
+        async fn get_pending_question(
+            &self,
+            _question_id: &str,
+        ) -> Result<PendingQuestionRecord, StorageError> {
+            Err(StorageError::backend("not found"))
+        }
+
+        async fn update_pending_question_answer(
+            &self,
+            _question_id: &str,
+            _status: PendingQuestionStatus,
+            _selected_option_id: Option<&str>,
+            _answered_by: Option<&str>,
+            _answered_at_ms: Option<i64>,
+        ) -> Result<PendingQuestionRecord, StorageError> {
+            Err(StorageError::backend("not found"))
+        }
+
         fn session_jsonl_path(&self, _session_key: &str) -> PathBuf {
             PathBuf::new()
         }
@@ -996,12 +1033,12 @@ mod tests {
     }
 
     #[test]
-    fn does_not_infer_base_session_for_stdio() {
+    fn does_not_infer_base_session_for_terminal() {
         let payload = InboundMessage {
-            channel: "stdio".to_string(),
+            channel: "terminal".to_string(),
             sender_id: "system".to_string(),
             chat_id: "chat-1".to_string(),
-            session_key: "stdio:chat-1".to_string(),
+            session_key: "terminal:chat-1".to_string(),
             content: "hello".to_string(),
             media_references: Vec::new(),
             metadata: BTreeMap::new(),
@@ -1389,17 +1426,17 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn run_tick_isolates_stdio_session_per_run() {
+    async fn run_tick_isolates_terminal_session_per_run() {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
-        insert_due_job(&storage, "job-stdio", "stdio", "stdio:chat1", "{}").await;
+        insert_due_job(&storage, "job-terminal", "terminal", "terminal:chat1", "{}").await;
 
         let worker = test_worker(&storage, &transport);
         worker.run_tick().await.expect("tick");
 
         let messages = transport.published_messages().await;
         assert_eq!(messages.len(), 1);
-        assert_generated_execution_session_key(&messages[0].header.session_key, "job-stdio");
+        assert_generated_execution_session_key(&messages[0].header.session_key, "job-terminal");
         assert_eq!(
             messages[0].header.session_key,
             messages[0].payload.session_key
@@ -1410,7 +1447,7 @@ mod tests {
                 .metadata
                 .get("cron.original_session_key")
                 .and_then(|value| value.as_str()),
-            Some("stdio:chat1")
+            Some("terminal:chat1")
         );
     }
 

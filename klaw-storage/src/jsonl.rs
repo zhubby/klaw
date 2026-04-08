@@ -65,7 +65,7 @@ mod tests {
     #[test]
     fn session_jsonl_path_uses_session_id_as_filename() {
         let paths = StoragePaths::from_root("/tmp/klaw-storage-jsonl-test".into());
-        let file_path = session_jsonl_path(&paths, "stdio:test3");
+        let file_path = session_jsonl_path(&paths, "terminal:test3");
         assert_eq!(file_path, paths.sessions_dir.join("test3.jsonl"));
     }
 
@@ -79,7 +79,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn read_chat_records_returns_empty_when_session_file_is_missing() {
         let paths = StoragePaths::from_root("/tmp/klaw-storage-jsonl-test-missing".into());
-        let records = read_chat_records(&paths, "stdio:missing")
+        let records = read_chat_records(&paths, "terminal:missing")
             .await
             .expect("missing file should read as empty");
         assert!(records.is_empty());

@@ -135,9 +135,9 @@ silent_ack_token = "HEARTBEAT_OK"
 timezone = "Asia/Shanghai"
 
 [[heartbeat.sessions]]
-session_key = "stdio:main"
+session_key = "terminal:main"
 chat_id = "main"
-channel = "stdio"
+channel = "terminal"
 ```
 
 规则：

@@ -2053,7 +2053,7 @@ mod tests {
         store
             .record_tool_outcome(ToolMetricEvent {
                 occurred_at_unix_ms: now,
-                session_key: "stdio:test".to_string(),
+                session_key: "terminal:test".to_string(),
                 tool_name: "shell".to_string(),
                 status: ToolOutcomeStatus::Success,
                 error_code: None,
@@ -2064,7 +2064,7 @@ mod tests {
         store
             .record_tool_outcome(ToolMetricEvent {
                 occurred_at_unix_ms: now,
-                session_key: "stdio:test".to_string(),
+                session_key: "terminal:test".to_string(),
                 tool_name: "shell".to_string(),
                 status: ToolOutcomeStatus::Failure,
                 error_code: Some("timeout".to_string()),
@@ -2100,7 +2100,7 @@ mod tests {
             store
                 .record_tool_outcome(ToolMetricEvent {
                     occurred_at_unix_ms: now,
-                    session_key: "stdio:test".to_string(),
+                    session_key: "terminal:test".to_string(),
                     tool_name: tool_name.to_string(),
                     status: ToolOutcomeStatus::Failure,
                     error_code: Some("timeout".to_string()),
@@ -2124,7 +2124,7 @@ mod tests {
         let store = create_store().await;
         store
             .record_model_request(ModelRequestRecord {
-                session_key: "stdio:model".to_string(),
+                session_key: "terminal:model".to_string(),
                 provider: "openai".to_string(),
                 model: "gpt-4o-mini".to_string(),
                 wire_api: "responses".to_string(),
@@ -2146,7 +2146,7 @@ mod tests {
             .expect("llm success should persist");
         store
             .record_model_request(ModelRequestRecord {
-                session_key: "stdio:model".to_string(),
+                session_key: "terminal:model".to_string(),
                 provider: "openai".to_string(),
                 model: "gpt-4o-mini".to_string(),
                 wire_api: "responses".to_string(),
@@ -2168,7 +2168,7 @@ mod tests {
             .expect("llm failure should persist");
         store
             .record_model_tool_outcome(ModelToolOutcomeRecord {
-                session_key: "stdio:model".to_string(),
+                session_key: "terminal:model".to_string(),
                 provider: "openai".to_string(),
                 model: "gpt-4o-mini".to_string(),
                 tool_name: "shell".to_string(),
@@ -2181,7 +2181,7 @@ mod tests {
             .expect("tool outcome should persist");
         store
             .record_turn_outcome(TurnOutcomeRecord {
-                session_key: "stdio:model".to_string(),
+                session_key: "terminal:model".to_string(),
                 provider: "openai".to_string(),
                 model: "gpt-4o-mini".to_string(),
                 requests_in_turn: 2,

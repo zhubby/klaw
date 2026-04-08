@@ -581,7 +581,7 @@ url = "http://127.0.0.1:8888"
 禁用会话命令的渠道列表。
 
 ```toml
-channels.disable_session_commands_for = ["dingtalk", "telegram", "stdio"]
+channels.disable_session_commands_for = ["dingtalk", "telegram", "terminal"]
 ```
 
 ---

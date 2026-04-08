@@ -12,8 +12,8 @@ pub mod manager;
 pub mod media;
 pub mod outbound;
 pub mod render;
-pub mod stdio;
 pub mod telegram;
+pub mod terminal;
 
 pub use manager::{
     ChannelConfigSnapshot, ChannelDriverFactory, ChannelInstanceConfig, ChannelInstanceKey,

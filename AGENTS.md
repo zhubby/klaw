@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 This repository is a Rust workspace. Crates are split by responsibility:
 - `klaw-core`: agent loop, protocol, reliability, scheduling.
-- `klaw-cli`: CLI entrypoint and command handlers (`stdio`, `once`).
+- `klaw-cli`: CLI entrypoint and command handlers (`tui`, `agent`, etc.).
 - `klaw-llm`: LLM provider integrations.
 - `klaw-tool`: tool implementations and registry.
 - `klaw-config`: TOML config loading/validation.
@@ -20,7 +20,7 @@ Use workspace-level Cargo commands from repo root:
 - `cargo test -p klaw-core --test runtime_e2e`: run core E2E runtime tests.
 - `cargo fmt --all`: apply Rust formatting.
 - `cargo clippy --workspace --all-targets -- -D warnings`: lint strictly.
-- `klaw stdio`: run interactive local agent loop.
+- `klaw tui`: run interactive local agent loop in the terminal UI.
 - `klaw agent --input "hello"`: single request/response run.
 
 For docs: `mdbook build docs` (or `mdbook serve docs` for local preview).

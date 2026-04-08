@@ -4,7 +4,7 @@
 
 当前包含：
 
-- `stdio`：本地终端交互通道
+- `terminal`：本地终端（TUI）交互渠道；会话 key 形如 `terminal:<id>`
 - `dingtalk`：钉钉事件与 websocket 通道（已按目录模块拆分为 `dingtalk/`）
 - `telegram`：Telegram Bot API long polling 通道
 - `manager`：运行中的 channel 实例生命周期管理与配置快照同步
@@ -37,9 +37,9 @@
 - `telegram` 入站现在会解析 `chat.type`、`entities` / `caption_entities`、以及 `reply_to_message`：私聊保持直接对话，群组 / 超级群仅在显式 `@bot`、`/command@bot` 或回复 bot 消息时才触发 runtime，并会把命中的 mention / 定向命令规范化为干净输入
 - `dingtalk` 应用机器人现支持 archive 驱动的出站附件回复：图片会先上传媒体并在 Markdown 中直接显示；文件仅对 `pdf/doc/docx/xlsx/zip/rar` 发送原生文件消息，并按文件名/MIME 自动补齐 webhook `fileType`，其他类型降级为 Markdown 提示
 
-## Stdio Interaction
+## Terminal / TUI Interaction
 
-- `stdio` 保持标准行输入，兼容普通终端和中文输入法
-- 交互模式下的 tracing 日志默认分流到 `~/.klaw/logs/stdio.log`，避免覆盖当前输入
-- `Ctrl+C`、`SIGTERM`、`/exit` 和空输入都在通道层统一处理
-- 在等待 stdin、后台 tick 或 agent 响应时都可以被终止信号打断
+- `klaw tui` 使用全屏 TUI（ratatui / crossterm），由 `klaw-tui` 负责输入与渲染
+- 交互模式下的 tracing 日志默认分流到 `~/.klaw/logs/terminal.log`，避免覆盖全屏 UI
+- `Ctrl+C`、`SIGTERM` 与 TUI 内退出路径会恢复终端并配合 runtime shutdown
+- 在等待输入、后台 tick 或 agent 响应时都可以被终止信号打断

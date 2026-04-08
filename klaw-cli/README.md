@@ -12,7 +12,7 @@
 
 - 全局参数：`--config <PATH>`、`--log-level <trace|debug|info|warn|error>`
 - `klaw`（默认等同于 `klaw gui`）
-- `klaw stdio`
+- `klaw tui`
 - `klaw agent --input "..."`
 - `klaw gateway`
 - `klaw gui`
@@ -59,14 +59,14 @@
 
 ## Runtime Integration
 
-- `klaw-cli` 不再内嵌共享 runtime 实现；`stdio`、`agent`、`gateway` 与 `gui` 统一通过 `klaw-runtime` 获取宿主能力
+- `klaw-cli` 不再内嵌共享 runtime 实现；`tui`、`agent`、`gateway` 与 `gui` 统一通过 `klaw-runtime` 获取宿主能力
 - `klaw-runtime` 暴露统一的 runtime facade，包括 bundle 构建/关闭、submit 流程、channel runtime、后台服务、webhook glue 和 gateway 管理
 - 通用 IM 会话命令路由、审批命令、卡片回答命令与 session policy 已迁入 `klaw-runtime`
 - `klaw-cli` 继续保留纯入口相关逻辑，例如 tracing 初始化、GUI 进程环境准备、`daemon` 命令和子命令分发
-- `stdio` 启动时会在 runtime 与 MCP 完全就绪后打印 ASCII `KLAW` 标记，以及版本、skills、tools、MCP 加载摘要
-- `stdio` 默认会将 tracing 日志写入 `~/.klaw/logs/stdio.log`，避免后台日志覆盖当前输入中的 prompt
-- `stdio --verbose-terminal` 可显式把 tracing 日志重新打回终端，便于排查启动或 MCP 问题
-- `stdio` 与 `gateway` 都监听统一的 shutdown signal；`stdio` 在运行阶段可中断，在 shutdown 阶段再次收到信号会直接退出
+- `tui` 启动时会在 runtime 与 MCP 完全就绪后展示启动摘要（版本、skills、tools、MCP 等）
+- `tui` 默认会将 tracing 日志写入 `~/.klaw/logs/terminal.log`，避免后台日志干扰全屏界面
+- `tui --verbose-terminal` 可显式把 tracing 日志重新打回终端，便于排查启动或 MCP 问题
+- `tui` 与 `gateway` 都监听统一的 shutdown signal；`tui` 在运行阶段可中断，在 shutdown 阶段再次收到信号会直接退出
 - `gateway` 在收到终止信号时会执行 runtime shutdown，确保 MCP/bootstrap 资源收尾
 - `klaw gui` 现在会在技能安装、卸载和 registry sync 后向 GUI runtime 发送技能 prompt 热重载命令，使后续请求可立即看到最新 skills
 - `klaw gui` / `klaw gateway` 通过共享 `ChannelManager` 管理运行中的 channel 实例；GUI 保存 channel 配置后会立即发送通用 `SyncChannels` 事件，由 runtime 按最新快照执行 keep/start/stop/restart

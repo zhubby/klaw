@@ -323,7 +323,7 @@ async fn resolve_active_session_key(&self, payload: &InboundMessage)
   "action": "create",
   "name": "custom task",
   "schedule_expr": "0 8 * * *",
-  "payload_json": "{\"channel\":\"stdio\",\"chat_id\":\"main\",\"session_key\":\"stdio:main\",\"content\":\"执行每日任务\",\"metadata\":{}}"
+  "payload_json": "{\"channel\":\"terminal\",\"chat_id\":\"main\",\"session_key\":\"terminal:main\",\"content\":\"执行每日任务\",\"metadata\":{}}"
 }
 ```
 

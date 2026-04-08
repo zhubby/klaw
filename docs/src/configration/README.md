@@ -8,7 +8,7 @@
 
 ```bash
 # 首次运行会自动创建默认配置
-klaw stdio
+klaw tui
 ```
 
 ### 2. 手动创建配置

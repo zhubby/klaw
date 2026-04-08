@@ -31,7 +31,7 @@
   - [Webhook](./gateway/webhook.md)
   - [Tailscale](./gateway/tailscale.md)
 - [渠道](./channels/README.md)
-  - [Stdio](./channels/stdio.md)
+  - [Terminal / TUI](./channels/terminal.md)
   - [DingTalk](./channels/dingtalk.md)
   - [Telegram](./channels/telegram.md)
 - [配置](./configration/README.md)

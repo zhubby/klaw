@@ -20,6 +20,7 @@ members = [
     "klaw-storage",
     "klaw-gateway",
     "klaw-channel",
+    "klaw-tui",
     "klaw-gui",
     "klaw-observability",
     "klaw-runtime",
@@ -45,6 +46,8 @@ rustls = "0.23"
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+ratatui = "0.29"
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls", "stream"] }
 bytes = "1"
 tokio-stream = "0.1"
@@ -129,6 +132,7 @@ klaw-skill = { path = "klaw-skill" }
 klaw-mcp = { path = "klaw-mcp" }
 klaw-gateway = { path = "klaw-gateway" }
 klaw-channel = { path = "klaw-channel" }
+klaw-tui = { path = "klaw-tui" }
 klaw-gui = { path = "klaw-gui" }
 klaw-observability = { path = "klaw-observability" }
 klaw-runtime = { path = "klaw-runtime" }

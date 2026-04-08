@@ -465,7 +465,7 @@ async fn list_llm_audit(&self, query: &LlmAuditQuery)
 
 | 参数 | 类型 | 说明 | 示例 |
 |------|------|------|------|
-| `session_key` | `Option<String>` | 按会话过滤 | `Some("stdio:main")` |
+| `session_key` | `Option<String>` | 按会话过滤 | `Some("terminal:main")` |
 | `provider` | `Option<String>` | 按提供商过滤 | `Some("openai")` |
 | `requested_from_ms` | `Option<i64>` | 时间范围起点（毫秒时间戳） | `Some(1700000000000)` |
 | `requested_to_ms` | `Option<i64>` | 时间范围终点（毫秒时间戳） | `Some(1700086400000)` |
@@ -529,7 +529,7 @@ use klaw_gui::RuntimeBridge;
 
 // 查询审计记录
 let query = LlmAuditQuery {
-    session_key: Some("stdio:main".to_string()),
+    session_key: Some("terminal:main".to_string()),
     provider: None,
     requested_from_ms: None,
     requested_to_ms: None,

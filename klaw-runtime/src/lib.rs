@@ -1707,7 +1707,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         }),
         subscription: Subscription {
             topic: "agent.inbound",
-            consumer_group: "stdio".to_string(),
+            consumer_group: "terminal".to_string(),
             visibility_timeout: Duration::from_secs(10),
         },
         session_store,
@@ -3296,11 +3296,11 @@ mod tests {
         let runtime = build_test_runtime(provider).await;
         let sessions = super::session_manager(&runtime);
         sessions
-            .touch_session("parent-session", "chat-parent", "stdio")
+            .touch_session("parent-session", "chat-parent", "terminal")
             .await
             .expect("parent session should exist");
         sessions
-            .complete_turn("parent-session", "chat-parent", "stdio")
+            .complete_turn("parent-session", "chat-parent", "terminal")
             .await
             .expect("turn count should increment");
 
@@ -3551,10 +3551,10 @@ mod tests {
     #[test]
     fn silent_heartbeat_ack_is_filtered() {
         let msg = Envelope {
-            header: EnvelopeHeader::new("stdio:test"),
+            header: EnvelopeHeader::new("terminal:test"),
             metadata: BTreeMap::new(),
             payload: OutboundMessage {
-                channel: "stdio".to_string(),
+                channel: "terminal".to_string(),
                 chat_id: "test".to_string(),
                 content: " HEARTBEAT_OK ".to_string(),
                 reply_to: None,
@@ -3574,10 +3574,10 @@ mod tests {
     #[test]
     fn normal_messages_are_not_filtered() {
         let msg = Envelope {
-            header: EnvelopeHeader::new("stdio:test"),
+            header: EnvelopeHeader::new("terminal:test"),
             metadata: BTreeMap::new(),
             payload: OutboundMessage {
-                channel: "stdio".to_string(),
+                channel: "terminal".to_string(),
                 chat_id: "test".to_string(),
                 content: "Need action".to_string(),
                 reply_to: None,
@@ -3740,14 +3740,14 @@ A .docx file is a ZIP archive containing XML files.
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
         let runtime = build_test_runtime(provider).await;
         let sessions = test_session_manager(&runtime);
-        let session_key = "stdio:usage".to_string();
+        let session_key = "terminal:usage".to_string();
         let chat_id = "chat-usage".to_string();
 
         sessions
             .get_or_create_session_state(
                 &session_key,
                 &chat_id,
-                "stdio",
+                "terminal",
                 "test-provider",
                 "test-model",
             )
@@ -3818,7 +3818,7 @@ A .docx file is a ZIP archive containing XML files.
 
         let response = im_commands::handle_im_command(
             &runtime,
-            "stdio".to_string(),
+            "terminal".to_string(),
             session_key.clone(),
             chat_id,
             "/usage".to_string(),
@@ -3844,14 +3844,14 @@ A .docx file is a ZIP archive containing XML files.
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
         let mut runtime = build_test_runtime(provider).await;
         let sessions = test_session_manager(&runtime);
-        let session_key = "stdio:shell".to_string();
+        let session_key = "terminal:shell".to_string();
         let chat_id = "chat-shell".to_string();
 
         sessions
             .get_or_create_session_state(
                 &session_key,
                 &chat_id,
-                "stdio",
+                "terminal",
                 "test-provider",
                 "test-model",
             )
@@ -3872,7 +3872,7 @@ A .docx file is a ZIP archive containing XML files.
 
         let response = im_commands::handle_im_command(
             &runtime,
-            "stdio".to_string(),
+            "terminal".to_string(),
             session_key,
             chat_id,
             "/shell echo risky".to_string(),
@@ -3899,14 +3899,14 @@ A .docx file is a ZIP archive containing XML files.
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
         let mut runtime = build_test_runtime(provider).await;
         let sessions = test_session_manager(&runtime);
-        let session_key = "stdio:shell-blocked".to_string();
+        let session_key = "terminal:shell-blocked".to_string();
         let chat_id = "chat-shell-blocked".to_string();
 
         sessions
             .get_or_create_session_state(
                 &session_key,
                 &chat_id,
-                "stdio",
+                "terminal",
                 "test-provider",
                 "test-model",
             )
@@ -3928,7 +3928,7 @@ A .docx file is a ZIP archive containing XML files.
 
         let response = im_commands::handle_im_command(
             &runtime,
-            "stdio".to_string(),
+            "terminal".to_string(),
             session_key,
             chat_id,
             "/shell echo blocked".to_string(),
@@ -3956,8 +3956,8 @@ A .docx file is a ZIP archive containing XML files.
 
         let response = im_commands::handle_im_command(
             &runtime,
-            "stdio".to_string(),
-            "stdio:help".to_string(),
+            "terminal".to_string(),
+            "terminal:help".to_string(),
             "chat-help".to_string(),
             "/help".to_string(),
             BTreeMap::new(),
@@ -4121,8 +4121,8 @@ A .docx file is a ZIP archive containing XML files.
 
         let response = im_commands::handle_im_command(
             &runtime,
-            "stdio".to_string(),
-            "stdio:test".to_string(),
+            "terminal".to_string(),
+            "terminal:test".to_string(),
             "chat-1".to_string(),
             "/model_provider".to_string(),
             BTreeMap::new(),
@@ -4143,9 +4143,9 @@ A .docx file is a ZIP archive containing XML files.
         let sessions = test_session_manager(&runtime);
         sessions
             .get_or_create_session_state(
-                "stdio:test",
+                "terminal:test",
                 "chat-1",
-                "stdio",
+                "terminal",
                 "test-provider",
                 "test-model",
             )
@@ -4153,9 +4153,9 @@ A .docx file is a ZIP archive containing XML files.
             .expect("session should exist");
         sessions
             .set_model_provider(
-                "stdio:test",
+                "terminal:test",
                 "chat-1",
-                "stdio",
+                "terminal",
                 "legacy-provider",
                 "legacy-model",
             )
@@ -4168,7 +4168,7 @@ A .docx file is a ZIP archive containing XML files.
             BTreeMap::from([("fresh".to_string(), test_provider_config("fresh-model"))]);
         sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
 
-        let route = resolve_session_route(&runtime, "stdio", "stdio:test", "chat-1")
+        let route = resolve_session_route(&runtime, "terminal", "terminal:test", "chat-1")
             .await
             .expect("route should resolve");
 
@@ -4184,9 +4184,9 @@ A .docx file is a ZIP archive containing XML files.
         let sessions = test_session_manager(&runtime);
         sessions
             .get_or_create_session_state(
-                "stdio:test",
+                "terminal:test",
                 "chat-1",
-                "stdio",
+                "terminal",
                 "test-provider",
                 "test-model",
             )
@@ -4194,9 +4194,9 @@ A .docx file is a ZIP archive containing XML files.
             .expect("session should exist");
         sessions
             .set_model_provider(
-                "stdio:test",
+                "terminal:test",
                 "chat-1",
-                "stdio",
+                "terminal",
                 "explicit-provider",
                 "explicit-model",
             )
@@ -4214,7 +4214,7 @@ A .docx file is a ZIP archive containing XML files.
         ]);
         sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
 
-        let route = resolve_session_route(&runtime, "stdio", "stdio:test", "chat-1")
+        let route = resolve_session_route(&runtime, "terminal", "terminal:test", "chat-1")
             .await
             .expect("route should resolve");
 
@@ -4230,16 +4230,16 @@ A .docx file is a ZIP archive containing XML files.
         let sessions = test_session_manager(&runtime);
         sessions
             .get_or_create_session_state(
-                "stdio:test",
+                "terminal:test",
                 "chat-1",
-                "stdio",
+                "terminal",
                 "test-provider",
                 "test-model",
             )
             .await
             .expect("session should exist");
         sessions
-            .set_model("stdio:test", "chat-1", "stdio", "legacy-model")
+            .set_model("terminal:test", "chat-1", "terminal", "legacy-model")
             .await
             .expect("legacy model-only override should persist");
 
@@ -4249,7 +4249,7 @@ A .docx file is a ZIP archive containing XML files.
             BTreeMap::from([("fresh".to_string(), test_provider_config("fresh-model"))]);
         sync_runtime_providers(&runtime, &config).expect("provider sync should succeed");
 
-        let route = resolve_session_route(&runtime, "stdio", "stdio:test", "chat-1")
+        let route = resolve_session_route(&runtime, "terminal", "terminal:test", "chat-1")
             .await
             .expect("route should resolve");
 
@@ -4280,13 +4280,13 @@ A .docx file is a ZIP archive containing XML files.
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
         let runtime = build_test_runtime(provider).await;
 
-        resolve_session_route(&runtime, "stdio", "stdio:test", "chat-1")
+        resolve_session_route(&runtime, "terminal", "terminal:test", "chat-1")
             .await
             .expect("route should resolve");
 
         let err = runtime
             .session_store
-            .get_heartbeat_by_session_key("stdio:test")
+            .get_heartbeat_by_session_key("terminal:test")
             .await
             .expect_err("heartbeat should not be created");
         assert!(format!("{err}").contains("not found"));

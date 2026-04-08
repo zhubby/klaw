@@ -27,20 +27,20 @@ env_key = "OPENAI_API_KEY"
 
 ## 运行模式
 
-### stdio 模式（本地交互）
+### TUI 模式（本地终端交互）
 
 ```bash
-klaw stdio
+klaw tui
 ```
 
 如果要直接在终端看到 tracing / MCP bootstrap 日志，可改用：
 
 ```bash
-klaw stdio --verbose-terminal
+klaw tui --verbose-terminal
 ```
 
-- 输入任意文本并回车开始对话
-- 输入 `/exit` 退出
+- 在输入区编辑文本，回车提交；`Shift+Enter` 换行
+- `Esc` 或 `Ctrl+C` 退出
 
 ### 单次请求
 
@@ -121,7 +121,7 @@ installed = ["brainstorming"]
 klaw session list
 
 # 查看会话详情
-klaw session get --session-key "stdio:my-chat"
+klaw session get --session-key "terminal:my-chat"
 ```
 
 ## 下一步

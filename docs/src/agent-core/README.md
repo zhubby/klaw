@@ -10,16 +10,16 @@
 
 对应代码骨架位于 `klaw-core/src`。
 
-## Local stdio run
+## Local TUI run
 
 可直接本地运行（不依赖外部 MQ）：
 
 ```bash
-klaw stdio
+klaw tui
 ```
 
-- 输入任意文本并回车
-- 输入 `/exit` 退出
+- 在 TUI 输入区编辑并回车提交
+- `Esc` 或 `Ctrl+C` 退出
 
 ---
 

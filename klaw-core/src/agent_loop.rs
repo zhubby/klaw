@@ -1823,7 +1823,7 @@ mod tests {
     fn heartbeat_metadata_is_passthrough_only_for_heartbeat_keys() {
         let inbound = BTreeMap::from([
             ("trigger.kind".to_string(), json!("heartbeat")),
-            ("heartbeat.session_key".to_string(), json!("stdio:test")),
+            ("heartbeat.session_key".to_string(), json!("terminal:test")),
             ("reasoning".to_string(), json!("ignore")),
         ]);
 
@@ -1831,7 +1831,7 @@ mod tests {
         assert_eq!(metadata.get("trigger.kind"), Some(&json!("heartbeat")));
         assert_eq!(
             metadata.get("heartbeat.session_key"),
-            Some(&json!("stdio:test"))
+            Some(&json!("terminal:test"))
         );
         assert!(!metadata.contains_key("reasoning"));
     }

@@ -110,7 +110,7 @@ mod tests {
     async fn touch_does_not_increase_turn_count() {
         let store = create_store().await;
         let first = store
-            .touch_session("stdio:test1", "test1", "stdio")
+            .touch_session("terminal:test1", "test1", "terminal")
             .await
             .expect("touch should succeed");
         assert_eq!(first.turn_count, 0);
@@ -120,11 +120,11 @@ mod tests {
     async fn complete_turn_increments_only_on_response() {
         let store = create_store().await;
         let _ = store
-            .touch_session("stdio:test2", "test2", "stdio")
+            .touch_session("terminal:test2", "test2", "terminal")
             .await
             .expect("touch should succeed");
         let completed = store
-            .complete_turn("stdio:test2", "test2", "stdio")
+            .complete_turn("terminal:test2", "test2", "terminal")
             .await
             .expect("complete turn should succeed");
         assert_eq!(completed.turn_count, 1);
@@ -135,11 +135,11 @@ mod tests {
         let store = create_store().await;
         let record = ChatRecord::new("user", "hello", Some("m1".to_string()));
         store
-            .append_chat_record("stdio:test3", &record)
+            .append_chat_record("terminal:test3", &record)
             .await
             .expect("append should succeed");
 
-        let file_path = store.session_jsonl_path("stdio:test3");
+        let file_path = store.session_jsonl_path("terminal:test3");
         let contents = fs::read_to_string(file_path)
             .await
             .expect("jsonl file should exist");
@@ -152,21 +152,21 @@ mod tests {
         let store = create_store().await;
         store
             .append_chat_record(
-                "stdio:test-history",
+                "terminal:test-history",
                 &ChatRecord::new("user", "hello", Some("m1".to_string())),
             )
             .await
             .expect("first append should succeed");
         store
             .append_chat_record(
-                "stdio:test-history",
+                "terminal:test-history",
                 &ChatRecord::new("assistant", "world", Some("m2".to_string())),
             )
             .await
             .expect("second append should succeed");
 
         let records = store
-            .read_chat_records("stdio:test-history")
+            .read_chat_records("terminal:test-history")
             .await
             .expect("history read should succeed");
         let summary: Vec<(&str, &str)> = records
@@ -184,9 +184,9 @@ mod tests {
             .await
             .expect("telegram session should be created");
         let _ = store
-            .touch_session("stdio:chat-2", "chat-2", "stdio")
+            .touch_session("terminal:chat-2", "chat-2", "terminal")
             .await
-            .expect("stdio session should be created");
+            .expect("terminal session should be created");
 
         let filtered = store
             .list_sessions(
@@ -194,19 +194,22 @@ mod tests {
                 0,
                 None,
                 None,
-                Some("stdio"),
+                Some("terminal"),
                 SessionSortOrder::UpdatedAtAsc,
             )
             .await
             .expect("filtered sessions should load");
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].session_key, "stdio:chat-2");
+        assert_eq!(filtered[0].session_key, "terminal:chat-2");
 
         let channels = store
             .list_session_channels()
             .await
             .expect("channel list should load");
-        assert_eq!(channels, vec!["stdio".to_string(), "telegram".to_string()]);
+        assert_eq!(
+            channels,
+            vec!["telegram".to_string(), "terminal".to_string()]
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -332,14 +335,14 @@ mod tests {
     async fn llm_usage_is_aggregated_by_session_and_turn() {
         let store = create_store().await;
         store
-            .touch_session("stdio:usage", "chat-usage", "stdio")
+            .touch_session("terminal:usage", "chat-usage", "terminal")
             .await
             .expect("session should exist");
 
         store
             .append_llm_usage(&NewLlmUsageRecord {
                 id: "usage-1".to_string(),
-                session_key: "stdio:usage".to_string(),
+                session_key: "terminal:usage".to_string(),
                 chat_id: "chat-usage".to_string(),
                 turn_index: 0,
                 request_seq: 1,
@@ -360,7 +363,7 @@ mod tests {
         store
             .append_llm_usage(&NewLlmUsageRecord {
                 id: "usage-2".to_string(),
-                session_key: "stdio:usage".to_string(),
+                session_key: "terminal:usage".to_string(),
                 chat_id: "chat-usage".to_string(),
                 turn_index: 0,
                 request_seq: 2,
@@ -380,7 +383,7 @@ mod tests {
             .expect("second usage should append");
 
         let by_session = store
-            .sum_llm_usage_by_session("stdio:usage")
+            .sum_llm_usage_by_session("terminal:usage")
             .await
             .expect("session usage should sum");
         assert_eq!(by_session.request_count, 2);
@@ -391,13 +394,13 @@ mod tests {
         assert_eq!(by_session.reasoning_tokens, 1);
 
         let by_turn = store
-            .sum_llm_usage_by_turn("stdio:usage", 0)
+            .sum_llm_usage_by_turn("terminal:usage", 0)
             .await
             .expect("turn usage should sum");
         assert_eq!(by_turn, by_session);
 
         let records = store
-            .list_llm_usage("stdio:usage", 10, 0)
+            .list_llm_usage("terminal:usage", 10, 0)
             .await
             .expect("usage history should list");
         assert_eq!(records.len(), 2);
@@ -409,14 +412,14 @@ mod tests {
     async fn llm_audit_supports_filtering_and_sorting() {
         let store = create_store().await;
         store
-            .touch_session("stdio:audit", "chat-audit", "stdio")
+            .touch_session("terminal:audit", "chat-audit", "terminal")
             .await
             .expect("session should exist");
 
         store
             .append_llm_audit(&NewLlmAuditRecord {
                 id: "audit-1".to_string(),
-                session_key: "stdio:audit".to_string(),
+                session_key: "terminal:audit".to_string(),
                 chat_id: "chat-audit".to_string(),
                 turn_index: 0,
                 request_seq: 1,
@@ -439,7 +442,7 @@ mod tests {
         store
             .append_llm_audit(&NewLlmAuditRecord {
                 id: "audit-2".to_string(),
-                session_key: "stdio:audit".to_string(),
+                session_key: "terminal:audit".to_string(),
                 chat_id: "chat-audit".to_string(),
                 turn_index: 1,
                 request_seq: 2,
@@ -462,7 +465,7 @@ mod tests {
 
         let filtered = store
             .list_llm_audit(&LlmAuditQuery {
-                session_key: Some("stdio:audit".to_string()),
+                session_key: Some("terminal:audit".to_string()),
                 provider: Some("anthropic".to_string()),
                 requested_from_ms: Some(1_500),
                 requested_to_ms: Some(2_500),
@@ -479,7 +482,7 @@ mod tests {
 
         let descending = store
             .list_llm_audit(&LlmAuditQuery {
-                session_key: Some("stdio:audit".to_string()),
+                session_key: Some("terminal:audit".to_string()),
                 provider: None,
                 requested_from_ms: None,
                 requested_to_ms: None,
@@ -502,14 +505,14 @@ mod tests {
     async fn llm_audit_summaries_exclude_large_json_payloads() {
         let store = create_store().await;
         store
-            .touch_session("stdio:audit-summary", "chat-audit-summary", "stdio")
+            .touch_session("terminal:audit-summary", "chat-audit-summary", "terminal")
             .await
             .expect("session should exist");
 
         store
             .append_llm_audit(&NewLlmAuditRecord {
                 id: "audit-summary-1".to_string(),
-                session_key: "stdio:audit-summary".to_string(),
+                session_key: "terminal:audit-summary".to_string(),
                 chat_id: "chat-audit-summary".to_string(),
                 turn_index: 0,
                 request_seq: 1,
@@ -532,7 +535,7 @@ mod tests {
 
         let summaries = store
             .list_llm_audit_summaries(&LlmAuditQuery {
-                session_key: Some("stdio:audit-summary".to_string()),
+                session_key: Some("terminal:audit-summary".to_string()),
                 provider: None,
                 requested_from_ms: None,
                 requested_to_ms: None,
@@ -548,7 +551,7 @@ mod tests {
             summaries[0],
             LlmAuditSummaryRecord {
                 id: "audit-summary-1".to_string(),
-                session_key: "stdio:audit-summary".to_string(),
+                session_key: "terminal:audit-summary".to_string(),
                 chat_id: "chat-audit-summary".to_string(),
                 turn_index: 0,
                 request_seq: 1,
@@ -588,18 +591,18 @@ mod tests {
     async fn llm_audit_filter_options_are_aggregated_and_sorted() {
         let store = create_store().await;
         store
-            .touch_session("stdio:audit-a", "chat-audit-a", "stdio")
+            .touch_session("terminal:audit-a", "chat-audit-a", "terminal")
             .await
             .expect("first session should exist");
         store
-            .touch_session("stdio:audit-b", "chat-audit-b", "stdio")
+            .touch_session("terminal:audit-b", "chat-audit-b", "terminal")
             .await
             .expect("second session should exist");
 
         store
             .append_llm_audit(&NewLlmAuditRecord {
                 id: "audit-filter-1".to_string(),
-                session_key: "stdio:audit-b".to_string(),
+                session_key: "terminal:audit-b".to_string(),
                 chat_id: "chat-audit-b".to_string(),
                 turn_index: 0,
                 request_seq: 1,
@@ -622,7 +625,7 @@ mod tests {
         store
             .append_llm_audit(&NewLlmAuditRecord {
                 id: "audit-filter-2".to_string(),
-                session_key: "stdio:audit-a".to_string(),
+                session_key: "terminal:audit-a".to_string(),
                 chat_id: "chat-audit-a".to_string(),
                 turn_index: 0,
                 request_seq: 1,
@@ -645,7 +648,7 @@ mod tests {
         store
             .append_llm_audit(&NewLlmAuditRecord {
                 id: "audit-filter-3".to_string(),
-                session_key: "stdio:audit-a".to_string(),
+                session_key: "terminal:audit-a".to_string(),
                 chat_id: "chat-audit-a".to_string(),
                 turn_index: 1,
                 request_seq: 2,
@@ -677,7 +680,7 @@ mod tests {
         assert_eq!(
             options,
             LlmAuditFilterOptions {
-                session_keys: vec!["stdio:audit-a".to_string()],
+                session_keys: vec!["terminal:audit-a".to_string()],
                 providers: vec!["anthropic".to_string(), "openai".to_string()],
             }
         );
@@ -687,14 +690,14 @@ mod tests {
     async fn tool_audit_supports_filtering_and_sorting() {
         let store = create_store().await;
         store
-            .touch_session("stdio:tool-audit", "chat-tool-audit", "stdio")
+            .touch_session("terminal:tool-audit", "chat-tool-audit", "terminal")
             .await
             .expect("session should exist");
 
         store
             .append_tool_audit(&NewToolAuditRecord {
                 id: "tool-audit-1".to_string(),
-                session_key: "stdio:tool-audit".to_string(),
+                session_key: "terminal:tool-audit".to_string(),
                 chat_id: "chat-tool-audit".to_string(),
                 turn_index: 0,
                 request_seq: 1,
@@ -718,7 +721,7 @@ mod tests {
         store
             .append_tool_audit(&NewToolAuditRecord {
                 id: "tool-audit-2".to_string(),
-                session_key: "stdio:tool-audit".to_string(),
+                session_key: "terminal:tool-audit".to_string(),
                 chat_id: "chat-tool-audit".to_string(),
                 turn_index: 0,
                 request_seq: 1,
@@ -745,7 +748,7 @@ mod tests {
 
         let rows = store
             .list_tool_audit(&ToolAuditQuery {
-                session_key: Some("stdio:tool-audit".to_string()),
+                session_key: Some("terminal:tool-audit".to_string()),
                 tool_name: Some("shell".to_string()),
                 started_from_ms: Some(1_500),
                 started_to_ms: Some(2_500),
@@ -767,7 +770,10 @@ mod tests {
             })
             .await
             .expect("tool audit filters should load");
-        assert_eq!(options.session_keys, vec!["stdio:tool-audit".to_string()]);
+        assert_eq!(
+            options.session_keys,
+            vec!["terminal:tool-audit".to_string()]
+        );
         assert_eq!(options.tool_names, vec!["shell".to_string()]);
     }
 
@@ -965,15 +971,15 @@ mod tests {
     async fn approval_lifecycle_create_approve_consume() {
         let store = create_store().await;
         let session = store
-            .touch_session("stdio:approval", "approval-chat", "stdio")
+            .touch_session("terminal:approval", "approval-chat", "terminal")
             .await
             .expect("session should exist for approval foreign key");
-        assert_eq!(session.session_key, "stdio:approval");
+        assert_eq!(session.session_key, "terminal:approval");
 
         let created = store
             .create_approval(&NewApprovalRecord {
                 id: "approval-1".to_string(),
-                session_key: "stdio:approval".to_string(),
+                session_key: "terminal:approval".to_string(),
                 tool_name: "shell".to_string(),
                 command_hash: "abc123".to_string(),
                 command_preview: "touch file.txt".to_string(),
@@ -997,7 +1003,7 @@ mod tests {
         let consumed = store
             .consume_approved_shell_command(
                 "approval-1",
-                "stdio:approval",
+                "terminal:approval",
                 "abc123",
                 util::now_ms(),
             )
@@ -1017,14 +1023,14 @@ mod tests {
     async fn approval_consume_latest_by_session_and_command_hash() {
         let store = create_store().await;
         store
-            .touch_session("stdio:approval2", "approval-chat2", "stdio")
+            .touch_session("terminal:approval2", "approval-chat2", "terminal")
             .await
             .expect("session should exist for approval foreign key");
 
         store
             .create_approval(&NewApprovalRecord {
                 id: "approval-latest-1".to_string(),
-                session_key: "stdio:approval2".to_string(),
+                session_key: "terminal:approval2".to_string(),
                 tool_name: "shell".to_string(),
                 command_hash: "samehash".to_string(),
                 command_preview: "touch a.txt".to_string(),
@@ -1042,7 +1048,7 @@ mod tests {
             .expect("approve should succeed");
 
         let consumed = store
-            .consume_latest_approved_shell_command("stdio:approval2", "samehash", util::now_ms())
+            .consume_latest_approved_shell_command("terminal:approval2", "samehash", util::now_ms())
             .await
             .expect("consume latest should succeed");
         assert!(consumed);

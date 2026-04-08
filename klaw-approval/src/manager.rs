@@ -514,13 +514,13 @@ mod tests {
     async fn list_approvals_returns_latest_first() {
         let store = create_store().await;
         store
-            .touch_session("stdio:test", "chat-1", "stdio")
+            .touch_session("terminal:test", "chat-1", "terminal")
             .await
             .expect("session should exist");
         let manager = SqliteApprovalManager::from_store(store);
         let _ = manager
             .create_approval(ApprovalCreateInput {
-                session_key: "stdio:test".to_string(),
+                session_key: "terminal:test".to_string(),
                 tool_name: "shell".to_string(),
                 command_text: "touch a".to_string(),
                 command_preview: None,
@@ -534,7 +534,7 @@ mod tests {
             .expect("first approval should be created");
         let second = manager
             .create_approval(ApprovalCreateInput {
-                session_key: "stdio:test".to_string(),
+                session_key: "terminal:test".to_string(),
                 tool_name: "shell".to_string(),
                 command_text: "touch b".to_string(),
                 command_preview: None,
@@ -558,13 +558,13 @@ mod tests {
     async fn resolve_approval_marks_record_approved() {
         let store = create_store().await;
         store
-            .touch_session("stdio:test", "chat-1", "stdio")
+            .touch_session("terminal:test", "chat-1", "terminal")
             .await
             .expect("session should exist");
         let manager = SqliteApprovalManager::from_store(store);
         let approval = manager
             .create_approval(ApprovalCreateInput {
-                session_key: "stdio:test".to_string(),
+                session_key: "terminal:test".to_string(),
                 tool_name: "shell".to_string(),
                 command_text: "touch a".to_string(),
                 command_preview: None,
@@ -594,13 +594,13 @@ mod tests {
     async fn consume_approval_marks_record_consumed() {
         let store = create_store().await;
         store
-            .touch_session("stdio:test", "chat-1", "stdio")
+            .touch_session("terminal:test", "chat-1", "terminal")
             .await
             .expect("session should exist");
         let manager = SqliteApprovalManager::from_store(store);
         let approval = manager
             .create_approval(ApprovalCreateInput {
-                session_key: "stdio:test".to_string(),
+                session_key: "terminal:test".to_string(),
                 tool_name: "shell".to_string(),
                 command_text: "touch a".to_string(),
                 command_preview: None,

@@ -2,7 +2,7 @@
 
 渠道模块提供外部通信协议接入能力，当前支持：
 
-- [Stdio](./stdio.md) - 基于标准输入输出的终端交互渠道
+- [Terminal / TUI](./terminal.md) - 本地 `terminal` 渠道与 `klaw tui` 全屏终端交互
 - [DingTalk（钉钉）](./dingtalk.md) - 基于 WebSocket 长连接的钉钉机器人渠道
 - [Telegram](./telegram.md) - 基于 Bot API long polling 的 Telegram 机器人渠道
 
@@ -106,6 +106,7 @@ url = "http://proxy.example.com:8080"
 ```
 
 例如：
+- 本地 TUI：`terminal:<chat_id>`（如 `terminal:main`）
 - DingTalk: `dingtalk:default:USER123`
 - DingTalk 群聊：`dingtalk:default:conversation456`
 - Telegram: `telegram:default:123456789`
@@ -148,11 +149,11 @@ url = "http://proxy.example.com:8080"
 
 ## 渠道对比
 
-| 特性 | Stdio | DingTalk | Telegram |
-|------|-------|----------|----------|
-| 交互方式 | 终端输入输出 | 钉钉消息 | Telegram Bot |
+| 特性 | Terminal (TUI) | DingTalk | Telegram |
+|------|----------------|----------|----------|
+| 交互方式 | 全屏终端 UI | 钉钉消息 | Telegram Bot |
 | 媒体支持 | 无 | 图片、语音、文件 | 图片、文件 |
 | 审批卡片 | 无 | 支持 | 首版不支持 |
-| 多会话 | 否 | 是 | 是 |
+| 多会话 | 视 TUI 实现 | 是 | 是 |
 | 回调机制 | 无 | 支持 | 首版不支持 |
 | 适用场景 | 本地调试、CLI | 企业协作 | Bot 私聊/群聊 |

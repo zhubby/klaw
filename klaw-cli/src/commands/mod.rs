@@ -7,4 +7,4 @@ pub mod gui;
 pub mod session;
 pub mod signal;
 pub mod startup_display;
-pub mod stdio;
+pub mod tui;

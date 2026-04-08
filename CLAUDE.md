@@ -18,7 +18,7 @@ cargo test -p klaw-core
 cargo test -p klaw-core -- <test_name>
 
 # Run the CLI
-klaw stdio                     # Starts interactive stdio mode
+klaw tui                       # Starts interactive terminal UI (local)
 klaw --help
 
 # One-shot request

@@ -27,7 +27,7 @@ pub struct SessionListCommand {
 
 #[derive(Debug, Args)]
 pub struct SessionGetCommand {
-    /// Exact session key, e.g. stdio:local-chat.
+    /// Exact session key, e.g. terminal:local-chat.
     #[arg(long)]
     pub session_key: String,
 }

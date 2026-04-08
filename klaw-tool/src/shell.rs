@@ -770,7 +770,7 @@ mod tests {
         let config = test_config();
         let store = create_store().await;
         store
-            .touch_session("s1", "chat-1", "stdio")
+            .touch_session("s1", "chat-1", "terminal")
             .await
             .expect("session should exist");
         let tool = ShellTool::with_store(&config, store.clone());
@@ -799,7 +799,7 @@ mod tests {
         let config = test_config();
         let store = create_store().await;
         store
-            .touch_session("s1", "chat-1", "stdio")
+            .touch_session("s1", "chat-1", "terminal")
             .await
             .expect("session should exist");
         let tool = ShellTool::with_store(&config, store.clone());

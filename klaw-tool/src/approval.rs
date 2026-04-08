@@ -325,7 +325,7 @@ mod tests {
     async fn request_creates_pending_approval() {
         let store = create_store().await;
         store
-            .touch_session("s1", "chat-1", "stdio")
+            .touch_session("s1", "chat-1", "terminal")
             .await
             .expect("session should exist");
         let tool = ApprovalTool::with_manager(SqliteApprovalManager::from_store(store.clone()));
@@ -360,7 +360,7 @@ mod tests {
     async fn resolve_updates_approval_to_approved() {
         let store = create_store().await;
         store
-            .touch_session("s1", "chat-1", "stdio")
+            .touch_session("s1", "chat-1", "terminal")
             .await
             .expect("session should exist");
         let tool = ApprovalTool::with_manager(SqliteApprovalManager::from_store(store.clone()));
@@ -410,11 +410,11 @@ mod tests {
     async fn get_rejects_cross_session_access() {
         let store = create_store().await;
         store
-            .touch_session("s1", "chat-1", "stdio")
+            .touch_session("s1", "chat-1", "terminal")
             .await
             .expect("session should exist");
         store
-            .touch_session("s2", "chat-2", "stdio")
+            .touch_session("s2", "chat-2", "terminal")
             .await
             .expect("session should exist");
         let tool = ApprovalTool::with_manager(SqliteApprovalManager::from_store(store.clone()));

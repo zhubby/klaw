@@ -8,14 +8,14 @@
 
 - `session_key`：会话唯一键（主键）
 - `chat_id`：对话 ID
-- `channel`：来源通道（如 `stdio`）
+- `channel`：来源通道（如 `terminal`）
 - `created_at_ms`：创建时间
 - `updated_at_ms`：最近更新时间
 - `last_message_at_ms`：最近消息时间
 - `turn_count`：已完成轮次
 - `jsonl_path`：对应 JSONL 文件路径
 
-JSONL 文件名默认使用 `session_id`（即 `session_key` 中 `:` 后半段，如 `stdio:local-chat` -> `local-chat.jsonl`）。
+JSONL 文件名默认使用 `session_id`（即 `session_key` 中 `:` 后半段，如 `terminal:local-chat` -> `local-chat.jsonl`）。
 
 ## 轮次规则
 

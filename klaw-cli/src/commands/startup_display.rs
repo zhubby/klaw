@@ -1,11 +1,16 @@
 use klaw_config::{AppConfig, McpServerConfig, McpServerMode};
 use klaw_runtime::StartupReport;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupDisplaySummary {
+    pub version: String,
+    pub skills: String,
+    pub tools: String,
+    pub mcp: String,
+}
+
 pub fn print_startup_banner(config: &AppConfig, report: &StartupReport) {
-    let version = env!("CARGO_PKG_VERSION");
-    let tool_names = tools_for_display(report);
-    let skills = join_or_dash(&report.skill_names);
-    let mcp = format_mcp_status(config, report);
+    let summary = build_startup_summary(config, report);
     let width = 18usize;
 
     println!(
@@ -18,11 +23,25 @@ pub fn print_startup_banner(config: &AppConfig, report: &StartupReport) {
   ✨ crafted for calm, sharp loops ✨"#
     );
     println!();
-    println!("{:<width$} {}", "🚀 Version", version, width = width);
-    println!("{:<width$} {}", "🧠 Skills", skills, width = width);
-    println!("{:<width$} {}", "🛠️  Tools", tool_names, width = width);
-    println!("{:<width$} {}", "🔌 MCP", mcp, width = width);
+    println!(
+        "{:<width$} {}",
+        "🚀 Version",
+        summary.version,
+        width = width
+    );
+    println!("{:<width$} {}", "🧠 Skills", summary.skills, width = width);
+    println!("{:<width$} {}", "🛠️  Tools", summary.tools, width = width);
+    println!("{:<width$} {}", "🔌 MCP", summary.mcp, width = width);
     println!();
+}
+
+pub fn build_startup_summary(config: &AppConfig, report: &StartupReport) -> StartupDisplaySummary {
+    StartupDisplaySummary {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        tools: tools_for_display(report),
+        skills: join_or_dash(&report.skill_names),
+        mcp: format_mcp_status(config, report),
+    }
 }
 
 fn tools_for_display(report: &StartupReport) -> String {
@@ -93,7 +112,10 @@ mod tests {
     use klaw_mcp::{McpLifecycleState, McpServerKey, McpServerStatus, McpSyncResult};
     use klaw_runtime::StartupReport;
 
-    use super::{format_mcp_status, join_or_dash, tools_for_display};
+    use super::{
+        StartupDisplaySummary, build_startup_summary, format_mcp_status, join_or_dash,
+        tools_for_display,
+    };
 
     #[test]
     fn tools_display_includes_enabled_optional_tools() {
@@ -184,5 +206,21 @@ mod tests {
     fn join_or_dash_handles_empty_values() {
         assert_eq!(join_or_dash(&[]), "-");
         assert_eq!(join_or_dash(&["a".to_string(), "b".to_string()]), "a, b");
+    }
+
+    #[test]
+    fn startup_summary_collects_banner_fields() {
+        let config = AppConfig::default();
+        let report = StartupReport::default();
+        let summary = build_startup_summary(&config, &report);
+        assert_eq!(
+            summary,
+            StartupDisplaySummary {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                skills: "-".to_string(),
+                tools: "-".to_string(),
+                mcp: "bootstrapping, no servers configured".to_string(),
+            }
+        );
     }
 }
