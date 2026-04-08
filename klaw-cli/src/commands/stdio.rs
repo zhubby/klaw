@@ -1,12 +1,9 @@
 use clap::Args;
+use klaw_runtime::{build_hosted_runtime, shutdown_runtime_bundle};
 use std::sync::Arc;
 
 use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
-use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
-use crate::runtime::{
-    SharedChannelRuntime, build_runtime_bundle, finalize_startup_report, shutdown_runtime_bundle,
-};
 use klaw_channel::{Channel, stdio::StdioChannel};
 use klaw_config::AppConfig;
 
@@ -25,27 +22,19 @@ pub struct StdioCommand {
 
 impl StdioCommand {
     pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
-        let mut runtime = build_runtime_bundle(config.as_ref()).await?;
-        let startup_report = finalize_startup_report(&mut runtime).await?;
-        print_startup_banner(config.as_ref(), &startup_report);
-
-        let runtime = Arc::new(runtime);
-        let background = Arc::new(BackgroundServices::new(
-            runtime.as_ref(),
-            BackgroundServiceConfig::from_app_config(config.as_ref()),
-        ));
-        let adapter = SharedChannelRuntime::new(runtime.clone(), background);
+        let hosted = build_hosted_runtime(config.as_ref()).await?;
+        print_startup_banner(config.as_ref(), &hosted.startup_report);
 
         let mut channel = StdioChannel::new(self.session_key, self.show_reasoning);
         let run_result = tokio::select! {
-            result = channel.run(&adapter) => result,
+            result = channel.run(hosted.adapter.as_ref()) => result,
             _ = shutdown_signal() => {
                 println!("\nShutdown signal received. Bye.");
                 Ok(())
             }
         };
         let shutdown_result = tokio::select! {
-            result = shutdown_runtime_bundle(runtime.as_ref()) => result,
+            result = shutdown_runtime_bundle(hosted.runtime.as_ref()) => result,
             _ = shutdown_signal() => {
                 std::process::exit(130);
             }

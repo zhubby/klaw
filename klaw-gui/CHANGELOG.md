@@ -2,6 +2,10 @@
 
 ## 2026-04-08
 
+### Changed
+
+- gateway runtime bridge now reuses `klaw-runtime::GatewayStatusSnapshot` instead of owning a GUI-local duplicate, so the desktop UI consumes the shared host-layer status model exported by the runtime crate
+
 ### Fixed
 
 - `ACP` 面板详情弹窗不再单独显示 `Args` 和 `State`；`Command` 字段现直接展示完整拼接后的 adapter 启动命令

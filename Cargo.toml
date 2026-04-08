@@ -22,6 +22,7 @@ members = [
     "klaw-channel",
     "klaw-gui",
     "klaw-observability",
+    "klaw-runtime",
 ]
 resolver = "2"
 
@@ -130,6 +131,7 @@ klaw-gateway = { path = "klaw-gateway" }
 klaw-channel = { path = "klaw-channel" }
 klaw-gui = { path = "klaw-gui" }
 klaw-observability = { path = "klaw-observability" }
+klaw-runtime = { path = "klaw-runtime" }
 
 [profile.release]
 opt-level = 3

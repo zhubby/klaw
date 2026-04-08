@@ -1,9 +1,9 @@
 use clap::Args;
+use klaw_runtime::{build_runtime_bundle, submit_and_get_output};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::runtime::{build_runtime_bundle, submit_and_get_output};
 use klaw_config::AppConfig;
 
 #[derive(Debug, Args)]

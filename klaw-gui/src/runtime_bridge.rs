@@ -3,7 +3,6 @@ use klaw_acp::{
 };
 use klaw_channel::{ChannelInstanceKey, ChannelInstanceStatus, ChannelSyncResult};
 use klaw_config::TailscaleMode;
-use klaw_gateway::{GatewayRuntimeInfo, TailscaleHostInfo};
 use klaw_llm::ToolDefinition;
 use klaw_mcp::{McpRuntimeSnapshot, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
@@ -13,17 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
-#[derive(Debug, Clone, Default)]
-pub struct GatewayStatusSnapshot {
-    pub configured_enabled: bool,
-    pub running: bool,
-    pub transitioning: bool,
-    pub info: Option<GatewayRuntimeInfo>,
-    pub tailscale_host: TailscaleHostInfo,
-    pub last_error: Option<String>,
-    pub auth_configured: bool,
-    pub tailscale_mode: TailscaleMode,
-}
+pub use klaw_runtime::GatewayStatusSnapshot;
 
 #[derive(Debug, Clone, Default)]
 pub struct ProviderRuntimeSnapshot {

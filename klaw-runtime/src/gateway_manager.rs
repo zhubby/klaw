@@ -1,7 +1,6 @@
-use super::{RuntimeBundle, webhook};
+use super::{GatewayStatusSnapshot, RuntimeBundle, webhook};
 use klaw_config::{AppConfig, ConfigError, ConfigStore, TailscaleMode};
 use klaw_gateway::{GatewayHandle, TailscaleManager, spawn_gateway_with_options};
-use klaw_gui::GatewayStatusSnapshot;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::warn;

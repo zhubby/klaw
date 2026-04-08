@@ -4,6 +4,12 @@ use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
 use klaw_llm::ToolDefinition;
 use klaw_mcp::McpConfigSnapshot;
+use klaw_runtime::gateway_manager::GatewayManager;
+use klaw_runtime::{
+    RuntimeBundle, build_channel_driver_factory, build_hosted_runtime,
+    reload_runtime_skills_prompt, set_runtime_provider_override,
+    shutdown_runtime_bundle, sync_runtime_providers, sync_runtime_tools,
+};
 use std::{
     collections::BTreeMap,
     io,
@@ -17,13 +23,6 @@ use tokio::sync::{Mutex as AsyncMutex, oneshot, watch};
 
 use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
-use crate::runtime::gateway_manager::GatewayManager;
-use crate::runtime::service_loop::{BackgroundServiceConfig, BackgroundServices};
-use crate::runtime::{
-    SharedChannelRuntime, build_channel_driver_factory, build_runtime_bundle,
-    finalize_startup_report, reload_runtime_skills_prompt, set_runtime_provider_override,
-    shutdown_runtime_bundle, sync_runtime_providers, sync_runtime_tools,
-};
 use klaw_config::ConfigStore;
 use tracing::{info, warn};
 
@@ -65,9 +64,7 @@ where
     }
 }
 
-fn provider_runtime_snapshot(
-    runtime: &crate::runtime::RuntimeBundle,
-) -> klaw_gui::ProviderRuntimeSnapshot {
+fn provider_runtime_snapshot(runtime: &RuntimeBundle) -> klaw_gui::ProviderRuntimeSnapshot {
     let provider_runtime = runtime.runtime.provider_runtime_snapshot();
     let runtime_provider_override = runtime
         .runtime_provider_override
@@ -91,7 +88,7 @@ fn provider_runtime_snapshot(
     }
 }
 
-fn tool_definitions(runtime: &crate::runtime::RuntimeBundle) -> Vec<ToolDefinition> {
+fn tool_definitions(runtime: &RuntimeBundle) -> Vec<ToolDefinition> {
     let mut definitions = runtime
         .runtime
         .tools
@@ -223,32 +220,21 @@ impl GuiCommand {
                     .map_err(|err| err.to_string())?;
 
                 runtime.block_on(async move {
-                    let mut runtime = match build_runtime_bundle(&config_for_thread).await {
-                        Ok(runtime) => runtime,
+                    let hosted = match build_hosted_runtime(&config_for_thread).await {
+                        Ok(hosted) => hosted,
                         Err(err) => {
                             let err = err.to_string();
                             let _ = startup_tx.send(Err(err.clone()));
                             return Err(err);
                         }
                     };
-                    let startup_report = match finalize_startup_report(&mut runtime).await {
-                        Ok(report) => report,
-                        Err(err) => {
-                            let err = err.to_string();
-                            let _ = startup_tx.send(Err(err.clone()));
-                            return Err(err);
-                        }
-                    };
-                    let _ = startup_tx.send(Ok(startup_report));
+                    let _ = startup_tx.send(Ok(hosted.startup_report.clone()));
 
-                    let runtime = Arc::new(runtime);
-                    let background = Arc::new(BackgroundServices::new(
-                        runtime.as_ref(),
-                        BackgroundServiceConfig::from_app_config(&config_for_thread),
-                    ));
+                    let runtime = Arc::clone(&hosted.runtime);
+                    let background = Arc::clone(&hosted.background);
                     let gateway_manager = Arc::new(AsyncMutex::new(GatewayManager::new(
                         &config_for_thread,
-                        runtime.clone(),
+                        Arc::clone(&runtime),
                     )));
                     if let Err(err) = gateway_manager
                         .lock()
@@ -258,10 +244,7 @@ impl GuiCommand {
                     {
                         warn!(error = %err, "failed to start gateway for gui runtime");
                     }
-                    let adapter = Arc::new(SharedChannelRuntime::new(
-                        runtime.clone(),
-                        Arc::clone(&background),
-                    ));
+                    let adapter = Arc::clone(&hosted.adapter);
 
                     let local = tokio::task::LocalSet::new();
                     local
