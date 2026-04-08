@@ -2,6 +2,9 @@
 //!
 //! Build for web: `wasm-pack build klaw-webui --target web --out-dir ../klaw-gateway/static/chat/pkg`
 
+#[allow(dead_code)]
+mod presentation;
+
 #[cfg(target_arch = "wasm32")]
 mod web_chat;
 
