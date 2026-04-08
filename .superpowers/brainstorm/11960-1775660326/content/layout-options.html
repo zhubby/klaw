@@ -1,0 +1,94 @@
+<h2>klaw-webui 布局方向</h2>
+<p class="subtitle">你刚刚选择了「Klaw 自己的风格」和「紧凑工具栏」。下面是 3 个布局方向，重点比较信息密度、聊天专注度和输入区位置。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. 经典居中会话</div>
+        <div class="mockup-body">
+          <div style="background:#d9d9df;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;font-size:12px;">
+            <span>Klaw</span>
+            <span>connected | reconnect</span>
+          </div>
+          <div style="max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:12px;min-height:280px;">
+            <div style="align-self:flex-start;background:#d8e6ff;padding:12px 14px;border-radius:16px 16px 16px 4px;width:72%;">assistant bubble</div>
+            <div style="align-self:flex-end;background:#ececec;padding:12px 14px;border-radius:16px 16px 4px 16px;width:64%;">user bubble</div>
+            <div style="align-self:flex-start;background:#d8e6ff;padding:12px 14px;border-radius:16px 16px 16px 4px;width:78%;">assistant bubble</div>
+          </div>
+          <div style="max-width:680px;margin:18px auto 0;background:#f4f4f6;border:1px solid #d0d0d6;border-radius:22px;padding:14px 18px;font-size:12px;">rounded composer fixed at bottom</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>方案 A：经典居中会话</h3>
+      <p>最接近 ChatGPT 的阅读节奏，中间是窄栏对话，底部是悬浮圆角输入框，顶部保留一条轻量状态栏。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. 品牌欢迎 + 对话主区</div>
+        <div class="mockup-body">
+          <div style="background:#d9d9df;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;font-size:12px;">
+            <span>Klaw</span>
+            <span>connected | reconnect</span>
+          </div>
+          <div style="max-width:680px;margin:0 auto;">
+            <div style="text-align:center;padding:26px 12px 20px;">
+              <div style="font-size:12px;color:#777;">Klaw Web Chat</div>
+              <div style="font-size:20px;font-weight:700;margin-top:6px;">A calmer, branded starting state</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:12px;min-height:210px;">
+              <div style="align-self:flex-start;background:#d8e6ff;padding:12px 14px;border-radius:16px 16px 16px 4px;width:68%;">assistant bubble</div>
+              <div style="align-self:flex-end;background:#ececec;padding:12px 14px;border-radius:16px 16px 4px 16px;width:56%;">user bubble</div>
+            </div>
+          </div>
+          <div style="max-width:720px;margin:18px auto 0;background:#f4f4f6;border:1px solid #d0d0d6;border-radius:18px;padding:14px 18px;font-size:12px;">composer attached to a wider panel</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>方案 B：品牌欢迎 + 对话主区</h3>
+      <p>首次进入更有产品感，顶部和中段能放一点 Klaw 品牌语气，但开始聊天后依然回到中间主对话区。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. 宽屏聊天 + 侧边元信息</div>
+        <div class="mockup-body">
+          <div style="background:#d9d9df;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;font-size:12px;">
+            <span>Klaw</span>
+            <span>connected | reconnect</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 180px;gap:16px;min-height:280px;">
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <div style="align-self:flex-start;background:#d8e6ff;padding:12px 14px;border-radius:16px 16px 16px 4px;width:70%;">assistant bubble</div>
+              <div style="align-self:flex-end;background:#ececec;padding:12px 14px;border-radius:16px 16px 4px 16px;width:58%;">user bubble</div>
+              <div style="align-self:flex-start;background:#d8e6ff;padding:12px 14px;border-radius:16px 16px 16px 4px;width:82%;">assistant bubble</div>
+            </div>
+            <div style="background:#f4f4f6;border:1px solid #d0d0d6;border-radius:16px;padding:12px;font-size:12px;">
+              <div style="font-weight:600;margin-bottom:8px;">session meta</div>
+              <div>status</div>
+              <div>session id</div>
+              <div>debug info</div>
+            </div>
+          </div>
+          <div style="margin-top:18px;background:#f4f4f6;border:1px solid #d0d0d6;border-radius:18px;padding:14px 18px;font-size:12px;">bottom composer spans content width</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>方案 C：宽屏聊天 + 侧边元信息</h3>
+      <p>更偏产品工作台，聊天仍在中间，但把 session / 状态信息放到右侧，不干扰气泡区。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px;">
+  <div class="label">我的推荐</div>
+  <p>推荐先做 <strong>方案 A</strong>：最稳、最清晰，也最符合你说的“中间为会话面板，底部为输入框”。如果你希望首屏更有 Klaw 个性，可以在 A 的基础上吸收一点 B 的品牌元素。</p>
+</div>
