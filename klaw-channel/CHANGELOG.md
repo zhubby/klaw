@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-08
+
+### Changed
+
+- `render::render_agent_output` 的 `OutputRenderStyle::Terminal` 不再包裹 `--------------------` / `[answer]` 等装饰线，正文为模型回复原文；开启 reasoning 时仍在正文后以 `[reasoning]` 与 `>` 引用行追加推理块
+
 ## 2026-03-31
 
 ### Changed
