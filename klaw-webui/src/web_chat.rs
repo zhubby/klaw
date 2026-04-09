@@ -3,27 +3,113 @@
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
 use crate::{
-    ConnectionState, MessageRole, classify_message_role, normalize_gateway_token_input,
+    ConnectionState, MessageRole, ThemeMode, classify_message_role, normalize_gateway_token_input,
     toolbar_title,
 };
 use eframe::egui::{
-    self, Align, Align2, Color32, Frame, Key, RichText, ScrollArea, Stroke, TextEdit, vec2,
+    self, Align, Align2, Button, ComboBox, Context, Frame, Id, Key, Layout, RichText, ScrollArea,
+    TextEdit, TopBottomPanel, vec2,
 };
 use egui_notify::{Anchor, Toasts};
+use egui_phosphor::regular;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
-use web_sys::{CloseEvent, MessageEvent, WebSocket};
+use web_sys::{CloseEvent, MessageEvent, Storage, WebSocket};
 
-const CHAT_COLUMN_MAX_WIDTH: f32 = 760.0;
-const COMPOSER_MAX_WIDTH: f32 = 760.0;
-const BUBBLE_MAX_WIDTH: f32 = 520.0;
-const SESSION_STORAGE_KEY: &str = "klaw_webui_session_key";
+const APP_STATE_STORAGE_KEY: &str = "klaw_webui_workspace_state";
+const BUBBLE_MAX_WIDTH: f32 = 420.0;
+const SESSION_LIST_WIDTH: f32 = 220.0;
+const SESSION_WINDOW_DEFAULT_WIDTH: f32 = 560.0;
+const SESSION_WINDOW_DEFAULT_HEIGHT: f32 = 620.0;
+const SESSION_WINDOW_MIN_WIDTH: f32 = 360.0;
+const SESSION_WINDOW_MIN_HEIGHT: f32 = 420.0;
+const WINDOW_START_X: f32 = SESSION_LIST_WIDTH + 28.0;
+const WINDOW_START_Y: f32 = 72.0;
+const WINDOW_OFFSET_X: f32 = 40.0;
+const WINDOW_OFFSET_Y: f32 = 32.0;
+const WINDOW_STAGGER_COLUMNS: u32 = 4;
+const INPUT_PANEL_HEIGHT: f32 = 124.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ChatMessage {
     text: String,
     role: MessageRole,
+    timestamp_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PersistedSession {
+    session_key: String,
+    title: String,
+    #[serde(default = "default_session_open")]
+    open: bool,
+    #[serde(default)]
+    window_anchor: Option<WindowAnchor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct WindowAnchor {
+    x: i32,
+    y: i32,
+}
+
+impl WindowAnchor {
+    fn from_pos2(pos: egui::Pos2) -> Self {
+        Self {
+            x: pos.x.round() as i32,
+            y: pos.y.round() as i32,
+        }
+    }
+
+    fn to_pos2(self) -> egui::Pos2 {
+        egui::pos2(self.x as f32, self.y as f32)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PersistedWorkspaceState {
+    #[serde(default)]
+    theme_mode: ThemeMode,
+    #[serde(default)]
+    sessions: Vec<PersistedSession>,
+    #[serde(default)]
+    active_session_key: Option<String>,
+    #[serde(default = "default_next_session_number")]
+    next_session_number: u32,
+}
+
+#[derive(Clone)]
+struct SessionBuffers {
+    messages: Rc<RefCell<Vec<ChatMessage>>>,
+    pending_local_echoes: Rc<RefCell<VecDeque<String>>>,
+    state: Rc<RefCell<ConnectionState>>,
+    ws: Rc<RefCell<Option<WebSocket>>>,
+    auth_verified: Rc<RefCell<bool>>,
+    suppress_next_close_notice: Rc<RefCell<bool>>,
+}
+
+impl Default for SessionBuffers {
+    fn default() -> Self {
+        Self {
+            messages: Rc::new(RefCell::new(Vec::new())),
+            pending_local_echoes: Rc::new(RefCell::new(VecDeque::new())),
+            state: Rc::new(RefCell::new(ConnectionState::Disconnected)),
+            ws: Rc::new(RefCell::new(None)),
+            auth_verified: Rc::new(RefCell::new(false)),
+            suppress_next_close_notice: Rc::new(RefCell::new(false)),
+        }
+    }
+}
+
+struct SessionWindow {
+    session_key: String,
+    title: String,
+    draft: String,
+    open: bool,
+    window_anchor: WindowAnchor,
+    buffers: SessionBuffers,
 }
 
 /// Start the chat UI on the given canvas (install from `index.html` via wasm-bindgen).
@@ -33,34 +119,118 @@ pub fn start_chat_ui(canvas: web_sys::HtmlCanvasElement) {
     let web_options = eframe::WebOptions::default();
     let runner = eframe::WebRunner::new();
     wasm_bindgen_futures::spawn_local(async move {
-        runner
+        let _ = runner
             .start(
                 canvas,
                 web_options,
                 Box::new(|cc| Ok(Box::new(ChatApp::new(cc)))),
             )
-            .await
-            .expect("eframe web start failed");
+            .await;
     });
 }
 
-fn load_or_create_session_key() -> String {
-    let Some(window) = web_sys::window() else {
-        return format!("web:{}", Uuid::new_v4());
+fn default_next_session_number() -> u32 {
+    2
+}
+
+fn default_session_open() -> bool {
+    true
+}
+
+fn window_anchor_for_slot(slot: u32) -> WindowAnchor {
+    let column = slot % WINDOW_STAGGER_COLUMNS;
+    let row = slot / WINDOW_STAGGER_COLUMNS;
+    WindowAnchor {
+        x: (WINDOW_START_X + column as f32 * WINDOW_OFFSET_X).round() as i32,
+        y: (WINDOW_START_Y + row as f32 * WINDOW_OFFSET_Y).round() as i32,
+    }
+}
+
+fn anchor_rect(anchor: WindowAnchor) -> egui::Rect {
+    egui::Rect::from_min_size(
+        anchor.to_pos2(),
+        egui::vec2(SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT),
+    )
+}
+
+fn current_timestamp_ms() -> i64 {
+    js_sys::Date::now().round() as i64
+}
+
+fn format_message_timestamp(timestamp_ms: i64) -> String {
+    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(timestamp_ms as f64));
+    format!("{:02}:{:02}", date.get_hours(), date.get_minutes())
+}
+
+fn default_workspace_state() -> PersistedWorkspaceState {
+    PersistedWorkspaceState {
+        theme_mode: ThemeMode::System,
+        sessions: vec![PersistedSession {
+            session_key: generate_session_key(),
+            title: session_title(1),
+            open: true,
+            window_anchor: Some(window_anchor_for_slot(0)),
+        }],
+        active_session_key: None,
+        next_session_number: default_next_session_number(),
+    }
+}
+
+fn storage() -> Option<Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+fn generate_session_key() -> String {
+    format!("web:{}", Uuid::new_v4())
+}
+
+fn is_valid_session_key(session_key: &str) -> bool {
+    let Some(rest) = session_key.strip_prefix("web:") else {
+        return false;
     };
-    let Some(storage) = window.local_storage().ok().flatten() else {
-        return format!("web:{}", Uuid::new_v4());
-    };
-    if let Ok(Some(existing)) = storage.get_item(SESSION_STORAGE_KEY) {
-        if let Some(rest) = existing.strip_prefix("web:") {
-            if Uuid::parse_str(rest).is_ok() {
-                return existing;
-            }
+    Uuid::parse_str(rest).is_ok()
+}
+
+fn session_title(number: u32) -> String {
+    format!("Session {number}")
+}
+
+fn load_workspace_state() -> PersistedWorkspaceState {
+    let mut state = storage()
+        .and_then(|storage| storage.get_item(APP_STATE_STORAGE_KEY).ok().flatten())
+        .and_then(|raw| serde_json::from_str::<PersistedWorkspaceState>(&raw).ok())
+        .unwrap_or_else(default_workspace_state);
+
+    state.sessions.retain(|session| {
+        is_valid_session_key(&session.session_key) && !session.title.trim().is_empty()
+    });
+
+    if state.sessions.is_empty() {
+        return default_workspace_state();
+    }
+
+    for (index, session) in state.sessions.iter_mut().enumerate() {
+        if session.window_anchor.is_none() {
+            session.window_anchor = Some(window_anchor_for_slot(index as u32));
         }
     }
-    let key = format!("web:{}", Uuid::new_v4());
-    let _ = storage.set_item(SESSION_STORAGE_KEY, &key);
-    key
+
+    if state.active_session_key.as_ref().is_none_or(|active| {
+        !state
+            .sessions
+            .iter()
+            .any(|session| &session.session_key == active)
+    }) {
+        state.active_session_key = state
+            .sessions
+            .first()
+            .map(|session| session.session_key.clone());
+    }
+
+    state.next_session_number = state
+        .next_session_number
+        .max(state.sessions.len() as u32 + 1);
+    state
 }
 
 fn gateway_token_from_page() -> Option<String> {
@@ -92,174 +262,385 @@ fn ws_chat_url(session_key: &str, token: Option<&str>) -> Result<String, String>
         .host()
         .map_err(|_| "location.host unavailable".to_string())?;
     let mut url = format!(
-        "{}://{}/ws/chat?session_key={}",
-        ws_scheme,
-        host,
+        "{ws_scheme}://{host}/ws/chat?session_key={}",
         urlencoding::encode(session_key)
     );
-    if let Some(t) = token {
+    if let Some(token) = token {
         url.push_str("&token=");
-        url.push_str(&urlencoding::encode(t));
+        url.push_str(&urlencoding::encode(token));
     }
     Ok(url)
 }
 
+impl SessionWindow {
+    fn new(metadata: PersistedSession) -> Self {
+        Self {
+            session_key: metadata.session_key,
+            title: metadata.title,
+            draft: String::new(),
+            open: metadata.open,
+            window_anchor: metadata
+                .window_anchor
+                .unwrap_or_else(|| window_anchor_for_slot(0)),
+            buffers: SessionBuffers::default(),
+        }
+    }
+
+    fn metadata(&self) -> PersistedSession {
+        PersistedSession {
+            session_key: self.session_key.clone(),
+            title: self.title.clone(),
+            open: self.open,
+            window_anchor: Some(self.window_anchor),
+        }
+    }
+
+    fn connection_state(&self) -> ConnectionState {
+        self.buffers.state.borrow().clone()
+    }
+}
+
 pub struct ChatApp {
-    session_key: String,
+    ctx: Context,
+    theme_mode: ThemeMode,
     gateway_token: Option<String>,
     gateway_token_input: String,
-    ctx: egui::Context,
-    messages: Rc<RefCell<Vec<ChatMessage>>>,
-    pending_local_echoes: Rc<RefCell<VecDeque<String>>>,
-    state: Rc<RefCell<ConnectionState>>,
-    ws: Rc<RefCell<Option<WebSocket>>>,
-    auth_verified: Rc<RefCell<bool>>,
-    suppress_next_close_notice: Rc<RefCell<bool>>,
+    sessions: Vec<SessionWindow>,
+    active_session_key: Option<String>,
+    next_session_number: u32,
     toasts: Rc<RefCell<Toasts>>,
-    draft: String,
+    show_gateway_dialog: bool,
+    rename_session_key: Option<String>,
+    rename_session_input: String,
     did_attempt_prefilled_token: bool,
 }
 
 impl ChatApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let persisted = load_workspace_state();
         let gateway_token = gateway_token_from_page();
         let gateway_token_input = gateway_token.clone().unwrap_or_default();
         let toasts = Toasts::new()
             .with_anchor(Anchor::BottomRight)
             .with_margin(vec2(16.0, 16.0));
-        Self {
-            session_key: load_or_create_session_key(),
+        let sessions = persisted
+            .sessions
+            .into_iter()
+            .map(SessionWindow::new)
+            .collect::<Vec<_>>();
+        let active_session_key = persisted
+            .active_session_key
+            .or_else(|| sessions.first().map(|session| session.session_key.clone()));
+
+        let app = Self {
+            ctx: cc.egui_ctx.clone(),
+            theme_mode: persisted.theme_mode,
             gateway_token,
             gateway_token_input,
-            ctx: cc.egui_ctx.clone(),
-            messages: Rc::new(RefCell::new(Vec::new())),
-            pending_local_echoes: Rc::new(RefCell::new(VecDeque::new())),
-            state: Rc::new(RefCell::new(ConnectionState::Disconnected)),
-            ws: Rc::new(RefCell::new(None)),
-            auth_verified: Rc::new(RefCell::new(false)),
-            suppress_next_close_notice: Rc::new(RefCell::new(false)),
+            sessions,
+            active_session_key,
+            next_session_number: persisted.next_session_number,
             toasts: Rc::new(RefCell::new(toasts)),
-            draft: String::new(),
+            show_gateway_dialog: false,
+            rename_session_key: None,
+            rename_session_input: String::new(),
             did_attempt_prefilled_token: false,
+        };
+        app.apply_theme();
+        app
+    }
+
+    fn apply_theme(&self) {
+        let preference = match self.theme_mode {
+            ThemeMode::System => egui::ThemePreference::System,
+            ThemeMode::Light => egui::ThemePreference::Light,
+            ThemeMode::Dark => egui::ThemePreference::Dark,
+        };
+        self.ctx.set_theme(preference);
+        self.ctx
+            .set_visuals_of(egui::Theme::Light, egui::Visuals::light());
+        self.ctx
+            .set_visuals_of(egui::Theme::Dark, egui::Visuals::dark());
+    }
+
+    fn persist_workspace_state(&self) {
+        let Some(storage) = storage() else {
+            return;
+        };
+        let state = PersistedWorkspaceState {
+            theme_mode: self.theme_mode,
+            sessions: self.sessions.iter().map(SessionWindow::metadata).collect(),
+            active_session_key: self.active_session_key.clone(),
+            next_session_number: self.next_session_number,
+        };
+        let Ok(encoded) = serde_json::to_string(&state) else {
+            return;
+        };
+        let _ = storage.set_item(APP_STATE_STORAGE_KEY, &encoded);
+    }
+
+    fn session_index(&self, session_key: &str) -> Option<usize> {
+        self.sessions
+            .iter()
+            .position(|session| session.session_key == session_key)
+    }
+
+    fn bring_session_to_front(&mut self, session_key: &str) -> bool {
+        let Some(index) = self.session_index(session_key) else {
+            return false;
+        };
+        if index + 1 == self.sessions.len() {
+            return false;
+        }
+        let session = self.sessions.remove(index);
+        self.sessions.push(session);
+        true
+    }
+
+    fn focus_session(&mut self, session_key: &str) {
+        let mut changed = false;
+        if let Some(index) = self.session_index(session_key) {
+            let session = &mut self.sessions[index];
+            if !session.open {
+                session.open = true;
+                changed = true;
+            }
+        }
+        if self.active_session_key.as_deref() != Some(session_key) {
+            self.active_session_key = Some(session_key.to_string());
+            changed = true;
+        }
+        if self.bring_session_to_front(session_key) {
+            changed = true;
+        }
+        if changed {
+            self.persist_workspace_state();
         }
     }
 
-    fn connection_state(&self) -> ConnectionState {
-        self.state.borrow().clone()
+    fn set_theme_mode(&mut self, theme_mode: ThemeMode) {
+        if self.theme_mode == theme_mode {
+            return;
+        }
+        self.theme_mode = theme_mode;
+        self.apply_theme();
+        self.persist_workspace_state();
     }
 
-    fn is_authenticated(&self) -> bool {
-        *self.auth_verified.borrow()
-    }
-
-    fn close_socket(&mut self) {
-        if let Some(ws) = self.ws.borrow_mut().take() {
-            *self.suppress_next_close_notice.borrow_mut() = true;
+    fn close_buffers(buffers: &SessionBuffers) {
+        if let Some(ws) = buffers.ws.borrow_mut().take() {
+            *buffers.suppress_next_close_notice.borrow_mut() = true;
             let _ = ws.close();
         }
-        *self.state.borrow_mut() = ConnectionState::Disconnected;
+        *buffers.state.borrow_mut() = ConnectionState::Disconnected;
+        *buffers.auth_verified.borrow_mut() = false;
     }
 
-    fn maybe_auto_validate_prefilled_token(&mut self) {
+    fn remove_session(&mut self, session_key: &str) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
+        let session = self.sessions.remove(index);
+        Self::close_buffers(&session.buffers);
+
+        if self.active_session_key.as_deref() == Some(session_key) {
+            self.active_session_key = self
+                .sessions
+                .last()
+                .map(|session| session.session_key.clone());
+        }
+        self.persist_workspace_state();
+    }
+
+    fn choose_next_window_anchor(&self) -> WindowAnchor {
+        let occupied_rects = self
+            .sessions
+            .iter()
+            .filter(|session| session.open)
+            .map(|session| anchor_rect(session.window_anchor))
+            .collect::<Vec<_>>();
+
+        for slot in 0..128 {
+            let anchor = window_anchor_for_slot(slot);
+            let rect = anchor_rect(anchor);
+            let overlaps_existing = occupied_rects
+                .iter()
+                .any(|occupied| occupied.intersects(rect));
+            if !overlaps_existing {
+                return anchor;
+            }
+        }
+
+        window_anchor_for_slot(self.sessions.len() as u32)
+    }
+
+    fn tile_open_sessions(&mut self) {
+        let mut slot = 0;
+        let mut changed = false;
+        for session in &mut self.sessions {
+            if !session.open {
+                continue;
+            }
+            let next_anchor = window_anchor_for_slot(slot);
+            slot += 1;
+            if session.window_anchor != next_anchor {
+                session.window_anchor = next_anchor;
+                changed = true;
+            }
+        }
+        if changed {
+            self.persist_workspace_state();
+            self.ctx.request_repaint();
+        }
+    }
+
+    fn reset_window_layout(&mut self) {
+        let mut changed = false;
+        for (index, session) in self.sessions.iter_mut().enumerate() {
+            let next_anchor = window_anchor_for_slot(index as u32);
+            if session.window_anchor != next_anchor {
+                session.window_anchor = next_anchor;
+                changed = true;
+            }
+        }
+        if changed {
+            self.persist_workspace_state();
+            self.ctx.request_repaint();
+        }
+    }
+
+    fn create_session(&mut self) {
+        let window_anchor = self.choose_next_window_anchor();
+        let session = PersistedSession {
+            session_key: generate_session_key(),
+            title: session_title(self.next_session_number),
+            open: true,
+            window_anchor: Some(window_anchor),
+        };
+        self.next_session_number += 1;
+        let session_key = session.session_key.clone();
+        self.sessions.push(SessionWindow::new(session));
+        self.active_session_key = Some(session_key.clone());
+        self.persist_workspace_state();
+
+        if self.gateway_token.is_some() {
+            self.try_connect_session(&session_key);
+        }
+    }
+
+    fn reconnect_all_sessions(&mut self) {
+        let keys = self
+            .sessions
+            .iter()
+            .map(|session| session.session_key.clone())
+            .collect::<Vec<_>>();
+        for session_key in keys {
+            self.try_connect_session(&session_key);
+        }
+    }
+
+    fn maybe_auto_connect_prefilled_token(&mut self) {
         if self.did_attempt_prefilled_token {
             return;
         }
         self.did_attempt_prefilled_token = true;
         if self.gateway_token.is_some() {
-            self.try_connect();
+            self.reconnect_all_sessions();
         }
     }
 
-    fn begin_gateway_auth(&mut self) {
-        self.gateway_token = normalize_gateway_token_input(&self.gateway_token_input);
-        self.try_connect();
-    }
-
-    fn try_connect(&mut self) {
-        self.close_socket();
-        let url = match ws_chat_url(&self.session_key, self.gateway_token.as_deref()) {
-            Ok(u) => u,
-            Err(e) => {
-                *self.state.borrow_mut() = ConnectionState::Error(e.clone());
-                if !self.is_authenticated() {
-                    self.toasts.borrow_mut().error(e);
-                }
-                return;
-            }
+    fn try_connect_session(&mut self, session_key: &str) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
         };
-        *self.state.borrow_mut() = ConnectionState::Connecting;
-        let ws = match WebSocket::new(&url.as_str()) {
-            Ok(w) => w,
-            Err(e) => {
-                let message = format!("WebSocket::new: {e:?}");
-                *self.state.borrow_mut() = ConnectionState::Error(message.clone());
-                if !self.is_authenticated() {
-                    self.toasts.borrow_mut().error(message);
-                }
+
+        let token = self.gateway_token.clone();
+        let buffers = self.sessions[index].buffers.clone();
+        Self::close_buffers(&buffers);
+
+        let url = match ws_chat_url(session_key, token.as_deref()) {
+            Ok(url) => url,
+            Err(err) => {
+                *buffers.state.borrow_mut() = ConnectionState::Error(err.clone());
+                self.toasts.borrow_mut().error(err);
                 return;
             }
         };
 
-        let messages = self.messages.clone();
-        let pending_local_echoes = self.pending_local_echoes.clone();
+        *buffers.state.borrow_mut() = ConnectionState::Connecting;
+        let ws = match WebSocket::new(&url) {
+            Ok(ws) => ws,
+            Err(err) => {
+                let message = format!("WebSocket::new: {err:?}");
+                *buffers.state.borrow_mut() = ConnectionState::Error(message.clone());
+                self.toasts.borrow_mut().error(message);
+                return;
+            }
+        };
+
+        let messages = buffers.messages.clone();
+        let pending_local_echoes = buffers.pending_local_echoes.clone();
         let ctx = self.ctx.clone();
-        let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
-            let text = if let Ok(s) = e.data().dyn_into::<js_sys::JsString>() {
-                String::from(s)
-            } else if let Some(s) = e.data().as_string() {
-                s
+        let onmessage = Closure::wrap(Box::new(move |event: MessageEvent| {
+            let text = if let Ok(text) = event.data().dyn_into::<js_sys::JsString>() {
+                String::from(text)
+            } else if let Some(text) = event.data().as_string() {
+                text
             } else {
                 "[non-text message]".to_string()
             };
             let role = classify_message_role(&mut pending_local_echoes.borrow_mut(), text.as_str());
-            messages.borrow_mut().push(ChatMessage { text, role });
+            messages.borrow_mut().push(ChatMessage {
+                text,
+                role,
+                timestamp_ms: current_timestamp_ms(),
+            });
             ctx.request_repaint();
         }) as Box<dyn FnMut(MessageEvent)>);
         ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
         onmessage.forget();
 
-        let state_open = self.state.clone();
-        let messages_open = self.messages.clone();
+        let state_open = buffers.state.clone();
+        let messages_open = buffers.messages.clone();
+        let auth_verified_open = buffers.auth_verified.clone();
         let ctx_open = self.ctx.clone();
-        let auth_verified_open = self.auth_verified.clone();
-        let onopen = Closure::wrap(Box::new(move |_e: JsValue| {
+        let onopen = Closure::wrap(Box::new(move |_event: JsValue| {
             *auth_verified_open.borrow_mut() = true;
             *state_open.borrow_mut() = ConnectionState::Connected;
             messages_open.borrow_mut().push(ChatMessage {
                 text: "Connected to the Klaw room.".to_string(),
                 role: MessageRole::System,
+                timestamp_ms: current_timestamp_ms(),
             });
             ctx_open.request_repaint();
         }) as Box<dyn FnMut(JsValue)>);
         ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
         onopen.forget();
 
-        let state_err = self.state.clone();
-        let ctx_err = self.ctx.clone();
-        let auth_verified_err = self.auth_verified.clone();
-        let onerror = Closure::wrap(Box::new(move |_e: JsValue| {
-            if *auth_verified_err.borrow() {
-                if *state_err.borrow() == ConnectionState::Connecting {
-                    *state_err.borrow_mut() =
-                        ConnectionState::Error("WebSocket error before open".to_string());
-                }
+        let state_error = buffers.state.clone();
+        let auth_verified_error = buffers.auth_verified.clone();
+        let ctx_error = self.ctx.clone();
+        let onerror = Closure::wrap(Box::new(move |_event: JsValue| {
+            let next_state = if *auth_verified_error.borrow() {
+                ConnectionState::Error("WebSocket error before open".to_string())
             } else {
-                *state_err.borrow_mut() = ConnectionState::Error(
+                ConnectionState::Error(
                     "Token validation failed. Check the gateway token and try again.".to_string(),
-                );
-            }
-            ctx_err.request_repaint();
+                )
+            };
+            *state_error.borrow_mut() = next_state;
+            ctx_error.request_repaint();
         }) as Box<dyn FnMut(JsValue)>);
         ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
         onerror.forget();
 
-        let state_close = self.state.clone();
-        let messages_close = self.messages.clone();
-        let ctx_close = self.ctx.clone();
-        let ws_cell = self.ws.clone();
-        let auth_verified_close = self.auth_verified.clone();
-        let suppress_close_notice = self.suppress_next_close_notice.clone();
+        let state_close = buffers.state.clone();
+        let messages_close = buffers.messages.clone();
+        let ws_cell = buffers.ws.clone();
+        let auth_verified_close = buffers.auth_verified.clone();
+        let suppress_close_notice = buffers.suppress_next_close_notice.clone();
         let toasts_close = self.toasts.clone();
+        let ctx_close = self.ctx.clone();
         let onclose = Closure::wrap(Box::new(move |event: CloseEvent| {
             ws_cell.borrow_mut().take();
             if *suppress_close_notice.borrow() {
@@ -267,11 +648,13 @@ impl ChatApp {
                 ctx_close.request_repaint();
                 return;
             }
+
             if *auth_verified_close.borrow() {
                 *state_close.borrow_mut() = ConnectionState::Disconnected;
                 messages_close.borrow_mut().push(ChatMessage {
                     text: "Connection closed.".to_string(),
                     role: MessageRole::System,
+                    timestamp_ms: current_timestamp_ms(),
                 });
             } else {
                 let message = match &*state_close.borrow() {
@@ -290,299 +673,590 @@ impl ChatApp {
         ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
         onclose.forget();
 
-        *self.ws.borrow_mut() = Some(ws);
+        *buffers.ws.borrow_mut() = Some(ws);
     }
 
-    fn send_draft(&mut self) {
-        let text = self.draft.trim().to_string();
+    fn send_session_draft(&mut self, session_key: &str) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
+        let session = &mut self.sessions[index];
+        let text = session.draft.trim().to_string();
         if text.is_empty() {
             return;
         }
-        let Some(ws) = self.ws.borrow().as_ref().cloned() else {
+
+        let Some(ws) = session.buffers.ws.borrow().as_ref().cloned() else {
             return;
         };
         if ws.ready_state() != WebSocket::OPEN {
             return;
         }
-        self.pending_local_echoes
+
+        session
+            .buffers
+            .pending_local_echoes
             .borrow_mut()
             .push_back(text.clone());
         if ws.send_with_str(&text).is_err() {
-            *self.state.borrow_mut() = ConnectionState::Error("send failed".to_string());
+            *session.buffers.state.borrow_mut() = ConnectionState::Error("send failed".to_string());
             return;
         }
-        self.draft.clear();
+        session.draft.clear();
     }
 
-    fn render_auth_gate(&mut self, ctx: &egui::Context) {
-        let is_connecting = matches!(self.connection_state(), ConnectionState::Connecting);
-        let action_label = if is_connecting {
-            "Validating…"
-        } else {
-            "Connect"
+    fn render_top_bar(&mut self, ctx: &Context) {
+        TopBottomPanel::top("klaw-webui-toolbar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("New Session").clicked() {
+                    self.create_session();
+                }
+                if ui.button("Tile Windows").clicked() {
+                    self.tile_open_sessions();
+                }
+                if ui.button("Reset Layout").clicked() {
+                    self.reset_window_layout();
+                }
+                if ui.button("Gateway Token").clicked() {
+                    self.show_gateway_dialog = true;
+                }
+                if ui.button("Reconnect All").clicked() {
+                    self.reconnect_all_sessions();
+                }
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(toolbar_title()).strong());
+                });
+            });
+        });
+    }
+
+    fn render_status_bar(&mut self, ctx: &Context) {
+        let mut requested_theme = None;
+        TopBottomPanel::bottom("klaw-webui-status").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Theme Mode:");
+                ComboBox::from_id_salt("klaw-webui-theme-mode")
+                    .width(110.0)
+                    .selected_text(self.theme_mode.label())
+                    .show_ui(ui, |ui| {
+                        for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
+                            if ui
+                                .selectable_label(self.theme_mode == mode, mode.label())
+                                .clicked()
+                            {
+                                requested_theme = Some(mode);
+                                ui.close();
+                            }
+                        }
+                    });
+                ui.separator();
+                ui.label(format!("Sessions: {}", self.sessions.len()));
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if let Some(active_session_key) = self.active_session_key.as_deref() {
+                        if let Some(session) = self
+                            .sessions
+                            .iter()
+                            .find(|session| session.session_key == active_session_key)
+                        {
+                            ui.label(session.connection_state().status_text());
+                            ui.separator();
+                            ui.label(&session.title);
+                        }
+                    } else {
+                        ui.label("No active session");
+                    }
+                });
+            });
+        });
+
+        if let Some(theme_mode) = requested_theme {
+            self.set_theme_mode(theme_mode);
+        }
+    }
+
+    fn session_list_order(&self) -> Vec<String> {
+        let active = self.active_session_key.as_deref();
+        let mut visible = Vec::new();
+        let mut hidden = Vec::new();
+
+        for session in &self.sessions {
+            if active == Some(session.session_key.as_str()) {
+                continue;
+            }
+            if session.open {
+                visible.push(session.session_key.clone());
+            } else {
+                hidden.push(session.session_key.clone());
+            }
+        }
+
+        let mut ordered = Vec::with_capacity(self.sessions.len());
+        if let Some(active_session) = self
+            .sessions
+            .iter()
+            .find(|session| active == Some(session.session_key.as_str()))
+        {
+            ordered.push(active_session.session_key.clone());
+        }
+        ordered.extend(visible);
+        ordered.extend(hidden);
+        ordered
+    }
+
+    fn render_session_list(&mut self, ctx: &Context) {
+        let mut remove_session_key = None;
+        let mut focus_session_key = None;
+        let mut rename_session_key = None;
+
+        egui::SidePanel::left("klaw-webui-sessions")
+            .resizable(true)
+            .default_width(SESSION_LIST_WIDTH)
+            .show(ctx, |ui| {
+                ui.heading("Sessions");
+                ui.separator();
+
+                if self.sessions.is_empty() {
+                    ui.label("No sessions yet.");
+                    return;
+                }
+
+                ScrollArea::vertical().show(ui, |ui| {
+                    for session_key in self.session_list_order() {
+                        let Some(index) = self.session_index(&session_key) else {
+                            continue;
+                        };
+                        let session = &self.sessions[index];
+                        let is_active = self.active_session_key.as_deref()
+                            == Some(session.session_key.as_str());
+                        let card = Frame::group(ui.style()).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(regular::APP_WINDOW);
+                                ui.label(
+                                    RichText::new(&session.title).strong().size(if is_active {
+                                        15.0
+                                    } else {
+                                        14.0
+                                    }),
+                                );
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if is_active {
+                                        ui.label(RichText::new("Active").small().strong());
+                                    }
+                                });
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(
+                                    RichText::new(session.connection_state().status_text()).small(),
+                                );
+                                ui.separator();
+                                ui.label(
+                                    RichText::new(if session.open { "Visible" } else { "Hidden" })
+                                        .small(),
+                                );
+                            });
+                            ui.add_space(2.0);
+                            ui.label(RichText::new(&session.session_key).small().weak());
+                        });
+                        if card.response.clicked() {
+                            focus_session_key = Some(session.session_key.clone());
+                        }
+                        card.response.context_menu(|ui| {
+                            if ui
+                                .button(format!("{} Rename", regular::PENCIL_SIMPLE))
+                                .clicked()
+                            {
+                                rename_session_key = Some(session.session_key.clone());
+                                ui.close();
+                            }
+                            if ui.button(format!("{} Delete", regular::TRASH)).clicked() {
+                                remove_session_key = Some(session.session_key.clone());
+                                ui.close();
+                            }
+                        });
+                        ui.add_space(6.0);
+                    }
+                });
+            });
+
+        if let Some(session_key) = focus_session_key {
+            self.focus_session(&session_key);
+        }
+        if let Some(session_key) = rename_session_key
+            && let Some(index) = self.session_index(&session_key)
+        {
+            self.rename_session_key = Some(session_key);
+            self.rename_session_input = self.sessions[index].title.clone();
+        }
+        if let Some(session_key) = remove_session_key {
+            self.remove_session(&session_key);
+        }
+    }
+
+    fn render_rename_dialog(&mut self, ctx: &Context) {
+        let Some(session_key) = self.rename_session_key.clone() else {
+            return;
         };
 
-        egui::CentralPanel::default()
-            .frame(Frame::new().fill(Color32::from_rgb(14, 17, 24)))
-            .show(ctx, |_ui| {});
+        let mut open = true;
+        let mut submit = false;
+        let mut cancel = false;
+
+        egui::Window::new("Rename Session")
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(360.0);
+                let response = ui.add(
+                    TextEdit::singleline(&mut self.rename_session_input)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Session name"),
+                );
+                let submit_with_enter =
+                    response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() || submit_with_enter {
+                        submit = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        if submit {
+            let trimmed = self.rename_session_input.trim();
+            if !trimmed.is_empty()
+                && let Some(index) = self.session_index(&session_key)
+            {
+                self.sessions[index].title = trimmed.to_string();
+                self.persist_workspace_state();
+            }
+            self.rename_session_key = None;
+            self.rename_session_input.clear();
+            return;
+        }
+
+        if cancel || !open {
+            self.rename_session_key = None;
+            self.rename_session_input.clear();
+        }
+    }
+
+    fn render_gateway_dialog(&mut self, ctx: &Context) {
+        if !self.show_gateway_dialog {
+            return;
+        }
+
+        let mut open = self.show_gateway_dialog;
+        let mut reconnect_all = false;
 
         egui::Window::new("Gateway Token")
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .collapsible(false)
             .resizable(false)
-            .title_bar(true)
-            .default_width(420.0)
+            .open(&mut open)
             .show(ctx, |ui| {
-                ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new("Enter the gateway token before opening chat.")
-                            .strong()
-                            .size(18.0)
-                            .color(Color32::from_rgb(236, 240, 248)),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(
-                            "If gateway auth is disabled, you can leave this field blank and connect directly.",
-                        )
-                        .color(Color32::from_rgb(152, 160, 178)),
-                    );
-                    ui.add_space(12.0);
-                    ui.label(
-                        RichText::new(format!("Session {}", self.session_key))
-                            .size(11.0)
-                            .color(Color32::from_rgb(132, 140, 158)),
-                    );
-                    ui.add_space(10.0);
+                ui.set_min_width(420.0);
+                ui.label("If gateway auth is enabled, enter the token here.");
+                ui.label(
+                    RichText::new("Leave it blank when auth is disabled.")
+                        .small()
+                        .weak(),
+                );
+                ui.add_space(8.0);
 
-                    let response = ui.add_enabled(
-                        !is_connecting,
-                        TextEdit::singleline(&mut self.gateway_token_input)
-                            .password(true)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("Gateway token"),
-                    );
-                    let submit_with_enter =
-                        response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                let response = ui.add(
+                    TextEdit::singleline(&mut self.gateway_token_input)
+                        .password(true)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Gateway token"),
+                );
+                let submit_with_enter =
+                    response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
 
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(self.connection_state().status_text())
-                                .color(Color32::from_rgb(240, 190, 110))
-                                .strong(),
-                        );
-                        let connect_clicked = ui
-                            .add_enabled(!is_connecting, egui::Button::new(action_label))
-                            .clicked();
-                        if connect_clicked || submit_with_enter {
-                            self.begin_gateway_auth();
-                        }
-                    });
-                });
-            });
-    }
-
-    fn render_top_bar(&mut self, ctx: &egui::Context, state: &ConnectionState) {
-        let status_color = match state {
-            ConnectionState::Connected => Color32::from_rgb(123, 216, 157),
-            ConnectionState::Connecting => Color32::from_rgb(240, 190, 110),
-            ConnectionState::Disconnected => Color32::from_rgb(164, 169, 188),
-            ConnectionState::Error(_) => Color32::from_rgb(255, 130, 130),
-        };
-
-        egui::TopBottomPanel::top("toolbar")
-            .frame(
-                Frame::new()
-                    .fill(Color32::from_rgb(20, 24, 31))
-                    .inner_margin(12.0)
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(37, 45, 57))),
-            )
-            .show(ctx, |ui| {
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(
-                            RichText::new(toolbar_title())
-                                .strong()
-                                .size(16.0)
-                                .color(Color32::from_rgb(236, 240, 248)),
-                        );
-                        ui.label(
-                            RichText::new(format!("Session {}", self.session_key))
-                                .size(11.0)
-                                .color(Color32::from_rgb(132, 140, 158)),
-                        );
-                    });
-
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        if !matches!(state, ConnectionState::Connected)
-                            && ui.small_button("Reconnect").clicked()
-                        {
-                            self.try_connect();
-                        }
-                        ui.label(
-                            RichText::new(state.status_text())
-                                .color(status_color)
-                                .strong(),
-                        );
-                    });
+                    if ui.button("Save & Reconnect").clicked() || submit_with_enter {
+                        reconnect_all = true;
+                    }
+                    if ui.button("Clear").clicked() {
+                        self.gateway_token_input.clear();
+                        self.gateway_token = None;
+                    }
                 });
             });
+
+        self.show_gateway_dialog = open;
+
+        if reconnect_all {
+            self.gateway_token = normalize_gateway_token_input(&self.gateway_token_input);
+            self.reconnect_all_sessions();
+            self.show_gateway_dialog = false;
+        }
     }
 
-    fn render_empty_state(&self, ui: &mut egui::Ui, state: &ConnectionState) {
+    fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState) {
         let copy = state.empty_state_copy();
-        ui.add_space(72.0);
+        ui.add_space(24.0);
         ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new(copy.title)
-                    .size(28.0)
-                    .strong()
-                    .color(Color32::from_rgb(238, 242, 248)),
-            );
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(copy.body)
-                    .size(14.0)
-                    .color(Color32::from_rgb(152, 160, 178)),
-            );
+            ui.label(RichText::new(copy.title).heading().strong());
+            ui.add_space(4.0);
+            ui.label(RichText::new(copy.body).weak());
         });
     }
 
-    fn render_message(&self, ui: &mut egui::Ui, message: &ChatMessage) {
+    fn render_message(ui: &mut egui::Ui, message: &ChatMessage) {
+        let time_label = format_message_timestamp(message.timestamp_ms);
         match message.role {
             MessageRole::System => {
                 ui.vertical_centered(|ui| {
-                    ui.label(
-                        RichText::new(&message.text)
-                            .size(11.0)
-                            .color(Color32::from_rgb(130, 138, 154)),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("System").small().strong().weak());
+                        ui.label(RichText::new(time_label).small().weak());
+                    });
+                    ui.label(RichText::new(&message.text).small().weak());
                 });
             }
             MessageRole::Assistant | MessageRole::User => {
-                let fill = match message.role {
-                    MessageRole::Assistant => Color32::from_rgb(46, 61, 84),
-                    MessageRole::User => Color32::from_rgb(228, 233, 241),
-                    MessageRole::System => Color32::TRANSPARENT,
+                let role_label = match message.role {
+                    MessageRole::Assistant => "Klaw",
+                    MessageRole::User => "You",
+                    MessageRole::System => "System",
                 };
-                let text_color = match message.role {
-                    MessageRole::User => Color32::from_rgb(20, 24, 31),
-                    _ => Color32::from_rgb(241, 244, 248),
-                };
-                let align = if matches!(message.role, MessageRole::User) {
-                    egui::Layout::right_to_left(Align::TOP)
+                let layout = if matches!(message.role, MessageRole::User) {
+                    Layout::right_to_left(Align::TOP)
                 } else {
-                    egui::Layout::left_to_right(Align::TOP)
+                    Layout::left_to_right(Align::TOP)
                 };
-
-                ui.with_layout(align, |ui| {
-                    Frame::group(ui.style())
-                        .fill(fill)
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(60, 70, 88)))
-                        .corner_radius(18.0)
-                        .inner_margin(14.0)
-                        .show(ui, |ui| {
-                            ui.set_max_width(BUBBLE_MAX_WIDTH);
-                            ui.label(RichText::new(&message.text).size(14.0).color(text_color));
+                ui.with_layout(layout, |ui| {
+                    Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_max_width(BUBBLE_MAX_WIDTH);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(role_label).strong());
+                            ui.label(RichText::new(time_label).small().weak());
                         });
+                        ui.add_space(4.0);
+                        ui.label(&message.text);
+                    });
                 });
             }
         }
     }
 
-    fn render_chat_surface(&self, ui: &mut egui::Ui, state: &ConnectionState) {
-        let messages = self.messages.borrow();
-        ui.vertical_centered(|ui| {
-            ui.set_max_width(CHAT_COLUMN_MAX_WIDTH);
-            ui.set_width(ui.available_width().min(CHAT_COLUMN_MAX_WIDTH));
+    fn render_session_window(&mut self, ctx: &Context, session_key: &str) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
 
-            if messages.is_empty() {
-                self.render_empty_state(ui, state);
+        let mut trigger_send = false;
+        let mut trigger_connect = false;
+        let mut trigger_disconnect = false;
+        let mut set_active = false;
+        let mut persist_after_render = false;
+        {
+            let session = &mut self.sessions[index];
+            let state = session.connection_state();
+            let messages = session.buffers.messages.borrow().clone();
+            let error_text = match &state {
+                ConnectionState::Error(message) => Some(message.clone()),
+                _ => None,
+            };
+            let mut open = session.open;
+
+            let window = egui::Window::new(&session.title)
+                .id(Id::new(("session-window", &session.session_key)))
+                .default_pos(session.window_anchor.to_pos2())
+                .default_size([SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT])
+                .min_width(SESSION_WINDOW_MIN_WIDTH)
+                .min_height(SESSION_WINDOW_MIN_HEIGHT)
+                .open(&mut open);
+
+            if let Some(inner) = window.show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&session.session_key).small().weak());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let button_label = if matches!(state, ConnectionState::Connected) {
+                            "Disconnect"
+                        } else if matches!(state, ConnectionState::Connecting) {
+                            "Connecting…"
+                        } else {
+                            "Connect"
+                        };
+                        let button = ui.add_enabled(
+                            !matches!(state, ConnectionState::Connecting),
+                            Button::new(button_label),
+                        );
+                        if button.clicked() {
+                            if matches!(state, ConnectionState::Connected) {
+                                trigger_disconnect = true;
+                            } else {
+                                trigger_connect = true;
+                            }
+                        }
+                        ui.label(state.status_text());
+                    });
+                });
+                if let Some(message) = error_text {
+                    ui.label(RichText::new(message).small().weak());
+                }
+                ui.separator();
+
+                let messages_height = (ui.available_height() - INPUT_PANEL_HEIGHT).max(140.0);
+                ui.allocate_ui(vec2(ui.available_width(), messages_height), |ui| {
+                    ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            if messages.is_empty() {
+                                Self::render_empty_state(ui, &state);
+                                return;
+                            }
+
+                            for message in &messages {
+                                Self::render_message(ui, message);
+                                ui.add_space(8.0);
+                            }
+                        });
+                });
+
+                ui.separator();
+                ui.vertical(|ui| {
+                    let input = TextEdit::multiline(&mut session.draft)
+                        .desired_rows(3)
+                        .hint_text(state.composer_hint_text())
+                        .interactive(state.can_send());
+                    let response = ui.add_sized([ui.available_width(), 72.0], input);
+                    let shortcut = response.has_focus()
+                        && ui.input(|input| {
+                            input.key_pressed(Key::Enter)
+                                && (input.modifiers.command || input.modifiers.ctrl)
+                        });
+
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        let helper_text = if state.can_send() {
+                            "Cmd/Ctrl+Enter to send"
+                        } else {
+                            state.composer_hint_text()
+                        };
+                        ui.label(RichText::new(helper_text).small().weak());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let send_button = ui.add_enabled(state.can_send(), Button::new("Send"));
+                            if send_button.clicked() || shortcut {
+                                trigger_send = true;
+                            }
+                        });
+                    });
+                });
+            }) {
+                set_active = inner.response.clicked();
+                let next_anchor = WindowAnchor::from_pos2(inner.response.rect.min);
+                if session.window_anchor != next_anchor {
+                    session.window_anchor = next_anchor;
+                    persist_after_render = true;
+                }
+            }
+
+            session.open = open;
+            let should_remove = !open;
+            if should_remove {
+                self.persist_workspace_state();
+                return;
+            }
+        }
+
+        let became_active = set_active && self.active_session_key.as_deref() != Some(session_key);
+        let moved_to_front = if set_active {
+            self.bring_session_to_front(session_key)
+        } else {
+            false
+        };
+        if became_active {
+            self.active_session_key = Some(session_key.to_string());
+        }
+        if became_active || moved_to_front {
+            self.persist_workspace_state();
+        }
+        if trigger_disconnect {
+            if let Some(index) = self.session_index(session_key) {
+                Self::close_buffers(&self.sessions[index].buffers);
+            }
+        }
+        if trigger_connect {
+            self.try_connect_session(session_key);
+        }
+        if trigger_send {
+            self.send_session_draft(session_key);
+        }
+        if persist_after_render {
+            self.persist_workspace_state();
+        }
+    }
+
+    fn session_render_order(&self) -> Vec<String> {
+        let active = self.active_session_key.as_deref();
+        let mut ordered = self
+            .sessions
+            .iter()
+            .filter(|session| active != Some(session.session_key.as_str()))
+            .map(|session| session.session_key.clone())
+            .collect::<Vec<_>>();
+        if let Some(active_session) = self
+            .sessions
+            .iter()
+            .find(|session| active == Some(session.session_key.as_str()))
+        {
+            ordered.push(active_session.session_key.clone());
+        }
+        ordered
+    }
+
+    fn render_workbench(&mut self, ctx: &Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if self.sessions.is_empty() {
+                ui.centered_and_justified(|ui| {
+                    ui.label("No sessions open. Click New Session to start.");
+                });
                 return;
             }
 
-            ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    ui.add_space(12.0);
-                    for message in messages.iter() {
-                        self.render_message(ui, message);
-                        ui.add_space(10.0);
-                    }
-                    ui.add_space(8.0);
-                });
+            ui.label(RichText::new("Workbench").strong());
+            ui.label(
+                RichText::new("Each session opens as its own egui window.")
+                    .small()
+                    .weak(),
+            );
         });
-    }
 
-    fn render_composer(&mut self, ctx: &egui::Context, state: &ConnectionState) {
-        let can_send = state.can_send();
-        let hint = state.composer_hint_text();
-
-        egui::TopBottomPanel::bottom("composer")
-            .frame(
-                Frame::new()
-                    .fill(Color32::from_rgb(16, 20, 28))
-                    .inner_margin(16.0)
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(36, 42, 54))),
-            )
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.set_max_width(COMPOSER_MAX_WIDTH);
-                    ui.set_width(ui.available_width().min(COMPOSER_MAX_WIDTH));
-
-                    Frame::group(ui.style())
-                        .fill(Color32::from_rgb(27, 33, 44))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(52, 60, 74)))
-                        .corner_radius(22.0)
-                        .inner_margin(14.0)
-                        .show(ui, |ui| {
-                            ui.horizontal_top(|ui| {
-                                let input = TextEdit::multiline(&mut self.draft)
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(3)
-                                    .hint_text(hint)
-                                    .interactive(can_send);
-                                ui.add_sized([ui.available_width() - 84.0, 72.0], input);
-
-                                let send_button =
-                                    ui.add_enabled(can_send, egui::Button::new("Send"));
-                                if send_button.clicked() {
-                                    self.send_draft();
-                                }
-                            });
-                        });
-                });
-            });
+        for session_key in self.session_render_order() {
+            if self
+                .session_index(&session_key)
+                .and_then(|index| self.sessions.get(index))
+                .is_some_and(|session| session.open)
+            {
+                self.render_session_window(ctx, &session_key);
+            }
+        }
     }
 }
 
 impl eframe::App for ChatApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.style_mut(|style| {
-            style.visuals.panel_fill = Color32::from_rgb(14, 17, 24);
-            style.visuals.override_text_color = Some(Color32::from_rgb(235, 239, 245));
-        });
-
-        self.maybe_auto_validate_prefilled_token();
-        if !self.is_authenticated() {
-            self.render_auth_gate(ctx);
-            self.toasts.borrow_mut().show(ctx);
-            return;
-        }
-
-        let state = self.connection_state();
-        self.render_top_bar(ctx, &state);
-
-        egui::CentralPanel::default()
-            .frame(Frame::new().fill(Color32::from_rgb(14, 17, 24)))
-            .show(ctx, |ui| {
-                ui.add_space(18.0);
-                self.render_chat_surface(ui, &state);
-            });
-
-        self.render_composer(ctx, &state);
+    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.apply_theme();
+        self.maybe_auto_connect_prefilled_token();
+        self.render_top_bar(ctx);
+        self.render_status_bar(ctx);
+        self.render_session_list(ctx);
+        self.render_workbench(ctx);
+        self.render_gateway_dialog(ctx);
+        self.render_rename_dialog(ctx);
         self.toasts.borrow_mut().show(ctx);
     }
 }

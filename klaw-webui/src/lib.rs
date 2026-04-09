@@ -3,6 +3,9 @@
 //! Refresh embedded assets from the workspace root: `make webui-wasm`
 
 #[cfg(any(test, target_arch = "wasm32"))]
+use serde::{Deserialize, Serialize};
+
+#[cfg(any(test, target_arch = "wasm32"))]
 use std::collections::VecDeque;
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -12,6 +15,27 @@ pub(crate) enum ConnectionState {
     Connecting,
     Connected,
     Error(String),
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+impl ThemeMode {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -110,8 +134,8 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::{
-        ConnectionState, MessageRole, classify_message_role, normalize_gateway_token_input,
-        toolbar_title,
+        ConnectionState, MessageRole, ThemeMode, classify_message_role,
+        normalize_gateway_token_input, toolbar_title,
     };
 
     #[test]
@@ -184,5 +208,12 @@ mod tests {
             normalize_gateway_token_input("  secret-token  "),
             Some("secret-token".to_string())
         );
+    }
+
+    #[test]
+    fn theme_mode_labels_match_gui_copy() {
+        assert_eq!(ThemeMode::System.label(), "System");
+        assert_eq!(ThemeMode::Light.label(), "Light");
+        assert_eq!(ThemeMode::Dark.label(), "Dark");
     }
 }
