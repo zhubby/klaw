@@ -1,9 +1,13 @@
 use crate::{
     GatewayError,
     auth::GatewayAuth,
+    chat_page::{chat_page_handler, chat_pkg_js_handler, chat_pkg_wasm_handler},
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
     home::{home_logo_handler, home_page_handler},
-    routes::{HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH},
+    routes::{
+        CHAT_PATH, CHAT_PKG_JS_PATH, CHAT_PKG_WASM_PATH, HOME_LOGO_PATH, HOME_PATH,
+        WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
+    },
     state::{GatewayHandle, GatewayRuntimeInfo, GatewayState},
     tailscale::{TailscaleError, TailscaleManager},
     webhook::{
@@ -174,6 +178,9 @@ fn build_router(
     let mut app = Router::new()
         .route(HOME_PATH, get(home_page_handler))
         .route(HOME_LOGO_PATH, get(home_logo_handler))
+        .route(CHAT_PATH, get(chat_page_handler))
+        .route(CHAT_PKG_JS_PATH, get(chat_pkg_js_handler))
+        .route(CHAT_PKG_WASM_PATH, get(chat_pkg_wasm_handler))
         .route(WS_CHAT_PATH, get(ws_chat_handler))
         .route("/health/live", get(health_live_handler))
         .route("/health/ready", get(health_ready_handler))

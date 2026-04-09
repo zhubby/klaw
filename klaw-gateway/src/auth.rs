@@ -35,23 +35,36 @@ impl GatewayAuth {
             return Ok(next.run(request).await);
         }
 
-        let auth_header = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok());
-
-        match auth_header {
-            Some(header) if header.starts_with("Bearer ") => {
-                let token = &header[7..];
-                if token == auth.token {
-                    Ok(next.run(request).await)
-                } else {
-                    Err(StatusCode::UNAUTHORIZED)
-                }
-            }
+        match extract_gateway_credential(&request) {
+            Some(token) if token == auth.token => Ok(next.run(request).await),
             _ => Err(StatusCode::UNAUTHORIZED),
         }
     }
+}
+
+/// Bearer token, or for `/ws/chat` only: `token` / `access_token` query params (for browser WebSocket).
+pub(crate) fn extract_gateway_credential(request: &Request<Body>) -> Option<String> {
+    let auth_header = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok());
+    if let Some(hdr) = auth_header {
+        if let Some(token) = hdr.strip_prefix("Bearer ") {
+            return Some(token.to_string());
+        }
+    }
+    if request.uri().path() != WS_CHAT_PATH {
+        return None;
+    }
+    let query = request.uri().query()?;
+    for pair in query.split('&') {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        if k != "token" && k != "access_token" {
+            continue;
+        }
+        return Some(urlencoding::decode(v).ok()?.into_owned());
+    }
+    None
 }
 
 pub fn should_require_gateway_auth(path: &str) -> bool {
@@ -311,8 +324,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{GatewayAuth, WebhookAuth, should_require_gateway_auth};
-    use axum::http::{HeaderMap, HeaderValue};
+    use super::{
+        GatewayAuth, WebhookAuth, extract_gateway_credential, should_require_gateway_auth,
+    };
+    use axum::body::Body;
+    use axum::http::{HeaderMap, HeaderValue, Request};
     use hmac::{Hmac, Mac};
     use sha1::Sha1;
     use sha2::Sha256;
@@ -328,6 +344,41 @@ mod tests {
         assert!(!should_require_gateway_auth("/metrics"));
         assert!(!should_require_gateway_auth("/webhook/events"));
         assert!(!should_require_gateway_auth("/webhook/agents"));
+        assert!(!should_require_gateway_auth("/chat"));
+    }
+
+    #[test]
+    fn gateway_credential_accepts_ws_query_token() {
+        let req = Request::builder()
+            .uri("/ws/chat?session_key=web:u&token=sec%2Fret")
+            .body(Body::empty())
+            .expect("request");
+        assert_eq!(
+            extract_gateway_credential(&req),
+            Some("sec/ret".to_string())
+        );
+    }
+
+    #[test]
+    fn gateway_credential_prefers_bearer_over_query() {
+        let req = Request::builder()
+            .uri("/ws/chat?session_key=k&token=wrong")
+            .header("authorization", "Bearer correct")
+            .body(Body::empty())
+            .expect("request");
+        assert_eq!(
+            extract_gateway_credential(&req),
+            Some("correct".to_string())
+        );
+    }
+
+    #[test]
+    fn gateway_credential_ignores_query_token_on_non_ws_paths() {
+        let req = Request::builder()
+            .uri("/other?token=secret")
+            .body(Body::empty())
+            .expect("request");
+        assert_eq!(extract_gateway_credential(&req), None);
     }
 
     #[test]

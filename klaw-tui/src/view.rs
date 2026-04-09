@@ -92,10 +92,7 @@ fn push_agent_waiting_placeholder(text: &mut Text<'static>, label: &str, label_c
                 .fg(label_color)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!("{} {}", braille_spinner(), phrase),
-            body_style,
-        ),
+        Span::styled(format!("{} {}", braille_spinner(), phrase), body_style),
     ]));
     text.lines.push(Line::default());
 }
@@ -404,17 +401,41 @@ fn status_widget(state: &AppState, panel_width: u16) -> Paragraph<'static> {
         content_w,
         StatusValueKind::Plain,
     );
-    push_status_field(&mut lines, "Model:", &meta.model, content_w, StatusValueKind::Plain);
+    push_status_field(
+        &mut lines,
+        "Model:",
+        &meta.model,
+        content_w,
+        StatusValueKind::Plain,
+    );
 
     lines.push(Line::default());
 
     let skills = cap_comma_separated(&meta.skills, 12, "more");
-    push_status_field(&mut lines, "Skills:", &skills, content_w, StatusValueKind::CommaList);
+    push_status_field(
+        &mut lines,
+        "Skills:",
+        &skills,
+        content_w,
+        StatusValueKind::CommaList,
+    );
 
     let tools = cap_comma_separated(&meta.tools, 10, "more");
-    push_status_field(&mut lines, "Tools:", &tools, content_w, StatusValueKind::CommaList);
+    push_status_field(
+        &mut lines,
+        "Tools:",
+        &tools,
+        content_w,
+        StatusValueKind::CommaList,
+    );
 
-    push_status_field(&mut lines, "MCP:", &meta.mcp, content_w, StatusValueKind::Plain);
+    push_status_field(
+        &mut lines,
+        "MCP:",
+        &meta.mcp,
+        content_w,
+        StatusValueKind::Plain,
+    );
 
     lines.push(Line::default());
 
