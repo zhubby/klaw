@@ -706,7 +706,7 @@ fn build_approval_action_card_body_includes_command_preview() {
     let card = resolve_approval_card(&output).expect("approval card");
     let body = build_approval_action_card_body(&card);
     assert!(body.contains("待执行命令"));
-    assert!(body.contains("python3 -c \"print(1)\""));
+    assert!(body.contains("```\npython3 -c \"print(1)\"\n```"));
     assert!(body.contains("审批单: `approval-1`"));
 }
 
