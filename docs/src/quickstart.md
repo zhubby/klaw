@@ -10,6 +10,8 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+根目录直接执行 `cargo build` 时，会使用 workspace `default-members`，默认不包含 `klaw-webui`。如果需要刷新浏览器端聊天页面资源，请先在仓库根目录执行 `make webui-wasm`，再编译 `klaw-gateway`。
+
 ## 配置
 
 首次运行会自动创建配置文件 `~/.klaw/config.toml`：

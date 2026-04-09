@@ -101,6 +101,8 @@ klaw agent --input "prompt"     # One-shot
 klaw gateway                    # WebSocket
 ```
 
+根目录直接执行 `cargo build` 会使用 workspace `default-members`，默认不包含 `klaw-webui`。如需构建浏览器端 WASM 资源，请执行 `make webui-wasm`，然后再编译 `klaw-gateway`。
+
 ## macOS Packaging
 
 Build a native macOS app bundle and dmg from the existing GUI entrypoint:

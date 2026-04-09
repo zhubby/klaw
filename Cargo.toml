@@ -26,6 +26,32 @@ members = [
     "klaw-runtime",
     "klaw-webui",
 ]
+default-members = [
+    "klaw-acp",
+    "klaw-agent",
+    "klaw-approval",
+    "klaw-archive",
+    "klaw-voice",
+    "klaw-core",
+    "klaw-util",
+    "klaw-llm",
+    "klaw-tool",
+    "klaw-heartbeat",
+    "klaw-config",
+    "klaw-cli",
+    "klaw-mcp",
+    "klaw-skill",
+    "klaw-memory",
+    "klaw-cron",
+    "klaw-session",
+    "klaw-storage",
+    "klaw-gateway",
+    "klaw-channel",
+    "klaw-tui",
+    "klaw-gui",
+    "klaw-observability",
+    "klaw-runtime",
+]
 resolver = "2"
 
 [workspace.package]

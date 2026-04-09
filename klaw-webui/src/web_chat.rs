@@ -2,12 +2,18 @@
 
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
-use crate::{ConnectionState, MessageRole, classify_message_role, toolbar_title};
-use eframe::egui::{self, Align, Color32, Frame, RichText, ScrollArea, Stroke, TextEdit};
+use crate::{
+    ConnectionState, MessageRole, classify_message_role, normalize_gateway_token_input,
+    toolbar_title,
+};
+use eframe::egui::{
+    self, Align, Align2, Color32, Frame, Key, RichText, ScrollArea, Stroke, TextEdit, vec2,
+};
+use egui_notify::{Anchor, Toasts};
 use uuid::Uuid;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
-use web_sys::{MessageEvent, WebSocket};
+use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
 const CHAT_COLUMN_MAX_WIDTH: f32 = 760.0;
 const COMPOSER_MAX_WIDTH: f32 = 760.0;
@@ -101,27 +107,40 @@ fn ws_chat_url(session_key: &str, token: Option<&str>) -> Result<String, String>
 pub struct ChatApp {
     session_key: String,
     gateway_token: Option<String>,
+    gateway_token_input: String,
     ctx: egui::Context,
     messages: Rc<RefCell<Vec<ChatMessage>>>,
     pending_local_echoes: Rc<RefCell<VecDeque<String>>>,
     state: Rc<RefCell<ConnectionState>>,
     ws: Rc<RefCell<Option<WebSocket>>>,
+    auth_verified: Rc<RefCell<bool>>,
+    suppress_next_close_notice: Rc<RefCell<bool>>,
+    toasts: Rc<RefCell<Toasts>>,
     draft: String,
-    did_request_initial_connect: bool,
+    did_attempt_prefilled_token: bool,
 }
 
 impl ChatApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let gateway_token = gateway_token_from_page();
+        let gateway_token_input = gateway_token.clone().unwrap_or_default();
+        let toasts = Toasts::new()
+            .with_anchor(Anchor::BottomRight)
+            .with_margin(vec2(16.0, 16.0));
         Self {
             session_key: load_or_create_session_key(),
-            gateway_token: gateway_token_from_page(),
+            gateway_token,
+            gateway_token_input,
             ctx: cc.egui_ctx.clone(),
             messages: Rc::new(RefCell::new(Vec::new())),
             pending_local_echoes: Rc::new(RefCell::new(VecDeque::new())),
             state: Rc::new(RefCell::new(ConnectionState::Disconnected)),
             ws: Rc::new(RefCell::new(None)),
+            auth_verified: Rc::new(RefCell::new(false)),
+            suppress_next_close_notice: Rc::new(RefCell::new(false)),
+            toasts: Rc::new(RefCell::new(toasts)),
             draft: String::new(),
-            did_request_initial_connect: false,
+            did_attempt_prefilled_token: false,
         }
     }
 
@@ -129,11 +148,31 @@ impl ChatApp {
         self.state.borrow().clone()
     }
 
+    fn is_authenticated(&self) -> bool {
+        *self.auth_verified.borrow()
+    }
+
     fn close_socket(&mut self) {
         if let Some(ws) = self.ws.borrow_mut().take() {
+            *self.suppress_next_close_notice.borrow_mut() = true;
             let _ = ws.close();
         }
         *self.state.borrow_mut() = ConnectionState::Disconnected;
+    }
+
+    fn maybe_auto_validate_prefilled_token(&mut self) {
+        if self.did_attempt_prefilled_token {
+            return;
+        }
+        self.did_attempt_prefilled_token = true;
+        if self.gateway_token.is_some() {
+            self.try_connect();
+        }
+    }
+
+    fn begin_gateway_auth(&mut self) {
+        self.gateway_token = normalize_gateway_token_input(&self.gateway_token_input);
+        self.try_connect();
     }
 
     fn try_connect(&mut self) {
@@ -141,7 +180,10 @@ impl ChatApp {
         let url = match ws_chat_url(&self.session_key, self.gateway_token.as_deref()) {
             Ok(u) => u,
             Err(e) => {
-                *self.state.borrow_mut() = ConnectionState::Error(e);
+                *self.state.borrow_mut() = ConnectionState::Error(e.clone());
+                if !self.is_authenticated() {
+                    self.toasts.borrow_mut().error(e);
+                }
                 return;
             }
         };
@@ -149,7 +191,11 @@ impl ChatApp {
         let ws = match WebSocket::new(&url.as_str()) {
             Ok(w) => w,
             Err(e) => {
-                *self.state.borrow_mut() = ConnectionState::Error(format!("WebSocket::new: {e:?}"));
+                let message = format!("WebSocket::new: {e:?}");
+                *self.state.borrow_mut() = ConnectionState::Error(message.clone());
+                if !self.is_authenticated() {
+                    self.toasts.borrow_mut().error(message);
+                }
                 return;
             }
         };
@@ -175,7 +221,9 @@ impl ChatApp {
         let state_open = self.state.clone();
         let messages_open = self.messages.clone();
         let ctx_open = self.ctx.clone();
+        let auth_verified_open = self.auth_verified.clone();
         let onopen = Closure::wrap(Box::new(move |_e: JsValue| {
+            *auth_verified_open.borrow_mut() = true;
             *state_open.borrow_mut() = ConnectionState::Connected;
             messages_open.borrow_mut().push(ChatMessage {
                 text: "Connected to the Klaw room.".to_string(),
@@ -188,10 +236,17 @@ impl ChatApp {
 
         let state_err = self.state.clone();
         let ctx_err = self.ctx.clone();
+        let auth_verified_err = self.auth_verified.clone();
         let onerror = Closure::wrap(Box::new(move |_e: JsValue| {
-            if *state_err.borrow() == ConnectionState::Connecting {
-                *state_err.borrow_mut() =
-                    ConnectionState::Error("WebSocket error before open".to_string());
+            if *auth_verified_err.borrow() {
+                if *state_err.borrow() == ConnectionState::Connecting {
+                    *state_err.borrow_mut() =
+                        ConnectionState::Error("WebSocket error before open".to_string());
+                }
+            } else {
+                *state_err.borrow_mut() = ConnectionState::Error(
+                    "Token validation failed. Check the gateway token and try again.".to_string(),
+                );
             }
             ctx_err.request_repaint();
         }) as Box<dyn FnMut(JsValue)>);
@@ -202,15 +257,36 @@ impl ChatApp {
         let messages_close = self.messages.clone();
         let ctx_close = self.ctx.clone();
         let ws_cell = self.ws.clone();
-        let onclose = Closure::wrap(Box::new(move |_e: JsValue| {
+        let auth_verified_close = self.auth_verified.clone();
+        let suppress_close_notice = self.suppress_next_close_notice.clone();
+        let toasts_close = self.toasts.clone();
+        let onclose = Closure::wrap(Box::new(move |event: CloseEvent| {
             ws_cell.borrow_mut().take();
-            *state_close.borrow_mut() = ConnectionState::Disconnected;
-            messages_close.borrow_mut().push(ChatMessage {
-                text: "Connection closed.".to_string(),
-                role: MessageRole::System,
-            });
+            if *suppress_close_notice.borrow() {
+                *suppress_close_notice.borrow_mut() = false;
+                ctx_close.request_repaint();
+                return;
+            }
+            if *auth_verified_close.borrow() {
+                *state_close.borrow_mut() = ConnectionState::Disconnected;
+                messages_close.borrow_mut().push(ChatMessage {
+                    text: "Connection closed.".to_string(),
+                    role: MessageRole::System,
+                });
+            } else {
+                let message = match &*state_close.borrow() {
+                    ConnectionState::Error(message) => message.clone(),
+                    _ if !event.reason().is_empty() => {
+                        format!("Gateway rejected websocket connection: {}", event.reason())
+                    }
+                    _ => "Token validation failed. Check the gateway token and try again."
+                        .to_string(),
+                };
+                *state_close.borrow_mut() = ConnectionState::Disconnected;
+                toasts_close.borrow_mut().error(message);
+            }
             ctx_close.request_repaint();
-        }) as Box<dyn FnMut(JsValue)>);
+        }) as Box<dyn FnMut(CloseEvent)>);
         ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
         onclose.forget();
 
@@ -236,6 +312,75 @@ impl ChatApp {
             return;
         }
         self.draft.clear();
+    }
+
+    fn render_auth_gate(&mut self, ctx: &egui::Context) {
+        let is_connecting = matches!(self.connection_state(), ConnectionState::Connecting);
+        let action_label = if is_connecting {
+            "Validating…"
+        } else {
+            "Connect"
+        };
+
+        egui::CentralPanel::default()
+            .frame(Frame::new().fill(Color32::from_rgb(14, 17, 24)))
+            .show(ctx, |_ui| {});
+
+        egui::Window::new("Gateway Token")
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .collapsible(false)
+            .resizable(false)
+            .title_bar(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new("Enter the gateway token before opening chat.")
+                            .strong()
+                            .size(18.0)
+                            .color(Color32::from_rgb(236, 240, 248)),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(
+                            "If gateway auth is disabled, you can leave this field blank and connect directly.",
+                        )
+                        .color(Color32::from_rgb(152, 160, 178)),
+                    );
+                    ui.add_space(12.0);
+                    ui.label(
+                        RichText::new(format!("Session {}", self.session_key))
+                            .size(11.0)
+                            .color(Color32::from_rgb(132, 140, 158)),
+                    );
+                    ui.add_space(10.0);
+
+                    let response = ui.add_enabled(
+                        !is_connecting,
+                        TextEdit::singleline(&mut self.gateway_token_input)
+                            .password(true)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("Gateway token"),
+                    );
+                    let submit_with_enter =
+                        response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(self.connection_state().status_text())
+                                .color(Color32::from_rgb(240, 190, 110))
+                                .strong(),
+                        );
+                        let connect_clicked = ui
+                            .add_enabled(!is_connecting, egui::Button::new(action_label))
+                            .clicked();
+                        if connect_clicked || submit_with_enter {
+                            self.begin_gateway_auth();
+                        }
+                    });
+                });
+            });
     }
 
     fn render_top_bar(&mut self, ctx: &egui::Context, state: &ConnectionState) {
@@ -415,15 +560,17 @@ impl ChatApp {
 
 impl eframe::App for ChatApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if !self.did_request_initial_connect {
-            self.did_request_initial_connect = true;
-            self.try_connect();
-        }
-
         ctx.style_mut(|style| {
             style.visuals.panel_fill = Color32::from_rgb(14, 17, 24);
             style.visuals.override_text_color = Some(Color32::from_rgb(235, 239, 245));
         });
+
+        self.maybe_auto_validate_prefilled_token();
+        if !self.is_authenticated() {
+            self.render_auth_gate(ctx);
+            self.toasts.borrow_mut().show(ctx);
+            return;
+        }
 
         let state = self.connection_state();
         self.render_top_bar(ctx, &state);
@@ -436,5 +583,6 @@ impl eframe::App for ChatApp {
             });
 
         self.render_composer(ctx, &state);
+        self.toasts.borrow_mut().show(ctx);
     }
 }

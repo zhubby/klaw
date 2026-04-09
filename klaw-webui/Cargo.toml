@@ -17,6 +17,7 @@ console_error_panic_hook = { workspace = true }
 # eframe needs a different feature set than desktop `klaw-gui`; cannot inherit workspace eframe.
 eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "wgpu"] }
 egui = { version = "0.33.3", default-features = false, features = ["default_fonts"] }
+egui-notify = { workspace = true }
 js-sys = { workspace = true }
 urlencoding = { workspace = true }
 # Enable `wgpu`'s `web` backend for `egui-wgpu` on wasm (same version as eframe).

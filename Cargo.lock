@@ -4452,6 +4452,7 @@ dependencies = [
  "console_error_panic_hook",
  "eframe",
  "egui",
+ "egui-notify",
  "js-sys",
  "urlencoding",
  "uuid",

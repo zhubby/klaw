@@ -80,6 +80,12 @@ pub(crate) fn toolbar_title() -> &'static str {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn normalize_gateway_token_input(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn classify_message_role(
     pending_local_echoes: &mut VecDeque<String>,
     text: &str,
@@ -103,7 +109,10 @@ pub use web_chat::start_chat_ui;
 mod tests {
     use std::collections::VecDeque;
 
-    use super::{ConnectionState, MessageRole, classify_message_role, toolbar_title};
+    use super::{
+        ConnectionState, MessageRole, classify_message_role, normalize_gateway_token_input,
+        toolbar_title,
+    };
 
     #[test]
     fn toolbar_title_matches_chat_product() {
@@ -162,5 +171,18 @@ mod tests {
     #[test]
     fn system_role_stays_distinct_from_user_messages() {
         assert_ne!(MessageRole::System, MessageRole::User);
+    }
+
+    #[test]
+    fn blank_gateway_token_is_treated_as_missing() {
+        assert_eq!(normalize_gateway_token_input("   "), None);
+    }
+
+    #[test]
+    fn gateway_token_input_is_trimmed_before_use() {
+        assert_eq!(
+            normalize_gateway_token_input("  secret-token  "),
+            Some("secret-token".to_string())
+        );
     }
 }
