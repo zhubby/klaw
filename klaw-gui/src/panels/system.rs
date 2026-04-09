@@ -6,7 +6,8 @@ use egui_phosphor::regular;
 use klaw_storage::StoragePaths;
 use klaw_util::{DependencyCategory, EnvironmentCheckReport};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
@@ -390,7 +391,12 @@ impl SystemPanel {
         }
     }
 
-    fn render_section(&mut self, ui: &mut egui::Ui, kind: DirKind) {
+    fn render_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        kind: DirKind,
+        notifications: &mut NotificationCenter,
+    ) {
         ui.strong(kind.title());
         ui.add_space(4.0);
 
@@ -421,6 +427,17 @@ impl SystemPanel {
                 .clicked()
             {
                 self.refresh_usage(kind);
+            }
+
+            if ui
+                .button(regular::FOLDER_OPEN)
+                .on_hover_text(format!("Open {} directory in Finder", kind.title()))
+                .clicked()
+            {
+                if let Err(err) = open_directory_in_file_manager(&path) {
+                    notifications
+                        .error(format!("Failed to open {} directory: {err}", kind.title()));
+                }
             }
 
             if ui
@@ -486,19 +503,19 @@ impl PanelRenderer for SystemPanel {
                 SystemView::Cleanup => {
                     ui.label("Inspect and clear data under the Klaw data directory.");
                     ui.add_space(8.0);
-                    self.render_section(ui, DirKind::Tmp);
+                    self.render_section(ui, DirKind::Tmp, notifications);
                     ui.separator();
-                    self.render_section(ui, DirKind::Workspace);
+                    self.render_section(ui, DirKind::Workspace, notifications);
                     ui.separator();
-                    self.render_section(ui, DirKind::Sessions);
+                    self.render_section(ui, DirKind::Sessions, notifications);
                     ui.separator();
-                    self.render_section(ui, DirKind::Archives);
+                    self.render_section(ui, DirKind::Archives, notifications);
                     ui.separator();
-                    self.render_section(ui, DirKind::Logs);
+                    self.render_section(ui, DirKind::Logs, notifications);
                     ui.separator();
-                    self.render_section(ui, DirKind::Skills);
+                    self.render_section(ui, DirKind::Skills, notifications);
                     ui.separator();
-                    self.render_section(ui, DirKind::SkillsRegistry);
+                    self.render_section(ui, DirKind::SkillsRegistry, notifications);
                 }
                 SystemView::Environment => {
                     self.render_env_check_section(ui);
@@ -519,6 +536,27 @@ fn usage_text(loading: bool, bytes: Option<u64>, error: Option<&str>) -> String 
     } else {
         "Usage: unavailable".to_string()
     }
+}
+
+#[cfg(target_os = "macos")]
+fn open_directory_in_file_manager(path: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(path)?;
+    Command::new("open").arg(path).spawn()?.wait()?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn open_directory_in_file_manager(path: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(path)?;
+    Command::new("explorer").arg(path).spawn()?.wait()?;
+    Ok(())
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn open_directory_in_file_manager(path: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(path)?;
+    Command::new("xdg-open").arg(path).spawn()?.wait()?;
+    Ok(())
 }
 
 fn ensure_dir_exists(path: &PathBuf) -> Result<(), String> {

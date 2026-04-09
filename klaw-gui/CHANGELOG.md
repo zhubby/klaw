@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-09
+
+### Added
+
+- `System > Cleanup` 的每个数据目录条目现在新增文件夹图标按钮，可直接在系统文件管理器中打开对应目录；在 macOS 上会拉起 Finder
+
 ## 2026-04-08
 
 ### Changed
