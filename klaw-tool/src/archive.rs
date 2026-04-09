@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use klaw_archive::{ArchiveRecord, ArchiveService, open_default_archive_service};
 use klaw_config::AppConfig;
+use klaw_storage::{DefaultSessionStore, SessionStorage};
 use klaw_util::{default_data_dir, workspace_dir};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
@@ -17,7 +19,13 @@ const DEFAULT_SESSION_ATTACHMENT_LIMIT: i64 = 50;
 
 pub struct ArchiveTool {
     service: Arc<dyn ArchiveService>,
+    session_store: Arc<DefaultSessionStore>,
     storage_root_dir: Option<String>,
+}
+
+struct ResolvedSessionScope {
+    base_session_key: String,
+    session_keys: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,12 +60,16 @@ struct CurrentAttachment {
 }
 
 impl ArchiveTool {
-    pub async fn open_default(config: &AppConfig) -> Result<Self, ToolError> {
+    pub async fn open_default(
+        config: &AppConfig,
+        session_store: DefaultSessionStore,
+    ) -> Result<Self, ToolError> {
         let service = open_default_archive_service().await.map_err(|err| {
             ToolError::ExecutionFailed(format!("failed to open archive service: {err}"))
         })?;
         Ok(Self {
             service: Arc::new(service),
+            session_store: Arc::new(session_store),
             storage_root_dir: config.storage.root_dir.clone(),
         })
     }
@@ -218,25 +230,82 @@ impl ArchiveTool {
         })
     }
 
-    async fn session_attachments(&self, ctx: &ToolContext) -> Result<Vec<Value>, ToolError> {
-        let records = self
-            .service
-            .find(klaw_archive::ArchiveQuery {
-                session_key: Some(ctx.session_key.clone()),
-                limit: DEFAULT_SESSION_ATTACHMENT_LIMIT,
-                ..Default::default()
-            })
+    async fn resolve_session_scope(
+        &self,
+        ctx: &ToolContext,
+    ) -> Result<ResolvedSessionScope, ToolError> {
+        let from_metadata = ctx
+            .metadata
+            .get("channel.base_session_key")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let base_session_key = match from_metadata {
+            Some(key) => key,
+            None => self
+                .session_store
+                .get_session_by_active_session_key(&ctx.session_key)
+                .await
+                .map(|base| base.session_key)
+                .unwrap_or_else(|_| ctx.session_key.clone()),
+        };
+
+        let active_session_key = self
+            .session_store
+            .get_session(&base_session_key)
             .await
-            .map_err(|err| {
-                ToolError::ExecutionFailed(format!(
-                    "failed to list session archive records for `{}`: {err}",
-                    ctx.session_key
-                ))
-            })?;
-        Ok(records
-            .iter()
-            .map(Self::archive_record_to_json)
-            .collect::<Vec<_>>())
+            .ok()
+            .and_then(|session| session.active_session_key)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let mut session_keys = vec![base_session_key.clone()];
+        if let Some(active_session_key) = active_session_key {
+            if active_session_key != base_session_key {
+                session_keys.push(active_session_key);
+            }
+        }
+        if ctx.session_key != base_session_key && !session_keys.contains(&ctx.session_key) {
+            session_keys.push(ctx.session_key.clone());
+        }
+        Ok(ResolvedSessionScope {
+            base_session_key,
+            session_keys,
+        })
+    }
+
+    async fn session_attachments(
+        &self,
+        ctx: &ToolContext,
+    ) -> Result<(ResolvedSessionScope, Vec<Value>), ToolError> {
+        let scope = self.resolve_session_scope(ctx).await?;
+        let mut attachments = Vec::new();
+        let mut seen_ids = HashSet::new();
+        for session_key in &scope.session_keys {
+            let remaining = DEFAULT_SESSION_ATTACHMENT_LIMIT.saturating_sub(attachments.len() as i64);
+            if remaining <= 0 {
+                break;
+            }
+            let records = self
+                .service
+                .find(klaw_archive::ArchiveQuery {
+                    session_key: Some(session_key.clone()),
+                    limit: remaining,
+                    ..Default::default()
+                })
+                .await
+                .map_err(|err| {
+                    ToolError::ExecutionFailed(format!(
+                        "failed to list session archive records for `{session_key}`: {err}"
+                    ))
+                })?;
+            for record in records {
+                if seen_ids.insert(record.id.clone()) {
+                    attachments.push(Self::archive_record_to_json(&record));
+                }
+            }
+        }
+        Ok((scope, attachments))
     }
 }
 
@@ -247,13 +316,13 @@ impl Tool for ArchiveTool {
     }
 
     fn description(&self) -> &str {
-        "Inspect archived attachments for the current conversation. Prefer `get` when the current message already includes an `archive_id`. Use `list_current_attachments` only for current-message attachments, and `list_session_attachments` for archived attachments from the current session."
+        "Inspect archived attachments for the current conversation. Prefer `get` when the current message already includes an `archive_id`. Use `list_current_attachments` only for current-message attachments, and `list_session_attachments` for archived attachments from the current conversation's session chain."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Read-only archive access and copy-to-workspace operations. Prefer `get` when you already have an `archive_id`. Use `list_current_attachments` only to confirm attachments from the current user message, and `list_session_attachments` to inspect archived attachments from the broader current session. Never modify files under archives/ directly; use copy_to_workspace first if you need to transform a file.",
+            "description": "Read-only archive access and copy-to-workspace operations. Prefer `get` when you already have an `archive_id`. Use `list_current_attachments` only to confirm attachments from the current user message, and `list_session_attachments` to inspect archived attachments from the broader current conversation session chain. Never modify files under archives/ directly; use copy_to_workspace first if you need to transform a file.",
             "oneOf": [
                 {
                     "description": "Inspect one archive record by archive id. Prefer this when the current message summary already includes an `archive_id`.",
@@ -342,13 +411,15 @@ impl Tool for ArchiveTool {
                 "scope": "current_message_only",
             }),
             "list_session_attachments" => {
-                let attachments = self.session_attachments(ctx).await?;
+                let (scope, attachments) = self.session_attachments(ctx).await?;
                 json!({
                     "action": request.action,
                     "attachments": attachments,
                     "archives_are_read_only": true,
                     "scope": "current_session",
                     "session_key": ctx.session_key,
+                    "base_session_key": scope.base_session_key,
+                    "queried_session_keys": scope.session_keys,
                     "workflow": "copy_to_workspace_before_edit",
                 })
             }
@@ -450,12 +521,14 @@ mod tests {
         ArchiveBlob, ArchiveError, ArchiveIngestInput, ArchiveMediaKind, ArchiveQuery,
         ArchiveSourceKind,
     };
+    use klaw_storage::{DefaultSessionStore, SessionStorage, StoragePaths};
     use std::sync::Mutex;
 
     #[derive(Default)]
     struct FakeArchiveService {
         record: Mutex<Option<ArchiveRecord>>,
         find_records: Mutex<Vec<ArchiveRecord>>,
+        find_session_keys: Mutex<Vec<Option<String>>>,
         bytes: Mutex<Vec<u8>>,
         absolute_path: Mutex<Option<PathBuf>>,
     }
@@ -478,7 +551,11 @@ mod tests {
             unreachable!()
         }
 
-        async fn find(&self, _query: ArchiveQuery) -> Result<Vec<ArchiveRecord>, ArchiveError> {
+        async fn find(&self, query: ArchiveQuery) -> Result<Vec<ArchiveRecord>, ArchiveError> {
+            self.find_session_keys
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(query.session_key.clone());
             Ok(self
                 .find_records
                 .lock()
@@ -541,10 +618,17 @@ mod tests {
         }
     }
 
+    async fn create_store(prefix: &str) -> DefaultSessionStore {
+        DefaultSessionStore::open(StoragePaths::from_root(temp_root(prefix)))
+            .await
+            .expect("session store should open")
+    }
+
     #[tokio::test]
     async fn list_current_attachments_reads_context_metadata() {
         let tool = ArchiveTool {
             service: Arc::new(FakeArchiveService::default()),
+            session_store: Arc::new(create_store("current").await),
             storage_root_dir: None,
         };
         let mut ctx = base_ctx();
@@ -581,27 +665,29 @@ mod tests {
 
     #[tokio::test]
     async fn list_session_attachments_reads_current_session_records() {
+        let service = Arc::new(FakeArchiveService {
+            find_records: Mutex::new(vec![ArchiveRecord {
+                id: "arch-session-1".to_string(),
+                source_kind: ArchiveSourceKind::ChannelInbound,
+                media_kind: ArchiveMediaKind::Image,
+                mime_type: Some("image/png".to_string()),
+                extension: Some("png".to_string()),
+                original_filename: Some("screen.png".to_string()),
+                content_sha256: "hash-1".to_string(),
+                size_bytes: 42,
+                storage_rel_path: "archives/2026-03-24/arch-session-1.png".to_string(),
+                session_key: Some("im:chat-1".to_string()),
+                channel: Some("dingtalk".to_string()),
+                chat_id: Some("chat-1".to_string()),
+                message_id: Some("msg-1".to_string()),
+                metadata_json: "{}".to_string(),
+                created_at_ms: 1,
+            }]),
+            ..Default::default()
+        });
         let tool = ArchiveTool {
-            service: Arc::new(FakeArchiveService {
-                find_records: Mutex::new(vec![ArchiveRecord {
-                    id: "arch-session-1".to_string(),
-                    source_kind: ArchiveSourceKind::ChannelInbound,
-                    media_kind: ArchiveMediaKind::Image,
-                    mime_type: Some("image/png".to_string()),
-                    extension: Some("png".to_string()),
-                    original_filename: Some("screen.png".to_string()),
-                    content_sha256: "hash-1".to_string(),
-                    size_bytes: 42,
-                    storage_rel_path: "archives/2026-03-24/arch-session-1.png".to_string(),
-                    session_key: Some("im:chat-1".to_string()),
-                    channel: Some("dingtalk".to_string()),
-                    chat_id: Some("chat-1".to_string()),
-                    message_id: Some("msg-1".to_string()),
-                    metadata_json: "{}".to_string(),
-                    created_at_ms: 1,
-                }]),
-                ..Default::default()
-            }),
+            service: service.clone(),
+            session_store: Arc::new(create_store("session").await),
             storage_root_dir: None,
         };
         let output = tool
@@ -621,7 +707,128 @@ mod tests {
         assert!(
             output
                 .content_for_model
+                .contains("\"base_session_key\": \"im:chat-1\"")
+        );
+        assert!(
+            output
+                .content_for_model
                 .contains("\"id\": \"arch-session-1\"")
+        );
+        let queried = service
+            .find_session_keys
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
+        assert_eq!(queried, vec![Some("im:chat-1".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn list_session_attachments_includes_base_and_active_session_records() {
+        let store = create_store("session-scope").await;
+        store
+            .get_or_create_session_state(
+                "dingtalk:base",
+                "chat-1",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+        store
+            .get_or_create_session_state(
+                "dingtalk:base:active",
+                "chat-1",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("active session should exist");
+        store
+            .set_active_session(
+                "dingtalk:base",
+                "chat-1",
+                "dingtalk",
+                "dingtalk:base:active",
+            )
+            .await
+            .expect("base session should point to active session");
+        let service = Arc::new(FakeArchiveService {
+            find_records: Mutex::new(vec![
+                ArchiveRecord {
+                    id: "arch-base-1".to_string(),
+                    source_kind: ArchiveSourceKind::ChannelInbound,
+                    media_kind: ArchiveMediaKind::Other,
+                    mime_type: Some("application/pdf".to_string()),
+                    extension: Some("pdf".to_string()),
+                    original_filename: Some("base.pdf".to_string()),
+                    content_sha256: "hash-base".to_string(),
+                    size_bytes: 10,
+                    storage_rel_path: "archives/2026-03-24/base.pdf".to_string(),
+                    session_key: Some("dingtalk:base".to_string()),
+                    channel: Some("dingtalk".to_string()),
+                    chat_id: Some("chat-1".to_string()),
+                    message_id: Some("msg-base".to_string()),
+                    metadata_json: "{}".to_string(),
+                    created_at_ms: 1,
+                },
+                ArchiveRecord {
+                    id: "arch-active-1".to_string(),
+                    source_kind: ArchiveSourceKind::ChannelInbound,
+                    media_kind: ArchiveMediaKind::Other,
+                    mime_type: Some("application/vnd.apple.pages".to_string()),
+                    extension: Some("pages".to_string()),
+                    original_filename: Some("active.pages".to_string()),
+                    content_sha256: "hash-active".to_string(),
+                    size_bytes: 11,
+                    storage_rel_path: "archives/2026-03-24/active.pages".to_string(),
+                    session_key: Some("dingtalk:base:active".to_string()),
+                    channel: Some("dingtalk".to_string()),
+                    chat_id: Some("chat-1".to_string()),
+                    message_id: Some("msg-active".to_string()),
+                    metadata_json: "{}".to_string(),
+                    created_at_ms: 2,
+                },
+            ]),
+            ..Default::default()
+        });
+        let tool = ArchiveTool {
+            service: service.clone(),
+            session_store: Arc::new(store),
+            storage_root_dir: None,
+        };
+        let ctx = ToolContext {
+            session_key: "dingtalk:base:active".to_string(),
+            metadata: std::collections::BTreeMap::new(),
+        };
+        let output = tool
+            .execute(json!({"action": "list_session_attachments"}), &ctx)
+            .await
+            .expect("list session attachments should succeed");
+        assert!(output.content_for_model.contains("\"id\": \"arch-base-1\""));
+        assert!(output.content_for_model.contains("\"id\": \"arch-active-1\""));
+        assert!(
+            output
+                .content_for_model
+                .contains("\"base_session_key\": \"dingtalk:base\"")
+        );
+        assert!(
+            output
+                .content_for_model
+                .contains("\"queried_session_keys\": [")
+        );
+        let queried = service
+            .find_session_keys
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
+        assert_eq!(
+            queried,
+            vec![
+                Some("dingtalk:base".to_string()),
+                Some("dingtalk:base:active".to_string()),
+            ]
         );
     }
 
@@ -650,11 +857,13 @@ mod tests {
                 created_at_ms: 0,
             })),
             find_records: Mutex::new(Vec::new()),
+            find_session_keys: Mutex::new(Vec::new()),
             bytes: Mutex::new(b"hello archive".to_vec()),
             absolute_path: Mutex::new(Some(source)),
         };
         let tool = ArchiveTool {
             service: Arc::new(service),
+            session_store: Arc::new(create_store("copy").await),
             storage_root_dir: Some(root.to_string_lossy().to_string()),
         };
 

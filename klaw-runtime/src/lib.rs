@@ -1167,7 +1167,7 @@ async fn register_configured_tools(
     sub_agent_audit_sink: Option<Arc<dyn SubAgentAuditSink>>,
 ) -> Result<(), Box<dyn Error>> {
     if config.tools.archive.enabled() {
-        tools.register(ArchiveTool::open_default(config).await?);
+        tools.register(ArchiveTool::open_default(config, session_store.clone()).await?);
     }
     if config.tools.channel_attachment.enabled() {
         tools.register(ChannelAttachmentTool::open_default(config).await?);
