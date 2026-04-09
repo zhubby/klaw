@@ -1385,9 +1385,13 @@ fn persistable_session_delivery_metadata_json(
     let delivery_metadata = metadata
         .iter()
         .filter_map(|(key, value)| match key.as_str() {
-            "channel.dingtalk.session_webhook" | "channel.dingtalk.bot_title" => {
-                Some((key.clone(), value.clone()))
-            }
+            "channel.base_session_key"
+            | "channel.delivery_session_key"
+            | "channel.dingtalk.session_webhook"
+            | "channel.dingtalk.bot_title"
+            | "webhook.delivery_session_key"
+            | "webhook.delivery_channel"
+            | "webhook.delivery_chat_id" => Some((key.clone(), value.clone())),
             _ => None,
         })
         .collect::<serde_json::Map<String, serde_json::Value>>();
@@ -2458,6 +2462,18 @@ async fn submit_webhook_isolated_turn(
             "webhook.delivery_chat_id".to_string(),
             Value::String(route.chat_id.clone()),
         );
+    }
+    if let Some(delivery_metadata_json) =
+        persistable_session_delivery_metadata_json(&inbound_metadata)
+    {
+        sessions
+            .set_delivery_metadata(
+                &execution.session_key,
+                &execution.chat_id,
+                "webhook",
+                Some(&delivery_metadata_json),
+            )
+            .await?;
     }
 
     let envelope = Envelope {
@@ -4824,6 +4840,101 @@ A .docx file is a ZIP archive containing XML files.
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn approve_command_accepts_linked_execution_session_approval() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let channel = "telegram".to_string();
+        let base_session_key = "telegram:tg7:chat-linked".to_string();
+        let active_session_key = "telegram:tg7:chat-linked:active".to_string();
+        let execution_session_key = "webhook:github:req-linked".to_string();
+        let chat_id = "chat-linked".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &base_session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+        sessions
+            .get_or_create_session_state(
+                &active_session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("active session should exist");
+        sessions
+            .set_active_session(&base_session_key, &chat_id, &channel, &active_session_key)
+            .await
+            .expect("active session should switch");
+        sessions
+            .get_or_create_session_state(
+                &execution_session_key,
+                &execution_session_key,
+                "webhook",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("execution session should exist");
+        sessions
+            .set_delivery_metadata(
+                &execution_session_key,
+                &execution_session_key,
+                "webhook",
+                Some(
+                    "{\"channel.base_session_key\":\"telegram:tg7:chat-linked\",\"channel.delivery_session_key\":\"telegram:tg7:chat-linked:active\",\"webhook.delivery_session_key\":\"telegram:tg7:chat-linked:active\"}",
+                ),
+            )
+            .await
+            .expect("execution delivery metadata should persist");
+
+        let manager = approval_manager(&runtime);
+        let approval = manager
+            .create_approval(ApprovalCreateInput {
+                session_key: execution_session_key,
+                tool_name: "shell".to_string(),
+                command_text: "printf linked-approval".to_string(),
+                command_preview: Some("printf linked-approval".to_string()),
+                command_hash: Some("linked-command-hash-1".to_string()),
+                risk_level: Some("unsafe".to_string()),
+                requested_by: Some("agent".to_string()),
+                justification: None,
+                expires_in_minutes: Some(10),
+            })
+            .await
+            .expect("approval should be created");
+
+        let response = im_commands::handle_im_command(
+            &runtime,
+            channel,
+            base_session_key,
+            chat_id,
+            format!("/approve {}", approval.id),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("approve command should succeed")
+        .expect("approve command should return a response");
+
+        assert_eq!(response.content, "bootstrap reply");
+        let captured = provider
+            .last_user_message
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone()
+            .expect("follow-up user message should be captured");
+        assert!(captured.contains("shell_result:"));
+        assert!(captured.contains("linked-approval"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn submit_and_get_output_persists_dingtalk_delivery_metadata_on_active_session() {
         let provider = Arc::new(BootstrapCaptureProvider::default());
         let runtime = build_test_runtime(provider).await;
@@ -5042,6 +5153,25 @@ A .docx file is a ZIP archive containing XML files.
                 .payload
                 .metadata
                 .get("channel.delivery_session_key"),
+            Some(&json!("dingtalk:acc:chat-1:active"))
+        );
+        let execution_session = sessions
+            .get_session("webhook:github:req-1")
+            .await
+            .expect("execution session should exist");
+        let execution_metadata: serde_json::Map<String, Value> = execution_session
+            .delivery_metadata_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .expect("execution delivery metadata should parse")
+            .expect("execution delivery metadata should exist");
+        assert_eq!(
+            execution_metadata.get("channel.base_session_key"),
+            Some(&json!("dingtalk:acc:chat-1"))
+        );
+        assert_eq!(
+            execution_metadata.get("channel.delivery_session_key"),
             Some(&json!("dingtalk:acc:chat-1:active"))
         );
     }

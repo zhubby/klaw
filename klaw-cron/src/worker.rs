@@ -137,6 +137,18 @@ where
             "channel.delivery_session_key".to_string(),
             serde_json::Value::String(delivery_session_key),
         );
+        if let Some(delivery_metadata_json) =
+            persistable_session_delivery_metadata_json(&payload.metadata)
+        {
+            self.storage
+                .set_delivery_metadata(
+                    &execution_session_key,
+                    &payload.chat_id,
+                    &payload.channel,
+                    Some(&delivery_metadata_json),
+                )
+                .await?;
+        }
 
         let envelope = Envelope {
             header: EnvelopeHeader::new(execution_session_key),
@@ -234,6 +246,25 @@ where
 
 fn build_execution_session_key(job_id: &str, run_id: &str) -> String {
     format!("cron:{job_id}:{run_id}")
+}
+
+fn persistable_session_delivery_metadata_json(
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> Option<String> {
+    let delivery_metadata = metadata
+        .iter()
+        .filter_map(|(key, value)| match key.as_str() {
+            "channel.base_session_key"
+            | "channel.delivery_session_key"
+            | "channel.dingtalk.session_webhook"
+            | "channel.dingtalk.bot_title" => Some((key.clone(), value.clone())),
+            _ => None,
+        })
+        .collect::<serde_json::Map<String, serde_json::Value>>();
+    if delivery_metadata.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&delivery_metadata).ok()
 }
 
 fn infer_base_session_key(payload: &InboundMessage) -> Option<String> {
@@ -1344,6 +1375,29 @@ mod tests {
             messages[0]
                 .payload
                 .metadata
+                .get("channel.delivery_session_key")
+                .and_then(|value| value.as_str()),
+            Some("dingtalk:acc:chat1:child")
+        );
+        let execution_session = storage
+            .get_session(&messages[0].header.session_key)
+            .await
+            .expect("execution session should be persisted");
+        let execution_metadata = execution_session
+            .delivery_metadata_json
+            .as_deref()
+            .map(serde_json::from_str::<serde_json::Map<String, serde_json::Value>>)
+            .transpose()
+            .expect("execution delivery metadata should parse")
+            .expect("execution delivery metadata should exist");
+        assert_eq!(
+            execution_metadata
+                .get("channel.base_session_key")
+                .and_then(|value| value.as_str()),
+            Some("dingtalk:acc:chat1")
+        );
+        assert_eq!(
+            execution_metadata
                 .get("channel.delivery_session_key")
                 .and_then(|value| value.as_str()),
             Some("dingtalk:acc:chat1:child")
