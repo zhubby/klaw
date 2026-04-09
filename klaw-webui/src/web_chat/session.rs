@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use web_sys::WebSocket;
 
-use super::storage::PersistedSession;
+use super::{markdown::MarkdownCache, storage::PersistedSession};
 
 pub(super) const BUBBLE_MAX_WIDTH: f32 = 420.0;
-pub(super) const SESSION_LIST_WIDTH: f32 = 220.0;
+pub(super) const SESSION_LIST_WIDTH: f32 = 240.0;
 pub(super) const SESSION_WINDOW_DEFAULT_WIDTH: f32 = 560.0;
 pub(super) const SESSION_WINDOW_DEFAULT_HEIGHT: f32 = 620.0;
 pub(super) const SESSION_WINDOW_MIN_WIDTH: f32 = 360.0;
@@ -78,6 +78,7 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) open: bool,
     pub(in crate::web_chat) window_anchor: WindowAnchor,
     pub(in crate::web_chat) buffers: SessionBuffers,
+    pub(in crate::web_chat) markdown_cache: MarkdownCache,
 }
 
 impl SessionWindow {
@@ -91,6 +92,7 @@ impl SessionWindow {
                 .window_anchor
                 .unwrap_or_else(|| window_anchor_for_slot(0)),
             buffers: SessionBuffers::default(),
+            markdown_cache: MarkdownCache::default(),
         }
     }
 
@@ -145,5 +147,11 @@ pub(super) fn is_valid_session_key(session_key: &str) -> bool {
 }
 
 pub(super) fn session_title(number: u32) -> String {
-    format!("Session {number}")
+    format!("Agent {number}")
+}
+
+pub(super) fn migrate_legacy_session_title(title: &str) -> Option<String> {
+    let number = title.strip_prefix("Session ")?;
+    let parsed = number.parse::<u32>().ok()?;
+    Some(session_title(parsed))
 }

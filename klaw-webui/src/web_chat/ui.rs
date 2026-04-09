@@ -1,6 +1,6 @@
 use eframe::egui::{
-    self, Align, Align2, Button, ComboBox, Context, Frame, Id, Key, Layout, RichText, ScrollArea,
-    TextEdit, TopBottomPanel, vec2,
+    self, Align, Align2, Button, Color32, ComboBox, Context, Frame, Id, Key, Layout, RichText,
+    ScrollArea, Stroke, TextEdit, TopBottomPanel, vec2,
 };
 use egui_phosphor::regular;
 
@@ -10,6 +10,7 @@ use crate::{
 
 use super::{
     app::ChatApp,
+    markdown::{MarkdownCache, render_markdown, render_plain_message},
     session::{
         BUBBLE_MAX_WIDTH, ChatMessage, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH,
         SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT,
@@ -20,26 +21,53 @@ use super::{
 impl ChatApp {
     fn render_top_bar(&mut self, ctx: &Context) {
         TopBottomPanel::top("klaw-webui-toolbar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("New Session").clicked() {
-                    self.create_session();
-                }
-                if ui.button("Tile Windows").clicked() {
-                    self.tile_open_sessions();
-                }
-                if ui.button("Reset Layout").clicked() {
-                    self.reset_window_layout();
-                }
-                if ui.button("Gateway Token").clicked() {
-                    self.show_gateway_dialog = true;
-                }
-                if ui.button("Reconnect All").clicked() {
-                    self.reconnect_all_sessions();
-                }
-
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(toolbar_title()).strong());
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button(format!("{} Agent", regular::ROBOT), |ui| {
+                    if ui.button(format!("{} New Agent", regular::ROBOT)).clicked() {
+                        self.create_session();
+                        ui.close();
+                    }
                 });
+
+                ui.menu_button(format!("{} Window", regular::APP_WINDOW), |ui| {
+                    if ui
+                        .button(format!("{} Tile Windows", regular::APP_WINDOW))
+                        .clicked()
+                    {
+                        self.tile_open_sessions();
+                        ui.close();
+                    }
+                    if ui
+                        .button(format!("{} Reset Layout", regular::ARROWS_OUT))
+                        .clicked()
+                    {
+                        self.reset_window_layout();
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button(format!("{} Connection", regular::PLUG), |ui| {
+                    if ui.button(format!("{} Gateway Token", regular::KEY)).clicked() {
+                        self.show_gateway_dialog = true;
+                        ui.close();
+                    }
+                    if ui
+                        .button(format!("{} Reconnect All", regular::ARROWS_CLOCKWISE))
+                        .clicked()
+                    {
+                        self.reconnect_all_sessions();
+                        ui.close();
+                    }
+                });
+
+                let row_height = ui.spacing().interact_size.y;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), row_height),
+                    Layout::right_to_left(Align::Center),
+                    |ui| {
+                        ui.label(RichText::new(toolbar_title()).strong());
+                    },
+                );
             });
         });
     }
@@ -64,7 +92,7 @@ impl ChatApp {
                         }
                     });
                 ui.separator();
-                ui.label(format!("Sessions: {}", self.sessions.len()));
+                ui.label(format!("Agents: {}", self.sessions.len()));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some(active_session_key) = self.active_session_key.as_deref() {
@@ -78,7 +106,7 @@ impl ChatApp {
                             ui.label(&session.title);
                         }
                     } else {
-                        ui.label("No active session");
+                        ui.label("No active agent");
                     }
                 });
             });
@@ -122,16 +150,17 @@ impl ChatApp {
         let mut remove_session_key = None;
         let mut focus_session_key = None;
         let mut rename_session_key = None;
+        let mut copy_session_key = None;
 
         egui::SidePanel::left("klaw-webui-sessions")
             .resizable(true)
             .default_width(SESSION_LIST_WIDTH)
             .show(ctx, |ui| {
-                ui.heading("Sessions");
+                ui.heading(format!("{} Agents", regular::ROBOT));
                 ui.separator();
 
                 if self.sessions.is_empty() {
-                    ui.label("No sessions yet.");
+                    ui.label("No agents yet.");
                     return;
                 }
 
@@ -143,41 +172,53 @@ impl ChatApp {
                         let session = &self.sessions[index];
                         let is_active = self.active_session_key.as_deref()
                             == Some(session.session_key.as_str());
-                        let card = Frame::group(ui.style()).show(ui, |ui| {
+                        let state = session.connection_state();
+                        let compact_title = compact_sidebar_title(&session.title);
+                        let card = Frame::group(ui.style())
+                            .fill(if is_active {
+                                ui.visuals().faint_bg_color
+                            } else {
+                                ui.visuals().widgets.noninteractive.bg_fill
+                            })
+                            .stroke(if is_active {
+                                ui.visuals().selection.stroke
+                            } else {
+                                ui.visuals().widgets.noninteractive.bg_stroke
+                            })
+                            .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(regular::APP_WINDOW);
-                                ui.label(
-                                    RichText::new(&session.title).strong().size(if is_active {
-                                        15.0
-                                    } else {
-                                        14.0
-                                    }),
-                                );
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(regular::ROBOT);
+                                ui.label(RichText::new(compact_title).strong());
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(RichText::new(regular::DOTS_THREE).small().weak());
                                     if is_active {
                                         ui.label(RichText::new("Active").small().strong());
                                     }
+                                    ui.label(RichText::new(state.status_text()).small().weak());
+                                    ui.label(
+                                        RichText::new("●")
+                                            .small()
+                                            .color(connection_state_color(&state, ui.visuals())),
+                                    );
                                 });
                             });
-                            ui.add_space(4.0);
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(
-                                    RichText::new(session.connection_state().status_text()).small(),
-                                );
-                                ui.separator();
-                                ui.label(
-                                    RichText::new(if session.open { "Visible" } else { "Hidden" })
-                                        .small(),
-                                );
-                            });
-                            ui.add_space(2.0);
-                            ui.label(RichText::new(&session.session_key).small().weak());
                         });
-                        if card.response.clicked() {
+                        let response = card.response.on_hover_text(format!(
+                            "{}\n{}\n{}",
+                            session.title,
+                            session.session_key,
+                            if session.open {
+                                "Window visible"
+                            } else {
+                                "Window hidden"
+                            }
+                        ));
+                        if response.clicked() {
                             focus_session_key = Some(session.session_key.clone());
                         }
-                        card.response.context_menu(|ui| {
+                        response.context_menu(|ui| {
                             if ui
                                 .button(format!("{} Rename", regular::PENCIL_SIMPLE))
                                 .clicked()
@@ -185,12 +226,22 @@ impl ChatApp {
                                 rename_session_key = Some(session.session_key.clone());
                                 ui.close();
                             }
-                            if ui.button(format!("{} Delete", regular::TRASH)).clicked() {
+                            if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                copy_session_key = Some(session.session_key.clone());
+                                ui.close();
+                            }
+                            if ui
+                                .add(Button::new(
+                                    RichText::new(format!("{} Delete", regular::TRASH))
+                                        .color(ui.visuals().error_fg_color),
+                                ))
+                                .clicked()
+                            {
                                 remove_session_key = Some(session.session_key.clone());
                                 ui.close();
                             }
                         });
-                        ui.add_space(6.0);
+                        ui.add_space(4.0);
                     }
                 });
             });
@@ -203,6 +254,13 @@ impl ChatApp {
         {
             self.rename_session_key = Some(session_key);
             self.rename_session_input = self.sessions[index].title.clone();
+        }
+        if let Some(session_key) = copy_session_key {
+            ctx.output_mut(|o| {
+                o.commands
+                    .push(egui::OutputCommand::CopyText(session_key.clone()));
+            });
+            self.toasts.borrow_mut().success("Agent ID copied");
         }
         if let Some(session_key) = remove_session_key {
             self.remove_session(&session_key);
@@ -218,7 +276,7 @@ impl ChatApp {
         let mut submit = false;
         let mut cancel = false;
 
-        egui::Window::new("Rename Session")
+        egui::Window::new("Rename Agent")
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .collapsible(false)
             .resizable(false)
@@ -228,7 +286,7 @@ impl ChatApp {
                 let response = ui.add(
                     TextEdit::singleline(&mut self.rename_session_input)
                         .desired_width(f32::INFINITY)
-                        .hint_text("Session name"),
+                        .hint_text("Agent name"),
                 );
                 let submit_with_enter =
                     response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
@@ -385,7 +443,7 @@ impl ChatApp {
                             }
 
                             for message in &messages {
-                                render_message(ui, message);
+                                render_message(ui, &mut session.markdown_cache, message);
                                 ui.add_space(8.0);
                             }
                         });
@@ -484,14 +542,14 @@ impl ChatApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.sessions.is_empty() {
                 ui.centered_and_justified(|ui| {
-                    ui.label("No sessions open. Click New Session to start.");
+                    ui.label("No agents open. Click New Agent to start.");
                 });
                 return;
             }
 
-            ui.label(RichText::new("Workbench").strong());
+            ui.label(RichText::new("Agent Workspace").strong());
             ui.label(
-                RichText::new("Each session opens as its own egui window.")
+                RichText::new("Each agent opens as its own egui window.")
                     .small()
                     .weak(),
             );
@@ -533,7 +591,7 @@ fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState) {
     });
 }
 
-fn render_message(ui: &mut egui::Ui, message: &ChatMessage) {
+fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message: &ChatMessage) {
     let time_label = format_message_timestamp(message.timestamp_ms);
     match message.role {
         MessageRole::System => {
@@ -542,7 +600,7 @@ fn render_message(ui: &mut egui::Ui, message: &ChatMessage) {
                     ui.label(RichText::new("System").small().strong().weak());
                     ui.label(RichText::new(time_label).small().weak());
                 });
-                ui.label(RichText::new(&message.text).small().weak());
+                render_plain_message(ui, &message.text, ui.visuals().weak_text_color());
             });
         }
         MessageRole::Assistant | MessageRole::User => {
@@ -551,22 +609,81 @@ fn render_message(ui: &mut egui::Ui, message: &ChatMessage) {
                 MessageRole::User => "You",
                 MessageRole::System => "System",
             };
+            let dark_mode = ui.visuals().dark_mode;
             let layout = if matches!(message.role, MessageRole::User) {
                 Layout::right_to_left(Align::TOP)
             } else {
                 Layout::left_to_right(Align::TOP)
             };
             ui.with_layout(layout, |ui| {
-                Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_max_width(BUBBLE_MAX_WIDTH);
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(role_label).strong());
-                        ui.label(RichText::new(time_label).small().weak());
+                let (bubble_fill, bubble_stroke, heading_color, body_color, link_color) =
+                    match message.role {
+                        MessageRole::User if dark_mode => (
+                            Color32::from_rgb(49, 102, 214),
+                            Stroke::new(1.0, Color32::from_rgb(96, 145, 245)),
+                            Color32::WHITE,
+                            Color32::WHITE,
+                            Color32::from_rgb(219, 233, 255),
+                        ),
+                        MessageRole::User => (
+                            Color32::from_rgb(229, 239, 255),
+                            Stroke::new(1.0, Color32::from_rgb(170, 196, 250)),
+                            Color32::from_rgb(24, 55, 124),
+                            Color32::from_rgb(32, 43, 67),
+                            Color32::from_rgb(20, 83, 181),
+                        ),
+                        _ => (
+                            ui.visuals().widgets.noninteractive.bg_fill,
+                            ui.visuals().widgets.noninteractive.bg_stroke,
+                            ui.visuals().strong_text_color(),
+                            ui.visuals().text_color(),
+                            ui.visuals().hyperlink_color,
+                        ),
+                    };
+                Frame::group(ui.style())
+                    .fill(bubble_fill)
+                    .stroke(bubble_stroke)
+                    .inner_margin(if matches!(message.role, MessageRole::User) {
+                        10.0
+                    } else {
+                        8.0
+                    })
+                    .outer_margin(2.0)
+                    .corner_radius(if matches!(message.role, MessageRole::User) {
+                        12.0
+                    } else {
+                        6.0
+                    })
+                    .show(ui, |ui| {
+                        ui.set_max_width(BUBBLE_MAX_WIDTH);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(role_label).strong().color(heading_color));
+                            ui.label(RichText::new(time_label).small().color(heading_color));
+                        });
+                        ui.add_space(4.0);
+                        render_markdown(ui, markdown_cache, &message.text, body_color, link_color);
                     });
-                    ui.add_space(4.0);
-                    ui.label(&message.text);
-                });
             });
         }
+    }
+}
+
+fn compact_sidebar_title(title: &str) -> String {
+    const MAX_CHARS: usize = 24;
+    let count = title.chars().count();
+    if count <= MAX_CHARS {
+        return title.to_string();
+    }
+
+    let shortened = title.chars().take(MAX_CHARS - 1).collect::<String>();
+    format!("{shortened}…")
+}
+
+fn connection_state_color(state: &ConnectionState, visuals: &egui::Visuals) -> Color32 {
+    match state {
+        ConnectionState::Connected => Color32::from_rgb(41, 163, 90),
+        ConnectionState::Connecting => Color32::from_rgb(214, 149, 33),
+        ConnectionState::Disconnected => visuals.weak_text_color(),
+        ConnectionState::Error(_) => Color32::from_rgb(208, 67, 67),
     }
 }

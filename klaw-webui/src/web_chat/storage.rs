@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use web_sys::Storage;
 
 use super::session::{
-    WindowAnchor, generate_session_key, is_valid_session_key, session_title, window_anchor_for_slot,
+    WindowAnchor, generate_session_key, is_valid_session_key, migrate_legacy_session_title,
+    session_title, window_anchor_for_slot,
 };
 
 const APP_STATE_STORAGE_KEY: &str = "klaw_webui_workspace_state";
@@ -70,6 +71,9 @@ pub(super) fn load_workspace_state() -> PersistedWorkspaceState {
     }
 
     for (index, session) in state.sessions.iter_mut().enumerate() {
+        if let Some(updated_title) = migrate_legacy_session_title(&session.title) {
+            session.title = updated_title;
+        }
         if session.window_anchor.is_none() {
             session.window_anchor = Some(window_anchor_for_slot(index as u32));
         }
