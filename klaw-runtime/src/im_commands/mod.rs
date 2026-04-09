@@ -20,6 +20,77 @@ pub(super) fn second_arg_token(arg: Option<&str>) -> Option<&str> {
     parser::second_arg_token(arg)
 }
 
+fn approval_link_metadata_matches_route(
+    metadata: &BTreeMap<String, Value>,
+    route: &SessionRoute,
+    base_session_key: &str,
+) -> bool {
+    let linked_base = metadata
+        .get("channel.base_session_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let linked_delivery = metadata
+        .get("channel.delivery_session_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if linked_base.is_none() && linked_delivery.is_none() {
+        return false;
+    }
+    let base_matches = linked_base.is_some_and(|value| value == base_session_key);
+    let delivery_matches =
+        linked_delivery.is_some_and(|value| value == route.active_session_key.as_str());
+    let base_conflict = linked_base.is_some_and(|value| value != base_session_key);
+    let delivery_conflict =
+        linked_delivery.is_some_and(|value| value != route.active_session_key.as_str());
+    (base_matches || delivery_matches) && !base_conflict && !delivery_conflict
+}
+
+async fn approval_belongs_to_route(
+    runtime: &RuntimeBundle,
+    approval_session_key: &str,
+    route: &SessionRoute,
+    base_session_key: &str,
+) -> bool {
+    if approval_session_key == route.active_session_key || approval_session_key == base_session_key
+    {
+        return true;
+    }
+    let sessions = session_manager(runtime);
+    let Ok(session) = sessions.get_session(approval_session_key).await else {
+        return false;
+    };
+    let metadata = session
+        .delivery_metadata_json
+        .as_deref()
+        .and_then(parse_delivery_metadata_json)
+        .unwrap_or_default();
+    approval_link_metadata_matches_route(&metadata, route, base_session_key)
+}
+
+async fn approval_followup_context(
+    runtime: &RuntimeBundle,
+    approval_session_key: &str,
+    fallback_channel: &str,
+    fallback_chat_id: &str,
+) -> (String, String, BTreeMap<String, Value>) {
+    let sessions = session_manager(runtime);
+    let Ok(session) = sessions.get_session(approval_session_key).await else {
+        return (
+            fallback_channel.to_string(),
+            fallback_chat_id.to_string(),
+            BTreeMap::new(),
+        );
+    };
+    let metadata = session
+        .delivery_metadata_json
+        .as_deref()
+        .and_then(parse_delivery_metadata_json)
+        .unwrap_or_default();
+    (session.channel, session.chat_id, metadata)
+}
+
 pub(super) async fn try_handle(
     runtime: &RuntimeBundle,
     channel: String,
@@ -273,8 +344,8 @@ pub(super) async fn handle_im_command(
                     )));
                 }
             };
-            if approval.session_key != route.active_session_key
-                && approval.session_key != base_session_key
+            if !approval_belongs_to_route(runtime, &approval.session_key, &route, &base_session_key)
+                .await
             {
                 return Ok(Some(channel_response(
                     format!("❌ Approval `{approval_id}` does not belong to current session."),
@@ -337,17 +408,32 @@ pub(super) async fn handle_im_command(
                         shell_result:\n{}",
                         approved.id, approved.command_preview, execution_result
                     );
+                    let (followup_channel, followup_chat_id, stored_delivery_metadata) =
+                        approval_followup_context(
+                            runtime,
+                            &approved.session_key,
+                            &channel,
+                            &chat_id,
+                        )
+                        .await;
+                    let mut followup_request_metadata =
+                        build_approved_shell_followup_request_metadata(&request_metadata);
+                    for (key, value) in stored_delivery_metadata {
+                        if key.starts_with("channel.") || key.starts_with("webhook.") {
+                            followup_request_metadata.entry(key).or_insert(value);
+                        }
+                    }
                     let maybe_output = submit_and_get_output(
                         runtime,
-                        channel.clone(),
+                        followup_channel,
                         model_followup_input,
                         approved.session_key.clone(),
-                        chat_id.clone(),
+                        followup_chat_id,
                         "local-user".to_string(),
                         route.model_provider.clone(),
                         route.model.clone(),
                         Vec::new(),
-                        build_approved_shell_followup_request_metadata(&request_metadata),
+                        followup_request_metadata,
                     )
                     .await?;
                     match maybe_output {
@@ -390,8 +476,8 @@ pub(super) async fn handle_im_command(
                     )));
                 }
             };
-            if approval.session_key != route.active_session_key
-                && approval.session_key != base_session_key
+            if !approval_belongs_to_route(runtime, &approval.session_key, &route, &base_session_key)
+                .await
             {
                 return Ok(Some(channel_response(
                     format!("❌ Approval `{approval_id}` does not belong to current session."),

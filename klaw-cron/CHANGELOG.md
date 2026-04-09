@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-09
+
+### Fixed
+
+- `CronWorker` 现在会把 execution session 的 `channel.base_session_key` / `channel.delivery_session_key` 连同回复所需的 channel metadata 一起持久化到 session 索引，允许后续 `/approve` 之类的交互命令安全识别并认领 cron 触发的隔离执行 session
+
 ## 2026-03-31
 
 ### Fixed
