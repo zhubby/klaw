@@ -287,6 +287,39 @@ impl McpManager {
         }
     }
 
+    pub async fn restart_server(
+        &mut self,
+        key: &McpServerKey,
+        snapshot: &McpConfigSnapshot,
+    ) -> Result<McpRuntimeSnapshot, String> {
+        let Some(config) = snapshot
+            .servers
+            .iter()
+            .find(|config| McpServerKey::new(&config.id) == *key)
+            .cloned()
+        else {
+            return Err(format!("mcp server '{}' not found in config", key.as_str()));
+        };
+        if config.mode != McpServerMode::Stdio {
+            return Err(format!(
+                "mcp server '{}' only supports restart in stdio mode",
+                key.as_str()
+            ));
+        }
+        if !config.enabled {
+            return Err(format!(
+                "mcp server '{}' is disabled and cannot be restarted",
+                key.as_str()
+            ));
+        }
+
+        self.config = snapshot.clone();
+        self.stop_server(key).await;
+        self.start_server(config).await;
+        self.reconcile_statuses(snapshot);
+        Ok(self.runtime_snapshot(snapshot))
+    }
+
     #[must_use]
     pub fn snapshot(&self) -> Vec<McpServerStatus> {
         self.statuses
@@ -805,5 +838,37 @@ mod tests {
 
         assert_eq!(status.state, McpLifecycleState::Failed);
         assert_eq!(status.last_error.as_deref(), Some("timeout after 1s"));
+    }
+
+    #[tokio::test]
+    async fn restart_server_rejects_non_stdio_servers() {
+        let mut manager = McpManager::new(ToolRegistry::default());
+        let snapshot = McpConfigSnapshot {
+            startup_timeout_seconds: 30,
+            servers: vec![server("remote", McpServerMode::Sse, true)],
+        };
+
+        let err = manager
+            .restart_server(&McpServerKey::new("remote"), &snapshot)
+            .await
+            .expect_err("sse restart should be rejected");
+
+        assert!(err.contains("only supports restart in stdio mode"));
+    }
+
+    #[tokio::test]
+    async fn restart_server_rejects_disabled_stdio_servers() {
+        let mut manager = McpManager::new(ToolRegistry::default());
+        let snapshot = McpConfigSnapshot {
+            startup_timeout_seconds: 30,
+            servers: vec![server("disabled", McpServerMode::Stdio, false)],
+        };
+
+        let err = manager
+            .restart_server(&McpServerKey::new("disabled"), &snapshot)
+            .await
+            .expect_err("disabled restart should be rejected");
+
+        assert!(err.contains("is disabled"));
     }
 }

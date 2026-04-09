@@ -1,6 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::runtime_bridge::{request_mcp_status, request_sync_mcp};
+use crate::runtime_bridge::{
+    RuntimeRequestHandle, begin_restart_mcp_server_request, request_mcp_status, request_sync_mcp,
+};
 use crate::widgets::{ArrayEditor, KeyValueEditor, markdown};
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
@@ -8,7 +10,7 @@ use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode,
 };
-use klaw_mcp::{McpRuntimeSnapshot, McpServerDetail, McpSyncResult};
+use klaw_mcp::{McpLifecycleState, McpRuntimeSnapshot, McpServerDetail, McpSyncResult};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Receiver};
@@ -95,7 +97,7 @@ impl McpServerForm {
 
 #[derive(Debug, Clone)]
 struct ServerRuntimeStatus {
-    state: String,
+    state: McpLifecycleState,
     tool_count: usize,
     last_error: Option<String>,
 }
@@ -119,6 +121,8 @@ pub struct McpPanel {
     detail_markdown_cache: markdown::MarkdownCache,
     status_fetch_rx: Option<Receiver<Result<McpRuntimeSnapshot, String>>>,
     sync_fetch_rx: Option<Receiver<Result<McpSyncResult, String>>>,
+    restart_request: Option<RuntimeRequestHandle<McpRuntimeSnapshot>>,
+    restart_target_key: Option<String>,
     last_status_refresh_at: Option<Instant>,
     status_refresh_announce: bool,
     status_refresh_manual: bool,
@@ -197,6 +201,28 @@ impl McpPanel {
         }
     }
 
+    fn apply_runtime_snapshot(&mut self, result: McpRuntimeSnapshot) {
+        self.server_statuses = result
+            .statuses
+            .into_iter()
+            .map(|status| {
+                (
+                    status.key.as_str().to_string(),
+                    ServerRuntimeStatus {
+                        state: status.state,
+                        tool_count: status.tool_count,
+                        last_error: status.last_error,
+                    },
+                )
+            })
+            .collect();
+        self.server_details = result
+            .details
+            .into_iter()
+            .map(|detail| (detail.key.as_str().to_string(), detail))
+            .collect();
+    }
+
     fn poll_status_refresh(&mut self, notifications: &mut NotificationCenter) {
         let Some(rx) = self.status_fetch_rx.as_ref() else {
             return;
@@ -204,25 +230,7 @@ impl McpPanel {
 
         match rx.try_recv() {
             Ok(Ok(result)) => {
-                self.server_statuses = result
-                    .statuses
-                    .into_iter()
-                    .map(|status| {
-                        (
-                            status.key.as_str().to_string(),
-                            ServerRuntimeStatus {
-                                state: status.state.as_str().to_string(),
-                                tool_count: status.tool_count,
-                                last_error: status.last_error,
-                            },
-                        )
-                    })
-                    .collect();
-                self.server_details = result
-                    .details
-                    .into_iter()
-                    .map(|detail| (detail.key.as_str().to_string(), detail))
-                    .collect();
+                self.apply_runtime_snapshot(result);
                 self.status_fetch_rx = None;
                 if self.status_refresh_announce {
                     notifications.success("MCP status refreshed");
@@ -247,6 +255,30 @@ impl McpPanel {
                 }
                 self.status_refresh_announce = false;
                 self.status_refresh_manual = false;
+            }
+        }
+    }
+
+    fn poll_restart_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.restart_request.as_mut() else {
+            return;
+        };
+        let Some(result) = request.try_take_result() else {
+            return;
+        };
+
+        self.restart_request = None;
+        let target = self
+            .restart_target_key
+            .take()
+            .unwrap_or_else(|| "selected mcp server".to_string());
+        match result {
+            Ok(snapshot) => {
+                self.apply_runtime_snapshot(snapshot);
+                notifications.success(format!("Restarted MCP server {}", target));
+            }
+            Err(err) => {
+                notifications.error(format!("Failed to restart {}: {}", target, err));
             }
         }
     }
@@ -325,6 +357,29 @@ impl McpPanel {
         }
     }
 
+    fn restart_server(&mut self, id: &str, notifications: &mut NotificationCenter) {
+        if self.restart_request.is_some() {
+            notifications.info("An MCP server restart is already in progress");
+            return;
+        }
+        self.mark_server_restarting(id);
+        self.restart_target_key = Some(id.to_string());
+        self.restart_request = Some(begin_restart_mcp_server_request(id.to_string()));
+    }
+
+    fn mark_server_restarting(&mut self, id: &str) {
+        // Right after the user requests a restart, the old runtime snapshot may still
+        // report `running`. Force the row into `starting` until the fresh snapshot arrives.
+        self.server_statuses.insert(
+            id.to_string(),
+            ServerRuntimeStatus {
+                state: McpLifecycleState::Starting,
+                tool_count: 0,
+                last_error: None,
+            },
+        );
+    }
+
     fn open_add_server(&mut self) {
         self.form = Some(McpServerForm::new());
     }
@@ -396,11 +451,11 @@ impl McpPanel {
         Ok(config)
     }
 
-    fn server_status_text(&self, id: &str) -> &str {
+    fn server_state(&self, id: &str) -> McpLifecycleState {
         self.server_statuses
             .get(id)
-            .map(|status| status.state.as_str())
-            .unwrap_or("stopped")
+            .map(|status| status.state)
+            .unwrap_or(McpLifecycleState::Stopped)
     }
 
     fn server_tool_count(&self, id: &str) -> usize {
@@ -606,6 +661,7 @@ impl PanelRenderer for McpPanel {
         self.ensure_store_loaded(notifications);
         self.poll_manager_sync(notifications);
         self.poll_status_refresh(notifications);
+        self.poll_restart_request(notifications);
         self.refresh_status_if_due();
         ui.ctx().request_repaint_after(MCP_STATUS_POLL_INTERVAL);
 
@@ -621,6 +677,10 @@ impl PanelRenderer for McpPanel {
                     ui.spinner();
                     ui.label("Refreshing runtime status...");
                 }
+            }
+            if self.restart_request.is_some() {
+                ui.spinner();
+                ui.label("Restarting MCP server...");
             }
         });
         ui.separator();
@@ -661,6 +721,7 @@ impl PanelRenderer for McpPanel {
             let mut edit_server_id = None;
             let mut delete_server_id = None;
             let mut detail_server_id = None;
+            let mut restart_server_id = None;
             let mut open_settings_from_menu = false;
             let available_height = ui.available_height();
 
@@ -717,7 +778,7 @@ impl PanelRenderer for McpPanel {
                         let is_selected = self.selected_server.as_deref() == Some(server_id);
                         row.set_selected(is_selected);
 
-                        let status = self.server_status_text(server_id);
+                        let state = self.server_state(server_id);
                         let tool_count = self.server_tool_count(server_id);
 
                         row.col(|ui| {
@@ -727,13 +788,10 @@ impl PanelRenderer for McpPanel {
                             ui.label(if server.enabled { "yes" } else { "no" });
                         });
                         row.col(|ui| {
-                            let color = match status {
-                                "running" => egui::Color32::LIGHT_GREEN,
-                                "failed" => egui::Color32::LIGHT_RED,
-                                "starting" => egui::Color32::YELLOW,
-                                _ => egui::Color32::GRAY,
-                            };
-                            ui.label(RichText::new(status).color(color));
+                            ui.label(
+                                RichText::new(server_state_label(state))
+                                    .color(server_state_color(state)),
+                            );
                         });
                         row.col(|ui| {
                             ui.label(match server.mode {
@@ -780,6 +838,14 @@ impl PanelRenderer for McpPanel {
                                 open_settings_from_menu = true;
                                 ui.close();
                             }
+                            if can_restart_server(server)
+                                && ui
+                                    .button(format!("{} Restart", regular::ARROW_CLOCKWISE))
+                                    .clicked()
+                            {
+                                restart_server_id = Some(server_id_clone.clone());
+                                ui.close();
+                            }
                             ui.separator();
                             if ui
                                 .add(egui::Button::new(
@@ -804,6 +870,9 @@ impl PanelRenderer for McpPanel {
             if open_settings_from_menu && self.global_settings_form.is_none() {
                 self.open_global_settings();
             }
+            if let Some(id) = restart_server_id {
+                self.restart_server(&id, notifications);
+            }
             if let Some(id) = delete_server_id {
                 self.delete_server(&id, notifications);
             }
@@ -820,7 +889,9 @@ fn build_server_detail_markdown(
     status: Option<&ServerRuntimeStatus>,
     detail: Option<&McpServerDetail>,
 ) -> String {
-    let state = status.map(|item| item.state.as_str()).unwrap_or("stopped");
+    let state = status
+        .map(|item| server_state_label(item.state))
+        .unwrap_or(server_state_label(McpLifecycleState::Stopped));
     let tool_count = status.map(|item| item.tool_count).unwrap_or(0);
     let last_error = status
         .and_then(|item| item.last_error.as_deref())
@@ -858,6 +929,28 @@ fn command_display(server: &McpServerConfig) -> String {
             }
         }
         McpServerMode::Sse => server.url.clone().unwrap_or_else(|| "-".to_string()),
+    }
+}
+
+fn can_restart_server(server: &McpServerConfig) -> bool {
+    server.mode == McpServerMode::Stdio && server.enabled
+}
+
+fn server_state_label(state: McpLifecycleState) -> &'static str {
+    match state {
+        McpLifecycleState::Starting => "starting",
+        McpLifecycleState::Running => "running",
+        McpLifecycleState::Stopped => "stopped",
+        McpLifecycleState::Failed => "failed",
+    }
+}
+
+fn server_state_color(state: McpLifecycleState) -> egui::Color32 {
+    match state {
+        McpLifecycleState::Starting => egui::Color32::from_rgb(245, 191, 66),
+        McpLifecycleState::Running => egui::Color32::from_rgb(82, 196, 107),
+        McpLifecycleState::Stopped => egui::Color32::from_rgb(132, 146, 166),
+        McpLifecycleState::Failed => egui::Color32::from_rgb(232, 86, 86),
     }
 }
 
@@ -940,7 +1033,11 @@ mod tests {
     fn server_status_defaults_to_stopped_without_runtime_data() {
         let panel = McpPanel::default();
 
-        assert_eq!(panel.server_status_text("missing"), "stopped");
+        assert_eq!(panel.server_state("missing"), McpLifecycleState::Stopped);
+        assert_eq!(
+            server_state_label(panel.server_state("missing")),
+            server_state_label(McpLifecycleState::Stopped)
+        );
         assert_eq!(panel.server_tool_count("missing"), 0);
     }
 
@@ -959,5 +1056,83 @@ mod tests {
         };
 
         assert_eq!(command_display(&server), "npx @browsermcp/mcp@latest");
+    }
+
+    #[test]
+    fn restart_action_only_shows_for_enabled_stdio_servers() {
+        let enabled_stdio = McpServerConfig {
+            id: "browser".to_string(),
+            enabled: true,
+            mode: McpServerMode::Stdio,
+            command: Some("npx".to_string()),
+            args: vec!["@browsermcp/mcp".to_string()],
+            env: BTreeMap::new(),
+            cwd: None,
+            url: None,
+            headers: BTreeMap::new(),
+        };
+        let disabled_stdio = McpServerConfig {
+            enabled: false,
+            ..enabled_stdio.clone()
+        };
+        let sse_server = McpServerConfig {
+            id: "context7".to_string(),
+            enabled: true,
+            mode: McpServerMode::Sse,
+            command: None,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            cwd: None,
+            url: Some("https://mcp.context7.com/mcp".to_string()),
+            headers: BTreeMap::new(),
+        };
+
+        assert!(can_restart_server(&enabled_stdio));
+        assert!(!can_restart_server(&disabled_stdio));
+        assert!(!can_restart_server(&sse_server));
+    }
+
+    #[test]
+    fn mark_server_restarting_updates_row_state_immediately() {
+        let mut panel = McpPanel::default();
+        panel.server_statuses.insert(
+            "browser".to_string(),
+            ServerRuntimeStatus {
+                state: McpLifecycleState::Running,
+                tool_count: 12,
+                last_error: Some("old error".to_string()),
+            },
+        );
+
+        panel.mark_server_restarting("browser");
+
+        let status = panel
+            .server_statuses
+            .get("browser")
+            .expect("server status should exist");
+        assert_eq!(status.state, McpLifecycleState::Starting);
+        assert_eq!(status.tool_count, 0);
+        assert_eq!(status.last_error, None);
+    }
+
+    #[test]
+    fn server_state_helpers_define_distinct_labels_and_colors() {
+        assert_eq!(server_state_label(McpLifecycleState::Starting), "starting");
+        assert_eq!(server_state_label(McpLifecycleState::Running), "running");
+        assert_eq!(server_state_label(McpLifecycleState::Stopped), "stopped");
+        assert_eq!(server_state_label(McpLifecycleState::Failed), "failed");
+
+        assert_ne!(
+            server_state_color(McpLifecycleState::Stopped),
+            server_state_color(McpLifecycleState::Running)
+        );
+        assert_ne!(
+            server_state_color(McpLifecycleState::Stopped),
+            server_state_color(McpLifecycleState::Failed)
+        );
+        assert_ne!(
+            server_state_color(McpLifecycleState::Stopped),
+            server_state_color(McpLifecycleState::Starting)
+        );
     }
 }

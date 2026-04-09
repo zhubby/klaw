@@ -373,6 +373,21 @@ impl GuiCommand {
                                                     let _ = response.send(result);
                                                 });
                                             }
+                                            Some(klaw_gui::RuntimeCommand::RestartMcpServer { server_id, response }) => {
+                                                let manager = Arc::clone(&mcp_manager);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            let mcp_snapshot = McpConfigSnapshot::from_mcp_config(&snapshot.config.mcp);
+                                                            let mut guard = manager.lock().await;
+                                                            guard.restart_server(&klaw_mcp::McpServerKey::new(&server_id), &mcp_snapshot).await
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
+                                            }
                                             Some(klaw_gui::RuntimeCommand::SyncMcp { response }) => {
                                                 let manager = Arc::clone(&mcp_manager);
                                                 tokio::task::spawn_local(async move {

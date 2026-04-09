@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-04-09
+
+### Added
+
+- `McpManager` 新增按 server id 重启单个 `stdio` MCP server 的能力，供 GUI 面板直接触发定向重启
+
+### Fixed
+
+- 单实例 MCP 重启现在会显式拒绝 `sse` 或已禁用的 server，避免 GUI 动作误触发无效重启
+
 ## 2026-03-26
 
 ### Fixed

@@ -4,7 +4,7 @@ use klaw_acp::{
 use klaw_channel::{ChannelInstanceKey, ChannelInstanceStatus, ChannelSyncResult};
 use klaw_config::TailscaleMode;
 use klaw_llm::ToolDefinition;
-use klaw_mcp::{McpRuntimeSnapshot, McpSyncResult};
+use klaw_mcp::{McpRuntimeSnapshot, McpServerKey, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -59,6 +59,10 @@ pub enum RuntimeCommand {
     RestartChannel {
         instance_key: String,
         response: mpsc::Sender<Result<ChannelSyncResult, String>>,
+    },
+    RestartMcpServer {
+        server_id: String,
+        response: mpsc::Sender<Result<McpRuntimeSnapshot, String>>,
     },
     SyncMcp {
         response: mpsc::Sender<Result<McpSyncResult, String>>,
@@ -128,6 +132,7 @@ static RUNTIME_COMMAND_SENDER: OnceLock<Mutex<Option<UnboundedSender<RuntimeComm
 static LOG_BRIDGE: OnceLock<Mutex<Option<Arc<GuiLogBridge>>>> = OnceLock::new();
 const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(1);
 const RUNTIME_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
+const RUNTIME_MCP_RESTART_TIMEOUT: Duration = Duration::from_secs(90);
 const LOG_BRIDGE_MAX_CHUNKS: usize = 8_192;
 
 fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
@@ -459,6 +464,34 @@ pub fn begin_restart_channel_request(
     instance_key: String,
 ) -> RuntimeRequestHandle<ChannelSyncResult> {
     spawn_request(move || request_restart_channel(&instance_key))
+}
+
+pub fn request_restart_mcp_server(server_id: &str) -> Result<McpRuntimeSnapshot, String> {
+    let server_id = McpServerKey::new(server_id).as_str().to_string();
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::RestartMcpServer {
+            server_id,
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(
+        response_rx,
+        RUNTIME_MCP_RESTART_TIMEOUT,
+        "restart mcp server",
+    )?
+}
+
+pub fn begin_restart_mcp_server_request(
+    server_id: String,
+) -> RuntimeRequestHandle<McpRuntimeSnapshot> {
+    spawn_request(move || request_restart_mcp_server(&server_id))
 }
 
 pub fn request_sync_providers() -> Result<ProviderRuntimeSnapshot, String> {
