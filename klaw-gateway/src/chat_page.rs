@@ -12,32 +12,23 @@ pub async fn chat_page_handler() -> Html<&'static str> {
     Html(CHAT_INDEX_HTML)
 }
 
+fn embedded_asset(bytes: &'static [u8], content_type: &'static str) -> Response<Body> {
+    let mut response = Response::new(Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=3600"),
+    );
+    response
+}
+
 pub async fn chat_pkg_js_handler() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/javascript; charset=utf-8"),
-        )
-        .header(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=3600"),
-        )
-        .body(Body::from(CHAT_PKG_JS))
-        .unwrap_or_else(|_| Response::new(Body::from(Vec::from(CHAT_PKG_JS))))
+    embedded_asset(CHAT_PKG_JS, "application/javascript; charset=utf-8")
 }
 
 pub async fn chat_pkg_wasm_handler() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/wasm"),
-        )
-        .header(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=3600"),
-        )
-        .body(Body::from(CHAT_PKG_WASM))
-        .unwrap_or_else(|_| Response::new(Body::from(Vec::from(CHAT_PKG_WASM))))
+    embedded_asset(CHAT_PKG_WASM, "application/wasm")
 }

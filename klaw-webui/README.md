@@ -7,19 +7,18 @@
 
 ## 构建并刷新 gateway 内嵌资源
 
-在仓库根目录：
+唯一推荐入口是在仓库根目录执行：
 
 ```bash
 make webui-wasm
 ```
 
-或手动：
+该目标会自动：
 
-```bash
-rustup target add wasm32-unknown-unknown
-cargo build -p klaw-webui --target wasm32-unknown-unknown --release
-wasm-bindgen target/wasm32-unknown-unknown/release/klaw_webui.wasm \
-  --out-dir klaw-gateway/static/chat/pkg --target web --no-typescript
-```
+- 确保 `wasm32-unknown-unknown` target 已安装
+- 编译 `klaw-webui`
+- 运行 `wasm-bindgen` 并把产物写入 `klaw-gateway/static/chat/pkg/`
 
-`wasm-bindgen` CLI 的补丁版本须与 crate 依赖一致（当前 workspace 为 `0.2.114`）。输出目录 `klaw-gateway/static/chat/pkg/` 已被 `.gitignore` 忽略；生成后再 `cargo build -p klaw-gateway` 才会通过 `include_*` 打入二进制。
+如果本机缺少 `wasm-bindgen` CLI，`make` 会直接提示按 workspace 当前版本安装。
+
+`klaw-gateway/static/chat/pkg/` 已被 `.gitignore` 忽略；生成后再执行 `cargo build -p klaw-gateway`，`include_*` 才能把这些资源打入二进制。

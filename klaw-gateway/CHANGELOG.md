@@ -9,6 +9,7 @@
 ### Changed
 
 - `klaw-gateway/static/chat/pkg/`（wasm-bindgen 生成的 `.js` / `.wasm`）改为 `.gitignore`，构建前需本地生成后再编译 gateway
+- `/chat` 内嵌资源响应现收敛为共享 helper，保留原有路径与缓存行为但减少重复代码；README 也改为统一指向根目录 `make webui-wasm`
 
 ## 2026-03-29
 

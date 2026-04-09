@@ -13,6 +13,7 @@ WASM_TARGET := wasm32-unknown-unknown
 WEBUI_PKG_DIR := klaw-gateway/static/chat/pkg
 WEBUI_WASM_RELEASE := target/$(WASM_TARGET)/release/klaw_webui.wasm
 WASM_BINDGEN ?= wasm-bindgen
+WASM_BINDGEN_VERSION := $(shell awk -F' *= *' '/^wasm-bindgen = / {gsub(/"/,"",$$2); print $$2; exit}' Cargo.toml)
 
 .PHONY: build-macos-app package-macos-dmg clean-macos-artifacts webui-wasm clean-webui-wasm
 
@@ -31,13 +32,13 @@ package-macos-dmg: build-macos-app
 clean-macos-artifacts:
 	rm -rf $(DIST_DIR)
 
-# 生成 `klaw-gateway/static/chat/pkg/`（需 wasm-bindgen CLI，版本与 workspace 一致，当前为 0.2.114）
+# 生成 `klaw-gateway/static/chat/pkg/`（需已安装与 workspace 对齐版本的 wasm-bindgen CLI）
 webui-wasm:
 	rustup target add $(WASM_TARGET)
 	cargo build -p klaw-webui --target $(WASM_TARGET) --release
 	@command -v $(WASM_BINDGEN) >/dev/null 2>&1 || { \
 		echo "error: $(WASM_BINDGEN) not found; install e.g." >&2; \
-		echo "  cargo install -f wasm-bindgen-cli --version 0.2.114" >&2; \
+		echo "  cargo install -f wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION)" >&2; \
 		exit 1; \
 	}
 	mkdir -p $(WEBUI_PKG_DIR)

@@ -37,20 +37,13 @@
 
 ## Web UI（WASM）构建
 
-更新内嵌聊天资源前，在仓库根目录执行（需已安装 `wasm-bindgen` CLI，版本与 workspace 一致，当前为 **0.2.114**）：
+更新内嵌聊天资源前，在仓库根目录执行：
 
 ```bash
 make webui-wasm
 ```
 
-等价于：
-
-```bash
-rustup target add wasm32-unknown-unknown
-cargo build -p klaw-webui --target wasm32-unknown-unknown --release
-wasm-bindgen target/wasm32-unknown-unknown/release/klaw_webui.wasm \
-  --out-dir klaw-gateway/static/chat/pkg --target web --no-typescript
-```
+这是唯一推荐入口；它会负责 target 检查、`klaw-webui` 编译，以及把 wasm-bindgen 产物写入 `klaw-gateway/static/chat/pkg/`。如果本机缺少 `wasm-bindgen` CLI，`make` 会按 workspace 当前版本给出安装提示。
 
 清理本地生成的 `pkg/`（可选）：`make clean-webui-wasm`
 

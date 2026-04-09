@@ -2,26 +2,17 @@
 
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
-use crate::presentation::{
-    BUBBLE_MAX_WIDTH, CHAT_COLUMN_MAX_WIDTH, COMPOSER_MAX_WIDTH, ConnectionViewState, MessageRole,
-    can_send, classify_incoming_text, composer_hint_text, empty_state_copy, status_text,
-    toolbar_title,
-};
+use crate::{ConnectionState, MessageRole, classify_message_role, toolbar_title};
 use eframe::egui::{self, Align, Color32, Frame, RichText, ScrollArea, Stroke, TextEdit};
 use uuid::Uuid;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 use web_sys::{MessageEvent, WebSocket};
 
+const CHAT_COLUMN_MAX_WIDTH: f32 = 760.0;
+const COMPOSER_MAX_WIDTH: f32 = 760.0;
+const BUBBLE_MAX_WIDTH: f32 = 520.0;
 const SESSION_STORAGE_KEY: &str = "klaw_webui_session_key";
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ConnState {
-    Disconnected,
-    Connecting,
-    Connected,
-    Error(String),
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ChatMessage {
@@ -113,7 +104,7 @@ pub struct ChatApp {
     ctx: egui::Context,
     messages: Rc<RefCell<Vec<ChatMessage>>>,
     pending_local_echoes: Rc<RefCell<VecDeque<String>>>,
-    state: Rc<RefCell<ConnState>>,
+    state: Rc<RefCell<ConnectionState>>,
     ws: Rc<RefCell<Option<WebSocket>>>,
     draft: String,
     did_request_initial_connect: bool,
@@ -127,27 +118,22 @@ impl ChatApp {
             ctx: cc.egui_ctx.clone(),
             messages: Rc::new(RefCell::new(Vec::new())),
             pending_local_echoes: Rc::new(RefCell::new(VecDeque::new())),
-            state: Rc::new(RefCell::new(ConnState::Disconnected)),
+            state: Rc::new(RefCell::new(ConnectionState::Disconnected)),
             ws: Rc::new(RefCell::new(None)),
             draft: String::new(),
             did_request_initial_connect: false,
         }
     }
 
-    fn connection_view_state(&self) -> ConnectionViewState {
-        match self.state.borrow().clone() {
-            ConnState::Disconnected => ConnectionViewState::Disconnected,
-            ConnState::Connecting => ConnectionViewState::Connecting,
-            ConnState::Connected => ConnectionViewState::Connected,
-            ConnState::Error(error) => ConnectionViewState::Error(error),
-        }
+    fn connection_state(&self) -> ConnectionState {
+        self.state.borrow().clone()
     }
 
     fn close_socket(&mut self) {
         if let Some(ws) = self.ws.borrow_mut().take() {
             let _ = ws.close();
         }
-        *self.state.borrow_mut() = ConnState::Disconnected;
+        *self.state.borrow_mut() = ConnectionState::Disconnected;
     }
 
     fn try_connect(&mut self) {
@@ -155,15 +141,15 @@ impl ChatApp {
         let url = match ws_chat_url(&self.session_key, self.gateway_token.as_deref()) {
             Ok(u) => u,
             Err(e) => {
-                *self.state.borrow_mut() = ConnState::Error(e);
+                *self.state.borrow_mut() = ConnectionState::Error(e);
                 return;
             }
         };
-        *self.state.borrow_mut() = ConnState::Connecting;
+        *self.state.borrow_mut() = ConnectionState::Connecting;
         let ws = match WebSocket::new(&url.as_str()) {
             Ok(w) => w,
             Err(e) => {
-                *self.state.borrow_mut() = ConnState::Error(format!("WebSocket::new: {e:?}"));
+                *self.state.borrow_mut() = ConnectionState::Error(format!("WebSocket::new: {e:?}"));
                 return;
             }
         };
@@ -179,8 +165,7 @@ impl ChatApp {
             } else {
                 "[non-text message]".to_string()
             };
-            let role =
-                classify_incoming_text(&mut pending_local_echoes.borrow_mut(), text.as_str());
+            let role = classify_message_role(&mut pending_local_echoes.borrow_mut(), text.as_str());
             messages.borrow_mut().push(ChatMessage { text, role });
             ctx.request_repaint();
         }) as Box<dyn FnMut(MessageEvent)>);
@@ -191,7 +176,7 @@ impl ChatApp {
         let messages_open = self.messages.clone();
         let ctx_open = self.ctx.clone();
         let onopen = Closure::wrap(Box::new(move |_e: JsValue| {
-            *state_open.borrow_mut() = ConnState::Connected;
+            *state_open.borrow_mut() = ConnectionState::Connected;
             messages_open.borrow_mut().push(ChatMessage {
                 text: "Connected to the Klaw room.".to_string(),
                 role: MessageRole::System,
@@ -204,9 +189,9 @@ impl ChatApp {
         let state_err = self.state.clone();
         let ctx_err = self.ctx.clone();
         let onerror = Closure::wrap(Box::new(move |_e: JsValue| {
-            if *state_err.borrow() == ConnState::Connecting {
+            if *state_err.borrow() == ConnectionState::Connecting {
                 *state_err.borrow_mut() =
-                    ConnState::Error("WebSocket error before open".to_string());
+                    ConnectionState::Error("WebSocket error before open".to_string());
             }
             ctx_err.request_repaint();
         }) as Box<dyn FnMut(JsValue)>);
@@ -219,7 +204,7 @@ impl ChatApp {
         let ws_cell = self.ws.clone();
         let onclose = Closure::wrap(Box::new(move |_e: JsValue| {
             ws_cell.borrow_mut().take();
-            *state_close.borrow_mut() = ConnState::Disconnected;
+            *state_close.borrow_mut() = ConnectionState::Disconnected;
             messages_close.borrow_mut().push(ChatMessage {
                 text: "Connection closed.".to_string(),
                 role: MessageRole::System,
@@ -247,19 +232,18 @@ impl ChatApp {
             .borrow_mut()
             .push_back(text.clone());
         if ws.send_with_str(&text).is_err() {
-            *self.state.borrow_mut() = ConnState::Error("send failed".to_string());
+            *self.state.borrow_mut() = ConnectionState::Error("send failed".to_string());
             return;
         }
         self.draft.clear();
     }
 
-    fn render_top_bar(&mut self, ctx: &egui::Context, view_state: &ConnectionViewState) {
-        let status = status_text(view_state);
-        let status_color = match view_state {
-            ConnectionViewState::Connected => Color32::from_rgb(123, 216, 157),
-            ConnectionViewState::Connecting => Color32::from_rgb(240, 190, 110),
-            ConnectionViewState::Disconnected => Color32::from_rgb(164, 169, 188),
-            ConnectionViewState::Error(_) => Color32::from_rgb(255, 130, 130),
+    fn render_top_bar(&mut self, ctx: &egui::Context, state: &ConnectionState) {
+        let status_color = match state {
+            ConnectionState::Connected => Color32::from_rgb(123, 216, 157),
+            ConnectionState::Connecting => Color32::from_rgb(240, 190, 110),
+            ConnectionState::Disconnected => Color32::from_rgb(164, 169, 188),
+            ConnectionState::Error(_) => Color32::from_rgb(255, 130, 130),
         };
 
         egui::TopBottomPanel::top("toolbar")
@@ -286,19 +270,23 @@ impl ChatApp {
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        if !matches!(view_state, ConnectionViewState::Connected)
+                        if !matches!(state, ConnectionState::Connected)
                             && ui.small_button("Reconnect").clicked()
                         {
                             self.try_connect();
                         }
-                        ui.label(RichText::new(status).color(status_color).strong());
+                        ui.label(
+                            RichText::new(state.status_text())
+                                .color(status_color)
+                                .strong(),
+                        );
                     });
                 });
             });
     }
 
-    fn render_empty_state(&self, ui: &mut egui::Ui, view_state: &ConnectionViewState) {
-        let copy = empty_state_copy(view_state);
+    fn render_empty_state(&self, ui: &mut egui::Ui, state: &ConnectionState) {
+        let copy = state.empty_state_copy();
         ui.add_space(72.0);
         ui.vertical_centered(|ui| {
             ui.label(
@@ -358,14 +346,14 @@ impl ChatApp {
         }
     }
 
-    fn render_chat_surface(&self, ui: &mut egui::Ui, view_state: &ConnectionViewState) {
+    fn render_chat_surface(&self, ui: &mut egui::Ui, state: &ConnectionState) {
         let messages = self.messages.borrow();
         ui.vertical_centered(|ui| {
             ui.set_max_width(CHAT_COLUMN_MAX_WIDTH);
             ui.set_width(ui.available_width().min(CHAT_COLUMN_MAX_WIDTH));
 
             if messages.is_empty() {
-                self.render_empty_state(ui, view_state);
+                self.render_empty_state(ui, state);
                 return;
             }
 
@@ -383,9 +371,9 @@ impl ChatApp {
         });
     }
 
-    fn render_composer(&mut self, ctx: &egui::Context, view_state: &ConnectionViewState) {
-        let can_send = can_send(view_state);
-        let hint = composer_hint_text(view_state);
+    fn render_composer(&mut self, ctx: &egui::Context, state: &ConnectionState) {
+        let can_send = state.can_send();
+        let hint = state.composer_hint_text();
 
         egui::TopBottomPanel::bottom("composer")
             .frame(
@@ -437,16 +425,16 @@ impl eframe::App for ChatApp {
             style.visuals.override_text_color = Some(Color32::from_rgb(235, 239, 245));
         });
 
-        let view_state = self.connection_view_state();
-        self.render_top_bar(ctx, &view_state);
+        let state = self.connection_state();
+        self.render_top_bar(ctx, &state);
 
         egui::CentralPanel::default()
             .frame(Frame::new().fill(Color32::from_rgb(14, 17, 24)))
             .show(ctx, |ui| {
                 ui.add_space(18.0);
-                self.render_chat_surface(ui, &view_state);
+                self.render_chat_surface(ui, &state);
             });
 
-        self.render_composer(ctx, &view_state);
+        self.render_composer(ctx, &state);
     }
 }
