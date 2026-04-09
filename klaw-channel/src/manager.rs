@@ -1,6 +1,11 @@
-use crate::{ChannelResult, ChannelRuntime, dingtalk::DingtalkChannel, telegram::TelegramChannel};
+use crate::{
+    ChannelResult, ChannelRuntime, dingtalk::DingtalkChannel, telegram::TelegramChannel,
+    websocket::WebsocketChannel,
+};
 use ::time::OffsetDateTime;
-use klaw_config::{ChannelsConfig, DingtalkConfig, LocalAttachmentConfig, TelegramConfig};
+use klaw_config::{
+    ChannelsConfig, DingtalkConfig, LocalAttachmentConfig, TelegramConfig, WebsocketConfig,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -15,6 +20,7 @@ const CHANNEL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_
 pub enum ChannelKind {
     Dingtalk,
     Telegram,
+    Websocket,
     Feishu,
 }
 
@@ -24,6 +30,7 @@ impl ChannelKind {
         match self {
             Self::Dingtalk => "dingtalk",
             Self::Telegram => "telegram",
+            Self::Websocket => "websocket",
             Self::Feishu => "feishu",
         }
     }
@@ -52,6 +59,7 @@ impl ChannelInstanceKey {
         let kind = match kind_raw {
             "dingtalk" => ChannelKind::Dingtalk,
             "telegram" => ChannelKind::Telegram,
+            "websocket" => ChannelKind::Websocket,
             "feishu" => ChannelKind::Feishu,
             _ => return Err(format!("invalid channel kind '{kind_raw}'")),
         };
@@ -74,6 +82,7 @@ impl fmt::Display for ChannelInstanceKey {
 pub enum ChannelInstanceConfig {
     Dingtalk(DingtalkConfig),
     Telegram(TelegramConfig),
+    Websocket(WebsocketConfig),
 }
 
 impl ChannelInstanceConfig {
@@ -82,6 +91,7 @@ impl ChannelInstanceConfig {
         match self {
             Self::Dingtalk(_) => ChannelKind::Dingtalk,
             Self::Telegram(_) => ChannelKind::Telegram,
+            Self::Websocket(_) => ChannelKind::Websocket,
         }
     }
 
@@ -90,6 +100,7 @@ impl ChannelInstanceConfig {
         match self {
             Self::Dingtalk(config) => &config.id,
             Self::Telegram(config) => &config.id,
+            Self::Websocket(config) => &config.id,
         }
     }
 
@@ -98,6 +109,7 @@ impl ChannelInstanceConfig {
         match self {
             Self::Dingtalk(config) => config.enabled,
             Self::Telegram(config) => config.enabled,
+            Self::Websocket(config) => config.enabled,
         }
     }
 
@@ -129,6 +141,13 @@ impl ChannelConfigSnapshot {
                 &mut instances,
                 &mut keys,
                 ChannelInstanceConfig::Telegram(config.clone()),
+            )?;
+        }
+        for config in &channels.websocket {
+            push_unique_instance(
+                &mut instances,
+                &mut keys,
+                ChannelInstanceConfig::Websocket(config.clone()),
             )?;
         }
 
@@ -347,6 +366,9 @@ impl ChannelDriverFactory for DefaultChannelDriverFactory {
             ChannelInstanceConfig::Telegram(config) => Ok(Box::new(
                 TelegramChannel::from_app_config(config.clone(), self.local_attachments.clone())?,
             )),
+            ChannelInstanceConfig::Websocket(config) => {
+                Ok(Box::new(WebsocketChannel::from_app_config(config.clone())))
+            }
         }
     }
 }
@@ -855,6 +877,15 @@ mod tests {
         })
     }
 
+    fn websocket(id: &str, enabled: bool) -> ChannelInstanceConfig {
+        ChannelInstanceConfig::Websocket(WebsocketConfig {
+            id: id.to_string(),
+            enabled,
+            show_reasoning: false,
+            stream_output: true,
+        })
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn sync_plans_keep_start_stop_and_restart() {
         let local = tokio::task::LocalSet::new();
@@ -915,6 +946,9 @@ mod tests {
                     ChannelInstanceConfig::Dingtalk(config) => config,
                     ChannelInstanceConfig::Telegram(_) => {
                         unreachable!("test helper returned telegram")
+                    }
+                    ChannelInstanceConfig::Websocket(_) => {
+                        unreachable!("test helper returned websocket")
                     }
                 };
                 changed.show_reasoning = true;
@@ -1009,13 +1043,18 @@ mod tests {
                 id: "bot".to_string(),
                 ..TelegramConfig::default()
             }],
+            websocket: vec![WebsocketConfig {
+                id: "browser".to_string(),
+                ..WebsocketConfig::default()
+            }],
             disable_session_commands_for: Vec::new(),
         })
         .expect("snapshot should build");
 
-        assert_eq!(snapshot.instances().len(), 2);
+        assert_eq!(snapshot.instances().len(), 3);
         assert_eq!(snapshot.instances()[0].key().as_str(), "dingtalk:ops");
         assert_eq!(snapshot.instances()[1].key().as_str(), "telegram:bot");
+        assert_eq!(snapshot.instances()[2].key().as_str(), "websocket:browser");
     }
 
     #[test]
@@ -1032,6 +1071,7 @@ mod tests {
                 },
             ],
             telegram: Vec::new(),
+            websocket: Vec::new(),
             disable_session_commands_for: Vec::new(),
         })
         .expect_err("duplicate ids should fail");
@@ -1065,6 +1105,7 @@ mod tests {
                     ..TelegramConfig::default()
                 },
             ],
+            websocket: Vec::new(),
             disable_session_commands_for: Vec::new(),
         })
         .expect_err("duplicate ids should fail");
@@ -1090,6 +1131,32 @@ mod tests {
                 assert_eq!(
                     result.start,
                     vec![ChannelInstanceKey::new(ChannelKind::Telegram, "ops-bot")]
+                );
+                assert!(result.keep.is_empty());
+                assert!(result.restart.is_empty());
+                assert!(result.stop.is_empty());
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_supports_websocket_instances() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let factory = TestFactory::new();
+                let runtime = Arc::new(DummyRuntime);
+                let mut manager = ChannelManager::with_factory(runtime, factory);
+
+                let result = manager
+                    .sync(ChannelConfigSnapshot {
+                        instances: vec![websocket("browser", true)],
+                    })
+                    .await;
+
+                assert_eq!(
+                    result.start,
+                    vec![ChannelInstanceKey::new(ChannelKind::Websocket, "browser")]
                 );
                 assert!(result.keep.is_empty());
                 assert!(result.restart.is_empty());

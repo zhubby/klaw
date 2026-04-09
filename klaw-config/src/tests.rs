@@ -930,6 +930,42 @@ fn validate_fails_when_telegram_channel_ids_duplicate() {
 }
 
 #[test]
+fn validate_fails_when_websocket_channel_ids_duplicate() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.websocket = vec![
+        WebsocketConfig {
+            id: "browser".to_string(),
+            enabled: true,
+            show_reasoning: false,
+            stream_output: true,
+        },
+        WebsocketConfig {
+            id: "browser".to_string(),
+            enabled: true,
+            show_reasoning: true,
+            stream_output: false,
+        },
+    ];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("channels.websocket contains duplicated id"));
+}
+
+#[test]
+fn validate_fails_when_websocket_channel_id_is_blank() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.websocket = vec![WebsocketConfig {
+        id: "   ".to_string(),
+        enabled: true,
+        show_reasoning: false,
+        stream_output: true,
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("channels.websocket.id"));
+}
+
+#[test]
 fn validate_fails_when_enabled_telegram_channel_missing_token() {
     let mut cfg = AppConfig::default();
     cfg.channels.telegram = vec![TelegramConfig {

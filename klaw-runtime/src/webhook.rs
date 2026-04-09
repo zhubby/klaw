@@ -1,6 +1,6 @@
-use super::{RuntimeBundle, submit_webhook_agent, submit_webhook_event};
+use super::{RuntimeBundle, gateway_websocket, submit_webhook_agent, submit_webhook_event};
 use async_trait::async_trait;
-use klaw_config::ConfigStore;
+use klaw_config::{AppConfig, ConfigStore};
 use klaw_gateway::{
     GatewayOptions, GatewayWebhookAgentRequest, GatewayWebhookAgentResponse, GatewayWebhookHandler,
     GatewayWebhookHandlerError, GatewayWebhookRequest, GatewayWebhookResponse,
@@ -20,9 +20,15 @@ use std::{
 use tokio::fs;
 use tracing::{debug, warn};
 
-pub fn gateway_options(runtime: Arc<RuntimeBundle>) -> GatewayOptions {
+pub fn gateway_options(runtime: Arc<RuntimeBundle>, config: &AppConfig) -> GatewayOptions {
     GatewayOptions {
-        webhook_handler: Some(Arc::new(RuntimeWebhookHandler { runtime })),
+        webhook_handler: Some(Arc::new(RuntimeWebhookHandler {
+            runtime: Arc::clone(&runtime),
+        })),
+        websocket_handler: Some(gateway_websocket::build_gateway_websocket_handler(
+            Arc::clone(&runtime),
+            config,
+        )),
         ..GatewayOptions::default()
     }
 }

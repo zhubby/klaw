@@ -8,7 +8,7 @@
 - 暴露 `GET /ws/chat` 端点，承载 WebSocket 聊天。
 - 暴露受 Bearer Token 保护的 webhook 事件输入端点。
 - 在根配置 `gateway` 下统一管理监听地址和 TLS 配置。
-- 以 `session_key` 作为房间隔离键，实现同房间广播、跨房间隔离。
+- 以 `session_key` 作为 websocket 会话路由键，并把输入映射到统一 channel/runtime 抽象。
 
 ## 代码位置
 
@@ -86,36 +86,43 @@ key_path = "/path/to/privkey.pem"
 ### 握手
 
 - 端点：`GET /ws/chat`
-- 必填 query：`session_key`
-- 缺少或空 `session_key` 返回 `400 Bad Request`。
+- 可选 query：`token`
+- 可选 query：`session_key`，仅用于兼容旧连接方式；推荐在握手后通过 `session.subscribe` 显式订阅。
 
 示例：
 
 ```text
-ws://127.0.0.1:18080/ws/chat?session_key=demo-room
+ws://127.0.0.1:18080/ws/chat?token=secret
 ```
 
-### 房间模型
+### 帧模型
 
-- 服务内维护 `HashMap<session_key, broadcast::Sender<String>>`。
-- 每个 `session_key` 对应一个 `tokio::broadcast` 总线。
-- 新连接订阅对应总线；收到上行消息后向该总线广播。
+- 客户端上行统一使用 `method` 帧：
+  - `session.subscribe`
+  - `session.unsubscribe`
+  - `session.ping`
+  - `session.submit`
+- 服务端下行统一使用：
+  - `result`
+  - `error`
+  - `event`
 
 ### 消息处理
 
-- `Text` 帧：原样转为字符串并广播。
-- `Binary` 帧：按 UTF-8 lossy 转字符串后广播。
-- `Ping/Pong`：忽略业务处理。
-- `Close`：结束连接并触发房间清理。
+- `Text` 帧：按 JSON 解析为结构化 websocket method。
+- `Binary` 帧：返回 `invalid_message_type` 错误。
+- `session.subscribe`：更新当前连接的 `session_key` 路由，并下发 `session.subscribed`。
+- `session.submit`：映射到 runtime `ChannelRequest`；返回 `result`，并在 streaming 模式下追加 `session.message` / `session.stream.*` 事件。
+- `Ping/Pong`：保留 websocket 心跳语义，不参与业务处理。
+- `Close`：结束连接并触发连接注册表清理。
 
 ## 连接生命周期与清理
 
-- 每条连接拆分为读写两路：
-  - 写任务持续消费广播总线并下发到 WebSocket。
-  - 读循环持续读取客户端消息并向房间广播。
-- 连接断开后：
-  - 终止写任务。
-  - 若对应房间订阅数为 0，则从房间表移除，避免长期空房间占用。
+- 每条连接在进程内连接表中维护：
+  - `connection_id`
+  - 当前订阅的 `session_key`
+- 握手成功后服务端会先发送 `session.connected` 事件。
+- 连接断开后会移除对应连接记录。
 
 ## 错误处理语义
 
@@ -125,8 +132,15 @@ ws://127.0.0.1:18080/ws/chat?session_key=demo-room
 - `TlsNotImplemented`：TLS 配置启用但服务端 TLS 尚未实现。
 - `Bind`：端口绑定失败。
 - `Serve`：服务运行阶段错误。
-- `MissingWebhookToken`：启用 webhook 但没有可用 Bearer Token。
 - `MissingWebhookHandler`：启用 webhook 但没有注入处理器。
+
+业务级 websocket method 失败不会抛 `GatewayError`，而是下发结构化 `error` 帧，例如：
+
+- `invalid_json`
+- `invalid_params`
+- `missing_session`
+- `unknown_method`
+- `not_configured`
 
 ## Webhook 输入
 

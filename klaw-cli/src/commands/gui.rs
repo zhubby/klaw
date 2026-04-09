@@ -245,7 +245,6 @@ impl GuiCommand {
                         warn!(error = %err, "failed to start gateway for gui runtime");
                     }
                     let adapter = Arc::clone(&hosted.adapter);
-
                     let local = tokio::task::LocalSet::new();
                     local
                         .run_until(async move {

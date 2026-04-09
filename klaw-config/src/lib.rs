@@ -328,6 +328,8 @@ pub struct ChannelsConfig {
     #[serde(default)]
     pub telegram: Vec<TelegramConfig>,
     #[serde(default)]
+    pub websocket: Vec<WebsocketConfig>,
+    #[serde(default)]
     pub disable_session_commands_for: Vec<String>,
 }
 
@@ -377,6 +379,10 @@ fn default_channel_enabled() -> bool {
     true
 }
 
+fn default_websocket_stream_output() -> bool {
+    true
+}
+
 fn default_dingtalk_bot_title() -> String {
     "Klaw".to_string()
 }
@@ -407,6 +413,28 @@ impl Default for TelegramConfig {
             stream_output: false,
             allowlist: Vec::new(),
             proxy: TelegramProxyConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebsocketConfig {
+    pub id: String,
+    #[serde(default = "default_channel_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub show_reasoning: bool,
+    #[serde(default = "default_websocket_stream_output")]
+    pub stream_output: bool,
+}
+
+impl Default for WebsocketConfig {
+    fn default() -> Self {
+        Self {
+            id: "default".to_string(),
+            enabled: default_channel_enabled(),
+            show_reasoning: false,
+            stream_output: default_websocket_stream_output(),
         }
     }
 }

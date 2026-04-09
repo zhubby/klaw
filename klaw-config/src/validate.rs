@@ -427,6 +427,16 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
             }
         }
     }
+    ids.clear();
+    for channel in &channels.websocket {
+        require_non_empty(&channel.id, "channels.websocket.id")?;
+        if !ids.insert(channel.id.trim().to_string()) {
+            return Err(ConfigError::InvalidConfig(format!(
+                "channels.websocket contains duplicated id '{}'",
+                channel.id
+            )));
+        }
+    }
     for channel in &channels.disable_session_commands_for {
         require_non_empty(channel, "channels.disable_session_commands_for")?;
     }

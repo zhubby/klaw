@@ -7,8 +7,8 @@
 - 基于 `axum` 的轻量 HTTP 服务
 - `GET /ws/chat` WebSocket 端点
 - `POST /webhook/events` 风格的 webhook 事件输入端点
-- 基于 `session_key` 的房间隔离
-- 同房间广播、跨房间隔离
+- 基于 `session_key` 的会话订阅
+- `method/result/error/event` 结构化帧协议
 - 连接生命周期管理
 - Tailscale Serve/Funnel 支持
 
@@ -44,7 +44,7 @@ key_path = "/path/to/privkey.pem"
 
 - `enabled = true` 时，`klaw gui` 启动会自动拉起内置 gateway
 - `listen_port = 0` 时由系统分配随机可用端口，实际端口会输出到日志并展示在 GUI Gateway 面板
-- `gateway.auth.enabled = true` 时，所有端点（除 `/health/*` 外）需要 `Authorization: Bearer <token>` 鉴权
+- `gateway.auth.enabled = true` 时，`/ws/chat` 需要 `Authorization: Bearer <token>`，浏览器 WebSocket 也可用 `?token=` 传递
 - `gateway.tailscale.mode` 可将 gateway 暴露到 Tailscale 私有网络或公网
 - `gateway.webhook.enabled = true` 时会注册 webhook HTTP 路由
 
@@ -68,7 +68,7 @@ klaw gateway
 如果配置了随机端口，请使用启动日志或 GUI `Gateway` 面板显示的实际地址进行连接，例如：
 
 ```text
-ws://127.0.0.1:18080/ws/chat?session_key=demo-room
+ws://127.0.0.1:18080/ws/chat
 ```
 
 Webhook 示例：
@@ -89,33 +89,38 @@ curl -X POST http://127.0.0.1:18080/webhook/events \
 
 Webhook 请求在鉴权和参数校验通过后会立即返回 `202 Accepted`，随后由 runtime 异步处理，并把请求、状态和结果摘要落库供 GUI `Webhook` 面板查看。
 
-## 房间模型
+## WebSocket 协议
 
-- 服务维护 `HashMap<session_key, broadcast::Sender<String>>`
-- 每个 `session_key` 对应一个 `tokio::broadcast` 总线
-- 新连接订阅对应总线，收到上行消息后向该总线广播
+- 连接建立后服务端先下发 `event`：`session.connected`
+- 客户端通过 `method` 调用：
+  - `session.subscribe`
+  - `session.unsubscribe`
+  - `session.ping`
+  - `session.submit`
+- 服务端返回：
+  - `result`：method 成功结果
+  - `error`：结构化错误
+  - `event`：连接态、消息快照、流式事件
 
-## 消息处理
+示例：
 
-| 帧类型 | 处理方式 |
-|--------|----------|
-| `Text` | 原样转为字符串并广播 |
-| `Binary` | 按 UTF-8 lossy 转字符串后广播 |
-| `Ping/Pong` | 忽略业务处理 |
-| `Close` | 结束连接并触发房间清理 |
+```json
+{"type":"method","id":"sub-1","method":"session.subscribe","params":{"session_key":"web:demo"}}
+{"type":"method","id":"req-1","method":"session.submit","params":{"input":"hello","stream":true}}
+```
 
 ## 连接生命周期
 
-- 每条连接拆分为读写两路任务
-- 写任务持续消费广播总线并下发到 WebSocket
-- 读循环持续读取客户端消息并向房间广播
-- 连接断开后，若房间订阅数为 0 则移除
+- 每条连接维护独立的连接上下文与当前订阅的 `session_key`
+- `session.subscribe` 会更新当前连接的会话路由
+- `session.submit` 会把输入映射为 runtime `ChannelRequest`
+- 连接断开后，进程内连接注册表会立即清理
 
 ## 当前限制
 
 - TLS 仅有配置模型，尚未实现 HTTPS/WSS 监听
-- 房间状态为进程内内存结构，重启后不保留
-- 无跨实例共享房间（单实例适用）
+- 连接状态为进程内内存结构，重启后不保留
+- 当前 streaming 以 runtime snapshot 事件为单位，不是 token 级别推送
 
 ## 后续演进
 

@@ -69,7 +69,7 @@ funnel mode requires authentication. Configure gateway.auth first.
 
 ```bash
 # 连接（使用 MagicDNS 名称）
-wscat -c "wss://your-machine.tailnet-name.ts.net/ws/chat?session_key=room1" \
+wscat -c "wss://your-machine.tailnet-name.ts.net/ws/chat" \
   -H "Authorization: Bearer your-secret-token"
 ```
 
@@ -79,7 +79,7 @@ wscat -c "wss://your-machine.tailnet-name.ts.net/ws/chat?session_key=room1" \
 
 ```bash
 # 连接
-wscat -c "wss://your-machine.tailnet-name.ts.net/ws/chat?session_key=room1" \
+wscat -c "wss://your-machine.tailnet-name.ts.net/ws/chat" \
   -H "Authorization: Bearer your-secret-token"
 ```
 

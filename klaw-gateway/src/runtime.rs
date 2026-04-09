@@ -8,12 +8,12 @@ use crate::{
         CHAT_PATH, CHAT_PKG_JS_PATH, CHAT_PKG_WASM_PATH, HOME_LOGO_PATH, HOME_PATH,
         WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
     },
-    state::{GatewayHandle, GatewayRuntimeInfo, GatewayState},
+    state::{GatewayHandle, GatewayRuntimeInfo, GatewayState, GatewayWebsocketState},
     tailscale::{TailscaleError, TailscaleManager},
     webhook::{
         GatewayWebhookHandler, build_webhook_state, webhook_agents_handler, webhook_handler,
     },
-    websocket::ws_chat_handler,
+    websocket::{GatewayWebsocketHandler, ws_chat_handler},
 };
 use axum::{
     Router,
@@ -30,6 +30,7 @@ pub struct GatewayOptions {
     pub health: Option<Arc<HealthRegistry>>,
     pub prometheus: Option<PrometheusExporter>,
     pub webhook_handler: Option<Arc<dyn GatewayWebhookHandler>>,
+    pub websocket_handler: Option<Arc<dyn GatewayWebsocketHandler>>,
 }
 
 impl Default for GatewayOptions {
@@ -38,6 +39,7 @@ impl Default for GatewayOptions {
             health: None,
             prometheus: None,
             webhook_handler: None,
+            websocket_handler: None,
         }
     }
 }
@@ -69,12 +71,20 @@ pub async fn spawn_gateway_with_options(
     let socket_addr = parse_socket_addr(config)?;
     let health = build_health_registry(options.health);
     let webhook = build_webhook_state(config, options.webhook_handler)?;
+    let websocket = options
+        .websocket_handler
+        .map(|handler| GatewayWebsocketState { handler });
     let auth_token = config
         .auth
         .enabled
         .then(|| config.auth.resolve_token())
         .flatten();
-    let state = Arc::new(GatewayState::new(health, options.prometheus, webhook));
+    let state = Arc::new(GatewayState::new(
+        health,
+        options.prometheus,
+        webhook,
+        websocket,
+    ));
     let app = build_router(config, state, auth_token);
 
     let listener = tokio::net::TcpListener::bind(socket_addr)

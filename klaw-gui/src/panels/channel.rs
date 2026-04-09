@@ -12,7 +12,7 @@ use egui_phosphor::regular;
 use klaw_channel::{ChannelInstanceStatus, ChannelKind, ChannelSyncResult};
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig,
-    TelegramConfig, TelegramProxyConfig,
+    TelegramConfig, TelegramProxyConfig, WebsocketConfig,
 };
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -170,9 +170,63 @@ impl TelegramForm {
 }
 
 #[derive(Debug, Clone)]
+struct WebsocketForm {
+    original_id: Option<String>,
+    id: String,
+    enabled: bool,
+    show_reasoning: bool,
+    stream_output: bool,
+}
+
+impl WebsocketForm {
+    fn new() -> Self {
+        let default = WebsocketConfig::default();
+        Self {
+            original_id: None,
+            id: String::new(),
+            enabled: default.enabled,
+            show_reasoning: default.show_reasoning,
+            stream_output: default.stream_output,
+        }
+    }
+
+    fn edit(channel: &WebsocketConfig) -> Self {
+        Self {
+            original_id: Some(channel.id.clone()),
+            id: channel.id.clone(),
+            enabled: channel.enabled,
+            show_reasoning: channel.show_reasoning,
+            stream_output: channel.stream_output,
+        }
+    }
+
+    fn title(&self) -> &'static str {
+        if self.original_id.is_some() {
+            "Edit WebSocket Channel"
+        } else {
+            "Add WebSocket Channel"
+        }
+    }
+
+    fn normalized_id(&self) -> String {
+        self.id.trim().to_string()
+    }
+
+    fn to_config(&self) -> WebsocketConfig {
+        WebsocketConfig {
+            id: self.normalized_id(),
+            enabled: self.enabled,
+            show_reasoning: self.show_reasoning,
+            stream_output: self.stream_output,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 enum ChannelForm {
     Dingtalk(DingtalkForm),
     Telegram(TelegramForm),
+    Websocket(WebsocketForm),
 }
 
 impl ChannelForm {
@@ -180,6 +234,7 @@ impl ChannelForm {
         match self {
             Self::Dingtalk(form) => form.title(),
             Self::Telegram(form) => form.title(),
+            Self::Websocket(form) => form.title(),
         }
     }
 }
@@ -188,6 +243,7 @@ impl ChannelForm {
 enum ChannelRow {
     Dingtalk(DingtalkConfig),
     Telegram(TelegramConfig),
+    Websocket(WebsocketConfig),
 }
 
 impl ChannelRow {
@@ -195,6 +251,7 @@ impl ChannelRow {
         match self {
             Self::Dingtalk(_) => ChannelKind::Dingtalk,
             Self::Telegram(_) => ChannelKind::Telegram,
+            Self::Websocket(_) => ChannelKind::Websocket,
         }
     }
 
@@ -202,6 +259,7 @@ impl ChannelRow {
         match self {
             Self::Dingtalk(config) => &config.id,
             Self::Telegram(config) => &config.id,
+            Self::Websocket(config) => &config.id,
         }
     }
 
@@ -209,6 +267,7 @@ impl ChannelRow {
         match self {
             Self::Dingtalk(config) => config.enabled,
             Self::Telegram(config) => config.enabled,
+            Self::Websocket(config) => config.enabled,
         }
     }
 
@@ -216,6 +275,7 @@ impl ChannelRow {
         match self {
             Self::Dingtalk(config) => config.bot_title.clone(),
             Self::Telegram(_) => "-".to_string(),
+            Self::Websocket(_) => "-".to_string(),
         }
     }
 
@@ -223,6 +283,7 @@ impl ChannelRow {
         let enabled = match self {
             Self::Dingtalk(config) => config.proxy.enabled,
             Self::Telegram(config) => config.proxy.enabled,
+            Self::Websocket(_) => false,
         };
         if enabled { "on" } else { "off" }.to_string()
     }
@@ -231,6 +292,7 @@ impl ChannelRow {
         match self {
             Self::Dingtalk(config) => config.show_reasoning,
             Self::Telegram(config) => config.show_reasoning,
+            Self::Websocket(config) => config.show_reasoning,
         }
     }
 
@@ -238,6 +300,7 @@ impl ChannelRow {
         match self {
             Self::Dingtalk(config) => config.stream_output,
             Self::Telegram(config) => config.stream_output,
+            Self::Websocket(config) => config.stream_output,
         }
     }
 }
@@ -388,6 +451,14 @@ impl ChannelPanel {
                 .cloned()
                 .map(ChannelRow::Telegram),
         );
+        rows.extend(
+            self.config
+                .channels
+                .websocket
+                .iter()
+                .cloned()
+                .map(ChannelRow::Websocket),
+        );
         rows
     }
 
@@ -488,6 +559,10 @@ impl ChannelPanel {
         self.form = Some(ChannelForm::Telegram(TelegramForm::new()));
     }
 
+    fn open_add_websocket_channel(&mut self) {
+        self.form = Some(ChannelForm::Websocket(WebsocketForm::new()));
+    }
+
     fn open_edit_channel(&mut self, kind: ChannelKind, id: &str) {
         match kind {
             ChannelKind::Dingtalk => {
@@ -510,6 +585,17 @@ impl ChannelPanel {
                     .find(|item| item.id == id)
                 {
                     self.form = Some(ChannelForm::Telegram(TelegramForm::edit(account)));
+                }
+            }
+            ChannelKind::Websocket => {
+                if let Some(channel) = self
+                    .config
+                    .channels
+                    .websocket
+                    .iter()
+                    .find(|item| item.id == id)
+                {
+                    self.form = Some(ChannelForm::Websocket(WebsocketForm::edit(channel)));
                 }
             }
             ChannelKind::Feishu => {}
@@ -545,6 +631,12 @@ impl ChannelPanel {
             ChannelKind::Telegram => {
                 self.save_config(notifications, "Telegram channel deleted", move |config| {
                     config.channels.telegram.retain(|item| item.id != id);
+                    Ok(())
+                });
+            }
+            ChannelKind::Websocket => {
+                self.save_config(notifications, "WebSocket channel deleted", move |config| {
+                    config.channels.websocket.retain(|item| item.id != id);
                     Ok(())
                 });
             }
@@ -597,6 +689,24 @@ impl ChannelPanel {
                     Ok(())
                 });
             }
+            ChannelKind::Websocket => {
+                let msg = if enable {
+                    "WebSocket channel enabled"
+                } else {
+                    "WebSocket channel disabled"
+                };
+                self.save_config(notifications, msg, move |config| {
+                    if let Some(channel) = config
+                        .channels
+                        .websocket
+                        .iter_mut()
+                        .find(|item| item.id == id)
+                    {
+                        channel.enabled = enable;
+                    }
+                    Ok(())
+                });
+            }
             ChannelKind::Feishu => {}
         }
     }
@@ -608,12 +718,14 @@ impl ChannelPanel {
         let message = match &form {
             ChannelForm::Dingtalk(_) => "Dingtalk channel saved",
             ChannelForm::Telegram(_) => "Telegram channel saved",
+            ChannelForm::Websocket(_) => "WebSocket channel saved",
         };
 
         if self.save_config(notifications, message, move |config| {
             let next = match &form {
                 ChannelForm::Dingtalk(form) => Self::apply_dingtalk_form(config.clone(), form),
                 ChannelForm::Telegram(form) => Self::apply_telegram_form(config.clone(), form),
+                ChannelForm::Websocket(form) => Self::apply_websocket_form(config.clone(), form),
             }?;
             *config = next;
             Ok(())
@@ -695,6 +807,45 @@ impl ChannelPanel {
         }
         if !replaced {
             config.channels.telegram.push(account);
+        }
+
+        Ok(config)
+    }
+
+    fn apply_websocket_form(
+        mut config: AppConfig,
+        form: &WebsocketForm,
+    ) -> Result<AppConfig, String> {
+        let channel = form.to_config();
+        if channel.id.is_empty() {
+            return Err("Channel ID cannot be empty".to_string());
+        }
+
+        let mut replaced = false;
+        if let Some(original_id) = form.original_id.as_ref() {
+            for item in &mut config.channels.websocket {
+                if item.id == *original_id {
+                    *item = channel.clone();
+                    replaced = true;
+                    break;
+                }
+            }
+        }
+
+        if !replaced
+            && config
+                .channels
+                .websocket
+                .iter()
+                .any(|item| item.id == channel.id)
+        {
+            return Err(format!(
+                "Channel ID '{}' already exists, choose another ID",
+                channel.id
+            ));
+        }
+        if !replaced {
+            config.channels.websocket.push(channel);
         }
 
         Ok(config)
@@ -796,6 +947,28 @@ impl ChannelPanel {
 
                         ui.separator();
                         form.allowlist_input.show(ui);
+                    }
+                    ChannelForm::Websocket(form) => {
+                        egui::Grid::new("channel-form-grid-websocket")
+                            .num_columns(2)
+                            .spacing([12.0, 8.0])
+                            .show(ui, |ui| {
+                                ui.label("ID");
+                                ui.text_edit_singleline(&mut form.id);
+                                ui.end_row();
+
+                                ui.label("Enabled");
+                                ui.checkbox(&mut form.enabled, "");
+                                ui.end_row();
+
+                                ui.label("Show Reasoning");
+                                ui.checkbox(&mut form.show_reasoning, "");
+                                ui.end_row();
+
+                                ui.label("Stream Output");
+                                ui.checkbox(&mut form.stream_output, "");
+                                ui.end_row();
+                            });
                     }
                 }
 
@@ -947,6 +1120,9 @@ impl PanelRenderer for ChannelPanel {
                 .clicked()
             {
                 self.open_add_telegram_channel();
+            }
+            if ui.button("Add WebSocket").clicked() {
+                self.open_add_websocket_channel();
             }
             if ui
                 .button(format!("{} Reload", regular::ARROW_CLOCKWISE))
@@ -1312,5 +1488,53 @@ mod tests {
         let updated = ChannelPanel::apply_telegram_form(config, &form).expect("should apply");
 
         assert!(updated.channels.telegram[0].stream_output);
+    }
+
+    #[test]
+    fn apply_websocket_form_adds_new_channel() {
+        let config = AppConfig::default();
+        let mut form = WebsocketForm::new();
+        form.id = "browser".to_string();
+        form.show_reasoning = true;
+
+        let updated = ChannelPanel::apply_websocket_form(config, &form).expect("should apply");
+
+        assert!(
+            updated
+                .channels
+                .websocket
+                .iter()
+                .any(|item| item.id == "browser")
+        );
+        assert!(updated.channels.websocket[0].show_reasoning);
+    }
+
+    #[test]
+    fn apply_websocket_form_rejects_duplicate_id() {
+        let mut config = AppConfig::default();
+        config.channels.websocket.push(WebsocketConfig {
+            id: "browser".to_string(),
+            ..WebsocketConfig::default()
+        });
+
+        let mut form = WebsocketForm::new();
+        form.id = "browser".to_string();
+
+        let err =
+            ChannelPanel::apply_websocket_form(config, &form).expect_err("duplicate should fail");
+
+        assert!(err.contains("already exists"));
+    }
+
+    #[test]
+    fn apply_websocket_form_preserves_stream_flag() {
+        let config = AppConfig::default();
+        let mut form = WebsocketForm::new();
+        form.id = "browser".to_string();
+        form.stream_output = false;
+
+        let updated = ChannelPanel::apply_websocket_form(config, &form).expect("should apply");
+
+        assert!(!updated.channels.websocket[0].stream_output);
     }
 }

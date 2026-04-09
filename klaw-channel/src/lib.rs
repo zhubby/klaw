@@ -14,6 +14,7 @@ pub mod outbound;
 pub mod render;
 pub mod telegram;
 pub mod terminal;
+pub mod websocket;
 
 pub use manager::{
     ChannelConfigSnapshot, ChannelDriverFactory, ChannelInstanceConfig, ChannelInstanceKey,

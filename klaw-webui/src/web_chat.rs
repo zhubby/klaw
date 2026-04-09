@@ -1,10 +1,9 @@
 //! WASM-only egui chat client for `/ws/chat`.
 
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    ConnectionState, MessageRole, ThemeMode, classify_message_role, normalize_gateway_token_input,
-    toolbar_title,
+    ConnectionState, MessageRole, ThemeMode, normalize_gateway_token_input, toolbar_title,
 };
 use eframe::egui::{
     self, Align, Align2, Button, ComboBox, Context, Frame, Id, Key, Layout, RichText, ScrollArea,
@@ -13,6 +12,7 @@ use eframe::egui::{
 use egui_notify::{Anchor, Toasts};
 use egui_phosphor::regular;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use uuid::Uuid;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
@@ -83,24 +83,60 @@ struct PersistedWorkspaceState {
 #[derive(Clone)]
 struct SessionBuffers {
     messages: Rc<RefCell<Vec<ChatMessage>>>,
-    pending_local_echoes: Rc<RefCell<VecDeque<String>>>,
     state: Rc<RefCell<ConnectionState>>,
     ws: Rc<RefCell<Option<WebSocket>>>,
     auth_verified: Rc<RefCell<bool>>,
     suppress_next_close_notice: Rc<RefCell<bool>>,
+    active_stream_request_id: Rc<RefCell<Option<String>>>,
 }
 
 impl Default for SessionBuffers {
     fn default() -> Self {
         Self {
             messages: Rc::new(RefCell::new(Vec::new())),
-            pending_local_echoes: Rc::new(RefCell::new(VecDeque::new())),
             state: Rc::new(RefCell::new(ConnectionState::Disconnected)),
             ws: Rc::new(RefCell::new(None)),
             auth_verified: Rc::new(RefCell::new(false)),
             suppress_next_close_notice: Rc::new(RefCell::new(false)),
+            active_stream_request_id: Rc::new(RefCell::new(None)),
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ClientFrame<'a> {
+    Method {
+        id: &'a str,
+        method: &'a str,
+        #[serde(default)]
+        params: Value,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ServerFrame {
+    Event {
+        event: String,
+        #[serde(default)]
+        payload: Value,
+    },
+    Result {
+        id: String,
+        #[serde(default)]
+        result: Value,
+    },
+    Error {
+        id: Option<String>,
+        error: ServerErrorFrame,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+struct ServerErrorFrame {
+    code: String,
+    message: String,
 }
 
 struct SessionWindow {
@@ -251,7 +287,7 @@ fn parse_query_param(search: &str, key: &str) -> Option<String> {
     None
 }
 
-fn ws_chat_url(session_key: &str, token: Option<&str>) -> Result<String, String> {
+fn ws_chat_url(token: Option<&str>) -> Result<String, String> {
     let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
     let loc = window.location();
     let protocol = loc
@@ -261,15 +297,20 @@ fn ws_chat_url(session_key: &str, token: Option<&str>) -> Result<String, String>
     let host = loc
         .host()
         .map_err(|_| "location.host unavailable".to_string())?;
-    let mut url = format!(
-        "{ws_scheme}://{host}/ws/chat?session_key={}",
-        urlencoding::encode(session_key)
-    );
+    let mut url = format!("{ws_scheme}://{host}/ws/chat");
     if let Some(token) = token {
-        url.push_str("&token=");
+        url.push_str("?token=");
         url.push_str(&urlencoding::encode(token));
     }
     Ok(url)
+}
+
+fn send_method(ws: &WebSocket, id: &str, method: &str, params: Value) -> Result<(), String> {
+    let frame = ClientFrame::Method { id, method, params };
+    let payload = serde_json::to_string(&frame)
+        .map_err(|err| format!("serialize websocket method: {err}"))?;
+    ws.send_with_str(&payload)
+        .map_err(|_| format!("websocket send failed for method '{method}'"))
 }
 
 impl SessionWindow {
@@ -558,7 +599,7 @@ impl ChatApp {
         let buffers = self.sessions[index].buffers.clone();
         Self::close_buffers(&buffers);
 
-        let url = match ws_chat_url(session_key, token.as_deref()) {
+        let url = match ws_chat_url(token.as_deref()) {
             Ok(url) => url,
             Err(err) => {
                 *buffers.state.borrow_mut() = ConnectionState::Error(err.clone());
@@ -579,7 +620,9 @@ impl ChatApp {
         };
 
         let messages = buffers.messages.clone();
-        let pending_local_echoes = buffers.pending_local_echoes.clone();
+        let active_stream_request_id = buffers.active_stream_request_id.clone();
+        let state_message = buffers.state.clone();
+        let toasts_message = self.toasts.clone();
         let ctx = self.ctx.clone();
         let onmessage = Closure::wrap(Box::new(move |event: MessageEvent| {
             let text = if let Ok(text) = event.data().dyn_into::<js_sys::JsString>() {
@@ -589,12 +632,120 @@ impl ChatApp {
             } else {
                 "[non-text message]".to_string()
             };
-            let role = classify_message_role(&mut pending_local_echoes.borrow_mut(), text.as_str());
-            messages.borrow_mut().push(ChatMessage {
-                text,
-                role,
-                timestamp_ms: current_timestamp_ms(),
-            });
+            match serde_json::from_str::<ServerFrame>(&text) {
+                Ok(ServerFrame::Event { event, payload }) => match event.as_str() {
+                    "session.connected" => {
+                        *state_message.borrow_mut() = ConnectionState::Connected;
+                        messages.borrow_mut().push(ChatMessage {
+                            text: "Connected to the Klaw gateway.".to_string(),
+                            role: MessageRole::System,
+                            timestamp_ms: current_timestamp_ms(),
+                        });
+                    }
+                    "session.subscribed" => {
+                        let session_key = payload
+                            .get("session_key")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown");
+                        messages.borrow_mut().push(ChatMessage {
+                            text: format!("Subscribed to session `{session_key}`."),
+                            role: MessageRole::System,
+                            timestamp_ms: current_timestamp_ms(),
+                        });
+                    }
+                    "session.unsubscribed" => {
+                        messages.borrow_mut().push(ChatMessage {
+                            text: "Session subscription cleared.".to_string(),
+                            role: MessageRole::System,
+                            timestamp_ms: current_timestamp_ms(),
+                        });
+                    }
+                    "session.message" => {
+                        let request_id = payload
+                            .get("request_id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string);
+                        let content = payload
+                            .get("response")
+                            .and_then(|response| response.get("content"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        if content.is_empty() {
+                            ctx.request_repaint();
+                            return;
+                        }
+                        let mut history = messages.borrow_mut();
+                        let should_replace = request_id.as_ref().is_some_and(|request_id| {
+                            active_stream_request_id.borrow().as_deref()
+                                == Some(request_id.as_str())
+                        });
+                        if should_replace {
+                            if let Some(message) = history.last_mut() {
+                                if message.role == MessageRole::Assistant {
+                                    message.text = content;
+                                    message.timestamp_ms = current_timestamp_ms();
+                                }
+                            }
+                        } else {
+                            history.push(ChatMessage {
+                                text: content,
+                                role: MessageRole::Assistant,
+                                timestamp_ms: current_timestamp_ms(),
+                            });
+                            *active_stream_request_id.borrow_mut() = request_id;
+                        }
+                    }
+                    "session.stream.clear" => {
+                        *active_stream_request_id.borrow_mut() = None;
+                    }
+                    "session.stream.done" => {
+                        *active_stream_request_id.borrow_mut() = None;
+                    }
+                    _ => {}
+                },
+                Ok(ServerFrame::Result { id: _, result }) => {
+                    let Some(response) = result.get("response") else {
+                        ctx.request_repaint();
+                        return;
+                    };
+                    let streamed = result
+                        .get("stream")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let content = response
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    if !streamed && !content.is_empty() {
+                        messages.borrow_mut().push(ChatMessage {
+                            text: content,
+                            role: MessageRole::Assistant,
+                            timestamp_ms: current_timestamp_ms(),
+                        });
+                    }
+                    *active_stream_request_id.borrow_mut() = None;
+                }
+                Ok(ServerFrame::Error { id: _, error }) => {
+                    *active_stream_request_id.borrow_mut() = None;
+                    let message = format!("{}: {}", error.code, error.message);
+                    *state_message.borrow_mut() = ConnectionState::Error(message.clone());
+                    toasts_message.borrow_mut().error(message.clone());
+                    messages.borrow_mut().push(ChatMessage {
+                        text: message,
+                        role: MessageRole::System,
+                        timestamp_ms: current_timestamp_ms(),
+                    });
+                }
+                Err(_) => {
+                    messages.borrow_mut().push(ChatMessage {
+                        text,
+                        role: MessageRole::System,
+                        timestamp_ms: current_timestamp_ms(),
+                    });
+                }
+            }
             ctx.request_repaint();
         }) as Box<dyn FnMut(MessageEvent)>);
         ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
@@ -603,15 +754,28 @@ impl ChatApp {
         let state_open = buffers.state.clone();
         let messages_open = buffers.messages.clone();
         let auth_verified_open = buffers.auth_verified.clone();
+        let session_key_open = session_key.to_string();
+        let ws_open = ws.clone();
+        let toasts_open = self.toasts.clone();
         let ctx_open = self.ctx.clone();
         let onopen = Closure::wrap(Box::new(move |_event: JsValue| {
             *auth_verified_open.borrow_mut() = true;
             *state_open.borrow_mut() = ConnectionState::Connected;
-            messages_open.borrow_mut().push(ChatMessage {
-                text: "Connected to the Klaw room.".to_string(),
-                role: MessageRole::System,
-                timestamp_ms: current_timestamp_ms(),
-            });
+            let subscribe_id = Uuid::new_v4().to_string();
+            if let Err(err) = send_method(
+                &ws_open,
+                &subscribe_id,
+                "session.subscribe",
+                json!({ "session_key": session_key_open }),
+            ) {
+                *state_open.borrow_mut() = ConnectionState::Error(err.clone());
+                toasts_open.borrow_mut().error(err.clone());
+                messages_open.borrow_mut().push(ChatMessage {
+                    text: err,
+                    role: MessageRole::System,
+                    timestamp_ms: current_timestamp_ms(),
+                });
+            }
             ctx_open.request_repaint();
         }) as Box<dyn FnMut(JsValue)>);
         ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
@@ -693,13 +857,25 @@ impl ChatApp {
             return;
         }
 
-        session
-            .buffers
-            .pending_local_echoes
-            .borrow_mut()
-            .push_back(text.clone());
-        if ws.send_with_str(&text).is_err() {
-            *session.buffers.state.borrow_mut() = ConnectionState::Error("send failed".to_string());
+        let request_id = Uuid::new_v4().to_string();
+        session.buffers.messages.borrow_mut().push(ChatMessage {
+            text: text.clone(),
+            role: MessageRole::User,
+            timestamp_ms: current_timestamp_ms(),
+        });
+        *session.buffers.active_stream_request_id.borrow_mut() = Some(request_id.clone());
+        if let Err(err) = send_method(
+            &ws,
+            &request_id,
+            "session.submit",
+            json!({
+                "session_key": session_key,
+                "chat_id": session_key,
+                "input": text,
+                "stream": true,
+            }),
+        ) {
+            *session.buffers.state.borrow_mut() = ConnectionState::Error(err);
             return;
         }
         session.draft.clear();

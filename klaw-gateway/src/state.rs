@@ -1,4 +1,4 @@
-use crate::{GatewayError, webhook::GatewayWebhookHandler};
+use crate::{GatewayError, webhook::GatewayWebhookHandler, websocket::GatewayWebsocketHandler};
 use crate::{
     auth::WebhookAuth,
     tailscale::{TailscaleManager, TailscaleRuntimeInfo},
@@ -12,22 +12,30 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    sync::{RwLock, broadcast, oneshot},
+    sync::{RwLock, oneshot},
     task::JoinHandle,
 };
-
-pub(crate) const ROOM_BUFFER_SIZE: usize = 256;
 
 pub(crate) struct GatewayWebhookState {
     pub(crate) handler: Arc<dyn GatewayWebhookHandler>,
     pub(crate) auth: WebhookAuth,
 }
 
+pub(crate) struct GatewayWebsocketState {
+    pub(crate) handler: Arc<dyn GatewayWebsocketHandler>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct GatewayWebsocketConnection {
+    pub(crate) session_key: Option<String>,
+}
+
 pub(crate) struct GatewayState {
-    pub(crate) rooms: RwLock<HashMap<String, broadcast::Sender<String>>>,
+    pub(crate) websocket_connections: RwLock<HashMap<String, GatewayWebsocketConnection>>,
     pub(crate) health: Arc<HealthRegistry>,
     pub(crate) prometheus: Option<PrometheusExporter>,
     pub(crate) webhook: Option<GatewayWebhookState>,
+    pub(crate) websocket: Option<GatewayWebsocketState>,
 }
 
 impl GatewayState {
@@ -35,12 +43,14 @@ impl GatewayState {
         health: Arc<HealthRegistry>,
         prometheus: Option<PrometheusExporter>,
         webhook: Option<GatewayWebhookState>,
+        websocket: Option<GatewayWebsocketState>,
     ) -> Self {
         Self {
-            rooms: RwLock::new(HashMap::new()),
+            websocket_connections: RwLock::new(HashMap::new()),
             health,
             prometheus,
             webhook,
+            websocket,
         }
     }
 }

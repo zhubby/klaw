@@ -67,7 +67,7 @@ impl GatewayManager {
         self.transitioning = true;
         let start_result = spawn_gateway_with_options(
             &config.gateway,
-            webhook::gateway_options(Arc::clone(&self.runtime)),
+            webhook::gateway_options(Arc::clone(&self.runtime), config),
         )
         .await;
         self.transitioning = false;

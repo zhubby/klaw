@@ -26,3 +26,7 @@ pub use webhook::{
     GatewayWebhookAgentRequest, GatewayWebhookAgentResponse, GatewayWebhookHandler,
     GatewayWebhookHandlerError, GatewayWebhookRequest, GatewayWebhookResponse,
 };
+pub use websocket::{
+    GatewayWebsocketErrorFrame, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
+    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
+};

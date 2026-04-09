@@ -1,5 +1,6 @@
 pub mod env_check;
 pub mod gateway_manager;
+mod gateway_websocket;
 mod im_commands;
 pub mod service_loop;
 pub mod webhook;
@@ -200,46 +201,7 @@ pub async fn build_hosted_runtime(config: &AppConfig) -> Result<HostedRuntime, B
 #[async_trait::async_trait(?Send)]
 impl ChannelRuntime for SharedChannelRuntime {
     async fn submit(&self, request: ChannelRequest) -> ChannelResult<Option<ChannelResponse>> {
-        if !is_channel_commands_disabled(self.runtime.as_ref(), &request.channel)
-            && request.input.trim_start().starts_with('/')
-        {
-            if let Some(response) = im_commands::try_handle(
-                self.runtime.as_ref(),
-                request.channel.clone(),
-                request.session_key.clone(),
-                request.chat_id.clone(),
-                request.input.clone(),
-                request.metadata.clone(),
-            )
-            .await?
-            {
-                return Ok(Some(response));
-            }
-        }
-
-        let route = resolve_session_route(
-            self.runtime.as_ref(),
-            &request.channel,
-            &request.session_key,
-            &request.chat_id,
-        )
-        .await?;
-        let maybe_output = submit_and_get_output(
-            self.runtime.as_ref(),
-            request.channel,
-            request.input,
-            route.active_session_key,
-            request.chat_id,
-            "local-user".to_string(),
-            route.model_provider,
-            route.model,
-            request.media_references,
-            request.metadata,
-        )
-        .await?;
-
-        Ok(maybe_output
-            .map(|output| channel_response(output.content, output.reasoning, output.metadata)))
+        submit_channel_request(self.runtime.as_ref(), request).await
     }
 
     async fn submit_streaming(
@@ -247,49 +209,12 @@ impl ChannelRuntime for SharedChannelRuntime {
         request: ChannelRequest,
         writer: &mut dyn ChannelStreamWriter,
     ) -> ChannelResult<Option<ChannelResponse>> {
-        if !is_channel_commands_disabled(self.runtime.as_ref(), &request.channel)
-            && request.input.trim_start().starts_with('/')
-        {
-            if let Some(response) = im_commands::try_handle(
-                self.runtime.as_ref(),
-                request.channel.clone(),
-                request.session_key.clone(),
-                request.chat_id.clone(),
-                request.input.clone(),
-                request.metadata.clone(),
-            )
-            .await?
-            {
-                writer
-                    .write(ChannelStreamEvent::Snapshot(response.clone()))
-                    .await?;
-                return Ok(Some(response));
-            }
+        let (events, response) =
+            submit_channel_request_streaming(self.runtime.as_ref(), request).await?;
+        for event in events {
+            writer.write(event).await?;
         }
-
-        let route = resolve_session_route(
-            self.runtime.as_ref(),
-            &request.channel,
-            &request.session_key,
-            &request.chat_id,
-        )
-        .await?;
-        let maybe_output = submit_and_stream_output(
-            self.runtime.as_ref(),
-            request.channel,
-            request.input,
-            route.active_session_key,
-            request.chat_id,
-            route.model_provider,
-            route.model,
-            request.media_references,
-            request.metadata,
-            writer,
-        )
-        .await?;
-
-        Ok(maybe_output
-            .map(|output| channel_response(output.content, output.reasoning, output.metadata)))
+        Ok(response)
     }
 
     fn cron_tick_interval(&self) -> Duration {
@@ -307,6 +232,104 @@ impl ChannelRuntime for SharedChannelRuntime {
     async fn on_runtime_tick(&self) {
         self.background.on_runtime_tick(self.runtime.as_ref()).await;
     }
+}
+
+pub async fn submit_channel_request(
+    runtime: &RuntimeBundle,
+    request: ChannelRequest,
+) -> ChannelResult<Option<ChannelResponse>> {
+    if !is_channel_commands_disabled(runtime, &request.channel)
+        && request.input.trim_start().starts_with('/')
+    {
+        if let Some(response) = im_commands::try_handle(
+            runtime,
+            request.channel.clone(),
+            request.session_key.clone(),
+            request.chat_id.clone(),
+            request.input.clone(),
+            request.metadata.clone(),
+        )
+        .await?
+        {
+            return Ok(Some(response));
+        }
+    }
+
+    let route = resolve_session_route(
+        runtime,
+        &request.channel,
+        &request.session_key,
+        &request.chat_id,
+    )
+    .await?;
+    let maybe_output = submit_and_get_output(
+        runtime,
+        request.channel,
+        request.input,
+        route.active_session_key,
+        request.chat_id,
+        "local-user".to_string(),
+        route.model_provider,
+        route.model,
+        request.media_references,
+        request.metadata,
+    )
+    .await?;
+
+    Ok(maybe_output
+        .map(|output| channel_response(output.content, output.reasoning, output.metadata)))
+}
+
+pub async fn submit_channel_request_streaming(
+    runtime: &RuntimeBundle,
+    request: ChannelRequest,
+) -> ChannelResult<(Vec<ChannelStreamEvent>, Option<ChannelResponse>)> {
+    let mut events = Vec::new();
+
+    if !is_channel_commands_disabled(runtime, &request.channel)
+        && request.input.trim_start().starts_with('/')
+    {
+        if let Some(response) = im_commands::try_handle(
+            runtime,
+            request.channel.clone(),
+            request.session_key.clone(),
+            request.chat_id.clone(),
+            request.input.clone(),
+            request.metadata.clone(),
+        )
+        .await?
+        {
+            events.push(ChannelStreamEvent::Snapshot(response.clone()));
+            return Ok((events, Some(response)));
+        }
+    }
+
+    let route = resolve_session_route(
+        runtime,
+        &request.channel,
+        &request.session_key,
+        &request.chat_id,
+    )
+    .await?;
+    let maybe_output = submit_and_collect_stream_output(
+        runtime,
+        request.channel,
+        request.input,
+        route.active_session_key,
+        request.chat_id,
+        route.model_provider,
+        route.model,
+        request.media_references,
+        request.metadata,
+        &mut events,
+    )
+    .await?;
+
+    Ok((
+        events,
+        maybe_output
+            .map(|output| channel_response(output.content, output.reasoning, output.metadata)),
+    ))
 }
 
 #[derive(Debug, Clone)]
@@ -2840,6 +2863,171 @@ pub async fn submit_and_stream_output(
                     output.metadata.clone(),
                 )))
                 .await?;
+            Ok(Some(output))
+        }
+        Some(_) | None => {
+            enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
+            warn!("no outbound response produced");
+            Ok(None)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn submit_and_collect_stream_output(
+    runtime: &RuntimeBundle,
+    channel: String,
+    input: String,
+    session_key: String,
+    chat_id: String,
+    model_provider: String,
+    model: String,
+    media_references: Vec<MediaReference>,
+    request_metadata: BTreeMap<String, serde_json::Value>,
+    events: &mut Vec<ChannelStreamEvent>,
+) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
+    let sessions = session_manager(runtime);
+    let full_history = sessions.read_chat_records(&session_key).await?;
+    let summary = maybe_refresh_summary(
+        runtime,
+        &session_key,
+        &model_provider,
+        &model,
+        &full_history,
+    )
+    .await;
+    let conversation_history = build_history_for_model(
+        full_history,
+        runtime.conversation_history_limit,
+        summary.as_ref(),
+    );
+    let header = EnvelopeHeader::new(session_key.clone());
+    let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
+    sessions
+        .append_chat_record(&session_key, &user_record)
+        .await?;
+    let session_state = sessions
+        .touch_session(&session_key, &chat_id, &channel)
+        .await?;
+    persist_session_delivery_metadata(
+        &sessions,
+        &session_key,
+        &chat_id,
+        &channel,
+        &request_metadata,
+    )
+    .await?;
+
+    let inbound_payload = InboundMessage {
+        channel: channel.to_string(),
+        sender_id: "local-user".to_string(),
+        chat_id: chat_id.clone(),
+        session_key,
+        content: input,
+        media_references,
+        metadata: {
+            let mut metadata = request_metadata;
+            metadata.insert(
+                META_CONVERSATION_HISTORY_KEY.to_string(),
+                json!(
+                    conversation_history
+                        .into_iter()
+                        .map(|record| {
+                            json!({
+                                "role": record.role,
+                                "content": record.content,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                ),
+            );
+            metadata.insert(
+                META_PROVIDER_KEY.to_string(),
+                serde_json::Value::String(model_provider),
+            );
+            metadata.insert(META_MODEL_KEY.to_string(), serde_json::Value::String(model));
+            metadata
+        },
+    };
+    info!(
+        channel = %inbound_payload.channel,
+        chat_id = %inbound_payload.chat_id,
+        session_key = %inbound_payload.session_key,
+        "channel inbound normalized (streaming)"
+    );
+    trace!(
+        inbound = ?inbound_payload,
+        "channel inbound normalized (streaming)"
+    );
+
+    let envelope = Envelope {
+        header,
+        metadata: BTreeMap::new(),
+        payload: inbound_payload,
+    };
+    let (stream_tx, mut stream_rx) = mpsc::unbounded_channel::<AgentExecutionStreamEvent>();
+    let process = runtime
+        .runtime
+        .process_message_streaming(envelope, stream_tx);
+    tokio::pin!(process);
+    let mut stream_open = true;
+
+    let outcome = loop {
+        tokio::select! {
+            maybe_event = stream_rx.recv(), if stream_open => {
+                let Some(event) = maybe_event else {
+                    stream_open = false;
+                    continue;
+                };
+                match event {
+                    AgentExecutionStreamEvent::Snapshot { content, reasoning } => {
+                        events.push(ChannelStreamEvent::Snapshot(channel_response(
+                            content,
+                            reasoning,
+                            BTreeMap::new(),
+                        )));
+                    }
+                    AgentExecutionStreamEvent::Clear => {
+                        events.push(ChannelStreamEvent::Clear);
+                    }
+                }
+            }
+            outcome = &mut process => break outcome,
+        }
+    };
+    enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
+
+    match outcome.final_response {
+        Some(msg) if should_emit_outbound(&msg) => {
+            let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
+            persist_assistant_response_state(
+                runtime,
+                &msg.header.session_key,
+                &msg.payload.chat_id,
+                &msg.payload.channel,
+                session_state.turn_count,
+                &msg.header.message_id,
+                &msg.payload.metadata,
+                &agent_record,
+            )
+            .await;
+            let reasoning = msg
+                .payload
+                .metadata
+                .get("reasoning")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+                .filter(|value| !value.trim().is_empty());
+            let output = AssistantOutput {
+                content: msg.payload.content.clone(),
+                reasoning,
+                metadata: msg.payload.metadata.clone(),
+            };
+            events.push(ChannelStreamEvent::Snapshot(channel_response(
+                output.content.clone(),
+                output.reasoning.clone(),
+                output.metadata.clone(),
+            )));
             Ok(Some(output))
         }
         Some(_) | None => {

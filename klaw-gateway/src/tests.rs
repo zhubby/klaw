@@ -1,16 +1,71 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        CHAT_PATH, CHAT_PKG_JS_PATH, CHAT_PKG_WASM_PATH, HOME_LOGO_PATH, HOME_PATH,
-        WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH, spawn_gateway,
+        CHAT_PATH, CHAT_PKG_JS_PATH, CHAT_PKG_WASM_PATH, GatewayOptions, GatewayWebsocketHandler,
+        GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
+        HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
+        spawn_gateway, spawn_gateway_with_options,
         webhook::{
             GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
             normalize_webhook_request,
         },
     };
-    use klaw_config::GatewayConfig;
+    use async_trait::async_trait;
+    use futures_util::{SinkExt, StreamExt};
+    use klaw_config::{GatewayAuthConfig, GatewayConfig};
     use reqwest::StatusCode;
     use serde_json::json;
+    use std::sync::{Arc, Mutex};
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+    #[derive(Clone, Default)]
+    struct RecordingWebsocketHandler {
+        requests: Arc<Mutex<Vec<GatewayWebsocketSubmitRequest>>>,
+    }
+
+    #[async_trait]
+    impl GatewayWebsocketHandler for RecordingWebsocketHandler {
+        async fn submit(
+            &self,
+            request: GatewayWebsocketSubmitRequest,
+        ) -> Result<Vec<GatewayWebsocketServerFrame>, GatewayWebsocketHandlerError> {
+            self.requests
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(request.clone());
+            Ok(vec![GatewayWebsocketServerFrame::Result {
+                id: request.request_id,
+                result: json!({
+                    "response": {
+                        "content": format!("ack: {}", request.input),
+                    },
+                    "session_key": request.session_key,
+                    "stream": false,
+                }),
+            }])
+        }
+    }
+
+    fn test_gateway_config() -> GatewayConfig {
+        GatewayConfig {
+            enabled: true,
+            listen_ip: "127.0.0.1".to_string(),
+            listen_port: 0,
+            auth: Default::default(),
+            tailscale: Default::default(),
+            tls: Default::default(),
+            webhook: Default::default(),
+        }
+    }
+
+    fn ws_url(port: u16, token: Option<&str>) -> String {
+        let mut url = format!("ws://127.0.0.1:{port}{WS_CHAT_PATH}");
+        if let Some(token) = token {
+            url.push_str("?token=");
+            url.push_str(token);
+        }
+        url
+    }
 
     #[tokio::test]
     async fn spawn_gateway_uses_actual_random_port() {
@@ -111,15 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn gateway_chat_route_serves_embedded_webui_assets() {
-        let config = GatewayConfig {
-            enabled: true,
-            listen_ip: "127.0.0.1".to_string(),
-            listen_port: 0,
-            auth: Default::default(),
-            tailscale: Default::default(),
-            tls: Default::default(),
-            webhook: Default::default(),
-        };
+        let config = test_gateway_config();
 
         let handle = match spawn_gateway(&config).await {
             Ok(handle) => handle,
@@ -276,5 +323,196 @@ mod tests {
             request.base_session_key.as_deref(),
             Some("telegram:acc:chat-legacy")
         );
+    }
+
+    #[tokio::test]
+    async fn websocket_rejects_connections_without_required_token() {
+        let mut config = test_gateway_config();
+        config.auth = GatewayAuthConfig {
+            enabled: true,
+            token: Some("secret-token".to_string()),
+            env_key: None,
+        };
+
+        let handle = match spawn_gateway_with_options(&config, GatewayOptions::default()).await {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let err = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect_err("missing token should fail");
+        assert!(err.to_string().contains("401"));
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_submit_routes_structured_request_to_handler() {
+        let config = test_gateway_config();
+        let handler = RecordingWebsocketHandler::default();
+        let requests = Arc::clone(&handler.requests);
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(handler)),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let connected = socket
+            .next()
+            .await
+            .expect("connected frame")
+            .expect("connected message");
+        let connected = match connected {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid connected frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        match connected {
+            GatewayWebsocketServerFrame::Event { event, .. } => {
+                assert_eq!(event, "session.connected");
+            }
+            other => panic!("unexpected connected frame: {other:?}"),
+        }
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "sub-1",
+                    "method": "session.subscribe",
+                    "params": { "session_key": "web:test-session" }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("subscribe should send");
+
+        for _ in 0..2 {
+            let _ = socket.next().await;
+        }
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "req-1",
+                    "method": "session.submit",
+                    "params": {
+                        "input": "hello gateway",
+                        "channel_id": "default"
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("submit should send");
+
+        let result = socket
+            .next()
+            .await
+            .expect("submit response")
+            .expect("submit message");
+        let result = match result {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid result frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        match result {
+            GatewayWebsocketServerFrame::Result { id, result } => {
+                assert_eq!(id, "req-1");
+                assert_eq!(
+                    result
+                        .get("response")
+                        .and_then(|response| response.get("content"))
+                        .and_then(|value| value.as_str()),
+                    Some("ack: hello gateway")
+                );
+            }
+            other => panic!("unexpected submit frame: {other:?}"),
+        }
+
+        let recorded = requests.lock().unwrap_or_else(|err| err.into_inner());
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].session_key, "web:test-session");
+        assert_eq!(recorded[0].chat_id, "web:test-session");
+        assert_eq!(recorded[0].channel_id, "default");
+        assert_eq!(recorded[0].input, "hello gateway");
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_unknown_method_returns_structured_error() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway(&config).await {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _ = socket.next().await;
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "bad-1",
+                    "method": "session.unknown",
+                    "params": {}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("bad method should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("error response")
+            .expect("error frame");
+        let frame = match frame {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid error frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        match frame {
+            GatewayWebsocketServerFrame::Error { id, error } => {
+                assert_eq!(id.as_deref(), Some("bad-1"));
+                assert_eq!(error.code, "unknown_method");
+            }
+            other => panic!("unexpected error frame: {other:?}"),
+        }
+
+        handle.shutdown().await.expect("gateway should stop");
     }
 }

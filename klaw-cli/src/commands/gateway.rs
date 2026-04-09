@@ -31,7 +31,8 @@ impl GatewayCommand {
                 let mut channel_manager =
                     ChannelManager::with_factory(Arc::clone(&hosted.adapter), channel_factory);
                 channel_manager.sync(channel_snapshot).await;
-                let gateway_options = webhook::gateway_options(Arc::clone(&hosted.runtime));
+                let gateway_options =
+                    webhook::gateway_options(Arc::clone(&hosted.runtime), config.as_ref());
 
                 let mut gateway_task = tokio::task::spawn_local(async move {
                     run_gateway_with_options(&gateway_config, gateway_options).await
