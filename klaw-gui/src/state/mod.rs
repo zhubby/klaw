@@ -2,6 +2,7 @@ pub mod persistence;
 pub mod workbench;
 
 use crate::domain::menu::WorkbenchMenu;
+pub use klaw_ui_kit::ThemeMode;
 use serde::{Deserialize, Serialize};
 use workbench::TabId;
 
@@ -21,25 +22,6 @@ pub enum UiAction {
     StartWindowDrag,
     ShowAbout,
     HideAbout,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ThemeMode {
-    #[default]
-    System,
-    Light,
-    Dark,
-}
-
-impl ThemeMode {
-    pub const fn label(self) -> &'static str {
-        match self {
-            ThemeMode::System => "System",
-            ThemeMode::Light => "Light",
-            ThemeMode::Dark => "Dark",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -22,6 +22,7 @@ members = [
     "klaw-channel",
     "klaw-tui",
     "klaw-gui",
+    "klaw-ui-kit",
     "klaw-observability",
     "klaw-runtime",
     "klaw-webui",
@@ -49,6 +50,7 @@ default-members = [
     "klaw-channel",
     "klaw-tui",
     "klaw-gui",
+    "klaw-ui-kit",
     "klaw-observability",
     "klaw-runtime",
 ]
@@ -166,6 +168,7 @@ klaw-gateway = { path = "klaw-gateway" }
 klaw-channel = { path = "klaw-channel" }
 klaw-tui = { path = "klaw-tui" }
 klaw-gui = { path = "klaw-gui" }
+klaw-ui-kit = { path = "klaw-ui-kit" }
 klaw-observability = { path = "klaw-observability" }
 klaw-runtime = { path = "klaw-runtime" }
 klaw-webui = { path = "klaw-webui" }

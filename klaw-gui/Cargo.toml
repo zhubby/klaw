@@ -15,7 +15,6 @@ egui_json_tree = { workspace = true }
 egui-file-dialog = { workspace = true }
 egui-phosphor = { workspace = true }
 egui_extras = { workspace = true, features = ["chrono"] }
-egui-notify = { workspace = true }
 egui_plot = { workspace = true }
 fontdb = { workspace = true }
 klaw-config = { workspace = true }
@@ -35,6 +34,7 @@ klaw-runtime = { workspace = true }
 klaw-session = { workspace = true }
 klaw-skill = { workspace = true }
 klaw-storage = { workspace = true }
+klaw-ui-kit = { workspace = true }
 klaw-voice = { workspace = true }
 klaw-util = { workspace = true }
 serde = { workspace = true }

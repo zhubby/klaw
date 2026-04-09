@@ -4148,7 +4148,6 @@ dependencies = [
  "eframe",
  "egui",
  "egui-file-dialog",
- "egui-notify",
  "egui-phosphor",
  "egui_commonmark",
  "egui_extras",
@@ -4176,6 +4175,7 @@ dependencies = [
  "klaw-session",
  "klaw-skill",
  "klaw-storage",
+ "klaw-ui-kit",
  "klaw-util",
  "klaw-voice",
  "objc2 0.5.2",
@@ -4418,6 +4418,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "klaw-ui-kit"
+version = "0.10.3"
+dependencies = [
+ "egui",
+ "egui-notify",
+ "serde",
+]
+
+[[package]]
 name = "klaw-util"
 version = "0.10.3"
 dependencies = [
@@ -4456,6 +4465,7 @@ dependencies = [
  "egui-notify",
  "egui-phosphor",
  "js-sys",
+ "klaw-ui-kit",
  "serde",
  "serde_json",
  "urlencoding",

@@ -1,7 +1,9 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
+
 This repository is a Rust workspace. Crates are split by responsibility:
+
 - `klaw-core`: agent loop, protocol, reliability, scheduling.
 - `klaw-cli`: CLI entrypoint and command handlers (`tui`, `agent`, etc.).
 - `klaw-llm`: LLM provider integrations.
@@ -12,8 +14,20 @@ This repository is a Rust workspace. Crates are split by responsibility:
 
 Keep new code in the crate that owns the domain concern; avoid cross-crate leakage of CLI-specific logic into core runtime crates.
 
+## Shared UI Extraction
+
+Use `klaw-ui-kit` for UI foundation shared by both `klaw-gui` and `klaw-webui`, but keep the bar high:
+
+- Extract only when the concept already exists in both frontends or the second consumer is immediate and concrete.
+- Prefer shared low-level building blocks such as theme enums, display labels, copy helpers, and lightweight `egui` wrappers.
+- Do not move app shell, panel orchestration, runtime bridge code, transport logic, or platform-specific lifecycle code into `klaw-ui-kit`.
+- If a shared API would need awkward compromise naming or would force one frontend to give up a better UX, keep it local instead.
+- Shared UI code must remain platform-agnostic: avoid `web_sys`, browser-only callbacks, desktop runtime bridge types, and other frontend-specific dependencies.
+
 ## Build, Test, and Development Commands
+
 Use workspace-level Cargo commands from repo root:
+
 - `cargo check --workspace`: fast compile verification.
 - `cargo build --workspace`: build all crates.
 - `cargo test --workspace`: run unit and integration tests.
@@ -62,6 +76,7 @@ All crates share a single source of truth for dependencies in the root `Cargo.to
 - When adding features to a workspace dependency in a crate, use `{ workspace = true, features = [...] }`.
 
 Example:
+
 ```toml
 # Root Cargo.toml
 [workspace.dependencies]
@@ -75,7 +90,9 @@ tokio = { workspace = true, features = ["fs"] }
 ```
 
 ## Coding Style & Naming Conventions
+
 Follow Rust 2024 defaults and `rustfmt` output (4-space indentation, trailing commas where formatter adds them). Prefer:
+
 - `snake_case` for modules/functions/files.
 - `PascalCase` for types/traits.
 - small modules with explicit ownership boundaries.
@@ -83,16 +100,19 @@ Follow Rust 2024 defaults and `rustfmt` output (4-space indentation, trailing co
 Use `thiserror` for error enums and avoid `unwrap()` in production paths.
 
 When implementing tools in `klaw-tool`, make tool metadata LLM-friendly:
+
 - Write `description` so model planners can clearly infer **when** to call the tool.
 - Design `parameters` schema with strong guidance (clear field semantics, constraints/defaults, and practical examples) to improve call accuracy and argument quality.
 
 ## Testing Guidelines
+
 Place unit tests next to implementation (`mod tests`), and integration tests under `*/tests/` (example: `klaw-core/tests/runtime_e2e.rs`).
 Name tests by behavior, e.g., `validate_fails_when_active_provider_missing`. Add regression tests for bug fixes.
 
 For tool and config changes, include enough test cases to cover core paths and edge cases (arg validation, provider/config routing, formatting, and error handling when applicable). Every modification should keep the relevant crate/workspace tests passing before completion.
 
 ## Config Persistence Safety
+
 - Treat `~/.klaw/config.toml` as a shared source of truth across GUI panels and runtime helpers.
 - **Never** persist config changes by mutating a stale in-memory `AppConfig` snapshot and writing the whole file back.
 - When editing one config subsection, reload the latest on-disk config first, apply a targeted mutation, validate, then write the updated config.
@@ -100,7 +120,9 @@ For tool and config changes, include enough test cases to cover core paths and e
 - Add regression tests for cross-panel or cross-store save ordering whenever changing config persistence logic. At minimum, cover the case where two stale editors save different fields and both changes must survive.
 
 ## Documentation Guidelines (mdBook)
+
 When adding or updating docs under `docs/src`, ensure they satisfy mdBook structure and rendering requirements:
+
 - Every new page must be linked from `docs/src/SUMMARY.md` using a relative path.
 - Use clear heading hierarchy (`#`, `##`, `###`) and stable section names.
 - Prefer fenced code blocks with language tags for commands/config snippets.
@@ -109,36 +131,43 @@ When adding or updating docs under `docs/src`, ensure they satisfy mdBook struct
 - Validate documentation build with `mdbook build docs` when doc structure changes.
 
 ## Commit & Pull Request Guidelines
+
 Recent history is short, but commit messages should be concise, imperative, and specific (e.g., `add config loading to cli commands`). Keep one logical change per commit.
 
 PRs should include:
+
 - purpose and impacted crates,
 - test evidence (commands run + results),
 - config/doc updates when behavior changes,
 - sample CLI output when user-facing behavior is modified.
 
 ## Security & Configuration Tips
+
 Never commit API keys. Prefer `env_key` in `~/.klaw/config.toml` (default expects `OPENAI_API_KEY`). If sharing configs, redact credentials.
 
 ## Module Documentation & Changelog
+
 Each workspace crate must maintain its own documentation:
 
 **CHANGELOG.md** (at crate root, e.g., `klaw-core/CHANGELOG.md`):
+
 - Record main changes on every module modification
 - Format with date and type: `Added` / `Changed` / `Fixed` / `Removed`
 
 **README.md** (at crate root):
+
 - Describe module capabilities, implementation, and architecture
 - Keep in sync with code - update when descriptions become inaccurate
 
 ## GUI Layout Notes (egui)
+
 - Use `StripBuilder` for major vertical regions (header/editor/footer) to keep sizing predictable.
 - Let header/content text use natural height; avoid hard-coded header heights that create blank gaps.
 - Keep editor width equal to parent container width (`available_width` + `add_sized`).
 - When parent height is below the panel minimum height, enable one outer scroll area for the whole panel.
 - Prefer global toast notifications (`egui-notify`) for operation feedback; avoid inline success/error blocks that shift layout.
 - Do not block the egui render/update path on runtime or IO work. Avoid calling `recv_timeout`, network requests, disk-heavy syncs, or other waiting operations directly from render callbacks.
-- For GUI-to-runtime communication, prefer a background request handle plus `try_recv`/polling from UI state. Reuse the non-blocking request pattern already used by MCP/Gateway/ACP-style panels instead of introducing new synchronous `request_*` calls in render code.
+- For GUI-to-runtime communication, prefer a background request handle plus `try_recv`/polling from UI state. Reuse the non-blocking request pattern already used by MCP/Gateway/ACP-style panels instead of introducing new synchronous `request_`* calls in render code.
 - Treat status refreshes as background work. Periodic polling (provider status, environment checks, gateway/runtime snapshots, etc.) must be scheduled asynchronously and coalesced so a slow prior refresh does not queue duplicate work.
 - User-triggered actions that may take noticeable time should also avoid blocking the UI thread. Prefer pending task state, optimistic or staged UI updates, and completion toasts over synchronous waits.
 - Keep the GUI runtime command loop responsive: slow commands should be spawned into tasks or subsystem workers instead of awaiting inline on the main command dispatcher.
@@ -161,24 +190,26 @@ Commit messages follow the [Conventional Commits](https://www.conventionalcommit
 ```
 
 - **Subject line**: Required, imperative mood, lowercase, no trailing period, max 72 chars
-- **Body**: Optional, explains _what_ and _why_, not _how_
+- **Body**: Optional, explains *what* and *why*, not *how*
 - **Footer**: Optional, use for `BREAKING CHANGE:`, `Closes #123`, etc.
 
 ### Commit Types
 
-| Type | Description |
-|------|-------------|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `docs` | Documentation changes |
-| `style` | Code style (formatting, semicolons, etc.) |
-| `refactor` | Code refactoring without behavior change |
-| `perf` | Performance improvements |
-| `test` | Test additions or corrections |
-| `chore` | Maintenance tasks, dependencies, tooling |
-| `ci` | CI/CD configuration changes |
-| `build` | Build system or external dependency changes |
-| `revert` | Reverting a previous commit |
+
+| Type       | Description                                 |
+| ---------- | ------------------------------------------- |
+| `feat`     | New feature                                 |
+| `fix`      | Bug fix                                     |
+| `docs`     | Documentation changes                       |
+| `style`    | Code style (formatting, semicolons, etc.)   |
+| `refactor` | Code refactoring without behavior change    |
+| `perf`     | Performance improvements                    |
+| `test`     | Test additions or corrections               |
+| `chore`    | Maintenance tasks, dependencies, tooling    |
+| `ci`       | CI/CD configuration changes                 |
+| `build`    | Build system or external dependency changes |
+| `revert`   | Reverting a previous commit                 |
+
 
 ### Examples
 
@@ -202,7 +233,9 @@ docs: add git commit guidelines to agents.md
 ### Pull Request Guidelines
 
 PRs should include:
+
 - Purpose and impacted crates
 - Test evidence (commands run + results)
 - Config/doc updates when behavior changes
 - Sample CLI output when user-facing behavior is modified
+

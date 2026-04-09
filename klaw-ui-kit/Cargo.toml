@@ -1,0 +1,11 @@
+[package]
+name = "klaw-ui-kit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared UI foundation for klaw-gui and klaw-webui"
+
+[dependencies]
+egui = { workspace = true }
+egui-notify = { workspace = true }
+serde = { workspace = true, features = ["derive"] }

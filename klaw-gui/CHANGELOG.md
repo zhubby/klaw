@@ -7,6 +7,10 @@
 - `MCP` 面板的服务器行右键菜单现在为已启用的 `stdio` 类型 server 提供 `Restart` 动作，并通过后台 runtime 请求执行单实例重启
 - `System > Cleanup` 的每个数据目录条目现在新增文件夹图标按钮，可直接在系统文件管理器中打开对应目录；在 macOS 上会拉起 Finder
 
+### Changed
+
+- 主题模式与全局通知中心现在改为复用 `klaw-ui-kit` 提供的共享 UI 基础，减少桌面端与 Web 端的重复定义
+
 ## 2026-04-08
 
 ### Changed

@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-04-09
+
+### Added
+
+- `klaw-webui` 现在依赖新的共享基础 crate `klaw-ui-kit`，复用 `ThemeMode`、`theme_preference()` 与 `NotificationCenter`
+
+### Changed
+
+- 将原来的单文件 `src/web_chat.rs` 拆分为 `app`、`session`、`protocol`、`storage`、`transport` 和 `ui` 模块，明确浏览器聊天 UI 的职责边界
+
 ## 2026-04-08
 
 ### Added

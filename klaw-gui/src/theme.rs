@@ -1,4 +1,5 @@
-use crate::state::{DarkThemePreset, LightThemePreset, ThemeMode, UiState};
+use crate::state::{DarkThemePreset, LightThemePreset, UiState};
+use klaw_ui_kit::theme_preference;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -18,12 +19,7 @@ pub fn install_fonts(ctx: &egui::Context) {
 }
 
 pub fn apply_theme(ctx: &egui::Context, state: &UiState) {
-    let preference = match state.theme_mode {
-        ThemeMode::System => egui::ThemePreference::System,
-        ThemeMode::Light => egui::ThemePreference::Light,
-        ThemeMode::Dark => egui::ThemePreference::Dark,
-    };
-    ctx.set_theme(preference);
+    ctx.set_theme(theme_preference(state.theme_mode));
     ctx.set_visuals_of(egui::Theme::Light, light_visuals(state.light_theme));
     ctx.set_visuals_of(egui::Theme::Dark, dark_visuals(state.dark_theme));
 }

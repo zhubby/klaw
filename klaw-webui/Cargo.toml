@@ -9,6 +9,7 @@ description = "egui chat UI for Klaw gateway (WASM)"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+klaw-ui-kit = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }

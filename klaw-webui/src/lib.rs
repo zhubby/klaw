@@ -3,9 +3,9 @@
 //! Refresh embedded assets from the workspace root: `make webui-wasm`
 
 #[cfg(any(test, target_arch = "wasm32"))]
-use serde::{Deserialize, Serialize};
+pub(crate) use klaw_ui_kit::ThemeMode;
 
-#[cfg(any(test, target_arch = "wasm32"))]
+#[cfg(test)]
 use std::collections::VecDeque;
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -15,27 +15,6 @@ pub(crate) enum ConnectionState {
     Connecting,
     Connected,
     Error(String),
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ThemeMode {
-    #[default]
-    System,
-    Light,
-    Dark,
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-impl ThemeMode {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::System => "System",
-            Self::Light => "Light",
-            Self::Dark => "Dark",
-        }
-    }
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -109,7 +88,7 @@ pub(crate) fn normalize_gateway_token_input(input: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-#[cfg(any(test, target_arch = "wasm32"))]
+#[cfg(test)]
 pub(crate) fn classify_message_role(
     pending_local_echoes: &mut VecDeque<String>,
     text: &str,
