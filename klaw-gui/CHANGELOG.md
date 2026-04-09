@@ -10,6 +10,7 @@
 ### Changed
 
 - 主题模式与全局通知中心现在改为复用 `klaw-ui-kit` 提供的共享 UI 基础，减少桌面端与 Web 端的重复定义
+- GUI 启动时的字体安装逻辑与内嵌 LXGW WenKai 资源已上移到 `klaw-ui-kit`，桌面端继续保留系统 CJK fallback，但不再在 `klaw-gui` 内单独维护
 
 ## 2026-04-08
 

@@ -5,6 +5,7 @@
 ## What belongs here
 
 - Shared theme enums and labels
+- Shared font installation and embedded font assets used by both frontends
 - Platform-agnostic display copy helpers
 - Lightweight `egui` wrappers used by both frontends
 

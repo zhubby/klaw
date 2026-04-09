@@ -25,6 +25,7 @@
 - `ThemeMode`
 - `theme_preference()`
 - `NotificationCenter`
+- `install_fonts()`
 
 浏览器专属逻辑仍保留在 `klaw-webui`，例如 `web_sys`、WASM 启动入口、WebSocket 回调和 `localStorage` 细节。
 

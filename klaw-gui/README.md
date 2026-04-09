@@ -22,7 +22,7 @@
 - macOS app icon is loaded from embedded image bytes at startup, so both `.app` bundles and standalone binaries keep the custom icon
 - macOS window close requests now hide the app to the menu bar instead of quitting; tray `Quit Klaw` remains the explicit full-exit path
 - macOS `Launch at startup` now provisions a user `LaunchAgent` from the packaged `.app` bundle and re-syncs stale login-item state on startup
-- System CJK font fallback via `fontdb` to avoid Chinese text missing-glyph rendering
+- Shared `klaw-ui-kit::install_fonts()` setup, including embedded LXGW WenKai fonts, Phosphor icon font registration, and desktop system CJK fallback via `fontdb`
 - Strongly typed menu model for workspace modules
 - Sidebar group headings for `WORKSPACE`, `AI & CAPABILITY`, `RUNTIME & ACCESS`, `AUTOMATION & OPERATIONS`, `DATA & HISTORY`, and `OBSERVABILITY`
 - Single-tab-per-menu behavior (click to open or activate)
@@ -168,7 +168,7 @@
   - includes `terminal` panel backed by `egui_term` and a lazily started local PTY session
 - `widgets/`: shared reusable UI widgets
   - includes shared markdown helpers for code-style `TextEdit` layouters and CommonMark rich rendering
-- `theme.rs`: centralized theme setup
+- `theme.rs`: centralized visual theme setup
   - system-follow mode selection plus configurable light/dark theme presets, including the custom `Crab` light palette derived from the Klaw gateway logo
 - `state/persistence.rs`: local UI state load/save with schema versioning and atomic writes
 

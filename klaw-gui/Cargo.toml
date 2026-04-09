@@ -16,7 +16,6 @@ egui-file-dialog = { workspace = true }
 egui-phosphor = { workspace = true }
 egui_extras = { workspace = true, features = ["chrono"] }
 egui_plot = { workspace = true }
-fontdb = { workspace = true }
 klaw-config = { workspace = true }
 klaw-channel = { workspace = true }
 klaw-core = { workspace = true }

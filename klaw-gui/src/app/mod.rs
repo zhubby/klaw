@@ -5,6 +5,7 @@ use crate::theme;
 use crate::tray::{self, TrayCommand, TrayIntegration};
 use crate::ui::shell::ShellUi;
 use crate::{hide_macos_app, show_macos_app};
+use klaw_ui_kit::install_fonts;
 use std::time::{Duration, Instant};
 
 const UI_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -44,7 +45,7 @@ impl KlawGuiApp {
             should_quit: false,
             pending_provider_override: None,
         };
-        theme::install_fonts(&creation_ctx.egui_ctx);
+        install_fonts(&creation_ctx.egui_ctx);
         theme::apply_theme(&creation_ctx.egui_ctx, &app.state);
         creation_ctx
             .egui_ctx

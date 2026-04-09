@@ -4154,7 +4154,6 @@ dependencies = [
  "egui_json_tree",
  "egui_plot",
  "egui_term",
- "fontdb",
  "hostname",
  "hound",
  "image",
@@ -4423,6 +4422,8 @@ version = "0.10.3"
 dependencies = [
  "egui",
  "egui-notify",
+ "egui-phosphor",
+ "fontdb",
  "serde",
 ]
 

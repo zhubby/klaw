@@ -8,6 +8,7 @@ mod transport;
 mod ui;
 
 use app::ChatApp;
+use klaw_ui_kit::install_fonts;
 use wasm_bindgen::prelude::*;
 
 /// Start the chat UI on the given canvas (install from `index.html` via wasm-bindgen).
@@ -21,7 +22,10 @@ pub fn start_chat_ui(canvas: web_sys::HtmlCanvasElement) {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(ChatApp::new(cc)))),
+                Box::new(|cc| {
+                    install_fonts(&cc.egui_ctx);
+                    Ok(Box::new(ChatApp::new(cc)))
+                }),
             )
             .await;
     });
