@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-09
+
+### Fixed
+
+- `dingtalk` 审批 ActionCard 里的“待执行命令”预览改为 fenced code block 输出，不再使用单行反引号，长命令在卡片里会以代码框样式展示
+
 ## 2026-04-08
 
 ### Changed

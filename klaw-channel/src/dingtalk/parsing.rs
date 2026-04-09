@@ -1113,7 +1113,7 @@ fn base_card_sections(card: &ImCard, fallback_title: &str) -> Vec<String> {
     )];
     if let Some(command_preview) = card.command_preview() {
         sections.push(format!(
-            "**待执行命令**\n\n`{}`",
+            "**待执行命令**\n\n```\n{}\n```",
             escape_markdown_for_action_card(command_preview)
         ));
     }
