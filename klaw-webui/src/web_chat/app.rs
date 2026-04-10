@@ -30,6 +30,7 @@ pub(super) struct ChatApp {
     pub(in crate::web_chat) show_gateway_dialog: bool,
     pub(in crate::web_chat) rename_session_key: Option<String>,
     pub(in crate::web_chat) rename_session_input: String,
+    pub(in crate::web_chat) delete_session_key: Option<String>,
     pub(in crate::web_chat) did_attempt_prefilled_token: bool,
 }
 
@@ -56,6 +57,7 @@ impl ChatApp {
             show_gateway_dialog: false,
             rename_session_key: None,
             rename_session_input: String::new(),
+            delete_session_key: None,
             did_attempt_prefilled_token: false,
         };
         app.restore_window_state(persisted_sessions);
@@ -95,16 +97,22 @@ impl ChatApp {
 
     pub(in crate::web_chat) fn focus_session(&mut self, session_key: &str) {
         let mut changed = false;
+        let mut should_subscribe_history = false;
+        let workspace_ready = self.is_workspace_ready();
         if let Some(index) = self.session_index(session_key) {
             let session = &mut self.sessions[index];
             if !session.open {
                 session.open = true;
                 changed = true;
             }
+            should_subscribe_history = workspace_ready && !*session.buffers.history_loaded.borrow();
         }
         if self.active_session_key.as_deref() != Some(session_key) {
             self.active_session_key = Some(session_key.to_string());
             changed = true;
+        }
+        if should_subscribe_history {
+            self.subscribe_session(session_key);
         }
         if changed {
             self.persist_workspace_state();

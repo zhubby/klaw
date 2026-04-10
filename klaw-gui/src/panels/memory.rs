@@ -1477,6 +1477,7 @@ mod tests {
             session_key: session_key.to_string(),
             chat_id: "chat-1".to_string(),
             channel: "terminal".to_string(),
+            title: None,
             active_session_key: active_session_key.map(ToString::to_string),
             model_provider: None,
             model_provider_explicit: false,

@@ -59,6 +59,14 @@ pub trait SessionManager: Send + Sync {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, SessionError>;
 
+    async fn set_session_title(
+        &self,
+        session_key: &str,
+        title: Option<&str>,
+    ) -> Result<SessionIndex, SessionError>;
+
+    async fn delete_session(&self, session_key: &str) -> Result<bool, SessionError>;
+
     async fn get_or_create_session_state(
         &self,
         session_key: &str,
@@ -273,6 +281,18 @@ impl SessionManager for SqliteSessionManager {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, SessionError> {
         Ok(self.store.get_session(session_key).await?)
+    }
+
+    async fn set_session_title(
+        &self,
+        session_key: &str,
+        title: Option<&str>,
+    ) -> Result<SessionIndex, SessionError> {
+        Ok(self.store.set_session_title(session_key, title).await?)
+    }
+
+    async fn delete_session(&self, session_key: &str) -> Result<bool, SessionError> {
+        Ok(self.store.delete_session(session_key).await?)
     }
 
     async fn get_or_create_session_state(
@@ -703,5 +723,49 @@ mod tests {
             .await
             .expect("chat records should load");
         assert_eq!(records.len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn manager_persists_session_title_updates() {
+        let store = create_store().await;
+        let manager = SqliteSessionManager::from_store(store);
+        manager
+            .touch_session("web:test", "chat-1", "web")
+            .await
+            .expect("session should be created");
+
+        let updated = manager
+            .set_session_title("web:test", Some("Renamed agent"))
+            .await
+            .expect("title should update");
+        assert_eq!(updated.title.as_deref(), Some("Renamed agent"));
+
+        let reloaded = manager
+            .get_session("web:test")
+            .await
+            .expect("session should reload");
+        assert_eq!(reloaded.title.as_deref(), Some("Renamed agent"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn manager_deletes_session_and_history() {
+        let store = create_store().await;
+        let manager = SqliteSessionManager::from_store(store);
+        manager
+            .touch_session("web:delete-me", "chat-1", "web")
+            .await
+            .expect("session should be created");
+        manager
+            .append_chat_record("web:delete-me", &ChatRecord::new("user", "hello", None))
+            .await
+            .expect("history should append");
+
+        let deleted = manager
+            .delete_session("web:delete-me")
+            .await
+            .expect("delete should succeed");
+        assert!(deleted);
+        assert!(manager.read_chat_records("web:delete-me").await.expect("history should load").is_empty());
+        assert!(manager.get_session("web:delete-me").await.is_err());
     }
 }

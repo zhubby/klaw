@@ -44,6 +44,7 @@ struct SessionIndexRow {
     session_key: String,
     chat_id: String,
     channel: String,
+    title: Option<String>,
     active_session_key: Option<String>,
     model_provider: Option<String>,
     model_provider_explicit: i64,
@@ -298,6 +299,7 @@ impl From<SessionIndexRow> for SessionIndex {
             session_key: value.session_key,
             chat_id: value.chat_id,
             channel: value.channel,
+            title: value.title,
             active_session_key: value.active_session_key,
             model_provider: value.model_provider,
             model_provider_explicit: value.model_provider_explicit != 0,
@@ -670,6 +672,7 @@ impl SqlxSessionStore {
                 session_key TEXT PRIMARY KEY,
                 chat_id TEXT NOT NULL,
                 channel TEXT NOT NULL,
+                title TEXT,
                 active_session_key TEXT,
                 model_provider TEXT,
                 model_provider_explicit INTEGER NOT NULL DEFAULT 0,
@@ -688,6 +691,11 @@ impl SqlxSessionStore {
         .execute(&self.pool)
         .await
         .map_err(StorageError::backend)?;
+        self.ensure_session_column(
+            "title",
+            "ALTER TABLE sessions ADD COLUMN title TEXT",
+        )
+        .await?;
         self.ensure_session_column(
             "active_session_key",
             "ALTER TABLE sessions ADD COLUMN active_session_key TEXT",
@@ -1526,7 +1534,7 @@ impl SessionStorage for SqlxSessionStore {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let row = sqlx::query_as::<_, SessionIndexRow>(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              WHERE session_key = ?1",
         )
@@ -1537,12 +1545,51 @@ impl SessionStorage for SqlxSessionStore {
         Ok(row.into())
     }
 
+    async fn set_session_title(
+        &self,
+        session_key: &str,
+        title: Option<&str>,
+    ) -> Result<SessionIndex, StorageError> {
+        let updated = sqlx::query(
+            "UPDATE sessions
+             SET title = ?1
+             WHERE session_key = ?2",
+        )
+        .bind(title)
+        .bind(session_key)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::backend)?;
+
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting title"
+            )));
+        }
+
+        self.get_session(session_key).await
+    }
+
+    async fn delete_session(&self, session_key: &str) -> Result<bool, StorageError> {
+        let deleted = sqlx::query("DELETE FROM sessions WHERE session_key = ?1")
+            .bind(session_key)
+            .execute(&self.pool)
+            .await
+            .map_err(StorageError::backend)?
+            .rows_affected()
+            > 0;
+        if deleted {
+            jsonl::delete_chat_records(&self.paths, session_key).await?;
+        }
+        Ok(deleted)
+    }
+
     async fn get_session_by_active_session_key(
         &self,
         active_session_key: &str,
     ) -> Result<SessionIndex, StorageError> {
         let row = sqlx::query_as::<_, SessionIndexRow>(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              WHERE active_session_key = ?1
              ORDER BY CASE WHEN session_key = active_session_key THEN 1 ELSE 0 END, updated_at_ms DESC
@@ -1816,7 +1863,7 @@ impl SessionStorage for SqlxSessionStore {
         sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let mut query = String::from(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions WHERE 1=1",
         );
         if updated_from_ms.is_some() {

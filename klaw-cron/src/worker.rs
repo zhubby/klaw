@@ -561,6 +561,7 @@ mod tests {
                 session_key: session_key.to_string(),
                 chat_id: chat_id.to_string(),
                 channel: channel.to_string(),
+                title: None,
                 active_session_key: Some(session_key.to_string()),
                 model_provider: None,
                 model_provider_explicit: false,
@@ -609,6 +610,27 @@ mod tests {
                 .find(|session| session.session_key == session_key)
                 .cloned()
                 .ok_or_else(|| StorageError::backend("not found"))
+        }
+
+        async fn set_session_title(
+            &self,
+            session_key: &str,
+            title: Option<&str>,
+        ) -> Result<SessionIndex, StorageError> {
+            let mut sessions = self.sessions.lock().expect("lock");
+            let session = sessions
+                .iter_mut()
+                .find(|session| session.session_key == session_key)
+                .ok_or_else(|| StorageError::backend("not found"))?;
+            session.title = title.map(ToString::to_string);
+            Ok(session.clone())
+        }
+
+        async fn delete_session(&self, session_key: &str) -> Result<bool, StorageError> {
+            let mut sessions = self.sessions.lock().expect("lock");
+            let before = sessions.len();
+            sessions.retain(|session| session.session_key != session_key);
+            Ok(sessions.len() != before)
         }
 
         async fn get_session_by_active_session_key(

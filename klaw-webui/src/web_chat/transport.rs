@@ -170,6 +170,43 @@ impl ChatApp {
         );
     }
 
+    pub(in crate::web_chat) fn rename_session(&mut self, session_key: &str, title: &str) {
+        let Some(ws) = self.ws.borrow().as_ref().cloned() else {
+            return;
+        };
+        if ws.ready_state() != WebSocket::OPEN {
+            return;
+        }
+        let request_id = Uuid::new_v4().to_string();
+        let _ = send_method(
+            &ws,
+            &request_id,
+            "session.update",
+            json!({
+                "session_key": session_key,
+                "title": title,
+            }),
+        );
+    }
+
+    pub(in crate::web_chat) fn delete_session(&mut self, session_key: &str) {
+        let Some(ws) = self.ws.borrow().as_ref().cloned() else {
+            return;
+        };
+        if ws.ready_state() != WebSocket::OPEN {
+            return;
+        }
+        let request_id = Uuid::new_v4().to_string();
+        let _ = send_method(
+            &ws,
+            &request_id,
+            "session.delete",
+            json!({
+                "session_key": session_key,
+            }),
+        );
+    }
+
     pub(in crate::web_chat) fn process_pending_frames(&mut self) {
         let frames = self
             .pending_frames
@@ -195,6 +232,39 @@ impl ChatApp {
     }
 
     fn process_result_frame(&mut self, result: &Value) {
+        if result.get("updated").and_then(Value::as_bool) == Some(true) {
+            let Some(session_key) = result.get("session_key").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(title) = result.get("title").and_then(Value::as_str) else {
+                return;
+            };
+            if let Some(index) = self.session_index(session_key) {
+                self.sessions[index].title = title.to_string();
+                self.persist_workspace_state();
+            }
+            return;
+        }
+
+        if result.get("deleted").and_then(Value::as_bool) == Some(true) {
+            let Some(session_key) = result.get("session_key").and_then(Value::as_str) else {
+                return;
+            };
+            self.remove_session(session_key);
+            return;
+        }
+
+        if let Some(session_key) = result.get("session_key").and_then(Value::as_str)
+            && result.get("title").is_none()
+            && result.get("created_at_ms").is_none()
+            && result.get("response").is_none()
+        {
+            if let Some(index) = self.session_index(session_key) {
+                *self.sessions[index].buffers.history_loaded.borrow_mut() = true;
+            }
+            return;
+        }
+
         if let Some(sessions_value) = result.get("sessions").cloned() {
             let entries =
                 serde_json::from_value::<Vec<SessionListEntry>>(sessions_value).unwrap_or_default();

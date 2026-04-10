@@ -16,6 +16,8 @@ use uuid::Uuid;
 const METHOD_SESSION_PING: &str = "session.ping";
 const METHOD_WORKSPACE_BOOTSTRAP: &str = "workspace.bootstrap";
 const METHOD_SESSION_CREATE: &str = "session.create";
+const METHOD_SESSION_UPDATE: &str = "session.update";
+const METHOD_SESSION_DELETE: &str = "session.delete";
 const METHOD_SESSION_SUBSCRIBE: &str = "session.subscribe";
 const METHOD_SESSION_UNSUBSCRIBE: &str = "session.unsubscribe";
 const METHOD_SESSION_SUBMIT: &str = "session.submit";
@@ -125,6 +127,17 @@ pub trait GatewayWebsocketHandler: Send + Sync {
     async fn create_session(&self)
     -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError>;
 
+    async fn update_session(
+        &self,
+        session_key: &str,
+        title: String,
+    ) -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError>;
+
+    async fn delete_session(
+        &self,
+        session_key: &str,
+    ) -> Result<bool, GatewayWebsocketHandlerError>;
+
     async fn load_session_history(
         &self,
         session_key: &str,
@@ -149,6 +162,17 @@ enum GatewayWebsocketClientFrame {
 
 #[derive(Debug, Deserialize)]
 struct SessionSubscribeParams {
+    session_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionUpdateParams {
+    session_key: String,
+    title: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionDeleteParams {
     session_key: String,
 }
 
@@ -327,6 +351,104 @@ async fn handle_text_message(
                             }),
                         }]
                     }
+                    Err(err) => vec![GatewayWebsocketServerFrame::Error {
+                        id: Some(id),
+                        error: GatewayWebsocketErrorFrame {
+                            code: err.code,
+                            message: err.message,
+                            data: err.data,
+                        },
+                    }],
+                }
+            }
+            METHOD_SESSION_UPDATE => {
+                let params = match serde_json::from_value::<SessionUpdateParams>(params) {
+                    Ok(params) => params,
+                    Err(err) => {
+                        return vec![error_frame(
+                            Some(id),
+                            "invalid_params",
+                            format!("invalid session.update params: {err}"),
+                        )];
+                    }
+                };
+                let session_key = params.session_key.trim().to_string();
+                if session_key.is_empty() {
+                    return vec![error_frame(
+                        Some(id),
+                        "invalid_params",
+                        "session.update requires a non-empty session_key",
+                    )];
+                }
+                let title = params.title.trim().to_string();
+                if title.is_empty() {
+                    return vec![error_frame(
+                        Some(id),
+                        "invalid_params",
+                        "session.update requires a non-empty title",
+                    )];
+                }
+                let Some(websocket) = state.websocket.as_ref() else {
+                    return vec![error_frame(
+                        Some(id),
+                        "not_configured",
+                        "gateway websocket handler is not configured",
+                    )];
+                };
+                match websocket.handler.update_session(&session_key, title).await {
+                    Ok(session) => vec![GatewayWebsocketServerFrame::Result {
+                        id,
+                        result: json!({
+                            "session_key": session.session_key,
+                            "title": session.title,
+                            "created_at_ms": session.created_at_ms,
+                            "updated": true,
+                        }),
+                    }],
+                    Err(err) => vec![GatewayWebsocketServerFrame::Error {
+                        id: Some(id),
+                        error: GatewayWebsocketErrorFrame {
+                            code: err.code,
+                            message: err.message,
+                            data: err.data,
+                        },
+                    }],
+                }
+            }
+            METHOD_SESSION_DELETE => {
+                let params = match serde_json::from_value::<SessionDeleteParams>(params) {
+                    Ok(params) => params,
+                    Err(err) => {
+                        return vec![error_frame(
+                            Some(id),
+                            "invalid_params",
+                            format!("invalid session.delete params: {err}"),
+                        )];
+                    }
+                };
+                let session_key = params.session_key.trim().to_string();
+                if session_key.is_empty() {
+                    return vec![error_frame(
+                        Some(id),
+                        "invalid_params",
+                        "session.delete requires a non-empty session_key",
+                    )];
+                }
+                let Some(websocket) = state.websocket.as_ref() else {
+                    return vec![error_frame(
+                        Some(id),
+                        "not_configured",
+                        "gateway websocket handler is not configured",
+                    )];
+                };
+                match websocket.handler.delete_session(&session_key).await {
+                    Ok(deleted) => vec![GatewayWebsocketServerFrame::Result {
+                        id,
+                        result: json!({
+                            "session_key": session_key,
+                            "deleted": deleted,
+                        }),
+                    }],
                     Err(err) => vec![GatewayWebsocketServerFrame::Error {
                         id: Some(id),
                         error: GatewayWebsocketErrorFrame {

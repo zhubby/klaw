@@ -43,6 +43,7 @@ impl WindowAnchor {
 pub(super) struct SessionBuffers {
     pub(in crate::web_chat) messages: Rc<RefCell<Vec<ChatMessage>>>,
     pub(in crate::web_chat) active_stream_request_id: Rc<RefCell<Option<String>>>,
+    pub(in crate::web_chat) history_loaded: Rc<RefCell<bool>>,
 }
 
 impl Default for SessionBuffers {
@@ -50,6 +51,7 @@ impl Default for SessionBuffers {
         Self {
             messages: Rc::new(RefCell::new(Vec::new())),
             active_stream_request_id: Rc::new(RefCell::new(None)),
+            history_loaded: Rc::new(RefCell::new(false)),
         }
     }
 }

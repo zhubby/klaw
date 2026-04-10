@@ -5,8 +5,8 @@ use eframe::egui::{
 use egui_phosphor::regular;
 
 use crate::{
-    ConnectionState, MessageRole, PageMode, connection_action_label, derive_page_mode,
-    normalize_gateway_token_input, session_card_activity_label,
+    ConnectionState, MessageRole, PageMode, connection_action_label, delete_confirmation_body,
+    derive_page_mode, normalize_gateway_token_input, session_card_activity_label,
     should_activate_session_window, toolbar_title,
 };
 
@@ -270,7 +270,7 @@ impl ChatApp {
             self.toasts.borrow_mut().success("Agent ID copied");
         }
         if let Some(session_key) = remove_session_key {
-            self.remove_session(&session_key);
+            self.delete_session_key = Some(session_key);
         }
     }
 
@@ -309,12 +309,9 @@ impl ChatApp {
             });
 
         if submit {
-            let trimmed = self.rename_session_input.trim();
-            if !trimmed.is_empty()
-                && let Some(index) = self.session_index(&session_key)
-            {
-                self.sessions[index].title = trimmed.to_string();
-                self.persist_workspace_state();
+            let trimmed = self.rename_session_input.trim().to_string();
+            if !trimmed.is_empty() {
+                self.rename_session(&session_key, &trimmed);
             }
             self.rename_session_key = None;
             self.rename_session_input.clear();
@@ -379,6 +376,55 @@ impl ChatApp {
             self.persist_workspace_state();
             self.reconnect_all_sessions();
             self.show_gateway_dialog = false;
+        }
+    }
+
+    fn render_delete_dialog(&mut self, ctx: &Context) {
+        let Some(session_key) = self.delete_session_key.clone() else {
+            return;
+        };
+        let Some(index) = self.session_index(&session_key) else {
+            self.delete_session_key = None;
+            return;
+        };
+        let session_title = self.sessions[index].title.clone();
+
+        let mut open = true;
+        let mut confirm = false;
+        let mut cancel = false;
+
+        egui::Window::new("Delete Agent")
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(380.0);
+                ui.label(delete_confirmation_body(&session_title));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(Button::new(
+                            RichText::new("Delete").color(ui.visuals().error_fg_color),
+                        ))
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        if confirm {
+            self.delete_session(&session_key);
+            self.delete_session_key = None;
+            return;
+        }
+
+        if cancel || !open {
+            self.delete_session_key = None;
         }
     }
 
@@ -580,6 +626,7 @@ impl eframe::App for ChatApp {
         self.render_workbench(ctx);
         self.render_gateway_dialog(ctx);
         self.render_rename_dialog(ctx);
+        self.render_delete_dialog(ctx);
         self.toasts.borrow_mut().show(ctx);
     }
 }

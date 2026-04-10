@@ -59,39 +59,11 @@ impl RuntimeWebsocketHandler {
     async fn load_web_workspace(
         &self,
     ) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError> {
-        let mut sessions =
-            klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone())
-                .list_sessions(SessionListQuery {
-                    channel: Some("web".to_string()),
-                    ..SessionListQuery::default()
-                })
-                .await
-                .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
-        sessions.sort_by(|left, right| {
-            left.created_at_ms
-                .cmp(&right.created_at_ms)
-                .then_with(|| left.session_key.cmp(&right.session_key))
-        });
-        let mut sessions = sessions
-            .into_iter()
-            .enumerate()
-            .map(|(index, session)| GatewayWorkspaceSession {
-                session_key: session.session_key,
-                title: format!("Agent {}", index + 1),
-                created_at_ms: session.created_at_ms,
-            })
-            .collect::<Vec<_>>();
-        sessions.sort_by(|left, right| {
-            right
-                .created_at_ms
-                .cmp(&left.created_at_ms)
-                .then_with(|| right.session_key.cmp(&left.session_key))
-        });
-        let active_session_key = sessions.first().map(|session| session.session_key.clone());
-        Ok(GatewayWorkspaceBootstrap {
-            sessions,
-            active_session_key,
-        })
+        let sessions = klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone())
+            .list_sessions(SessionListQuery::default())
+            .await
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        Ok(build_web_workspace_bootstrap(sessions))
     }
 }
 
@@ -121,6 +93,36 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
                     "created session `{session_key}` missing from workspace bootstrap"
                 ))
             })
+    }
+
+    async fn update_session(
+        &self,
+        session_key: &str,
+        title: String,
+    ) -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError> {
+        let manager =
+            klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone());
+        let session = manager
+            .set_session_title(session_key, Some(&title))
+            .await
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        Ok(GatewayWorkspaceSession {
+            session_key: session.session_key,
+            title,
+            created_at_ms: session.created_at_ms,
+        })
+    }
+
+    async fn delete_session(
+        &self,
+        session_key: &str,
+    ) -> Result<bool, GatewayWebsocketHandlerError> {
+        let manager =
+            klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone());
+        manager
+            .delete_session(session_key)
+            .await
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))
     }
 
     async fn load_session_history(
@@ -267,13 +269,48 @@ fn serialize_response(response: &ChannelResponse, show_reasoning: bool) -> Value
     })
 }
 
+fn build_web_workspace_bootstrap(
+    mut sessions: Vec<klaw_storage::SessionIndex>,
+) -> GatewayWorkspaceBootstrap {
+    sessions.retain(|session| session.session_key.starts_with("web:"));
+    sessions.sort_by(|left, right| {
+        left.created_at_ms
+            .cmp(&right.created_at_ms)
+            .then_with(|| left.session_key.cmp(&right.session_key))
+    });
+    let mut sessions = sessions
+        .into_iter()
+        .enumerate()
+        .map(|(index, session)| GatewayWorkspaceSession {
+            session_key: session.session_key,
+            title: session
+                .title
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or_else(|| format!("Agent {}", index + 1)),
+            created_at_ms: session.created_at_ms,
+        })
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| {
+        right
+            .created_at_ms
+            .cmp(&left.created_at_ms)
+            .then_with(|| right.session_key.cmp(&left.session_key))
+    });
+    let active_session_key = sessions.first().map(|session| session.session_key.clone());
+    GatewayWorkspaceBootstrap {
+        sessions,
+        active_session_key,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         EVENT_SESSION_MESSAGE, EVENT_SESSION_STREAM_CLEAR, EVENT_SESSION_STREAM_DELTA,
-        stream_events_to_frames,
+        build_web_workspace_bootstrap, stream_events_to_frames,
     };
     use klaw_channel::{ChannelResponse, ChannelStreamEvent};
+    use klaw_storage::SessionIndex;
     use std::collections::BTreeMap;
 
     #[test]
@@ -377,5 +414,69 @@ mod tests {
             _ => None,
         });
         assert_eq!(last_delta, Some("Reset"));
+    }
+
+    #[test]
+    fn web_workspace_bootstrap_keeps_web_sessions_after_channel_changes() {
+        let workspace = build_web_workspace_bootstrap(vec![
+            SessionIndex {
+                session_key: "web:old".to_string(),
+                chat_id: "chat-old".to_string(),
+                channel: "websocket".to_string(),
+                title: Some("Saved old".to_string()),
+                active_session_key: None,
+                model_provider: None,
+                model_provider_explicit: false,
+                model: None,
+                model_explicit: false,
+                delivery_metadata_json: None,
+                created_at_ms: 10,
+                updated_at_ms: 20,
+                last_message_at_ms: 20,
+                turn_count: 1,
+                jsonl_path: "old.jsonl".to_string(),
+            },
+            SessionIndex {
+                session_key: "terminal:ignore".to_string(),
+                chat_id: "chat-ignore".to_string(),
+                channel: "terminal".to_string(),
+                title: Some("Terminal".to_string()),
+                active_session_key: None,
+                model_provider: None,
+                model_provider_explicit: false,
+                model: None,
+                model_explicit: false,
+                delivery_metadata_json: None,
+                created_at_ms: 30,
+                updated_at_ms: 40,
+                last_message_at_ms: 40,
+                turn_count: 1,
+                jsonl_path: "ignore.jsonl".to_string(),
+            },
+            SessionIndex {
+                session_key: "web:new".to_string(),
+                chat_id: "chat-new".to_string(),
+                channel: "web".to_string(),
+                title: None,
+                active_session_key: None,
+                model_provider: None,
+                model_provider_explicit: false,
+                model: None,
+                model_explicit: false,
+                delivery_metadata_json: None,
+                created_at_ms: 50,
+                updated_at_ms: 60,
+                last_message_at_ms: 60,
+                turn_count: 1,
+                jsonl_path: "new.jsonl".to_string(),
+            },
+        ]);
+
+        assert_eq!(workspace.active_session_key.as_deref(), Some("web:new"));
+        assert_eq!(workspace.sessions.len(), 2);
+        assert_eq!(workspace.sessions[0].session_key, "web:new");
+        assert_eq!(workspace.sessions[0].title, "Agent 2");
+        assert_eq!(workspace.sessions[1].session_key, "web:old");
+        assert_eq!(workspace.sessions[1].title, "Saved old");
     }
 }

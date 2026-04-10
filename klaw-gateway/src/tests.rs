@@ -58,6 +58,25 @@ mod tests {
             })
         }
 
+        async fn update_session(
+            &self,
+            session_key: &str,
+            title: String,
+        ) -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError> {
+            Ok(GatewayWorkspaceSession {
+                session_key: session_key.to_string(),
+                title,
+                created_at_ms: 20,
+            })
+        }
+
+        async fn delete_session(
+            &self,
+            session_key: &str,
+        ) -> Result<bool, GatewayWebsocketHandlerError> {
+            Ok(session_key == "web:newer")
+        }
+
         async fn load_session_history(
             &self,
             session_key: &str,
@@ -668,6 +687,139 @@ mod tests {
             }
             other => panic!("unexpected create frame: {other:?}"),
         }
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_session_update_returns_updated_session_metadata() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let url = ws_url(handle.info().actual_port, None);
+        let (mut socket, _) = connect_async(url)
+            .await
+            .expect("websocket should connect");
+        let _connected = socket.next().await.expect("connected frame").expect("frame ok");
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "update-1",
+                    "method": "session.update",
+                    "params": {
+                        "session_key": "web:newer",
+                        "title": "Renamed agent"
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("update should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("update result frame")
+            .expect("frame should decode");
+        let payload = match frame {
+            Message::Text(text) => serde_json::from_str::<serde_json::Value>(&text)
+                .expect("frame payload should parse"),
+            other => panic!("unexpected websocket frame: {other:?}"),
+        };
+        assert_eq!(payload.get("type").and_then(|value| value.as_str()), Some("result"));
+        let result = payload.get("result").expect("result payload");
+        assert_eq!(
+            result.get("session_key").and_then(|value| value.as_str()),
+            Some("web:newer")
+        );
+        assert_eq!(
+            result.get("title").and_then(|value| value.as_str()),
+            Some("Renamed agent")
+        );
+        assert_eq!(result.get("updated").and_then(|value| value.as_bool()), Some(true));
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_session_delete_returns_deleted_flag() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let url = ws_url(handle.info().actual_port, None);
+        let (mut socket, _) = connect_async(url)
+            .await
+            .expect("websocket should connect");
+        let _connected = socket.next().await.expect("connected frame").expect("frame ok");
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "delete-1",
+                    "method": "session.delete",
+                    "params": {
+                        "session_key": "web:newer"
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("delete should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("delete result frame")
+            .expect("frame should decode");
+        let payload = match frame {
+            Message::Text(text) => serde_json::from_str::<serde_json::Value>(&text)
+                .expect("frame payload should parse"),
+            other => panic!("unexpected websocket frame: {other:?}"),
+        };
+        assert_eq!(payload.get("type").and_then(|value| value.as_str()), Some("result"));
+        let result = payload.get("result").expect("result payload");
+        assert_eq!(
+            result.get("session_key").and_then(|value| value.as_str()),
+            Some("web:newer")
+        );
+        assert_eq!(result.get("deleted").and_then(|value| value.as_bool()), Some(true));
 
         handle.shutdown().await.expect("gateway should stop");
     }

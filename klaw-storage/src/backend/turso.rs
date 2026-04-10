@@ -71,6 +71,7 @@ impl TursoSessionStore {
                     session_key TEXT PRIMARY KEY,
                     chat_id TEXT NOT NULL,
                     channel TEXT NOT NULL,
+                    title TEXT,
                     active_session_key TEXT,
                     model_provider TEXT,
                     model_provider_explicit INTEGER NOT NULL DEFAULT 0,
@@ -339,6 +340,7 @@ impl TursoSessionStore {
             .await
             .map_err(StorageError::backend)?;
         }
+        self.ensure_session_column("title", "TEXT").await?;
         self.ensure_session_column("active_session_key", "TEXT")
             .await?;
         self.ensure_session_column("model_provider", "TEXT").await?;
@@ -730,7 +732,7 @@ impl SessionStorage for TursoSessionStore {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let sql = format!(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              WHERE session_key = '{}'
              LIMIT 1",
@@ -746,12 +748,53 @@ impl SessionStorage for TursoSessionStore {
         row_to_session_index(&row)
     }
 
+    async fn set_session_title(
+        &self,
+        session_key: &str,
+        title: Option<&str>,
+    ) -> Result<SessionIndex, StorageError> {
+        let title_sql = title
+            .map(|value| format!("'{}'", escape_sql_text(value)))
+            .unwrap_or_else(|| "NULL".to_string());
+        let sql = format!(
+            "UPDATE sessions
+             SET title = {title_sql}
+             WHERE session_key = '{}'",
+            escape_sql_text(session_key)
+        );
+        let affected = {
+            let conn = self.connection().await?;
+            conn.execute(&sql, ()).await.map_err(StorageError::backend)?
+        };
+        if affected == 0 {
+            return Err(StorageError::backend(format!(
+                "session '{session_key}' not found when setting title"
+            )));
+        }
+        self.get_session(session_key).await
+    }
+
+    async fn delete_session(&self, session_key: &str) -> Result<bool, StorageError> {
+        let sql = format!(
+            "DELETE FROM sessions WHERE session_key = '{}'",
+            escape_sql_text(session_key)
+        );
+        let deleted = {
+            let conn = self.connection().await?;
+            conn.execute(&sql, ()).await.map_err(StorageError::backend)? > 0
+        };
+        if deleted {
+            jsonl::delete_chat_records(&self.paths, session_key).await?;
+        }
+        Ok(deleted)
+    }
+
     async fn get_session_by_active_session_key(
         &self,
         active_session_key: &str,
     ) -> Result<SessionIndex, StorageError> {
         let sql = format!(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions
              WHERE active_session_key = '{}'
              ORDER BY CASE WHEN session_key = active_session_key THEN 1 ELSE 0 END, updated_at_ms DESC
@@ -1053,7 +1096,7 @@ impl SessionStorage for TursoSessionStore {
         sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let mut sql = String::from(
-            "SELECT session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
              FROM sessions WHERE 1=1",
         );
         if let Some(from) = updated_from_ms {
@@ -2929,20 +2972,21 @@ fn row_to_session_index(row: &Row) -> Result<SessionIndex, StorageError> {
         session_key: value_to_string(row.get_value(0).map_err(StorageError::backend)?)?,
         chat_id: value_to_string(row.get_value(1).map_err(StorageError::backend)?)?,
         channel: value_to_string(row.get_value(2).map_err(StorageError::backend)?)?,
-        active_session_key: value_to_opt_string(row.get_value(3).map_err(StorageError::backend)?),
-        model_provider: value_to_opt_string(row.get_value(4).map_err(StorageError::backend)?),
-        model_provider_explicit: value_to_i64(row.get_value(5).map_err(StorageError::backend)?)?
+        title: value_to_opt_string(row.get_value(3).map_err(StorageError::backend)?),
+        active_session_key: value_to_opt_string(row.get_value(4).map_err(StorageError::backend)?),
+        model_provider: value_to_opt_string(row.get_value(5).map_err(StorageError::backend)?),
+        model_provider_explicit: value_to_i64(row.get_value(6).map_err(StorageError::backend)?)?
             != 0,
-        model: value_to_opt_string(row.get_value(6).map_err(StorageError::backend)?),
-        model_explicit: value_to_i64(row.get_value(7).map_err(StorageError::backend)?)? != 0,
+        model: value_to_opt_string(row.get_value(7).map_err(StorageError::backend)?),
+        model_explicit: value_to_i64(row.get_value(8).map_err(StorageError::backend)?)? != 0,
         delivery_metadata_json: value_to_opt_string(
-            row.get_value(8).map_err(StorageError::backend)?,
+            row.get_value(9).map_err(StorageError::backend)?,
         ),
-        created_at_ms: value_to_i64(row.get_value(9).map_err(StorageError::backend)?)?,
-        updated_at_ms: value_to_i64(row.get_value(10).map_err(StorageError::backend)?)?,
-        last_message_at_ms: value_to_i64(row.get_value(11).map_err(StorageError::backend)?)?,
-        turn_count: value_to_i64(row.get_value(12).map_err(StorageError::backend)?)?,
-        jsonl_path: value_to_string(row.get_value(13).map_err(StorageError::backend)?)?,
+        created_at_ms: value_to_i64(row.get_value(10).map_err(StorageError::backend)?)?,
+        updated_at_ms: value_to_i64(row.get_value(11).map_err(StorageError::backend)?)?,
+        last_message_at_ms: value_to_i64(row.get_value(12).map_err(StorageError::backend)?)?,
+        turn_count: value_to_i64(row.get_value(13).map_err(StorageError::backend)?)?,
+        jsonl_path: value_to_string(row.get_value(14).map_err(StorageError::backend)?)?,
     })
 }
 
