@@ -72,6 +72,14 @@ pub(crate) enum MessageRole {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StreamMessageAction {
+    IgnoreEmpty,
+    ReplaceLastAssistant,
+    PushAssistant,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) struct EmptyStateCopy {
     pub(crate) title: String,
     pub(crate) body: String,
@@ -86,6 +94,27 @@ pub(crate) fn toolbar_title() -> &'static str {
 pub(crate) fn normalize_gateway_token_input(input: &str) -> Option<String> {
     let trimmed = input.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn classify_stream_message_action(
+    last_role: Option<MessageRole>,
+    active_stream_request_id: Option<&str>,
+    request_id: Option<&str>,
+    content: &str,
+) -> StreamMessageAction {
+    if content.is_empty() {
+        return StreamMessageAction::IgnoreEmpty;
+    }
+
+    if request_id.is_some()
+        && request_id == active_stream_request_id
+        && last_role == Some(MessageRole::Assistant)
+    {
+        return StreamMessageAction::ReplaceLastAssistant;
+    }
+
+    StreamMessageAction::PushAssistant
 }
 
 #[cfg(test)]
@@ -113,8 +142,8 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::{
-        ConnectionState, MessageRole, ThemeMode, classify_message_role,
-        normalize_gateway_token_input, toolbar_title,
+        ConnectionState, MessageRole, StreamMessageAction, ThemeMode, classify_message_role,
+        classify_stream_message_action, normalize_gateway_token_input, toolbar_title,
     };
 
     #[test]
@@ -169,6 +198,39 @@ mod tests {
         let role = classify_message_role(&mut pending, "hello from server");
         assert_eq!(role, MessageRole::Assistant);
         assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
+    fn first_stream_snapshot_pushes_assistant_after_user_message() {
+        let action = classify_stream_message_action(
+            Some(MessageRole::User),
+            Some("req-1"),
+            Some("req-1"),
+            "Hel",
+        );
+        assert_eq!(action, StreamMessageAction::PushAssistant);
+    }
+
+    #[test]
+    fn later_stream_snapshot_replaces_existing_assistant_message() {
+        let action = classify_stream_message_action(
+            Some(MessageRole::Assistant),
+            Some("req-1"),
+            Some("req-1"),
+            "Hello",
+        );
+        assert_eq!(action, StreamMessageAction::ReplaceLastAssistant);
+    }
+
+    #[test]
+    fn empty_stream_snapshot_is_ignored() {
+        let action = classify_stream_message_action(
+            Some(MessageRole::Assistant),
+            Some("req-1"),
+            Some("req-1"),
+            "",
+        );
+        assert_eq!(action, StreamMessageAction::IgnoreEmpty);
     }
 
     #[test]

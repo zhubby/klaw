@@ -3,7 +3,7 @@ use uuid::Uuid;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
-use crate::{ConnectionState, MessageRole};
+use crate::{ConnectionState, MessageRole, StreamMessageAction, classify_stream_message_action};
 
 use super::{
     app::ChatApp,
@@ -141,29 +141,30 @@ impl ChatApp {
                             .and_then(Value::as_str)
                             .unwrap_or_default()
                             .to_string();
-                        if content.is_empty() {
-                            ctx.request_repaint();
-                            return;
-                        }
                         let mut history = messages.borrow_mut();
-                        let should_replace = request_id.as_ref().is_some_and(|request_id| {
-                            active_stream_request_id.borrow().as_deref()
-                                == Some(request_id.as_str())
-                        });
-                        if should_replace {
-                            if let Some(message) = history.last_mut()
-                                && message.role == MessageRole::Assistant
-                            {
-                                message.text = content;
-                                message.timestamp_ms = current_timestamp_ms();
+                        let action = classify_stream_message_action(
+                            history.last().map(|message| message.role),
+                            active_stream_request_id.borrow().as_deref(),
+                            request_id.as_deref(),
+                            &content,
+                        );
+                        match action {
+                            StreamMessageAction::IgnoreEmpty => {}
+                            StreamMessageAction::ReplaceLastAssistant => {
+                                if let Some(message) = history.last_mut() {
+                                    debug_assert_eq!(message.role, MessageRole::Assistant);
+                                    message.text = content;
+                                    message.timestamp_ms = current_timestamp_ms();
+                                }
                             }
-                        } else {
-                            history.push(ChatMessage {
-                                text: content,
-                                role: MessageRole::Assistant,
-                                timestamp_ms: current_timestamp_ms(),
-                            });
-                            *active_stream_request_id.borrow_mut() = request_id;
+                            StreamMessageAction::PushAssistant => {
+                                history.push(ChatMessage {
+                                    text: content,
+                                    role: MessageRole::Assistant,
+                                    timestamp_ms: current_timestamp_ms(),
+                                });
+                                *active_stream_request_id.borrow_mut() = request_id;
+                            }
                         }
                     }
                     "session.stream.clear" | "session.stream.done" => {

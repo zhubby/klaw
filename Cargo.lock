@@ -4465,6 +4465,7 @@ dependencies = [
  "egui",
  "egui-notify",
  "egui-phosphor",
+ "egui_commonmark",
  "js-sys",
  "klaw-ui-kit",
  "serde",

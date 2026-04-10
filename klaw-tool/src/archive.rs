@@ -282,7 +282,8 @@ impl ArchiveTool {
         let mut attachments = Vec::new();
         let mut seen_ids = HashSet::new();
         for session_key in &scope.session_keys {
-            let remaining = DEFAULT_SESSION_ATTACHMENT_LIMIT.saturating_sub(attachments.len() as i64);
+            let remaining =
+                DEFAULT_SESSION_ATTACHMENT_LIMIT.saturating_sub(attachments.len() as i64);
             if remaining <= 0 {
                 break;
             }
@@ -807,7 +808,11 @@ mod tests {
             .await
             .expect("list session attachments should succeed");
         assert!(output.content_for_model.contains("\"id\": \"arch-base-1\""));
-        assert!(output.content_for_model.contains("\"id\": \"arch-active-1\""));
+        assert!(
+            output
+                .content_for_model
+                .contains("\"id\": \"arch-active-1\"")
+        );
         assert!(
             output
                 .content_for_model

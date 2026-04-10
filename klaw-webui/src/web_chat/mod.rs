@@ -1,6 +1,7 @@
 //! WASM-only egui chat client for `/ws/chat`.
 
 mod app;
+mod markdown;
 mod protocol;
 mod session;
 mod storage;
