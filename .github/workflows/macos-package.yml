@@ -13,6 +13,7 @@ jobs:
     runs-on: macos-latest
     env:
       MACOS_TARGET: aarch64-apple-darwin
+      WASM_TARGET: wasm32-unknown-unknown
       APP_NAME: Klaw
     steps:
       - name: Checkout
@@ -27,10 +28,18 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: aarch64-apple-darwin,wasm32-unknown-unknown
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-bindgen CLI
+        run: |
+          WASM_BINDGEN_VERSION="$(awk -F' *= *' '/^wasm-bindgen = / {gsub(/"/,"",$2); print $2; exit}' Cargo.toml)"
+          cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
+
+      - name: Build webui wasm assets
+        run: make webui-wasm
 
       - name: Build macOS dmg
         run: make package-macos-dmg
