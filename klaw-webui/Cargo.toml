@@ -18,7 +18,7 @@ uuid = { workspace = true, features = ["v4"] }
 uuid = { workspace = true, features = ["js"] }
 console_error_panic_hook = { workspace = true }
 # eframe needs a different feature set than desktop `klaw-gui`; cannot inherit workspace eframe.
-eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "wgpu"] }
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "wgpu", "persistence"] }
 egui = { version = "0.33.3", default-features = false, features = ["default_fonts"] }
 egui_commonmark = { workspace = true }
 egui-phosphor = { workspace = true }

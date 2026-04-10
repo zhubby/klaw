@@ -5,7 +5,7 @@ use eframe::egui::{
 use egui_phosphor::regular;
 
 use crate::{
-    ConnectionState, MessageRole, ThemeMode, normalize_gateway_token_input, toolbar_title,
+    ConnectionState, MessageRole, normalize_gateway_token_input, toolbar_title,
 };
 
 use super::{
@@ -14,7 +14,7 @@ use super::{
     session::{
         BUBBLE_MAX_WIDTH, ChatMessage, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH,
         SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT,
-        SESSION_WINDOW_MIN_WIDTH, WindowAnchor, format_message_timestamp,
+        SESSION_WINDOW_MIN_WIDTH, format_message_timestamp,
     },
 };
 
@@ -77,13 +77,18 @@ impl ChatApp {
         TopBottomPanel::bottom("klaw-webui-status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Theme Mode:");
+                let current_theme = self.ctx.options(|opt| opt.theme_preference);
                 ComboBox::from_id_salt("klaw-webui-theme-mode")
                     .width(110.0)
-                    .selected_text(self.theme_mode.label())
+                    .selected_text(theme_preference_label(current_theme))
                     .show_ui(ui, |ui| {
-                        for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
+                        for mode in [
+                            egui::ThemePreference::System,
+                            egui::ThemePreference::Light,
+                            egui::ThemePreference::Dark,
+                        ] {
                             if ui
-                                .selectable_label(self.theme_mode == mode, mode.label())
+                                .selectable_label(current_theme == mode, theme_preference_label(mode))
                                 .clicked()
                             {
                                 requested_theme = Some(mode);
@@ -360,6 +365,7 @@ impl ChatApp {
                     if ui.button("Clear").clicked() {
                         self.gateway_token_input.clear();
                         self.gateway_token = None;
+                        self.persist_workspace_state();
                     }
                 });
             });
@@ -368,6 +374,7 @@ impl ChatApp {
 
         if reconnect_all {
             self.gateway_token = normalize_gateway_token_input(&self.gateway_token_input);
+            self.persist_workspace_state();
             self.reconnect_all_sessions();
             self.show_gateway_dialog = false;
         }
@@ -382,7 +389,6 @@ impl ChatApp {
         let mut trigger_connect = false;
         let mut trigger_disconnect = false;
         let mut set_active = false;
-        let mut persist_after_render = false;
         {
             let session = &mut self.sessions[index];
             let state = session.connection_state();
@@ -480,11 +486,6 @@ impl ChatApp {
                 });
             }) {
                 set_active = inner.response.clicked();
-                let next_anchor = WindowAnchor::from_pos2(inner.response.rect.min);
-                if session.window_anchor != next_anchor {
-                    session.window_anchor = next_anchor;
-                    persist_after_render = true;
-                }
             }
 
             session.open = open;
@@ -514,9 +515,6 @@ impl ChatApp {
         }
         if trigger_send {
             self.send_session_draft(session_key);
-        }
-        if persist_after_render {
-            self.persist_workspace_state();
         }
     }
 
@@ -685,5 +683,13 @@ fn connection_state_color(state: &ConnectionState, visuals: &egui::Visuals) -> C
         ConnectionState::Connecting => Color32::from_rgb(214, 149, 33),
         ConnectionState::Disconnected => visuals.weak_text_color(),
         ConnectionState::Error(_) => Color32::from_rgb(208, 67, 67),
+    }
+}
+
+fn theme_preference_label(theme: egui::ThemePreference) -> &'static str {
+    match theme {
+        egui::ThemePreference::System => "System",
+        egui::ThemePreference::Light => "Light",
+        egui::ThemePreference::Dark => "Dark",
     }
 }

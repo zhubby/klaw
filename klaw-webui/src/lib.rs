@@ -97,6 +97,21 @@ pub(crate) fn normalize_gateway_token_input(input: &str) -> Option<String> {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn resolve_gateway_token(
+    query_token: Option<String>,
+    persisted_token: Option<String>,
+) -> Option<String> {
+    query_token
+        .as_deref()
+        .and_then(normalize_gateway_token_input)
+        .or_else(|| {
+            persisted_token
+                .as_deref()
+                .and_then(normalize_gateway_token_input)
+        })
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn classify_stream_message_action(
     last_role: Option<MessageRole>,
     active_stream_request_id: Option<&str>,
@@ -143,7 +158,8 @@ mod tests {
 
     use super::{
         ConnectionState, MessageRole, StreamMessageAction, ThemeMode, classify_message_role,
-        classify_stream_message_action, normalize_gateway_token_input, toolbar_title,
+        classify_stream_message_action, normalize_gateway_token_input, resolve_gateway_token,
+        toolbar_title,
     };
 
     #[test]
@@ -248,6 +264,25 @@ mod tests {
         assert_eq!(
             normalize_gateway_token_input("  secret-token  "),
             Some("secret-token".to_string())
+        );
+    }
+
+    #[test]
+    fn query_token_overrides_persisted_gateway_token() {
+        assert_eq!(
+            resolve_gateway_token(
+                Some(" query-token ".to_string()),
+                Some("persisted-token".to_string())
+            ),
+            Some("query-token".to_string())
+        );
+    }
+
+    #[test]
+    fn persisted_gateway_token_is_used_when_query_missing() {
+        assert_eq!(
+            resolve_gateway_token(None, Some(" persisted-token ".to_string())),
+            Some("persisted-token".to_string())
         );
     }
 

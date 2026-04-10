@@ -36,13 +36,6 @@ pub(super) struct WindowAnchor {
 }
 
 impl WindowAnchor {
-    pub(super) fn from_pos2(pos: egui::Pos2) -> Self {
-        Self {
-            x: pos.x.round() as i32,
-            y: pos.y.round() as i32,
-        }
-    }
-
     pub(super) fn to_pos2(self) -> egui::Pos2 {
         egui::pos2(self.x as f32, self.y as f32)
     }
@@ -88,9 +81,7 @@ impl SessionWindow {
             title: metadata.title,
             draft: String::new(),
             open: metadata.open,
-            window_anchor: metadata
-                .window_anchor
-                .unwrap_or_else(|| window_anchor_for_slot(0)),
+            window_anchor: window_anchor_for_slot(0),
             buffers: SessionBuffers::default(),
             markdown_cache: MarkdownCache::default(),
         }
@@ -101,7 +92,6 @@ impl SessionWindow {
             session_key: self.session_key.clone(),
             title: self.title.clone(),
             open: self.open,
-            window_anchor: Some(self.window_anchor),
         }
     }
 
@@ -117,13 +107,6 @@ pub(super) fn window_anchor_for_slot(slot: u32) -> WindowAnchor {
         x: (WINDOW_START_X + column as f32 * WINDOW_OFFSET_X).round() as i32,
         y: (WINDOW_START_Y + row as f32 * WINDOW_OFFSET_Y).round() as i32,
     }
-}
-
-pub(super) fn anchor_rect(anchor: WindowAnchor) -> egui::Rect {
-    egui::Rect::from_min_size(
-        anchor.to_pos2(),
-        egui::vec2(SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT),
-    )
 }
 
 pub(super) fn current_timestamp_ms() -> i64 {

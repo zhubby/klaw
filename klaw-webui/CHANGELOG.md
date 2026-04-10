@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-04-10
+
+### Added
+
+- `klaw-webui` 的浏览器业务状态现在会持久化 gateway token，刷新页面后仍可恢复
+
+### Changed
+
+- `gateway_token` 的恢复策略改为“URL query 优先，其次使用 localStorage 中的上次保存值”，便于显式覆盖浏览器内已缓存的 token
+- `egui/eframe` 的内建 persistence 现已启用，主题偏好、侧栏宽度与 agent 窗口布局改由框架自身恢复，不再由 `klaw-webui` 手写持久化
+
 ## 2026-04-09
 
 ### Added
