@@ -2,8 +2,24 @@ use super::*;
 use klaw_util::system_timezone_name;
 use std::{
     env, fs,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+static TEMP_TEST_ROOT_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn temp_test_root(prefix: &str) -> std::path::PathBuf {
+    let counter = TEMP_TEST_ROOT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    env::temp_dir().join(format!("{prefix}-{}-{counter}", std::process::id()))
+}
+
+#[test]
+fn temp_test_root_is_unique_per_call() {
+    let first = temp_test_root("klaw-config-store-test");
+    let second = temp_test_root("klaw-config-store-test");
+
+    assert_ne!(first, second);
+}
 
 #[test]
 fn parse_default_template_succeeds() {
@@ -1579,11 +1595,7 @@ fn validate_config_file_does_not_create_when_missing() {
 
 #[test]
 fn config_store_save_updates_shared_snapshot_revision() {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
-    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let root = temp_test_root("klaw-config-store-test");
     let path = root.join("config.toml");
 
     let raw = r#"
@@ -1629,11 +1641,7 @@ env_key = "OPENAI_API_KEY"
 
 #[test]
 fn config_store_update_config_merges_changes_from_stale_store_snapshots() {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
-    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let root = temp_test_root("klaw-config-store-test");
     let path = root.join("config.toml");
 
     let raw = r#"
@@ -1695,11 +1703,7 @@ model = "text-embedding-3-small"
 
 #[test]
 fn config_store_reset_and_migrate_refresh_snapshot_from_disk() {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
-    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let root = temp_test_root("klaw-config-store-test");
     let path = root.join("config.toml");
 
     let raw = r#"
@@ -1752,11 +1756,7 @@ flag = true
 
 #[test]
 fn config_store_validate_raw_toml_works_without_persisting() {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
-    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let root = temp_test_root("klaw-config-store-test");
     let path = root.join("config.toml");
     fs::create_dir_all(&root).expect("should create temp root");
     fs::write(
@@ -1804,11 +1804,7 @@ env_key = "OPENAI_API_KEY"
 
 #[test]
 fn config_store_save_observability_config_persists_changes() {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
-    let root = env::temp_dir().join(format!("klaw-config-store-test-{suffix}"));
+    let root = temp_test_root("klaw-config-store-test");
     let path = root.join("config.toml");
     fs::create_dir_all(&root).expect("should create temp root");
     fs::write(
