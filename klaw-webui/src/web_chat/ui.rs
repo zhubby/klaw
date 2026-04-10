@@ -718,7 +718,13 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
                     ),
                 };
 
-            let show_bubble = |ui: &mut egui::Ui, inner_max_width: f32| {
+            let inner_w_user = if is_user {
+                Some(user_bubble_inner_max_width(ui, message, role_label, &time_label))
+            } else {
+                None
+            };
+
+            let mut show_bubble = |ui: &mut egui::Ui, inner_max_width: f32| {
                 Frame::group(ui.style())
                     .fill(bubble_fill)
                     .stroke(bubble_stroke)
@@ -731,7 +737,7 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(role_label).strong().color(heading_color));
                                 ui.add_space(6.0);
-                                ui.label(RichText::new(time_label).small().color(heading_color));
+                                ui.label(RichText::new(&time_label).small().color(heading_color));
                             });
                             ui.add_space(4.0);
                             render_markdown(
@@ -745,8 +751,7 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
                     });
             };
 
-            if is_user {
-                let inner_w = user_bubble_inner_max_width(ui, message, role_label, &time_label);
+            if let Some(inner_w) = inner_w_user {
                 let row_w = ui.available_width();
                 ui.allocate_ui_with_layout(
                     vec2(row_w, 0.0),
