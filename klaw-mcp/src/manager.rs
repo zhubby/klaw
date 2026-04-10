@@ -684,6 +684,7 @@ mod tests {
             id: id.to_string(),
             enabled,
             mode,
+            tool_timeout_seconds: 60,
             command: if is_stdio {
                 Some("echo".to_string())
             } else {
@@ -820,6 +821,7 @@ mod tests {
                 id: "sleepy".to_string(),
                 enabled: true,
                 mode: McpServerMode::Stdio,
+                tool_timeout_seconds: 60,
                 command: Some("sleep".to_string()),
                 args: vec!["2".to_string()],
                 env: BTreeMap::new(),

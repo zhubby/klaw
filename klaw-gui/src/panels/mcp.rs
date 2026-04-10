@@ -25,6 +25,7 @@ struct McpServerForm {
     id: String,
     enabled: bool,
     mode: McpServerMode,
+    tool_timeout_seconds: String,
     command: String,
     args_input: ArrayEditor,
     env_input: KeyValueEditor,
@@ -40,6 +41,7 @@ impl McpServerForm {
             id: String::new(),
             enabled: true,
             mode: McpServerMode::Stdio,
+            tool_timeout_seconds: "60".to_string(),
             command: String::new(),
             args_input: ArrayEditor::new("Args"),
             env_input: KeyValueEditor::new("Env"),
@@ -55,6 +57,7 @@ impl McpServerForm {
             id: server.id.clone(),
             enabled: server.enabled,
             mode: server.mode.clone(),
+            tool_timeout_seconds: server.tool_timeout_seconds.to_string(),
             command: server.command.clone().unwrap_or_default(),
             args_input: ArrayEditor::from_vec("Args", &server.args),
             env_input: KeyValueEditor::from_map("Env", &server.env),
@@ -76,22 +79,31 @@ impl McpServerForm {
         self.id.trim().to_string()
     }
 
-    fn to_config(&self) -> McpServerConfig {
+    fn to_config(&self) -> Result<McpServerConfig, String> {
         let command = self.command.trim();
         let cwd = self.cwd.trim();
         let url = self.url.trim();
+        let tool_timeout_seconds = self
+            .tool_timeout_seconds
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| "tool_timeout_seconds must be a positive integer".to_string())?;
+        if tool_timeout_seconds == 0 {
+            return Err("tool_timeout_seconds must be a positive integer".to_string());
+        }
 
-        McpServerConfig {
+        Ok(McpServerConfig {
             id: self.normalized_id(),
             enabled: self.enabled,
             mode: self.mode.clone(),
+            tool_timeout_seconds,
             command: (!command.is_empty()).then(|| command.to_string()),
             args: self.args_input.to_vec(),
             env: self.env_input.to_map(),
             cwd: (!cwd.is_empty()).then(|| cwd.to_string()),
             url: (!url.is_empty()).then(|| url.to_string()),
             headers: self.headers_input.to_map(),
-        }
+        })
     }
 }
 
@@ -422,7 +434,7 @@ impl McpPanel {
     }
 
     fn apply_form(mut config: AppConfig, form: &McpServerForm) -> Result<AppConfig, String> {
-        let server = form.to_config();
+        let server = form.to_config()?;
         if server.id.is_empty() {
             return Err("MCP server ID cannot be empty".to_string());
         }
@@ -510,6 +522,10 @@ impl McpPanel {
                                 ui.selectable_value(&mut form.mode, McpServerMode::Stdio, "stdio");
                                 ui.selectable_value(&mut form.mode, McpServerMode::Sse, "sse");
                             });
+                        ui.end_row();
+
+                        ui.label("Tool Timeout Seconds");
+                        ui.text_edit_singleline(&mut form.tool_timeout_seconds);
                         ui.end_row();
                     });
 
@@ -978,6 +994,7 @@ mod tests {
             id: "docs".to_string(),
             enabled: true,
             mode: McpServerMode::Stdio,
+            tool_timeout_seconds: 60,
             command: Some("uvx mcp-docs".to_string()),
             args: Vec::new(),
             env: BTreeMap::new(),
@@ -1001,6 +1018,7 @@ mod tests {
             id: "docs".to_string(),
             enabled: true,
             mode: McpServerMode::Stdio,
+            tool_timeout_seconds: 90,
             command: Some("old".to_string()),
             args: Vec::new(),
             env: BTreeMap::new(),
@@ -1027,6 +1045,7 @@ mod tests {
             .find(|item| item.id == "docs")
             .expect("server should exist");
         assert_eq!(server.command.as_deref(), Some("new"));
+        assert_eq!(server.tool_timeout_seconds, 90);
     }
 
     #[test]
@@ -1047,6 +1066,7 @@ mod tests {
             id: "browser".to_string(),
             enabled: true,
             mode: McpServerMode::Stdio,
+            tool_timeout_seconds: 60,
             command: Some("npx".to_string()),
             args: vec!["@browsermcp/mcp@latest".to_string()],
             env: BTreeMap::new(),
@@ -1064,6 +1084,7 @@ mod tests {
             id: "browser".to_string(),
             enabled: true,
             mode: McpServerMode::Stdio,
+            tool_timeout_seconds: 60,
             command: Some("npx".to_string()),
             args: vec!["@browsermcp/mcp".to_string()],
             env: BTreeMap::new(),
@@ -1079,6 +1100,7 @@ mod tests {
             id: "context7".to_string(),
             enabled: true,
             mode: McpServerMode::Sse,
+            tool_timeout_seconds: 60,
             command: None,
             args: Vec::new(),
             env: BTreeMap::new(),

@@ -139,6 +139,12 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
                 server.id
             )));
         }
+        if server.tool_timeout_seconds == 0 {
+            return Err(ConfigError::InvalidConfig(format!(
+                "mcp.servers '{}' tool_timeout_seconds must be greater than 0",
+                server.id
+            )));
+        }
         match server.mode {
             McpServerMode::Stdio => {
                 let command = server.command.as_deref().map(str::trim).unwrap_or_default();

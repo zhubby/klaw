@@ -763,6 +763,8 @@ pub struct McpServerConfig {
     #[serde(default = "default_mcp_server_enabled")]
     pub enabled: bool,
     pub mode: McpServerMode,
+    #[serde(default = "default_mcp_server_tool_timeout_seconds")]
+    pub tool_timeout_seconds: u64,
     #[serde(default)]
     pub command: Option<String>,
     #[serde(default)]
@@ -783,6 +785,7 @@ impl Default for McpServerConfig {
             id: String::new(),
             enabled: default_mcp_server_enabled(),
             mode: McpServerMode::Stdio,
+            tool_timeout_seconds: default_mcp_server_tool_timeout_seconds(),
             command: None,
             args: Vec::new(),
             env: BTreeMap::new(),
@@ -799,6 +802,10 @@ fn default_mcp_startup_timeout_seconds() -> u64 {
 
 fn default_mcp_server_enabled() -> bool {
     true
+}
+
+fn default_mcp_server_tool_timeout_seconds() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

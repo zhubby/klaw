@@ -167,6 +167,7 @@ mod tests {
             id: "local".to_string(),
             enabled: true,
             mode: McpServerMode::Stdio,
+            tool_timeout_seconds: 60,
             command: Some("npx".to_string()),
             args: Vec::new(),
             env: Default::default(),

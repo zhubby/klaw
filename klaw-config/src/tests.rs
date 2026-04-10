@@ -493,6 +493,7 @@ startup_timeout_seconds = 30
 id = "filesystem"
 enabled = true
 mode = "stdio"
+tool_timeout_seconds = 45
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 cwd = "/tmp"
@@ -514,7 +515,9 @@ Authorization = "Bearer test"
     assert_eq!(parsed.mcp.startup_timeout_seconds, 30);
     assert_eq!(parsed.mcp.servers.len(), 2);
     assert_eq!(parsed.mcp.servers[0].mode, McpServerMode::Stdio);
+    assert_eq!(parsed.mcp.servers[0].tool_timeout_seconds, 45);
     assert_eq!(parsed.mcp.servers[0].command.as_deref(), Some("npx"),);
+    assert_eq!(parsed.mcp.servers[1].tool_timeout_seconds, 60);
     assert_eq!(
         parsed.mcp.servers[1].url.as_deref(),
         Some("https://mcp.example.com/sse")
@@ -717,6 +720,26 @@ fn validate_fails_when_mcp_timeout_is_zero() {
     cfg.mcp.startup_timeout_seconds = 0;
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("mcp.startup_timeout_seconds"));
+}
+
+#[test]
+fn validate_fails_when_mcp_server_tool_timeout_is_zero() {
+    let mut cfg = AppConfig::default();
+    cfg.mcp.servers = vec![McpServerConfig {
+        id: "filesystem".to_string(),
+        enabled: true,
+        mode: McpServerMode::Stdio,
+        command: Some("npx".to_string()),
+        args: Vec::new(),
+        env: BTreeMap::new(),
+        cwd: None,
+        url: None,
+        headers: BTreeMap::new(),
+        tool_timeout_seconds: 0,
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("tool_timeout_seconds"));
 }
 
 #[test]
@@ -1051,6 +1074,7 @@ fn validate_fails_when_mcp_server_ids_duplicate() {
             id: "dup".to_string(),
             enabled: true,
             mode: McpServerMode::Stdio,
+            tool_timeout_seconds: 60,
             command: Some("echo".to_string()),
             args: vec![],
             env: BTreeMap::new(),
@@ -1062,6 +1086,7 @@ fn validate_fails_when_mcp_server_ids_duplicate() {
             id: "dup".to_string(),
             enabled: true,
             mode: McpServerMode::Sse,
+            tool_timeout_seconds: 60,
             command: None,
             args: vec![],
             env: BTreeMap::new(),
@@ -1081,6 +1106,7 @@ fn validate_fails_when_stdio_server_command_missing() {
         id: "stdio".to_string(),
         enabled: true,
         mode: McpServerMode::Stdio,
+        tool_timeout_seconds: 60,
         command: Some("".to_string()),
         args: vec![],
         env: BTreeMap::new(),
@@ -1099,6 +1125,7 @@ fn validate_fails_when_sse_server_url_invalid() {
         id: "sse".to_string(),
         enabled: true,
         mode: McpServerMode::Sse,
+        tool_timeout_seconds: 60,
         command: None,
         args: vec![],
         env: BTreeMap::new(),

@@ -89,6 +89,7 @@ startup_timeout_seconds = 60
 [[mcp.servers]]
 id = "filesystem"
 mode = "stdio"
+tool_timeout_seconds = 60
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem"]
 
@@ -275,6 +276,7 @@ pub fn reset_to_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, C
 |------|------|
 | `startup_timeout_seconds` | 必须 > 0 |
 | `servers.id` | 不能为空，不能重复 |
+| `servers.tool_timeout_seconds` | 必须 > 0 |
 | `mode=stdio` | `command` 必填 |
 | `mode=sse` | `url` 必填且为有效 HTTP(S) URL |
 

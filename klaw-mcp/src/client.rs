@@ -71,6 +71,7 @@ struct StdioIo {
 pub(crate) struct StdioMcpClient {
     io: Mutex<StdioIo>,
     next_id: AtomicU64,
+    tool_timeout: Duration,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
     stderr_task: Mutex<Option<JoinHandle<()>>>,
 }
@@ -122,6 +123,7 @@ impl StdioMcpClient {
                 stdout: BufReader::new(stdout),
             }),
             next_id: AtomicU64::new(1),
+            tool_timeout: Duration::from_secs(server.tool_timeout_seconds),
             stderr_tail,
             stderr_task: Mutex::new(Some(stderr_task)),
         })
@@ -321,14 +323,23 @@ impl McpClient for StdioMcpClient {
     }
 
     async fn call_tool(&self, tool_name: &str, arguments: Value) -> Result<Value, McpClientError> {
-        self.rpc_request(
-            "tools/call",
-            json!({
-                "name": tool_name,
-                "arguments": arguments
-            }),
+        timeout(
+            self.tool_timeout,
+            self.rpc_request(
+                "tools/call",
+                json!({
+                    "name": tool_name,
+                    "arguments": arguments
+                }),
+            ),
         )
         .await
+        .map_err(|_| {
+            McpClientError::Request(format!(
+                "tool call timed out after {}s",
+                self.tool_timeout.as_secs()
+            ))
+        })?
     }
 
     async fn shutdown(&self) -> Result<(), McpClientError> {
@@ -369,6 +380,7 @@ pub(crate) struct SseMcpClient {
     url: String,
     headers: HeaderMap,
     next_id: AtomicU64,
+    tool_timeout: Duration,
 }
 
 impl SseMcpClient {
@@ -394,6 +406,7 @@ impl SseMcpClient {
             url,
             headers,
             next_id: AtomicU64::new(1),
+            tool_timeout: Duration::from_secs(server.tool_timeout_seconds),
         })
     }
 
@@ -478,14 +491,23 @@ impl McpClient for SseMcpClient {
     }
 
     async fn call_tool(&self, tool_name: &str, arguments: Value) -> Result<Value, McpClientError> {
-        self.rpc_request(
-            "tools/call",
-            json!({
-                "name": tool_name,
-                "arguments": arguments
-            }),
+        timeout(
+            self.tool_timeout,
+            self.rpc_request(
+                "tools/call",
+                json!({
+                    "name": tool_name,
+                    "arguments": arguments
+                }),
+            ),
         )
         .await
+        .map_err(|_| {
+            McpClientError::Request(format!(
+                "tool call timed out after {}s",
+                self.tool_timeout.as_secs()
+            ))
+        })?
     }
 }
 
@@ -539,6 +561,22 @@ mod tests {
             cwd: None,
             url: Some("https://example.com/sse".to_string()),
             headers,
+            tool_timeout_seconds: 60,
+        }
+    }
+
+    fn stdio_server(command: &str, args: Vec<&str>, tool_timeout_seconds: u64) -> McpServerConfig {
+        McpServerConfig {
+            id: "test-stdio".to_string(),
+            enabled: true,
+            mode: McpServerMode::Stdio,
+            command: Some(command.to_string()),
+            args: args.into_iter().map(ToString::to_string).collect(),
+            env: BTreeMap::new(),
+            cwd: None,
+            url: None,
+            headers: BTreeMap::new(),
+            tool_timeout_seconds,
         }
     }
 
@@ -578,6 +616,16 @@ mod tests {
     }
 
     #[test]
+    fn sse_client_uses_server_tool_timeout() {
+        let mut server = sse_server(BTreeMap::new());
+        server.tool_timeout_seconds = 7;
+
+        let client = SseMcpClient::new(&server).expect("should construct");
+
+        assert_eq!(client.tool_timeout, Duration::from_secs(7));
+    }
+
+    #[test]
     fn force_npx_yes_for_noninteractive_launch() {
         assert!(should_force_npx_yes("npx", &BTreeMap::new()));
         assert!(should_force_npx_yes(
@@ -610,5 +658,19 @@ mod tests {
             std::str::from_utf8(&frame).expect("utf8"),
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"
         );
+    }
+
+    #[tokio::test]
+    async fn stdio_call_tool_times_out_using_server_config() {
+        let client = StdioMcpClient::new(&stdio_server("sleep", vec!["2"], 1))
+            .await
+            .expect("should construct");
+
+        let err = client
+            .call_tool("slow_tool", json!({}))
+            .await
+            .expect_err("tool call should time out");
+
+        assert!(err.to_string().contains("timed out after 1s"));
     }
 }

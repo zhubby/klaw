@@ -1575,6 +1575,7 @@ MCP 服务器列表。
 id = "filesystem"
 enabled = true
 mode = "stdio"
+tool_timeout_seconds = 45
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/data"]
 
@@ -1621,6 +1622,18 @@ mcp.servers.enabled = false
 
 ```toml
 mcp.servers.mode = "stdio"
+```
+
+#### `mcp.servers[].tool_timeout_seconds`
+
+**类型**: `u64`
+**默认值**: `60`
+**必填**: 否
+
+该 MCP server 上 `tools/call` 调用的执行超时（秒）。
+
+```toml
+mcp.servers.tool_timeout_seconds = 60
 ```
 
 #### `mcp.servers[].command`

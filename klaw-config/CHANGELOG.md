@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-04-10
+
+### Added
+
+- 新增 `mcp.servers[].tool_timeout_seconds` 配置项，默认值为 `60`，用于限制单个 MCP server 上 `tools/call` 的执行时长
+
+### Changed
+
+- MCP 配置校验现在要求 `mcp.servers[].tool_timeout_seconds` 必须大于 `0`
+
 ## 2026-04-07
 
 ### Added

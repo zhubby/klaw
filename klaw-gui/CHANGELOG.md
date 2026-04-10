@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-10
+
+### Changed
+
+- `MCP` 面板的服务器表单现在支持编辑 `tool_timeout_seconds`，避免通过 GUI 保存 server 配置时把自定义的 tool 调用超时重置回默认值
+
 ## 2026-04-09
 
 ### Added

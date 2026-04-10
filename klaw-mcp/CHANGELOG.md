@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-04-10
+
+### Added
+
+- stdio 与 SSE MCP client 现支持读取每个 server 的 `tool_timeout_seconds` 配置，并对 `tools/call` 应用独立超时
+
+### Fixed
+
+- MCP 代理工具调用不再只受 server 启动超时保护；卡住的远程 `tools/call` 现在会按 server 配置及时失败返回
+
 ## 2026-04-09
 
 ### Added
