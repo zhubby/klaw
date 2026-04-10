@@ -28,6 +28,7 @@ pub use webhook::{
     GatewayWebhookHandlerError, GatewayWebhookRequest, GatewayWebhookResponse,
 };
 pub use websocket::{
-    GatewayWebsocketErrorFrame, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
-    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
+    GatewaySessionHistoryMessage, GatewayWebsocketErrorFrame, GatewayWebsocketHandler,
+    GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
+    GatewayWorkspaceBootstrap, GatewayWorkspaceSession,
 };

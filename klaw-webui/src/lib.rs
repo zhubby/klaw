@@ -9,6 +9,9 @@ pub(crate) use klaw_ui_kit::ThemeMode;
 use std::collections::VecDeque;
 
 #[cfg(any(test, target_arch = "wasm32"))]
+use serde::{Deserialize, Serialize};
+
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ConnectionState {
     Disconnected,
@@ -86,6 +89,22 @@ pub(crate) struct EmptyStateCopy {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SessionListEntry {
+    pub(crate) session_key: String,
+    pub(crate) title: String,
+    pub(crate) created_at_ms: i64,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PageMode {
+    ConnectionGuide,
+    LoadingWorkspace,
+    Workspace,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn toolbar_title() -> &'static str {
     "Klaw Web Chat"
 }
@@ -122,6 +141,28 @@ pub(crate) fn should_activate_session_window(
 #[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn session_card_activity_label(_is_active: bool) -> Option<&'static str> {
     None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn derive_page_mode(
+    connection_state: &ConnectionState,
+    workspace_loaded: bool,
+) -> PageMode {
+    match connection_state {
+        ConnectionState::Connected if workspace_loaded => PageMode::Workspace,
+        ConnectionState::Connected => PageMode::LoadingWorkspace,
+        _ => PageMode::ConnectionGuide,
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn sort_session_entries_by_created_at_desc(entries: &mut [SessionListEntry]) {
+    entries.sort_by(|left, right| {
+        right
+            .created_at_ms
+            .cmp(&left.created_at_ms)
+            .then_with(|| right.session_key.cmp(&left.session_key))
+    });
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -170,9 +211,10 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::{
-        ConnectionState, MessageRole, StreamMessageAction, ThemeMode, classify_message_role,
-        classify_stream_message_action, normalize_gateway_token_input, resolve_gateway_token,
-        session_card_activity_label, should_activate_session_window, toolbar_title,
+        ConnectionState, MessageRole, PageMode, SessionListEntry, StreamMessageAction, ThemeMode,
+        classify_message_role, classify_stream_message_action, derive_page_mode,
+        normalize_gateway_token_input, resolve_gateway_token, session_card_activity_label,
+        should_activate_session_window, sort_session_entries_by_created_at_desc, toolbar_title,
     };
 
     #[test]
@@ -317,5 +359,42 @@ mod tests {
         assert_eq!(ThemeMode::System.label(), "System");
         assert_eq!(ThemeMode::Light.label(), "Light");
         assert_eq!(ThemeMode::Dark.label(), "Dark");
+    }
+
+    #[test]
+    fn derive_page_mode_hides_workspace_until_bootstrap_is_ready() {
+        assert_eq!(
+            derive_page_mode(&ConnectionState::Disconnected, false),
+            PageMode::ConnectionGuide
+        );
+        assert_eq!(
+            derive_page_mode(&ConnectionState::Connected, false),
+            PageMode::LoadingWorkspace
+        );
+        assert_eq!(
+            derive_page_mode(&ConnectionState::Connected, true),
+            PageMode::Workspace
+        );
+    }
+
+    #[test]
+    fn sort_sessions_by_created_at_desc_keeps_newest_first() {
+        let mut sessions = vec![
+            SessionListEntry {
+                session_key: "web:1".to_string(),
+                title: "Agent 1".to_string(),
+                created_at_ms: 10,
+            },
+            SessionListEntry {
+                session_key: "web:2".to_string(),
+                title: "Agent 2".to_string(),
+                created_at_ms: 20,
+            },
+        ];
+
+        sort_session_entries_by_created_at_desc(&mut sessions);
+
+        assert_eq!(sessions[0].session_key, "web:2");
+        assert_eq!(sessions[1].session_key, "web:1");
     }
 }

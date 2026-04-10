@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, GatewayOptions, GatewayWebsocketHandler,
-        GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
-        HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
-        spawn_gateway, spawn_gateway_with_options,
+        CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, GatewayOptions,
+        GatewaySessionHistoryMessage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
+        GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
+        GatewayWorkspaceSession, HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH,
+        WEBHOOK_EVENTS_PATH, WS_CHAT_PATH, spawn_gateway, spawn_gateway_with_options,
         webhook::{
             GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
             normalize_webhook_request,
@@ -16,6 +17,8 @@ mod tests {
     use reqwest::StatusCode;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::time::timeout;
     use tokio_tungstenite::{connect_async, tungstenite::Message};
 
     #[derive(Clone, Default)]
@@ -25,6 +28,51 @@ mod tests {
 
     #[async_trait]
     impl GatewayWebsocketHandler for RecordingWebsocketHandler {
+        async fn bootstrap(
+            &self,
+        ) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError> {
+            Ok(GatewayWorkspaceBootstrap {
+                sessions: vec![
+                    GatewayWorkspaceSession {
+                        session_key: "web:older".to_string(),
+                        title: "Agent 1".to_string(),
+                        created_at_ms: 10,
+                    },
+                    GatewayWorkspaceSession {
+                        session_key: "web:newer".to_string(),
+                        title: "Agent 2".to_string(),
+                        created_at_ms: 20,
+                    },
+                ],
+                active_session_key: Some("web:newer".to_string()),
+            })
+        }
+
+        async fn create_session(
+            &self,
+        ) -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError> {
+            Ok(GatewayWorkspaceSession {
+                session_key: "web:created".to_string(),
+                title: "Agent 3".to_string(),
+                created_at_ms: 30,
+            })
+        }
+
+        async fn load_session_history(
+            &self,
+            session_key: &str,
+        ) -> Result<Vec<GatewaySessionHistoryMessage>, GatewayWebsocketHandlerError> {
+            if session_key == "web:history" {
+                return Ok(vec![GatewaySessionHistoryMessage {
+                    role: "assistant".to_string(),
+                    content: "previous answer".to_string(),
+                    timestamp_ms: 42,
+                    message_id: Some("msg-1".to_string()),
+                }]);
+            }
+            Ok(Vec::new())
+        }
+
         async fn submit(
             &self,
             request: GatewayWebsocketSubmitRequest,
@@ -141,6 +189,7 @@ mod tests {
         assert!(home_html.contains(HOME_LOGO_PATH));
         assert!(home_html.contains("href=\"/chat\""));
         assert!(home_html.contains("Open web chat"));
+        assert!(!home_html.contains("Klaw Gateway is the friendly little harbor of the system."));
 
         let logo_response = client
             .get(format!("{base_url}{HOME_LOGO_PATH}"))
@@ -462,6 +511,280 @@ mod tests {
         assert_eq!(recorded[0].chat_id, "web:test-session");
         assert_eq!(recorded[0].channel_id, "default");
         assert_eq!(recorded[0].input, "hello gateway");
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_workspace_bootstrap_returns_sessions_sorted_by_created_at_desc() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _ = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "bootstrap-1",
+                    "method": "workspace.bootstrap",
+                    "params": {}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("bootstrap should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("bootstrap response")
+            .expect("bootstrap frame");
+        let frame = match frame {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid result frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+
+        match frame {
+            GatewayWebsocketServerFrame::Result { id, result } => {
+                assert_eq!(id, "bootstrap-1");
+                let sessions = result
+                    .get("sessions")
+                    .and_then(|value| value.as_array())
+                    .expect("sessions array");
+                assert_eq!(sessions.len(), 2);
+                assert_eq!(
+                    sessions[0]
+                        .get("session_key")
+                        .and_then(|value| value.as_str()),
+                    Some("web:newer")
+                );
+                assert_eq!(
+                    sessions[1]
+                        .get("session_key")
+                        .and_then(|value| value.as_str()),
+                    Some("web:older")
+                );
+                assert_eq!(
+                    result
+                        .get("active_session_key")
+                        .and_then(|value| value.as_str()),
+                    Some("web:newer")
+                );
+            }
+            other => panic!("unexpected bootstrap frame: {other:?}"),
+        }
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_session_create_returns_created_session_metadata() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _ = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "create-1",
+                    "method": "session.create",
+                    "params": {}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("create should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("create response")
+            .expect("create frame");
+        let frame = match frame {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid result frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+
+        match frame {
+            GatewayWebsocketServerFrame::Result { id, result } => {
+                assert_eq!(id, "create-1");
+                assert_eq!(
+                    result.get("session_key").and_then(|value| value.as_str()),
+                    Some("web:created")
+                );
+                assert_eq!(
+                    result.get("title").and_then(|value| value.as_str()),
+                    Some("Agent 3")
+                );
+                assert_eq!(
+                    result.get("created_at_ms").and_then(|value| value.as_i64()),
+                    Some(30)
+                );
+            }
+            other => panic!("unexpected create frame: {other:?}"),
+        }
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_subscribe_emits_existing_chat_history_for_session() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _ = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "sub-history-1",
+                    "method": "session.subscribe",
+                    "params": { "session_key": "web:history" }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("subscribe should send");
+
+        let first = socket
+            .next()
+            .await
+            .expect("subscribe result")
+            .expect("subscribe result frame");
+        let second = socket
+            .next()
+            .await
+            .expect("subscribed event")
+            .expect("subscribed event frame");
+        let third = timeout(Duration::from_millis(250), socket.next())
+            .await
+            .expect("history event should arrive before timeout")
+            .expect("history event")
+            .expect("history event frame");
+
+        let first = match first {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid result frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        let second = match second {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid event frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        let third = match third {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid history frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+
+        match first {
+            GatewayWebsocketServerFrame::Result { id, .. } => {
+                assert_eq!(id, "sub-history-1");
+            }
+            other => panic!("unexpected subscribe result: {other:?}"),
+        }
+        match second {
+            GatewayWebsocketServerFrame::Event { event, payload } => {
+                assert_eq!(event, "session.subscribed");
+                assert_eq!(
+                    payload.get("session_key").and_then(|value| value.as_str()),
+                    Some("web:history")
+                );
+            }
+            other => panic!("unexpected subscribe event: {other:?}"),
+        }
+        match third {
+            GatewayWebsocketServerFrame::Event { event, payload } => {
+                assert_eq!(event, "session.message");
+                assert_eq!(
+                    payload.get("session_key").and_then(|value| value.as_str()),
+                    Some("web:history")
+                );
+                assert_eq!(
+                    payload
+                        .get("response")
+                        .and_then(|response| response.get("content"))
+                        .and_then(|value| value.as_str()),
+                    Some("previous answer")
+                );
+                assert_eq!(
+                    payload.get("role").and_then(|value| value.as_str()),
+                    Some("assistant")
+                );
+                assert_eq!(
+                    payload.get("history").and_then(|value| value.as_bool()),
+                    Some(true)
+                );
+            }
+            other => panic!("unexpected history event: {other:?}"),
+        }
 
         handle.shutdown().await.expect("gateway should stop");
     }

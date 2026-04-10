@@ -5,8 +5,8 @@ use eframe::egui::{
 use egui_phosphor::regular;
 
 use crate::{
-    ConnectionState, MessageRole, normalize_gateway_token_input, session_card_activity_label,
-    should_activate_session_window, toolbar_title,
+    ConnectionState, MessageRole, PageMode, derive_page_mode, normalize_gateway_token_input,
+    session_card_activity_label, should_activate_session_window, toolbar_title,
 };
 
 use super::{
@@ -24,7 +24,13 @@ impl ChatApp {
         TopBottomPanel::top("klaw-webui-toolbar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button(format!("{} Agent", regular::ROBOT), |ui| {
-                    if ui.button(format!("{} New Agent", regular::ROBOT)).clicked() {
+                    if ui
+                        .add_enabled(
+                            self.is_workspace_ready(),
+                            Button::new(format!("{} New Agent", regular::ROBOT)),
+                        )
+                        .clicked()
+                    {
                         self.create_session();
                         ui.close();
                     }
@@ -107,17 +113,18 @@ impl ChatApp {
                 ui.label(format!("Agents: {}", self.sessions.len()));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if let Some(active_session_key) = self.active_session_key.as_deref() {
-                        if let Some(session) = self
+                    ui.label(self.connection_state.borrow().status_text());
+                    if let Some(active_session_key) = self.active_session_key.as_deref()
+                        && let Some(session) = self
                             .sessions
                             .iter()
                             .find(|session| session.session_key == active_session_key)
-                        {
-                            ui.label(session.connection_state().status_text());
-                            ui.separator();
-                            ui.label(&session.title);
-                        }
+                        && self.is_workspace_ready()
+                    {
+                        ui.separator();
+                        ui.label(&session.title);
                     } else {
+                        ui.separator();
                         ui.label("No active agent");
                     }
                 });
@@ -130,35 +137,16 @@ impl ChatApp {
     }
 
     fn session_list_order(&self) -> Vec<String> {
-        let active = self.active_session_key.as_deref();
-        let mut visible = Vec::new();
-        let mut hidden = Vec::new();
-
-        for session in &self.sessions {
-            if active == Some(session.session_key.as_str()) {
-                continue;
-            }
-            if session.open {
-                visible.push(session.session_key.clone());
-            } else {
-                hidden.push(session.session_key.clone());
-            }
-        }
-
-        let mut ordered = Vec::with_capacity(self.sessions.len());
-        if let Some(active_session) = self
-            .sessions
+        self.sessions
             .iter()
-            .find(|session| active == Some(session.session_key.as_str()))
-        {
-            ordered.push(active_session.session_key.clone());
-        }
-        ordered.extend(visible);
-        ordered.extend(hidden);
-        ordered
+            .map(|session| session.session_key.clone())
+            .collect()
     }
 
     fn render_session_list(&mut self, ctx: &Context) {
+        if !self.is_workspace_ready() {
+            return;
+        }
         let mut remove_session_key = None;
         let mut focus_session_key = None;
         let mut rename_session_key = None;
@@ -184,7 +172,7 @@ impl ChatApp {
                         let session = &self.sessions[index];
                         let is_active = self.active_session_key.as_deref()
                             == Some(session.session_key.as_str());
-                        let state = session.connection_state();
+                        let state = self.connection_state.borrow().clone();
                         let compact_title = compact_sidebar_title(&session.title);
                         let card = Frame::group(ui.style())
                             .fill(if is_active {
@@ -397,17 +385,10 @@ impl ChatApp {
         };
 
         let mut trigger_send = false;
-        let mut trigger_connect = false;
-        let mut trigger_disconnect = false;
         let mut set_active = false;
         {
             let session = &mut self.sessions[index];
-            let state = session.connection_state();
             let messages = session.buffers.messages.borrow().clone();
-            let error_text = match &state {
-                ConnectionState::Error(message) => Some(message.clone()),
-                _ => None,
-            };
             let mut open = session.open;
 
             let window = egui::Window::new(&session.title)
@@ -422,30 +403,9 @@ impl ChatApp {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&session.session_key).small().weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let button_label = if matches!(state, ConnectionState::Connected) {
-                            "Disconnect"
-                        } else if matches!(state, ConnectionState::Connecting) {
-                            "Connecting…"
-                        } else {
-                            "Connect"
-                        };
-                        let button = ui.add_enabled(
-                            !matches!(state, ConnectionState::Connecting),
-                            Button::new(button_label),
-                        );
-                        if button.clicked() {
-                            if matches!(state, ConnectionState::Connected) {
-                                trigger_disconnect = true;
-                            } else {
-                                trigger_connect = true;
-                            }
-                        }
-                        ui.label(state.status_text());
+                        ui.label(self.connection_state.borrow().status_text());
                     });
                 });
-                if let Some(message) = error_text {
-                    ui.label(RichText::new(message).small().weak());
-                }
                 ui.separator();
 
                 let messages_height = (ui.available_height() - INPUT_PANEL_HEIGHT).max(140.0);
@@ -455,7 +415,7 @@ impl ChatApp {
                         .stick_to_bottom(true)
                         .show(ui, |ui| {
                             if messages.is_empty() {
-                                render_empty_state(ui, &state);
+                                render_empty_state(ui, &self.connection_state.borrow());
                                 return;
                             }
 
@@ -470,8 +430,8 @@ impl ChatApp {
                 ui.vertical(|ui| {
                     let input = TextEdit::multiline(&mut session.draft)
                         .desired_rows(3)
-                        .hint_text(state.composer_hint_text())
-                        .interactive(state.can_send());
+                        .hint_text(self.connection_state.borrow().composer_hint_text())
+                        .interactive(self.connection_state.borrow().can_send());
                     let response = ui.add_sized([ui.available_width(), 72.0], input);
                     let shortcut = response.has_focus()
                         && ui.input(|input| {
@@ -481,14 +441,17 @@ impl ChatApp {
 
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        let helper_text = if state.can_send() {
+                        let helper_text = if self.connection_state.borrow().can_send() {
                             "Cmd/Ctrl+Enter to send"
                         } else {
-                            state.composer_hint_text()
+                            self.connection_state.borrow().composer_hint_text()
                         };
                         ui.label(RichText::new(helper_text).small().weak());
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let send_button = ui.add_enabled(state.can_send(), Button::new("Send"));
+                            let send_button = ui.add_enabled(
+                                self.connection_state.borrow().can_send(),
+                                Button::new("Send"),
+                            );
                             if send_button.clicked() || shortcut {
                                 trigger_send = true;
                             }
@@ -521,12 +484,6 @@ impl ChatApp {
         if became_active || moved_to_front {
             self.persist_workspace_state();
         }
-        if trigger_disconnect && let Some(index) = self.session_index(session_key) {
-            Self::close_buffers(&self.sessions[index].buffers);
-        }
-        if trigger_connect {
-            self.try_connect_session(session_key);
-        }
         if trigger_send {
             self.send_session_draft(session_key);
         }
@@ -551,10 +508,40 @@ impl ChatApp {
     }
 
     fn render_workbench(&mut self, ctx: &Context) {
+        let page_mode = {
+            let connection_state = self.connection_state.borrow().clone();
+            derive_page_mode(&connection_state, self.workspace_loaded)
+        };
+        match page_mode {
+            PageMode::ConnectionGuide => {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.centered_and_justified(|ui| {
+                        ui.vertical(|ui| {
+                            ui.heading("Connect to Klaw Gateway");
+                            ui.label("Connect successfully before loading agents.");
+                            ui.add_space(8.0);
+                            if ui.button("Connect").clicked() {
+                                self.reconnect_all_sessions();
+                            }
+                        });
+                    });
+                });
+                return;
+            }
+            PageMode::LoadingWorkspace => {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.centered_and_justified(|ui| {
+                        ui.label("Loading agents from Klaw gateway…");
+                    });
+                });
+                return;
+            }
+            PageMode::Workspace => {}
+        }
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.sessions.is_empty() {
                 ui.centered_and_justified(|ui| {
-                    ui.label("No agents open. Click New Agent to start.");
+                    ui.label("No agents yet. Click New Agent to start.");
                 });
                 return;
             }
@@ -583,6 +570,7 @@ impl eframe::App for ChatApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.apply_theme();
         self.maybe_auto_connect_prefilled_token();
+        self.process_pending_frames();
         self.render_top_bar(ctx);
         self.render_status_bar(ctx);
         self.render_session_list(ctx);

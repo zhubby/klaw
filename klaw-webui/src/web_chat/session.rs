@@ -1,10 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{ConnectionState, MessageRole};
+use crate::{MessageRole, SessionListEntry};
 use js_sys::Date;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-use web_sys::WebSocket;
 
 use super::{markdown::MarkdownCache, storage::PersistedSession};
 
@@ -44,10 +42,6 @@ impl WindowAnchor {
 #[derive(Clone)]
 pub(super) struct SessionBuffers {
     pub(in crate::web_chat) messages: Rc<RefCell<Vec<ChatMessage>>>,
-    pub(in crate::web_chat) state: Rc<RefCell<ConnectionState>>,
-    pub(in crate::web_chat) ws: Rc<RefCell<Option<WebSocket>>>,
-    pub(in crate::web_chat) auth_verified: Rc<RefCell<bool>>,
-    pub(in crate::web_chat) suppress_next_close_notice: Rc<RefCell<bool>>,
     pub(in crate::web_chat) active_stream_request_id: Rc<RefCell<Option<String>>>,
 }
 
@@ -55,10 +49,6 @@ impl Default for SessionBuffers {
     fn default() -> Self {
         Self {
             messages: Rc::new(RefCell::new(Vec::new())),
-            state: Rc::new(RefCell::new(ConnectionState::Disconnected)),
-            ws: Rc::new(RefCell::new(None)),
-            auth_verified: Rc::new(RefCell::new(false)),
-            suppress_next_close_notice: Rc::new(RefCell::new(false)),
             active_stream_request_id: Rc::new(RefCell::new(None)),
         }
     }
@@ -67,6 +57,7 @@ impl Default for SessionBuffers {
 pub(super) struct SessionWindow {
     pub(in crate::web_chat) session_key: String,
     pub(in crate::web_chat) title: String,
+    pub(in crate::web_chat) created_at_ms: i64,
     pub(in crate::web_chat) draft: String,
     pub(in crate::web_chat) open: bool,
     pub(in crate::web_chat) window_anchor: WindowAnchor,
@@ -75,12 +66,13 @@ pub(super) struct SessionWindow {
 }
 
 impl SessionWindow {
-    pub(super) fn new(metadata: PersistedSession) -> Self {
+    pub(super) fn new(metadata: SessionListEntry, open: bool) -> Self {
         Self {
             session_key: metadata.session_key,
             title: metadata.title,
+            created_at_ms: metadata.created_at_ms,
             draft: String::new(),
-            open: metadata.open,
+            open,
             window_anchor: window_anchor_for_slot(0),
             buffers: SessionBuffers::default(),
             markdown_cache: MarkdownCache::default(),
@@ -90,13 +82,8 @@ impl SessionWindow {
     pub(super) fn metadata(&self) -> PersistedSession {
         PersistedSession {
             session_key: self.session_key.clone(),
-            title: self.title.clone(),
             open: self.open,
         }
-    }
-
-    pub(super) fn connection_state(&self) -> ConnectionState {
-        self.buffers.state.borrow().clone()
     }
 }
 
@@ -116,25 +103,4 @@ pub(super) fn current_timestamp_ms() -> i64 {
 pub(super) fn format_message_timestamp(timestamp_ms: i64) -> String {
     let date = Date::new(&wasm_bindgen::JsValue::from_f64(timestamp_ms as f64));
     format!("{:02}:{:02}", date.get_hours(), date.get_minutes())
-}
-
-pub(super) fn generate_session_key() -> String {
-    format!("web:{}", Uuid::new_v4())
-}
-
-pub(super) fn is_valid_session_key(session_key: &str) -> bool {
-    let Some(rest) = session_key.strip_prefix("web:") else {
-        return false;
-    };
-    Uuid::parse_str(rest).is_ok()
-}
-
-pub(super) fn session_title(number: u32) -> String {
-    format!("Agent {number}")
-}
-
-pub(super) fn migrate_legacy_session_title(title: &str) -> Option<String> {
-    let number = title.strip_prefix("Session ")?;
-    let parsed = number.parse::<u32>().ok()?;
-    Some(session_title(parsed))
 }

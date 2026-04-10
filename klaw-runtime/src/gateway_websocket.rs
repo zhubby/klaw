@@ -3,11 +3,14 @@ use async_trait::async_trait;
 use klaw_channel::{ChannelResponse, ChannelStreamEvent, websocket::WebsocketSubmitEnvelope};
 use klaw_config::{AppConfig, WebsocketConfig};
 use klaw_gateway::{
-    GatewayWebsocketHandler, GatewayWebsocketHandlerError, GatewayWebsocketServerFrame,
-    GatewayWebsocketSubmitRequest,
+    GatewaySessionHistoryMessage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
+    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
+    GatewayWorkspaceSession,
 };
+use klaw_session::{SessionListQuery, SessionManager};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
+use uuid::Uuid;
 
 const EVENT_SESSION_MESSAGE: &str = "session.message";
 const EVENT_SESSION_STREAM_CLEAR: &str = "session.stream.clear";
@@ -52,10 +55,95 @@ impl RuntimeWebsocketHandler {
             "unknown websocket channel_id '{channel_id}'"
         )))
     }
+
+    async fn load_web_workspace(
+        &self,
+    ) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError> {
+        let mut sessions =
+            klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone())
+                .list_sessions(SessionListQuery {
+                    channel: Some("web".to_string()),
+                    ..SessionListQuery::default()
+                })
+                .await
+                .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        sessions.sort_by(|left, right| {
+            left.created_at_ms
+                .cmp(&right.created_at_ms)
+                .then_with(|| left.session_key.cmp(&right.session_key))
+        });
+        let mut sessions = sessions
+            .into_iter()
+            .enumerate()
+            .map(|(index, session)| GatewayWorkspaceSession {
+                session_key: session.session_key,
+                title: format!("Agent {}", index + 1),
+                created_at_ms: session.created_at_ms,
+            })
+            .collect::<Vec<_>>();
+        sessions.sort_by(|left, right| {
+            right
+                .created_at_ms
+                .cmp(&left.created_at_ms)
+                .then_with(|| right.session_key.cmp(&left.session_key))
+        });
+        let active_session_key = sessions.first().map(|session| session.session_key.clone());
+        Ok(GatewayWorkspaceBootstrap {
+            sessions,
+            active_session_key,
+        })
+    }
 }
 
 #[async_trait]
 impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
+    async fn bootstrap(&self) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError> {
+        self.load_web_workspace().await
+    }
+
+    async fn create_session(
+        &self,
+    ) -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError> {
+        let manager =
+            klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone());
+        let session_key = format!("web:{}", Uuid::new_v4());
+        manager
+            .touch_session(&session_key, &session_key, "web")
+            .await
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        let workspace = self.load_web_workspace().await?;
+        workspace
+            .sessions
+            .into_iter()
+            .find(|session| session.session_key == session_key)
+            .ok_or_else(|| {
+                GatewayWebsocketHandlerError::internal(format!(
+                    "created session `{session_key}` missing from workspace bootstrap"
+                ))
+            })
+    }
+
+    async fn load_session_history(
+        &self,
+        session_key: &str,
+    ) -> Result<Vec<GatewaySessionHistoryMessage>, GatewayWebsocketHandlerError> {
+        let manager =
+            klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone());
+        let records = manager
+            .read_chat_records(session_key)
+            .await
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        Ok(records
+            .into_iter()
+            .map(|record| GatewaySessionHistoryMessage {
+                role: record.role,
+                content: record.content,
+                timestamp_ms: record.ts_ms,
+                message_id: record.message_id,
+            })
+            .collect())
+    }
+
     async fn submit(
         &self,
         request: GatewayWebsocketSubmitRequest,
@@ -79,8 +167,12 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
                 submit_channel_request_streaming(self.runtime.as_ref(), channel_request)
                     .await
                     .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
-            let mut frames =
-                stream_events_to_frames(&request_id, config.show_reasoning, &stream_events);
+            let mut frames = stream_events_to_frames(
+                &request_id,
+                &request.session_key,
+                config.show_reasoning,
+                &stream_events,
+            );
             frames.push(GatewayWebsocketServerFrame::Event {
                 event: EVENT_SESSION_STREAM_DONE.to_string(),
                 payload: json!({
@@ -116,6 +208,7 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
 
 fn stream_events_to_frames(
     request_id: &str,
+    session_key: &str,
     show_reasoning: bool,
     events: &[ChannelStreamEvent],
 ) -> Vec<GatewayWebsocketServerFrame> {
@@ -135,6 +228,7 @@ fn stream_events_to_frames(
                     event: EVENT_SESSION_MESSAGE.to_string(),
                     payload: json!({
                         "request_id": request_id,
+                        "session_key": session_key,
                         "response": serialize_response(response, show_reasoning),
                     }),
                 });
@@ -143,6 +237,7 @@ fn stream_events_to_frames(
                         event: EVENT_SESSION_STREAM_DELTA.to_string(),
                         payload: json!({
                             "request_id": request_id,
+                            "session_key": session_key,
                             "delta": delta,
                         }),
                     });
@@ -154,6 +249,7 @@ fn stream_events_to_frames(
                     event: EVENT_SESSION_STREAM_CLEAR.to_string(),
                     payload: json!({
                         "request_id": request_id,
+                        "session_key": session_key,
                     }),
                 });
             }
@@ -184,6 +280,7 @@ mod tests {
     fn stream_events_emit_delta_then_done_snapshot_updates() {
         let frames = stream_events_to_frames(
             "req-1",
+            "web:test",
             false,
             &[
                 ChannelStreamEvent::Snapshot(ChannelResponse {
@@ -247,6 +344,7 @@ mod tests {
     fn stream_clear_resets_active_delta_state() {
         let frames = stream_events_to_frames(
             "req-2",
+            "web:test",
             true,
             &[
                 ChannelStreamEvent::Snapshot(ChannelResponse {

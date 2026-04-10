@@ -1,17 +1,13 @@
 use crate::{ThemeMode, normalize_gateway_token_input};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 use web_sys::Storage;
-
-use super::session::{
-    generate_session_key, is_valid_session_key, migrate_legacy_session_title, session_title,
-};
 
 const APP_STATE_STORAGE_KEY: &str = "klaw_webui_workspace_state";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct PersistedSession {
     pub(in crate::web_chat) session_key: String,
-    pub(in crate::web_chat) title: String,
     #[serde(default = "default_session_open")]
     pub(in crate::web_chat) open: bool,
 }
@@ -24,14 +20,8 @@ pub(super) struct PersistedWorkspaceState {
     pub(in crate::web_chat) sessions: Vec<PersistedSession>,
     #[serde(default)]
     pub(in crate::web_chat) active_session_key: Option<String>,
-    #[serde(default = "default_next_session_number")]
-    pub(in crate::web_chat) next_session_number: u32,
     #[serde(default)]
     pub(in crate::web_chat) gateway_token: Option<String>,
-}
-
-const fn default_next_session_number() -> u32 {
-    2
 }
 
 const fn default_session_open() -> bool {
@@ -41,13 +31,8 @@ const fn default_session_open() -> bool {
 fn default_workspace_state() -> PersistedWorkspaceState {
     PersistedWorkspaceState {
         legacy_theme_mode: None,
-        sessions: vec![PersistedSession {
-            session_key: generate_session_key(),
-            title: session_title(1),
-            open: true,
-        }],
+        sessions: Vec::new(),
         active_session_key: None,
-        next_session_number: default_next_session_number(),
         gateway_token: None,
     }
 }
@@ -74,18 +59,12 @@ pub(super) fn load_workspace_state() -> PersistedWorkspaceState {
             .and_then(|legacy| legacy.theme_mode);
     }
 
-    state.sessions.retain(|session| {
-        is_valid_session_key(&session.session_key) && !session.title.trim().is_empty()
-    });
+    state
+        .sessions
+        .retain(|session| is_valid_session_key(&session.session_key));
 
     if state.sessions.is_empty() {
-        return default_workspace_state();
-    }
-
-    for session in state.sessions.iter_mut() {
-        if let Some(updated_title) = migrate_legacy_session_title(&session.title) {
-            session.title = updated_title;
-        }
+        state.active_session_key = None;
     }
 
     if state.active_session_key.as_ref().is_none_or(|active| {
@@ -100,9 +79,6 @@ pub(super) fn load_workspace_state() -> PersistedWorkspaceState {
             .map(|session| session.session_key.clone());
     }
 
-    state.next_session_number = state
-        .next_session_number
-        .max(state.sessions.len() as u32 + 1);
     state.gateway_token = state
         .gateway_token
         .as_deref()
@@ -118,4 +94,24 @@ pub(super) fn save_workspace_state(state: &PersistedWorkspaceState) {
         return;
     };
     let _ = storage.set_item(APP_STATE_STORAGE_KEY, &encoded);
+}
+
+fn is_valid_session_key(session_key: &str) -> bool {
+    let Some(rest) = session_key.strip_prefix("web:") else {
+        return false;
+    };
+    Uuid::parse_str(rest).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_workspace_state;
+
+    #[test]
+    fn persisted_workspace_state_defaults_without_local_sessions() {
+        let state = default_workspace_state();
+        assert!(state.active_session_key.is_none());
+        assert!(state.gateway_token.is_none());
+        assert!(state.sessions.is_empty());
+    }
 }

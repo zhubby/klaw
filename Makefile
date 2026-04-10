@@ -15,7 +15,7 @@ WEBUI_WASM_RELEASE := target/$(WASM_TARGET)/release/klaw_webui.wasm
 WASM_BINDGEN ?= wasm-bindgen
 WASM_BINDGEN_VERSION := $(shell awk -F' *= *' '/^wasm-bindgen = / {gsub(/"/,"",$$2); print $$2; exit}' Cargo.toml)
 
-.PHONY: build-macos-app package-macos-dmg clean-macos-artifacts webui-wasm clean-webui-wasm
+.PHONY: build-macos-app package-macos-dmg clean-macos-artifacts webui-wasm clean-webui-wasm docs
 
 build-macos-app:
 	cargo build --release -p klaw-cli --target $(MACOS_TARGET)
@@ -47,3 +47,6 @@ webui-wasm:
 
 clean-webui-wasm:
 	rm -rf $(WEBUI_DIST_DIR)
+
+docs:
+	mdbook serve docs

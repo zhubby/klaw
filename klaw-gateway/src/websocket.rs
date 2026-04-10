@@ -14,6 +14,8 @@ use std::{collections::BTreeMap, sync::Arc};
 use uuid::Uuid;
 
 const METHOD_SESSION_PING: &str = "session.ping";
+const METHOD_WORKSPACE_BOOTSTRAP: &str = "workspace.bootstrap";
+const METHOD_SESSION_CREATE: &str = "session.create";
 const METHOD_SESSION_SUBSCRIBE: &str = "session.subscribe";
 const METHOD_SESSION_UNSUBSCRIBE: &str = "session.unsubscribe";
 const METHOD_SESSION_SUBMIT: &str = "session.submit";
@@ -68,6 +70,27 @@ pub struct GatewayWebsocketSubmitRequest {
     pub stream: Option<bool>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayWorkspaceSession {
+    pub session_key: String,
+    pub title: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayWorkspaceBootstrap {
+    pub sessions: Vec<GatewayWorkspaceSession>,
+    pub active_session_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewaySessionHistoryMessage {
+    pub role: String,
+    pub content: String,
+    pub timestamp_ms: i64,
+    pub message_id: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct GatewayWebsocketHandlerError {
     pub code: String,
@@ -97,6 +120,16 @@ impl GatewayWebsocketHandlerError {
 
 #[async_trait]
 pub trait GatewayWebsocketHandler: Send + Sync {
+    async fn bootstrap(&self) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError>;
+
+    async fn create_session(&self)
+    -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError>;
+
+    async fn load_session_history(
+        &self,
+        session_key: &str,
+    ) -> Result<Vec<GatewaySessionHistoryMessage>, GatewayWebsocketHandlerError>;
+
     async fn submit(
         &self,
         request: GatewayWebsocketSubmitRequest,
@@ -234,6 +267,76 @@ async fn handle_text_message(
                 id,
                 result: json!({ "ok": true }),
             }],
+            METHOD_WORKSPACE_BOOTSTRAP => {
+                let Some(websocket) = state.websocket.as_ref() else {
+                    return vec![error_frame(
+                        Some(id),
+                        "not_configured",
+                        "gateway websocket handler is not configured",
+                    )];
+                };
+                match websocket.handler.bootstrap().await {
+                    Ok(mut workspace) => {
+                        workspace.sessions.sort_by(|left, right| {
+                            right
+                                .created_at_ms
+                                .cmp(&left.created_at_ms)
+                                .then_with(|| right.session_key.cmp(&left.session_key))
+                        });
+                        vec![GatewayWebsocketServerFrame::Result {
+                            id,
+                            result: json!({
+                                "sessions": workspace.sessions,
+                                "active_session_key": workspace.active_session_key,
+                            }),
+                        }]
+                    }
+                    Err(err) => vec![GatewayWebsocketServerFrame::Error {
+                        id: Some(id),
+                        error: GatewayWebsocketErrorFrame {
+                            code: err.code,
+                            message: err.message,
+                            data: err.data,
+                        },
+                    }],
+                }
+            }
+            METHOD_SESSION_CREATE => {
+                let Some(websocket) = state.websocket.as_ref() else {
+                    return vec![error_frame(
+                        Some(id),
+                        "not_configured",
+                        "gateway websocket handler is not configured",
+                    )];
+                };
+                match websocket.handler.create_session().await {
+                    Ok(session) => {
+                        *current_session_key = Some(session.session_key.clone());
+                        update_connection_session_key(
+                            state,
+                            connection_id,
+                            Some(session.session_key.clone()),
+                        )
+                        .await;
+                        vec![GatewayWebsocketServerFrame::Result {
+                            id,
+                            result: json!({
+                                "session_key": session.session_key,
+                                "title": session.title,
+                                "created_at_ms": session.created_at_ms,
+                            }),
+                        }]
+                    }
+                    Err(err) => vec![GatewayWebsocketServerFrame::Error {
+                        id: Some(id),
+                        error: GatewayWebsocketErrorFrame {
+                            code: err.code,
+                            message: err.message,
+                            data: err.data,
+                        },
+                    }],
+                }
+            }
             METHOD_SESSION_SUBSCRIBE => {
                 let params = match serde_json::from_value::<SessionSubscribeParams>(params) {
                     Ok(params) => params,
@@ -256,7 +359,27 @@ async fn handle_text_message(
                 *current_session_key = Some(session_key.clone());
                 update_connection_session_key(state, connection_id, Some(session_key.clone()))
                     .await;
-                vec![
+                let Some(websocket) = state.websocket.as_ref() else {
+                    return vec![error_frame(
+                        Some(id),
+                        "not_configured",
+                        "gateway websocket handler is not configured",
+                    )];
+                };
+                let history = match websocket.handler.load_session_history(&session_key).await {
+                    Ok(history) => history,
+                    Err(err) => {
+                        return vec![GatewayWebsocketServerFrame::Error {
+                            id: Some(id),
+                            error: GatewayWebsocketErrorFrame {
+                                code: err.code,
+                                message: err.message,
+                                data: err.data,
+                            },
+                        }];
+                    }
+                };
+                let mut frames = vec![
                     GatewayWebsocketServerFrame::Result {
                         id,
                         result: json!({ "session_key": session_key }),
@@ -265,7 +388,23 @@ async fn handle_text_message(
                         event: EVENT_SESSION_SUBSCRIBED.to_string(),
                         payload: json!({ "session_key": current_session_key }),
                     },
-                ]
+                ];
+                frames.extend(history.into_iter().map(|message| {
+                    GatewayWebsocketServerFrame::Event {
+                        event: "session.message".to_string(),
+                        payload: json!({
+                            "session_key": session_key,
+                            "response": {
+                                "content": message.content,
+                            },
+                            "role": message.role,
+                            "timestamp_ms": message.timestamp_ms,
+                            "message_id": message.message_id,
+                            "history": true,
+                        }),
+                    }
+                }));
+                frames
             }
             METHOD_SESSION_UNSUBSCRIBE => {
                 let previous_session_key = current_session_key.take();

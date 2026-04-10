@@ -13,7 +13,7 @@ pub(super) enum ClientFrame<'a> {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum ServerFrame {
     Event {
@@ -22,17 +22,19 @@ pub(super) enum ServerFrame {
         payload: Value,
     },
     Result {
+        #[allow(dead_code)]
         id: String,
         #[serde(default)]
         result: Value,
     },
     Error {
+        #[allow(dead_code)]
         id: Option<String>,
         error: ServerErrorFrame,
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub(super) struct ServerErrorFrame {
     pub(super) code: String,
     pub(super) message: String,
