@@ -6,6 +6,7 @@ use web_sys::WebSocket;
 
 use crate::{
     ConnectionState, SessionListEntry, resolve_gateway_token,
+    should_prompt_for_gateway_token_before_connect,
     sort_session_entries_by_created_at_desc,
 };
 
@@ -189,6 +190,14 @@ impl ChatApp {
     pub(in crate::web_chat) fn is_workspace_ready(&self) -> bool {
         matches!(*self.connection_state.borrow(), ConnectionState::Connected)
             && self.workspace_loaded
+    }
+
+    pub(in crate::web_chat) fn request_workspace_connection(&mut self) {
+        if should_prompt_for_gateway_token_before_connect(self.gateway_token.as_deref()) {
+            self.show_gateway_dialog = true;
+            return;
+        }
+        self.reconnect_all_sessions();
     }
 
     pub(in crate::web_chat) fn sync_sessions_from_workspace(

@@ -5,8 +5,9 @@ use eframe::egui::{
 use egui_phosphor::regular;
 
 use crate::{
-    ConnectionState, MessageRole, PageMode, derive_page_mode, normalize_gateway_token_input,
-    session_card_activity_label, should_activate_session_window, toolbar_title,
+    ConnectionState, MessageRole, PageMode, connection_action_label, derive_page_mode,
+    normalize_gateway_token_input, session_card_activity_label,
+    should_activate_session_window, toolbar_title,
 };
 
 use super::{
@@ -54,6 +55,8 @@ impl ChatApp {
                 });
 
                 ui.menu_button(format!("{} Connection", regular::PLUG), |ui| {
+                    let connection_action =
+                        connection_action_label(&self.connection_state.borrow().clone());
                     if ui
                         .button(format!("{} Gateway Token", regular::KEY))
                         .clicked()
@@ -62,10 +65,10 @@ impl ChatApp {
                         ui.close();
                     }
                     if ui
-                        .button(format!("{} Reconnect All", regular::ARROWS_CLOCKWISE))
+                        .button(format!("{} {connection_action}", regular::ARROWS_CLOCKWISE))
                         .clicked()
                     {
-                        self.reconnect_all_sessions();
+                        self.request_workspace_connection();
                         ui.close();
                     }
                 });
@@ -521,7 +524,7 @@ impl ChatApp {
                             ui.label("Connect successfully before loading agents.");
                             ui.add_space(8.0);
                             if ui.button("Connect").clicked() {
-                                self.reconnect_all_sessions();
+                                self.request_workspace_connection();
                             }
                         });
                     });

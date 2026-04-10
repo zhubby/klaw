@@ -116,6 +116,21 @@ pub(crate) fn normalize_gateway_token_input(input: &str) -> Option<String> {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn should_prompt_for_gateway_token_before_connect(token: Option<&str>) -> bool {
+    token.and_then(normalize_gateway_token_input).is_none()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn connection_action_label(connection_state: &ConnectionState) -> &'static str {
+    match connection_state {
+        ConnectionState::Connected => "Reconnect",
+        ConnectionState::Connecting => "Connect",
+        ConnectionState::Disconnected => "Connect",
+        ConnectionState::Error(_) => "Reconnect",
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn resolve_gateway_token(
     query_token: Option<String>,
     persisted_token: Option<String>,
@@ -212,9 +227,11 @@ mod tests {
 
     use super::{
         ConnectionState, MessageRole, PageMode, SessionListEntry, StreamMessageAction, ThemeMode,
-        classify_message_role, classify_stream_message_action, derive_page_mode,
-        normalize_gateway_token_input, resolve_gateway_token, session_card_activity_label,
-        should_activate_session_window, sort_session_entries_by_created_at_desc, toolbar_title,
+        classify_message_role, classify_stream_message_action, connection_action_label,
+        derive_page_mode, normalize_gateway_token_input, resolve_gateway_token,
+        session_card_activity_label, should_activate_session_window,
+        should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
+        toolbar_title,
     };
 
     #[test]
@@ -396,5 +413,23 @@ mod tests {
 
         assert_eq!(sessions[0].session_key, "web:2");
         assert_eq!(sessions[1].session_key, "web:1");
+    }
+
+    #[test]
+    fn connect_without_token_should_prompt_for_gateway_token() {
+        assert!(should_prompt_for_gateway_token_before_connect(None));
+        assert!(should_prompt_for_gateway_token_before_connect(Some("   ")));
+        assert!(!should_prompt_for_gateway_token_before_connect(Some("secret-token")));
+    }
+
+    #[test]
+    fn connection_action_uses_global_connection_wording() {
+        assert_eq!(connection_action_label(&ConnectionState::Disconnected), "Connect");
+        assert_eq!(connection_action_label(&ConnectionState::Connecting), "Connect");
+        assert_eq!(connection_action_label(&ConnectionState::Connected), "Reconnect");
+        assert_eq!(
+            connection_action_label(&ConnectionState::Error("oops".to_string())),
+            "Reconnect"
+        );
     }
 }
