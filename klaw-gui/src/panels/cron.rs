@@ -17,6 +17,8 @@ use std::time::Duration;
 use tokio::runtime::Builder;
 use uuid::Uuid;
 
+const CRON_RUNS_WINDOW_WIDTH: f32 = 760.0;
+
 #[derive(Debug, Clone)]
 struct CronForm {
     original_id: Option<String>,
@@ -409,9 +411,12 @@ impl CronPanel {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
+            .default_width(CRON_RUNS_WINDOW_WIDTH)
+            .min_width(CRON_RUNS_WINDOW_WIDTH)
+            .max_width(CRON_RUNS_WINDOW_WIDTH)
             .open(&mut keep_open)
             .show(ui.ctx(), |ui| {
-                ui.set_min_width(820.0);
+                ui.set_width(CRON_RUNS_WINDOW_WIDTH);
                 ui.horizontal(|ui| {
                     if ui.button("Refresh Runs").clicked() {
                         self.load_runs(&cron_id, notifications);
@@ -431,7 +436,9 @@ impl CronPanel {
                     return;
                 }
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                     egui::Grid::new("cron-run-grid")
                         .striped(true)
                         .num_columns(6)
@@ -460,7 +467,7 @@ impl CronPanel {
                                 ui.end_row();
                             }
                         });
-                });
+                    });
             });
 
         if !keep_open {
@@ -806,5 +813,19 @@ mod tests {
     #[test]
     fn new_cron_form_defaults_to_system_timezone() {
         assert_eq!(CronForm::new().timezone, system_timezone_name());
+    }
+
+    #[test]
+    fn runs_window_uses_fixed_width_and_bidirectional_scroll() {
+        let source = include_str!("cron.rs");
+        let render_runs_window = source
+            .split("fn render_runs_window")
+            .nth(1)
+            .and_then(|section| section.split("impl PanelRenderer for CronPanel").next())
+            .expect("render_runs_window section should exist");
+
+        assert!(render_runs_window.contains(".default_width(CRON_RUNS_WINDOW_WIDTH)"));
+        assert!(render_runs_window.contains(".max_width(CRON_RUNS_WINDOW_WIDTH)"));
+        assert!(render_runs_window.contains("egui::ScrollArea::both()"));
     }
 }
