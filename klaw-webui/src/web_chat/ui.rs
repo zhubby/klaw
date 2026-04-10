@@ -723,7 +723,6 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
             } else {
                 None
             };
-
             let mut show_bubble = |ui: &mut egui::Ui, inner_max_width: f32| {
                 Frame::group(ui.style())
                     .fill(bubble_fill)

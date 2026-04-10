@@ -18,6 +18,7 @@ mod tests {
     use serde_json::json;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use tokio::sync::mpsc;
     use tokio::time::timeout;
     use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -95,21 +96,25 @@ mod tests {
         async fn submit(
             &self,
             request: GatewayWebsocketSubmitRequest,
-        ) -> Result<Vec<GatewayWebsocketServerFrame>, GatewayWebsocketHandlerError> {
+            frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+        ) -> Result<(), GatewayWebsocketHandlerError> {
             self.requests
                 .lock()
                 .unwrap_or_else(|err| err.into_inner())
                 .push(request.clone());
-            Ok(vec![GatewayWebsocketServerFrame::Result {
-                id: request.request_id,
-                result: json!({
-                    "response": {
-                        "content": format!("ack: {}", request.input),
-                    },
-                    "session_key": request.session_key,
-                    "stream": false,
-                }),
-            }])
+            frame_tx
+                .send(GatewayWebsocketServerFrame::Result {
+                    id: request.request_id,
+                    result: json!({
+                        "response": {
+                            "content": format!("ack: {}", request.input),
+                        },
+                        "session_key": request.session_key,
+                        "stream": false,
+                    }),
+                })
+                .map_err(|_| GatewayWebsocketHandlerError::internal("connection closed"))?;
+            Ok(())
         }
     }
 

@@ -284,8 +284,28 @@ pub async fn submit_channel_request_streaming(
     runtime: &RuntimeBundle,
     request: ChannelRequest,
 ) -> ChannelResult<(Vec<ChannelStreamEvent>, Option<ChannelResponse>)> {
-    let mut events = Vec::new();
+    struct CollectingWriter {
+        events: Vec<ChannelStreamEvent>,
+    }
 
+    #[async_trait::async_trait(?Send)]
+    impl ChannelStreamWriter for CollectingWriter {
+        async fn write(&mut self, event: ChannelStreamEvent) -> ChannelResult<()> {
+            self.events.push(event);
+            Ok(())
+        }
+    }
+
+    let mut writer = CollectingWriter { events: Vec::new() };
+    let response = submit_channel_request_streaming_into(runtime, request, &mut writer).await?;
+    Ok((writer.events, response))
+}
+
+pub async fn submit_channel_request_streaming_into(
+    runtime: &RuntimeBundle,
+    request: ChannelRequest,
+    writer: &mut dyn ChannelStreamWriter,
+) -> ChannelResult<Option<ChannelResponse>> {
     if !is_channel_commands_disabled(runtime, &request.channel)
         && request.input.trim_start().starts_with('/')
     {
@@ -299,8 +319,10 @@ pub async fn submit_channel_request_streaming(
         )
         .await?
         {
-            events.push(ChannelStreamEvent::Snapshot(response.clone()));
-            return Ok((events, Some(response)));
+            writer
+                .write(ChannelStreamEvent::Snapshot(response.clone()))
+                .await?;
+            return Ok(Some(response));
         }
     }
 
@@ -311,7 +333,7 @@ pub async fn submit_channel_request_streaming(
         &request.chat_id,
     )
     .await?;
-    let maybe_output = submit_and_collect_stream_output(
+    submit_and_stream_output(
         runtime,
         request.channel,
         request.input,
@@ -321,15 +343,65 @@ pub async fn submit_channel_request_streaming(
         route.model,
         request.media_references,
         request.metadata,
-        &mut events,
+        writer,
+    )
+    .await
+    .map(|maybe_output| {
+        maybe_output
+            .map(|output| channel_response(output.content, output.reasoning, output.metadata))
+    })
+}
+
+pub async fn submit_channel_request_streaming_with_callback<F>(
+    runtime: &RuntimeBundle,
+    request: ChannelRequest,
+    mut on_event: F,
+) -> ChannelResult<Option<ChannelResponse>>
+where
+    F: FnMut(ChannelStreamEvent) -> ChannelResult<()> + Send,
+{
+    if !is_channel_commands_disabled(runtime, &request.channel)
+        && request.input.trim_start().starts_with('/')
+    {
+        if let Some(response) = im_commands::try_handle(
+            runtime,
+            request.channel.clone(),
+            request.session_key.clone(),
+            request.chat_id.clone(),
+            request.input.clone(),
+            request.metadata.clone(),
+        )
+        .await?
+        {
+            on_event(ChannelStreamEvent::Snapshot(response.clone()))?;
+            return Ok(Some(response));
+        }
+    }
+
+    let route = resolve_session_route(
+        runtime,
+        &request.channel,
+        &request.session_key,
+        &request.chat_id,
     )
     .await?;
-
-    Ok((
-        events,
+    submit_and_stream_output_with_callback(
+        runtime,
+        request.channel,
+        request.input,
+        route.active_session_key,
+        request.chat_id,
+        route.model_provider,
+        route.model,
+        request.media_references,
+        request.metadata,
+        &mut on_event,
+    )
+    .await
+    .map(|maybe_output| {
         maybe_output
-            .map(|output| channel_response(output.content, output.reasoning, output.metadata)),
-    ))
+            .map(|output| channel_response(output.content, output.reasoning, output.metadata))
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -2874,7 +2946,7 @@ pub async fn submit_and_stream_output(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn submit_and_collect_stream_output(
+async fn submit_and_stream_output_with_callback<F>(
     runtime: &RuntimeBundle,
     channel: String,
     input: String,
@@ -2884,8 +2956,11 @@ async fn submit_and_collect_stream_output(
     model: String,
     media_references: Vec<MediaReference>,
     request_metadata: BTreeMap<String, serde_json::Value>,
-    events: &mut Vec<ChannelStreamEvent>,
-) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
+    on_event: &mut F,
+) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>>
+where
+    F: FnMut(ChannelStreamEvent) -> ChannelResult<()> + Send,
+{
     let sessions = session_manager(runtime);
     let full_history = sessions.read_chat_records(&session_key).await?;
     let summary = maybe_refresh_summary(
@@ -2981,14 +3056,14 @@ async fn submit_and_collect_stream_output(
                 };
                 match event {
                     AgentExecutionStreamEvent::Snapshot { content, reasoning } => {
-                        events.push(ChannelStreamEvent::Snapshot(channel_response(
+                        on_event(ChannelStreamEvent::Snapshot(channel_response(
                             content,
                             reasoning,
                             BTreeMap::new(),
-                        )));
+                        )))?;
                     }
                     AgentExecutionStreamEvent::Clear => {
-                        events.push(ChannelStreamEvent::Clear);
+                        on_event(ChannelStreamEvent::Clear)?;
                     }
                 }
             }
@@ -3023,11 +3098,11 @@ async fn submit_and_collect_stream_output(
                 reasoning,
                 metadata: msg.payload.metadata.clone(),
             };
-            events.push(ChannelStreamEvent::Snapshot(channel_response(
+            on_event(ChannelStreamEvent::Snapshot(channel_response(
                 output.content.clone(),
                 output.reasoning.clone(),
                 output.metadata.clone(),
-            )));
+            )))?;
             Ok(Some(output))
         }
         Some(_) | None => {

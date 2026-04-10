@@ -11,6 +11,7 @@ use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
+use tokio::{spawn, sync::mpsc};
 use uuid::Uuid;
 
 const METHOD_SESSION_PING: &str = "session.ping";
@@ -144,7 +145,8 @@ pub trait GatewayWebsocketHandler: Send + Sync {
     async fn submit(
         &self,
         request: GatewayWebsocketSubmitRequest,
-    ) -> Result<Vec<GatewayWebsocketServerFrame>, GatewayWebsocketHandlerError>;
+        frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    ) -> Result<(), GatewayWebsocketHandlerError>;
 }
 
 #[derive(Debug, Deserialize)]
@@ -208,58 +210,76 @@ async fn handle_socket(
     mut socket: WebSocket,
 ) {
     let connection_id = Uuid::new_v4().to_string();
+    let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<GatewayWebsocketServerFrame>();
     register_connection(&state, &connection_id, initial_session_key.clone()).await;
 
     let mut current_session_key = initial_session_key;
-    if send_frame(
-        &mut socket,
-        &GatewayWebsocketServerFrame::Event {
+    if outgoing_tx
+        .send(GatewayWebsocketServerFrame::Event {
             event: EVENT_SESSION_CONNECTED.to_string(),
             payload: json!({
                 "connection_id": connection_id,
                 "session_key": current_session_key,
             }),
-        },
-    )
-    .await
-    .is_err()
+        })
+        .is_err()
     {
         cleanup_connection(state, connection_id).await;
         return;
     }
 
-    while let Some(Ok(message)) = socket.next().await {
-        match message {
-            Message::Text(text) => {
-                let frames =
-                    handle_text_message(&state, &connection_id, &mut current_session_key, &text)
+    loop {
+        tokio::select! {
+            maybe_frame = outgoing_rx.recv() => {
+                let Some(frame) = maybe_frame else {
+                    break;
+                };
+                if send_frame(&mut socket, &frame).await.is_err() {
+                    break;
+                }
+            }
+            maybe_message = socket.next() => {
+                let Some(Ok(message)) = maybe_message else {
+                    break;
+                };
+                match message {
+                    Message::Text(text) => {
+                        let frames = handle_text_message(
+                            &state,
+                            &connection_id,
+                            &mut current_session_key,
+                            &text,
+                            outgoing_tx.clone(),
+                        )
                         .await;
-                if send_frames(&mut socket, &frames).await.is_err() {
-                    break;
+                        if send_frames(&mut socket, &frames).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Binary(_) => {
+                        if send_frame(
+                            &mut socket,
+                            &error_frame(
+                                None,
+                                "invalid_message_type",
+                                "binary websocket frames are not supported",
+                            ),
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Message::Close(_) => break,
+                    Message::Ping(payload) => {
+                        if socket.send(Message::Pong(payload)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Pong(_) => {}
                 }
             }
-            Message::Binary(_) => {
-                if send_frame(
-                    &mut socket,
-                    &error_frame(
-                        None,
-                        "invalid_message_type",
-                        "binary websocket frames are not supported",
-                    ),
-                )
-                .await
-                .is_err()
-                {
-                    break;
-                }
-            }
-            Message::Close(_) => break,
-            Message::Ping(payload) => {
-                if socket.send(Message::Pong(payload)).await.is_err() {
-                    break;
-                }
-            }
-            Message::Pong(_) => {}
         }
     }
 
@@ -271,6 +291,7 @@ async fn handle_text_message(
     connection_id: &str,
     current_session_key: &mut Option<String>,
     text: &str,
+    outgoing_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
 ) -> Vec<GatewayWebsocketServerFrame> {
     let frame = match serde_json::from_str::<GatewayWebsocketClientFrame>(text) {
         Ok(frame) => frame,
@@ -591,30 +612,36 @@ async fn handle_text_message(
                         "gateway websocket handler is not configured",
                     )];
                 };
-                match websocket
-                    .handler
-                    .submit(GatewayWebsocketSubmitRequest {
-                        connection_id: connection_id.to_string(),
-                        request_id: id.clone(),
-                        channel_id,
-                        session_key,
-                        chat_id,
-                        input,
-                        metadata: params.metadata,
-                        stream: params.stream,
-                    })
-                    .await
-                {
-                    Ok(frames) => frames,
-                    Err(err) => vec![GatewayWebsocketServerFrame::Error {
-                        id: Some(id),
-                        error: GatewayWebsocketErrorFrame {
-                            code: err.code,
-                            message: err.message,
-                            data: err.data,
-                        },
-                    }],
-                }
+                let handler = Arc::clone(&websocket.handler);
+                let submit_connection_id = connection_id.to_string();
+                spawn(async move {
+                    let result = handler
+                        .submit(
+                            GatewayWebsocketSubmitRequest {
+                                connection_id: submit_connection_id,
+                                request_id: id.clone(),
+                                channel_id,
+                                session_key,
+                                chat_id,
+                                input,
+                                metadata: params.metadata,
+                                stream: params.stream,
+                            },
+                            outgoing_tx.clone(),
+                        )
+                        .await;
+                    if let Err(err) = result {
+                        let _ = outgoing_tx.send(GatewayWebsocketServerFrame::Error {
+                            id: Some(id),
+                            error: GatewayWebsocketErrorFrame {
+                                code: err.code,
+                                message: err.message,
+                                data: err.data,
+                            },
+                        });
+                    }
+                });
+                Vec::new()
             }
             _ => vec![error_frame(
                 Some(id),

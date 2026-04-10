@@ -2,6 +2,10 @@
 
 ## 2026-04-10
 
+### Fixed
+
+- `/ws/chat` 的 `session.submit` 现在改为后台逐帧推送 handler 产出的 websocket frame，不再等整轮响应结束后一次性发送，修复浏览器 chat UI 在 provider 开启 stream 时仍只看到整段结果的问题
+
 ### Changed
 
 - gateway 现在改用 `rust-embed` 从 `static/` 与 `assets/` 目录打包首页、`/chat` 和 logo 资源；聊天 WASM/JS 路径同步从 `/chat/pkg/*` 切换为 `/chat/dist/*`

@@ -1,6 +1,8 @@
-use crate::{RuntimeBundle, submit_channel_request, submit_channel_request_streaming};
+use crate::{
+    RuntimeBundle, submit_channel_request, submit_channel_request_streaming_with_callback,
+};
 use async_trait::async_trait;
-use klaw_channel::{ChannelResponse, ChannelStreamEvent, websocket::WebsocketSubmitEnvelope};
+use klaw_channel::{ChannelResponse, websocket::WebsocketSubmitEnvelope};
 use klaw_config::{AppConfig, WebsocketConfig};
 use klaw_gateway::{
     GatewaySessionHistoryMessage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
@@ -10,6 +12,7 @@ use klaw_gateway::{
 use klaw_session::{SessionListQuery, SessionManager};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 const EVENT_SESSION_MESSAGE: &str = "session.message";
@@ -150,10 +153,12 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
     async fn submit(
         &self,
         request: GatewayWebsocketSubmitRequest,
-    ) -> Result<Vec<GatewayWebsocketServerFrame>, GatewayWebsocketHandlerError> {
+        frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    ) -> Result<(), GatewayWebsocketHandlerError> {
         let config = self.resolve_config(&request.channel_id)?;
         let stream_output = request.stream.unwrap_or(config.stream_output);
         let request_id = request.request_id.clone();
+        let session_key = request.session_key.clone();
         let channel_request = WebsocketSubmitEnvelope {
             channel_id: request.channel_id.clone(),
             connection_id: request.connection_id,
@@ -166,60 +171,155 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
         .into_channel_request();
 
         if stream_output {
-            let (stream_events, response) =
-                submit_channel_request_streaming(self.runtime.as_ref(), channel_request)
-                    .await
-                    .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
-            let mut frames = stream_events_to_frames(
-                &request_id,
-                &request.session_key,
-                config.show_reasoning,
-                &stream_events,
-            );
-            frames.push(GatewayWebsocketServerFrame::Event {
-                event: EVENT_SESSION_STREAM_DONE.to_string(),
-                payload: json!({
-                    "request_id": request_id,
-                    "response": response.as_ref().map(|response| serialize_response(response, config.show_reasoning)),
-                    "session_key": request.session_key,
-                }),
-            });
-            frames.push(GatewayWebsocketServerFrame::Result {
-                id: request_id,
-                result: json!({
-                    "response": response.as_ref().map(|response| serialize_response(response, config.show_reasoning)),
-                    "session_key": request.session_key,
-                    "stream": true,
-                }),
-            });
-            return Ok(frames);
+            let mut stream_state = GatewayStreamState::default();
+            let response = submit_channel_request_streaming_with_callback(
+                self.runtime.as_ref(),
+                channel_request,
+                |event| {
+                    stream_state.push_event(
+                        &frame_tx,
+                        &request_id,
+                        &session_key,
+                        config.show_reasoning,
+                        event,
+                    )
+                },
+            )
+            .await
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+            send_frame(
+                &frame_tx,
+                GatewayWebsocketServerFrame::Event {
+                    event: EVENT_SESSION_STREAM_DONE.to_string(),
+                    payload: json!({
+                        "request_id": request_id.clone(),
+                        "response": response.as_ref().map(|response| serialize_response(response, config.show_reasoning)),
+                        "session_key": session_key.clone(),
+                    }),
+                },
+            )?;
+            send_frame(
+                &frame_tx,
+                GatewayWebsocketServerFrame::Result {
+                    id: request_id,
+                    result: json!({
+                        "response": response.as_ref().map(|response| serialize_response(response, config.show_reasoning)),
+                        "session_key": session_key,
+                        "stream": true,
+                    }),
+                },
+            )?;
+            return Ok(());
         }
 
         let response = submit_channel_request(self.runtime.as_ref(), channel_request)
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
-        Ok(vec![GatewayWebsocketServerFrame::Result {
-            id: request_id,
-            result: json!({
-                "response": response.as_ref().map(|response| serialize_response(response, config.show_reasoning)),
-                "session_key": request.session_key,
-                "stream": false,
-            }),
-        }])
+        send_frame(
+            &frame_tx,
+            GatewayWebsocketServerFrame::Result {
+                id: request_id,
+                result: json!({
+                    "response": response.as_ref().map(|response| serialize_response(response, config.show_reasoning)),
+                    "session_key": session_key,
+                    "stream": false,
+                }),
+            },
+        )?;
+        Ok(())
     }
 }
 
+#[derive(Default)]
+struct GatewayStreamState {
+    last_snapshot: Option<String>,
+}
+
+impl GatewayStreamState {
+    fn push_event(
+        &mut self,
+        frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+        request_id: &str,
+        session_key: &str,
+        show_reasoning: bool,
+        event: klaw_channel::ChannelStreamEvent,
+    ) -> klaw_channel::ChannelResult<()> {
+        match event {
+            klaw_channel::ChannelStreamEvent::Snapshot(response) => {
+                let delta = match self.last_snapshot.as_deref() {
+                    Some(previous) if response.content.starts_with(previous) => {
+                        response.content[previous.len()..].to_string()
+                    }
+                    _ => response.content.clone(),
+                };
+                self.last_snapshot = Some(response.content.clone());
+                send_frame(
+                    frame_tx,
+                    GatewayWebsocketServerFrame::Event {
+                        event: EVENT_SESSION_MESSAGE.to_string(),
+                        payload: json!({
+                            "request_id": request_id,
+                            "session_key": session_key,
+                            "response": serialize_response(&response, show_reasoning),
+                        }),
+                    },
+                )
+                .map_err(|err| std::io::Error::other(err.message))?;
+                if !delta.is_empty() {
+                    send_frame(
+                        frame_tx,
+                        GatewayWebsocketServerFrame::Event {
+                            event: EVENT_SESSION_STREAM_DELTA.to_string(),
+                            payload: json!({
+                                "request_id": request_id,
+                                "session_key": session_key,
+                                "delta": delta,
+                            }),
+                        },
+                    )
+                    .map_err(|err| std::io::Error::other(err.message))?;
+                }
+            }
+            klaw_channel::ChannelStreamEvent::Clear => {
+                self.last_snapshot = None;
+                send_frame(
+                    frame_tx,
+                    GatewayWebsocketServerFrame::Event {
+                        event: EVENT_SESSION_STREAM_CLEAR.to_string(),
+                        payload: json!({
+                            "request_id": request_id,
+                            "session_key": session_key,
+                        }),
+                    },
+                )
+                .map_err(|err| std::io::Error::other(err.message))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn send_frame(
+    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    frame: GatewayWebsocketServerFrame,
+) -> Result<(), GatewayWebsocketHandlerError> {
+    frame_tx.send(frame).map_err(|_| {
+        GatewayWebsocketHandlerError::internal("websocket connection closed before frame delivery")
+    })
+}
+
+#[cfg(test)]
 fn stream_events_to_frames(
     request_id: &str,
     session_key: &str,
     show_reasoning: bool,
-    events: &[ChannelStreamEvent],
+    events: &[klaw_channel::ChannelStreamEvent],
 ) -> Vec<GatewayWebsocketServerFrame> {
     let mut frames = Vec::new();
     let mut last_snapshot: Option<String> = None;
     for event in events {
         match event {
-            ChannelStreamEvent::Snapshot(response) => {
+            klaw_channel::ChannelStreamEvent::Snapshot(response) => {
                 let delta = match last_snapshot.as_deref() {
                     Some(previous) if response.content.starts_with(previous) => {
                         response.content[previous.len()..].to_string()
@@ -246,7 +346,7 @@ fn stream_events_to_frames(
                     });
                 }
             }
-            ChannelStreamEvent::Clear => {
+            klaw_channel::ChannelStreamEvent::Clear => {
                 last_snapshot = None;
                 frames.push(GatewayWebsocketServerFrame::Event {
                     event: EVENT_SESSION_STREAM_CLEAR.to_string(),
