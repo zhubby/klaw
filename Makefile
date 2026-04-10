@@ -48,5 +48,32 @@ webui-wasm:
 clean-webui-wasm:
 	rm -rf $(WEBUI_DIST_DIR)
 
+REQUIRED_MDBOOK_VERSION := 0.4.40
+REQUIRED_MDBOOK_MERMAID_VERSION := 0.14.0
+
 docs:
+	@echo "Checking mdbook version (required: $(REQUIRED_MDBOOK_VERSION))..."
+	@if command -v mdbook >/dev/null 2>&1; then \
+		INSTALLED_VERSION=$$(mdbook --version | awk '{print $$2}'); \
+		if [ "$$INSTALLED_VERSION" != "$(REQUIRED_MDBOOK_VERSION)" ]; then \
+			echo "mdbook version $$INSTALLED_VERSION found, expected $(REQUIRED_MDBOOK_VERSION)"; \
+			echo "Installing correct version of mdbook..."; \
+			cargo install mdbook --vers $(REQUIRED_MDBOOK_VERSION); \
+		fi \
+	else \
+		echo "mdbook not found, installing version $(REQUIRED_MDBOOK_VERSION)..."; \
+		cargo install mdbook --vers $(REQUIRED_MDBOOK_VERSION); \
+	fi
+	@echo "Checking mdbook-mermaid version (required: $(REQUIRED_MDBOOK_MERMAID_VERSION))..."
+	@if command -v mdbook-mermaid >/dev/null 2>&1; then \
+		INSTALLED_VERSION=$$(mdbook-mermaid --version | awk '{print $$2}'); \
+		if [ "$$INSTALLED_VERSION" != "$(REQUIRED_MDBOOK_MERMAID_VERSION)" ]; then \
+			echo "mdbook-mermaid version $$INSTALLED_VERSION found, expected $(REQUIRED_MDBOOK_MERMAID_VERSION)"; \
+			echo "Installing correct version of mdbook-mermaid..."; \
+			cargo install mdbook-mermaid --vers $(REQUIRED_MDBOOK_MERMAID_VERSION); \
+		fi \
+	else \
+		echo "mdbook-mermaid not found, installing version $(REQUIRED_MDBOOK_MERMAID_VERSION)..."; \
+		cargo install mdbook-mermaid --vers $(REQUIRED_MDBOOK_MERMAID_VERSION); \
+	fi
 	mdbook serve docs
