@@ -1,6 +1,6 @@
 use eframe::egui::{
     self, Align, Align2, Button, Color32, ComboBox, Context, Frame, Key, Layout, RichText,
-    ScrollArea, Stroke, TextEdit, TopBottomPanel, vec2,
+    ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText, vec2,
 };
 use egui_phosphor::regular;
 
@@ -631,6 +631,38 @@ impl eframe::App for ChatApp {
     }
 }
 
+/// Inner max width for a user bubble: shrink-wrap short plain text, cap at [`BUBBLE_MAX_WIDTH`].
+fn user_bubble_inner_max_width(ui: &egui::Ui, message: &ChatMessage, role_label: &str, time_label: &str) -> f32 {
+    const SLACK: f32 = 8.0;
+    const MIN_INNER: f32 = 72.0;
+
+    let header_w = WidgetText::from(
+        RichText::new(format!("{role_label}  {time_label}")).strong(),
+    )
+    .into_galley(ui, None, f32::INFINITY, TextStyle::Body)
+    .size()
+    .x;
+
+    let body_w = {
+        let t = message.text.as_str();
+        let looks_structured = t.contains("```")
+            || t.contains('\n')
+            || t.trim_start().starts_with('#')
+            || t.contains("**");
+        if looks_structured {
+            BUBBLE_MAX_WIDTH
+        } else {
+            WidgetText::from(RichText::new(t))
+                .into_galley(ui, None, f32::INFINITY, TextStyle::Body)
+                .size()
+                .x
+        }
+    };
+
+    (header_w.max(body_w) + SLACK)
+        .clamp(MIN_INNER, BUBBLE_MAX_WIDTH)
+}
+
 fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState) {
     let copy = state.empty_state_copy();
     ui.add_space(24.0);
@@ -686,7 +718,7 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
                     ),
                 };
 
-            let show_bubble = |ui: &mut egui::Ui| {
+            let show_bubble = |ui: &mut egui::Ui, inner_max_width: f32| {
                 Frame::group(ui.style())
                     .fill(bubble_fill)
                     .stroke(bubble_stroke)
@@ -694,7 +726,7 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
                     .outer_margin(2.0)
                     .corner_radius(if is_user { 12.0 } else { 6.0 })
                     .show(ui, |ui| {
-                        ui.set_max_width(BUBBLE_MAX_WIDTH);
+                        ui.set_max_width(inner_max_width);
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(role_label).strong().color(heading_color));
@@ -714,14 +746,20 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
             };
 
             if is_user {
-                ui.horizontal(|ui| {
-                    ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                        show_bubble(ui);
+                let inner_w = user_bubble_inner_max_width(ui, message, role_label, &time_label);
+                let row_w = ui.available_width();
+                ui.allocate_ui_with_layout(
+                    vec2(row_w, 0.0),
+                    Layout::right_to_left(Align::TOP),
+                    |ui| {
+                        ui.allocate_ui(vec2(inner_w.min(ui.available_width()), 0.0), |ui| {
+                            show_bubble(ui, inner_w);
+                        });
                         ui.add_space(ui.available_width());
-                    });
-                });
+                    },
+                );
             } else {
-                show_bubble(ui);
+                show_bubble(ui, BUBBLE_MAX_WIDTH);
             }
         }
     }

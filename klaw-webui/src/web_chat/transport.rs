@@ -58,6 +58,7 @@ impl ChatApp {
             return;
         }
 
+        self.sync_gateway_token_from_input_and_persist();
         let token = self.gateway_token.clone();
         self.close_connection();
         let url = match ws_chat_url(token.as_deref()) {
@@ -272,10 +273,8 @@ impl ChatApp {
                 .get("active_session_key")
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
-            self.sync_sessions_from_workspace(entries, active_session_key.clone());
-            if let Some(session_key) = active_session_key {
-                self.subscribe_session(&session_key);
-            }
+            self.sync_sessions_from_workspace(entries, active_session_key);
+            self.subscribe_open_sessions_needing_history();
             return;
         }
 
@@ -299,7 +298,11 @@ impl ChatApp {
                 created_at_ms,
             });
             self.sync_sessions_from_workspace(entries, Some(session_key.to_string()));
-            self.subscribe_session(session_key);
+            if let Some(index) = self.session_index(session_key) {
+                self.sessions[index].open = true;
+            }
+            self.persist_workspace_state();
+            self.subscribe_open_sessions_needing_history();
             return;
         }
 

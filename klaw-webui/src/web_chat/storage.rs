@@ -25,7 +25,7 @@ pub(super) struct PersistedWorkspaceState {
 }
 
 const fn default_session_open() -> bool {
-    true
+    false
 }
 
 fn default_workspace_state() -> PersistedWorkspaceState {

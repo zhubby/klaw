@@ -5,11 +5,15 @@
 ### Added
 
 - `klaw-webui` 的浏览器业务状态现在会持久化 gateway token，刷新页面后仍可恢复
+- 工作区 bootstrap 完成后，对所有 **已打开** 的 agent 窗口调用 `session.subscribe`，各自拉取历史（不再仅订阅服务端 `active_session_key`）
+- 连接前将输入框中的 token 写回 `gateway_token` 并 `localStorage` 落盘，避免只在输入框里填了 token、未点「Save & Reconnect」时刷新丢失
 
 ### Changed
 
 - `gateway_token` 的恢复策略改为“URL query 优先，其次使用 localStorage 中的上次保存值”，便于显式覆盖浏览器内已缓存的 token
 - `egui/eframe` 的内建 persistence 现已启用，主题偏好、侧栏宽度与 agent 窗口布局改由框架自身恢复，不再由 `klaw-webui` 手写持久化
+- 与服务端会话列表对齐时：仅在本地已有记录时恢复 `open`，**新出现的 agent 默认不自动打开窗口**（`PersistedSession.open` 缺省改为 `false`）；本机新建的 agent 仍会在创建后自动打开
+- 「Connect / Reconnect」在判断是否弹出 token 对话框时，会同时参考输入框与已保存的 token
 
 ## 2026-04-09
 

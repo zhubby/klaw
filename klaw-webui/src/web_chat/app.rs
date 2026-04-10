@@ -5,7 +5,7 @@ use klaw_ui_kit::{NotificationCenter, theme_preference};
 use web_sys::WebSocket;
 
 use crate::{
-    ConnectionState, SessionListEntry, resolve_gateway_token,
+    ConnectionState, SessionListEntry, normalize_gateway_token_input, resolve_gateway_token,
     should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
 };
 
@@ -81,6 +81,29 @@ impl ChatApp {
             active_session_key: self.active_session_key.clone(),
             gateway_token: self.gateway_token.clone(),
         });
+    }
+
+    /// Keep in-memory token aligned with the text field and write `localStorage` so reconnects
+    /// survive reloads (toolbar Connect does not require opening the Save dialog).
+    pub(in crate::web_chat) fn sync_gateway_token_from_input_and_persist(&mut self) {
+        self.gateway_token = normalize_gateway_token_input(&self.gateway_token_input);
+        self.persist_workspace_state();
+    }
+
+    /// Subscribe every visible agent window that has not received history yet.
+    pub(in crate::web_chat) fn subscribe_open_sessions_needing_history(&mut self) {
+        if !self.is_workspace_ready() {
+            return;
+        }
+        let keys: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|session| session.open && !*session.buffers.history_loaded.borrow())
+            .map(|session| session.session_key.clone())
+            .collect();
+        for session_key in keys {
+            self.subscribe_session(&session_key);
+        }
     }
 
     pub(in crate::web_chat) fn session_index(&self, session_key: &str) -> Option<usize> {
@@ -209,7 +232,9 @@ impl ChatApp {
     }
 
     pub(in crate::web_chat) fn request_workspace_connection(&mut self) {
-        if should_prompt_for_gateway_token_before_connect(self.gateway_token.as_deref()) {
+        let token_for_gate = normalize_gateway_token_input(&self.gateway_token_input)
+            .or_else(|| self.gateway_token.clone());
+        if should_prompt_for_gateway_token_before_connect(token_for_gate.as_deref()) {
             self.show_gateway_dialog = true;
             return;
         }
@@ -231,7 +256,7 @@ impl ChatApp {
             .into_iter()
             .enumerate()
             .map(|(index, entry)| {
-                let open = persisted.get(&entry.session_key).copied().unwrap_or(true);
+                let open = persisted.get(&entry.session_key).copied().unwrap_or(false);
                 let mut session = SessionWindow::new(entry, open);
                 session.window_anchor = window_anchor_for_slot(index as u32);
                 session
