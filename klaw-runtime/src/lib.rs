@@ -5426,6 +5426,25 @@ A .docx file is a ZIP archive containing XML files.
         assert_eq!(outbound.len(), 1);
         assert_eq!(outbound[0].payload.channel, "telegram");
         assert_eq!(outbound[0].payload.chat_id, "chat-1");
+        let execution_session = sessions
+            .get_session(&execution_session_key)
+            .await
+            .expect("execution session should exist");
+        let execution_metadata: serde_json::Map<String, Value> = execution_session
+            .delivery_metadata_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .expect("execution delivery metadata should parse")
+            .expect("execution delivery metadata should exist");
+        assert_eq!(
+            execution_metadata.get("channel.base_session_key"),
+            Some(&json!("telegram:acc:chat-1"))
+        );
+        assert_eq!(
+            execution_metadata.get("channel.delivery_session_key"),
+            Some(&json!("telegram:acc:chat-1"))
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

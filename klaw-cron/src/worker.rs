@@ -137,6 +137,9 @@ where
             "channel.delivery_session_key".to_string(),
             serde_json::Value::String(delivery_session_key),
         );
+        self.storage
+            .touch_session(&execution_session_key, &payload.chat_id, &payload.channel)
+            .await?;
         if let Some(delivery_metadata_json) =
             persistable_session_delivery_metadata_json(&payload.metadata)
         {
@@ -677,7 +680,9 @@ mod tests {
             channel: &str,
             delivery_metadata_json: Option<&str>,
         ) -> Result<SessionIndex, StorageError> {
-            let mut session = self.touch_session(session_key, chat_id, channel).await?;
+            let mut session = self.get_session(session_key).await?;
+            session.chat_id = chat_id.to_string();
+            session.channel = channel.to_string();
             session.delivery_metadata_json = delivery_metadata_json.map(ToString::to_string);
             Ok(self.upsert_session(session))
         }
@@ -1309,6 +1314,10 @@ mod tests {
             )
             .await
             .expect("session route should exist");
+        storage
+            .touch_session("dingtalk:acc:chat1:child", "chat1", "dingtalk")
+            .await
+            .expect("delivery session should exist");
         storage
             .set_delivery_metadata(
                 "dingtalk:acc:chat1:child",
