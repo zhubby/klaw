@@ -660,60 +660,69 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
                 MessageRole::System => "System",
             };
             let dark_mode = ui.visuals().dark_mode;
-            let layout = if matches!(message.role, MessageRole::User) {
-                Layout::right_to_left(Align::TOP)
-            } else {
-                Layout::left_to_right(Align::TOP)
-            };
-            ui.with_layout(layout, |ui| {
-                let (bubble_fill, bubble_stroke, heading_color, body_color, link_color) =
-                    match message.role {
-                        MessageRole::User if dark_mode => (
-                            Color32::from_rgb(49, 102, 214),
-                            Stroke::new(1.0, Color32::from_rgb(96, 145, 245)),
-                            Color32::WHITE,
-                            Color32::WHITE,
-                            Color32::from_rgb(219, 233, 255),
-                        ),
-                        MessageRole::User => (
-                            Color32::from_rgb(229, 239, 255),
-                            Stroke::new(1.0, Color32::from_rgb(170, 196, 250)),
-                            Color32::from_rgb(24, 55, 124),
-                            Color32::from_rgb(32, 43, 67),
-                            Color32::from_rgb(20, 83, 181),
-                        ),
-                        _ => (
-                            ui.visuals().widgets.noninteractive.bg_fill,
-                            ui.visuals().widgets.noninteractive.bg_stroke,
-                            ui.visuals().strong_text_color(),
-                            ui.visuals().text_color(),
-                            ui.visuals().hyperlink_color,
-                        ),
-                    };
+            let is_user = matches!(message.role, MessageRole::User);
+            let (bubble_fill, bubble_stroke, heading_color, body_color, link_color) =
+                match message.role {
+                    MessageRole::User if dark_mode => (
+                        Color32::from_rgb(49, 102, 214),
+                        Stroke::new(1.0, Color32::from_rgb(96, 145, 245)),
+                        Color32::WHITE,
+                        Color32::WHITE,
+                        Color32::from_rgb(219, 233, 255),
+                    ),
+                    MessageRole::User => (
+                        Color32::from_rgb(229, 239, 255),
+                        Stroke::new(1.0, Color32::from_rgb(170, 196, 250)),
+                        Color32::from_rgb(24, 55, 124),
+                        Color32::from_rgb(32, 43, 67),
+                        Color32::from_rgb(20, 83, 181),
+                    ),
+                    _ => (
+                        ui.visuals().widgets.noninteractive.bg_fill,
+                        ui.visuals().widgets.noninteractive.bg_stroke,
+                        ui.visuals().strong_text_color(),
+                        ui.visuals().text_color(),
+                        ui.visuals().hyperlink_color,
+                    ),
+                };
+
+            let show_bubble = |ui: &mut egui::Ui| {
                 Frame::group(ui.style())
                     .fill(bubble_fill)
                     .stroke(bubble_stroke)
-                    .inner_margin(if matches!(message.role, MessageRole::User) {
-                        10.0
-                    } else {
-                        8.0
-                    })
+                    .inner_margin(if is_user { 10.0 } else { 8.0 })
                     .outer_margin(2.0)
-                    .corner_radius(if matches!(message.role, MessageRole::User) {
-                        12.0
-                    } else {
-                        6.0
-                    })
+                    .corner_radius(if is_user { 12.0 } else { 6.0 })
                     .show(ui, |ui| {
                         ui.set_max_width(BUBBLE_MAX_WIDTH);
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(role_label).strong().color(heading_color));
-                            ui.label(RichText::new(time_label).small().color(heading_color));
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(role_label).strong().color(heading_color));
+                                ui.add_space(6.0);
+                                ui.label(RichText::new(time_label).small().color(heading_color));
+                            });
+                            ui.add_space(4.0);
+                            render_markdown(
+                                ui,
+                                markdown_cache,
+                                &message.text,
+                                body_color,
+                                link_color,
+                            );
                         });
-                        ui.add_space(4.0);
-                        render_markdown(ui, markdown_cache, &message.text, body_color, link_color);
                     });
-            });
+            };
+
+            if is_user {
+                ui.horizontal(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
+                        show_bubble(ui);
+                        ui.add_space(ui.available_width());
+                    });
+                });
+            } else {
+                show_bubble(ui);
+            }
         }
     }
 }
