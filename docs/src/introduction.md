@@ -1,42 +1,106 @@
 # Klaw 项目简介
 
-Klaw 是一个基于 Rust 的 AI Agent 框架，采用 MQ 风格的消息传递架构和内置可靠性控制。
+Klaw (Crab ❤️ Claw) 是一个用 Rust 构建的**生产级 AI Agent 运行时框架**，提供基于消息驱动的架构设计和全面的可靠性控制，支持从单机 CLI 到分布式多租户部署。
 
 ## 核心特性
 
-- **会话隔离**：基于 `session_key` 的串行执行保证，同会话消息顺序处理
-- **可靠性保障**：重试策略（指数退避）、幂等存储、熔断器、死信队列
-- **工具系统**：可扩展的工具抽象，内置 shell、web search、memory、sub-agent 等能力
-- **Skills 支持**：兼容 Anthropic/Vercel skills，支持从 Git 仓库同步
-- **多后端存储**：支持 Turso/libSQL 和 SQLx 后端，统一 trait 对外
-- **消息总线**：Channel 与 Agent 通过 MessageBus 解耦，支持多平台接入
+- **会话级并发控制**：基于 `session_key` 的串行执行保证，同会话消息严格顺序处理，多会话并行独立执行
+- **端到端可靠性保障**：指数退避重试、幂等去重存储、熔断器、预算控制、死信队列，容错与可观测性内置
+- **可扩展工具系统**：Trait 抽象的工具接口，内置 Shell、文件系统、Web 搜索、长期记忆、子 Agent 调用等能力
+- **多协议支持**：原生支持 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 和 Agent Client Protocol (ACP)
+- **Skills 生态**：兼容 Skill 格式，支持从 Git 仓库动态同步技能定义
+- **多模态能力**：支持语音输入转文字（ASR）和语音合成（TTS），可接入多种语音提供商
+- **长期记忆**：内置 BM25 + Vector 双层检索记忆，支持知识持久化
+- **多 LLM 后端**：统一抽象层，支持 OpenAI 兼容接口、Anthropic 等主流提供商
+- **持久化存储**：支持 Turso/libSQL 和 SQLx 后端，统一 Trait 抽象
+- **部署灵活**：支持 CLI 交互、终端 TUI、原生桌面 GUI、WebSocket 网关等多种部署模式
+- **可观测性**：内置 OpenTelemetry 支持，提供指标、链路追踪能力
 
 ## 架构概览
 
+```mermaid
+flowchart LR
+    user[User Input]
+    inbound[InboundMessage]
+    transport[Transport / Channel]
+
+    subgraph runtime[Agent Runtime]
+        scheduler[SessionScheduler]
+        loop[AgentLoop]
+        validate[Validate + Normalize]
+        plan[Model Planning]
+        tools[Tool Loop]
+        publish[Publish Result]
+        dlq[Dead Letter Queue]
+    end
+
+    subgraph providers[Execution Backends]
+        llm[LLM Provider]
+        registry[Tool Registry]
+        memory[Memory / Skills / MCP]
+    end
+
+    user --> inbound
+    inbound --> transport
+    transport --> scheduler
+    scheduler --> loop
+    loop --> validate
+    validate --> plan
+    plan --> llm
+    llm --> tools
+    tools --> registry
+    registry --> memory
+    memory --> tools
+    tools --> publish
+    publish --> transport
+    transport --> outbound[OutboundMessage]
+    validate -. retry / failure .-> dlq
+    plan -. exhausted budget .-> dlq
+    tools -. non-recoverable error .-> dlq
 ```
-User Input → InboundMessage (agent.inbound)
-                    → AgentLoop.run_once_reliable()
-                    → OutboundMessage (agent.outbound) → Response
-                                               ↘ DeadLetterMessage (agent.dlq)
-```
+
+Klaw 采用消息驱动的架构风格：
+
+1. **消息信封**：所有跨模块消息统一使用 `Envelope<T>` 封装，包含追踪、重试、路由元数据
+2. **主题路由**：通过逻辑主题 (`agent.inbound`/`agent.outbound`/`agent.events`/`agent.dlq`) 解耦生产者和消费者
+3. **状态机驱动**：`AgentLoop` 作为状态机驱动会话从接收 → 校验 → 调度 → 模型调用 → 工具循环 → 完成全流程
+4. **至少一次交付**：幂等键保证重试不会导致重复处理
+
+详细设计文档：
+- [消息协议](./agent-core/message-protocol.md)
+- [运行时状态机](./agent-core/runtime-state-machine.md)
+- [可靠性控制](./agent-core/reliability-controls.md)
 
 ## 工作空间结构
 
 | Crate | 职责 |
 |-------|------|
+| `klaw-acp` | Agent Client Protocol 集成 |
+| `klaw-agent` | Agent 编排高层工具集 |
+| `klaw-approval` | 审批工作流与策略闸门 |
+| `klaw-archive` | 媒体归档数据模型与存储 |
+| `klaw-voice` | 语音 ASR/TTS 支持 |
+| `klaw-core` | Agent 核心运行时、调度器、可靠性控制 |
+| `klaw-util` | 跨 crate 共享工具库 |
+| `klaw-llm` | LLM 提供商抽象与适配（OpenAI 兼容、Anthropic） |
+| `klaw-tool` | 工具 Trait 定义与内置工具实现 |
+| `klaw-heartbeat` | 会话心跳追踪与存活探测 |
 | `klaw-config` | TOML 配置加载（`~/.klaw/config.toml`） |
-| `klaw-tool` | 工具 trait 定义和内置工具（shell、fs、web 等） |
-| `klaw-core` | Agent 运行时：消息协议、调度器、可靠性控制 |
-| `klaw-cli` | CLI 入口（binary: `klaw`） |
-| `klaw-storage` | 存储抽象层（session/cron 持久化） |
-| `klaw-archive` | 媒体归档服务（文件落盘与索引） |
-| `klaw-gateway` | WebSocket 网关服务 |
-| `klaw-skill` | Skills 生命周期管理 |
-| `klaw-memory` | 长期记忆服务（BM25 + Vector） |
+| `klaw-cli` | CLI 二进制入口（`klaw`） |
 | `klaw-mcp` | Model Context Protocol 支持 |
-| `klaw-cron` | 定时任务管理 |
-| `klaw-heartbeat` | 会话心跳监控 |
-| `klaw-channel` | 多平台 Channel 适配器 |
+| `klaw-skill` | Skills 生命周期管理 |
+| `klaw-memory` | 长期记忆服务（BM25 + Vector 检索） |
+| `klaw-cron` | 定时任务调度执行 |
+| `klaw-session` | 会话生命周期与协调 |
+| `klaw-storage` | 会话与任务持久化存储抽象 |
+| `klaw-gateway` | WebSocket 网关与远程传输端点 |
+| `klaw-channel` | 多渠道接入抽象（钉钉、Telegram 等） |
+| `klaw-tui` | 终端交互式 UI |
+| `klaw-gui` | 原生桌面 GUI（基于 egui） |
+| `klaw-ui-kit` | 共享 UI 组件库 |
+| `klaw-observability` | 指标、链路追踪可观测性工具 |
+| `klaw-runtime` | 高层运行时组装与启动 |
+| `klaw-webui` | 浏览器端 Web UI（WASM，可选构建） |
 
 ## 快速链接
 
