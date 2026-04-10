@@ -58,7 +58,10 @@ pub async fn read_chat_records(
         .collect()
 }
 
-pub async fn delete_chat_records(paths: &StoragePaths, session_key: &str) -> Result<(), StorageError> {
+pub async fn delete_chat_records(
+    paths: &StoragePaths,
+    session_key: &str,
+) -> Result<(), StorageError> {
     let file_path = session_jsonl_path(paths, session_key);
     match fs::remove_file(file_path).await {
         Ok(()) => Ok(()),

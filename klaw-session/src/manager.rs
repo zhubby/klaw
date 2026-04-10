@@ -765,7 +765,13 @@ mod tests {
             .await
             .expect("delete should succeed");
         assert!(deleted);
-        assert!(manager.read_chat_records("web:delete-me").await.expect("history should load").is_empty());
+        assert!(
+            manager
+                .read_chat_records("web:delete-me")
+                .await
+                .expect("history should load")
+                .is_empty()
+        );
         assert!(manager.get_session("web:delete-me").await.is_err());
     }
 }

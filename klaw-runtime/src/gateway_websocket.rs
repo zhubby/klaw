@@ -59,10 +59,11 @@ impl RuntimeWebsocketHandler {
     async fn load_web_workspace(
         &self,
     ) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError> {
-        let sessions = klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone())
-            .list_sessions(SessionListQuery::default())
-            .await
-            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        let sessions =
+            klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone())
+                .list_sessions(SessionListQuery::default())
+                .await
+                .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
         Ok(build_web_workspace_bootstrap(sessions))
     }
 }

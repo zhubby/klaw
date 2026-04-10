@@ -1,5 +1,5 @@
 use eframe::egui::{
-    self, Align, Align2, Button, Color32, ComboBox, Context, Frame, Id, Key, Layout, RichText,
+    self, Align, Align2, Button, Color32, ComboBox, Context, Frame, Key, Layout, RichText,
     ScrollArea, Stroke, TextEdit, TopBottomPanel, vec2,
 };
 use egui_phosphor::regular;
@@ -16,7 +16,7 @@ use super::{
     session::{
         BUBBLE_MAX_WIDTH, ChatMessage, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH,
         SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT,
-        SESSION_WINDOW_MIN_WIDTH, format_message_timestamp,
+        SESSION_WINDOW_MIN_WIDTH, format_message_timestamp, session_window_id,
     },
 };
 
@@ -441,7 +441,7 @@ impl ChatApp {
             let mut open = session.open;
 
             let window = egui::Window::new(&session.title)
-                .id(Id::new(("session-window", &session.session_key)))
+                .id(session_window_id(&session.session_key))
                 .default_pos(session.window_anchor.to_pos2())
                 .default_size([SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT])
                 .min_width(SESSION_WINDOW_MIN_WIDTH)

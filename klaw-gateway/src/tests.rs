@@ -713,10 +713,12 @@ mod tests {
         };
 
         let url = ws_url(handle.info().actual_port, None);
-        let (mut socket, _) = connect_async(url)
+        let (mut socket, _) = connect_async(url).await.expect("websocket should connect");
+        let _connected = socket
+            .next()
             .await
-            .expect("websocket should connect");
-        let _connected = socket.next().await.expect("connected frame").expect("frame ok");
+            .expect("connected frame")
+            .expect("frame ok");
 
         socket
             .send(Message::Text(
@@ -745,7 +747,10 @@ mod tests {
                 .expect("frame payload should parse"),
             other => panic!("unexpected websocket frame: {other:?}"),
         };
-        assert_eq!(payload.get("type").and_then(|value| value.as_str()), Some("result"));
+        assert_eq!(
+            payload.get("type").and_then(|value| value.as_str()),
+            Some("result")
+        );
         let result = payload.get("result").expect("result payload");
         assert_eq!(
             result.get("session_key").and_then(|value| value.as_str()),
@@ -755,7 +760,10 @@ mod tests {
             result.get("title").and_then(|value| value.as_str()),
             Some("Renamed agent")
         );
-        assert_eq!(result.get("updated").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(
+            result.get("updated").and_then(|value| value.as_bool()),
+            Some(true)
+        );
 
         handle.shutdown().await.expect("gateway should stop");
     }
@@ -782,10 +790,12 @@ mod tests {
         };
 
         let url = ws_url(handle.info().actual_port, None);
-        let (mut socket, _) = connect_async(url)
+        let (mut socket, _) = connect_async(url).await.expect("websocket should connect");
+        let _connected = socket
+            .next()
             .await
-            .expect("websocket should connect");
-        let _connected = socket.next().await.expect("connected frame").expect("frame ok");
+            .expect("connected frame")
+            .expect("frame ok");
 
         socket
             .send(Message::Text(
@@ -813,13 +823,19 @@ mod tests {
                 .expect("frame payload should parse"),
             other => panic!("unexpected websocket frame: {other:?}"),
         };
-        assert_eq!(payload.get("type").and_then(|value| value.as_str()), Some("result"));
+        assert_eq!(
+            payload.get("type").and_then(|value| value.as_str()),
+            Some("result")
+        );
         let result = payload.get("result").expect("result payload");
         assert_eq!(
             result.get("session_key").and_then(|value| value.as_str()),
             Some("web:newer")
         );
-        assert_eq!(result.get("deleted").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(
+            result.get("deleted").and_then(|value| value.as_bool()),
+            Some(true)
+        );
 
         handle.shutdown().await.expect("gateway should stop");
     }

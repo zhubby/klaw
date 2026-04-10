@@ -39,6 +39,10 @@ impl WindowAnchor {
     }
 }
 
+pub(super) fn session_window_id(session_key: &str) -> egui::Id {
+    egui::Id::new(("session-window", session_key))
+}
+
 #[derive(Clone)]
 pub(super) struct SessionBuffers {
     pub(in crate::web_chat) messages: Rc<RefCell<Vec<ChatMessage>>>,

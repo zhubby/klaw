@@ -217,7 +217,13 @@ mod tests {
             .await
             .expect("delete should succeed");
         assert!(deleted);
-        assert!(store.read_chat_records("web:delete-test").await.expect("history should read").is_empty());
+        assert!(
+            store
+                .read_chat_records("web:delete-test")
+                .await
+                .expect("history should read")
+                .is_empty()
+        );
         assert!(store.get_session("web:delete-test").await.is_err());
     }
 

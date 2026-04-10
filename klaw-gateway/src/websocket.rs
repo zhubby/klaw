@@ -133,10 +133,8 @@ pub trait GatewayWebsocketHandler: Send + Sync {
         title: String,
     ) -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError>;
 
-    async fn delete_session(
-        &self,
-        session_key: &str,
-    ) -> Result<bool, GatewayWebsocketHandlerError>;
+    async fn delete_session(&self, session_key: &str)
+    -> Result<bool, GatewayWebsocketHandlerError>;
 
     async fn load_session_history(
         &self,

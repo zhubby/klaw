@@ -691,11 +691,8 @@ impl SqlxSessionStore {
         .execute(&self.pool)
         .await
         .map_err(StorageError::backend)?;
-        self.ensure_session_column(
-            "title",
-            "ALTER TABLE sessions ADD COLUMN title TEXT",
-        )
-        .await?;
+        self.ensure_session_column("title", "ALTER TABLE sessions ADD COLUMN title TEXT")
+            .await?;
         self.ensure_session_column(
             "active_session_key",
             "ALTER TABLE sessions ADD COLUMN active_session_key TEXT",

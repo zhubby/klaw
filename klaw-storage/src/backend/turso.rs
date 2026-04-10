@@ -764,7 +764,9 @@ impl SessionStorage for TursoSessionStore {
         );
         let affected = {
             let conn = self.connection().await?;
-            conn.execute(&sql, ()).await.map_err(StorageError::backend)?
+            conn.execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?
         };
         if affected == 0 {
             return Err(StorageError::backend(format!(
@@ -781,7 +783,10 @@ impl SessionStorage for TursoSessionStore {
         );
         let deleted = {
             let conn = self.connection().await?;
-            conn.execute(&sql, ()).await.map_err(StorageError::backend)? > 0
+            conn.execute(&sql, ())
+                .await
+                .map_err(StorageError::backend)?
+                > 0
         };
         if deleted {
             jsonl::delete_chat_records(&self.paths, session_key).await?;

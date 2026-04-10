@@ -6,13 +6,12 @@ use web_sys::WebSocket;
 
 use crate::{
     ConnectionState, SessionListEntry, resolve_gateway_token,
-    should_prompt_for_gateway_token_before_connect,
-    sort_session_entries_by_created_at_desc,
+    should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
 };
 
 use super::{
     protocol::ServerFrame,
-    session::{SessionWindow, window_anchor_for_slot},
+    session::{SessionWindow, session_window_id, window_anchor_for_slot},
     storage::{PersistedWorkspaceState, load_workspace_state, save_workspace_state},
 };
 
@@ -91,8 +90,16 @@ impl ChatApp {
     }
 
     pub(in crate::web_chat) fn bring_session_to_front(&mut self, session_key: &str) -> bool {
-        let _ = session_key;
-        false
+        if self.session_index(session_key).is_none() {
+            return false;
+        }
+
+        self.ctx.move_to_top(egui::LayerId::new(
+            egui::Order::Middle,
+            session_window_id(session_key),
+        ));
+        self.ctx.request_repaint();
+        true
     }
 
     pub(in crate::web_chat) fn focus_session(&mut self, session_key: &str) {
@@ -111,10 +118,11 @@ impl ChatApp {
             self.active_session_key = Some(session_key.to_string());
             changed = true;
         }
+        let moved_to_front = self.bring_session_to_front(session_key);
         if should_subscribe_history {
             self.subscribe_session(session_key);
         }
-        if changed {
+        if changed || moved_to_front {
             self.persist_workspace_state();
         }
     }
