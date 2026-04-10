@@ -112,6 +112,19 @@ pub(crate) fn resolve_gateway_token(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn should_activate_session_window(
+    window_contains_pointer: bool,
+    primary_pointer_pressed: bool,
+) -> bool {
+    window_contains_pointer && primary_pointer_pressed
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn session_card_activity_label(_is_active: bool) -> Option<&'static str> {
+    None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn classify_stream_message_action(
     last_role: Option<MessageRole>,
     active_stream_request_id: Option<&str>,
@@ -159,7 +172,7 @@ mod tests {
     use super::{
         ConnectionState, MessageRole, StreamMessageAction, ThemeMode, classify_message_role,
         classify_stream_message_action, normalize_gateway_token_input, resolve_gateway_token,
-        toolbar_title,
+        session_card_activity_label, should_activate_session_window, toolbar_title,
     };
 
     #[test]
@@ -284,6 +297,19 @@ mod tests {
             resolve_gateway_token(None, Some(" persisted-token ".to_string())),
             Some("persisted-token".to_string())
         );
+    }
+
+    #[test]
+    fn pointer_press_inside_window_activates_session() {
+        assert!(should_activate_session_window(true, true));
+        assert!(!should_activate_session_window(true, false));
+        assert!(!should_activate_session_window(false, true));
+    }
+
+    #[test]
+    fn active_session_relies_on_selection_styling_not_badge_copy() {
+        assert_eq!(session_card_activity_label(true), None);
+        assert_eq!(session_card_activity_label(false), None);
     }
 
     #[test]

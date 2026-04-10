@@ -5,7 +5,8 @@ use eframe::egui::{
 use egui_phosphor::regular;
 
 use crate::{
-    ConnectionState, MessageRole, normalize_gateway_token_input, toolbar_title,
+    ConnectionState, MessageRole, normalize_gateway_token_input,
+    session_card_activity_label, should_activate_session_window, toolbar_title,
 };
 
 use super::{
@@ -191,26 +192,29 @@ impl ChatApp {
                                 ui.visuals().widgets.noninteractive.bg_stroke
                             })
                             .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(regular::ROBOT);
-                                ui.label(RichText::new(compact_title).strong());
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    ui.label(RichText::new(regular::DOTS_THREE).small().weak());
-                                    if is_active {
-                                        ui.label(RichText::new("Active").small().strong());
-                                    }
-                                    ui.label(RichText::new(state.status_text()).small().weak());
-                                    ui.label(
-                                        RichText::new("●")
-                                            .small()
-                                            .color(connection_state_color(&state, ui.visuals())),
-                                    );
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    ui.label(regular::ROBOT);
+                                    ui.label(RichText::new(compact_title).strong());
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.label(RichText::new(regular::DOTS_THREE).small().weak());
+                                        if let Some(label) = session_card_activity_label(is_active) {
+                                            ui.label(RichText::new(label).small().strong());
+                                        }
+                                        ui.label(RichText::new(state.status_text()).small().weak());
+                                        ui.label(
+                                            RichText::new("●")
+                                                .small()
+                                                .color(connection_state_color(&state, ui.visuals())),
+                                        );
+                                    });
                                 });
                             });
-                        });
-                        let response = card.response.on_hover_text(format!(
+                        let response = card
+                            .response
+                            .interact(egui::Sense::click())
+                            .on_hover_text(format!(
                             "{}\n{}\n{}",
                             session.title,
                             session.session_key,
@@ -485,7 +489,10 @@ impl ChatApp {
                     });
                 });
             }) {
-                set_active = inner.response.clicked();
+                set_active = should_activate_session_window(
+                    inner.response.contains_pointer(),
+                    ctx.input(|input| input.pointer.primary_pressed()),
+                );
             }
 
             session.open = open;
