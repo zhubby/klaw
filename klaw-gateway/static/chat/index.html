@@ -5,31 +5,361 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Klaw Web Chat</title>
     <style>
+      html {
+        touch-action: manipulation;
+      }
+
       html,
       body {
-        margin: 0;
-        width: 100%;
-        height: 100%;
         overflow: hidden;
-        background: #1e1e2e;
+        margin: 0 !important;
+        padding: 0 !important;
+        height: 100%;
+        width: 100%;
+        background:
+          radial-gradient(circle at 16% 20%, rgba(120, 166, 255, 0.22), transparent 34%),
+          radial-gradient(circle at 82% 18%, rgba(132, 232, 255, 0.2), transparent 28%),
+          radial-gradient(circle at 52% 82%, rgba(192, 204, 255, 0.34), transparent 34%),
+          linear-gradient(180deg, #fdfefe 0%, #f5f8ff 52%, #eef3fb 100%);
+        color: #0f172a;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
       }
+
       #klaw_chat_canvas {
+        margin-right: auto;
+        margin-left: auto;
         display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
         width: 100%;
         height: 100%;
+      }
+
+      #center_text {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: grid;
+        place-items: center;
+        pointer-events: auto;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.24), rgba(242, 247, 255, 0.82)),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(243, 247, 253, 0.72));
+        backdrop-filter: blur(14px) saturate(120%);
+      }
+
+      #center_text::before,
+      #center_text::after {
+        content: "";
+        position: absolute;
+        border-radius: 999px;
+        filter: blur(48px);
+        opacity: 0.7;
+        animation: aurora-drift 14s ease-in-out infinite alternate;
+      }
+
+      #center_text::before {
+        width: 22rem;
+        height: 22rem;
+        top: -5rem;
+        left: -4rem;
+        background: rgba(102, 153, 255, 0.24);
+      }
+
+      #center_text::after {
+        width: 26rem;
+        height: 26rem;
+        right: -7rem;
+        bottom: -10rem;
+        background: rgba(121, 211, 255, 0.18);
+        animation-duration: 17s;
+      }
+
+      .loader-card {
+        position: relative;
+        width: min(320px, calc(100vw - 48px));
+        padding: 28px 26px 24px;
+        border-radius: 30px;
+        border: 1px solid rgba(255, 255, 255, 0.7);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.56));
+        box-shadow:
+          0 24px 80px rgba(148, 163, 184, 0.18),
+          0 6px 24px rgba(15, 23, 42, 0.06),
+          inset 0 1px 0 rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(28px) saturate(135%);
+        overflow: hidden;
+      }
+
+      .loader-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(
+            110deg,
+            transparent 0%,
+            rgba(255, 255, 255, 0.02) 28%,
+            rgba(255, 255, 255, 0.26) 46%,
+            rgba(255, 255, 255, 0.02) 64%,
+            transparent 100%
+          );
+        transform: translateX(-130%);
+        animation: card-sheen 4.2s ease-in-out infinite;
+      }
+
+      .loader-card > * {
+        position: relative;
+        z-index: 1;
+      }
+
+      .loader-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        background: rgba(255, 255, 255, 0.54);
+        color: rgba(71, 85, 105, 0.88);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .loader-badge-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #7dd3fc, #818cf8);
+        box-shadow: 0 0 14px rgba(125, 211, 252, 0.32);
+        animation: badge-pulse 2.2s ease-in-out infinite;
+      }
+
+      .loader-body {
+        margin-top: 22px;
+        display: grid;
+        justify-items: center;
+        text-align: center;
+      }
+
+      .loader-spinner {
+        position: relative;
+        width: 76px;
+        height: 76px;
+        display: grid;
+        place-items: center;
+      }
+
+      .loader-spinner::before,
+      .loader-spinner::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+      }
+
+      .loader-spinner::before {
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.92), rgba(241, 245, 249, 0.5));
+      }
+
+      .loader-spinner::after {
+        inset: 4px;
+        border: 2px solid transparent;
+        border-top-color: rgba(96, 165, 250, 0.92);
+        border-right-color: rgba(129, 140, 248, 0.8);
+        border-bottom-color: rgba(148, 163, 184, 0.18);
+        animation: loader-spin 1.25s cubic-bezier(0.55, 0.15, 0.45, 0.85) infinite;
+        box-shadow: 0 0 18px rgba(125, 211, 252, 0.12);
+      }
+
+      .loader-spinner-core {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, rgba(191, 219, 254, 0.95), rgba(129, 140, 248, 0.92));
+        box-shadow:
+          0 0 0 10px rgba(255, 255, 255, 0.44),
+          0 0 18px rgba(129, 140, 248, 0.16);
+        animation: core-breathe 2.4s ease-in-out infinite;
+      }
+
+      .loader-title {
+        margin-top: 18px;
+        font-size: 28px;
+        line-height: 1.2;
+        font-weight: 650;
+        letter-spacing: -0.04em;
+        color: #0f172a;
+      }
+
+      .loader-subtitle {
+        margin-top: 8px;
+        max-width: 20ch;
+        font-size: 13px;
+        line-height: 1.55;
+        color: rgba(71, 85, 105, 0.72);
+      }
+
+      .loader-caption {
+        margin-top: 16px;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: rgba(100, 116, 139, 0.48);
+      }
+
+      .loader-error {
+        width: min(560px, calc(100vw - 48px));
+        padding: 26px 28px;
+        border-radius: 24px;
+        border: 1px solid rgba(248, 113, 113, 0.18);
+        background: rgba(255, 255, 255, 0.82);
+        box-shadow: 0 24px 80px rgba(148, 163, 184, 0.22);
+        backdrop-filter: blur(20px) saturate(130%);
+        text-align: left;
+      }
+
+      .loader-error-title {
+        font-size: 20px;
+        font-weight: 650;
+        color: #e11d48;
+      }
+
+      .loader-error-body {
+        margin-top: 14px;
+        font-size: 14px;
+        line-height: 1.7;
+        color: rgba(15, 23, 42, 0.84);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .loader-error-help {
+        margin-top: 14px;
+        font-size: 13px;
+        line-height: 1.6;
+        color: rgba(71, 85, 105, 0.7);
+      }
+
+      @keyframes loader-spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes badge-pulse {
+        0%,
+        100% {
+          transform: scale(0.95);
+          opacity: 0.72;
+        }
+        50% {
+          transform: scale(1.08);
+          opacity: 1;
+        }
+      }
+
+      @keyframes core-breathe {
+        0%,
+        100% {
+          transform: scale(0.9);
+          opacity: 0.88;
+        }
+        50% {
+          transform: scale(1.06);
+          opacity: 1;
+        }
+      }
+
+      @keyframes card-sheen {
+        0%,
+        100% {
+          transform: translateX(-130%);
+        }
+        58% {
+          transform: translateX(140%);
+        }
+      }
+
+      @keyframes aurora-drift {
+        0% {
+          transform: translate3d(0, 0, 0) scale(1);
+        }
+        100% {
+          transform: translate3d(18px, -20px, 0) scale(1.08);
+        }
       }
     </style>
   </head>
   <body>
     <canvas id="klaw_chat_canvas"></canvas>
+    <div id="center_text">
+      <div class="loader-card">
+        <div class="loader-badge">
+          <span class="loader-badge-dot"></span>
+          <span>Klaw Web Chat</span>
+        </div>
+        <div class="loader-body">
+          <div class="loader-spinner">
+            <div class="loader-spinner-core"></div>
+          </div>
+          <div class="loader-title">Klaw</div>
+          <div class="loader-subtitle">Opening your workspace</div>
+          <div class="loader-caption">Loading</div>
+        </div>
+      </div>
+    </div>
     <script type="module">
       import init, { start_chat_ui } from "/chat/dist/klaw_webui.js";
+
+      function setCenterHtml(html) {
+        const node = document.getElementById("center_text");
+        node.innerHTML = html;
+        node.style.display = html ? "grid" : "none";
+      }
+
+      function clearCenterText() {
+        setCenterHtml("");
+      }
+
+      function onError(error) {
+        console.error("klaw-webui failed to start", error);
+        document.getElementById("klaw_chat_canvas").remove();
+        setCenterHtml(`
+          <div class="loader-error">
+            <div class="loader-error-title">Unable to start Klaw Web Chat</div>
+            <div class="loader-error-body">${error}</div>
+            <div class="loader-error-help">
+              Make sure your browser supports WASM and WebGPU/WebGL, then refresh and try again.
+            </div>
+          </div>
+        `);
+      }
+
       async function main() {
         await init("/chat/dist/klaw_webui_bg.wasm");
         const canvas = document.getElementById("klaw_chat_canvas");
-        start_chat_ui(canvas);
+        await start_chat_ui(canvas);
+        clearCenterText();
+        canvas.focus();
       }
-      main().catch((err) => console.error("klaw-webui failed to start", err));
+
+      main().catch(onError);
     </script>
   </body>
 </html>
