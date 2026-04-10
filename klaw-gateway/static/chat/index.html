@@ -23,9 +23,9 @@
   <body>
     <canvas id="klaw_chat_canvas"></canvas>
     <script type="module">
-      import init, { start_chat_ui } from "/chat/pkg/klaw_webui.js";
+      import init, { start_chat_ui } from "/chat/dist/klaw_webui.js";
       async function main() {
-        await init("/chat/pkg/klaw_webui_bg.wasm");
+        await init("/chat/dist/klaw_webui_bg.wasm");
         const canvas = document.getElementById("klaw_chat_canvas");
         start_chat_ui(canvas);
       }

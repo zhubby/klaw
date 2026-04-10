@@ -1,5 +1,6 @@
 mod auth;
 mod chat_page;
+mod embedded;
 mod error;
 mod handlers;
 mod home;
@@ -13,7 +14,7 @@ mod websocket;
 
 pub use error::GatewayError;
 pub use routes::{
-    CHAT_PATH, CHAT_PKG_JS_PATH, CHAT_PKG_WASM_PATH, HOME_LOGO_PATH, HOME_PATH,
+    CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, HOME_LOGO_PATH, HOME_PATH,
     WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
 };
 pub use runtime::{

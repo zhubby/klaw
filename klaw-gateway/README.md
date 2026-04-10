@@ -5,7 +5,7 @@
 - 绑定配置中的监听地址和端口
 - 支持 `listen_port = 0` 时由系统分配随机可用端口
 - 暴露 `/ws/chat` WebSocket 入口
-- 暴露 `/chat` 嵌入式 Web 聊天页（`klaw-webui` WASM + egui），静态资源为 `/chat/pkg/klaw_webui.js` 与 `/chat/pkg/klaw_webui_bg.wasm`
+- 暴露 `/chat` 嵌入式 Web 聊天页（`klaw-webui` WASM + egui），静态资源为 `/chat/dist/klaw_webui.js` 与 `/chat/dist/klaw_webui_bg.wasm`
 - 暴露 `/` 默认落地页与内置 logo 静态资源
 - 可选暴露固定路径的 `POST /webhook/events` 与 `POST /webhook/agents`，并支持 Bearer、GitHub、GitLab 多种 header/signature 校验
 - webhook 请求会进入独立的 `webhook:*` 执行 session；若提供 `base_session_key`，最终回复会路由回目标 IM 会话当前 active session
@@ -19,7 +19,7 @@
 - `runtime.rs`: gateway 启动、监听、路由装配与生命周期入口
 - `state.rs`: 运行态共享状态、`GatewayHandle` 与 `GatewayRuntimeInfo`
 - `websocket.rs`: `/ws/chat` WebSocket 连接与房间广播逻辑
-- `chat_page.rs`: `/chat` 与 WASM/JS 内嵌资源响应
+- `chat_page.rs`: `/chat` 与 `/chat/dist/*` WASM/JS 内嵌资源响应
 - `webhook.rs`: webhook 鉴权、`events` / `agents` payload 归一化与 handler 集成
 - `handlers.rs`: health / metrics HTTP handlers
 - `error.rs`: `GatewayError`
@@ -43,13 +43,13 @@
 make webui-wasm
 ```
 
-这是唯一推荐入口；它会负责 target 检查、`klaw-webui` 编译，以及把 wasm-bindgen 产物写入 `klaw-gateway/static/chat/pkg/`。如果本机缺少 `wasm-bindgen` CLI，`make` 会按 workspace 当前版本给出安装提示。
+这是唯一推荐入口；它会负责 target 检查、`klaw-webui` 编译，以及把 wasm-bindgen 产物写入 `klaw-gateway/static/chat/dist/`。如果本机缺少 `wasm-bindgen` CLI，`make` 会按 workspace 当前版本给出安装提示。
 
-清理本地生成的 `pkg/`（可选）：`make clean-webui-wasm`
+清理本地生成的 `dist/`（可选）：`make clean-webui-wasm`
 
-然后重新编译 `klaw-gateway`（`include_*` 会打包 `index.html` 与 `pkg/` 下的 `.js` / `.wasm`）。
+然后重新编译 `klaw-gateway`；`rust-embed` 会从 `static/` 与 `assets/` 目录打包首页、聊天页以及 `dist/` 下的 `.js` / `.wasm`。
 
-`klaw-gateway/static/chat/pkg/` 已列入仓库根目录 `.gitignore`，wasm-bindgen 产物不提交。克隆后若未生成该目录，编译 `klaw-gateway` 会因缺少 `include_bytes!` 目标而失败，需先执行上文命令。
+`klaw-gateway/static/chat/dist/` 已列入仓库根目录 `.gitignore`，wasm-bindgen 产物不提交。若需要刷新浏览器聊天资源，请先执行上文命令，再启动或编译 gateway。
 
 ## Examples
 

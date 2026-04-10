@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        CHAT_PATH, CHAT_PKG_JS_PATH, CHAT_PKG_WASM_PATH, GatewayOptions, GatewayWebsocketHandler,
+        CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, GatewayOptions, GatewayWebsocketHandler,
         GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
         HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
         spawn_gateway, spawn_gateway_with_options,
@@ -139,6 +139,8 @@ mod tests {
             .expect("home page body should load");
         assert!(home_html.contains("Little Claws, Big Conversations."));
         assert!(home_html.contains(HOME_LOGO_PATH));
+        assert!(home_html.contains("href=\"/chat\""));
+        assert!(home_html.contains("Open web chat"));
 
         let logo_response = client
             .get(format!("{base_url}{HOME_LOGO_PATH}"))
@@ -192,10 +194,10 @@ mod tests {
         assert_eq!(chat_html.status(), StatusCode::OK);
         let body = chat_html.text().await.expect("chat body");
         assert!(body.contains("klaw_chat_canvas"));
-        assert!(body.contains(CHAT_PKG_JS_PATH));
+        assert!(body.contains(CHAT_DIST_JS_PATH));
 
         let js = client
-            .get(format!("{base_url}{CHAT_PKG_JS_PATH}"))
+            .get(format!("{base_url}{CHAT_DIST_JS_PATH}"))
             .send()
             .await
             .expect("chat js should respond");
@@ -209,7 +211,7 @@ mod tests {
         assert!(!js.bytes().await.expect("js body").is_empty());
 
         let wasm = client
-            .get(format!("{base_url}{CHAT_PKG_WASM_PATH}"))
+            .get(format!("{base_url}{CHAT_DIST_WASM_PATH}"))
             .send()
             .await
             .expect("chat wasm should respond");
@@ -230,8 +232,8 @@ mod tests {
         assert_eq!(HOME_PATH, "/");
         assert_eq!(HOME_LOGO_PATH, "/assets/logo.webp");
         assert_eq!(CHAT_PATH, "/chat");
-        assert_eq!(CHAT_PKG_JS_PATH, "/chat/pkg/klaw_webui.js");
-        assert_eq!(CHAT_PKG_WASM_PATH, "/chat/pkg/klaw_webui_bg.wasm");
+        assert_eq!(CHAT_DIST_JS_PATH, "/chat/dist/klaw_webui.js");
+        assert_eq!(CHAT_DIST_WASM_PATH, "/chat/dist/klaw_webui_bg.wasm");
         assert_eq!(WS_CHAT_PATH, "/ws/chat");
         assert_eq!(WEBHOOK_EVENTS_PATH, "/webhook/events");
         assert_eq!(WEBHOOK_AGENTS_PATH, "/webhook/agents");

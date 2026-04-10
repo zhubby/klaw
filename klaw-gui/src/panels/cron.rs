@@ -439,34 +439,34 @@ impl CronPanel {
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                    egui::Grid::new("cron-run-grid")
-                        .striped(true)
-                        .num_columns(6)
-                        .spacing([12.0, 8.0])
-                        .show(ui, |ui| {
-                            ui.strong("Run ID");
-                            ui.strong("Status");
-                            ui.strong("Scheduled At");
-                            ui.strong("Started At");
-                            ui.strong("Finished At");
-                            ui.strong("Error");
-                            ui.end_row();
-
-                            for run in &self.runs {
-                                let (icon, color, text) = cron_status_display(run.status);
-                                ui.label(&run.id);
-                                ui.label(
-                                    egui::RichText::new(format!("{icon} {text}"))
-                                        .color(color)
-                                        .strong(),
-                                );
-                                ui.label(format_timestamp_millis(run.scheduled_at_ms));
-                                ui.label(format_optional_timestamp_millis(run.started_at_ms));
-                                ui.label(format_optional_timestamp_millis(run.finished_at_ms));
-                                ui.label(run.error_message.clone().unwrap_or_default());
+                        egui::Grid::new("cron-run-grid")
+                            .striped(true)
+                            .num_columns(6)
+                            .spacing([12.0, 8.0])
+                            .show(ui, |ui| {
+                                ui.strong("Run ID");
+                                ui.strong("Status");
+                                ui.strong("Scheduled At");
+                                ui.strong("Started At");
+                                ui.strong("Finished At");
+                                ui.strong("Error");
                                 ui.end_row();
-                            }
-                        });
+
+                                for run in &self.runs {
+                                    let (icon, color, text) = cron_status_display(run.status);
+                                    ui.label(&run.id);
+                                    ui.label(
+                                        egui::RichText::new(format!("{icon} {text}"))
+                                            .color(color)
+                                            .strong(),
+                                    );
+                                    ui.label(format_timestamp_millis(run.scheduled_at_ms));
+                                    ui.label(format_optional_timestamp_millis(run.started_at_ms));
+                                    ui.label(format_optional_timestamp_millis(run.finished_at_ms));
+                                    ui.label(run.error_message.clone().unwrap_or_default());
+                                    ui.end_row();
+                                }
+                            });
                     });
             });
 

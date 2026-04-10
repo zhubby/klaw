@@ -5,8 +5,8 @@ use eframe::egui::{
 use egui_phosphor::regular;
 
 use crate::{
-    ConnectionState, MessageRole, normalize_gateway_token_input,
-    session_card_activity_label, should_activate_session_window, toolbar_title,
+    ConnectionState, MessageRole, normalize_gateway_token_input, session_card_activity_label,
+    should_activate_session_window, toolbar_title,
 };
 
 use super::{
@@ -48,7 +48,10 @@ impl ChatApp {
                 });
 
                 ui.menu_button(format!("{} Connection", regular::PLUG), |ui| {
-                    if ui.button(format!("{} Gateway Token", regular::KEY)).clicked() {
+                    if ui
+                        .button(format!("{} Gateway Token", regular::KEY))
+                        .clicked()
+                    {
                         self.show_gateway_dialog = true;
                         ui.close();
                     }
@@ -89,7 +92,10 @@ impl ChatApp {
                             egui::ThemePreference::Dark,
                         ] {
                             if ui
-                                .selectable_label(current_theme == mode, theme_preference_label(mode))
+                                .selectable_label(
+                                    current_theme == mode,
+                                    theme_preference_label(mode),
+                                )
                                 .clicked()
                             {
                                 requested_theme = Some(mode);
@@ -199,31 +205,32 @@ impl ChatApp {
                                     ui.label(RichText::new(compact_title).strong());
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                         ui.label(RichText::new(regular::DOTS_THREE).small().weak());
-                                        if let Some(label) = session_card_activity_label(is_active) {
+                                        if let Some(label) = session_card_activity_label(is_active)
+                                        {
                                             ui.label(RichText::new(label).small().strong());
                                         }
                                         ui.label(RichText::new(state.status_text()).small().weak());
                                         ui.label(
-                                            RichText::new("●")
-                                                .small()
-                                                .color(connection_state_color(&state, ui.visuals())),
+                                            RichText::new("●").small().color(
+                                                connection_state_color(&state, ui.visuals()),
+                                            ),
                                         );
                                     });
                                 });
                             });
-                        let response = card
-                            .response
-                            .interact(egui::Sense::click())
-                            .on_hover_text(format!(
-                            "{}\n{}\n{}",
-                            session.title,
-                            session.session_key,
-                            if session.open {
-                                "Window visible"
-                            } else {
-                                "Window hidden"
-                            }
-                        ));
+                        let response =
+                            card.response
+                                .interact(egui::Sense::click())
+                                .on_hover_text(format!(
+                                    "{}\n{}\n{}",
+                                    session.title,
+                                    session.session_key,
+                                    if session.open {
+                                        "Window visible"
+                                    } else {
+                                        "Window hidden"
+                                    }
+                                ));
                         if response.clicked() {
                             focus_session_key = Some(session.session_key.clone());
                         }

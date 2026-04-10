@@ -6,9 +6,7 @@ use klaw_ui_kit::{NotificationCenter, theme_preference};
 use crate::resolve_gateway_token;
 
 use super::{
-    session::{
-        SessionWindow, generate_session_key, session_title, window_anchor_for_slot,
-    },
+    session::{SessionWindow, generate_session_key, session_title, window_anchor_for_slot},
     storage::{
         PersistedSession, PersistedWorkspaceState, load_workspace_state, save_workspace_state,
     },
@@ -31,7 +29,8 @@ pub(super) struct ChatApp {
 impl ChatApp {
     pub(super) fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let persisted = load_workspace_state();
-        let gateway_token = resolve_gateway_token(gateway_token_from_page(), persisted.gateway_token);
+        let gateway_token =
+            resolve_gateway_token(gateway_token_from_page(), persisted.gateway_token);
         let gateway_token_input = gateway_token.clone().unwrap_or_default();
         let sessions = persisted
             .sessions

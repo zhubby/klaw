@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-04-10
+
+### Changed
+
+- gateway 现在改用 `rust-embed` 从 `static/` 与 `assets/` 目录打包首页、`/chat` 和 logo 资源；聊天 WASM/JS 路径同步从 `/chat/pkg/*` 切换为 `/chat/dist/*`
+- 首页介绍区现改为风格化的 `/chat` 主按钮，作为浏览器聊天入口而不再展示三枚装饰性标签
+
 ## 2026-04-08
 
 ### Added

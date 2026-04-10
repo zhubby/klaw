@@ -42,8 +42,8 @@ make webui-wasm
 
 - 确保 `wasm32-unknown-unknown` target 已安装
 - 编译 `klaw-webui`
-- 运行 `wasm-bindgen` 并把产物写入 `klaw-gateway/static/chat/pkg/`
+- 运行 `wasm-bindgen` 并把产物写入 `klaw-gateway/static/chat/dist/`
 
 如果本机缺少 `wasm-bindgen` CLI，`make` 会直接提示按 workspace 当前版本安装。
 
-`klaw-gateway/static/chat/pkg/` 已被 `.gitignore` 忽略；生成后再执行 `cargo build -p klaw-gateway`，`include_*` 才能把这些资源打入二进制。
+`klaw-gateway/static/chat/dist/` 已被 `.gitignore` 忽略；生成后再执行 `cargo build -p klaw-gateway`，`rust-embed` 才会把这些资源打入 gateway 二进制。
