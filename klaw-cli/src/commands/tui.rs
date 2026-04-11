@@ -1,5 +1,6 @@
 use clap::Args;
-use klaw_channel::terminal::{TERMINAL_CHANNEL_NAME, resolve_session_key};
+use klaw_channel::SessionChannel;
+use klaw_channel::terminal::resolve_session_key;
 use klaw_runtime::{build_hosted_runtime, shutdown_runtime_bundle};
 use klaw_tui::{TuiMeta, run_tui};
 use std::sync::Arc;
@@ -30,7 +31,7 @@ impl TuiCommand {
         let meta = TuiMeta {
             version: summary.version,
             session_key,
-            channel: TERMINAL_CHANNEL_NAME.to_string(),
+            channel: SessionChannel::Terminal.to_string(),
             provider: provider_runtime.default_provider_id,
             model: provider_runtime.default_model,
             skills: summary.skills,

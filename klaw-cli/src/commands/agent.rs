@@ -1,5 +1,6 @@
 use clap::Args;
-use klaw_channel::terminal::{TERMINAL_CHANNEL_NAME, resolve_session_key};
+use klaw_channel::SessionChannel;
+use klaw_channel::terminal::resolve_session_key;
 use klaw_runtime::{build_runtime_bundle, submit_and_get_output};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use std::sync::Arc;
 use klaw_config::AppConfig;
 
 fn resolve_channel_name() -> &'static str {
-    TERMINAL_CHANNEL_NAME
+    SessionChannel::Terminal.as_str()
 }
 
 #[derive(Debug, Args)]

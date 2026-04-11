@@ -1,5 +1,5 @@
 use crate::{
-    ChannelRequest, ChannelResult, ChannelRuntime,
+    ChannelRequest, ChannelResult, ChannelRuntime, SessionChannel,
     manager::{ChannelKind, ChannelSupervisorReporter, ManagedChannelDriver},
 };
 use async_trait::async_trait;
@@ -8,7 +8,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use tokio::sync::watch;
 
-pub const WEBSOCKET_CHANNEL_NAME: &str = "websocket";
 pub const META_WEBSOCKET_CONNECTION_ID: &str = "channel.websocket.connection_id";
 pub const META_WEBSOCKET_CHANNEL_ID: &str = "channel.websocket.channel_id";
 pub const META_WEBSOCKET_REQUEST_ID: &str = "channel.websocket.request_id";
@@ -41,7 +40,7 @@ impl WebsocketSubmitEnvelope {
             Value::String(self.request_id),
         );
         ChannelRequest {
-            channel: WEBSOCKET_CHANNEL_NAME.to_string(),
+            channel: SessionChannel::Websocket.to_string(),
             input: self.input,
             session_key: self.session_key,
             chat_id: self.chat_id,

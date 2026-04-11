@@ -1,9 +1,10 @@
 use uuid::Uuid;
 
-pub const TERMINAL_CHANNEL_NAME: &str = "terminal";
+use crate::SessionChannel;
 
 pub fn resolve_session_key(session_key: Option<String>) -> String {
-    session_key.unwrap_or_else(|| format!("{TERMINAL_CHANNEL_NAME}:{}", Uuid::new_v4()))
+    let prefix = SessionChannel::Terminal;
+    session_key.unwrap_or_else(|| format!("{prefix}:{}", Uuid::new_v4()))
 }
 
 pub fn resolve_chat_id(session_key: &str) -> String {
@@ -12,7 +13,7 @@ pub fn resolve_chat_id(session_key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TERMINAL_CHANNEL_NAME, resolve_chat_id, resolve_session_key};
+    use super::*;
     use crate::{
         ChannelResponse,
         render::{OutputRenderStyle, render_agent_output},
@@ -32,7 +33,7 @@ mod tests {
 
     #[test]
     fn reports_terminal_channel_name() {
-        assert_eq!(TERMINAL_CHANNEL_NAME, "terminal");
+        assert_eq!(SessionChannel::Terminal.to_string(), "terminal");
     }
 
     #[test]
