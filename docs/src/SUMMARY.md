@@ -58,7 +58,7 @@
   - [WASM 中文字体方案](./ui/wasm-cjk-fonts.md)
   - [WebSocket Channel](./ui/websocket-channel.md)
   - [WebUI Architecture](./ui/webui-architecture.md)
-  - **面板文档**
+  - [面板文档](./ui/gui/README.md)
     - [ACP](./ui/gui/acp.md)
     - [分析仪表盘](./ui/gui/analyze-dashboard.md)
     - [审批](./ui/gui/approval.md)
