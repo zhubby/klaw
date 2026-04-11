@@ -6,17 +6,18 @@ use egui_phosphor::regular;
 
 use crate::{
     connection_action_label, delete_confirmation_body, derive_page_mode,
-    normalize_gateway_token_input, session_card_activity_label, should_activate_session_window,
-    toolbar_title, ConnectionState, MessageRole, PageMode,
+    normalize_gateway_token_input, should_activate_session_window, ConnectionState, MessageRole,
+    PageMode,
 };
 
 use super::{
     app::ChatApp,
     markdown::{render_markdown, render_plain_message, MarkdownCache},
     session::{
-        format_message_timestamp, session_window_id, ChatMessage, BUBBLE_MAX_WIDTH,
-        INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT,
-        SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT, SESSION_WINDOW_MIN_WIDTH,
+        current_timestamp_ms, format_message_timestamp, format_relative_time, session_window_id,
+        ChatMessage, BUBBLE_MAX_WIDTH, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH,
+        SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT,
+        SESSION_WINDOW_MIN_WIDTH,
     },
 };
 
@@ -58,6 +59,19 @@ impl ChatApp {
                         self.request_workspace_connection();
                         ui.close();
                     }
+                    if ui
+                        .add_enabled(
+                            matches!(
+                                *self.connection_state.borrow(),
+                                ConnectionState::Connected | ConnectionState::Connecting
+                            ),
+                            Button::new(format!("{} Disconnect", regular::SIGN_OUT)),
+                        )
+                        .clicked()
+                    {
+                        self.disconnect_and_clear_token();
+                        ui.close();
+                    }
                 });
 
                 let row_height = ui.spacing().interact_size.y;
@@ -65,7 +79,21 @@ impl ChatApp {
                     egui::vec2(ui.available_width(), row_height),
                     Layout::right_to_left(Align::Center),
                     |ui| {
-                        ui.label(RichText::new(toolbar_title()).strong());
+                        let state = self.connection_state.borrow().clone();
+                        let (dot, label) = match state {
+                            ConnectionState::Connected => {
+                                (Color32::from_rgb(41, 163, 90), "Connected")
+                            }
+                            ConnectionState::Connecting => {
+                                (Color32::from_rgb(214, 149, 33), "Connecting…")
+                            }
+                            ConnectionState::Disconnected => {
+                                (Color32::from_rgb(208, 67, 67), "Disconnected")
+                            }
+                            ConnectionState::Error(_) => (Color32::from_rgb(208, 67, 67), "Error"),
+                        };
+                        ui.label(RichText::new(label).small().strong());
+                        ui.label(RichText::new("●").color(dot));
                     },
                 );
             });
@@ -173,7 +201,8 @@ impl ChatApp {
                         let session = &self.sessions[index];
                         let is_active = self.active_session_key.as_deref()
                             == Some(session.session_key.as_str());
-                        let state = self.connection_state.borrow().clone();
+                        let now_ms = current_timestamp_ms();
+                        let relative_time = format_relative_time(session.created_at_ms, now_ms);
                         let compact_title = compact_sidebar_title(&session.title);
                         let card = Frame::group(ui.style())
                             .fill(if is_active {
@@ -193,17 +222,7 @@ impl ChatApp {
                                     ui.label(regular::ROBOT);
                                     ui.label(RichText::new(compact_title).strong());
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        ui.label(RichText::new(regular::DOTS_THREE).small().weak());
-                                        if let Some(label) = session_card_activity_label(is_active)
-                                        {
-                                            ui.label(RichText::new(label).small().strong());
-                                        }
-                                        ui.label(RichText::new(state.status_text()).small().weak());
-                                        ui.label(
-                                            RichText::new("●").small().color(
-                                                connection_state_color(&state, ui.visuals()),
-                                            ),
-                                        );
+                                        ui.label(RichText::new(relative_time).small().weak());
                                     });
                                 });
                             });
@@ -445,6 +464,7 @@ impl ChatApp {
                 .id(session_window_id(&session.session_key))
                 .default_pos(session.window_anchor.to_pos2())
                 .default_size([SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT])
+                .collapsible(false)
                 .min_width(SESSION_WINDOW_MIN_WIDTH)
                 .min_height(SESSION_WINDOW_MIN_HEIGHT)
                 .open(&mut open);
@@ -801,15 +821,6 @@ fn compact_sidebar_title(title: &str) -> String {
 
     let shortened = title.chars().take(MAX_CHARS - 1).collect::<String>();
     format!("{shortened}…")
-}
-
-fn connection_state_color(state: &ConnectionState, visuals: &egui::Visuals) -> Color32 {
-    match state {
-        ConnectionState::Connected => Color32::from_rgb(41, 163, 90),
-        ConnectionState::Connecting => Color32::from_rgb(214, 149, 33),
-        ConnectionState::Disconnected => visuals.weak_text_color(),
-        ConnectionState::Error(_) => Color32::from_rgb(208, 67, 67),
-    }
 }
 
 fn theme_preference_label(theme: egui::ThemePreference) -> &'static str {

@@ -93,6 +93,13 @@ impl ChatApp {
         self.persist_workspace_state();
     }
 
+    pub(in crate::web_chat) fn disconnect_and_clear_token(&mut self) {
+        self.close_connection();
+        self.gateway_token = None;
+        self.gateway_token_input.clear();
+        self.persist_workspace_state();
+    }
+
     /// Subscribe every visible agent window that has not received history yet.
     pub(in crate::web_chat) fn subscribe_open_sessions_needing_history(&mut self) {
         if !self.is_workspace_ready() {

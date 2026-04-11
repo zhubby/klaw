@@ -105,11 +105,6 @@ pub(crate) enum PageMode {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-pub(crate) fn toolbar_title() -> &'static str {
-    "Klaw Web Chat"
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn normalize_gateway_token_input(input: &str) -> Option<String> {
     let trimmed = input.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
@@ -156,11 +151,6 @@ pub(crate) fn should_activate_session_window(
     primary_pointer_pressed: bool,
 ) -> bool {
     window_contains_pointer && primary_pointer_pressed
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-pub(crate) fn session_card_activity_label(_is_active: bool) -> Option<&'static str> {
-    None
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -234,15 +224,9 @@ mod tests {
         ConnectionState, MessageRole, PageMode, SessionListEntry, StreamMessageAction, ThemeMode,
         classify_message_role, classify_stream_message_action, connection_action_label,
         delete_confirmation_body, derive_page_mode, normalize_gateway_token_input,
-        resolve_gateway_token, session_card_activity_label, should_activate_session_window,
+        resolve_gateway_token, should_activate_session_window,
         should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
-        toolbar_title,
     };
-
-    #[test]
-    fn toolbar_title_matches_chat_product() {
-        assert_eq!(toolbar_title(), "Klaw Web Chat");
-    }
 
     #[test]
     fn connected_state_uses_friendly_status_copy() {

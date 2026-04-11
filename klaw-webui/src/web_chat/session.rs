@@ -110,3 +110,23 @@ pub(super) fn format_message_timestamp(timestamp_ms: i64) -> String {
     let date = Date::new(&wasm_bindgen::JsValue::from_f64(timestamp_ms as f64));
     format!("{:02}:{:02}", date.get_hours(), date.get_minutes())
 }
+
+pub(super) fn format_relative_time(created_at_ms: i64, now_ms: i64) -> String {
+    let elapsed_ms = (now_ms - created_at_ms).max(0);
+    let elapsed_secs = elapsed_ms / 1000;
+    if elapsed_secs < 60 {
+        "just now".to_string()
+    } else if elapsed_secs < 3600 {
+        let mins = elapsed_secs / 60;
+        format!("{mins}m ago")
+    } else if elapsed_secs < 86400 {
+        let hours = elapsed_secs / 3600;
+        format!("{hours}h ago")
+    } else if elapsed_secs < 604800 {
+        let days = elapsed_secs / 86400;
+        format!("{days}d ago")
+    } else {
+        let weeks = elapsed_secs / 604800;
+        format!("{weeks}w ago")
+    }
+}
