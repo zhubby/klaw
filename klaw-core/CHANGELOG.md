@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-11
+
+### Changed
+- `ToolLoopExhausted` errors now return an informative response to the user instead of `final_response: None`, explaining that the tool call limit was reached and suggesting alternatives
+
 ## 2026-04-07
 
 ### Added
