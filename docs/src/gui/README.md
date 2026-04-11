@@ -6,7 +6,8 @@ This directory contains documentation for the Klaw desktop GUI application.
 
 - [Architecture Overview](architecture.md) - Complete GUI architecture, module structure, and design patterns
 - [Live Log Stream](log-stream.md) - Real-time in-process logs in GUI workbench
-- [WebSocket Channels](websocket-channels.md) - WebSocket channel configuration and usage
+- [WASM 中文字体方案](wasm-cjk-fonts.md) - eframe/egui WASM 零打包中文字体方案
+- [WebSocket Channel](websocket-channel.md) - WebSocket channel 架构、协议与使用指南
 
 ## Quick Links
 
