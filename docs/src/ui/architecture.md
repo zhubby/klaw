@@ -1,8 +1,10 @@
-# Klaw GUI Architecture
+# 桌面 UI 架构设计
+
+本文档描述 **klaw-gui** —— Klaw 桌面端应用的架构设计。
 
 ## Overview
 
-Klaw GUI is a desktop application built with [egui](https://www.egui.rs/), a immediate-mode GUI framework in Rust. It provides a visual interface for managing Klaw's configuration, sessions, skills, memory, and other subsystems.
+klaw-gui 是一个桌面应用，基于 [egui](https://www.egui.rs/) 构建，egui 是 Rust 生态中的立即模式 GUI 框架。它提供可视化界面来管理 Klaw 的配置、会话、技能、内存和其他子系统。
 
 ## Design Philosophy
 
