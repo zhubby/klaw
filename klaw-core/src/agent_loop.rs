@@ -1209,8 +1209,33 @@ impl AgentLoop {
                         )
                         .await;
                 }
+                let mut response_metadata =
+                    heartbeat_response_metadata(&msg.payload.metadata);
+                response_metadata.insert(
+                    META_AGENT_DISPOSITION_KEY.to_string(),
+                    serde_json::Value::String("exhausted".to_string()),
+                );
+                let exhausted_content = format!(
+                    "I've reached the maximum number of tool call iterations ({}). \
+                     This usually happens when a task requires more steps than the configured limit. \
+                     You may try:\n\
+                     - Breaking down the task into smaller parts\n\
+                     - Asking me to continue from where I left off\n\
+                     - Adjusting the iteration limit if you have administrative access",
+                    self.limits.max_tool_iterations
+                );
                 ProcessOutcome {
-                    final_response: None,
+                    final_response: Some(Envelope {
+                        header: msg.header.clone(),
+                        metadata: BTreeMap::new(),
+                        payload: OutboundMessage {
+                            channel: msg.payload.channel.clone(),
+                            chat_id: msg.payload.chat_id.clone(),
+                            content: exhausted_content,
+                            reply_to: None,
+                            metadata: response_metadata,
+                        },
+                    }),
                     error_code: Some(ErrorCode::RetryExhausted),
                     final_state: AgentRunState::Failed,
                     llm_audits: Vec::new(),

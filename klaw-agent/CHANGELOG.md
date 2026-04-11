@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-11
+
+### Changed
+- When approaching the `max_tool_iterations` limit (≥3 iterations allowed), the agent now injects a final-iteration system prompt asking the model to summarize progress and respond directly instead of calling more tools
+
 ## 2026-03-26
 
 ### Added

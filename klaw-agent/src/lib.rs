@@ -32,6 +32,7 @@ const META_CURRENT_ATTACHMENTS_KEY: &str = "agent.current_attachments";
 const APPROVAL_REQUIRED_SIGNAL: &str = "approval_required";
 const STOP_SIGNAL: &str = "stop";
 const STOPPED_TURN_MESSAGE: &str = "Current turn stopped. No further tool calls were made.";
+const FINAL_ITERATION_PROMPT: &str = "You are about to reach the maximum tool call limit. This is your final iteration. Please respond directly to the user with a summary of what you have accomplished so far, and explain that you have reached the tool call limit. Do NOT call any more tools in this response.";
 
 #[derive(Debug, Clone, Copy)]
 pub struct AgentExecutionLimits {
@@ -376,6 +377,32 @@ pub async fn run_agent_execution(
             break;
         }
         iteration = iteration.saturating_add(1);
+        let is_final_allowed_iteration =
+            max_tool_iterations > 0 && iteration == max_tool_iterations;
+        let should_warn_final_iteration = is_final_allowed_iteration
+            && max_tool_iterations >= 3
+            && !llm_messages.iter().any(|m| {
+                m.role == "system"
+                    && m
+                        .content
+                        .contains("You are about to reach the maximum tool call limit")
+            });
+        let final_iteration_messages: Option<Vec<LlmMessage>> =
+            if should_warn_final_iteration {
+                let mut msgs = llm_messages.clone();
+                msgs.push(LlmMessage {
+                    role: "system".to_string(),
+                    content: FINAL_ITERATION_PROMPT.to_string(),
+                    media: Vec::new(),
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+                Some(msgs)
+            } else {
+                None
+            };
+        let messages_for_request: &Vec<LlmMessage> =
+            final_iteration_messages.as_ref().unwrap_or(&llm_messages);
         let chat_options = ChatOptions {
             temperature: 0.2,
             max_tokens: None,
@@ -425,7 +452,7 @@ pub async fn run_agent_execution(
         });
         let llm_response = provider
             .chat_stream(
-                llm_messages.clone(),
+                messages_for_request.clone(),
                 tool_defs.clone(),
                 input.execution_context.resolved_model.as_deref(),
                 chat_options,
