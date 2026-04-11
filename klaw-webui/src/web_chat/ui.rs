@@ -632,16 +632,19 @@ impl eframe::App for ChatApp {
 }
 
 /// Inner max width for a user bubble: shrink-wrap short plain text, cap at [`BUBBLE_MAX_WIDTH`].
-fn user_bubble_inner_max_width(ui: &egui::Ui, message: &ChatMessage, role_label: &str, time_label: &str) -> f32 {
+fn user_bubble_inner_max_width(
+    ui: &egui::Ui,
+    message: &ChatMessage,
+    role_label: &str,
+    time_label: &str,
+) -> f32 {
     const SLACK: f32 = 8.0;
     const MIN_INNER: f32 = 72.0;
 
-    let header_w = WidgetText::from(
-        RichText::new(format!("{role_label}  {time_label}")).strong(),
-    )
-    .into_galley(ui, None, f32::INFINITY, TextStyle::Body)
-    .size()
-    .x;
+    let header_w = WidgetText::from(RichText::new(format!("{role_label}  {time_label}")).strong())
+        .into_galley(ui, None, f32::INFINITY, TextStyle::Body)
+        .size()
+        .x;
 
     let body_w = {
         let t = message.text.as_str();
@@ -659,8 +662,7 @@ fn user_bubble_inner_max_width(ui: &egui::Ui, message: &ChatMessage, role_label:
         }
     };
 
-    (header_w.max(body_w) + SLACK)
-        .clamp(MIN_INNER, BUBBLE_MAX_WIDTH)
+    (header_w.max(body_w) + SLACK).clamp(MIN_INNER, BUBBLE_MAX_WIDTH)
 }
 
 fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState) {
@@ -719,7 +721,12 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
                 };
 
             let inner_w_user = if is_user {
-                Some(user_bubble_inner_max_width(ui, message, role_label, &time_label))
+                Some(user_bubble_inner_max_width(
+                    ui,
+                    message,
+                    role_label,
+                    &time_label,
+                ))
             } else {
                 None
             };

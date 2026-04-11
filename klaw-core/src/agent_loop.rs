@@ -1209,8 +1209,7 @@ impl AgentLoop {
                         )
                         .await;
                 }
-                let mut response_metadata =
-                    heartbeat_response_metadata(&msg.payload.metadata);
+                let mut response_metadata = heartbeat_response_metadata(&msg.payload.metadata);
                 response_metadata.insert(
                     META_AGENT_DISPOSITION_KEY.to_string(),
                     serde_json::Value::String("exhausted".to_string()),

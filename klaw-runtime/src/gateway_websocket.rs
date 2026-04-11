@@ -7,18 +7,13 @@ use klaw_config::{AppConfig, WebsocketConfig};
 use klaw_gateway::{
     GatewaySessionHistoryMessage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
     GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-    GatewayWorkspaceSession,
+    GatewayWorkspaceSession, OutboundEvent,
 };
 use klaw_session::{SessionListQuery, SessionManager};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::mpsc;
 use uuid::Uuid;
-
-const EVENT_SESSION_MESSAGE: &str = "session.message";
-const EVENT_SESSION_STREAM_CLEAR: &str = "session.stream.clear";
-const EVENT_SESSION_STREAM_DELTA: &str = "session.stream.delta";
-const EVENT_SESSION_STREAM_DONE: &str = "session.stream.done";
 
 pub fn build_gateway_websocket_handler(
     runtime: Arc<RuntimeBundle>,
@@ -190,7 +185,7 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
             send_frame(
                 &frame_tx,
                 GatewayWebsocketServerFrame::Event {
-                    event: EVENT_SESSION_STREAM_DONE.to_string(),
+                    event: OutboundEvent::SessionStreamDone,
                     payload: json!({
                         "request_id": request_id.clone(),
                         "response": response.as_ref().map(|response| serialize_response(response, config.show_reasoning)),
@@ -256,7 +251,7 @@ impl GatewayStreamState {
                 send_frame(
                     frame_tx,
                     GatewayWebsocketServerFrame::Event {
-                        event: EVENT_SESSION_MESSAGE.to_string(),
+                        event: OutboundEvent::SessionMessage,
                         payload: json!({
                             "request_id": request_id,
                             "session_key": session_key,
@@ -269,7 +264,7 @@ impl GatewayStreamState {
                     send_frame(
                         frame_tx,
                         GatewayWebsocketServerFrame::Event {
-                            event: EVENT_SESSION_STREAM_DELTA.to_string(),
+                            event: OutboundEvent::SessionStreamDelta,
                             payload: json!({
                                 "request_id": request_id,
                                 "session_key": session_key,
@@ -285,7 +280,7 @@ impl GatewayStreamState {
                 send_frame(
                     frame_tx,
                     GatewayWebsocketServerFrame::Event {
-                        event: EVENT_SESSION_STREAM_CLEAR.to_string(),
+                        event: OutboundEvent::SessionStreamClear,
                         payload: json!({
                             "request_id": request_id,
                             "session_key": session_key,
@@ -328,7 +323,7 @@ fn stream_events_to_frames(
                 };
                 last_snapshot = Some(response.content.clone());
                 frames.push(GatewayWebsocketServerFrame::Event {
-                    event: EVENT_SESSION_MESSAGE.to_string(),
+                    event: OutboundEvent::SessionMessage,
                     payload: json!({
                         "request_id": request_id,
                         "session_key": session_key,
@@ -337,7 +332,7 @@ fn stream_events_to_frames(
                 });
                 if !delta.is_empty() {
                     frames.push(GatewayWebsocketServerFrame::Event {
-                        event: EVENT_SESSION_STREAM_DELTA.to_string(),
+                        event: OutboundEvent::SessionStreamDelta,
                         payload: json!({
                             "request_id": request_id,
                             "session_key": session_key,
@@ -349,7 +344,7 @@ fn stream_events_to_frames(
             klaw_channel::ChannelStreamEvent::Clear => {
                 last_snapshot = None;
                 frames.push(GatewayWebsocketServerFrame::Event {
-                    event: EVENT_SESSION_STREAM_CLEAR.to_string(),
+                    event: OutboundEvent::SessionStreamClear,
                     payload: json!({
                         "request_id": request_id,
                         "session_key": session_key,
@@ -406,11 +401,9 @@ fn build_web_workspace_bootstrap(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        EVENT_SESSION_MESSAGE, EVENT_SESSION_STREAM_CLEAR, EVENT_SESSION_STREAM_DELTA,
-        build_web_workspace_bootstrap, stream_events_to_frames,
-    };
+    use super::{build_web_workspace_bootstrap, stream_events_to_frames};
     use klaw_channel::{ChannelResponse, ChannelStreamEvent};
+    use klaw_gateway::OutboundEvent;
     use klaw_storage::SessionIndex;
     use std::collections::BTreeMap;
 
@@ -439,7 +432,7 @@ mod tests {
         assert_eq!(frames.len(), 4);
         match &frames[0] {
             klaw_gateway::GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, EVENT_SESSION_MESSAGE);
+                assert_eq!(*event, OutboundEvent::SessionMessage);
                 assert_eq!(
                     payload
                         .get("response")
@@ -458,7 +451,7 @@ mod tests {
         }
         match &frames[1] {
             klaw_gateway::GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, EVENT_SESSION_STREAM_DELTA);
+                assert_eq!(*event, OutboundEvent::SessionStreamDelta);
                 assert_eq!(
                     payload.get("delta").and_then(serde_json::Value::as_str),
                     Some("Hel")
@@ -468,7 +461,7 @@ mod tests {
         }
         match &frames[3] {
             klaw_gateway::GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, EVENT_SESSION_STREAM_DELTA);
+                assert_eq!(*event, OutboundEvent::SessionStreamDelta);
                 assert_eq!(
                     payload.get("delta").and_then(serde_json::Value::as_str),
                     Some("lo")
@@ -504,11 +497,11 @@ mod tests {
         assert!(frames.iter().any(|frame| matches!(
             frame,
             klaw_gateway::GatewayWebsocketServerFrame::Event { event, .. }
-            if event == EVENT_SESSION_STREAM_CLEAR
+            if *event == OutboundEvent::SessionStreamClear
         )));
         let last_delta = frames.iter().rev().find_map(|frame| match frame {
             klaw_gateway::GatewayWebsocketServerFrame::Event { event, payload }
-                if event == EVENT_SESSION_STREAM_DELTA =>
+                if *event == OutboundEvent::SessionStreamDelta =>
             {
                 payload.get("delta").and_then(serde_json::Value::as_str)
             }

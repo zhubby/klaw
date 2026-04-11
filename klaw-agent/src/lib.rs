@@ -383,24 +383,22 @@ pub async fn run_agent_execution(
             && max_tool_iterations >= 3
             && !llm_messages.iter().any(|m| {
                 m.role == "system"
-                    && m
-                        .content
+                    && m.content
                         .contains("You are about to reach the maximum tool call limit")
             });
-        let final_iteration_messages: Option<Vec<LlmMessage>> =
-            if should_warn_final_iteration {
-                let mut msgs = llm_messages.clone();
-                msgs.push(LlmMessage {
-                    role: "system".to_string(),
-                    content: FINAL_ITERATION_PROMPT.to_string(),
-                    media: Vec::new(),
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-                Some(msgs)
-            } else {
-                None
-            };
+        let final_iteration_messages: Option<Vec<LlmMessage>> = if should_warn_final_iteration {
+            let mut msgs = llm_messages.clone();
+            msgs.push(LlmMessage {
+                role: "system".to_string(),
+                content: FINAL_ITERATION_PROMPT.to_string(),
+                media: Vec::new(),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+            Some(msgs)
+        } else {
+            None
+        };
         let messages_for_request: &Vec<LlmMessage> =
             final_iteration_messages.as_ref().unwrap_or(&llm_messages);
         let chat_options = ChatOptions {

@@ -4,7 +4,7 @@ mod tests {
         CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, GatewayOptions,
         GatewaySessionHistoryMessage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
         GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-        GatewayWorkspaceSession, HOME_LOGO_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH,
+        GatewayWorkspaceSession, HOME_LOGO_PATH, HOME_PATH, OutboundEvent, WEBHOOK_AGENTS_PATH,
         WEBHOOK_EVENTS_PATH, WS_CHAT_PATH, spawn_gateway, spawn_gateway_with_options,
         webhook::{
             GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
@@ -465,7 +465,7 @@ mod tests {
         };
         match connected {
             GatewayWebsocketServerFrame::Event { event, .. } => {
-                assert_eq!(event, "session.connected");
+                assert_eq!(event, OutboundEvent::SessionConnected);
             }
             other => panic!("unexpected connected frame: {other:?}"),
         }
@@ -925,7 +925,7 @@ mod tests {
         }
         match second {
             GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, "session.subscribed");
+                assert_eq!(event, OutboundEvent::SessionSubscribed);
                 assert_eq!(
                     payload.get("session_key").and_then(|value| value.as_str()),
                     Some("web:history")
@@ -935,7 +935,7 @@ mod tests {
         }
         match third {
             GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, "session.message");
+                assert_eq!(event, OutboundEvent::SessionMessage);
                 assert_eq!(
                     payload.get("session_key").and_then(|value| value.as_str()),
                     Some("web:history")

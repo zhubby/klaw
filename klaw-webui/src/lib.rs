@@ -82,7 +82,6 @@ pub(crate) enum StreamMessageAction {
     PushAssistant,
 }
 
-
 #[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) struct EmptyStateCopy {
     pub(crate) title: String,
