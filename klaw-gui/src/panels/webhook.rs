@@ -8,6 +8,7 @@ use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
+use klaw_channel::SessionChannel;
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayWebhookConfig, TailscaleMode,
 };
@@ -1613,14 +1614,12 @@ fn load_session_options() -> Result<Vec<TrickSessionOption>, String> {
             .cloned()
             .map(|session| (session.session_key.clone(), session))
             .collect::<std::collections::BTreeMap<_, _>>();
-        let active_session_keys = sessions
-            .iter()
-            .filter_map(|session| session.active_session_key.clone())
-            .collect::<std::collections::BTreeSet<_>>();
         let mut session_options = sessions
             .into_iter()
-            .filter(|session| matches!(session.channel.as_str(), "dingtalk" | "telegram"))
-            .filter(|session| !active_session_keys.contains(&session.session_key))
+            .filter(|session| {
+                SessionChannel::from_str(session.channel.as_str())
+                    .is_some_and(|ch| ch.is_interactive())
+            })
             .filter_map(|session| {
                 let target_key = session
                     .active_session_key
@@ -1628,9 +1627,14 @@ fn load_session_options() -> Result<Vec<TrickSessionOption>, String> {
                     .filter(|value| !value.trim().is_empty())
                     .unwrap_or(session.session_key.as_str());
                 let target = sessions_by_key.get(target_key).unwrap_or(&session);
-                let delivery_ready = match target.channel.as_str() {
-                    "telegram" => true,
-                    "dingtalk" => target
+                let target_channel = SessionChannel::from_str(target.channel.as_str());
+                let delivery_ready = match target_channel {
+                    Some(
+                        SessionChannel::Telegram
+                        | SessionChannel::Terminal
+                        | SessionChannel::Websocket,
+                    ) => true,
+                    Some(SessionChannel::Dingtalk) => target
                         .delivery_metadata_json
                         .as_deref()
                         .is_some_and(|value| value.contains("channel.dingtalk.session_webhook")),

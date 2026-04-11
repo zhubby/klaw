@@ -55,6 +55,7 @@
 - [GUI](./gui/README.md)
   - [架构设计](./gui/architecture.md)
   - [实时日志流](./gui/log-stream.md)
+  - [WASM 中文字体方案](./gui/wasm-cjk-fonts.md)
 - [Superpowers](./superpowers/README.md)
   - [设计方案](./superpowers/plans/2026-04-08-klaw-webui-chat-layout.md)
   - [全局工作区](./superpowers/plans/2026-04-10-klaw-webui-global-workspace.md)

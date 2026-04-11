@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::time::Duration;
+use strum::{AsRefStr, Display, EnumIter, VariantArray};
 
 pub mod dingtalk;
 pub mod im_card;
@@ -23,6 +24,72 @@ pub use manager::{
 };
 
 pub type ChannelResult<T> = Result<T, Box<dyn Error>>;
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    AsRefStr,
+    Display,
+    EnumIter,
+    VariantArray,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "lowercase")]
+pub enum SessionChannel {
+    Dingtalk,
+    Telegram,
+    Terminal,
+    Websocket,
+    Cron,
+    Heartbeat,
+    Webhook,
+}
+
+impl SessionChannel {
+    #[must_use]
+    pub fn is_interactive(self) -> bool {
+        matches!(
+            self,
+            Self::Dingtalk | Self::Telegram | Self::Terminal | Self::Websocket
+        )
+    }
+
+    #[must_use]
+    pub fn is_internal(self) -> bool {
+        matches!(self, Self::Cron | Self::Heartbeat | Self::Webhook)
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "dingtalk" => Some(Self::Dingtalk),
+            "telegram" => Some(Self::Telegram),
+            "terminal" => Some(Self::Terminal),
+            "websocket" => Some(Self::Websocket),
+            "cron" => Some(Self::Cron),
+            "heartbeat" => Some(Self::Heartbeat),
+            "webhook" => Some(Self::Webhook),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dingtalk => "dingtalk",
+            Self::Telegram => "telegram",
+            Self::Terminal => "terminal",
+            Self::Websocket => "websocket",
+            Self::Cron => "cron",
+            Self::Heartbeat => "heartbeat",
+            Self::Webhook => "webhook",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
