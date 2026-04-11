@@ -14,6 +14,9 @@
 8. [MCP 配置](#mcp 配置)
 9. [Skills 配置](#skills 配置)
 10. [内存配置](#内存配置)
+11. [语音配置](#语音配置)
+12. [ACP 配置](#acp 配置)
+13. [可观测性配置](#可观测性配置)
 
 ---
 
@@ -570,6 +573,71 @@ url = "http://proxy.example.com:8080"
 [channels.telegram.proxy]
 enabled = true
 url = "http://127.0.0.1:8888"
+```
+
+### `channels.websocket`
+
+**类型**: `array`
+**默认值**: `[]`
+**必填**: 否
+
+WebSocket 渠道配置列表。用于配置外部客户端（如网页 UI、自定义集成）的接入。
+
+```toml
+[[channels.websocket]]
+id = "browser"
+enabled = true
+show_reasoning = false
+stream_output = true
+```
+
+#### `channels.websocket[].id`
+
+**类型**: `string`
+**默认值**: `"default"`
+**必填**: 是
+
+渠道标识，不能重复。
+
+```toml
+[[channels.websocket]]
+id = "web-ui"
+```
+
+#### `channels.websocket[].enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用该渠道。
+
+```toml
+channels.websocket.enabled = false
+```
+
+#### `channels.websocket[].show_reasoning`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否在响应中展示推理过程。
+
+```toml
+channels.websocket.show_reasoning = true
+```
+
+#### `channels.websocket[].stream_output`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否流式输出 token。开启后，token 生成时会逐帧发送给客户端；关闭则一次性发送完整响应。
+
+```toml
+channels.websocket.stream_output = false
 ```
 
 ### `channels.disable_session_commands_for`
@@ -1801,4 +1869,673 @@ provider = "openai"
 ```toml
 [memory.embedding]
 model = "text-embedding-3-small"
+```
+
+---
+
+## 语音配置
+
+语音功能（语音转文字 STT 和文字转语音 TTS）配置。
+
+### `voice.enabled`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否启用语音功能。语音工具只有在 `voice.enabled` **且** `tools.voice.enabled` 同时为 true 时才会注册。
+
+```toml
+[voice]
+enabled = true
+```
+
+### `voice.stt_provider`
+
+**类型**: `enum`
+**默认值**: `"deepgram"`
+**必填**: 否
+
+语音转文字（STT）服务商。
+
+可选值：
+- `deepgram`: Deepgram API
+- `assemblyai`: AssemblyAI API
+
+```toml
+[voice]
+stt_provider = "deepgram"
+```
+
+### `voice.tts_provider`
+
+**类型**: `enum`
+**默认值**: `"elevenlabs"`
+**必填**: 否
+
+文字转语音（TTS）服务商。
+
+可选值：
+- `elevenlabs`: ElevenLabs API
+
+```toml
+[voice]
+tts_provider = "elevenlabs"
+```
+
+### `voice.default_language`
+
+**类型**: `string`
+**默认值**: `"zh"`
+**必填**: 否
+
+默认语音识别语言代码。
+
+```toml
+[voice]
+default_language = "en"
+```
+
+### `voice.default_voice_id`
+
+**类型**: `string` (可选)
+**默认值**: `null`
+**必填**: 否
+
+默认 TTS 语音 ID。
+
+```toml
+[voice]
+default_voice_id = "pNInz6obpgDQGcFmaJgB"
+```
+
+### `voice.providers.elevenlabs`
+
+ElevenLabs TTS 配置。
+
+#### `voice.providers.elevenlabs.api_key`
+
+**类型**: `string` (可选)
+**默认值**: `null`
+**必填**: 条件必填
+
+API 密钥（与 `api_key_env` 二选一）。
+
+```toml
+[voice.providers.elevenlabs]
+api_key = "sk_xxx"
+```
+
+#### `voice.providers.elevenlabs.api_key_env`
+
+**类型**: `string`
+**默认值**: `"ELEVENLABS_API_KEY"`
+**必填**: 否
+
+环境变量名，用于读取 API 密钥（推荐）。
+
+```toml
+[voice.providers.elevenlabs]
+api_key_env = "ELEVENLABS_API_KEY"
+```
+
+#### `voice.providers.elevenlabs.base_url`
+
+**类型**: `string`
+**默认值**: `"https://api.elevenlabs.io/v1"`
+**必填**: 否
+
+API 基础 URL。
+
+```toml
+[voice.providers.elevenlabs]
+base_url = "https://api.elevenlabs.io/v1"
+```
+
+#### `voice.providers.elevenlabs.streaming_base_url`
+
+**类型**: `string`
+**默认值**: `"wss://api.elevenlabs.io/v1"`
+**必填**: 否
+
+流式输出 WebSocket 基础 URL。
+
+```toml
+[voice.providers.elevenlabs]
+streaming_base_url = "wss://api.elevenlabs.io/v1"
+```
+
+#### `voice.providers.elevenlabs.default_model`
+
+**类型**: `string`
+**默认值**: `"eleven_multilingual_v2"`
+**必填**: 否
+
+默认 TTS 模型。
+
+```toml
+[voice.providers.elevenlabs]
+default_model = "eleven_multilingual_v2"
+```
+
+#### `voice.providers.elevenlabs.default_voice_id`
+
+**类型**: `string` (可选)
+**默认值**: `null`
+**必填**: 否
+
+默认语音 ID（覆盖顶层 `voice.default_voice_id`）。
+
+```toml
+[voice.providers.elevenlabs]
+default_voice_id = "pNInz6obpgDQGcFmaJgB"
+```
+
+### `voice.providers.deepgram`
+
+Deepgram STT 配置。
+
+#### `voice.providers.deepgram.api_key`
+
+**类型**: `string` (可选)
+**默认值**: `null`
+**必填**: 条件必填
+
+API 密钥（与 `api_key_env` 二选一）。
+
+```toml
+[voice.providers.deepgram]
+api_key = "xxx"
+```
+
+#### `voice.providers.deepgram.api_key_env`
+
+**类型**: `string`
+**默认值**: `"DEEPGRAM_API_KEY"`
+**必填**: 否
+
+环境变量名，用于读取 API 密钥。
+
+```toml
+[voice.providers.deepgram]
+api_key_env = "DEEPGRAM_API_KEY"
+```
+
+#### `voice.providers.deepgram.base_url`
+
+**类型**: `string`
+**默认值**: `"https://api.deepgram.com"`
+**必填**: 否
+
+API 基础 URL。
+
+```toml
+[voice.providers.deepgram]
+base_url = "https://api.deepgram.com"
+```
+
+#### `voice.providers.deepgram.streaming_base_url`
+
+**类型**: `string`
+**默认值**: `"wss://api.deepgram.com"`
+**必填**: 否
+
+流式识别 WebSocket 基础 URL。
+
+```toml
+[voice.providers.deepgram]
+streaming_base_url = "wss://api.deepgram.com"
+```
+
+#### `voice.providers.deepgram.stt_model`
+
+**类型**: `string`
+**默认值**: `"nova-2"`
+**必填**: 否
+
+STT 模型名称。
+
+```toml
+[voice.providers.deepgram]
+stt_model = "nova-3"
+```
+
+### `voice.providers.assemblyai`
+
+AssemblyAI STT 配置。
+
+#### `voice.providers.assemblyai.api_key`
+
+**类型**: `string` (可选)
+**默认值**: `null`
+**必填**: 条件必填
+
+API 密钥（与 `api_key_env` 二选一）。
+
+```toml
+[voice.providers.assemblyai]
+api_key = "xxx"
+```
+
+#### `voice.providers.assemblyai.api_key_env`
+
+**类型**: `string`
+**默认值**: `"ASSEMBLYAI_API_KEY"`
+**必填**: 否
+
+环境变量名，用于读取 API 密钥。
+
+```toml
+[voice.providers.assemblyai]
+api_key_env = "ASSEMBLYAI_API_KEY"
+```
+
+#### `voice.providers.assemblyai.base_url`
+
+**类型**: `string`
+**默认值**: `"https://api.assemblyai.com"`
+**必填**: 否
+
+API 基础 URL。
+
+```toml
+[voice.providers.assemblyai]
+base_url = "https://api.assemblyai.com"
+```
+
+#### `voice.providers.assemblyai.streaming_base_url`
+
+**类型**: `string`
+**默认值**: `"wss://api.assemblyai.com"`
+**必填**: 否
+
+流式识别 WebSocket 基础 URL。
+
+```toml
+[voice.providers.assemblyai]
+streaming_base_url = "wss://api.assemblyai.com"
+```
+
+#### `voice.providers.assemblyai.stt_model`
+
+**类型**: `string`
+**默认值**: `"best"`
+**必填**: 否
+
+STT 模型名称。
+
+```toml
+[voice.providers.assemblyai]
+stt_model = "nova"
+```
+
+---
+
+## ACP 配置
+
+ACP (Agent Connect Protocol) 允许接入外部 Agent 作为工具被主 Agent 调度。
+
+### `acp.startup_timeout_seconds`
+
+**类型**: `u64`
+**默认值**: `60`
+**必填**: 否
+
+ACP Agent 启动超时（秒）。
+
+```toml
+[acp]
+startup_timeout_seconds = 120
+```
+
+### `acp.agents[]`
+
+**类型**: `array`
+**默认值**: `[]`
+**必填**: 否
+
+ACP Agent 配置列表。
+
+```toml
+[[acp.agents]]
+id = "my-agent"
+enabled = true
+command = "node"
+args = ["dist/agent.js", "--port", "8080"]
+description = "Custom domain agent"
+env = { "API_KEY" = "xxx" }
+```
+
+#### `acp.agents[].id`
+
+**类型**: `string`
+**必填**: 是
+
+Agent 唯一标识。
+
+```toml
+acp.agents.id = "domain-agent"
+```
+
+#### `acp.agents[].enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用该 Agent。
+
+```toml
+acp.agents.enabled = false
+```
+
+#### `acp.agents[].command`
+
+**类型**: `string`
+**必填**: 是
+
+启动命令。
+
+```toml
+acp.agents.command = "python"
+```
+
+#### `acp.agents[].args`
+
+**类型**: `array<string>`
+**默认值**: `[]`
+**必填**: 否
+
+命令参数。
+
+```toml
+acp.agents.args = ["agent.py", "--serve"]
+```
+
+#### `acp.agents[].env`
+
+**类型**: `map<string, string>`
+**默认值**: `{}`
+**必填**: 否
+
+环境变量。
+
+```toml
+acp.agents.env = { "OPENAI_API_KEY" = "$env:OPENAI_API_KEY" }
+```
+
+#### `acp.agents[].description`
+
+**类型**: `string`
+**默认值**: `""`
+**必填**: 否
+
+Agent 描述，用于工具调用时让大模型理解这个 Agent 的用途。
+
+```toml
+acp.agents.description = "Handles domain-specific knowledge queries"
+```
+
+---
+
+## 可观测性配置
+
+可观测性（OpenTelemetry metrics/traces、审计日志、Prometheus 导出）配置。
+
+### `observability.enabled`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否启用可观测性功能。
+
+```toml
+[observability]
+enabled = true
+```
+
+### `observability.service_name`
+
+**类型**: `string`
+**默认值**: `"klaw"`
+**必填**: 否
+
+服务名称，用于 metrics/traces。
+
+```toml
+[observability]
+service_name = "klaw-production"
+```
+
+### `observability.service_version`
+
+**类型**: `string`
+**默认值**: `"0.1.0"`
+**必填**: 否
+
+服务版本，用于 metrics/traces。
+
+```toml
+[observability]
+service_version = "0.11.0"
+```
+
+### `observability.metrics`
+
+指标配置。
+
+#### `observability.metrics.enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用指标导出。
+
+```toml
+[observability.metrics]
+enabled = true
+```
+
+#### `observability.metrics.export_interval_seconds`
+
+**类型**: `u64`
+**默认值**: `15`
+**必填**: 否
+
+指标导出间隔（秒）。
+
+```toml
+[observability.metrics]
+export_interval_seconds = 30
+```
+
+### `observability.traces`
+
+链路追踪配置。
+
+#### `observability.traces.enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用链路追踪。
+
+```toml
+[observability.traces]
+enabled = true
+```
+
+#### `observability.traces.sample_rate`
+
+**类型**: `f64`
+**默认值**: `1.0`
+**必填**: 否
+
+采样率 (0.0 - 1.0)。`1.0` 表示全采样。
+
+```toml
+[observability.traces]
+sample_rate = 0.5
+```
+
+### `observability.otlp`
+
+OpenTelemetry OTLP 导出配置。
+
+#### `observability.otlp.enabled`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否启用 OTLP 导出。
+
+```toml
+[observability.otlp]
+enabled = true
+```
+
+#### `observability.otlp.endpoint`
+
+**类型**: `string`
+**默认值**: `"http://localhost:4317"`
+**必填**: 否
+
+OTLP gRPC 端点。
+
+```toml
+[observability.otlp]
+endpoint = "http://otel-collector:4317"
+```
+
+#### `observability.otlp.headers`
+
+**类型**: `map<string, string>`
+**默认值**: `{}`
+**必填**: 否
+
+OTLP 请求头。
+
+```toml
+[observability.otlp.headers]
+Authorization = "Bearer xxx"
+```
+
+### `observability.prometheus`
+
+Prometheus 拉取配置。
+
+#### `observability.prometheus.enabled`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否启用 Prometheus 端点暴露。
+
+```toml
+[observability.prometheus]
+enabled = true
+```
+
+#### `observability.prometheus.listen_port`
+
+**类型**: `u16`
+**默认值**: `9464`
+**必填**: 否
+
+监听端口。
+
+```toml
+[observability.prometheus]
+listen_port = 9464
+```
+
+#### `observability.prometheus.path`
+
+**类型**: `string`
+**默认值**: `"/metrics"`
+**必填**: 否
+
+metrics 端点路径。
+
+```toml
+[observability.prometheus]
+path = "/metrics"
+```
+
+### `observability.audit`
+
+审计日志配置。
+
+#### `observability.audit.enabled`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否启用审计日志（记录所有 LLM 请求/响应）。
+
+```toml
+[observability.audit]
+enabled = true
+```
+
+#### `observability.audit.output_path`
+
+**类型**: `string` (可选)
+**默认值**: `null`
+**必填**: 否
+
+审计日志输出路径。`null` 使用默认路径。
+
+```toml
+[observability.audit]
+output_path = "/var/log/klaw/audit.log"
+```
+
+### `observability.local_store`
+
+本地存储配置。
+
+#### `observability.local_store.enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用本地可观测性存储。
+
+```toml
+[observability.local_store]
+enabled = true
+```
+
+#### `observability.local_store.retention_days`
+
+**类型**: `u16`
+**默认值**: `30`
+**必填**: 否
+
+数据保留天数。
+
+```toml
+[observability.local_store]
+retention_days = 90
+```
+
+#### `observability.local_store.flush_interval_seconds`
+
+**类型**: `u64`
+**默认值**: `10`
+**必填**: 否
+
+刷盘间隔（秒）。
+
+```toml
+[observability.local_store]
+flush_interval_seconds = 30
 ```

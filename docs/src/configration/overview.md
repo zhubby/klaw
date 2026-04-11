@@ -57,6 +57,12 @@ enabled = true
 client_id = "..."
 client_secret = "..."
 
+[[channels.websocket]]
+id = "browser"
+enabled = true
+show_reasoning = false
+stream_output = true
+
 # 工具配置
 [tools.shell]
 enabled = true
@@ -100,6 +106,33 @@ sync_timeout = 60
 [skills.registries.anthropic]
 address = "https://github.com/anthropics/skills"
 installed = []
+
+# 语音配置
+[voice]
+enabled = false
+stt_provider = "deepgram"
+tts_provider = "elevenlabs"
+default_language = "zh"
+
+# ACP 配置
+[acp]
+startup_timeout_seconds = 60
+
+[[acp.agents]]
+id = "external-agent"
+enabled = true
+command = "python"
+args = ["-m", "my_agent"]
+description = "External domain-specific agent"
+
+# 可观测性配置
+[observability]
+enabled = false
+service_name = "klaw"
+
+[observability.prometheus]
+enabled = false
+listen_port = 9464
 ```
 
 ## 配置加载流程
@@ -240,6 +273,9 @@ pub fn reset_to_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, C
 | `client_id` / `client_secret` | 不能为空（启用时） |
 | `bot_title` | 不能为空 |
 | `proxy.enabled=true` 时 | `proxy.url` 必填且为有效 URL |
+| `telegram.id` | 不能为空，不能重复 |
+| `bot_token` | 不能为空（启用时） |
+| `websocket.id` | 不能为空，不能重复 |
 
 #### 4. 工具验证
 
@@ -315,6 +351,30 @@ pub fn reset_to_defaults(config_path: Option<&Path>) -> Result<MigratedConfig, C
 | `sessions.session_key` | 不能为空，不能重复 |
 | `sessions.chat_id` | 不能为空 |
 | `sessions.channel` | 不能为空 |
+
+#### 10. 语音验证
+
+| 规则 | 描述 |
+|------|------|
+| `voice.providers.*.api_key` | `api_key` 和 `api_key_env` 必须至少配置一个 |
+
+#### 11. ACP 验证
+
+| 规则 | 描述 |
+|------|------|
+| `startup_timeout_seconds` | 必须 > 0 |
+| `agents.id` | 不能为空，不能重复 |
+| `agents.command` | `mode=stdio` 时不能为空 |
+
+#### 12. 可观测性验证
+
+| 规则 | 描述 |
+|------|------|
+| `metrics.export_interval_seconds` | 必须 > 0 |
+| `traces.sample_rate` | 必须在 `[0.0, 1.0]` 范围内 |
+| `prometheus.listen_port` | 必须是合法端口（当 `enabled=true` 时） |
+| `local_store.retention_days` | 必须 > 0 |
+| `local_store.flush_interval_seconds` | 必须 > 0 |
 
 ### 验证错误类型
 
