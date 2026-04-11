@@ -1,22 +1,24 @@
 use std::{cell::RefCell, rc::Rc};
 
 use eframe::egui::{self, Context};
-use klaw_ui_kit::{NotificationCenter, theme_preference};
+use klaw_ui_kit::{theme_preference, NotificationCenter};
 use web_sys::WebSocket;
 
 use crate::{
-    ConnectionState, SessionListEntry, normalize_gateway_token_input, resolve_gateway_token,
+    normalize_gateway_token_input, resolve_gateway_token,
     should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
+    ConnectionState, SessionListEntry,
 };
 
 use super::{
     protocol::ServerFrame,
-    session::{SessionWindow, session_window_id, window_anchor_for_slot},
-    storage::{PersistedWorkspaceState, load_workspace_state, save_workspace_state},
+    session::{session_window_id, window_anchor_for_slot, SessionWindow},
+    storage::{load_workspace_state, save_workspace_state, PersistedWorkspaceState},
 };
 
 pub(super) struct ChatApp {
     pub(in crate::web_chat) ctx: Context,
+    pub(in crate::web_chat) gateway_origin: Option<String>,
     pub(in crate::web_chat) gateway_token: Option<String>,
     pub(in crate::web_chat) gateway_token_input: String,
     pub(in crate::web_chat) ws: Rc<RefCell<Option<WebSocket>>>,
@@ -44,6 +46,7 @@ impl ChatApp {
 
         let mut app = Self {
             ctx: cc.egui_ctx.clone(),
+            gateway_origin: gateway_origin_from_page(),
             gateway_token,
             gateway_token_input,
             ws: Rc::new(RefCell::new(None)),
@@ -286,6 +289,10 @@ fn gateway_token_from_page() -> Option<String> {
     let window = web_sys::window()?;
     let search = window.location().search().ok()?;
     parse_query_param(&search, "gateway_token").or_else(|| parse_query_param(&search, "token"))
+}
+
+fn gateway_origin_from_page() -> Option<String> {
+    web_sys::window()?.location().origin().ok()
 }
 
 fn parse_query_param(search: &str, key: &str) -> Option<String> {

@@ -1,6 +1,6 @@
 use eframe::egui::{
-    self, vec2, Align, Align2, Button, Color32, ComboBox, Context, Frame, Key, Layout, RichText,
-    ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText,
+    self, vec2, Align, Align2, Button, Color32, ComboBox, Context, Frame, Image, Key, Layout,
+    RichText, ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText,
 };
 use egui_phosphor::regular;
 
@@ -573,15 +573,22 @@ impl ChatApp {
         match page_mode {
             PageMode::ConnectionGuide => {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.centered_and_justified(|ui| {
-                        ui.vertical(|ui| {
-                            ui.heading("Connect to Klaw Gateway");
-                            ui.label("Connect successfully before loading agents.");
-                            ui.add_space(8.0);
-                            if ui.button("Connect").clicked() {
-                                self.request_workspace_connection();
-                            }
-                        });
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(ui.available_height() / 2.0 - 140.0);
+                        if let Some(origin) = &self.gateway_origin {
+                            ui.add(
+                                Image::from_uri(format!("{origin}/images/crab.png"))
+                                    .max_size(vec2(120.0, 120.0)),
+                            );
+                        }
+                        ui.add_space(16.0);
+                        ui.heading("Connect to Klaw Gateway");
+                        ui.add_space(4.0);
+                        ui.label("Connect successfully before loading agents.");
+                        ui.add_space(12.0);
+                        if ui.button("Connect").clicked() {
+                            self.request_workspace_connection();
+                        }
                     });
                 });
                 return;

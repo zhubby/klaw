@@ -98,6 +98,7 @@ base64 = "0.22"
 anyhow = "1"
 egui = "0.33.3"
 eframe = "0.33.3"
+ehttp = "0.5"
 egui_term = { git = "https://github.com/Harzu/egui_term", rev = "ececa84ef6d228036b89b93b10979c17017dcfa0" }
 egui_commonmark = { version = "0.22.0", default-features = false, features = ["pulldown_cmark"] }
 egui_json_tree = "0.14.2"

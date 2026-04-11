@@ -24,6 +24,7 @@ pub async fn start_chat_ui(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsV
             web_options,
             Box::new(|cc| {
                 install_fonts(&cc.egui_ctx);
+                egui_extras::install_image_loaders(&cc.egui_ctx);
                 Ok(Box::new(ChatApp::new(cc)))
             }),
         )

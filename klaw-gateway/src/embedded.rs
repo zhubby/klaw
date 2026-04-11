@@ -61,3 +61,21 @@ pub(crate) fn favicon_response() -> Response<Body> {
         Some("public, max-age=86400"),
     )
 }
+
+pub(crate) fn image_response(filename: &str) -> Response<Body> {
+    let path = format!("images/{}", filename);
+    let content_type = match filename.rsplit('.').next() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("ico") => "image/x-icon",
+        _ => "application/octet-stream",
+    };
+    embedded_response(
+        GatewayStatic::get(&path),
+        content_type,
+        Some("public, max-age=86400"),
+    )
+}
