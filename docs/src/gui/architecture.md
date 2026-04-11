@@ -200,7 +200,7 @@ pub struct PanelRegistry {
 | Approval | Approval | Approval workflow status |
 | Configuration | Configuration | General configuration |
 | Provider | Model Provider | LLM provider management |
-| Channel | Channel | Channel adapters |
+| Channel | Channel | Manage inbound channel adapters (WebSocket, Dingtalk, Telegram) |
 | Cron | Cron | Scheduled jobs |
 | Heartbeat | Heartbeat | Session heartbeat monitoring |
 | MCP | MCP | Model Context Protocol |
