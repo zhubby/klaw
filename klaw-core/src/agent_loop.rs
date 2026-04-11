@@ -24,22 +24,40 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use strum::IntoStaticStr;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-const META_SYSTEM_PROMPT_KEY: &str = "agent.system_prompt";
-const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
-const META_PROVIDER_KEY: &str = "agent.provider_id";
-const META_MODEL_KEY: &str = "agent.model";
-const META_AGENT_DISPOSITION_KEY: &str = "agent.disposition";
-const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
-const META_LLM_USAGE_RECORDS_KEY: &str = "llm.usage.records";
-const META_LLM_AUDIT_RECORDS_KEY: &str = "llm.audit.records";
-const META_IM_CARD_KEY: &str = "im.card";
 const TOOL_RESULT_LOG_LIMIT: usize = 4000;
 const STOP_SIGNAL: &str = "stop";
+
+#[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
+pub enum AgentMetaKey {
+    #[strum(serialize = "agent.system_prompt")]
+    SystemPrompt,
+    #[strum(serialize = "agent.tool_choice")]
+    ToolChoice,
+    #[strum(serialize = "agent.provider_id")]
+    ProviderId,
+    #[strum(serialize = "agent.model")]
+    Model,
+    #[strum(serialize = "agent.disposition")]
+    Disposition,
+    #[strum(serialize = "agent.conversation_history")]
+    ConversationHistory,
+    #[strum(serialize = "llm.usage.records")]
+    LlmUsageRecords,
+    #[strum(serialize = "llm.audit.records")]
+    LlmAuditRecords,
+    #[strum(serialize = "im.card")]
+    ImCard,
+}
+
+fn meta_key(key: AgentMetaKey) -> &'static str {
+    key.into()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunState {
@@ -340,11 +358,11 @@ fn metadata_nonempty_trimmed_str<'a>(
 }
 
 fn metadata_provider(metadata: &BTreeMap<String, serde_json::Value>) -> &str {
-    metadata_nonempty_trimmed_str(metadata, META_PROVIDER_KEY).unwrap_or("unknown")
+    metadata_nonempty_trimmed_str(metadata, meta_key(AgentMetaKey::ProviderId)).unwrap_or("unknown")
 }
 
 fn metadata_model(metadata: &BTreeMap<String, serde_json::Value>) -> &str {
-    metadata_nonempty_trimmed_str(metadata, META_MODEL_KEY).unwrap_or("unknown")
+    metadata_nonempty_trimmed_str(metadata, meta_key(AgentMetaKey::Model)).unwrap_or("unknown")
 }
 
 fn disposition_metadata_token(disposition: AgentExecutionDisposition) -> &'static str {
@@ -731,7 +749,7 @@ impl AgentLoop {
         let provider_id = msg
             .payload
             .metadata
-            .get(META_PROVIDER_KEY)
+            .get(meta_key(AgentMetaKey::ProviderId))
             .and_then(serde_json::Value::as_str)
             .unwrap_or(provider_runtime.default_provider_id.as_str());
 
@@ -801,7 +819,7 @@ impl AgentLoop {
             );
         }
         let requested_provider_id =
-            metadata_nonempty_trimmed_str(&msg.payload.metadata, META_PROVIDER_KEY)
+            metadata_nonempty_trimmed_str(&msg.payload.metadata, meta_key(AgentMetaKey::ProviderId))
                 .map(ToString::to_string)
                 .unwrap_or_else(|| provider_runtime.default_provider_id.clone());
         let (resolved_provider_id, provider) = if let Some(provider) = provider_runtime
@@ -820,20 +838,20 @@ impl AgentLoop {
                 Arc::clone(&provider_runtime.default_provider),
             )
         };
-        let resolved_model = metadata_nonempty_trimmed_str(&msg.payload.metadata, META_MODEL_KEY)
+        let resolved_model = metadata_nonempty_trimmed_str(&msg.payload.metadata, meta_key(AgentMetaKey::Model))
             .map(ToString::to_string)
             .unwrap_or_else(|| provider_runtime.default_model.clone());
 
         let mut tool_metadata = msg.payload.metadata.clone();
-        tool_metadata.remove(META_CONVERSATION_HISTORY_KEY);
+        tool_metadata.remove(meta_key(AgentMetaKey::ConversationHistory));
         let execution_context = AgentExecutionContext {
             system_prompt: metadata_nonempty_trimmed_str(
                 &msg.payload.metadata,
-                META_SYSTEM_PROMPT_KEY,
+                meta_key(AgentMetaKey::SystemPrompt),
             )
             .map(ToString::to_string)
             .or_else(|| self.system_prompt()),
-            tool_choice: msg.payload.metadata.get(META_TOOL_CHOICE_KEY).cloned(),
+            tool_choice: msg.payload.metadata.get(meta_key(AgentMetaKey::ToolChoice)).cloned(),
             provider_id: Some(resolved_provider_id.clone()),
             resolved_model: Some(resolved_model.clone()),
             parent_session_key: Some(msg.payload.session_key.clone()),
@@ -947,7 +965,7 @@ impl AgentLoop {
 
                 let mut response_metadata = heartbeat_response_metadata(&msg.payload.metadata);
                 response_metadata.insert(
-                    META_AGENT_DISPOSITION_KEY.to_string(),
+                    meta_key(AgentMetaKey::Disposition).to_string(),
                     serde_json::Value::String(
                         disposition_metadata_token(output.disposition).to_string(),
                     ),
@@ -964,7 +982,7 @@ impl AgentLoop {
                         .find(|signal| signal.kind == "im_card")
                     {
                         response_metadata
-                            .insert(META_IM_CARD_KEY.to_string(), im_card_signal.payload.clone());
+                            .insert(meta_key(AgentMetaKey::ImCard).to_string(), im_card_signal.payload.clone());
                     }
                     if let Some(approval_required) = output
                         .tool_signals
@@ -979,13 +997,13 @@ impl AgentLoop {
                             "approval.signal".to_string(),
                             approval_required.payload.clone(),
                         );
-                        if !response_metadata.contains_key(META_IM_CARD_KEY)
+                        if !response_metadata.contains_key(meta_key(AgentMetaKey::ImCard))
                             && let Some(im_card) = approval_im_card_metadata(
                                 &approval_required.payload,
                                 &output.content,
                             )
                         {
-                            response_metadata.insert(META_IM_CARD_KEY.to_string(), im_card);
+                            response_metadata.insert(meta_key(AgentMetaKey::ImCard).to_string(), im_card);
                         }
                         if let Some(approval_id) = approval_required
                             .payload
@@ -1031,7 +1049,7 @@ impl AgentLoop {
                 }
                 if !output.request_usages.is_empty() {
                     response_metadata.insert(
-                        META_LLM_USAGE_RECORDS_KEY.to_string(),
+                        meta_key(AgentMetaKey::LlmUsageRecords).to_string(),
                         serde_json::Value::Array(
                             output
                                 .request_usages
@@ -1058,7 +1076,7 @@ impl AgentLoop {
                 }
                 if !request_audits.is_empty() {
                     response_metadata.insert(
-                        META_LLM_AUDIT_RECORDS_KEY.to_string(),
+                        meta_key(AgentMetaKey::LlmAuditRecords).to_string(),
                         serde_json::Value::Array(
                             request_audits
                                 .iter()
@@ -1211,7 +1229,7 @@ impl AgentLoop {
                 }
                 let mut response_metadata = heartbeat_response_metadata(&msg.payload.metadata);
                 response_metadata.insert(
-                    META_AGENT_DISPOSITION_KEY.to_string(),
+                    meta_key(AgentMetaKey::Disposition).to_string(),
                     serde_json::Value::String("exhausted".to_string()),
                 );
                 let exhausted_content = format!(
@@ -1618,7 +1636,7 @@ fn extract_conversation_history(
     metadata: &BTreeMap<String, serde_json::Value>,
 ) -> Vec<ConversationMessage> {
     metadata
-        .get(META_CONVERSATION_HISTORY_KEY)
+        .get(meta_key(AgentMetaKey::ConversationHistory))
         .cloned()
         .and_then(|value| serde_json::from_value::<Vec<ConversationMessage>>(value).ok())
         .unwrap_or_default()
@@ -1816,10 +1834,9 @@ fn augment_user_content_with_attachment_context(
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentLoop, META_IM_CARD_KEY, META_LLM_AUDIT_RECORDS_KEY, META_MODEL_KEY, META_PROVIDER_KEY,
-        QueueStrategy, RunLimits, SessionSchedulingPolicy,
+        AgentLoop, AgentMetaKey, QueueStrategy, RunLimits, SessionSchedulingPolicy,
         augment_user_content_with_attachment_context, current_attachment_contexts,
-        heartbeat_response_metadata,
+        heartbeat_response_metadata, meta_key,
     };
     use crate::{
         domain::InboundMessage,
@@ -2232,8 +2249,8 @@ mod tests {
                 content: "hello".to_string(),
                 media_references: Vec::new(),
                 metadata: BTreeMap::from([
-                    (META_PROVIDER_KEY.to_string(), json!("anthropic")),
-                    (META_MODEL_KEY.to_string(), json!("claude-opus-4")),
+                    (meta_key(AgentMetaKey::ProviderId).to_string(), json!("anthropic")),
+                    (meta_key(AgentMetaKey::Model).to_string(), json!("claude-opus-4")),
                 ]),
             },
         };
@@ -2430,7 +2447,7 @@ mod tests {
         let audit_records = response
             .payload
             .metadata
-            .get(META_LLM_AUDIT_RECORDS_KEY)
+            .get(meta_key(AgentMetaKey::LlmAuditRecords))
             .and_then(serde_json::Value::as_array)
             .expect("llm audit records should be present");
         assert_eq!(audit_records.len(), 1);
@@ -2564,7 +2581,7 @@ mod tests {
         let im_card = response
             .payload
             .metadata
-            .get(META_IM_CARD_KEY)
+            .get(meta_key(AgentMetaKey::ImCard))
             .expect("im.card should exist");
         assert_eq!(
             im_card.get("kind").and_then(serde_json::Value::as_str),
@@ -2647,7 +2664,7 @@ mod tests {
         let im_card = response
             .payload
             .metadata
-            .get(META_IM_CARD_KEY)
+            .get(meta_key(AgentMetaKey::ImCard))
             .expect("im.card should exist");
         assert_eq!(
             im_card.get("kind").and_then(serde_json::Value::as_str),

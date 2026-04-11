@@ -12,6 +12,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
+strum = { workspace = true }
 klaw-llm = { workspace = true }
 klaw-tool = { workspace = true }
 klaw-agent = { workspace = true }
