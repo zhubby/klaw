@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn exported_route_constants_match_expected_paths() {
         assert_eq!(HOME_PATH, "/");
-        assert_eq!(HOME_LOGO_PATH, "/assets/logo.webp");
+        assert_eq!(HOME_LOGO_PATH, "/logo.webp");
         assert_eq!(CHAT_PATH, "/chat");
         assert_eq!(CHAT_DIST_JS_PATH, "/chat/dist/klaw_webui.js");
         assert_eq!(CHAT_DIST_WASM_PATH, "/chat/dist/klaw_webui_bg.wasm");

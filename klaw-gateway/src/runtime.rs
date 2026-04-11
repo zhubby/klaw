@@ -3,10 +3,10 @@ use crate::{
     auth::GatewayAuth,
     chat_page::{chat_dist_js_handler, chat_dist_wasm_handler, chat_page_handler},
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
-    home::{home_logo_handler, home_page_handler},
+    home::{home_favicon_handler, home_logo_handler, home_page_handler},
     routes::{
-        CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, HOME_LOGO_PATH, HOME_PATH,
-        WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
+        CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, FAVICON_PATH, HOME_LOGO_PATH,
+        HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
     },
     state::{GatewayHandle, GatewayRuntimeInfo, GatewayState, GatewayWebsocketState},
     tailscale::{TailscaleError, TailscaleManager},
@@ -188,6 +188,7 @@ fn build_router(
     let mut app = Router::new()
         .route(HOME_PATH, get(home_page_handler))
         .route(HOME_LOGO_PATH, get(home_logo_handler))
+        .route(FAVICON_PATH, get(home_favicon_handler))
         .route(CHAT_PATH, get(chat_page_handler))
         .route(CHAT_DIST_JS_PATH, get(chat_dist_js_handler))
         .route(CHAT_DIST_WASM_PATH, get(chat_dist_wasm_handler))

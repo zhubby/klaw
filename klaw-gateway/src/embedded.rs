@@ -1,16 +1,12 @@
 use axum::{
     body::Body,
-    http::{HeaderValue, Response, StatusCode, header},
+    http::{header, HeaderValue, Response, StatusCode},
 };
 use rust_embed::{EmbeddedFile, RustEmbed};
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
 struct GatewayStatic;
-
-#[derive(RustEmbed)]
-#[folder = "assets/"]
-struct GatewayAssets;
 
 fn embedded_response(
     file: Option<EmbeddedFile>,
@@ -52,8 +48,16 @@ pub(crate) fn static_asset_response(
 
 pub(crate) fn logo_response() -> Response<Body> {
     embedded_response(
-        GatewayAssets::get("logo.webp"),
+        GatewayStatic::get("logo.webp"),
         "image/webp",
+        Some("public, max-age=86400"),
+    )
+}
+
+pub(crate) fn favicon_response() -> Response<Body> {
+    embedded_response(
+        GatewayStatic::get("favicon.ico"),
+        "image/x-icon",
         Some("public, max-age=86400"),
     )
 }

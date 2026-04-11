@@ -24,19 +24,6 @@ impl ChatApp {
     fn render_top_bar(&mut self, ctx: &Context) {
         TopBottomPanel::top("klaw-webui-toolbar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button(format!("{} Agent", regular::ROBOT), |ui| {
-                    if ui
-                        .add_enabled(
-                            self.is_workspace_ready(),
-                            Button::new(format!("{} New Agent", regular::ROBOT)),
-                        )
-                        .clicked()
-                    {
-                        self.create_session();
-                        ui.close();
-                    }
-                });
-
                 ui.menu_button(format!("{} Window", regular::APP_WINDOW), |ui| {
                     if ui
                         .button(format!("{} Tile Windows", regular::APP_WINDOW))
@@ -154,12 +141,23 @@ impl ChatApp {
         let mut focus_session_key = None;
         let mut rename_session_key = None;
         let mut copy_session_key = None;
+        let mut create_session = false;
 
         egui::SidePanel::left("klaw-webui-sessions")
             .resizable(true)
             .default_width(SESSION_LIST_WIDTH)
             .show(ctx, |ui| {
-                ui.heading(format!("{} Agents", regular::ROBOT));
+                ui.horizontal(|ui| {
+                    ui.heading(format!("{} Agents", regular::ROBOT));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .add_enabled(self.is_workspace_ready(), Button::new(regular::PLUS))
+                            .clicked()
+                        {
+                            create_session = true;
+                        }
+                    });
+                });
                 ui.separator();
 
                 if self.sessions.is_empty() {
@@ -271,6 +269,9 @@ impl ChatApp {
         }
         if let Some(session_key) = remove_session_key {
             self.delete_session_key = Some(session_key);
+        }
+        if create_session {
+            self.create_session();
         }
     }
 

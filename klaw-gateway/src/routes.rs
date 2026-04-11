@@ -1,5 +1,6 @@
 pub const HOME_PATH: &str = "/";
-pub const HOME_LOGO_PATH: &str = "/assets/logo.webp";
+pub const HOME_LOGO_PATH: &str = "/logo.webp";
+pub const FAVICON_PATH: &str = "/favicon.ico";
 pub const CHAT_PATH: &str = "/chat";
 pub const CHAT_DIST_JS_PATH: &str = "/chat/dist/klaw_webui.js";
 pub const CHAT_DIST_WASM_PATH: &str = "/chat/dist/klaw_webui_bg.wasm";
