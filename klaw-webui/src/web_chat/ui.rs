@@ -1,22 +1,22 @@
 use eframe::egui::{
-    self, Align, Align2, Button, Color32, ComboBox, Context, Frame, Key, Layout, RichText,
-    ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText, vec2,
+    self, vec2, Align, Align2, Button, Color32, ComboBox, Context, Frame, Key, Layout, RichText,
+    ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText,
 };
 use egui_phosphor::regular;
 
 use crate::{
-    ConnectionState, MessageRole, PageMode, connection_action_label, delete_confirmation_body,
-    derive_page_mode, normalize_gateway_token_input, session_card_activity_label,
-    should_activate_session_window, toolbar_title,
+    connection_action_label, delete_confirmation_body, derive_page_mode,
+    normalize_gateway_token_input, session_card_activity_label, should_activate_session_window,
+    toolbar_title, ConnectionState, MessageRole, PageMode,
 };
 
 use super::{
     app::ChatApp,
-    markdown::{MarkdownCache, render_markdown, render_plain_message},
+    markdown::{render_markdown, render_plain_message, MarkdownCache},
     session::{
-        BUBBLE_MAX_WIDTH, ChatMessage, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH,
-        SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT,
-        SESSION_WINDOW_MIN_WIDTH, format_message_timestamp, session_window_id,
+        format_message_timestamp, session_window_id, ChatMessage, BUBBLE_MAX_WIDTH,
+        INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT,
+        SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT, SESSION_WINDOW_MIN_WIDTH,
     },
 };
 
@@ -482,16 +482,24 @@ impl ChatApp {
                         .hint_text(self.connection_state.borrow().composer_hint_text())
                         .interactive(self.connection_state.borrow().can_send());
                     let response = ui.add_sized([ui.available_width(), 72.0], input);
-                    let shortcut = response.has_focus()
+
+                    let send_on_enter = response.has_focus()
                         && ui.input(|input| {
-                            input.key_pressed(Key::Enter)
-                                && (input.modifiers.command || input.modifiers.ctrl)
+                            input.key_pressed(Key::Enter) && !input.modifiers.command
                         });
+                    let insert_newline = response.has_focus()
+                        && ui.input(|input| {
+                            input.key_pressed(Key::Enter) && input.modifiers.command
+                        });
+
+                    if insert_newline {
+                        session.draft.push('\n');
+                    }
 
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         let helper_text = if self.connection_state.borrow().can_send() {
-                            "Cmd/Ctrl+Enter to send"
+                            "Enter to send, Cmd+Enter for newline"
                         } else {
                             self.connection_state.borrow().composer_hint_text()
                         };
@@ -499,9 +507,9 @@ impl ChatApp {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let send_button = ui.add_enabled(
                                 self.connection_state.borrow().can_send(),
-                                Button::new("Send"),
+                                Button::new(format!("{} Send", regular::PAPER_PLANE)),
                             );
-                            if send_button.clicked() || shortcut {
+                            if send_button.clicked() || send_on_enter {
                                 trigger_send = true;
                             }
                         });
