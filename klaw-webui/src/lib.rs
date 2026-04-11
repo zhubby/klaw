@@ -22,15 +22,6 @@ pub(crate) enum ConnectionState {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 impl ConnectionState {
-    pub(crate) fn status_text(&self) -> &'static str {
-        match self {
-            Self::Disconnected => "Offline",
-            Self::Connecting => "Connecting…",
-            Self::Connected => "Ready",
-            Self::Error(_) => "Connection error",
-        }
-    }
-
     pub(crate) fn composer_hint_text(&self) -> &'static str {
         match self {
             Self::Connected => "Message Klaw…",
@@ -62,6 +53,18 @@ impl ConnectionState {
                 title: "Connection error".to_string(),
                 body: format!("Klaw could not keep the chat connection alive: {error}"),
             },
+        }
+    }
+}
+
+#[cfg(test)]
+impl ConnectionState {
+    fn status_text(&self) -> &'static str {
+        match self {
+            Self::Disconnected => "Offline",
+            Self::Connecting => "Connecting…",
+            Self::Connected => "Ready",
+            Self::Error(_) => "Connection error",
         }
     }
 }
