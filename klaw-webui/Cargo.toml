@@ -25,6 +25,7 @@ ehttp = { workspace = true }
 egui_commonmark = { workspace = true }
 egui-phosphor = { workspace = true }
 egui-notify = { workspace = true }
+egui-twemoji = { workspace = true }
 js-sys = { workspace = true }
 urlencoding = { workspace = true }
 # Enable `wgpu`'s `web` backend for `egui-wgpu` on wasm (same version as eframe).
@@ -39,4 +40,5 @@ web-sys = { workspace = true, features = [
     "Storage",
     "WebSocket",
     "Window",
+    "Notification",
 ] }

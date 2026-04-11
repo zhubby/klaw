@@ -1,23 +1,22 @@
 use eframe::egui::{
-    self, vec2, Align, Align2, Button, Color32, ComboBox, Context, Frame, Image, Key, Layout,
-    RichText, ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText,
+    self, Align, Align2, Button, Color32, ComboBox, Context, Frame, Image, Key, Layout, RichText,
+    ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText, vec2,
 };
 use egui_phosphor::regular;
 
 use crate::{
-    connection_action_label, delete_confirmation_body, derive_page_mode,
-    normalize_gateway_token_input, should_activate_session_window, ConnectionState, MessageRole,
-    PageMode,
+    ConnectionState, MessageRole, PageMode, connection_action_label, delete_confirmation_body,
+    derive_page_mode, normalize_gateway_token_input, should_activate_session_window,
 };
 
 use super::{
     app::ChatApp,
-    markdown::{render_markdown, render_plain_message, MarkdownCache},
+    markdown::{MarkdownCache, render_markdown, render_plain_message},
     session::{
-        current_timestamp_ms, format_message_timestamp, format_relative_time, session_window_id,
-        ChatMessage, BUBBLE_MAX_WIDTH, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH,
+        BUBBLE_MAX_WIDTH, ChatMessage, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH,
         SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT,
-        SESSION_WINDOW_MIN_WIDTH,
+        SESSION_WINDOW_MIN_WIDTH, current_timestamp_ms, format_datetime, format_message_timestamp,
+        format_relative_time, session_window_id,
     },
 };
 
@@ -131,7 +130,8 @@ impl ChatApp {
                 ui.label(format!("Agents: {}", self.sessions.len()));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(self.connection_state.borrow().status_text());
+                    let fps = self.ctx.available_rect();
+                    ui.label(RichText::new(format!("{fps:.0} FPS")).small().weak());
                     if let Some(active_session_key) = self.active_session_key.as_deref()
                         && let Some(session) = self
                             .sessions
@@ -473,7 +473,11 @@ impl ChatApp {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&session.session_key).small().weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(self.connection_state.borrow().status_text());
+                        ui.label(
+                            RichText::new(format_datetime(session.created_at_ms))
+                                .small()
+                                .weak(),
+                        );
                     });
                 });
                 ui.separator();

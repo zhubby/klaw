@@ -2110,6 +2110,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-twemoji"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bed954a0747231267737ed8e497df3fef34055898d98a995ee4355237ad2a562"
+dependencies = [
+ "egui",
+ "twemoji-assets",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4481,6 +4492,7 @@ dependencies = [
  "egui",
  "egui-notify",
  "egui-phosphor",
+ "egui-twemoji",
  "fontdb",
  "serde",
 ]
@@ -4523,6 +4535,7 @@ dependencies = [
  "egui",
  "egui-notify",
  "egui-phosphor",
+ "egui-twemoji",
  "egui_commonmark",
  "egui_extras",
  "ehttp 0.5.0",
@@ -8713,6 +8726,12 @@ dependencies = [
  "turso_sdk_kit_macros",
  "turso_sync_engine",
 ]
+
+[[package]]
+name = "twemoji-assets"
+version = "1.4.0+16.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "017c4ab54d18564355728542435acefe322cbf6ca16efd912fa03c9a8b7f24bd"
 
 [[package]]
 name = "twox-hash"

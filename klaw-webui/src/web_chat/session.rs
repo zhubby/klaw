@@ -111,6 +111,19 @@ pub(super) fn format_message_timestamp(timestamp_ms: i64) -> String {
     format!("{:02}:{:02}", date.get_hours(), date.get_minutes())
 }
 
+pub(super) fn format_datetime(timestamp_ms: i64) -> String {
+    let date = Date::new(&wasm_bindgen::JsValue::from_f64(timestamp_ms as f64));
+    format!(
+        "{}/{:02}/{:02} {:02}:{:02}:{:02}",
+        date.get_full_year(),
+        date.get_month() + 1,
+        date.get_date(),
+        date.get_hours(),
+        date.get_minutes(),
+        date.get_seconds(),
+    )
+}
+
 pub(super) fn format_relative_time(created_at_ms: i64, now_ms: i64) -> String {
     let elapsed_ms = (now_ms - created_at_ms).max(0);
     let elapsed_secs = elapsed_ms / 1000;

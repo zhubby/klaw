@@ -1,19 +1,19 @@
 use std::{cell::RefCell, rc::Rc};
 
 use eframe::egui::{self, Context};
-use klaw_ui_kit::{theme_preference, NotificationCenter};
+use klaw_ui_kit::{NotificationCenter, theme_preference};
+use web_sys::Notification;
 use web_sys::WebSocket;
 
 use crate::{
-    normalize_gateway_token_input, resolve_gateway_token,
+    ConnectionState, SessionListEntry, normalize_gateway_token_input, resolve_gateway_token,
     should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
-    ConnectionState, SessionListEntry,
 };
 
 use super::{
     protocol::ServerFrame,
-    session::{session_window_id, window_anchor_for_slot, SessionWindow},
-    storage::{load_workspace_state, save_workspace_state, PersistedWorkspaceState},
+    session::{SessionWindow, session_window_id, window_anchor_for_slot},
+    storage::{PersistedWorkspaceState, load_workspace_state, save_workspace_state},
 };
 
 pub(super) struct ChatApp {
@@ -37,6 +37,7 @@ pub(super) struct ChatApp {
 
 impl ChatApp {
     pub(super) fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let _ = Notification::request_permission();
         let persisted = load_workspace_state();
         let gateway_token =
             resolve_gateway_token(gateway_token_from_page(), persisted.gateway_token);

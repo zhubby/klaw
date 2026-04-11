@@ -9,6 +9,7 @@ description = "Shared UI foundation for klaw-gui and klaw-webui"
 egui = { workspace = true }
 egui-phosphor = { workspace = true }
 egui-notify = { workspace = true }
+egui-twemoji = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
