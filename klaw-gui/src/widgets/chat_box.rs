@@ -1,4 +1,6 @@
 use egui_extras::{Size, StripBuilder};
+use klaw_ui_kit::text_animator::{AnimationType, TextAnimator};
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +138,7 @@ pub struct ChatBox {
     pub open: bool,
     scroll_to_bottom: bool,
     selected_message_id: Option<String>,
+    fade_in_messages: HashMap<String, TextAnimator>,
 }
 
 impl Default for ChatBox {
@@ -147,6 +150,7 @@ impl Default for ChatBox {
             open: false,
             scroll_to_bottom: false,
             selected_message_id: None,
+            fade_in_messages: HashMap::new(),
         }
     }
 }
@@ -166,6 +170,7 @@ impl ChatBox {
     }
 
     pub fn add_message(&mut self, message: ChatMessage) {
+        self.track_fade_in_message(&message);
         self.messages.push(message);
         self.scroll_to_bottom = true;
     }
@@ -180,6 +185,7 @@ impl ChatBox {
 
     pub fn clear_messages(&mut self) {
         self.messages.clear();
+        self.fade_in_messages.clear();
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<ChatAction> {
@@ -229,6 +235,7 @@ impl ChatBox {
     }
 
     fn render_messages(&mut self, ui: &mut egui::Ui, pending_action: &mut Option<ChatAction>) {
+        self.prune_finished_animations();
         let scroll_id = egui::Id::new((&self.title, "chat_messages"));
 
         egui::ScrollArea::vertical()
@@ -252,7 +259,7 @@ impl ChatBox {
     }
 
     fn render_message(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         message: &ChatMessage,
         pending_action: &mut Option<ChatAction>,
@@ -299,12 +306,7 @@ impl ChatBox {
 
                 ui.add_space(4.0);
 
-                let mut content = message.content.clone();
-                ui.add(
-                    egui::TextEdit::multiline(&mut content)
-                        .desired_width(f32::INFINITY)
-                        .interactive(false),
-                );
+                self.render_message_content(ui, message);
 
                 if message.is_streaming {
                     ui.horizontal(|ui| {
@@ -421,6 +423,60 @@ impl ChatBox {
         self.open = false;
     }
 
+    fn track_fade_in_message(&mut self, message: &ChatMessage) {
+        if !Self::should_fade_in_message(message) {
+            return;
+        }
+
+        self.fade_in_messages
+            .entry(message.id.clone())
+            .or_insert_with(|| {
+                TextAnimator::new(
+                    &message.content,
+                    egui::TextStyle::Body.resolve(&egui::Style::default()),
+                    egui::Color32::WHITE,
+                    2.5,
+                    AnimationType::FadeIn,
+                )
+            });
+    }
+
+    fn should_fade_in_message(message: &ChatMessage) -> bool {
+        matches!(message.role, ChatRole::Assistant)
+            && !message.is_streaming
+            && !message.content.is_empty()
+    }
+
+    fn render_message_content(&mut self, ui: &mut egui::Ui, message: &ChatMessage) {
+        let mut should_remove_animation = false;
+        if let Some(animator) = self.fade_in_messages.get_mut(&message.id) {
+            animator.font = egui::TextStyle::Body.resolve(ui.style());
+            animator.color = ui.visuals().text_color();
+            animator.process_animation(ui.ctx());
+            animator.render(ui);
+            if !animator.is_animation_finished() {
+                ui.ctx().request_repaint();
+            } else {
+                should_remove_animation = true;
+            }
+        } else {
+            ui.add(
+                egui::Label::new(message.content.as_str())
+                    .wrap()
+                    .selectable(true),
+            );
+        }
+
+        if should_remove_animation {
+            self.fade_in_messages.remove(&message.id);
+        }
+    }
+
+    fn prune_finished_animations(&mut self) {
+        self.fade_in_messages
+            .retain(|_, animator| !animator.is_animation_finished());
+    }
+
     pub fn from_chat_records(records: &[klaw_storage::ChatRecord]) -> Self {
         let messages: Vec<ChatMessage> = records
             .iter()
@@ -434,3 +490,69 @@ impl ChatBox {
 }
 
 const INPUT_AREA_HEIGHT: f32 = 60.0;
+
+#[cfg(test)]
+impl ChatBox {
+    fn animated_message_ids(&self) -> Vec<&str> {
+        let mut ids: Vec<&str> = self.fade_in_messages.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    fn prune_finished_animations_for_test(&mut self) {
+        self.prune_finished_animations();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChatBox, ChatMessage};
+
+    #[test]
+    fn tracks_only_new_non_stream_assistant_messages_for_animation() {
+        let existing = ChatMessage::assistant("history");
+        let mut chat_box = ChatBox::new("Chat").with_messages(vec![existing]);
+
+        assert!(chat_box.animated_message_ids().is_empty());
+
+        chat_box.add_message(ChatMessage::user("hello"));
+        assert!(chat_box.animated_message_ids().is_empty());
+
+        chat_box.add_message(ChatMessage::assistant("partial").set_streaming(true));
+        assert!(chat_box.animated_message_ids().is_empty());
+
+        let final_assistant = ChatMessage::assistant("final");
+        let final_id = final_assistant.id.clone();
+        chat_box.add_message(final_assistant);
+
+        assert_eq!(chat_box.animated_message_ids(), vec![final_id.as_str()]);
+    }
+
+    #[test]
+    fn historical_messages_do_not_start_fade_in_animation() {
+        let history = vec![
+            ChatMessage::assistant("first"),
+            ChatMessage::assistant("second"),
+        ];
+
+        let chat_box = ChatBox::new("Chat").with_messages(history);
+
+        assert!(chat_box.animated_message_ids().is_empty());
+    }
+
+    #[test]
+    fn removes_finished_fade_in_animation_state() {
+        let mut chat_box = ChatBox::new("Chat");
+        let message = ChatMessage::assistant("done");
+        let id = message.id.clone();
+        chat_box.add_message(message);
+
+        let animator = chat_box.fade_in_messages.get_mut(&id).unwrap();
+        animator.timer = 1.0;
+        animator.animation_finished = true;
+
+        chat_box.prune_finished_animations_for_test();
+
+        assert!(!chat_box.fade_in_messages.contains_key(&id));
+    }
+}

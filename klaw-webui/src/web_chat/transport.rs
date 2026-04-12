@@ -3,7 +3,10 @@ use uuid::Uuid;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
-use crate::{ConnectionState, MessageRole, SessionListEntry, classify_stream_message_action};
+use crate::{
+    ConnectionState, MessageRole, SessionListEntry, classify_stream_message_action,
+    should_register_non_stream_fade,
+};
 
 use super::{
     app::ChatApp,
@@ -325,15 +328,15 @@ impl ChatApp {
             .unwrap_or_default()
             .to_string();
         if !streamed && !content.is_empty() {
+            let message = ChatMessage::new(content, MessageRole::Assistant, current_timestamp_ms());
+            if should_register_non_stream_fade(message.role, streamed, false, &message.text) {
+                self.sessions[index].register_fade_in_message(&message);
+            }
             self.sessions[index]
                 .buffers
                 .messages
                 .borrow_mut()
-                .push(ChatMessage {
-                    text: content,
-                    role: MessageRole::Assistant,
-                    timestamp_ms: current_timestamp_ms(),
-                });
+                .push(message);
         }
         *self.sessions[index]
             .buffers
@@ -378,11 +381,7 @@ impl ChatApp {
                     .unwrap_or(false);
                 let mut history = self.sessions[index].buffers.messages.borrow_mut();
                 if history_event || !matches!(role, MessageRole::Assistant) {
-                    history.push(ChatMessage {
-                        text: content,
-                        role,
-                        timestamp_ms,
-                    });
+                    history.push(ChatMessage::new(content, role, timestamp_ms));
                     return;
                 }
                 let action = classify_stream_message_action(
@@ -404,11 +403,11 @@ impl ChatApp {
                         }
                     }
                     crate::StreamMessageAction::PushAssistant => {
-                        history.push(ChatMessage {
-                            text: content,
-                            role: MessageRole::Assistant,
+                        history.push(ChatMessage::new(
+                            content,
+                            MessageRole::Assistant,
                             timestamp_ms,
-                        });
+                        ));
                         *self.sessions[index]
                             .buffers
                             .active_stream_request_id
@@ -457,11 +456,11 @@ impl ChatApp {
             return;
         }
         let request_id = Uuid::new_v4().to_string();
-        session.buffers.messages.borrow_mut().push(ChatMessage {
-            text: text.clone(),
-            role: MessageRole::User,
-            timestamp_ms: current_timestamp_ms(),
-        });
+        session.buffers.messages.borrow_mut().push(ChatMessage::new(
+            text.clone(),
+            MessageRole::User,
+            current_timestamp_ms(),
+        ));
         *session.buffers.active_stream_request_id.borrow_mut() = Some(request_id.clone());
         if let Err(err) = send_method(
             &ws,

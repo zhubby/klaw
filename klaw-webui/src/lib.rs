@@ -128,6 +128,11 @@ pub(crate) fn connection_action_label(connection_state: &ConnectionState) -> &'s
     }
 }
 
+#[cfg(test)]
+pub(crate) fn session_card_activity_label(_is_active: bool) -> Option<&'static str> {
+    None
+}
+
 #[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn delete_confirmation_body(agent_name: &str) -> String {
     format!("Delete agent '{agent_name}' permanently? This cannot be undone.")
@@ -199,6 +204,16 @@ pub(crate) fn classify_stream_message_action(
     StreamMessageAction::PushAssistant
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn should_register_non_stream_fade(
+    role: MessageRole,
+    streamed: bool,
+    history_event: bool,
+    content: &str,
+) -> bool {
+    matches!(role, MessageRole::Assistant) && !streamed && !history_event && !content.is_empty()
+}
+
 #[cfg(test)]
 pub(crate) fn classify_message_role(
     pending_local_echoes: &mut VecDeque<String>,
@@ -227,8 +242,9 @@ mod tests {
         ConnectionState, MessageRole, PageMode, SessionListEntry, StreamMessageAction, ThemeMode,
         classify_message_role, classify_stream_message_action, connection_action_label,
         delete_confirmation_body, derive_page_mode, normalize_gateway_token_input,
-        resolve_gateway_token, should_activate_session_window,
-        should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
+        resolve_gateway_token, session_card_activity_label, should_activate_session_window,
+        should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
+        sort_session_entries_by_created_at_desc,
     };
 
     #[test]
@@ -311,6 +327,40 @@ mod tests {
             "",
         );
         assert_eq!(action, StreamMessageAction::IgnoreEmpty);
+    }
+
+    #[test]
+    fn registers_fade_only_for_non_stream_assistant_messages() {
+        assert!(should_register_non_stream_fade(
+            MessageRole::Assistant,
+            false,
+            false,
+            "final answer",
+        ));
+        assert!(!should_register_non_stream_fade(
+            MessageRole::Assistant,
+            true,
+            false,
+            "partial answer",
+        ));
+        assert!(!should_register_non_stream_fade(
+            MessageRole::Assistant,
+            false,
+            true,
+            "history answer",
+        ));
+        assert!(!should_register_non_stream_fade(
+            MessageRole::User,
+            false,
+            false,
+            "hello",
+        ));
+        assert!(!should_register_non_stream_fade(
+            MessageRole::Assistant,
+            false,
+            false,
+            "",
+        ));
     }
 
     #[test]

@@ -3,6 +3,8 @@ use eframe::egui::{
     ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText, vec2,
 };
 use egui_phosphor::regular;
+use klaw_ui_kit::text_animator::TextAnimator;
+use std::collections::HashMap;
 
 use crate::{
     ConnectionState, MessageRole, PageMode, connection_action_label, delete_confirmation_body,
@@ -493,8 +495,14 @@ impl ChatApp {
                                 return;
                             }
 
+                            session.prune_finished_animations();
                             for message in &messages {
-                                render_message(ui, &mut session.markdown_cache, message);
+                                render_message(
+                                    ui,
+                                    &mut session.markdown_cache,
+                                    &mut session.fade_in_messages,
+                                    message,
+                                );
                                 ui.add_space(8.0);
                             }
                         });
@@ -715,7 +723,12 @@ fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState) {
     });
 }
 
-fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message: &ChatMessage) {
+fn render_message(
+    ui: &mut egui::Ui,
+    markdown_cache: &mut MarkdownCache,
+    fade_in_messages: &mut HashMap<String, TextAnimator>,
+    message: &ChatMessage,
+) {
     let time_label = format_message_timestamp(message.timestamp_ms);
     match message.role {
         MessageRole::System => {
@@ -786,10 +799,11 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
                                 ui.label(RichText::new(&time_label).small().color(heading_color));
                             });
                             ui.add_space(4.0);
-                            render_markdown(
+                            render_message_body(
                                 ui,
                                 markdown_cache,
-                                &message.text,
+                                fade_in_messages,
+                                message,
                                 body_color,
                                 link_color,
                             );
@@ -813,6 +827,36 @@ fn render_message(ui: &mut egui::Ui, markdown_cache: &mut MarkdownCache, message
                 show_bubble(ui, BUBBLE_MAX_WIDTH);
             }
         }
+    }
+}
+
+fn render_message_body(
+    ui: &mut egui::Ui,
+    markdown_cache: &mut MarkdownCache,
+    fade_in_messages: &mut HashMap<String, TextAnimator>,
+    message: &ChatMessage,
+    body_color: Color32,
+    link_color: Color32,
+) {
+    let mut should_remove_animation = false;
+    if matches!(message.role, MessageRole::Assistant)
+        && let Some(animator) = fade_in_messages.get_mut(&message.id)
+    {
+        animator.font = TextStyle::Body.resolve(ui.style());
+        animator.color = body_color;
+        animator.process_animation(ui.ctx());
+        animator.render(ui);
+        if animator.is_animation_finished() {
+            should_remove_animation = true;
+        } else {
+            ui.ctx().request_repaint();
+        }
+    } else {
+        render_markdown(ui, markdown_cache, &message.text, body_color, link_color);
+    }
+
+    if should_remove_animation {
+        fade_in_messages.remove(&message.id);
     }
 }
 

@@ -1,9 +1,5 @@
 use crate::embedded::{favicon_response, image_response, logo_response, static_html_response};
-use axum::{
-    body::Body,
-    extract::Path,
-    http::Response,
-};
+use axum::{body::Body, extract::Path, http::Response};
 
 pub async fn home_page_handler() -> Response<Body> {
     static_html_response("index.html")

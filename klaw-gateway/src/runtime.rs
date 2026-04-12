@@ -5,8 +5,8 @@ use crate::{
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
     home::{home_favicon_handler, home_logo_handler, home_page_handler, image_handler},
     routes::{
-        CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, FAVICON_PATH, HOME_LOGO_PATH,
-        IMAGES_PATH, HOME_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
+        CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, FAVICON_PATH, HOME_LOGO_PATH, HOME_PATH,
+        IMAGES_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
     },
     state::{GatewayHandle, GatewayRuntimeInfo, GatewayState, GatewayWebsocketState},
     tailscale::{TailscaleError, TailscaleManager},

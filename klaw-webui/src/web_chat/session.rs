@@ -1,8 +1,11 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{MessageRole, SessionListEntry};
+use eframe::epaint::{Color32, FontFamily, FontId};
 use js_sys::Date;
+use klaw_ui_kit::text_animator::{AnimationType, TextAnimator};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::{markdown::MarkdownCache, storage::PersistedSession};
 
@@ -22,9 +25,21 @@ const WINDOW_STAGGER_COLUMNS: u32 = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ChatMessage {
+    pub(in crate::web_chat) id: String,
     pub(in crate::web_chat) text: String,
     pub(in crate::web_chat) role: MessageRole,
     pub(in crate::web_chat) timestamp_ms: i64,
+}
+
+impl ChatMessage {
+    pub(super) fn new(text: String, role: MessageRole, timestamp_ms: i64) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            text,
+            role,
+            timestamp_ms,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +84,7 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) window_anchor: WindowAnchor,
     pub(in crate::web_chat) buffers: SessionBuffers,
     pub(in crate::web_chat) markdown_cache: MarkdownCache,
+    pub(in crate::web_chat) fade_in_messages: HashMap<String, TextAnimator>,
 }
 
 impl SessionWindow {
@@ -82,6 +98,7 @@ impl SessionWindow {
             window_anchor: window_anchor_for_slot(0),
             buffers: SessionBuffers::default(),
             markdown_cache: MarkdownCache::default(),
+            fade_in_messages: HashMap::new(),
         }
     }
 
@@ -90,6 +107,25 @@ impl SessionWindow {
             session_key: self.session_key.clone(),
             open: self.open,
         }
+    }
+
+    pub(super) fn register_fade_in_message(&mut self, message: &ChatMessage) {
+        self.fade_in_messages
+            .entry(message.id.clone())
+            .or_insert_with(|| {
+                TextAnimator::new(
+                    &message.text,
+                    FontId::new(14.0, FontFamily::Proportional),
+                    Color32::WHITE,
+                    2.5,
+                    AnimationType::FadeIn,
+                )
+            });
+    }
+
+    pub(super) fn prune_finished_animations(&mut self) {
+        self.fade_in_messages
+            .retain(|_, animator| !animator.is_animation_finished());
     }
 }
 

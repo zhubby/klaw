@@ -818,10 +818,12 @@ impl AgentLoop {
                 "agent inbound media summary"
             );
         }
-        let requested_provider_id =
-            metadata_nonempty_trimmed_str(&msg.payload.metadata, meta_key(AgentMetaKey::ProviderId))
-                .map(ToString::to_string)
-                .unwrap_or_else(|| provider_runtime.default_provider_id.clone());
+        let requested_provider_id = metadata_nonempty_trimmed_str(
+            &msg.payload.metadata,
+            meta_key(AgentMetaKey::ProviderId),
+        )
+        .map(ToString::to_string)
+        .unwrap_or_else(|| provider_runtime.default_provider_id.clone());
         let (resolved_provider_id, provider) = if let Some(provider) = provider_runtime
             .provider_registry
             .get(&requested_provider_id)
@@ -838,9 +840,10 @@ impl AgentLoop {
                 Arc::clone(&provider_runtime.default_provider),
             )
         };
-        let resolved_model = metadata_nonempty_trimmed_str(&msg.payload.metadata, meta_key(AgentMetaKey::Model))
-            .map(ToString::to_string)
-            .unwrap_or_else(|| provider_runtime.default_model.clone());
+        let resolved_model =
+            metadata_nonempty_trimmed_str(&msg.payload.metadata, meta_key(AgentMetaKey::Model))
+                .map(ToString::to_string)
+                .unwrap_or_else(|| provider_runtime.default_model.clone());
 
         let mut tool_metadata = msg.payload.metadata.clone();
         tool_metadata.remove(meta_key(AgentMetaKey::ConversationHistory));
@@ -851,7 +854,11 @@ impl AgentLoop {
             )
             .map(ToString::to_string)
             .or_else(|| self.system_prompt()),
-            tool_choice: msg.payload.metadata.get(meta_key(AgentMetaKey::ToolChoice)).cloned(),
+            tool_choice: msg
+                .payload
+                .metadata
+                .get(meta_key(AgentMetaKey::ToolChoice))
+                .cloned(),
             provider_id: Some(resolved_provider_id.clone()),
             resolved_model: Some(resolved_model.clone()),
             parent_session_key: Some(msg.payload.session_key.clone()),
@@ -981,8 +988,10 @@ impl AgentLoop {
                         .iter()
                         .find(|signal| signal.kind == "im_card")
                     {
-                        response_metadata
-                            .insert(meta_key(AgentMetaKey::ImCard).to_string(), im_card_signal.payload.clone());
+                        response_metadata.insert(
+                            meta_key(AgentMetaKey::ImCard).to_string(),
+                            im_card_signal.payload.clone(),
+                        );
                     }
                     if let Some(approval_required) = output
                         .tool_signals
@@ -1003,7 +1012,8 @@ impl AgentLoop {
                                 &output.content,
                             )
                         {
-                            response_metadata.insert(meta_key(AgentMetaKey::ImCard).to_string(), im_card);
+                            response_metadata
+                                .insert(meta_key(AgentMetaKey::ImCard).to_string(), im_card);
                         }
                         if let Some(approval_id) = approval_required
                             .payload
@@ -2249,8 +2259,14 @@ mod tests {
                 content: "hello".to_string(),
                 media_references: Vec::new(),
                 metadata: BTreeMap::from([
-                    (meta_key(AgentMetaKey::ProviderId).to_string(), json!("anthropic")),
-                    (meta_key(AgentMetaKey::Model).to_string(), json!("claude-opus-4")),
+                    (
+                        meta_key(AgentMetaKey::ProviderId).to_string(),
+                        json!("anthropic"),
+                    ),
+                    (
+                        meta_key(AgentMetaKey::Model).to_string(),
+                        json!("claude-opus-4"),
+                    ),
                 ]),
             },
         };
