@@ -14,11 +14,7 @@ mod webhook;
 mod websocket;
 
 pub use error::GatewayError;
-pub use routes::{
-    ARCHIVE_DOWNLOAD_PATH, ARCHIVE_GET_PATH, ARCHIVE_LIST_PATH, ARCHIVE_UPLOAD_PATH,
-    CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, HOME_LOGO_PATH, HOME_PATH,
-    WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
-};
+pub use routes::Route;
 pub use runtime::{
     GatewayOptions, run_gateway, run_gateway_with_options, spawn_gateway,
     spawn_gateway_with_options,

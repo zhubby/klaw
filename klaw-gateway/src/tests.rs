@@ -1,11 +1,10 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, GatewayOptions,
+        GatewayOptions,
         GatewaySessionHistoryMessage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
         GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-        GatewayWorkspaceSession, HOME_LOGO_PATH, HOME_PATH, OutboundEvent, WEBHOOK_AGENTS_PATH,
-        WEBHOOK_EVENTS_PATH, WS_CHAT_PATH, spawn_gateway, spawn_gateway_with_options,
+        GatewayWorkspaceSession, OutboundEvent, Route, spawn_gateway, spawn_gateway_with_options,
         webhook::{
             GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
             normalize_webhook_request,
@@ -131,7 +130,7 @@ mod tests {
     }
 
     fn ws_url(port: u16, token: Option<&str>) -> String {
-        let mut url = format!("ws://127.0.0.1:{port}{WS_CHAT_PATH}");
+        let mut url = format!("ws://127.0.0.1:{port}{}", Route::WsChat.as_str());
         if let Some(token) = token {
             url.push_str("?token=");
             url.push_str(token);
@@ -200,7 +199,7 @@ mod tests {
             .expect("reqwest client");
 
         let home_response = client
-            .get(format!("{base_url}{HOME_PATH}"))
+            .get(format!("{base_url}{}", Route::Home.as_str()))
             .send()
             .await
             .expect("home page should respond");
@@ -210,13 +209,13 @@ mod tests {
             .await
             .expect("home page body should load");
         assert!(home_html.contains("Little Claws, Big Conversations."));
-        assert!(home_html.contains(HOME_LOGO_PATH));
+        assert!(home_html.contains(Route::HomeLogo.as_str()));
         assert!(home_html.contains("href=\"/chat\""));
         assert!(home_html.contains("Open web chat"));
         assert!(!home_html.contains("Klaw Gateway is the friendly little harbor of the system."));
 
         let logo_response = client
-            .get(format!("{base_url}{HOME_LOGO_PATH}"))
+            .get(format!("{base_url}{}", Route::HomeLogo.as_str()))
             .send()
             .await
             .expect("logo should respond");
@@ -260,17 +259,17 @@ mod tests {
             .expect("reqwest client");
 
         let chat_html = client
-            .get(format!("{base_url}{CHAT_PATH}"))
+            .get(format!("{base_url}{}", Route::Chat.as_str()))
             .send()
             .await
             .expect("chat page should respond");
         assert_eq!(chat_html.status(), StatusCode::OK);
         let body = chat_html.text().await.expect("chat body");
         assert!(body.contains("klaw_chat_canvas"));
-        assert!(body.contains(CHAT_DIST_JS_PATH));
+        assert!(body.contains(Route::ChatDistJs.as_str()));
 
         let js = client
-            .get(format!("{base_url}{CHAT_DIST_JS_PATH}"))
+            .get(format!("{base_url}{}", Route::ChatDistJs.as_str()))
             .send()
             .await
             .expect("chat js should respond");
@@ -284,7 +283,7 @@ mod tests {
         assert!(!js.bytes().await.expect("js body").is_empty());
 
         let wasm = client
-            .get(format!("{base_url}{CHAT_DIST_WASM_PATH}"))
+            .get(format!("{base_url}{}", Route::ChatDistWasm.as_str()))
             .send()
             .await
             .expect("chat wasm should respond");
@@ -302,14 +301,14 @@ mod tests {
 
     #[test]
     fn exported_route_constants_match_expected_paths() {
-        assert_eq!(HOME_PATH, "/");
-        assert_eq!(HOME_LOGO_PATH, "/logo.webp");
-        assert_eq!(CHAT_PATH, "/chat");
-        assert_eq!(CHAT_DIST_JS_PATH, "/chat/dist/klaw_webui.js");
-        assert_eq!(CHAT_DIST_WASM_PATH, "/chat/dist/klaw_webui_bg.wasm");
-        assert_eq!(WS_CHAT_PATH, "/ws/chat");
-        assert_eq!(WEBHOOK_EVENTS_PATH, "/webhook/events");
-        assert_eq!(WEBHOOK_AGENTS_PATH, "/webhook/agents");
+        assert_eq!(Route::Home.as_str(), "/");
+        assert_eq!(Route::HomeLogo.as_str(), "/logo.webp");
+        assert_eq!(Route::Chat.as_str(), "/chat");
+        assert_eq!(Route::ChatDistJs.as_str(), "/chat/dist/klaw_webui.js");
+        assert_eq!(Route::ChatDistWasm.as_str(), "/chat/dist/klaw_webui_bg.wasm");
+        assert_eq!(Route::WsChat.as_str(), "/ws/chat");
+        assert_eq!(Route::WebhookEvents.as_str(), "/webhook/events");
+        assert_eq!(Route::WebhookAgents.as_str(), "/webhook/agents");
     }
 
     #[test]

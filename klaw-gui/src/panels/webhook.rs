@@ -12,7 +12,7 @@ use klaw_channel::SessionChannel;
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayWebhookConfig, TailscaleMode,
 };
-use klaw_gateway::{WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH};
+use klaw_gateway::Route;
 use klaw_session::{
     SessionError, SessionListQuery, SessionManager, SqliteSessionManager, WebhookAgentQuery,
     WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
@@ -1012,7 +1012,7 @@ impl PanelRenderer for WebhookPanel {
 
                     ui.horizontal(|ui| {
                         ui.label("Path");
-                        ui.monospace(WEBHOOK_EVENTS_PATH);
+                        ui.monospace(Route::WebhookEvents.as_str());
                     });
 
                     ui.horizontal(|ui| {
@@ -1032,7 +1032,7 @@ impl PanelRenderer for WebhookPanel {
 
                     ui.horizontal(|ui| {
                         ui.label("Path");
-                        ui.monospace(WEBHOOK_AGENTS_PATH);
+                        ui.monospace(Route::WebhookAgents.as_str());
                     });
 
                     ui.horizontal(|ui| {
@@ -1738,7 +1738,7 @@ fn build_trick_url(
     }
     let model = trick.model.trim();
     let base = trick_base_url(gateway_status.expect("checked by trick_ready_error"))?;
-    let mut url = format!("{base}{WEBHOOK_AGENTS_PATH}");
+    let mut url = format!("{base}{}", Route::WebhookAgents.as_str());
     let mut query = vec![
         ("hook_id", percent_encode_query_value(&hook_id)),
         (

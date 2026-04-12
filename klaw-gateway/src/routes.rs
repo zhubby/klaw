@@ -1,14 +1,47 @@
-pub const HOME_PATH: &str = "/";
-pub const HOME_LOGO_PATH: &str = "/logo.webp";
-pub const FAVICON_PATH: &str = "/favicon.ico";
-pub const IMAGES_PATH: &str = "/images/{filename}";
-pub const CHAT_PATH: &str = "/chat";
-pub const CHAT_DIST_JS_PATH: &str = "/chat/dist/klaw_webui.js";
-pub const CHAT_DIST_WASM_PATH: &str = "/chat/dist/klaw_webui_bg.wasm";
-pub const WS_CHAT_PATH: &str = "/ws/chat";
-pub const WEBHOOK_EVENTS_PATH: &str = "/webhook/events";
-pub const WEBHOOK_AGENTS_PATH: &str = "/webhook/agents";
-pub const ARCHIVE_UPLOAD_PATH: &str = "/archive/upload";
-pub const ARCHIVE_DOWNLOAD_PATH: &str = "/archive/download/{id}";
-pub const ARCHIVE_LIST_PATH: &str = "/archive/list";
-pub const ARCHIVE_GET_PATH: &str = "/archive/{id}";
+use strum::IntoStaticStr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+pub enum Route {
+    #[strum(serialize = "/")]
+    Home,
+    #[strum(serialize = "/logo.webp")]
+    HomeLogo,
+    #[strum(serialize = "/favicon.ico")]
+    Favicon,
+    #[strum(serialize = "/images/{filename}")]
+    Images,
+    #[strum(serialize = "/chat")]
+    Chat,
+    #[strum(serialize = "/chat/dist/klaw_webui.js")]
+    ChatDistJs,
+    #[strum(serialize = "/chat/dist/klaw_webui_bg.wasm")]
+    ChatDistWasm,
+    #[strum(serialize = "/ws/chat")]
+    WsChat,
+    #[strum(serialize = "/webhook/events")]
+    WebhookEvents,
+    #[strum(serialize = "/webhook/agents")]
+    WebhookAgents,
+    #[strum(serialize = "/archive/upload")]
+    ArchiveUpload,
+    #[strum(serialize = "/archive/download/{id}")]
+    ArchiveDownload,
+    #[strum(serialize = "/archive/list")]
+    ArchiveList,
+    #[strum(serialize = "/archive/{id}")]
+    ArchiveGet,
+    #[strum(serialize = "/health/live")]
+    HealthLive,
+    #[strum(serialize = "/health/ready")]
+    HealthReady,
+    #[strum(serialize = "/health/status")]
+    HealthStatus,
+    #[strum(serialize = "/metrics")]
+    Metrics,
+}
+
+impl Route {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}

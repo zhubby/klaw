@@ -8,11 +8,7 @@ use crate::{
     chat_page::{chat_dist_js_handler, chat_dist_wasm_handler, chat_page_handler},
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
     home::{home_favicon_handler, home_logo_handler, home_page_handler, image_handler},
-    routes::{
-        ARCHIVE_DOWNLOAD_PATH, ARCHIVE_GET_PATH, ARCHIVE_LIST_PATH, ARCHIVE_UPLOAD_PATH,
-        CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, FAVICON_PATH, HOME_LOGO_PATH, HOME_PATH,
-        IMAGES_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
-    },
+    routes::Route,
     state::{GatewayArchiveState, GatewayHandle, GatewayRuntimeInfo, GatewayState, GatewayWebsocketState},
     tailscale::{TailscaleError, TailscaleManager},
     webhook::{
@@ -198,29 +194,29 @@ fn build_router(
     auth_token: Option<String>,
 ) -> Router {
     let mut app = Router::new()
-        .route(HOME_PATH, get(home_page_handler))
-        .route(HOME_LOGO_PATH, get(home_logo_handler))
-        .route(FAVICON_PATH, get(home_favicon_handler))
-        .route(IMAGES_PATH, get(image_handler))
-        .route(CHAT_PATH, get(chat_page_handler))
-        .route(CHAT_DIST_JS_PATH, get(chat_dist_js_handler))
-        .route(CHAT_DIST_WASM_PATH, get(chat_dist_wasm_handler))
-        .route(WS_CHAT_PATH, get(ws_chat_handler))
-        .route("/health/live", get(health_live_handler))
-        .route("/health/ready", get(health_ready_handler))
-        .route("/health/status", get(health_status_handler))
-        .route("/metrics", get(metrics_handler));
+        .route(Route::Home.as_str(), get(home_page_handler))
+        .route(Route::HomeLogo.as_str(), get(home_logo_handler))
+        .route(Route::Favicon.as_str(), get(home_favicon_handler))
+        .route(Route::Images.as_str(), get(image_handler))
+        .route(Route::Chat.as_str(), get(chat_page_handler))
+        .route(Route::ChatDistJs.as_str(), get(chat_dist_js_handler))
+        .route(Route::ChatDistWasm.as_str(), get(chat_dist_wasm_handler))
+        .route(Route::WsChat.as_str(), get(ws_chat_handler))
+        .route(Route::HealthLive.as_str(), get(health_live_handler))
+        .route(Route::HealthReady.as_str(), get(health_ready_handler))
+        .route(Route::HealthStatus.as_str(), get(health_status_handler))
+        .route(Route::Metrics.as_str(), get(metrics_handler));
 
     if config.webhook.enabled {
         if config.webhook.events.enabled {
             let events_router = Router::new()
-                .route(WEBHOOK_EVENTS_PATH, post(webhook_handler))
+                .route(Route::WebhookEvents.as_str(), post(webhook_handler))
                 .layer(DefaultBodyLimit::max(config.webhook.events.max_body_bytes));
             app = app.merge(events_router);
         }
         if config.webhook.agents.enabled {
             let agents_router = Router::new()
-                .route(WEBHOOK_AGENTS_PATH, post(webhook_agents_handler))
+                .route(Route::WebhookAgents.as_str(), post(webhook_agents_handler))
                 .layer(DefaultBodyLimit::max(config.webhook.agents.max_body_bytes));
             app = app.merge(agents_router);
         }
@@ -228,10 +224,10 @@ fn build_router(
 
     if state.archive.is_some() {
         app = app
-            .route(ARCHIVE_UPLOAD_PATH, post(archive_upload_handler))
-            .route(ARCHIVE_DOWNLOAD_PATH, get(archive_download_handler))
-            .route(ARCHIVE_LIST_PATH, get(archive_list_handler))
-            .route(ARCHIVE_GET_PATH, get(archive_get_handler));
+            .route(Route::ArchiveUpload.as_str(), post(archive_upload_handler))
+            .route(Route::ArchiveDownload.as_str(), get(archive_download_handler))
+            .route(Route::ArchiveList.as_str(), get(archive_list_handler))
+            .route(Route::ArchiveGet.as_str(), get(archive_get_handler));
     }
 
     let app = app

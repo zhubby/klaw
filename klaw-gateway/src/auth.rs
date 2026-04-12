@@ -9,7 +9,7 @@ use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::Sha256;
 
-use crate::routes::{ARCHIVE_LIST_PATH, ARCHIVE_UPLOAD_PATH, WS_CHAT_PATH};
+use crate::routes::Route;
 
 type HmacSha1 = Hmac<Sha1>;
 type HmacSha256 = Hmac<Sha256>;
@@ -53,7 +53,7 @@ pub(crate) fn extract_gateway_credential(request: &Request<Body>) -> Option<Stri
             return Some(token.to_string());
         }
     }
-    if request.uri().path() != WS_CHAT_PATH {
+    if request.uri().path() != Route::WsChat.as_str() {
         return None;
     }
     let query = request.uri().query()?;
@@ -68,9 +68,9 @@ pub(crate) fn extract_gateway_credential(request: &Request<Body>) -> Option<Stri
 }
 
 pub fn should_require_gateway_auth(path: &str) -> bool {
-    path == WS_CHAT_PATH
-        || path == ARCHIVE_UPLOAD_PATH
-        || path == ARCHIVE_LIST_PATH
+    path == Route::WsChat.as_str()
+        || path == Route::ArchiveUpload.as_str()
+        || path == Route::ArchiveList.as_str()
         || path.starts_with("/archive/download/")
         || path.starts_with("/archive/")
 }
