@@ -4,7 +4,8 @@ use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
 use crate::{
-    ConnectionState, MessageRole, SessionListEntry, classify_stream_message_action,
+    ConnectionState, MessageRole, ProviderCatalog, WorkspaceSessionEntry,
+    build_websocket_submit_params, classify_stream_message_action,
     next_selected_archive_id_after_submit, should_register_non_stream_fade,
 };
 
@@ -113,6 +114,12 @@ impl ChatApp {
             let bootstrap_id = Uuid::new_v4().to_string();
             if let Err(err) = send_method(&ws_open, &bootstrap_id, "workspace.bootstrap", json!({}))
             {
+                *state_open.borrow_mut() = ConnectionState::Error(err);
+                ctx_open.request_repaint();
+                return;
+            }
+            let providers_id = Uuid::new_v4().to_string();
+            if let Err(err) = send_method(&ws_open, &providers_id, "provider.list", json!({})) {
                 *state_open.borrow_mut() = ConnectionState::Error(err);
             }
             ctx_open.request_repaint();
@@ -236,6 +243,21 @@ impl ChatApp {
     }
 
     fn process_result_frame(&mut self, result: &Value) {
+        if let Some(providers_value) = result.get("providers").cloned() {
+            let providers =
+                serde_json::from_value::<Vec<crate::ProviderCatalogEntry>>(providers_value)
+                    .unwrap_or_default();
+            let provider_catalog = ProviderCatalog {
+                default_provider: result
+                    .get("default_provider")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                providers,
+            };
+            self.apply_provider_catalog(provider_catalog);
+            return;
+        }
+
         if result.get("updated").and_then(Value::as_bool) == Some(true) {
             let Some(session_key) = result.get("session_key").and_then(Value::as_str) else {
                 return;
@@ -245,6 +267,17 @@ impl ChatApp {
             };
             if let Some(index) = self.session_index(session_key) {
                 self.sessions[index].title = title.to_string();
+                self.sessions[index].sync_route_from_workspace(
+                    result
+                        .get("model_provider")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    result
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    &self.provider_catalog,
+                );
                 self.persist_workspace_state();
             }
             return;
@@ -271,7 +304,7 @@ impl ChatApp {
 
         if let Some(sessions_value) = result.get("sessions").cloned() {
             let entries =
-                serde_json::from_value::<Vec<SessionListEntry>>(sessions_value).unwrap_or_default();
+                serde_json::from_value::<Vec<WorkspaceSessionEntry>>(sessions_value).unwrap_or_default();
             let active_session_key = result
                 .get("active_session_key")
                 .and_then(Value::as_str)
@@ -286,19 +319,19 @@ impl ChatApp {
             result.get("title").and_then(Value::as_str),
             result.get("created_at_ms").and_then(Value::as_i64),
         ) {
-            let mut entries = self
-                .sessions
-                .iter()
-                .map(|session| SessionListEntry {
-                    session_key: session.session_key.clone(),
-                    title: session.title.clone(),
-                    created_at_ms: session.created_at_ms,
-                })
-                .collect::<Vec<_>>();
-            entries.push(SessionListEntry {
+            let mut entries = self.workspace_entries();
+            entries.push(WorkspaceSessionEntry {
                 session_key: session_key.to_string(),
                 title: title.to_string(),
                 created_at_ms,
+                model_provider: result
+                    .get("model_provider")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                model: result
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
             });
             self.sync_sessions_from_workspace(entries, Some(session_key.to_string()));
             if let Some(index) = self.session_index(session_key) {
@@ -465,16 +498,14 @@ impl ChatApp {
             self.stream_enabled.then_some(request_id.clone());
 
         let archive_id = session.selected_archive_id.borrow().clone();
-        let mut params = json!({
-            "session_key": session_key,
-            "chat_id": session_key,
-            "input": text,
-            "stream": self.stream_enabled,
-        });
-
-        if let Some(archive_id) = archive_id.as_ref() {
-            params["archive_id"] = json!(archive_id);
-        }
+        let params = build_submit_params(
+            session_key,
+            &text,
+            self.stream_enabled,
+            archive_id.as_deref(),
+            &session.selected_route.model_provider,
+            &session.selected_route.model,
+        );
 
         let send_result = send_method(&ws, &request_id, "session.submit", params);
         *session.selected_archive_id.borrow_mut() =
@@ -485,5 +516,71 @@ impl ChatApp {
             return;
         }
         session.draft.clear();
+    }
+}
+
+fn build_submit_params(
+    session_key: &str,
+    input: &str,
+    stream: bool,
+    archive_id: Option<&str>,
+    model_provider: &str,
+    model: &str,
+) -> Value {
+    build_websocket_submit_params(session_key, input, stream, archive_id, model_provider, model)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_submit_params;
+
+    #[test]
+    fn submit_params_include_model_route_and_archive() {
+        let params = build_submit_params(
+            "web:test",
+            "hello",
+            true,
+            Some("archive-1"),
+            "anthropic",
+            "claude-sonnet-4-5",
+        );
+
+        assert_eq!(params.get("session_key").and_then(serde_json::Value::as_str), Some("web:test"));
+        assert_eq!(params.get("input").and_then(serde_json::Value::as_str), Some("hello"));
+        assert_eq!(params.get("stream").and_then(serde_json::Value::as_bool), Some(true));
+        assert_eq!(
+            params.get("model_provider").and_then(serde_json::Value::as_str),
+            Some("anthropic")
+        );
+        assert_eq!(
+            params.get("model").and_then(serde_json::Value::as_str),
+            Some("claude-sonnet-4-5")
+        );
+        assert_eq!(
+            params.get("archive_id").and_then(serde_json::Value::as_str),
+            Some("archive-1")
+        );
+    }
+
+    #[test]
+    fn submit_params_omit_archive_when_unset() {
+        let params = build_submit_params(
+            "web:test",
+            "hello",
+            false,
+            None,
+            "openai",
+            "gpt-4.1-mini",
+        );
+
+        assert!(params.get("archive_id").is_none());
+        assert_eq!(
+            params.get("model_provider").and_then(serde_json::Value::as_str),
+            Some("openai")
+        );
+        assert_eq!(
+            params.get("model").and_then(serde_json::Value::as_str),
+            Some("gpt-4.1-mini")
+        );
     }
 }

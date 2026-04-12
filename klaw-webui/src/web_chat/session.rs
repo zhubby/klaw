@@ -1,6 +1,9 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{MessageRole, SessionListEntry};
+use crate::{
+    MessageRole, ProviderCatalog, ResolvedSessionRoute, SessionListEntry, WorkspaceSessionEntry,
+    resolve_session_route_inputs,
+};
 use eframe::epaint::{Color32, FontFamily, FontId};
 use js_sys::Date;
 use klaw_ui_kit::text_animator::{AnimationType, TextAnimator};
@@ -79,6 +82,9 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) session_key: String,
     pub(in crate::web_chat) title: String,
     pub(in crate::web_chat) created_at_ms: i64,
+    pub(in crate::web_chat) workspace_model_provider: Option<String>,
+    pub(in crate::web_chat) workspace_model: Option<String>,
+    pub(in crate::web_chat) selected_route: ResolvedSessionRoute,
     pub(in crate::web_chat) draft: String,
     pub(in crate::web_chat) open: bool,
     pub(in crate::web_chat) window_anchor: WindowAnchor,
@@ -91,11 +97,19 @@ pub(super) struct SessionWindow {
 }
 
 impl SessionWindow {
-    pub(super) fn new(metadata: SessionListEntry, open: bool) -> Self {
+    pub(super) fn new(metadata: WorkspaceSessionEntry, open: bool, catalog: &ProviderCatalog) -> Self {
+        let selected_route = resolve_session_route_choice(
+            metadata.model_provider.as_deref(),
+            metadata.model.as_deref(),
+            catalog,
+        );
         Self {
             session_key: metadata.session_key,
             title: metadata.title,
             created_at_ms: metadata.created_at_ms,
+            workspace_model_provider: metadata.model_provider,
+            workspace_model: metadata.model,
+            selected_route,
             draft: String::new(),
             open,
             window_anchor: window_anchor_for_slot(0),
@@ -113,6 +127,39 @@ impl SessionWindow {
             session_key: self.session_key.clone(),
             open: self.open,
         }
+    }
+
+    pub(super) fn workspace_entry(&self) -> WorkspaceSessionEntry {
+        WorkspaceSessionEntry {
+            session_key: self.session_key.clone(),
+            title: self.title.clone(),
+            created_at_ms: self.created_at_ms,
+            model_provider: self.workspace_model_provider.clone(),
+            model: self.workspace_model.clone(),
+        }
+    }
+
+    pub(super) fn sync_route_from_workspace(
+        &mut self,
+        model_provider: Option<String>,
+        model: Option<String>,
+        catalog: &ProviderCatalog,
+    ) {
+        self.workspace_model_provider = model_provider;
+        self.workspace_model = model;
+        self.selected_route = resolve_session_route_choice(
+            self.workspace_model_provider.as_deref(),
+            self.workspace_model.as_deref(),
+            catalog,
+        );
+    }
+
+    pub(super) fn reset_selected_model_to_provider_default(&mut self, catalog: &ProviderCatalog) {
+        self.selected_route = resolve_session_route_choice(
+            Some(&self.selected_route.model_provider),
+            None,
+            catalog,
+        );
     }
 
     pub(super) fn register_fade_in_message(&mut self, message: &ChatMessage) {
@@ -133,6 +180,14 @@ impl SessionWindow {
         self.fade_in_messages
             .retain(|_, animator| !animator.is_animation_finished());
     }
+}
+
+pub(super) fn resolve_session_route_choice(
+    model_provider: Option<&str>,
+    model: Option<&str>,
+    catalog: &ProviderCatalog,
+) -> ResolvedSessionRoute {
+    resolve_session_route_inputs(model_provider, model, catalog)
 }
 
 pub(super) fn window_anchor_for_slot(slot: u32) -> WindowAnchor {
@@ -183,5 +238,80 @@ pub(super) fn format_relative_time(created_at_ms: i64, now_ms: i64) -> String {
     } else {
         let weeks = elapsed_secs / 604800;
         format!("{weeks}w ago")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProviderCatalog, ProviderCatalogEntry, resolve_session_route_choice};
+
+    #[test]
+    fn session_route_prefers_explicit_workspace_route() {
+        let catalog = ProviderCatalog {
+            default_provider: Some("openai".to_string()),
+            providers: vec![
+                ProviderCatalogEntry {
+                    id: "anthropic".to_string(),
+                    default_model: "claude-sonnet-4-5".to_string(),
+                },
+                ProviderCatalogEntry {
+                    id: "openai".to_string(),
+                    default_model: "gpt-4.1-mini".to_string(),
+                },
+            ],
+        };
+
+        let route = resolve_session_route_choice(
+            Some("anthropic"),
+            Some("claude-opus-4-1"),
+            &catalog,
+        );
+
+        assert_eq!(route.model_provider, "anthropic");
+        assert_eq!(route.model, "claude-opus-4-1");
+    }
+
+    #[test]
+    fn session_route_uses_provider_default_model_when_workspace_model_missing() {
+        let catalog = ProviderCatalog {
+            default_provider: Some("openai".to_string()),
+            providers: vec![
+                ProviderCatalogEntry {
+                    id: "anthropic".to_string(),
+                    default_model: "claude-sonnet-4-5".to_string(),
+                },
+                ProviderCatalogEntry {
+                    id: "openai".to_string(),
+                    default_model: "gpt-4.1-mini".to_string(),
+                },
+            ],
+        };
+
+        let route = resolve_session_route_choice(Some("anthropic"), None, &catalog);
+
+        assert_eq!(route.model_provider, "anthropic");
+        assert_eq!(route.model, "claude-sonnet-4-5");
+    }
+
+    #[test]
+    fn session_route_falls_back_to_catalog_default_provider() {
+        let catalog = ProviderCatalog {
+            default_provider: Some("openai".to_string()),
+            providers: vec![
+                ProviderCatalogEntry {
+                    id: "openai".to_string(),
+                    default_model: "gpt-4.1-mini".to_string(),
+                },
+                ProviderCatalogEntry {
+                    id: "anthropic".to_string(),
+                    default_model: "claude-sonnet-4-5".to_string(),
+                },
+            ],
+        };
+
+        let route = resolve_session_route_choice(None, None, &catalog);
+
+        assert_eq!(route.model_provider, "openai");
+        assert_eq!(route.model, "gpt-4.1-mini");
     }
 }

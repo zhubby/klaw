@@ -5,9 +5,10 @@ use async_trait::async_trait;
 use klaw_channel::{ChannelResponse, websocket::WebsocketSubmitEnvelope};
 use klaw_config::{AppConfig, WebsocketConfig};
 use klaw_gateway::{
-    GatewaySessionHistoryMessage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
-    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-    GatewayWorkspaceSession, OutboundEvent,
+    GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
+    GatewayWebsocketHandler, GatewayWebsocketHandlerError, GatewayWebsocketServerFrame,
+    GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap, GatewayWorkspaceSession,
+    OutboundEvent,
 };
 use klaw_session::{SessionListQuery, SessionManager};
 use serde_json::{Value, json};
@@ -72,6 +73,19 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
         self.load_web_workspace().await
     }
 
+    async fn list_providers(&self) -> Result<GatewayProviderCatalog, GatewayWebsocketHandlerError> {
+        let snapshot = self.runtime.runtime.provider_runtime_snapshot();
+        let providers = snapshot
+            .provider_default_models
+            .into_iter()
+            .map(|(id, default_model)| GatewayProviderEntry { id, default_model })
+            .collect::<Vec<_>>();
+        Ok(GatewayProviderCatalog {
+            default_provider: snapshot.default_provider_id,
+            providers,
+        })
+    }
+
     async fn create_session(
         &self,
     ) -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError> {
@@ -109,6 +123,8 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
             session_key: session.session_key,
             title,
             created_at_ms: session.created_at_ms,
+            model_provider: session.model_provider,
+            model: session.model,
         })
     }
 
@@ -384,6 +400,8 @@ fn build_web_workspace_bootstrap(
                 .filter(|title| !title.trim().is_empty())
                 .unwrap_or_else(|| format!("Agent {}", index + 1)),
             created_at_ms: session.created_at_ms,
+            model_provider: session.model_provider,
+            model: session.model,
         })
         .collect::<Vec<_>>();
     sessions.sort_by(|left, right| {

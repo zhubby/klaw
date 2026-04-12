@@ -10,6 +10,8 @@ use std::collections::VecDeque;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 use serde::{Deserialize, Serialize};
+#[cfg(any(test, target_arch = "wasm32"))]
+use serde_json::{Value, json};
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +99,100 @@ pub(crate) struct SessionListEntry {
     pub(crate) session_key: String,
     pub(crate) title: String,
     pub(crate) created_at_ms: i64,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WorkspaceSessionEntry {
+    pub(crate) session_key: String,
+    pub(crate) title: String,
+    pub(crate) created_at_ms: i64,
+    #[serde(default)]
+    pub(crate) model_provider: Option<String>,
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ProviderCatalogEntry {
+    pub(crate) id: String,
+    pub(crate) default_model: String,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ProviderCatalog {
+    #[serde(default)]
+    pub(crate) default_provider: Option<String>,
+    #[serde(default)]
+    pub(crate) providers: Vec<ProviderCatalogEntry>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ResolvedSessionRoute {
+    pub(crate) model_provider: String,
+    pub(crate) model: String,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn resolve_session_route_inputs(
+    model_provider: Option<&str>,
+    model: Option<&str>,
+    catalog: &ProviderCatalog,
+) -> ResolvedSessionRoute {
+    let requested_provider = model_provider
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let fallback_provider = catalog
+        .default_provider
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| catalog.providers.first().map(|entry| entry.id.clone()))
+        .unwrap_or_default();
+    let model_provider = requested_provider.unwrap_or(fallback_provider);
+    let model = model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            catalog
+                .providers
+                .iter()
+                .find(|entry| entry.id == model_provider)
+                .map(|entry| entry.default_model.clone())
+        })
+        .unwrap_or_default();
+    ResolvedSessionRoute {
+        model_provider,
+        model,
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn build_websocket_submit_params(
+    session_key: &str,
+    input: &str,
+    stream: bool,
+    archive_id: Option<&str>,
+    model_provider: &str,
+    model: &str,
+) -> Value {
+    let mut params = json!({
+        "session_key": session_key,
+        "chat_id": session_key,
+        "input": input,
+        "stream": stream,
+        "model_provider": model_provider,
+        "model": model,
+    });
+    if let Some(archive_id) = archive_id.filter(|value| !value.is_empty()) {
+        params["archive_id"] = json!(archive_id);
+    }
+    params
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -294,9 +390,11 @@ mod tests {
 
     use super::{
         ArchiveRecord, ArchiveUploadResponse, ConnectionState, MessageRole, PageMode,
-        SessionListEntry, StreamMessageAction, ThemeMode, attachment_action_in_progress,
-        can_trigger_file_picker, classify_message_role, classify_stream_message_action,
-        connection_action_label, delete_confirmation_body, derive_page_mode,
+        ProviderCatalog, ProviderCatalogEntry, ResolvedSessionRoute, SessionListEntry,
+        StreamMessageAction, ThemeMode, attachment_action_in_progress,
+        build_websocket_submit_params, can_trigger_file_picker, classify_message_role,
+        classify_stream_message_action, connection_action_label, delete_confirmation_body,
+        derive_page_mode, resolve_session_route_inputs,
         next_selected_archive_id_after_submit, normalize_gateway_token_input,
         resolve_gateway_token, session_card_activity_label, should_activate_session_window,
         should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
@@ -630,5 +728,66 @@ mod tests {
         let body = delete_confirmation_body("My Agent");
         assert!(body.contains("My Agent"));
         assert!(body.contains("permanently"));
+    }
+
+    #[test]
+    fn session_route_inputs_fall_back_to_catalog_defaults() {
+        let catalog = ProviderCatalog {
+            default_provider: Some("openai".to_string()),
+            providers: vec![
+                ProviderCatalogEntry {
+                    id: "openai".to_string(),
+                    default_model: "gpt-4.1-mini".to_string(),
+                },
+                ProviderCatalogEntry {
+                    id: "anthropic".to_string(),
+                    default_model: "claude-sonnet-4-5".to_string(),
+                },
+            ],
+        };
+
+        assert_eq!(
+            resolve_session_route_inputs(None, None, &catalog),
+            ResolvedSessionRoute {
+                model_provider: "openai".to_string(),
+                model: "gpt-4.1-mini".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_session_route_inputs(Some("anthropic"), None, &catalog),
+            ResolvedSessionRoute {
+                model_provider: "anthropic".to_string(),
+                model: "claude-sonnet-4-5".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn websocket_submit_params_include_model_route() {
+        let params = build_websocket_submit_params(
+            "web:test",
+            "hello",
+            true,
+            Some("archive-1"),
+            "anthropic",
+            "claude-sonnet-4-5",
+        );
+
+        assert_eq!(params.get("session_key").and_then(serde_json::Value::as_str), Some("web:test"));
+        assert_eq!(params.get("chat_id").and_then(serde_json::Value::as_str), Some("web:test"));
+        assert_eq!(params.get("input").and_then(serde_json::Value::as_str), Some("hello"));
+        assert_eq!(params.get("stream").and_then(serde_json::Value::as_bool), Some(true));
+        assert_eq!(
+            params.get("model_provider").and_then(serde_json::Value::as_str),
+            Some("anthropic")
+        );
+        assert_eq!(
+            params.get("model").and_then(serde_json::Value::as_str),
+            Some("claude-sonnet-4-5")
+        );
+        assert_eq!(
+            params.get("archive_id").and_then(serde_json::Value::as_str),
+            Some("archive-1")
+        );
     }
 }

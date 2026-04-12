@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        GatewayOptions,
-        GatewaySessionHistoryMessage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
-        GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-        GatewayWorkspaceSession, OutboundEvent, Route, spawn_gateway, spawn_gateway_with_options,
+        GatewayOptions, GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
+        GatewayWebsocketHandler, GatewayWebsocketHandlerError, GatewayWebsocketServerFrame,
+        GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap, GatewayWorkspaceSession,
+        OutboundEvent, Route, spawn_gateway, spawn_gateway_with_options,
         webhook::{
             GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
             normalize_webhook_request,
@@ -37,11 +37,15 @@ mod tests {
                         session_key: "web:older".to_string(),
                         title: "Agent 1".to_string(),
                         created_at_ms: 10,
+                        model_provider: Some("openai".to_string()),
+                        model: Some("gpt-4.1-mini".to_string()),
                     },
                     GatewayWorkspaceSession {
                         session_key: "web:newer".to_string(),
                         title: "Agent 2".to_string(),
                         created_at_ms: 20,
+                        model_provider: Some("anthropic".to_string()),
+                        model: Some("claude-sonnet-4-5".to_string()),
                     },
                 ],
                 active_session_key: Some("web:newer".to_string()),
@@ -55,6 +59,8 @@ mod tests {
                 session_key: "web:created".to_string(),
                 title: "Agent 3".to_string(),
                 created_at_ms: 30,
+                model_provider: Some("openai".to_string()),
+                model: Some("gpt-4.1-mini".to_string()),
             })
         }
 
@@ -67,6 +73,8 @@ mod tests {
                 session_key: session_key.to_string(),
                 title,
                 created_at_ms: 20,
+                model_provider: Some("anthropic".to_string()),
+                model: Some("claude-sonnet-4-5".to_string()),
             })
         }
 
@@ -90,6 +98,24 @@ mod tests {
                 }]);
             }
             Ok(Vec::new())
+        }
+
+        async fn list_providers(
+            &self,
+        ) -> Result<GatewayProviderCatalog, GatewayWebsocketHandlerError> {
+            Ok(GatewayProviderCatalog {
+                default_provider: "anthropic".to_string(),
+                providers: vec![
+                    GatewayProviderEntry {
+                        id: "anthropic".to_string(),
+                        default_model: "claude-sonnet-4-5".to_string(),
+                    },
+                    GatewayProviderEntry {
+                        id: "openai".to_string(),
+                        default_model: "gpt-4.1-mini".to_string(),
+                    },
+                ],
+            })
         }
 
         async fn submit(
@@ -495,7 +521,9 @@ mod tests {
                     "method": "session.submit",
                     "params": {
                         "input": "hello gateway",
-                        "channel_id": "default"
+                        "channel_id": "default",
+                        "model_provider": "anthropic",
+                        "model": "claude-opus-4-1"
                     }
                 })
                 .to_string()
@@ -534,6 +562,14 @@ mod tests {
         assert_eq!(recorded[0].chat_id, "web:test-session");
         assert_eq!(recorded[0].channel_id, "default");
         assert_eq!(recorded[0].input, "hello gateway");
+        assert_eq!(
+            recorded[0].metadata.get("channel.websocket.model_provider"),
+            Some(&json!("anthropic"))
+        );
+        assert_eq!(
+            recorded[0].metadata.get("channel.websocket.model"),
+            Some(&json!("claude-opus-4-1"))
+        );
 
         handle.shutdown().await.expect("gateway should stop");
     }
@@ -615,6 +651,16 @@ mod tests {
                         .and_then(|value| value.as_str()),
                     Some("web:newer")
                 );
+                assert_eq!(
+                    sessions[0]
+                        .get("model_provider")
+                        .and_then(|value| value.as_str()),
+                    Some("anthropic")
+                );
+                assert_eq!(
+                    sessions[0].get("model").and_then(|value| value.as_str()),
+                    Some("claude-sonnet-4-5")
+                );
             }
             other => panic!("unexpected bootstrap frame: {other:?}"),
         }
@@ -687,6 +733,14 @@ mod tests {
                 assert_eq!(
                     result.get("created_at_ms").and_then(|value| value.as_i64()),
                     Some(30)
+                );
+                assert_eq!(
+                    result.get("model_provider").and_then(|value| value.as_str()),
+                    Some("openai")
+                );
+                assert_eq!(
+                    result.get("model").and_then(|value| value.as_str()),
+                    Some("gpt-4.1-mini")
                 );
             }
             other => panic!("unexpected create frame: {other:?}"),
@@ -768,6 +822,94 @@ mod tests {
             result.get("updated").and_then(|value| value.as_bool()),
             Some(true)
         );
+        assert_eq!(
+            result.get("model_provider").and_then(|value| value.as_str()),
+            Some("anthropic")
+        );
+        assert_eq!(
+            result.get("model").and_then(|value| value.as_str()),
+            Some("claude-sonnet-4-5")
+        );
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_provider_list_returns_runtime_provider_catalog() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _ = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "providers-1",
+                    "method": "provider.list",
+                    "params": {}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("provider.list should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("provider.list response")
+            .expect("provider.list frame");
+        let frame = match frame {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid provider.list frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+
+        match frame {
+            GatewayWebsocketServerFrame::Result { id, result } => {
+                assert_eq!(id, "providers-1");
+                assert_eq!(
+                    result.get("default_provider").and_then(|value| value.as_str()),
+                    Some("anthropic")
+                );
+                let providers = result
+                    .get("providers")
+                    .and_then(|value| value.as_array())
+                    .expect("providers array");
+                assert_eq!(providers.len(), 2);
+                assert_eq!(
+                    providers[0].get("id").and_then(|value| value.as_str()),
+                    Some("anthropic")
+                );
+                assert_eq!(
+                    providers[0]
+                        .get("default_model")
+                        .and_then(|value| value.as_str()),
+                    Some("claude-sonnet-4-5")
+                );
+            }
+            other => panic!("unexpected provider.list frame: {other:?}"),
+        }
 
         handle.shutdown().await.expect("gateway should stop");
     }

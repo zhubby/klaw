@@ -7,7 +7,8 @@ use web_sys::Notification;
 use web_sys::WebSocket;
 
 use crate::{
-    ConnectionState, SessionListEntry, attachment_action_in_progress,
+    ConnectionState, ProviderCatalog, SessionListEntry, WorkspaceSessionEntry,
+    attachment_action_in_progress,
     normalize_gateway_token_input, resolve_gateway_token,
     should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
     sort_session_entries_by_created_at_desc,
@@ -28,6 +29,7 @@ pub(super) struct ChatApp {
     pub(in crate::web_chat) connection_state: Rc<RefCell<ConnectionState>>,
     pub(in crate::web_chat) pending_frames: Rc<RefCell<Vec<ServerFrame>>>,
     pub(in crate::web_chat) sessions: Vec<SessionWindow>,
+    pub(in crate::web_chat) provider_catalog: ProviderCatalog,
     pub(in crate::web_chat) active_session_key: Option<String>,
     pub(in crate::web_chat) workspace_loaded: bool,
     pub(in crate::web_chat) toasts: Rc<RefCell<NotificationCenter>>,
@@ -59,6 +61,7 @@ impl ChatApp {
             connection_state: Rc::new(RefCell::new(ConnectionState::Disconnected)),
             pending_frames: Rc::new(RefCell::new(Vec::new())),
             sessions: Vec::new(),
+            provider_catalog: ProviderCatalog::default(),
             active_session_key: persisted_active_session_key,
             workspace_loaded: false,
             toasts: Rc::new(RefCell::new(NotificationCenter::default())),
@@ -232,12 +235,15 @@ impl ChatApp {
     ) {
         for (index, session) in persisted_sessions.into_iter().enumerate() {
             let mut restored = SessionWindow::new(
-                SessionListEntry {
+                WorkspaceSessionEntry {
                     session_key: session.session_key,
                     title: String::new(),
                     created_at_ms: 0,
+                    model_provider: None,
+                    model: None,
                 },
                 session.open,
+                &self.provider_catalog,
             );
             restored.window_anchor = window_anchor_for_slot(index as u32);
             self.sessions.push(restored);
@@ -261,10 +267,27 @@ impl ChatApp {
 
     pub(in crate::web_chat) fn sync_sessions_from_workspace(
         &mut self,
-        mut entries: Vec<SessionListEntry>,
+        mut entries: Vec<WorkspaceSessionEntry>,
         active_session_key: Option<String>,
     ) {
-        sort_session_entries_by_created_at_desc(&mut entries);
+        let mut ordering = entries
+            .iter()
+            .map(|entry| SessionListEntry {
+                session_key: entry.session_key.clone(),
+                title: entry.title.clone(),
+                created_at_ms: entry.created_at_ms,
+            })
+            .collect::<Vec<_>>();
+        sort_session_entries_by_created_at_desc(&mut ordering);
+        let order = ordering
+            .into_iter()
+            .map(|entry| entry.session_key)
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| {
+            order.iter()
+                .position(|session_key| session_key == &entry.session_key)
+                .unwrap_or(usize::MAX)
+        });
         let persisted = self
             .sessions
             .iter()
@@ -275,7 +298,7 @@ impl ChatApp {
             .enumerate()
             .map(|(index, entry)| {
                 let open = persisted.get(&entry.session_key).copied().unwrap_or(false);
-                let mut session = SessionWindow::new(entry, open);
+                let mut session = SessionWindow::new(entry, open, &self.provider_catalog);
                 session.window_anchor = window_anchor_for_slot(index as u32);
                 session
             })
@@ -297,6 +320,24 @@ impl ChatApp {
                     .map(|session| session.session_key.clone())
             });
         self.persist_workspace_state();
+    }
+
+    pub(in crate::web_chat) fn apply_provider_catalog(&mut self, provider_catalog: ProviderCatalog) {
+        self.provider_catalog = provider_catalog;
+        for session in &mut self.sessions {
+            session.sync_route_from_workspace(
+                session.workspace_model_provider.clone(),
+                session.workspace_model.clone(),
+                &self.provider_catalog,
+            );
+        }
+    }
+
+    pub(in crate::web_chat) fn workspace_entries(&self) -> Vec<WorkspaceSessionEntry> {
+        self.sessions
+            .iter()
+            .map(SessionWindow::workspace_entry)
+            .collect()
     }
 }
 

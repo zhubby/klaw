@@ -19,6 +19,8 @@ use uuid::Uuid;
 pub enum InboundMethod {
     #[strum(serialize = "session.ping")]
     SessionPing,
+    #[strum(serialize = "provider.list")]
+    ProviderList,
     #[strum(serialize = "workspace.bootstrap")]
     WorkspaceBootstrap,
     #[strum(serialize = "session.create")]
@@ -34,6 +36,9 @@ pub enum InboundMethod {
     #[strum(serialize = "session.submit")]
     SessionSubmit,
 }
+
+pub const META_WEBSOCKET_MODEL_PROVIDER: &str = "channel.websocket.model_provider";
+pub const META_WEBSOCKET_MODEL: &str = "channel.websocket.model";
 
 #[derive(Debug, Clone, PartialEq, Eq, strum::EnumString, strum::AsRefStr)]
 #[strum(serialize_all = "snake_case")]
@@ -121,10 +126,26 @@ pub struct GatewayWebsocketSubmitRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayProviderEntry {
+    pub id: String,
+    pub default_model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayProviderCatalog {
+    pub default_provider: String,
+    pub providers: Vec<GatewayProviderEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GatewayWorkspaceSession {
     pub session_key: String,
     pub title: String,
     pub created_at_ms: i64,
+    #[serde(default)]
+    pub model_provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +192,8 @@ impl GatewayWebsocketHandlerError {
 #[async_trait]
 pub trait GatewayWebsocketHandler: Send + Sync {
     async fn bootstrap(&self) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError>;
+
+    async fn list_providers(&self) -> Result<GatewayProviderCatalog, GatewayWebsocketHandlerError>;
 
     async fn create_session(&self)
     -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError>;
@@ -234,6 +257,10 @@ struct SessionSubmitParams {
     channel_id: Option<String>,
     #[serde(default)]
     stream: Option<bool>,
+    #[serde(default)]
+    model_provider: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
     #[serde(default)]
     metadata: BTreeMap<String, Value>,
 }
@@ -365,6 +392,32 @@ async fn handle_text_message(
                     id,
                     result: json!({ "ok": true }),
                 }],
+                InboundMethod::ProviderList => {
+                    let Some(websocket) = state.websocket.as_ref() else {
+                        return vec![error_frame(
+                            Some(id),
+                            "not_configured",
+                            "gateway websocket handler is not configured",
+                        )];
+                    };
+                    match websocket.handler.list_providers().await {
+                        Ok(catalog) => vec![GatewayWebsocketServerFrame::Result {
+                            id,
+                            result: json!({
+                                "default_provider": catalog.default_provider,
+                                "providers": catalog.providers,
+                            }),
+                        }],
+                        Err(err) => vec![GatewayWebsocketServerFrame::Error {
+                            id: Some(id),
+                            error: GatewayWebsocketErrorFrame {
+                                code: err.code,
+                                message: err.message,
+                                data: err.data,
+                            },
+                        }],
+                    }
+                }
                 InboundMethod::WorkspaceBootstrap => {
                     let Some(websocket) = state.websocket.as_ref() else {
                         return vec![error_frame(
@@ -422,6 +475,8 @@ async fn handle_text_message(
                                     "session_key": session.session_key,
                                     "title": session.title,
                                     "created_at_ms": session.created_at_ms,
+                                    "model_provider": session.model_provider,
+                                    "model": session.model,
                                 }),
                             }]
                         }
@@ -476,6 +531,8 @@ async fn handle_text_message(
                                 "session_key": session.session_key,
                                 "title": session.title,
                                 "created_at_ms": session.created_at_ms,
+                                "model_provider": session.model_provider,
+                                "model": session.model,
                                 "updated": true,
                             }),
                         }],
@@ -627,7 +684,17 @@ async fn handle_text_message(
                             )];
                         }
                     };
-                    let input = params.input.trim().to_string();
+                    let SessionSubmitParams {
+                        input,
+                        session_key: submit_session_key,
+                        chat_id: submit_chat_id,
+                        channel_id: submit_channel_id,
+                        stream,
+                        model_provider,
+                        model,
+                        mut metadata,
+                    } = params;
+                    let input = input.trim().to_string();
                     if input.is_empty() {
                         return vec![error_frame(
                             Some(id),
@@ -635,8 +702,22 @@ async fn handle_text_message(
                             "session.submit requires a non-empty input",
                         )];
                     }
-                    let resolved_session_key = params
-                        .session_key
+                    if let Some(model_provider) = model_provider
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                    {
+                        metadata.insert(
+                            META_WEBSOCKET_MODEL_PROVIDER.to_string(),
+                            Value::String(model_provider),
+                        );
+                    }
+                    if let Some(model) = model
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                    {
+                        metadata.insert(META_WEBSOCKET_MODEL.to_string(), Value::String(model));
+                    }
+                    let resolved_session_key = submit_session_key
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
                         .or_else(|| current_session_key.clone());
@@ -650,13 +731,11 @@ async fn handle_text_message(
                     *current_session_key = Some(session_key.clone());
                     update_connection_session_key(state, connection_id, Some(session_key.clone()))
                         .await;
-                    let chat_id = params
-                        .chat_id
+                    let chat_id = submit_chat_id
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| session_key.clone());
-                    let channel_id = params
-                        .channel_id
+                    let channel_id = submit_channel_id
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| "default".to_string());
@@ -679,8 +758,8 @@ async fn handle_text_message(
                                     session_key,
                                     chat_id,
                                     input,
-                                    metadata: params.metadata,
-                                    stream: params.stream,
+                                    metadata,
+                                    stream,
                                 },
                                 outgoing_tx.clone(),
                             )

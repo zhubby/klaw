@@ -562,6 +562,45 @@ impl ChatApp {
                             trigger_file_picker = true;
                         }
 
+                        ui.add_space(6.0);
+                        ui.add_enabled_ui(can_send && !attachment_busy, |ui| {
+                            let provider_changed = ComboBox::from_id_salt((
+                                "session-model-provider",
+                                session_key,
+                            ))
+                            .width(140.0)
+                            .selected_text(if session.selected_route.model_provider.is_empty() {
+                                "Provider".to_string()
+                            } else {
+                                session.selected_route.model_provider.clone()
+                            })
+                            .show_ui(ui, |ui| {
+                                let mut changed = false;
+                                for provider in &self.provider_catalog.providers {
+                                    changed |= ui
+                                        .selectable_value(
+                                            &mut session.selected_route.model_provider,
+                                            provider.id.clone(),
+                                            &provider.id,
+                                        )
+                                        .changed();
+                                }
+                                changed
+                            })
+                            .inner
+                            .unwrap_or(false);
+                            if provider_changed {
+                                session.reset_selected_model_to_provider_default(
+                                    &self.provider_catalog,
+                                );
+                            }
+                            ui.add_sized(
+                                [180.0, 24.0],
+                                TextEdit::singleline(&mut session.selected_route.model)
+                                    .hint_text("Model"),
+                            );
+                        });
+
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let send_button = ui.add_enabled(
                                 can_send && !attachment_busy,

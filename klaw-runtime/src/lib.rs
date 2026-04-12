@@ -29,7 +29,8 @@ use klaw_core::{
     TransportError, build_runtime_system_prompt, ensure_workspace_prompt_templates,
 };
 use klaw_gateway::{
-    GatewayRuntimeInfo, GatewayWebhookAgentRequest, GatewayWebhookRequest, TailscaleHostInfo,
+    GatewayRuntimeInfo, GatewayWebhookAgentRequest, GatewayWebhookRequest,
+    META_WEBSOCKET_MODEL, META_WEBSOCKET_MODEL_PROVIDER, TailscaleHostInfo,
 };
 use klaw_heartbeat::{HeartbeatManager, should_suppress_output};
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
@@ -257,6 +258,14 @@ pub async fn submit_channel_request(
         }
     }
 
+    apply_websocket_route_override_from_metadata(
+        runtime,
+        &request.channel,
+        &request.session_key,
+        &request.chat_id,
+        &request.metadata,
+    )
+    .await?;
     let route = resolve_session_route(
         runtime,
         &request.channel,
@@ -328,6 +337,14 @@ pub async fn submit_channel_request_streaming_into(
         }
     }
 
+    apply_websocket_route_override_from_metadata(
+        runtime,
+        &request.channel,
+        &request.session_key,
+        &request.chat_id,
+        &request.metadata,
+    )
+    .await?;
     let route = resolve_session_route(
         runtime,
         &request.channel,
@@ -380,6 +397,14 @@ where
         }
     }
 
+    apply_websocket_route_override_from_metadata(
+        runtime,
+        &request.channel,
+        &request.session_key,
+        &request.chat_id,
+        &request.metadata,
+    )
+    .await?;
     let route = resolve_session_route(
         runtime,
         &request.channel,
@@ -926,6 +951,59 @@ async fn resolve_session_route(
         model_provider,
         model,
     })
+}
+
+async fn apply_websocket_route_override_from_metadata(
+    runtime: &RuntimeBundle,
+    channel: &str,
+    base_session_key: &str,
+    chat_id: &str,
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> Result<(), Box<dyn Error>> {
+    let requested_provider = metadata
+        .get(META_WEBSOCKET_MODEL_PROVIDER)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let requested_model = metadata
+        .get(META_WEBSOCKET_MODEL)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if requested_provider.is_none() && requested_model.is_none() {
+        return Ok(());
+    }
+
+    let route = resolve_session_route(runtime, channel, base_session_key, chat_id).await?;
+    let sessions = session_manager(runtime);
+    if let Some(provider) = requested_provider {
+        let (provider, model) = resolve_webhook_agent_model(
+            runtime,
+            &route.model_provider,
+            &route.model,
+            Some(provider),
+            requested_model,
+        )
+        .map_err(config_err)?;
+        sessions
+            .set_model_provider(&route.active_session_key, chat_id, channel, &provider, &model)
+            .await?;
+        return Ok(());
+    }
+
+    let Some(model) = requested_model else {
+        return Ok(());
+    };
+    sessions
+        .set_model_provider(
+            &route.active_session_key,
+            chat_id,
+            channel,
+            &route.model_provider,
+            model,
+        )
+        .await?;
+    Ok(())
 }
 
 fn resolve_new_session_target(runtime: &RuntimeBundle) -> (String, String) {
@@ -3374,8 +3452,9 @@ mod tests {
         normalize_runtime_provider_override, parse_outbound_attachments, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
         shutdown_runtime_bundle, spawn_acp_init, spawn_llm_audit_writer, spawn_mcp_init,
-        submit_and_get_output, submit_webhook_agent, submit_webhook_event, sync_runtime_providers,
-        sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
+        submit_and_get_output, submit_channel_request, submit_webhook_agent,
+        submit_webhook_event, sync_runtime_providers, sync_runtime_tools,
+        trim_conversation_history, voice_tool_is_enabled,
     };
     use async_trait::async_trait;
     use klaw_archive::{
@@ -3384,7 +3463,7 @@ mod tests {
     };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
     use klaw_approval::{ApprovalCreateInput, ApprovalManager};
-    use klaw_channel::OutboundAttachmentSource;
+    use klaw_channel::{ChannelRequest, OutboundAttachmentSource};
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
     use klaw_core::{
         CircuitBreakerPolicy, DeadLetterPolicy, Envelope, EnvelopeHeader,
@@ -3413,6 +3492,7 @@ mod tests {
     #[derive(Default, Clone)]
     struct BootstrapCaptureProvider {
         last_user_message: Arc<Mutex<Option<String>>>,
+        last_model: Arc<Mutex<Option<String>>>,
         last_tool_choice: Arc<Mutex<Option<Value>>>,
     }
 
@@ -3549,7 +3629,7 @@ mod tests {
             &self,
             messages: Vec<klaw_llm::LlmMessage>,
             _tools: Vec<klaw_llm::ToolDefinition>,
-            _model: Option<&str>,
+            model: Option<&str>,
             options: ChatOptions,
         ) -> Result<klaw_llm::LlmResponse, LlmError> {
             let last_user_message = messages
@@ -3561,6 +3641,11 @@ mod tests {
                 .last_user_message
                 .lock()
                 .unwrap_or_else(|err| err.into_inner()) = last_user_message;
+            *self
+                .last_model
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) =
+                model.map(ToString::to_string);
             *self
                 .last_tool_choice
                 .lock()
@@ -5763,5 +5848,196 @@ A .docx file is a ZIP archive containing XML files.
                 .await
                 .is_empty()
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_channel_request_persists_websocket_provider_override_and_uses_provider_default_model()
+    {
+        let default_provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(default_provider.clone()).await;
+        let alt_provider = Arc::new(BootstrapCaptureProvider::default());
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "web:test-provider-route",
+                "chat-provider-route",
+                "websocket",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("websocket session should exist");
+
+        let mut provider_runtime = runtime.runtime.provider_runtime_snapshot();
+        provider_runtime
+            .provider_registry
+            .insert("alt-provider".to_string(), alt_provider.clone());
+        provider_runtime
+            .provider_default_models
+            .insert("alt-provider".to_string(), "alt-default-model".to_string());
+        runtime
+            .runtime
+            .set_provider_runtime_snapshot(provider_runtime);
+
+        let response = submit_channel_request(
+            &runtime,
+            ChannelRequest {
+                channel: "websocket".to_string(),
+                input: "route with alt provider".to_string(),
+                session_key: "web:test-provider-route".to_string(),
+                chat_id: "chat-provider-route".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::from([(
+                    "channel.websocket.model_provider".to_string(),
+                    json!("alt-provider"),
+                )]),
+            },
+        )
+        .await
+        .expect("submit should succeed")
+        .expect("submit should return a response");
+
+        assert_eq!(response.content, "bootstrap reply");
+        assert_eq!(
+            alt_provider
+                .last_user_message
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .as_deref(),
+            Some("route with alt provider")
+        );
+        assert_eq!(
+            alt_provider
+                .last_model
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .as_deref(),
+            Some("alt-default-model")
+        );
+        assert_eq!(
+            default_provider
+                .last_user_message
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .clone(),
+            None
+        );
+
+        let session = sessions
+            .get_session("web:test-provider-route")
+            .await
+            .expect("session should reload");
+        assert_eq!(session.model_provider.as_deref(), Some("alt-provider"));
+        assert_eq!(session.model.as_deref(), Some("alt-default-model"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_channel_request_persists_websocket_model_override_on_existing_provider() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "web:test-model-route",
+                "chat-model-route",
+                "websocket",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("websocket session should exist");
+
+        let response = submit_channel_request(
+            &runtime,
+            ChannelRequest {
+                channel: "websocket".to_string(),
+                input: "route with explicit model".to_string(),
+                session_key: "web:test-model-route".to_string(),
+                chat_id: "chat-model-route".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::from([(
+                    "channel.websocket.model".to_string(),
+                    json!("custom-model"),
+                )]),
+            },
+        )
+        .await
+        .expect("submit should succeed")
+        .expect("submit should return a response");
+
+        assert_eq!(response.content, "bootstrap reply");
+        assert_eq!(
+            provider
+                .last_model
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .as_deref(),
+            Some("custom-model")
+        );
+
+        let route = resolve_session_route(
+            &runtime,
+            "websocket",
+            "web:test-model-route",
+            "chat-model-route",
+        )
+        .await
+        .expect("route should resolve");
+        assert_eq!(route.model_provider, "test-provider");
+        assert_eq!(route.model, "custom-model");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_channel_request_rejects_unknown_websocket_provider_override_without_mutation() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "web:test-unknown-provider",
+                "chat-unknown-provider",
+                "websocket",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("websocket session should exist");
+
+        let err = submit_channel_request(
+            &runtime,
+            ChannelRequest {
+                channel: "websocket".to_string(),
+                input: "should fail".to_string(),
+                session_key: "web:test-unknown-provider".to_string(),
+                chat_id: "chat-unknown-provider".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::from([(
+                    "channel.websocket.model_provider".to_string(),
+                    json!("missing-provider"),
+                )]),
+            },
+        )
+        .await
+        .expect_err("unknown provider should fail");
+
+        assert!(err.to_string().contains("unknown provider"));
+        assert_eq!(
+            provider
+                .last_user_message
+                .lock()
+                .unwrap_or_else(|inner| inner.into_inner())
+                .clone(),
+            None
+        );
+        let route = resolve_session_route(
+            &runtime,
+            "websocket",
+            "web:test-unknown-provider",
+            "chat-unknown-provider",
+        )
+        .await
+        .expect("route should still resolve");
+        assert_eq!(route.model_provider, "test-provider");
+        assert_eq!(route.model, "test-model");
     }
 }
