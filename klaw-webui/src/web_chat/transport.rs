@@ -5,7 +5,7 @@ use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
 use crate::{
     ConnectionState, MessageRole, SessionListEntry, classify_stream_message_action,
-    should_register_non_stream_fade,
+    next_selected_archive_id_after_submit, should_register_non_stream_fade,
 };
 
 use super::{
@@ -463,17 +463,24 @@ impl ChatApp {
         ));
         *session.buffers.active_stream_request_id.borrow_mut() =
             self.stream_enabled.then_some(request_id.clone());
-        if let Err(err) = send_method(
-            &ws,
-            &request_id,
-            "session.submit",
-            json!({
-                "session_key": session_key,
-                "chat_id": session_key,
-                "input": text,
-                "stream": self.stream_enabled,
-            }),
-        ) {
+
+        let archive_id = session.selected_archive_id.borrow().clone();
+        let mut params = json!({
+            "session_key": session_key,
+            "chat_id": session_key,
+            "input": text,
+            "stream": self.stream_enabled,
+        });
+
+        if let Some(archive_id) = archive_id.as_ref() {
+            params["archive_id"] = json!(archive_id);
+        }
+
+        let send_result = send_method(&ws, &request_id, "session.submit", params);
+        *session.selected_archive_id.borrow_mut() =
+            next_selected_archive_id_after_submit(archive_id.as_deref(), send_result.is_ok());
+
+        if let Err(err) = send_result {
             *self.connection_state.borrow_mut() = ConnectionState::Error(err);
             return;
         }

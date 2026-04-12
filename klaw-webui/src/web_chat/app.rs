@@ -2,11 +2,13 @@ use std::{cell::RefCell, rc::Rc};
 
 use eframe::egui::{self, Context};
 use klaw_ui_kit::{NotificationCenter, theme_preference};
+use wasm_bindgen::JsCast;
 use web_sys::Notification;
 use web_sys::WebSocket;
 
 use crate::{
-    ConnectionState, SessionListEntry, normalize_gateway_token_input, resolve_gateway_token,
+    ConnectionState, SessionListEntry, attachment_action_in_progress,
+    normalize_gateway_token_input, resolve_gateway_token,
     should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
 };
 
@@ -317,4 +319,208 @@ fn parse_query_param(search: &str, key: &str) -> Option<String> {
         return Some(urlencoding::decode(v).ok()?.into_owned());
     }
     None
+}
+
+impl ChatApp {
+    pub(in crate::web_chat) fn trigger_file_picker(&mut self, session_key: &str) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
+
+        let Some(gateway_origin) = self.gateway_origin.clone() else {
+            self.toasts
+                .borrow_mut()
+                .error("Gateway origin not available");
+            return;
+        };
+
+        let gateway_token = self.gateway_token.clone();
+        let session_key_owned = session_key.to_string();
+        let toasts = self.toasts.clone();
+        let ctx = self.ctx.clone();
+
+        let selected_archive_id = self.sessions[index].selected_archive_id.clone();
+        let selecting_flag = self.sessions[index].selecting_file.clone();
+        let uploading_flag = self.sessions[index].uploading_file.clone();
+
+        if attachment_action_in_progress(*selecting_flag.borrow(), *uploading_flag.borrow()) {
+            return;
+        }
+
+        *selecting_flag.borrow_mut() = true;
+        self.ctx.request_repaint();
+
+        wasm_bindgen_futures::spawn_local(async move {
+            let window = match web_sys::window() {
+                Some(w) => w,
+                None => {
+                    toasts.borrow_mut().error("Window not available");
+                    set_attachment_flag(&selecting_flag, false, &ctx);
+                    return;
+                }
+            };
+
+            let document = match window.document() {
+                Some(d) => d,
+                None => {
+                    toasts.borrow_mut().error("Document not available");
+                    set_attachment_flag(&selecting_flag, false, &ctx);
+                    return;
+                }
+            };
+
+            let Some(body) = document.body() else {
+                toasts.borrow_mut().error("Document body not available");
+                set_attachment_flag(&selecting_flag, false, &ctx);
+                return;
+            };
+
+            let input = match document.create_element("input") {
+                Ok(el) => el,
+                Err(_) => {
+                    toasts.borrow_mut().error("Failed to create input element");
+                    set_attachment_flag(&selecting_flag, false, &ctx);
+                    return;
+                }
+            };
+
+            if input.set_attribute("type", "file").is_err() {
+                toasts
+                    .borrow_mut()
+                    .error("Failed to set input type attribute");
+                set_attachment_flag(&selecting_flag, false, &ctx);
+                return;
+            }
+
+            let _ = input.set_attribute("style", "display:none");
+
+            let input_element: web_sys::HtmlInputElement = match input.dyn_into() {
+                Ok(el) => el,
+                Err(_) => {
+                    toasts
+                        .borrow_mut()
+                        .error("Failed to cast to HtmlInputElement");
+                    set_attachment_flag(&selecting_flag, false, &ctx);
+                    return;
+                }
+            };
+
+            if body.append_child(&input_element).is_err() {
+                toasts.borrow_mut().error("Failed to attach file input");
+                set_attachment_flag(&selecting_flag, false, &ctx);
+                return;
+            }
+
+            input_element.click();
+            let picked_file = match wait_for_selected_file(&window, &document, &input_element).await
+            {
+                Ok(file) => file,
+                Err(err) => {
+                    remove_file_input(&input_element);
+                    set_attachment_flag(&selecting_flag, false, &ctx);
+                    toasts
+                        .borrow_mut()
+                        .error(format!("Failed to read selected file: {err}"));
+                    return;
+                }
+            };
+
+            remove_file_input(&input_element);
+            set_attachment_flag(&selecting_flag, false, &ctx);
+
+            let Some(file) = picked_file else {
+                return;
+            };
+
+            set_attachment_flag(&uploading_flag, true, &ctx);
+
+            match super::upload::upload_file_to_archive(
+                &gateway_origin,
+                gateway_token.as_deref(),
+                file,
+                &session_key_owned,
+            )
+            .await
+            {
+                Ok(record) => {
+                    toasts.borrow_mut().success(format!(
+                        "File uploaded: {}",
+                        record.original_filename.as_deref().unwrap_or("unknown")
+                    ));
+                    *selected_archive_id.borrow_mut() = Some(record.id);
+                    set_attachment_flag(&uploading_flag, false, &ctx);
+                }
+                Err(err) => {
+                    toasts.borrow_mut().error(format!("Upload failed: {err}"));
+                    set_attachment_flag(&uploading_flag, false, &ctx);
+                }
+            }
+        });
+    }
+}
+
+fn set_attachment_flag(flag: &Rc<RefCell<bool>>, value: bool, ctx: &Context) {
+    *flag.borrow_mut() = value;
+    ctx.request_repaint();
+}
+
+fn remove_file_input(input_element: &web_sys::HtmlInputElement) {
+    input_element.remove();
+}
+
+async fn wait_for_selected_file(
+    window: &web_sys::Window,
+    document: &web_sys::Document,
+    input_element: &web_sys::HtmlInputElement,
+) -> Result<Option<web_sys::File>, String> {
+    const FILE_PICKER_TIMEOUT_MS: f64 = 120_000.0;
+
+    let mut picker_took_focus = false;
+    let started_at = js_sys::Date::now();
+
+    loop {
+        if let Some(file) = input_element.files().and_then(|files| files.get(0)) {
+            return Ok(Some(file));
+        }
+
+        let has_focus = document
+            .has_focus()
+            .map_err(|_| "Failed to inspect picker focus state".to_string())?;
+        if !has_focus {
+            picker_took_focus = true;
+        } else if picker_took_focus {
+            return Ok(None);
+        }
+        if js_sys::Date::now() - started_at >= FILE_PICKER_TIMEOUT_MS {
+            return Ok(None);
+        }
+
+        sleep_ms(window, 50).await;
+    }
+}
+
+async fn sleep_ms(window: &web_sys::Window, ms: i32) {
+    use wasm_bindgen::{JsValue, closure::Closure};
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = window.clone();
+    let promise = js_sys::Promise::new(&mut move |resolve, _reject| {
+        let resolve_callback = resolve.clone();
+        let callback = Closure::once_into_js(move || {
+            let _ = resolve_callback.call0(&JsValue::NULL);
+        });
+
+        if window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                callback.unchecked_ref(),
+                ms,
+            )
+            .is_err()
+        {
+            let _ = resolve.call0(&JsValue::NULL);
+            return;
+        }
+    });
+
+    let _ = JsFuture::from(promise).await;
 }

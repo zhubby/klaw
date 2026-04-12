@@ -7,6 +7,7 @@ mod session;
 mod storage;
 mod transport;
 mod ui;
+mod upload;
 
 use app::ChatApp;
 use klaw_ui_kit::install_fonts;

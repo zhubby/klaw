@@ -85,6 +85,9 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) buffers: SessionBuffers,
     pub(in crate::web_chat) markdown_cache: MarkdownCache,
     pub(in crate::web_chat) fade_in_messages: HashMap<String, TextAnimator>,
+    pub(in crate::web_chat) selected_archive_id: Rc<RefCell<Option<String>>>,
+    pub(in crate::web_chat) selecting_file: Rc<RefCell<bool>>,
+    pub(in crate::web_chat) uploading_file: Rc<RefCell<bool>>,
 }
 
 impl SessionWindow {
@@ -99,6 +102,9 @@ impl SessionWindow {
             buffers: SessionBuffers::default(),
             markdown_cache: MarkdownCache::default(),
             fade_in_messages: HashMap::new(),
+            selected_archive_id: Rc::new(RefCell::new(None)),
+            selecting_file: Rc::new(RefCell::new(false)),
+            uploading_file: Rc::new(RefCell::new(false)),
         }
     }
 

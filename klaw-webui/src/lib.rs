@@ -100,6 +100,23 @@ pub(crate) struct SessionListEntry {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ArchiveUploadResponse {
+    pub(crate) success: bool,
+    pub(crate) record: Option<ArchiveRecord>,
+    pub(crate) error: Option<String>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ArchiveRecord {
+    pub(crate) id: String,
+    pub(crate) original_filename: Option<String>,
+    pub(crate) mime_type: Option<String>,
+    pub(crate) size_bytes: i64,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PageMode {
     ConnectionGuide,
@@ -214,6 +231,32 @@ pub(crate) fn should_register_non_stream_fade(
     matches!(role, MessageRole::Assistant) && !streamed && !history_event && !content.is_empty()
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn attachment_action_in_progress(selecting_file: bool, uploading_file: bool) -> bool {
+    selecting_file || uploading_file
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn can_trigger_file_picker(
+    can_send: bool,
+    selecting_file: bool,
+    uploading_file: bool,
+) -> bool {
+    can_send && !attachment_action_in_progress(selecting_file, uploading_file)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn next_selected_archive_id_after_submit(
+    selected_archive_id: Option<&str>,
+    send_succeeded: bool,
+) -> Option<String> {
+    if send_succeeded {
+        None
+    } else {
+        selected_archive_id.map(str::to_owned)
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn classify_message_role(
     pending_local_echoes: &mut VecDeque<String>,
@@ -238,10 +281,14 @@ pub use web_chat::start_chat_ui;
 mod tests {
     use std::collections::VecDeque;
 
+    use serde_json::json;
+
     use super::{
-        ConnectionState, MessageRole, PageMode, SessionListEntry, StreamMessageAction, ThemeMode,
-        classify_message_role, classify_stream_message_action, connection_action_label,
-        delete_confirmation_body, derive_page_mode, normalize_gateway_token_input,
+        ArchiveRecord, ArchiveUploadResponse, ConnectionState, MessageRole, PageMode,
+        SessionListEntry, StreamMessageAction, ThemeMode, attachment_action_in_progress,
+        can_trigger_file_picker, classify_message_role, classify_stream_message_action,
+        connection_action_label, delete_confirmation_body, derive_page_mode,
+        next_selected_archive_id_after_submit, normalize_gateway_token_input,
         resolve_gateway_token, session_card_activity_label, should_activate_session_window,
         should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
         sort_session_entries_by_created_at_desc,
@@ -364,6 +411,47 @@ mod tests {
     }
 
     #[test]
+    fn upload_response_deserializes_success_payload() {
+        let response: ArchiveUploadResponse = serde_json::from_value(json!({
+            "success": true,
+            "record": {
+                "id": "archive-1",
+                "original_filename": "notes.txt",
+                "mime_type": "text/plain",
+                "size_bytes": 42
+            },
+            "error": null
+        }))
+        .expect("success payload should deserialize");
+
+        assert!(response.success);
+        assert_eq!(
+            response.record,
+            Some(ArchiveRecord {
+                id: "archive-1".to_string(),
+                original_filename: Some("notes.txt".to_string()),
+                mime_type: Some("text/plain".to_string()),
+                size_bytes: 42,
+            })
+        );
+        assert_eq!(response.error, None);
+    }
+
+    #[test]
+    fn upload_response_deserializes_error_payload() {
+        let response: ArchiveUploadResponse = serde_json::from_value(json!({
+            "success": false,
+            "record": null,
+            "error": "upload failed"
+        }))
+        .expect("error payload should deserialize");
+
+        assert!(!response.success);
+        assert_eq!(response.record, None);
+        assert_eq!(response.error.as_deref(), Some("upload failed"));
+    }
+
+    #[test]
     fn system_role_stays_distinct_from_user_messages() {
         assert_ne!(MessageRole::System, MessageRole::User);
     }
@@ -405,6 +493,38 @@ mod tests {
         assert!(should_activate_session_window(true, true));
         assert!(!should_activate_session_window(true, false));
         assert!(!should_activate_session_window(false, true));
+    }
+
+    #[test]
+    fn attachment_action_in_progress_is_true_while_selecting_or_uploading() {
+        assert!(attachment_action_in_progress(true, false));
+        assert!(attachment_action_in_progress(false, true));
+        assert!(!attachment_action_in_progress(false, false));
+    }
+
+    #[test]
+    fn file_picker_requires_connected_idle_session() {
+        assert!(can_trigger_file_picker(true, false, false));
+        assert!(!can_trigger_file_picker(false, false, false));
+        assert!(!can_trigger_file_picker(true, true, false));
+        assert!(!can_trigger_file_picker(true, false, true));
+    }
+
+    #[test]
+    fn failed_submit_keeps_selected_archive() {
+        assert_eq!(
+            next_selected_archive_id_after_submit(Some("archive-1"), false),
+            Some("archive-1".to_string())
+        );
+    }
+
+    #[test]
+    fn successful_submit_clears_selected_archive() {
+        assert_eq!(
+            next_selected_archive_id_after_submit(Some("archive-1"), true),
+            None
+        );
+        assert_eq!(next_selected_archive_id_after_submit(None, true), None);
     }
 
     #[test]

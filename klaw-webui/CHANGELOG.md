@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## 2026-04-12
+
+### Added
+
+- 新增文件上传功能：在 agent 对话框中，原 "Enter to send" 提示位置改为文件选择按钮（回形针图标）
+- 点击文件按钮后触发浏览器文件选择器，选择文件后自动上传到 gateway 的 `/archive/upload` 接口
+- 上传完成后通过 notification 组件通知用户，并在输入框右侧显示"File attached"状态
+- 发送消息时，如果有已上传的文件，会在 `session.submit` websocket 消息中包含 `archive_id` 字段
+- 支持在发送前移除已附加的文件（点击 ✕ 按钮）
+- 上传过程中显示 spinner 和"Uploading..."状态提示
+
+### Changed
+
+- 移除了输入框下方的 "Enter to send, Cmd+Enter for newline" 提示文本
+- `SessionWindow` 中的 `selected_archive_id` 和 `uploading_file` 字段改为 `Rc<RefCell<>>` 以支持异步上传任务更新状态
+- `session.submit` 方法现在支持可选的 `archive_id` 参数，发送后自动清除已附加的文件
+
 ## 2026-04-10
 
 ### Added
@@ -10,7 +27,7 @@
 
 ### Changed
 
-- `gateway_token` 的恢复策略改为“URL query 优先，其次使用 localStorage 中的上次保存值”，便于显式覆盖浏览器内已缓存的 token
+- `gateway_token` 的恢复策略改为"URL query 优先，其次使用 localStorage 中的上次保存值"，便于显式覆盖浏览器内已缓存的 token
 - `egui/eframe` 的内建 persistence 现已启用，主题偏好、侧栏宽度与 agent 窗口布局改由框架自身恢复，不再由 `klaw-webui` 手写持久化
 - 与服务端会话列表对齐时：仅在本地已有记录时恢复 `open`，**新出现的 agent 默认不自动打开窗口**（`PersistedSession.open` 缺省改为 `false`）；本机新建的 agent 仍会在创建后自动打开
 - 「Connect / Reconnect」在判断是否弹出 token 对话框时，会同时参考输入框与已保存的 token

@@ -8,8 +8,9 @@ use klaw_ui_kit::toggle::toggle;
 use std::collections::HashMap;
 
 use crate::{
-    ConnectionState, MessageRole, PageMode, connection_action_label, delete_confirmation_body,
-    derive_page_mode, normalize_gateway_token_input, should_activate_session_window,
+    ConnectionState, MessageRole, PageMode, attachment_action_in_progress, can_trigger_file_picker,
+    connection_action_label, delete_confirmation_body, derive_page_mode,
+    normalize_gateway_token_input, should_activate_session_window,
 };
 
 use super::{
@@ -469,6 +470,7 @@ impl ChatApp {
         };
 
         let mut trigger_send = false;
+        let mut trigger_file_picker = false;
         let mut set_active = false;
         {
             let session = &mut self.sessions[index];
@@ -523,10 +525,15 @@ impl ChatApp {
 
                 ui.separator();
                 ui.vertical(|ui| {
+                    let selecting_file = *session.selecting_file.borrow();
+                    let uploading_file = *session.uploading_file.borrow();
+                    let attachment_busy =
+                        attachment_action_in_progress(selecting_file, uploading_file);
+                    let can_send = self.connection_state.borrow().can_send();
                     let input = TextEdit::multiline(&mut session.draft)
                         .desired_rows(3)
                         .hint_text(self.connection_state.borrow().composer_hint_text())
-                        .interactive(self.connection_state.borrow().can_send());
+                        .interactive(can_send && !attachment_busy);
                     let response = ui.add_sized([ui.available_width(), 72.0], input);
 
                     let send_on_enter = response.has_focus()
@@ -544,19 +551,41 @@ impl ChatApp {
 
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        let helper_text = if self.connection_state.borrow().can_send() {
-                            "Enter to send, Cmd+Enter for newline"
-                        } else {
-                            self.connection_state.borrow().composer_hint_text()
-                        };
-                        ui.label(RichText::new(helper_text).small().weak());
+                        if ui
+                            .add_enabled(
+                                can_trigger_file_picker(can_send, selecting_file, uploading_file),
+                                egui::Button::new(regular::PAPERCLIP).small(),
+                            )
+                            .on_hover_text("Attach file")
+                            .clicked()
+                        {
+                            trigger_file_picker = true;
+                        }
+
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let send_button = ui.add_enabled(
-                                self.connection_state.borrow().can_send(),
+                                can_send && !attachment_busy,
                                 Button::new(format!("{} Send", regular::PAPER_PLANE)),
                             );
                             if send_button.clicked() || send_on_enter {
                                 trigger_send = true;
+                            }
+
+                            if session.selected_archive_id.borrow().is_some() {
+                                ui.label(
+                                    RichText::new(format!("{} File attached", regular::CHECK))
+                                        .small()
+                                        .color(ui.visuals().hyperlink_color),
+                                );
+                                if ui.small_button("✕").on_hover_text("Remove file").clicked() {
+                                    *session.selected_archive_id.borrow_mut() = None;
+                                }
+                            } else if selecting_file {
+                                ui.spinner();
+                                ui.label(RichText::new("Selecting file...").small().weak());
+                            } else if uploading_file {
+                                ui.spinner();
+                                ui.label(RichText::new("Uploading...").small().weak());
                             }
                         });
                     });
@@ -586,6 +615,9 @@ impl ChatApp {
         }
         if became_active || moved_to_front {
             self.persist_workspace_state();
+        }
+        if trigger_file_picker {
+            self.trigger_file_picker(session_key);
         }
         if trigger_send {
             self.send_session_draft(session_key);
