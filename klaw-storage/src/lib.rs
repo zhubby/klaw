@@ -180,18 +180,18 @@ mod tests {
     async fn session_title_updates_persist_across_reads() {
         let store = create_store().await;
         store
-            .touch_session("web:title-test", "chat-1", "web")
+            .touch_session("websocket:title-test", "chat-1", "websocket")
             .await
             .expect("session should be created");
 
         let renamed = store
-            .set_session_title("web:title-test", Some("Saved name"))
+            .set_session_title("websocket:title-test", Some("Saved name"))
             .await
             .expect("title should update");
         assert_eq!(renamed.title.as_deref(), Some("Saved name"));
 
         let fetched = store
-            .get_session("web:title-test")
+            .get_session("websocket:title-test")
             .await
             .expect("session should reload");
         assert_eq!(fetched.title.as_deref(), Some("Saved name"));
@@ -201,30 +201,30 @@ mod tests {
     async fn delete_session_removes_index_and_history_file() {
         let store = create_store().await;
         store
-            .touch_session("web:delete-test", "chat-1", "web")
+            .touch_session("websocket:delete-test", "chat-1", "websocket")
             .await
             .expect("session should be created");
         store
             .append_chat_record(
-                "web:delete-test",
+                "websocket:delete-test",
                 &ChatRecord::new("user", "hello", Some("m1".to_string())),
             )
             .await
             .expect("history should append");
 
         let deleted = store
-            .delete_session("web:delete-test")
+            .delete_session("websocket:delete-test")
             .await
             .expect("delete should succeed");
         assert!(deleted);
         assert!(
             store
-                .read_chat_records("web:delete-test")
+                .read_chat_records("websocket:delete-test")
                 .await
                 .expect("history should read")
                 .is_empty()
         );
-        assert!(store.get_session("web:delete-test").await.is_err());
+        assert!(store.get_session("websocket:delete-test").await.is_err());
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn gateway_credential_accepts_ws_query_token() {
         let req = Request::builder()
-            .uri("/ws/chat?session_key=web:u&token=sec%2Fret")
+            .uri("/ws/chat?session_key=websocket:u&token=sec%2Fret")
             .body(Body::empty())
             .expect("request");
         assert_eq!(

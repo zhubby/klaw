@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-04-12
+
+### Fixed
+
+- gateway websocket 的 `session.subscribe` 读取历史时，现在会先解析订阅 session 的 `active_session_key`；当 base session 已派生到 active child 时，webui 打开窗口会加载 active session 的历史，而不再误读 base session 的旧历史
+- runtime 生成和识别浏览器 websocket 会话时，现已统一使用 `websocket:` 前缀与 `websocket` channel 名称，不再混用旧的 `web:` / `web`
+
 ## 2026-04-09
 
 ### Fixed

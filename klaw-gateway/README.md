@@ -37,7 +37,7 @@
 
 - 当前仅支持非 TLS 监听
 - 启动成功后会输出实际监听地址对应的 `http://<listen_addr>/ws/chat`
-- 根路径 `/` 会返回单页品牌首页，logo 资源位于 `/logo.webp`；浏览器聊天 UI 位于 `/chat`（会话 `session_key` 形如 `web:<uuid>`，存于 `localStorage`）
+- 根路径 `/` 会返回单页品牌首页，logo 资源位于 `/logo.webp`；浏览器聊天 UI 位于 `/chat`（会话 `session_key` 形如 `websocket:<uuid>`，存于 `localStorage`）
 - 当 `gateway.auth.enabled = true` 时，浏览器无法为 WebSocket 设置 `Authorization` 头，因此 `/ws/chat` 同时接受 query 参数 `token` 或 `access_token`（值与配置的 Bearer secret 相同）。**Token 会出现在 URL 与访问日志中**，公网请优先使用 WSS 并知晓风险
 - webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 仅可分别启停并配置独立 body limit，路径固定不再开放配置
 - archive 路由在 `GatewayOptions` 中提供 `archive_service` 时自动注册，所有 archive 接口均需要 Bearer 鉴权

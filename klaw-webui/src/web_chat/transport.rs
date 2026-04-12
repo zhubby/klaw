@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn submit_params_include_model_route_and_archive() {
         let params = build_submit_params(
-            "web:test",
+            "websocket:test",
             "hello",
             true,
             Some("archive-1"),
@@ -567,7 +567,7 @@ mod tests {
             params
                 .get("session_key")
                 .and_then(serde_json::Value::as_str),
-            Some("web:test")
+            Some("websocket:test")
         );
         assert_eq!(
             params.get("input").and_then(serde_json::Value::as_str),
@@ -595,8 +595,14 @@ mod tests {
 
     #[test]
     fn submit_params_omit_archive_when_unset() {
-        let params =
-            build_submit_params("web:test", "hello", false, None, "openai", "gpt-4.1-mini");
+        let params = build_submit_params(
+            "websocket:test",
+            "hello",
+            false,
+            None,
+            "openai",
+            "gpt-4.1-mini",
+        );
 
         assert!(params.get("archive_id").is_none());
         assert_eq!(

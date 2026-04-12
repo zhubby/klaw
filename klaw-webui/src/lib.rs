@@ -687,12 +687,12 @@ mod tests {
     fn sort_sessions_by_created_at_desc_keeps_newest_first() {
         let mut sessions = vec![
             SessionListEntry {
-                session_key: "web:1".to_string(),
+                session_key: "websocket:1".to_string(),
                 title: "Agent 1".to_string(),
                 created_at_ms: 10,
             },
             SessionListEntry {
-                session_key: "web:2".to_string(),
+                session_key: "websocket:2".to_string(),
                 title: "Agent 2".to_string(),
                 created_at_ms: 20,
             },
@@ -700,8 +700,8 @@ mod tests {
 
         sort_session_entries_by_created_at_desc(&mut sessions);
 
-        assert_eq!(sessions[0].session_key, "web:2");
-        assert_eq!(sessions[1].session_key, "web:1");
+        assert_eq!(sessions[0].session_key, "websocket:2");
+        assert_eq!(sessions[1].session_key, "websocket:1");
     }
 
     #[test]
@@ -784,7 +784,7 @@ mod tests {
     #[test]
     fn websocket_submit_params_include_model_route() {
         let params = build_websocket_submit_params(
-            "web:test",
+            "websocket:test",
             "hello",
             true,
             Some("archive-1"),
@@ -796,11 +796,11 @@ mod tests {
             params
                 .get("session_key")
                 .and_then(serde_json::Value::as_str),
-            Some("web:test")
+            Some("websocket:test")
         );
         assert_eq!(
             params.get("chat_id").and_then(serde_json::Value::as_str),
-            Some("web:test")
+            Some("websocket:test")
         );
         assert_eq!(
             params.get("input").and_then(serde_json::Value::as_str),

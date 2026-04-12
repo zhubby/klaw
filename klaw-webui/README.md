@@ -2,7 +2,7 @@
 
 基于 **egui** + **eframe** Web 后端的浏览器聊天壳，连接本仓库 `klaw-gateway` 的 `GET /ws/chat`（按 `session_key` 房间广播纯文本）。
 
-- 会话键：`web:<uuid>`；业务状态默认写入浏览器 `localStorage`（`klaw_webui_workspace_state`），现包含 gateway token 与会话列表
+- 会话键：`websocket:<uuid>`；业务状态默认写入浏览器 `localStorage`（`klaw_webui_workspace_state`），现包含 gateway token 与会话列表
 - `egui/eframe` 的内建持久化已启用，主题偏好与页面布局（如侧栏宽度、浮动窗口位置和尺寸）交由框架写入浏览器存储恢复
 - 可选鉴权：页面 URL 可带 `?gateway_token=` 或 `?token=`，会附加到 WebSocket 的 `token` query（与 `gateway.auth` 密钥一致时生效）
 

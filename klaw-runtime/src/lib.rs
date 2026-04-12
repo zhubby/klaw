@@ -3557,8 +3557,8 @@ mod tests {
             content_sha256: "sha256".to_string(),
             size_bytes: 7,
             storage_rel_path: "archive/test.bin".to_string(),
-            session_key: Some("web:test".to_string()),
-            channel: Some("web".to_string()),
+            session_key: Some("websocket:test".to_string()),
+            channel: Some("websocket".to_string()),
             chat_id: Some("chat:test".to_string()),
             message_id: None,
             metadata_json: "{}".to_string(),
@@ -5864,7 +5864,7 @@ A .docx file is a ZIP archive containing XML files.
         let sessions = test_session_manager(&runtime);
         sessions
             .get_or_create_session_state(
-                "web:test-provider-route",
+                "websocket:test-provider-route",
                 "chat-provider-route",
                 "websocket",
                 "test-provider",
@@ -5889,7 +5889,7 @@ A .docx file is a ZIP archive containing XML files.
             ChannelRequest {
                 channel: "websocket".to_string(),
                 input: "route with alt provider".to_string(),
-                session_key: "web:test-provider-route".to_string(),
+                session_key: "websocket:test-provider-route".to_string(),
                 chat_id: "chat-provider-route".to_string(),
                 media_references: Vec::new(),
                 metadata: BTreeMap::from([(
@@ -5929,7 +5929,7 @@ A .docx file is a ZIP archive containing XML files.
         );
 
         let session = sessions
-            .get_session("web:test-provider-route")
+            .get_session("websocket:test-provider-route")
             .await
             .expect("session should reload");
         assert_eq!(session.model_provider.as_deref(), Some("alt-provider"));
@@ -5943,7 +5943,7 @@ A .docx file is a ZIP archive containing XML files.
         let sessions = test_session_manager(&runtime);
         sessions
             .get_or_create_session_state(
-                "web:test-model-route",
+                "websocket:test-model-route",
                 "chat-model-route",
                 "websocket",
                 "test-provider",
@@ -5957,7 +5957,7 @@ A .docx file is a ZIP archive containing XML files.
             ChannelRequest {
                 channel: "websocket".to_string(),
                 input: "route with explicit model".to_string(),
-                session_key: "web:test-model-route".to_string(),
+                session_key: "websocket:test-model-route".to_string(),
                 chat_id: "chat-model-route".to_string(),
                 media_references: Vec::new(),
                 metadata: BTreeMap::from([(
@@ -5983,7 +5983,7 @@ A .docx file is a ZIP archive containing XML files.
         let route = resolve_session_route(
             &runtime,
             "websocket",
-            "web:test-model-route",
+            "websocket:test-model-route",
             "chat-model-route",
         )
         .await
@@ -5999,7 +5999,7 @@ A .docx file is a ZIP archive containing XML files.
         let sessions = test_session_manager(&runtime);
         sessions
             .get_or_create_session_state(
-                "web:test-unknown-provider",
+                "websocket:test-unknown-provider",
                 "chat-unknown-provider",
                 "websocket",
                 "test-provider",
@@ -6013,7 +6013,7 @@ A .docx file is a ZIP archive containing XML files.
             ChannelRequest {
                 channel: "websocket".to_string(),
                 input: "should fail".to_string(),
-                session_key: "web:test-unknown-provider".to_string(),
+                session_key: "websocket:test-unknown-provider".to_string(),
                 chat_id: "chat-unknown-provider".to_string(),
                 media_references: Vec::new(),
                 metadata: BTreeMap::from([(
@@ -6037,7 +6037,7 @@ A .docx file is a ZIP archive containing XML files.
         let route = resolve_session_route(
             &runtime,
             "websocket",
-            "web:test-unknown-provider",
+            "websocket:test-unknown-provider",
             "chat-unknown-provider",
         )
         .await

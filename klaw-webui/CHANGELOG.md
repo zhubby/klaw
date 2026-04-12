@@ -17,6 +17,7 @@
 - `SessionWindow` 中的 `selected_archive_id` 和 `uploading_file` 字段改为 `Rc<RefCell<>>` 以支持异步上传任务更新状态
 - `session.submit` 方法现在支持可选的 `archive_id` 参数，发送后自动清除已附加的文件
 - agent 窗口现在维护独立的历史初始化状态：未打开窗口不预取历史，首次打开时异步调用 `session.subscribe`，并在历史尚未返回完成前显示加载 spinner
+- webui 的 websocket 会话键前缀已从 `web:` 统一切换为 `websocket:`，并与 channel 类型命名保持一致
 
 ## 2026-04-10
 
@@ -48,7 +49,7 @@
 
 ### Added
 
-- 初始版本：WASM 聊天 UI（egui）、WebSocket 客户端、`web:` 会话前缀与可选 gateway token query
+- 初始版本：WASM 聊天 UI（egui）、WebSocket 客户端、`websocket:` 会话前缀与可选 gateway token query
 
 ### Changed
 

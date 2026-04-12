@@ -105,7 +105,7 @@ Webhook 请求在鉴权和参数校验通过后会立即返回 `202 Accepted`，
 示例：
 
 ```json
-{"type":"method","id":"sub-1","method":"session.subscribe","params":{"session_key":"web:demo"}}
+{"type":"method","id":"sub-1","method":"session.subscribe","params":{"session_key":"websocket:demo"}}
 {"type":"method","id":"req-1","method":"session.submit","params":{"input":"hello","stream":true}}
 ```
 

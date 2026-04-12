@@ -34,21 +34,21 @@ mod tests {
             Ok(GatewayWorkspaceBootstrap {
                 sessions: vec![
                     GatewayWorkspaceSession {
-                        session_key: "web:older".to_string(),
+                        session_key: "websocket:older".to_string(),
                         title: "Agent 1".to_string(),
                         created_at_ms: 10,
                         model_provider: Some("openai".to_string()),
                         model: Some("gpt-4.1-mini".to_string()),
                     },
                     GatewayWorkspaceSession {
-                        session_key: "web:newer".to_string(),
+                        session_key: "websocket:newer".to_string(),
                         title: "Agent 2".to_string(),
                         created_at_ms: 20,
                         model_provider: Some("anthropic".to_string()),
                         model: Some("claude-sonnet-4-5".to_string()),
                     },
                 ],
-                active_session_key: Some("web:newer".to_string()),
+                active_session_key: Some("websocket:newer".to_string()),
             })
         }
 
@@ -56,7 +56,7 @@ mod tests {
             &self,
         ) -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError> {
             Ok(GatewayWorkspaceSession {
-                session_key: "web:created".to_string(),
+                session_key: "websocket:created".to_string(),
                 title: "Agent 3".to_string(),
                 created_at_ms: 30,
                 model_provider: Some("openai".to_string()),
@@ -82,14 +82,14 @@ mod tests {
             &self,
             session_key: &str,
         ) -> Result<bool, GatewayWebsocketHandlerError> {
-            Ok(session_key == "web:newer")
+            Ok(session_key == "websocket:newer")
         }
 
         async fn load_session_history(
             &self,
             session_key: &str,
         ) -> Result<Vec<GatewaySessionHistoryMessage>, GatewayWebsocketHandlerError> {
-            if session_key == "web:history" {
+            if session_key == "websocket:history" {
                 return Ok(vec![GatewaySessionHistoryMessage {
                     role: "assistant".to_string(),
                     content: "previous answer".to_string(),
@@ -504,7 +504,7 @@ mod tests {
                     "type": "method",
                     "id": "sub-1",
                     "method": "session.subscribe",
-                    "params": { "session_key": "web:test-session" }
+                    "params": { "session_key": "websocket:test-session" }
                 })
                 .to_string()
                 .into(),
@@ -512,7 +512,7 @@ mod tests {
             .await
             .expect("subscribe should send");
 
-        for _ in 0..2 {
+        for _ in 0..3 {
             let _ = socket.next().await;
         }
 
@@ -561,8 +561,8 @@ mod tests {
 
         let recorded = requests.lock().unwrap_or_else(|err| err.into_inner());
         assert_eq!(recorded.len(), 1);
-        assert_eq!(recorded[0].session_key, "web:test-session");
-        assert_eq!(recorded[0].chat_id, "web:test-session");
+        assert_eq!(recorded[0].session_key, "websocket:test-session");
+        assert_eq!(recorded[0].chat_id, "websocket:test-session");
         assert_eq!(recorded[0].channel_id, "default");
         assert_eq!(recorded[0].input, "hello gateway");
         assert_eq!(
@@ -640,19 +640,19 @@ mod tests {
                     sessions[0]
                         .get("session_key")
                         .and_then(|value| value.as_str()),
-                    Some("web:newer")
+                    Some("websocket:newer")
                 );
                 assert_eq!(
                     sessions[1]
                         .get("session_key")
                         .and_then(|value| value.as_str()),
-                    Some("web:older")
+                    Some("websocket:older")
                 );
                 assert_eq!(
                     result
                         .get("active_session_key")
                         .and_then(|value| value.as_str()),
-                    Some("web:newer")
+                    Some("websocket:newer")
                 );
                 assert_eq!(
                     sessions[0]
@@ -727,7 +727,7 @@ mod tests {
                 assert_eq!(id, "create-1");
                 assert_eq!(
                     result.get("session_key").and_then(|value| value.as_str()),
-                    Some("web:created")
+                    Some("websocket:created")
                 );
                 assert_eq!(
                     result.get("title").and_then(|value| value.as_str()),
@@ -790,7 +790,7 @@ mod tests {
                     "id": "update-1",
                     "method": "session.update",
                     "params": {
-                        "session_key": "web:newer",
+                        "session_key": "websocket:newer",
                         "title": "Renamed agent"
                     }
                 })
@@ -817,7 +817,7 @@ mod tests {
         let result = payload.get("result").expect("result payload");
         assert_eq!(
             result.get("session_key").and_then(|value| value.as_str()),
-            Some("web:newer")
+            Some("websocket:newer")
         );
         assert_eq!(
             result.get("title").and_then(|value| value.as_str()),
@@ -959,7 +959,7 @@ mod tests {
                     "id": "delete-1",
                     "method": "session.delete",
                     "params": {
-                        "session_key": "web:newer"
+                        "session_key": "websocket:newer"
                     }
                 })
                 .to_string()
@@ -985,7 +985,7 @@ mod tests {
         let result = payload.get("result").expect("result payload");
         assert_eq!(
             result.get("session_key").and_then(|value| value.as_str()),
-            Some("web:newer")
+            Some("websocket:newer")
         );
         assert_eq!(
             result.get("deleted").and_then(|value| value.as_bool()),
@@ -1027,7 +1027,7 @@ mod tests {
                     "type": "method",
                     "id": "sub-history-1",
                     "method": "session.subscribe",
-                    "params": { "session_key": "web:history" }
+                    "params": { "session_key": "websocket:history" }
                 })
                 .to_string()
                 .into(),
@@ -1088,7 +1088,7 @@ mod tests {
                 assert_eq!(event, OutboundEvent::SessionSubscribed);
                 assert_eq!(
                     payload.get("session_key").and_then(|value| value.as_str()),
-                    Some("web:history")
+                    Some("websocket:history")
                 );
             }
             other => panic!("unexpected subscribe event: {other:?}"),
@@ -1098,7 +1098,7 @@ mod tests {
                 assert_eq!(event, OutboundEvent::SessionMessage);
                 assert_eq!(
                     payload.get("session_key").and_then(|value| value.as_str()),
-                    Some("web:history")
+                    Some("websocket:history")
                 );
                 assert_eq!(
                     payload
@@ -1123,7 +1123,7 @@ mod tests {
                 assert_eq!(event, OutboundEvent::SessionHistoryDone);
                 assert_eq!(
                     payload.get("session_key").and_then(|value| value.as_str()),
-                    Some("web:history")
+                    Some("websocket:history")
                 );
             }
             other => panic!("unexpected history done event: {other:?}"),

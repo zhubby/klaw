@@ -104,7 +104,7 @@ pub(super) fn save_workspace_state(state: &PersistedWorkspaceState) {
 }
 
 fn is_valid_session_key(session_key: &str) -> bool {
-    let Some(rest) = session_key.strip_prefix("web:") else {
+    let Some(rest) = session_key.strip_prefix("websocket:") else {
         return false;
     };
     Uuid::parse_str(rest).is_ok()
@@ -112,7 +112,7 @@ fn is_valid_session_key(session_key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_stream_enabled, default_workspace_state};
+    use super::{default_stream_enabled, default_workspace_state, is_valid_session_key};
 
     #[test]
     fn persisted_workspace_state_defaults_without_local_sessions() {
@@ -126,5 +126,15 @@ mod tests {
     #[test]
     fn webui_stream_toggle_defaults_to_enabled() {
         assert!(default_stream_enabled());
+    }
+
+    #[test]
+    fn webui_only_accepts_websocket_prefixed_session_keys() {
+        assert!(is_valid_session_key(
+            "websocket:550e8400-e29b-41d4-a716-446655440000"
+        ));
+        assert!(!is_valid_session_key(
+            "web:550e8400-e29b-41d4-a716-446655440000"
+        ));
     }
 }

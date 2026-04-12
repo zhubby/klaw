@@ -22,6 +22,7 @@
 - `should_require_gateway_auth` 函数现在检查 archive 和 providers 相关路径
 - `Route` 枚举新增 `ArchiveUpload`、`ArchiveDownload`、`ArchiveList`、`ArchiveGet` 和 `ProvidersList` 变体
 - `session.subscribe` 现在会在历史消息流发送完后额外发出 `session.history.done` 事件，便于浏览器 chat UI 在异步加载历史时准确结束 loading 状态
+- websocket chat 会话键前缀已统一改为 `websocket:`，与 channel 类型 `websocket` 保持一致
 
 ## 2026-04-10
 

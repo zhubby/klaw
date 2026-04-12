@@ -730,18 +730,18 @@ mod tests {
         let store = create_store().await;
         let manager = SqliteSessionManager::from_store(store);
         manager
-            .touch_session("web:test", "chat-1", "web")
+            .touch_session("websocket:test", "chat-1", "websocket")
             .await
             .expect("session should be created");
 
         let updated = manager
-            .set_session_title("web:test", Some("Renamed agent"))
+            .set_session_title("websocket:test", Some("Renamed agent"))
             .await
             .expect("title should update");
         assert_eq!(updated.title.as_deref(), Some("Renamed agent"));
 
         let reloaded = manager
-            .get_session("web:test")
+            .get_session("websocket:test")
             .await
             .expect("session should reload");
         assert_eq!(reloaded.title.as_deref(), Some("Renamed agent"));
@@ -752,26 +752,29 @@ mod tests {
         let store = create_store().await;
         let manager = SqliteSessionManager::from_store(store);
         manager
-            .touch_session("web:delete-me", "chat-1", "web")
+            .touch_session("websocket:delete-me", "chat-1", "websocket")
             .await
             .expect("session should be created");
         manager
-            .append_chat_record("web:delete-me", &ChatRecord::new("user", "hello", None))
+            .append_chat_record(
+                "websocket:delete-me",
+                &ChatRecord::new("user", "hello", None),
+            )
             .await
             .expect("history should append");
 
         let deleted = manager
-            .delete_session("web:delete-me")
+            .delete_session("websocket:delete-me")
             .await
             .expect("delete should succeed");
         assert!(deleted);
         assert!(
             manager
-                .read_chat_records("web:delete-me")
+                .read_chat_records("websocket:delete-me")
                 .await
                 .expect("history should load")
                 .is_empty()
         );
-        assert!(manager.get_session("web:delete-me").await.is_err());
+        assert!(manager.get_session("websocket:delete-me").await.is_err());
     }
 }

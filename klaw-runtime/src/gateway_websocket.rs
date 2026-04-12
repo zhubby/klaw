@@ -67,6 +67,14 @@ impl RuntimeWebsocketHandler {
     }
 }
 
+fn resolved_history_session_key(session: &klaw_storage::SessionIndex) -> &str {
+    session
+        .active_session_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+        .unwrap_or(&session.session_key)
+}
+
 #[async_trait]
 impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
     async fn bootstrap(&self) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError> {
@@ -91,9 +99,9 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
     ) -> Result<GatewayWorkspaceSession, GatewayWebsocketHandlerError> {
         let manager =
             klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone());
-        let session_key = format!("web:{}", Uuid::new_v4());
+        let session_key = format!("websocket:{}", Uuid::new_v4());
         manager
-            .touch_session(&session_key, &session_key, "web")
+            .touch_session(&session_key, &session_key, "websocket")
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
         let workspace = self.load_web_workspace().await?;
@@ -146,8 +154,12 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
     ) -> Result<Vec<GatewaySessionHistoryMessage>, GatewayWebsocketHandlerError> {
         let manager =
             klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone());
+        let session = manager
+            .get_session(session_key)
+            .await
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
         let records = manager
-            .read_chat_records(session_key)
+            .read_chat_records(resolved_history_session_key(&session))
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
         Ok(records
@@ -384,7 +396,7 @@ fn serialize_response(response: &ChannelResponse, show_reasoning: bool) -> Value
 fn build_web_workspace_bootstrap(
     mut sessions: Vec<klaw_storage::SessionIndex>,
 ) -> GatewayWorkspaceBootstrap {
-    sessions.retain(|session| session.session_key.starts_with("web:"));
+    sessions.retain(|session| session.session_key.starts_with("websocket:"));
     sessions.sort_by(|left, right| {
         left.created_at_ms
             .cmp(&right.created_at_ms)
@@ -419,7 +431,9 @@ fn build_web_workspace_bootstrap(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_web_workspace_bootstrap, stream_events_to_frames};
+    use super::{
+        build_web_workspace_bootstrap, resolved_history_session_key, stream_events_to_frames,
+    };
     use klaw_channel::{ChannelResponse, ChannelStreamEvent};
     use klaw_gateway::OutboundEvent;
     use klaw_storage::SessionIndex;
@@ -429,7 +443,7 @@ mod tests {
     fn stream_events_emit_delta_then_done_snapshot_updates() {
         let frames = stream_events_to_frames(
             "req-1",
-            "web:test",
+            "websocket:test",
             false,
             &[
                 ChannelStreamEvent::Snapshot(ChannelResponse {
@@ -493,7 +507,7 @@ mod tests {
     fn stream_clear_resets_active_delta_state() {
         let frames = stream_events_to_frames(
             "req-2",
-            "web:test",
+            "websocket:test",
             true,
             &[
                 ChannelStreamEvent::Snapshot(ChannelResponse {
@@ -532,7 +546,7 @@ mod tests {
     fn web_workspace_bootstrap_keeps_web_sessions_after_channel_changes() {
         let workspace = build_web_workspace_bootstrap(vec![
             SessionIndex {
-                session_key: "web:old".to_string(),
+                session_key: "websocket:old".to_string(),
                 chat_id: "chat-old".to_string(),
                 channel: "websocket".to_string(),
                 title: Some("Saved old".to_string()),
@@ -566,9 +580,9 @@ mod tests {
                 jsonl_path: "ignore.jsonl".to_string(),
             },
             SessionIndex {
-                session_key: "web:new".to_string(),
+                session_key: "websocket:new".to_string(),
                 chat_id: "chat-new".to_string(),
-                channel: "web".to_string(),
+                channel: "websocket".to_string(),
                 title: None,
                 active_session_key: None,
                 model_provider: None,
@@ -584,11 +598,37 @@ mod tests {
             },
         ]);
 
-        assert_eq!(workspace.active_session_key.as_deref(), Some("web:new"));
+        assert_eq!(
+            workspace.active_session_key.as_deref(),
+            Some("websocket:new")
+        );
         assert_eq!(workspace.sessions.len(), 2);
-        assert_eq!(workspace.sessions[0].session_key, "web:new");
+        assert_eq!(workspace.sessions[0].session_key, "websocket:new");
         assert_eq!(workspace.sessions[0].title, "Agent 2");
-        assert_eq!(workspace.sessions[1].session_key, "web:old");
+        assert_eq!(workspace.sessions[1].session_key, "websocket:old");
         assert_eq!(workspace.sessions[1].title, "Saved old");
+    }
+
+    #[test]
+    fn history_subscription_prefers_active_session_when_present() {
+        let base = SessionIndex {
+            session_key: "websocket:base".to_string(),
+            chat_id: "chat-base".to_string(),
+            channel: "websocket".to_string(),
+            title: Some("Base".to_string()),
+            active_session_key: Some("websocket:base:child".to_string()),
+            model_provider: None,
+            model_provider_explicit: false,
+            model: None,
+            model_explicit: false,
+            delivery_metadata_json: None,
+            created_at_ms: 10,
+            updated_at_ms: 20,
+            last_message_at_ms: 20,
+            turn_count: 1,
+            jsonl_path: "base.jsonl".to_string(),
+        };
+
+        assert_eq!(resolved_history_session_key(&base), "websocket:base:child");
     }
 }
