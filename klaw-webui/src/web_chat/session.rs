@@ -117,7 +117,7 @@ impl SessionWindow {
                     &message.text,
                     FontId::new(14.0, FontFamily::Proportional),
                     Color32::WHITE,
-                    2.5,
+                    0.6,
                     AnimationType::FadeIn,
                 )
             });

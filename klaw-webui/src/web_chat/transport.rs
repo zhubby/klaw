@@ -461,7 +461,8 @@ impl ChatApp {
             MessageRole::User,
             current_timestamp_ms(),
         ));
-        *session.buffers.active_stream_request_id.borrow_mut() = Some(request_id.clone());
+        *session.buffers.active_stream_request_id.borrow_mut() =
+            self.stream_enabled.then_some(request_id.clone());
         if let Err(err) = send_method(
             &ws,
             &request_id,
@@ -470,7 +471,7 @@ impl ChatApp {
                 "session_key": session_key,
                 "chat_id": session_key,
                 "input": text,
-                "stream": true,
+                "stream": self.stream_enabled,
             }),
         ) {
             *self.connection_state.borrow_mut() = ConnectionState::Error(err);

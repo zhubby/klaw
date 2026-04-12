@@ -33,6 +33,7 @@ pub(super) struct ChatApp {
     pub(in crate::web_chat) rename_session_input: String,
     pub(in crate::web_chat) delete_session_key: Option<String>,
     pub(in crate::web_chat) did_attempt_prefilled_token: bool,
+    pub(in crate::web_chat) stream_enabled: bool,
 }
 
 impl ChatApp {
@@ -44,6 +45,7 @@ impl ChatApp {
         let gateway_token_input = gateway_token.clone().unwrap_or_default();
         let persisted_active_session_key = persisted.active_session_key;
         let persisted_sessions = persisted.sessions;
+        let stream_enabled = persisted.stream_enabled;
 
         let mut app = Self {
             ctx: cc.egui_ctx.clone(),
@@ -62,6 +64,7 @@ impl ChatApp {
             rename_session_input: String::new(),
             delete_session_key: None,
             did_attempt_prefilled_token: false,
+            stream_enabled,
         };
         app.restore_window_state(persisted_sessions);
         if let Some(legacy_theme_mode) = persisted.legacy_theme_mode {
@@ -84,6 +87,7 @@ impl ChatApp {
             sessions: self.sessions.iter().map(SessionWindow::metadata).collect(),
             active_session_key: self.active_session_key.clone(),
             gateway_token: self.gateway_token.clone(),
+            stream_enabled: self.stream_enabled,
         });
     }
 

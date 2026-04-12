@@ -22,6 +22,8 @@ pub(super) struct PersistedWorkspaceState {
     pub(in crate::web_chat) active_session_key: Option<String>,
     #[serde(default)]
     pub(in crate::web_chat) gateway_token: Option<String>,
+    #[serde(default = "default_stream_enabled")]
+    pub(in crate::web_chat) stream_enabled: bool,
 }
 
 const fn default_session_open() -> bool {
@@ -34,7 +36,12 @@ fn default_workspace_state() -> PersistedWorkspaceState {
         sessions: Vec::new(),
         active_session_key: None,
         gateway_token: None,
+        stream_enabled: default_stream_enabled(),
     }
+}
+
+const fn default_stream_enabled() -> bool {
+    true
 }
 
 fn storage() -> Option<Storage> {
@@ -105,7 +112,7 @@ fn is_valid_session_key(session_key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::default_workspace_state;
+    use super::{default_stream_enabled, default_workspace_state};
 
     #[test]
     fn persisted_workspace_state_defaults_without_local_sessions() {
@@ -113,5 +120,11 @@ mod tests {
         assert!(state.active_session_key.is_none());
         assert!(state.gateway_token.is_none());
         assert!(state.sessions.is_empty());
+        assert!(state.stream_enabled);
+    }
+
+    #[test]
+    fn webui_stream_toggle_defaults_to_enabled() {
+        assert!(default_stream_enabled());
     }
 }

@@ -4,6 +4,7 @@ use eframe::egui::{
 };
 use egui_phosphor::regular;
 use klaw_ui_kit::text_animator::TextAnimator;
+use klaw_ui_kit::toggle::toggle;
 use std::collections::HashMap;
 
 use crate::{
@@ -103,6 +104,7 @@ impl ChatApp {
 
     fn render_status_bar(&mut self, ctx: &Context) {
         let mut requested_theme = None;
+        let mut stream_changed = false;
         TopBottomPanel::bottom("klaw-webui-status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Theme Mode:");
@@ -130,6 +132,14 @@ impl ChatApp {
                     });
                 ui.separator();
                 ui.label(format!("Agents: {}", self.sessions.len()));
+                ui.separator();
+                ui.label("Stream");
+                let response = ui.add(toggle(&mut self.stream_enabled)).on_hover_text(
+                    "On: stream replies live. Off: wait for a full reply and play fade-in.",
+                );
+                if response.changed() {
+                    stream_changed = true;
+                }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let fps = self.ctx.available_rect();
@@ -153,6 +163,9 @@ impl ChatApp {
 
         if let Some(theme_mode) = requested_theme {
             self.set_theme_mode(theme_mode);
+        }
+        if stream_changed {
+            self.persist_workspace_state();
         }
     }
 
