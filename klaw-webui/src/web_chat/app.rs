@@ -9,7 +9,8 @@ use web_sys::WebSocket;
 use crate::{
     ConnectionState, SessionListEntry, attachment_action_in_progress,
     normalize_gateway_token_input, resolve_gateway_token,
-    should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
+    should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
+    sort_session_entries_by_created_at_desc,
 };
 
 use super::{
@@ -474,8 +475,10 @@ async fn wait_for_selected_file(
     input_element: &web_sys::HtmlInputElement,
 ) -> Result<Option<web_sys::File>, String> {
     const FILE_PICKER_TIMEOUT_MS: f64 = 120_000.0;
+    const FILE_PICKER_CANCEL_GRACE_MS: f64 = 250.0;
 
     let mut picker_took_focus = false;
+    let mut focus_returned_at_ms = None;
     let started_at = js_sys::Date::now();
 
     loop {
@@ -488,8 +491,14 @@ async fn wait_for_selected_file(
             .map_err(|_| "Failed to inspect picker focus state".to_string())?;
         if !has_focus {
             picker_took_focus = true;
+            focus_returned_at_ms = None;
         } else if picker_took_focus {
-            return Ok(None);
+            let focus_returned_at = *focus_returned_at_ms.get_or_insert_with(js_sys::Date::now);
+            let grace_elapsed =
+                js_sys::Date::now() - focus_returned_at >= FILE_PICKER_CANCEL_GRACE_MS;
+            if should_cancel_file_picker_selection(picker_took_focus, has_focus, grace_elapsed) {
+                return Ok(None);
+            }
         }
         if js_sys::Date::now() - started_at >= FILE_PICKER_TIMEOUT_MS {
             return Ok(None);

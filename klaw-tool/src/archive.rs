@@ -60,6 +60,18 @@ struct CurrentAttachment {
 }
 
 impl ArchiveTool {
+    pub fn with_service(
+        service: Arc<dyn ArchiveService>,
+        config: &AppConfig,
+        session_store: DefaultSessionStore,
+    ) -> Self {
+        Self {
+            service,
+            session_store: Arc::new(session_store),
+            storage_root_dir: config.storage.root_dir.clone(),
+        }
+    }
+
     pub async fn open_default(
         config: &AppConfig,
         session_store: DefaultSessionStore,
@@ -67,11 +79,11 @@ impl ArchiveTool {
         let service = open_default_archive_service().await.map_err(|err| {
             ToolError::ExecutionFailed(format!("failed to open archive service: {err}"))
         })?;
-        Ok(Self {
-            service: Arc::new(service),
-            session_store: Arc::new(session_store),
-            storage_root_dir: config.storage.root_dir.clone(),
-        })
+        Ok(Self::with_service(
+            Arc::new(service),
+            config,
+            session_store,
+        ))
     }
 
     fn parse_request(args: Value) -> Result<ArchiveRequest, ToolError> {

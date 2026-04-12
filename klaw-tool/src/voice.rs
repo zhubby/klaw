@@ -75,17 +75,24 @@ struct VoiceRequest {
 }
 
 impl VoiceTool {
-    pub async fn open_default(config: &AppConfig) -> Result<Self, ToolError> {
-        let archive = open_default_archive_service().await.map_err(|err| {
-            ToolError::ExecutionFailed(format!("failed to open archive service: {err}"))
-        })?;
+    pub fn with_archive(
+        archive: Arc<dyn ArchiveService>,
+        config: &AppConfig,
+    ) -> Result<Self, ToolError> {
         let voice = VoiceService::from_config(&config.voice).map_err(|err| {
             ToolError::ExecutionFailed(format!("failed to build voice service: {err}"))
         })?;
         Ok(Self {
-            archive: Arc::new(archive),
+            archive,
             voice: Arc::new(voice),
         })
+    }
+
+    pub async fn open_default(config: &AppConfig) -> Result<Self, ToolError> {
+        let archive = open_default_archive_service().await.map_err(|err| {
+            ToolError::ExecutionFailed(format!("failed to open archive service: {err}"))
+        })?;
+        Self::with_archive(Arc::new(archive), config)
     }
 
     #[cfg(test)]

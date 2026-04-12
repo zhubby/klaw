@@ -257,6 +257,15 @@ pub(crate) fn next_selected_archive_id_after_submit(
     }
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn should_cancel_file_picker_selection(
+    picker_took_focus: bool,
+    has_focus: bool,
+    grace_elapsed: bool,
+) -> bool {
+    picker_took_focus && has_focus && grace_elapsed
+}
+
 #[cfg(test)]
 pub(crate) fn classify_message_role(
     pending_local_echoes: &mut VecDeque<String>,
@@ -290,8 +299,8 @@ mod tests {
         connection_action_label, delete_confirmation_body, derive_page_mode,
         next_selected_archive_id_after_submit, normalize_gateway_token_input,
         resolve_gateway_token, session_card_activity_label, should_activate_session_window,
-        should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
-        sort_session_entries_by_created_at_desc,
+        should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
+        should_register_non_stream_fade, sort_session_entries_by_created_at_desc,
     };
 
     #[test]
@@ -525,6 +534,16 @@ mod tests {
             None
         );
         assert_eq!(next_selected_archive_id_after_submit(None, true), None);
+    }
+
+    #[test]
+    fn file_picker_does_not_cancel_immediately_when_focus_returns() {
+        assert!(!should_cancel_file_picker_selection(true, true, false));
+    }
+
+    #[test]
+    fn file_picker_cancels_after_focus_returns_and_grace_expires() {
+        assert!(should_cancel_file_picker_selection(true, true, true));
     }
 
     #[test]

@@ -29,6 +29,8 @@ pub fn gateway_options(runtime: Arc<RuntimeBundle>, config: &AppConfig) -> Gatew
             Arc::clone(&runtime),
             config,
         )),
+        archive_service: runtime.archive_service.clone(),
+        app_config: Some(Arc::new(config.clone())),
         ..GatewayOptions::default()
     }
 }

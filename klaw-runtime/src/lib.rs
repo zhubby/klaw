@@ -11,6 +11,7 @@ use klaw_agent::{
     build_compression_prompt, build_provider_from_config, merge_or_reset_summary,
     parse_conversation_summary,
 };
+use klaw_archive::{ArchiveService, open_default_archive_service};
 use klaw_approval::{
     ApprovalManager, ApprovalResolveDecision, ApprovalStatus, SqliteApprovalManager,
 };
@@ -98,6 +99,7 @@ pub struct StartupReport {
 pub struct RuntimeBundle {
     pub runtime: AgentLoop,
     pub base_system_prompt: Arc<RwLock<Option<String>>>,
+    pub archive_service: Option<Arc<dyn ArchiveService>>,
     pub memory_db: Option<Arc<dyn MemoryDb>>,
     pub runtime_provider_override: Arc<RwLock<Option<String>>>,
     pub disable_session_commands_for: BTreeSet<String>,
@@ -1235,17 +1237,28 @@ async fn register_configured_tools(
     tools: &mut ToolRegistry,
     config: &AppConfig,
     session_store: DefaultSessionStore,
+    archive_service: Option<Arc<dyn ArchiveService>>,
     memory_db: Option<Arc<dyn MemoryDb>>,
     sub_agent_audit_sink: Option<Arc<dyn SubAgentAuditSink>>,
 ) -> Result<(), Box<dyn Error>> {
     if config.tools.archive.enabled() {
-        tools.register(ArchiveTool::open_default(config, session_store.clone()).await?);
+        let service = archive_service
+            .clone()
+            .ok_or_else(|| io::Error::other("archive service unavailable"))?;
+        tools.register(ArchiveTool::with_service(
+            service,
+            config,
+            session_store.clone(),
+        ));
     }
     if config.tools.channel_attachment.enabled() {
         tools.register(ChannelAttachmentTool::open_default(config).await?);
     }
     if voice_tool_is_enabled(config) {
-        tools.register(VoiceTool::open_default(config).await?);
+        let service = archive_service
+            .clone()
+            .ok_or_else(|| io::Error::other("archive service unavailable"))?;
+        tools.register(VoiceTool::with_archive(service, config)?);
     } else if config.tools.voice.enabled() && !config.voice.enabled {
         info!("voice tool disabled because voice.enabled=false");
     }
@@ -1387,6 +1400,7 @@ pub async fn sync_runtime_tools(
         &mut next_tools,
         config,
         runtime.session_store.clone(),
+        runtime.archive_service.clone(),
         runtime.memory_db.clone(),
         Some(sub_agent_audit_sink),
     )
@@ -1667,6 +1681,14 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let default_provider = Arc::clone(&provider_runtime.default_provider);
     let default_model = provider_runtime.default_model.clone();
     let session_store = open_default_store().await?;
+    let archive_service = if config.gateway.enabled
+        || config.tools.archive.enabled()
+        || voice_tool_is_enabled(config)
+    {
+        Some(Arc::new(open_default_archive_service().await?) as Arc<dyn ArchiveService>)
+    } else {
+        None
+    };
     let memory_db = if config.tools.memory.enabled() {
         Some(Arc::new(open_default_memory_db().await?) as Arc<dyn MemoryDb>)
     } else {
@@ -1684,6 +1706,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         &mut tools,
         config,
         session_store.clone(),
+        archive_service.clone(),
         memory_db.clone(),
         Some(sub_agent_audit_sink),
     )
@@ -1770,6 +1793,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     Ok(RuntimeBundle {
         runtime,
         base_system_prompt: Arc::new(RwLock::new(base_system_prompt)),
+        archive_service,
         memory_db,
         runtime_provider_override: Arc::new(RwLock::new(None)),
         disable_session_commands_for: config
@@ -3353,6 +3377,11 @@ mod tests {
         submit_and_get_output, submit_webhook_agent, submit_webhook_event, sync_runtime_providers,
         sync_runtime_tools, trim_conversation_history, voice_tool_is_enabled,
     };
+    use async_trait::async_trait;
+    use klaw_archive::{
+        ArchiveBlob, ArchiveError, ArchiveIngestInput, ArchiveMediaKind, ArchiveQuery,
+        ArchiveRecord, ArchiveService, ArchiveSourceKind,
+    };
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
     use klaw_approval::{ApprovalCreateInput, ApprovalManager};
     use klaw_channel::OutboundAttachmentSource;
@@ -3374,6 +3403,7 @@ mod tests {
     use std::{
         collections::{BTreeMap, BTreeSet},
         fs,
+        path::{Path, PathBuf},
         sync::{Arc, Mutex, RwLock},
         time::Duration,
     };
@@ -3384,6 +3414,70 @@ mod tests {
     struct BootstrapCaptureProvider {
         last_user_message: Arc<Mutex<Option<String>>>,
         last_tool_choice: Arc<Mutex<Option<Value>>>,
+    }
+
+    #[derive(Default)]
+    struct FakeArchiveService;
+
+    #[async_trait]
+    impl ArchiveService for FakeArchiveService {
+        async fn ingest_path(
+            &self,
+            _input: ArchiveIngestInput,
+            _source_path: &Path,
+        ) -> Result<ArchiveRecord, ArchiveError> {
+            Err(ArchiveError::InvalidQuery(
+                "ingest_path not used in runtime tests".to_string(),
+            ))
+        }
+
+        async fn ingest_bytes(
+            &self,
+            _input: ArchiveIngestInput,
+            _bytes: &[u8],
+        ) -> Result<ArchiveRecord, ArchiveError> {
+            Ok(sample_archive_record("arch-test"))
+        }
+
+        async fn find(&self, _query: ArchiveQuery) -> Result<Vec<ArchiveRecord>, ArchiveError> {
+            Ok(Vec::new())
+        }
+
+        async fn get(&self, archive_id: &str) -> Result<ArchiveRecord, ArchiveError> {
+            Ok(sample_archive_record(archive_id))
+        }
+
+        async fn open_download(&self, archive_id: &str) -> Result<ArchiveBlob, ArchiveError> {
+            Ok(ArchiveBlob {
+                record: sample_archive_record(archive_id),
+                absolute_path: PathBuf::from("/tmp/fake-archive"),
+                bytes: b"archive".to_vec(),
+            })
+        }
+
+        async fn list_session_keys(&self) -> Result<Vec<String>, ArchiveError> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn sample_archive_record(id: &str) -> ArchiveRecord {
+        ArchiveRecord {
+            id: id.to_string(),
+            source_kind: ArchiveSourceKind::UserUpload,
+            media_kind: ArchiveMediaKind::Other,
+            mime_type: Some("application/octet-stream".to_string()),
+            extension: None,
+            original_filename: Some("test.bin".to_string()),
+            content_sha256: "sha256".to_string(),
+            size_bytes: 7,
+            storage_rel_path: "archive/test.bin".to_string(),
+            session_key: Some("web:test".to_string()),
+            channel: Some("web".to_string()),
+            chat_id: Some("chat:test".to_string()),
+            message_id: None,
+            metadata_json: "{}".to_string(),
+            created_at_ms: 0,
+        }
     }
 
     #[test]
@@ -3526,6 +3620,7 @@ mod tests {
         RuntimeBundle {
             runtime,
             base_system_prompt: Arc::new(RwLock::new(None)),
+            archive_service: None,
             memory_db: None,
             runtime_provider_override: Arc::new(RwLock::new(None)),
             disable_session_commands_for: BTreeSet::new(),
@@ -3567,6 +3662,20 @@ mod tests {
                 checked_at: OffsetDateTime::UNIX_EPOCH,
             },
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn gateway_options_include_shared_archive_service_for_runtime_gateway() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let mut runtime = build_test_runtime(provider).await;
+        runtime.archive_service = Some(Arc::new(FakeArchiveService));
+        let runtime = Arc::new(runtime);
+        let config = AppConfig::default();
+
+        let options = crate::webhook::gateway_options(Arc::clone(&runtime), &config);
+
+        assert!(options.archive_service.is_some());
+        assert!(options.app_config.is_some());
     }
 
     #[tokio::test(flavor = "current_thread")]
