@@ -297,6 +297,16 @@ pub(crate) fn sort_session_entries_by_created_at_desc(entries: &mut [SessionList
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn should_request_window_history(
+    workspace_ready: bool,
+    window_open: bool,
+    history_loaded: bool,
+    history_loading: bool,
+) -> bool {
+    workspace_ready && window_open && !history_loaded && !history_loading
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn classify_stream_message_action(
     last_role: Option<MessageRole>,
     active_stream_request_id: Option<&str>,
@@ -394,11 +404,11 @@ mod tests {
         StreamMessageAction, ThemeMode, attachment_action_in_progress,
         build_websocket_submit_params, can_trigger_file_picker, classify_message_role,
         classify_stream_message_action, connection_action_label, delete_confirmation_body,
-        derive_page_mode, resolve_session_route_inputs,
-        next_selected_archive_id_after_submit, normalize_gateway_token_input,
-        resolve_gateway_token, session_card_activity_label, should_activate_session_window,
-        should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
-        should_register_non_stream_fade, sort_session_entries_by_created_at_desc,
+        derive_page_mode, next_selected_archive_id_after_submit, normalize_gateway_token_input,
+        resolve_gateway_token, resolve_session_route_inputs, session_card_activity_label,
+        should_activate_session_window, should_cancel_file_picker_selection,
+        should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
+        should_request_window_history, sort_session_entries_by_created_at_desc,
     };
 
     #[test]
@@ -695,6 +705,15 @@ mod tests {
     }
 
     #[test]
+    fn window_history_request_waits_until_open_and_uninitialized() {
+        assert!(should_request_window_history(true, true, false, false));
+        assert!(!should_request_window_history(true, false, false, false));
+        assert!(!should_request_window_history(true, true, true, false));
+        assert!(!should_request_window_history(true, true, false, true));
+        assert!(!should_request_window_history(false, true, false, false));
+    }
+
+    #[test]
     fn connect_without_token_should_prompt_for_gateway_token() {
         assert!(should_prompt_for_gateway_token_before_connect(None));
         assert!(should_prompt_for_gateway_token_before_connect(Some("   ")));
@@ -773,12 +792,28 @@ mod tests {
             "claude-sonnet-4-5",
         );
 
-        assert_eq!(params.get("session_key").and_then(serde_json::Value::as_str), Some("web:test"));
-        assert_eq!(params.get("chat_id").and_then(serde_json::Value::as_str), Some("web:test"));
-        assert_eq!(params.get("input").and_then(serde_json::Value::as_str), Some("hello"));
-        assert_eq!(params.get("stream").and_then(serde_json::Value::as_bool), Some(true));
         assert_eq!(
-            params.get("model_provider").and_then(serde_json::Value::as_str),
+            params
+                .get("session_key")
+                .and_then(serde_json::Value::as_str),
+            Some("web:test")
+        );
+        assert_eq!(
+            params.get("chat_id").and_then(serde_json::Value::as_str),
+            Some("web:test")
+        );
+        assert_eq!(
+            params.get("input").and_then(serde_json::Value::as_str),
+            Some("hello")
+        );
+        assert_eq!(
+            params.get("stream").and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            params
+                .get("model_provider")
+                .and_then(serde_json::Value::as_str),
             Some("anthropic")
         );
         assert_eq!(

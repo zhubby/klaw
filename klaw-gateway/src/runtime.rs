@@ -1,8 +1,7 @@
 use crate::{
     GatewayError,
     archive::{
-        archive_download_handler, archive_get_handler, archive_list_handler,
-        archive_upload_handler,
+        archive_download_handler, archive_get_handler, archive_list_handler, archive_upload_handler,
     },
     auth::GatewayAuth,
     chat_page::{chat_dist_js_handler, chat_dist_wasm_handler, chat_page_handler},
@@ -238,7 +237,10 @@ fn build_router(
     if state.archive.is_some() {
         app = app
             .route(Route::ArchiveUpload.as_str(), post(archive_upload_handler))
-            .route(Route::ArchiveDownload.as_str(), get(archive_download_handler))
+            .route(
+                Route::ArchiveDownload.as_str(),
+                get(archive_download_handler),
+            )
             .route(Route::ArchiveList.as_str(), get(archive_list_handler))
             .route(Route::ArchiveGet.as_str(), get(archive_get_handler));
     }

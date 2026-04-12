@@ -79,11 +79,7 @@ impl ArchiveTool {
         let service = open_default_archive_service().await.map_err(|err| {
             ToolError::ExecutionFailed(format!("failed to open archive service: {err}"))
         })?;
-        Ok(Self::with_service(
-            Arc::new(service),
-            config,
-            session_store,
-        ))
+        Ok(Self::with_service(Arc::new(service), config, session_store))
     }
 
     fn parse_request(args: Value) -> Result<ArchiveRequest, ToolError> {

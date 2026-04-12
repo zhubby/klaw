@@ -331,7 +331,10 @@ mod tests {
         assert_eq!(Route::HomeLogo.as_str(), "/logo.webp");
         assert_eq!(Route::Chat.as_str(), "/chat");
         assert_eq!(Route::ChatDistJs.as_str(), "/chat/dist/klaw_webui.js");
-        assert_eq!(Route::ChatDistWasm.as_str(), "/chat/dist/klaw_webui_bg.wasm");
+        assert_eq!(
+            Route::ChatDistWasm.as_str(),
+            "/chat/dist/klaw_webui_bg.wasm"
+        );
         assert_eq!(Route::WsChat.as_str(), "/ws/chat");
         assert_eq!(Route::WebhookEvents.as_str(), "/webhook/events");
         assert_eq!(Route::WebhookAgents.as_str(), "/webhook/agents");
@@ -735,7 +738,9 @@ mod tests {
                     Some(30)
                 );
                 assert_eq!(
-                    result.get("model_provider").and_then(|value| value.as_str()),
+                    result
+                        .get("model_provider")
+                        .and_then(|value| value.as_str()),
                     Some("openai")
                 );
                 assert_eq!(
@@ -823,7 +828,9 @@ mod tests {
             Some(true)
         );
         assert_eq!(
-            result.get("model_provider").and_then(|value| value.as_str()),
+            result
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
             Some("anthropic")
         );
         assert_eq!(
@@ -889,7 +896,9 @@ mod tests {
             GatewayWebsocketServerFrame::Result { id, result } => {
                 assert_eq!(id, "providers-1");
                 assert_eq!(
-                    result.get("default_provider").and_then(|value| value.as_str()),
+                    result
+                        .get("default_provider")
+                        .and_then(|value| value.as_str()),
                     Some("anthropic")
                 );
                 let providers = result
@@ -1041,6 +1050,11 @@ mod tests {
             .expect("history event should arrive before timeout")
             .expect("history event")
             .expect("history event frame");
+        let fourth = timeout(Duration::from_millis(250), socket.next())
+            .await
+            .expect("history done should arrive before timeout")
+            .expect("history done")
+            .expect("history done frame");
 
         let first = match first {
             Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
@@ -1055,6 +1069,11 @@ mod tests {
         let third = match third {
             Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
                 .expect("valid history frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        let fourth = match fourth {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid history done frame"),
             other => panic!("unexpected frame: {other:?}"),
         };
 
@@ -1098,6 +1117,16 @@ mod tests {
                 );
             }
             other => panic!("unexpected history event: {other:?}"),
+        }
+        match fourth {
+            GatewayWebsocketServerFrame::Event { event, payload } => {
+                assert_eq!(event, OutboundEvent::SessionHistoryDone);
+                assert_eq!(
+                    payload.get("session_key").and_then(|value| value.as_str()),
+                    Some("web:history")
+                );
+            }
+            other => panic!("unexpected history done event: {other:?}"),
         }
 
         handle.shutdown().await.expect("gateway should stop");

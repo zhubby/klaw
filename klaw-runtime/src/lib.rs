@@ -11,10 +11,10 @@ use klaw_agent::{
     build_compression_prompt, build_provider_from_config, merge_or_reset_summary,
     parse_conversation_summary,
 };
-use klaw_archive::{ArchiveService, open_default_archive_service};
 use klaw_approval::{
     ApprovalManager, ApprovalResolveDecision, ApprovalStatus, SqliteApprovalManager,
 };
+use klaw_archive::{ArchiveService, open_default_archive_service};
 use klaw_channel::{
     ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
     ChannelStreamWriter, DefaultChannelDriverFactory, OutboundAttachment, OutboundAttachmentSource,
@@ -29,8 +29,8 @@ use klaw_core::{
     TransportError, build_runtime_system_prompt, ensure_workspace_prompt_templates,
 };
 use klaw_gateway::{
-    GatewayRuntimeInfo, GatewayWebhookAgentRequest, GatewayWebhookRequest,
-    META_WEBSOCKET_MODEL, META_WEBSOCKET_MODEL_PROVIDER, TailscaleHostInfo,
+    GatewayRuntimeInfo, GatewayWebhookAgentRequest, GatewayWebhookRequest, META_WEBSOCKET_MODEL,
+    META_WEBSOCKET_MODEL_PROVIDER, TailscaleHostInfo,
 };
 use klaw_heartbeat::{HeartbeatManager, should_suppress_output};
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
@@ -986,7 +986,13 @@ async fn apply_websocket_route_override_from_metadata(
         )
         .map_err(config_err)?;
         sessions
-            .set_model_provider(&route.active_session_key, chat_id, channel, &provider, &model)
+            .set_model_provider(
+                &route.active_session_key,
+                chat_id,
+                channel,
+                &provider,
+                &model,
+            )
             .await?;
         return Ok(());
     }
@@ -3452,17 +3458,17 @@ mod tests {
         normalize_runtime_provider_override, parse_outbound_attachments, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
         shutdown_runtime_bundle, spawn_acp_init, spawn_llm_audit_writer, spawn_mcp_init,
-        submit_and_get_output, submit_channel_request, submit_webhook_agent,
-        submit_webhook_event, sync_runtime_providers, sync_runtime_tools,
-        trim_conversation_history, voice_tool_is_enabled,
+        submit_and_get_output, submit_channel_request, submit_webhook_agent, submit_webhook_event,
+        sync_runtime_providers, sync_runtime_tools, trim_conversation_history,
+        voice_tool_is_enabled,
     };
     use async_trait::async_trait;
+    use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
+    use klaw_approval::{ApprovalCreateInput, ApprovalManager};
     use klaw_archive::{
         ArchiveBlob, ArchiveError, ArchiveIngestInput, ArchiveMediaKind, ArchiveQuery,
         ArchiveRecord, ArchiveService, ArchiveSourceKind,
     };
-    use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
-    use klaw_approval::{ApprovalCreateInput, ApprovalManager};
     use klaw_channel::{ChannelRequest, OutboundAttachmentSource};
     use klaw_config::{AppConfig, McpConfig, ModelProviderConfig};
     use klaw_core::{
@@ -3644,8 +3650,7 @@ mod tests {
             *self
                 .last_model
                 .lock()
-                .unwrap_or_else(|err| err.into_inner()) =
-                model.map(ToString::to_string);
+                .unwrap_or_else(|err| err.into_inner()) = model.map(ToString::to_string);
             *self
                 .last_tool_choice
                 .lock()
@@ -5852,7 +5857,7 @@ A .docx file is a ZIP archive containing XML files.
 
     #[tokio::test(flavor = "current_thread")]
     async fn submit_channel_request_persists_websocket_provider_override_and_uses_provider_default_model()
-    {
+     {
         let default_provider = Arc::new(BootstrapCaptureProvider::default());
         let runtime = build_test_runtime(default_provider.clone()).await;
         let alt_provider = Arc::new(BootstrapCaptureProvider::default());

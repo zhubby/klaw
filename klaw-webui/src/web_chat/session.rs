@@ -66,6 +66,7 @@ pub(super) struct SessionBuffers {
     pub(in crate::web_chat) messages: Rc<RefCell<Vec<ChatMessage>>>,
     pub(in crate::web_chat) active_stream_request_id: Rc<RefCell<Option<String>>>,
     pub(in crate::web_chat) history_loaded: Rc<RefCell<bool>>,
+    pub(in crate::web_chat) history_loading: Rc<RefCell<bool>>,
 }
 
 impl Default for SessionBuffers {
@@ -74,6 +75,7 @@ impl Default for SessionBuffers {
             messages: Rc::new(RefCell::new(Vec::new())),
             active_stream_request_id: Rc::new(RefCell::new(None)),
             history_loaded: Rc::new(RefCell::new(false)),
+            history_loading: Rc::new(RefCell::new(false)),
         }
     }
 }
@@ -97,7 +99,11 @@ pub(super) struct SessionWindow {
 }
 
 impl SessionWindow {
-    pub(super) fn new(metadata: WorkspaceSessionEntry, open: bool, catalog: &ProviderCatalog) -> Self {
+    pub(super) fn new(
+        metadata: WorkspaceSessionEntry,
+        open: bool,
+        catalog: &ProviderCatalog,
+    ) -> Self {
         let selected_route = resolve_session_route_choice(
             metadata.model_provider.as_deref(),
             metadata.model.as_deref(),
@@ -155,11 +161,8 @@ impl SessionWindow {
     }
 
     pub(super) fn reset_selected_model_to_provider_default(&mut self, catalog: &ProviderCatalog) {
-        self.selected_route = resolve_session_route_choice(
-            Some(&self.selected_route.model_provider),
-            None,
-            catalog,
-        );
+        self.selected_route =
+            resolve_session_route_choice(Some(&self.selected_route.model_provider), None, catalog);
     }
 
     pub(super) fn register_fade_in_message(&mut self, message: &ChatMessage) {
@@ -261,11 +264,8 @@ mod tests {
             ],
         };
 
-        let route = resolve_session_route_choice(
-            Some("anthropic"),
-            Some("claude-opus-4-1"),
-            &catalog,
-        );
+        let route =
+            resolve_session_route_choice(Some("anthropic"), Some("claude-opus-4-1"), &catalog);
 
         assert_eq!(route.model_provider, "anthropic");
         assert_eq!(route.model, "claude-opus-4-1");

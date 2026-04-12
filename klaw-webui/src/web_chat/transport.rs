@@ -166,6 +166,14 @@ impl ChatApp {
     }
 
     pub(in crate::web_chat) fn subscribe_session(&mut self, session_key: &str) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
+        if *self.sessions[index].buffers.history_loaded.borrow()
+            || *self.sessions[index].buffers.history_loading.borrow()
+        {
+            return;
+        }
         let Some(ws) = self.ws.borrow().as_ref().cloned() else {
             return;
         };
@@ -173,12 +181,16 @@ impl ChatApp {
             return;
         }
         let request_id = Uuid::new_v4().to_string();
-        let _ = send_method(
+        *self.sessions[index].buffers.history_loading.borrow_mut() = true;
+        if let Err(err) = send_method(
             &ws,
             &request_id,
             "session.subscribe",
             json!({ "session_key": session_key }),
-        );
+        ) {
+            *self.sessions[index].buffers.history_loading.borrow_mut() = false;
+            self.toasts.borrow_mut().error(err);
+        }
     }
 
     pub(in crate::web_chat) fn rename_session(&mut self, session_key: &str, title: &str) {
@@ -291,26 +303,15 @@ impl ChatApp {
             return;
         }
 
-        if let Some(session_key) = result.get("session_key").and_then(Value::as_str)
-            && result.get("title").is_none()
-            && result.get("created_at_ms").is_none()
-            && result.get("response").is_none()
-        {
-            if let Some(index) = self.session_index(session_key) {
-                *self.sessions[index].buffers.history_loaded.borrow_mut() = true;
-            }
-            return;
-        }
-
         if let Some(sessions_value) = result.get("sessions").cloned() {
-            let entries =
-                serde_json::from_value::<Vec<WorkspaceSessionEntry>>(sessions_value).unwrap_or_default();
+            let entries = serde_json::from_value::<Vec<WorkspaceSessionEntry>>(sessions_value)
+                .unwrap_or_default();
             let active_session_key = result
                 .get("active_session_key")
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
             self.sync_sessions_from_workspace(entries, active_session_key);
-            self.subscribe_open_sessions_needing_history();
+            self.subscribe_sessions_needing_history();
             return;
         }
 
@@ -338,7 +339,7 @@ impl ChatApp {
                 self.sessions[index].open = true;
             }
             self.persist_workspace_state();
-            self.subscribe_open_sessions_needing_history();
+            self.subscribe_sessions_needing_history();
             return;
         }
 
@@ -381,6 +382,16 @@ impl ChatApp {
         match event {
             "session.connected" => {
                 *self.connection_state.borrow_mut() = ConnectionState::Connected;
+            }
+            "session.history.done" => {
+                let Some(session_key) = payload.get("session_key").and_then(Value::as_str) else {
+                    return;
+                };
+                let Some(index) = self.session_index(session_key) else {
+                    return;
+                };
+                *self.sessions[index].buffers.history_loading.borrow_mut() = false;
+                *self.sessions[index].buffers.history_loaded.borrow_mut() = true;
             }
             "session.message" => {
                 let Some(session_key) = payload.get("session_key").and_then(Value::as_str) else {
@@ -527,7 +538,14 @@ fn build_submit_params(
     model_provider: &str,
     model: &str,
 ) -> Value {
-    build_websocket_submit_params(session_key, input, stream, archive_id, model_provider, model)
+    build_websocket_submit_params(
+        session_key,
+        input,
+        stream,
+        archive_id,
+        model_provider,
+        model,
+    )
 }
 
 #[cfg(test)]
@@ -545,11 +563,24 @@ mod tests {
             "claude-sonnet-4-5",
         );
 
-        assert_eq!(params.get("session_key").and_then(serde_json::Value::as_str), Some("web:test"));
-        assert_eq!(params.get("input").and_then(serde_json::Value::as_str), Some("hello"));
-        assert_eq!(params.get("stream").and_then(serde_json::Value::as_bool), Some(true));
         assert_eq!(
-            params.get("model_provider").and_then(serde_json::Value::as_str),
+            params
+                .get("session_key")
+                .and_then(serde_json::Value::as_str),
+            Some("web:test")
+        );
+        assert_eq!(
+            params.get("input").and_then(serde_json::Value::as_str),
+            Some("hello")
+        );
+        assert_eq!(
+            params.get("stream").and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            params
+                .get("model_provider")
+                .and_then(serde_json::Value::as_str),
             Some("anthropic")
         );
         assert_eq!(
@@ -564,18 +595,14 @@ mod tests {
 
     #[test]
     fn submit_params_omit_archive_when_unset() {
-        let params = build_submit_params(
-            "web:test",
-            "hello",
-            false,
-            None,
-            "openai",
-            "gpt-4.1-mini",
-        );
+        let params =
+            build_submit_params("web:test", "hello", false, None, "openai", "gpt-4.1-mini");
 
         assert!(params.get("archive_id").is_none());
         assert_eq!(
-            params.get("model_provider").and_then(serde_json::Value::as_str),
+            params
+                .get("model_provider")
+                .and_then(serde_json::Value::as_str),
             Some("openai")
         );
         assert_eq!(

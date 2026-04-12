@@ -1,4 +1,9 @@
-use axum::{Json, extract::{Query, State}, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;

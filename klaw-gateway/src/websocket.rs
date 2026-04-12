@@ -47,6 +47,8 @@ pub enum OutboundEvent {
     SessionConnected,
     #[strum(serialize = "session.subscribed")]
     SessionSubscribed,
+    #[strum(serialize = "session.history.done")]
+    SessionHistoryDone,
     #[strum(serialize = "session.unsubscribed")]
     SessionUnsubscribed,
     #[strum(serialize = "session.message")]
@@ -657,6 +659,10 @@ async fn handle_text_message(
                             }),
                         }
                     }));
+                    frames.push(GatewayWebsocketServerFrame::Event {
+                        event: OutboundEvent::SessionHistoryDone,
+                        payload: json!({ "session_key": session_key }),
+                    });
                     frames
                 }
                 InboundMethod::SessionUnsubscribe => {

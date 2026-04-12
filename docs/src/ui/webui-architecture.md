@@ -155,8 +155,8 @@ onopen → 发送 workspace.bootstrap 请求
 sync_sessions_from_workspace()
    ↓
 workspace_loaded = true → 进入 Workspace 模式
-   ↓
-subscribe_open_sessions_needing_history() → 订阅已打开会话拉取历史
+  ↓
+subscribe_sessions_needing_history() → 仅为当前已打开且尚未初始化的窗口异步拉取服务端历史
 ```
 
 ### 发送消息

@@ -8,10 +8,9 @@ use web_sys::WebSocket;
 
 use crate::{
     ConnectionState, ProviderCatalog, SessionListEntry, WorkspaceSessionEntry,
-    attachment_action_in_progress,
-    normalize_gateway_token_input, resolve_gateway_token,
+    attachment_action_in_progress, normalize_gateway_token_input, resolve_gateway_token,
     should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
-    sort_session_entries_by_created_at_desc,
+    should_request_window_history, sort_session_entries_by_created_at_desc,
 };
 
 use super::{
@@ -111,17 +110,22 @@ impl ChatApp {
         self.persist_workspace_state();
     }
 
-    /// Subscribe every visible agent window that has not received history yet.
-    pub(in crate::web_chat) fn subscribe_open_sessions_needing_history(&mut self) {
-        if !self.is_workspace_ready() {
-            return;
-        }
-        let keys: Vec<String> = self
+    /// Fetch server history for open windows that have not initialized yet.
+    pub(in crate::web_chat) fn subscribe_sessions_needing_history(&mut self) {
+        let workspace_ready = self.is_workspace_ready();
+        let keys = self
             .sessions
             .iter()
-            .filter(|session| session.open && !*session.buffers.history_loaded.borrow())
+            .filter(|session| {
+                should_request_window_history(
+                    workspace_ready,
+                    session.open,
+                    *session.buffers.history_loaded.borrow(),
+                    *session.buffers.history_loading.borrow(),
+                )
+            })
             .map(|session| session.session_key.clone())
-            .collect();
+            .collect::<Vec<_>>();
         for session_key in keys {
             self.subscribe_session(&session_key);
         }
@@ -156,7 +160,12 @@ impl ChatApp {
                 session.open = true;
                 changed = true;
             }
-            should_subscribe_history = workspace_ready && !*session.buffers.history_loaded.borrow();
+            should_subscribe_history = should_request_window_history(
+                workspace_ready,
+                true,
+                *session.buffers.history_loaded.borrow(),
+                *session.buffers.history_loading.borrow(),
+            );
         }
         if self.active_session_key.as_deref() != Some(session_key) {
             self.active_session_key = Some(session_key.to_string());
@@ -284,7 +293,8 @@ impl ChatApp {
             .map(|entry| entry.session_key)
             .collect::<Vec<_>>();
         entries.sort_by_key(|entry| {
-            order.iter()
+            order
+                .iter()
                 .position(|session_key| session_key == &entry.session_key)
                 .unwrap_or(usize::MAX)
         });
@@ -322,7 +332,10 @@ impl ChatApp {
         self.persist_workspace_state();
     }
 
-    pub(in crate::web_chat) fn apply_provider_catalog(&mut self, provider_catalog: ProviderCatalog) {
+    pub(in crate::web_chat) fn apply_provider_catalog(
+        &mut self,
+        provider_catalog: ProviderCatalog,
+    ) {
         self.provider_catalog = provider_catalog;
         for session in &mut self.sessions {
             session.sync_route_from_workspace(
@@ -561,10 +574,7 @@ async fn sleep_ms(window: &web_sys::Window, ms: i32) {
         });
 
         if window
-            .set_timeout_with_callback_and_timeout_and_arguments_0(
-                callback.unchecked_ref(),
-                ms,
-            )
+            .set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), ms)
             .is_err()
         {
             let _ = resolve.call0(&JsValue::NULL);

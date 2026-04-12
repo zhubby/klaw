@@ -505,6 +505,10 @@ impl ChatApp {
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)
                         .show(ui, |ui| {
+                            if *session.buffers.history_loading.borrow() && messages.is_empty() {
+                                render_history_loading_state(ui);
+                                return;
+                            }
                             if messages.is_empty() {
                                 render_empty_state(ui, &self.connection_state.borrow());
                                 return;
@@ -581,31 +585,31 @@ impl ChatApp {
                                     TextEdit::singleline(&mut session.selected_route.model)
                                         .hint_text("Model"),
                                 );
-                                let provider_changed = ComboBox::from_id_salt((
-                                    "session-model-provider",
-                                    session_key,
-                                ))
-                                .width(provider_width)
-                                .selected_text(if session.selected_route.model_provider.is_empty() {
-                                    "Provider".to_string()
-                                } else {
-                                    session.selected_route.model_provider.clone()
-                                })
-                                .show_ui(ui, |ui| {
-                                    let mut changed = false;
-                                    for provider in &self.provider_catalog.providers {
-                                        changed |= ui
-                                            .selectable_value(
-                                                &mut session.selected_route.model_provider,
-                                                provider.id.clone(),
-                                                &provider.id,
-                                            )
-                                            .changed();
-                                    }
-                                    changed
-                                })
-                                .inner
-                                .unwrap_or(false);
+                                let provider_changed =
+                                    ComboBox::from_id_salt(("session-model-provider", session_key))
+                                        .width(provider_width)
+                                        .selected_text(
+                                            if session.selected_route.model_provider.is_empty() {
+                                                "Provider".to_string()
+                                            } else {
+                                                session.selected_route.model_provider.clone()
+                                            },
+                                        )
+                                        .show_ui(ui, |ui| {
+                                            let mut changed = false;
+                                            for provider in &self.provider_catalog.providers {
+                                                changed |= ui
+                                                    .selectable_value(
+                                                        &mut session.selected_route.model_provider,
+                                                        provider.id.clone(),
+                                                        &provider.id,
+                                                    )
+                                                    .changed();
+                                            }
+                                            changed
+                                        })
+                                        .inner
+                                        .unwrap_or(false);
                                 if provider_changed {
                                     session.reset_selected_model_to_provider_default(
                                         &self.provider_catalog,
@@ -807,6 +811,21 @@ fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState) {
         ui.label(RichText::new(copy.title).heading().strong());
         ui.add_space(4.0);
         ui.label(RichText::new(copy.body).weak());
+    });
+}
+
+fn render_history_loading_state(ui: &mut egui::Ui) {
+    ui.add_space(24.0);
+    ui.vertical_centered(|ui| {
+        ui.spinner();
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("Loading conversation history…")
+                .heading()
+                .strong(),
+        );
+        ui.add_space(4.0);
+        ui.label(RichText::new("Fetching messages from Klaw gateway.").weak());
     });
 }
 
