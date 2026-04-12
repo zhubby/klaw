@@ -1,4 +1,5 @@
 {
     "taipyStudio.gUI.elementsFilePaths": [],
-    "mirrord.promptUsingBinary": false
+    "mirrord.promptUsingBinary": false,
+    "kiroAgent.configureMCP": "Disabled"
 }

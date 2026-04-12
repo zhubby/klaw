@@ -8,3 +8,7 @@ pub const CHAT_DIST_WASM_PATH: &str = "/chat/dist/klaw_webui_bg.wasm";
 pub const WS_CHAT_PATH: &str = "/ws/chat";
 pub const WEBHOOK_EVENTS_PATH: &str = "/webhook/events";
 pub const WEBHOOK_AGENTS_PATH: &str = "/webhook/agents";
+pub const ARCHIVE_UPLOAD_PATH: &str = "/archive/upload";
+pub const ARCHIVE_DOWNLOAD_PATH: &str = "/archive/download/{id}";
+pub const ARCHIVE_LIST_PATH: &str = "/archive/list";
+pub const ARCHIVE_GET_PATH: &str = "/archive/{id}";

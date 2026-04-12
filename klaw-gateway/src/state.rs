@@ -3,6 +3,7 @@ use crate::{
     auth::WebhookAuth,
     tailscale::{TailscaleManager, TailscaleRuntimeInfo},
 };
+use klaw_archive::ArchiveService;
 use klaw_config::GatewayConfig;
 use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{
@@ -25,6 +26,10 @@ pub(crate) struct GatewayWebsocketState {
     pub(crate) handler: Arc<dyn GatewayWebsocketHandler>,
 }
 
+pub struct GatewayArchiveState {
+    pub service: Arc<dyn ArchiveService>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct GatewayWebsocketConnection {
     pub(crate) session_key: Option<String>,
@@ -36,6 +41,7 @@ pub(crate) struct GatewayState {
     pub(crate) prometheus: Option<PrometheusExporter>,
     pub(crate) webhook: Option<GatewayWebhookState>,
     pub(crate) websocket: Option<GatewayWebsocketState>,
+    pub(crate) archive: Option<Arc<GatewayArchiveState>>,
 }
 
 impl GatewayState {
@@ -44,6 +50,7 @@ impl GatewayState {
         prometheus: Option<PrometheusExporter>,
         webhook: Option<GatewayWebhookState>,
         websocket: Option<GatewayWebsocketState>,
+        archive: Option<Arc<GatewayArchiveState>>,
     ) -> Self {
         Self {
             websocket_connections: RwLock::new(HashMap::new()),
@@ -51,6 +58,7 @@ impl GatewayState {
             prometheus,
             webhook,
             websocket,
+            archive,
         }
     }
 }

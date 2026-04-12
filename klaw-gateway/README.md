@@ -8,6 +8,11 @@
 - 暴露 `/chat` 嵌入式 Web 聊天页（`klaw-webui` WASM + egui），静态资源为 `/chat/dist/klaw_webui.js` 与 `/chat/dist/klaw_webui_bg.wasm`
 - 暴露 `/` 默认落地页与内置 logo 静态资源
 - 可选暴露固定路径的 `POST /webhook/events` 与 `POST /webhook/agents`，并支持 Bearer、GitHub、GitLab 多种 header/signature 校验
+- 可选暴露 archive 文件上传下载接口：
+  - `POST /archive/upload`: 文件上传（multipart/form-data）
+  - `GET /archive/download/:id`: 文件下载
+  - `GET /archive/list`: 查询文件列表
+  - `GET /archive/:id`: 获取文件元数据
 - webhook 请求会进入独立的 `webhook:*` 执行 session；若提供 `base_session_key`，最终回复会路由回目标 IM 会话当前 active session
 - 按 `session_key` 维护房间广播通道
 - 在启动成功后打印实际可连接的 WebSocket 地址
@@ -21,6 +26,7 @@
 - `websocket.rs`: `/ws/chat` WebSocket 连接与房间广播逻辑
 - `chat_page.rs`: `/chat` 与 `/chat/dist/*` WASM/JS 内嵌资源响应
 - `webhook.rs`: webhook 鉴权、`events` / `agents` payload 归一化与 handler 集成
+- `archive.rs`: archive 文件上传下载接口实现
 - `handlers.rs`: health / metrics HTTP handlers
 - `error.rs`: `GatewayError`
 
@@ -31,7 +37,8 @@
 - 根路径 `/` 会返回单页品牌首页，logo 资源位于 `/logo.webp`；浏览器聊天 UI 位于 `/chat`（会话 `session_key` 形如 `web:<uuid>`，存于 `localStorage`）
 - 当 `gateway.auth.enabled = true` 时，浏览器无法为 WebSocket 设置 `Authorization` 头，因此 `/ws/chat` 同时接受 query 参数 `token` 或 `access_token`（值与配置的 Bearer secret 相同）。**Token 会出现在 URL 与访问日志中**，公网请优先使用 WSS 并知晓风险
 - webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 仅可分别启停并配置独立 body limit，路径固定不再开放配置
-- 仅 `/ws/chat` 会走 gateway Bearer 鉴权中间件（含 query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics 不做鉴权
+- archive 路由在 `GatewayOptions` 中提供 `archive_service` 时自动注册，所有 archive 接口均需要 Bearer 鉴权
+- 仅 `/ws/chat` 和 `/archive/*` 会走 gateway Bearer 鉴权中间件（含 query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics 不做鉴权
 - `TailscaleManager::inspect_host()` 可独立读取本机 Tailscale 状态，供 GUI 在 gateway 未运行时展示主机连接信息
 - Tailscale Serve/Funnel 会在 gateway 绑定完成后使用实际监听端口做反向代理，并在 setup 后回读 `tailscale serve status --json` / `tailscale funnel status --json` 确认配置是否生效；Funnel 未配置 auth 时允许启动，但应视为公网裸露入口
 
@@ -55,6 +62,7 @@ make webui-wasm
 
 - `examples/webhook_request.rs`: 使用 Rust 和 `reqwest` 向 `events` webhook 端点发送一条测试事件
 - `examples/webhook_agents_request.rs`: 使用 Rust 和 `reqwest` 向 `agents` webhook 端点发送 query + raw JSON body 请求
+- `examples/archive_upload.rs`: 使用 Rust 和 `reqwest` 向 archive 端点上传文件
 
 ```bash
 cargo run -p klaw-gateway --example webhook_request
@@ -62,4 +70,97 @@ WEBHOOK_TOKEN=replace-me BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gatew
 
 cargo run -p klaw-gateway --example webhook_agents_request
 WEBHOOK_TOKEN=replace-me BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gateway --example webhook_agents_request
+
+cargo run -p klaw-gateway --example archive_upload
+GATEWAY_TOKEN=your-token BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gateway --example archive_upload
+```
+
+## Archive API Usage
+
+### Upload File
+
+```bash
+curl -X POST http://127.0.0.1:18080/archive/upload \
+  -H "Authorization: Bearer your-token" \
+  -F "file=@/path/to/file.pdf" \
+  -F "session_key=terminal:test" \
+  -F "channel=terminal" \
+  -F "chat_id=test-chat"
+```
+
+Response:
+```json
+{
+  "success": true,
+  "record": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "source_kind": "user_upload",
+    "media_kind": "pdf",
+    "mime_type": "application/pdf",
+    "extension": "pdf",
+    "original_filename": "file.pdf",
+    "content_sha256": "abc123...",
+    "size_bytes": 12345,
+    "storage_rel_path": "archives/2024-01-15/550e8400-e29b-41d4-a716-446655440000.pdf",
+    "session_key": "terminal:test",
+    "channel": "terminal",
+    "chat_id": "test-chat",
+    "message_id": null,
+    "metadata_json": "{}",
+    "created_at_ms": 1705334400000
+  },
+  "error": null
+}
+```
+
+### Download File
+
+```bash
+curl -X GET http://127.0.0.1:18080/archive/download/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer your-token" \
+  -o downloaded-file.pdf
+```
+
+### List Files
+
+```bash
+curl -X GET "http://127.0.0.1:18080/archive/list?session_key=terminal:test&limit=10&offset=0" \
+  -H "Authorization: Bearer your-token"
+```
+
+Response:
+```json
+{
+  "success": true,
+  "records": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "source_kind": "user_upload",
+      "media_kind": "pdf",
+      ...
+    }
+  ],
+  "error": null
+}
+```
+
+### Get File Metadata
+
+```bash
+curl -X GET http://127.0.0.1:18080/archive/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer your-token"
+```
+
+Response:
+```json
+{
+  "success": true,
+  "record": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "source_kind": "user_upload",
+    "media_kind": "pdf",
+    ...
+  },
+  "error": null
+}
 ```

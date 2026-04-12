@@ -1,14 +1,19 @@
 use crate::{
     GatewayError,
+    archive::{
+        archive_download_handler, archive_get_handler, archive_list_handler,
+        archive_upload_handler,
+    },
     auth::GatewayAuth,
     chat_page::{chat_dist_js_handler, chat_dist_wasm_handler, chat_page_handler},
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
     home::{home_favicon_handler, home_logo_handler, home_page_handler, image_handler},
     routes::{
+        ARCHIVE_DOWNLOAD_PATH, ARCHIVE_GET_PATH, ARCHIVE_LIST_PATH, ARCHIVE_UPLOAD_PATH,
         CHAT_DIST_JS_PATH, CHAT_DIST_WASM_PATH, CHAT_PATH, FAVICON_PATH, HOME_LOGO_PATH, HOME_PATH,
         IMAGES_PATH, WEBHOOK_AGENTS_PATH, WEBHOOK_EVENTS_PATH, WS_CHAT_PATH,
     },
-    state::{GatewayHandle, GatewayRuntimeInfo, GatewayState, GatewayWebsocketState},
+    state::{GatewayArchiveState, GatewayHandle, GatewayRuntimeInfo, GatewayState, GatewayWebsocketState},
     tailscale::{TailscaleError, TailscaleManager},
     webhook::{
         GatewayWebhookHandler, build_webhook_state, webhook_agents_handler, webhook_handler,
@@ -21,6 +26,7 @@ use axum::{
     middleware,
     routing::{get, post},
 };
+use klaw_archive::ArchiveService;
 use klaw_config::{GatewayConfig, TailscaleMode};
 use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{net::SocketAddr, sync::Arc};
@@ -31,6 +37,7 @@ pub struct GatewayOptions {
     pub prometheus: Option<PrometheusExporter>,
     pub webhook_handler: Option<Arc<dyn GatewayWebhookHandler>>,
     pub websocket_handler: Option<Arc<dyn GatewayWebsocketHandler>>,
+    pub archive_service: Option<Arc<dyn ArchiveService>>,
 }
 
 impl Default for GatewayOptions {
@@ -40,6 +47,7 @@ impl Default for GatewayOptions {
             prometheus: None,
             webhook_handler: None,
             websocket_handler: None,
+            archive_service: None,
         }
     }
 }
@@ -74,6 +82,9 @@ pub async fn spawn_gateway_with_options(
     let websocket = options
         .websocket_handler
         .map(|handler| GatewayWebsocketState { handler });
+    let archive = options
+        .archive_service
+        .map(|service| Arc::new(GatewayArchiveState { service }));
     let auth_token = config
         .auth
         .enabled
@@ -84,6 +95,7 @@ pub async fn spawn_gateway_with_options(
         options.prometheus,
         webhook,
         websocket,
+        archive,
     ));
     let app = build_router(config, state, auth_token);
 
@@ -214,7 +226,17 @@ fn build_router(
         }
     }
 
-    let app = app.with_state(state);
+    if state.archive.is_some() {
+        app = app
+            .route(ARCHIVE_UPLOAD_PATH, post(archive_upload_handler))
+            .route(ARCHIVE_DOWNLOAD_PATH, get(archive_download_handler))
+            .route(ARCHIVE_LIST_PATH, get(archive_list_handler))
+            .route(ARCHIVE_GET_PATH, get(archive_get_handler));
+    }
+
+    let app = app
+        .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
+        .with_state(state);
 
     if let Some(token) = auth_token {
         app.layer(middleware::from_fn_with_state(

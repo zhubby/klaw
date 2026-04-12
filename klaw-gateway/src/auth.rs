@@ -9,7 +9,7 @@ use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::Sha256;
 
-use crate::routes::WS_CHAT_PATH;
+use crate::routes::{ARCHIVE_LIST_PATH, ARCHIVE_UPLOAD_PATH, WS_CHAT_PATH};
 
 type HmacSha1 = Hmac<Sha1>;
 type HmacSha256 = Hmac<Sha256>;
@@ -69,6 +69,10 @@ pub(crate) fn extract_gateway_credential(request: &Request<Body>) -> Option<Stri
 
 pub fn should_require_gateway_auth(path: &str) -> bool {
     path == WS_CHAT_PATH
+        || path == ARCHIVE_UPLOAD_PATH
+        || path == ARCHIVE_LIST_PATH
+        || path.starts_with("/archive/download/")
+        || path.starts_with("/archive/")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -339,6 +343,10 @@ mod tests {
     #[test]
     fn gateway_auth_only_protects_ws_chat_route() {
         assert!(should_require_gateway_auth("/ws/chat"));
+        assert!(should_require_gateway_auth("/archive/upload"));
+        assert!(should_require_gateway_auth("/archive/list"));
+        assert!(should_require_gateway_auth("/archive/download/123"));
+        assert!(should_require_gateway_auth("/archive/123"));
         assert!(!should_require_gateway_auth("/"));
         assert!(!should_require_gateway_auth("/health/status"));
         assert!(!should_require_gateway_auth("/metrics"));

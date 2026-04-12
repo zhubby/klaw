@@ -10,6 +10,7 @@ axum = { workspace = true }
 futures-util = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
+klaw-archive = { workspace = true }
 klaw-config = { workspace = true }
 klaw-observability = { workspace = true }
 klaw-util = { workspace = true }
@@ -27,6 +28,8 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+klaw-storage = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-tungstenite = { workspace = true }
+uuid = { workspace = true }
