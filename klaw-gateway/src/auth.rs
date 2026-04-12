@@ -71,6 +71,7 @@ pub fn should_require_gateway_auth(path: &str) -> bool {
     path == Route::WsChat.as_str()
         || path == Route::ArchiveUpload.as_str()
         || path == Route::ArchiveList.as_str()
+        || path == Route::ProvidersList.as_str()
         || path.starts_with("/archive/download/")
         || path.starts_with("/archive/")
 }
@@ -347,6 +348,7 @@ mod tests {
         assert!(should_require_gateway_auth("/archive/list"));
         assert!(should_require_gateway_auth("/archive/download/123"));
         assert!(should_require_gateway_auth("/archive/123"));
+        assert!(should_require_gateway_auth("/providers/list"));
         assert!(!should_require_gateway_auth("/"));
         assert!(!should_require_gateway_auth("/health/status"));
         assert!(!should_require_gateway_auth("/metrics"));

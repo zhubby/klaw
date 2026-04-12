@@ -9,14 +9,18 @@
   - `GET /archive/download/:id`: 文件下载
   - `GET /archive/list`: 查询文件列表（支持 session_key、chat_id、source_kind、media_kind、filename 过滤）
   - `GET /archive/:id`: 获取文件元数据
-- `GatewayOptions` 新增 `archive_service` 字段，支持注入 `ArchiveService` 实现
-- `GatewayState` 新增 `archive` 字段，存储 archive service 状态
+- 新增 model providers 列表 HTTP 接口，支持 Bearer 鉴权：
+  - `GET /providers/list`: 获取所有配置的 model providers 信息
+- `GatewayOptions` 新增 `archive_service` 和 `app_config` 字段
+- `GatewayState` 新增 `archive` 和 `providers` 字段
 - archive 路由在提供 `archive_service` 时自动注册，默认 body limit 为 100MB
+- providers 路由在提供 `app_config` 时自动注册
 
 ### Changed
 
-- gateway Bearer 鉴权中间件现在保护 `/ws/chat` 和所有 `/archive/*` 路由
-- `should_require_gateway_auth` 函数现在检查 archive 相关路径
+- gateway Bearer 鉴权中间件现在保护 `/ws/chat`、所有 `/archive/*` 和 `/providers/*` 路由
+- `should_require_gateway_auth` 函数现在检查 archive 和 providers 相关路径
+- `Route` 枚举新增 `ArchiveUpload`、`ArchiveDownload`、`ArchiveList`、`ArchiveGet` 和 `ProvidersList` 变体
 
 ## 2026-04-10
 

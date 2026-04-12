@@ -13,6 +13,8 @@
   - `GET /archive/download/:id`: 文件下载
   - `GET /archive/list`: 查询文件列表
   - `GET /archive/:id`: 获取文件元数据
+- 可选暴露 model providers 列表接口：
+  - `GET /providers/list`: 获取所有配置的 model providers
 - webhook 请求会进入独立的 `webhook:*` 执行 session；若提供 `base_session_key`，最终回复会路由回目标 IM 会话当前 active session
 - 按 `session_key` 维护房间广播通道
 - 在启动成功后打印实际可连接的 WebSocket 地址
@@ -27,6 +29,7 @@
 - `chat_page.rs`: `/chat` 与 `/chat/dist/*` WASM/JS 内嵌资源响应
 - `webhook.rs`: webhook 鉴权、`events` / `agents` payload 归一化与 handler 集成
 - `archive.rs`: archive 文件上传下载接口实现
+- `providers.rs`: model providers 列表接口实现
 - `handlers.rs`: health / metrics HTTP handlers
 - `error.rs`: `GatewayError`
 
@@ -161,6 +164,44 @@ Response:
     "media_kind": "pdf",
     ...
   },
+  "error": null
+}
+```
+
+## Providers API Usage
+
+### List Model Providers
+
+```bash
+curl -X GET http://127.0.0.1:18080/providers/list \
+  -H "Authorization: Bearer your-token"
+```
+
+Response:
+```json
+{
+  "success": true,
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "wire_api": "chat_completions",
+      "default_model": "gpt-4o-mini",
+      "stream": false,
+      "has_api_key": true
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "base_url": "https://api.anthropic.com",
+      "wire_api": "messages",
+      "default_model": "claude-3-5-sonnet-20241022",
+      "stream": false,
+      "has_api_key": true
+    }
+  ],
+  "default_provider": "openai",
   "error": null
 }
 ```

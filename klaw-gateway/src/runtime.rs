@@ -8,8 +8,12 @@ use crate::{
     chat_page::{chat_dist_js_handler, chat_dist_wasm_handler, chat_page_handler},
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
     home::{home_favicon_handler, home_logo_handler, home_page_handler, image_handler},
+    providers::providers_list_handler,
     routes::Route,
-    state::{GatewayArchiveState, GatewayHandle, GatewayRuntimeInfo, GatewayState, GatewayWebsocketState},
+    state::{
+        GatewayArchiveState, GatewayHandle, GatewayProvidersState, GatewayRuntimeInfo,
+        GatewayState, GatewayWebsocketState,
+    },
     tailscale::{TailscaleError, TailscaleManager},
     webhook::{
         GatewayWebhookHandler, build_webhook_state, webhook_agents_handler, webhook_handler,
@@ -23,7 +27,7 @@ use axum::{
     routing::{get, post},
 };
 use klaw_archive::ArchiveService;
-use klaw_config::{GatewayConfig, TailscaleMode};
+use klaw_config::{AppConfig, GatewayConfig, TailscaleMode};
 use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{net::SocketAddr, sync::Arc};
 use tracing::info;
@@ -34,6 +38,7 @@ pub struct GatewayOptions {
     pub webhook_handler: Option<Arc<dyn GatewayWebhookHandler>>,
     pub websocket_handler: Option<Arc<dyn GatewayWebsocketHandler>>,
     pub archive_service: Option<Arc<dyn ArchiveService>>,
+    pub app_config: Option<Arc<AppConfig>>,
 }
 
 impl Default for GatewayOptions {
@@ -44,6 +49,7 @@ impl Default for GatewayOptions {
             webhook_handler: None,
             websocket_handler: None,
             archive_service: None,
+            app_config: None,
         }
     }
 }
@@ -81,6 +87,12 @@ pub async fn spawn_gateway_with_options(
     let archive = options
         .archive_service
         .map(|service| Arc::new(GatewayArchiveState { service }));
+    let providers = options.app_config.map(|app_config| {
+        Arc::new(GatewayProvidersState {
+            providers: app_config.model_providers.clone(),
+            default_provider: app_config.model_provider.clone(),
+        })
+    });
     let auth_token = config
         .auth
         .enabled
@@ -92,6 +104,7 @@ pub async fn spawn_gateway_with_options(
         webhook,
         websocket,
         archive,
+        providers,
     ));
     let app = build_router(config, state, auth_token);
 
@@ -228,6 +241,10 @@ fn build_router(
             .route(Route::ArchiveDownload.as_str(), get(archive_download_handler))
             .route(Route::ArchiveList.as_str(), get(archive_list_handler))
             .route(Route::ArchiveGet.as_str(), get(archive_get_handler));
+    }
+
+    if state.providers.is_some() {
+        app = app.route(Route::ProvidersList.as_str(), get(providers_list_handler));
     }
 
     let app = app

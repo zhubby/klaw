@@ -4,10 +4,10 @@ use crate::{
     tailscale::{TailscaleManager, TailscaleRuntimeInfo},
 };
 use klaw_archive::ArchiveService;
-use klaw_config::GatewayConfig;
+use klaw_config::{GatewayConfig, ModelProviderConfig};
 use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     net::SocketAddr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -30,6 +30,11 @@ pub struct GatewayArchiveState {
     pub service: Arc<dyn ArchiveService>,
 }
 
+pub struct GatewayProvidersState {
+    pub providers: BTreeMap<String, ModelProviderConfig>,
+    pub default_provider: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct GatewayWebsocketConnection {
     pub(crate) session_key: Option<String>,
@@ -42,6 +47,7 @@ pub(crate) struct GatewayState {
     pub(crate) webhook: Option<GatewayWebhookState>,
     pub(crate) websocket: Option<GatewayWebsocketState>,
     pub(crate) archive: Option<Arc<GatewayArchiveState>>,
+    pub(crate) providers: Option<Arc<GatewayProvidersState>>,
 }
 
 impl GatewayState {
@@ -51,6 +57,7 @@ impl GatewayState {
         webhook: Option<GatewayWebhookState>,
         websocket: Option<GatewayWebsocketState>,
         archive: Option<Arc<GatewayArchiveState>>,
+        providers: Option<Arc<GatewayProvidersState>>,
     ) -> Self {
         Self {
             websocket_connections: RwLock::new(HashMap::new()),
@@ -59,6 +66,7 @@ impl GatewayState {
             webhook,
             websocket,
             archive,
+            providers,
         }
     }
 }

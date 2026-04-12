@@ -30,6 +30,8 @@ pub enum Route {
     ArchiveList,
     #[strum(serialize = "/archive/{id}")]
     ArchiveGet,
+    #[strum(serialize = "/providers/list")]
+    ProvidersList,
     #[strum(serialize = "/health/live")]
     HealthLive,
     #[strum(serialize = "/health/ready")]
