@@ -1,4 +1,7 @@
-use super::{RuntimeBundle, gateway_websocket, submit_webhook_agent, submit_webhook_event};
+use super::{
+    RuntimeBundle, gateway_websocket, service_loop::ChannelAvailability, submit_webhook_agent,
+    submit_webhook_event,
+};
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ConfigStore};
 use klaw_gateway::{
@@ -25,6 +28,7 @@ pub fn gateway_options(runtime: Arc<RuntimeBundle>, config: &AppConfig) -> Gatew
         websocket_broadcaster: Some(Arc::clone(&runtime.websocket_broadcaster)),
         webhook_handler: Some(Arc::new(RuntimeWebhookHandler {
             runtime: Arc::clone(&runtime),
+            channel_availability: ChannelAvailability::from_app_config(config),
         })),
         websocket_handler: Some(gateway_websocket::build_gateway_websocket_handler(
             Arc::clone(&runtime),
@@ -38,6 +42,7 @@ pub fn gateway_options(runtime: Arc<RuntimeBundle>, config: &AppConfig) -> Gatew
 
 struct RuntimeWebhookHandler {
     runtime: Arc<RuntimeBundle>,
+    channel_availability: ChannelAvailability,
 }
 
 #[async_trait]
@@ -98,8 +103,9 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
         let event_id = request.event_id.clone();
         let session_key = request.session_key.clone();
         let runtime = Arc::clone(&self.runtime);
+        let channel_availability = self.channel_availability.clone();
         tokio::spawn(async move {
-            process_webhook_event(runtime, request).await;
+            process_webhook_event(runtime, channel_availability, request).await;
         });
 
         Ok(GatewayWebhookResponse {
@@ -166,8 +172,9 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
         let hook_id = request.hook_id.clone();
         let session_key = request.session_key.clone();
         let runtime = Arc::clone(&self.runtime);
+        let channel_availability = self.channel_availability.clone();
         tokio::spawn(async move {
-            process_webhook_agent(runtime, request, content).await;
+            process_webhook_agent(runtime, channel_availability, request, content).await;
         });
 
         Ok(GatewayWebhookAgentResponse {
@@ -179,7 +186,11 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
     }
 }
 
-async fn process_webhook_event(runtime: Arc<RuntimeBundle>, request: GatewayWebhookRequest) {
+async fn process_webhook_event(
+    runtime: Arc<RuntimeBundle>,
+    channel_availability: ChannelAvailability,
+    request: GatewayWebhookRequest,
+) {
     let manager = SqliteSessionManager::from_store(runtime.session_store.clone());
     debug!(
         webhook_kind = "events",
@@ -187,6 +198,49 @@ async fn process_webhook_event(runtime: Arc<RuntimeBundle>, request: GatewayWebh
         session_key = request.session_key.as_str(),
         "starting webhook event processing"
     );
+    if let Some(reason) = request
+        .base_session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|base_session_key| {
+            let channel = if base_session_key.starts_with("dingtalk:") {
+                "dingtalk"
+            } else if base_session_key.starts_with("telegram:") {
+                "telegram"
+            } else if base_session_key.starts_with("websocket:") {
+                "websocket"
+            } else {
+                return None;
+            };
+            webhook_target_disabled_reason(&channel_availability, channel, base_session_key)
+        })
+    {
+        debug!(
+            webhook_kind = "events",
+            event_id = request.event_id.as_str(),
+            base_session_key = request.base_session_key.as_deref().unwrap_or_default(),
+            reason = %reason,
+            "skipping webhook event before agent loop because target channel is disabled"
+        );
+        let update = UpdateWebhookEventResult {
+            status: WebhookEventStatus::Processed,
+            error_message: None,
+            response_summary: None,
+            processed_at_ms: Some(now_ms()),
+        };
+        if let Err(err) = manager
+            .update_webhook_event_status(&request.event_id, &update)
+            .await
+        {
+            warn!(
+                error = %err,
+                webhook_event_id = request.event_id.as_str(),
+                "failed to persist skipped webhook event status"
+            );
+        }
+        return;
+    }
     let result = submit_webhook_event(runtime.as_ref(), &request).await;
     let update = match result {
         Ok(output) => UpdateWebhookEventResult {
@@ -235,6 +289,7 @@ async fn process_webhook_event(runtime: Arc<RuntimeBundle>, request: GatewayWebh
 
 async fn process_webhook_agent(
     runtime: Arc<RuntimeBundle>,
+    channel_availability: ChannelAvailability,
     request: GatewayWebhookAgentRequest,
     content: String,
 ) {
@@ -246,6 +301,50 @@ async fn process_webhook_agent(
         session_key = request.session_key.as_str(),
         "starting webhook agent processing"
     );
+    if let Some(reason) = request
+        .base_session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|base_session_key| {
+            let channel = if base_session_key.starts_with("dingtalk:") {
+                "dingtalk"
+            } else if base_session_key.starts_with("telegram:") {
+                "telegram"
+            } else if base_session_key.starts_with("websocket:") {
+                "websocket"
+            } else {
+                return None;
+            };
+            webhook_target_disabled_reason(&channel_availability, channel, base_session_key)
+        })
+    {
+        debug!(
+            webhook_kind = "agents",
+            request_id = request.request_id.as_str(),
+            hook_id = request.hook_id.as_str(),
+            base_session_key = request.base_session_key.as_deref().unwrap_or_default(),
+            reason = %reason,
+            "skipping webhook agent before agent loop because target channel is disabled"
+        );
+        let update = UpdateWebhookAgentResult {
+            status: WebhookEventStatus::Processed,
+            error_message: None,
+            response_summary: None,
+            processed_at_ms: Some(now_ms()),
+        };
+        if let Err(err) = manager
+            .update_webhook_agent_status(&request.request_id, &update)
+            .await
+        {
+            warn!(
+                error = %err,
+                webhook_request_id = request.request_id.as_str(),
+                "failed to persist skipped webhook agent status"
+            );
+        }
+        return;
+    }
     let result = submit_webhook_agent(runtime.as_ref(), &request, content).await;
     let update = match result {
         Ok(output) => UpdateWebhookAgentResult {
@@ -292,6 +391,14 @@ async fn process_webhook_agent(
             "failed to persist webhook agent status"
         );
     }
+}
+
+pub(crate) fn webhook_target_disabled_reason(
+    availability: &ChannelAvailability,
+    channel: &str,
+    session_key: &str,
+) -> Option<String> {
+    availability.disabled_reason(channel, session_key)
 }
 
 async fn load_webhook_agent_prompt(request: &GatewayWebhookAgentRequest) -> Result<String, String> {
@@ -358,7 +465,9 @@ fn _metadata_json(metadata: &BTreeMap<String, Value>) -> Result<String, serde_js
 
 #[cfg(test)]
 mod tests {
-    use super::build_webhook_agent_content;
+    use super::{build_webhook_agent_content, webhook_target_disabled_reason};
+    use crate::service_loop::ChannelAvailability;
+    use klaw_config::{AppConfig, ChannelsConfig, TelegramConfig};
     use serde_json::json;
 
     #[test]
@@ -375,5 +484,29 @@ mod tests {
         assert!(content.contains("\"order_id\": \"A123\""));
         assert!(!content.contains("## Hook Context"));
         assert!(!content.contains("Original Session Key"));
+    }
+
+    #[test]
+    fn webhook_target_disabled_reason_uses_channel_availability() {
+        let availability = ChannelAvailability::from_app_config(&AppConfig {
+            channels: ChannelsConfig {
+                telegram: vec![TelegramConfig {
+                    id: "bot-a".to_string(),
+                    enabled: true,
+                    ..TelegramConfig::default()
+                }],
+                ..ChannelsConfig::default()
+            },
+            ..AppConfig::default()
+        });
+
+        assert_eq!(
+            webhook_target_disabled_reason(&availability, "telegram", "telegram:bot-b:chat-1"),
+            Some("target telegram channel 'bot-b' is disabled".to_string())
+        );
+        assert_eq!(
+            webhook_target_disabled_reason(&availability, "telegram", "telegram:bot-a:chat-1"),
+            None
+        );
     }
 }

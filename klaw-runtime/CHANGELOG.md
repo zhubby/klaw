@@ -6,6 +6,7 @@
 
 - 后台 `cron` / 其他隔离执行产生的 outbound 消息现在会镜像写回 `channel.delivery_session_key`（或 base session）对应的会话历史，terminal 与 websocket 会话在重新打开时不再丢失这些后台回复
 - runtime 后台 outbound dispatcher 现在支持 `websocket` channel，会把隔离执行的 assistant 回复按目标 session 广播给当前订阅该会话的浏览器 websocket 客户端
+- cron / heartbeat / webhook 在进入 agent loop 前会先校验目标 channel 是否仍然 enabled；若目标 channel 已 disabled，则仅输出 debug 日志并跳过，不再继续执行后台 agent turn
 
 ## 2026-04-12
 

@@ -3481,7 +3481,9 @@ mod tests {
         InMemoryTransport, OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
         Subscription,
     };
-    use klaw_gateway::{GatewayWebhookAgentRequest, GatewayWebhookRequest};
+    use klaw_gateway::{
+        GatewayWebhookAgentRequest, GatewayWebhookRequest, GatewayWebsocketBroadcaster,
+    };
     use klaw_llm::{ChatOptions, LlmAuditPayload, LlmError, LlmProvider};
     use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
     use klaw_storage::{ApprovalStatus, HeartbeatStorage};

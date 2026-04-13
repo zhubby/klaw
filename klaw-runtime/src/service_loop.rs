@@ -2,7 +2,10 @@ use super::{RuntimeBundle, drain_runtime_queue};
 use klaw_channel::dingtalk::{DingtalkProxyConfig, send_session_webhook_markdown_via_proxy};
 use klaw_channel::telegram::dispatch_background_outbound as dispatch_telegram_background_outbound;
 use klaw_config::{AppConfig, CronMissedRunPolicy};
-use klaw_core::{Envelope, InboundMessage, OutboundMessage};
+use klaw_core::{
+    DeliveryMode, Envelope, InMemoryTransport, InboundMessage, MessageTransport, OutboundMessage,
+    Subscription, TransportAckHandle, TransportError,
+};
 use klaw_cron::{CronWorker, CronWorkerConfig, MissedRunPolicy};
 use klaw_gateway::{GatewayWebsocketServerFrame, OutboundEvent};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig};
@@ -17,13 +20,62 @@ use std::{
     time::SystemTime,
 };
 use tokio::time::timeout;
-use tracing::warn;
+use tracing::{debug, warn};
 
-pub type StdioCronWorker =
-    CronWorker<DefaultSessionStore, klaw_core::InMemoryTransport<InboundMessage>>;
-pub type StdioHeartbeatWorker =
-    HeartbeatWorker<DefaultSessionStore, klaw_core::InMemoryTransport<InboundMessage>>;
+type StdioCronWorker = CronWorker<DefaultSessionStore, FilteringInboundTransport>;
+type StdioHeartbeatWorker = HeartbeatWorker<DefaultSessionStore, FilteringInboundTransport>;
 const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ChannelAvailability {
+    dingtalk_enabled: std::collections::BTreeSet<String>,
+    telegram_enabled: std::collections::BTreeSet<String>,
+    websocket_enabled: bool,
+}
+
+impl ChannelAvailability {
+    pub(crate) fn from_app_config(config: &AppConfig) -> Self {
+        Self {
+            dingtalk_enabled: config
+                .channels
+                .dingtalk
+                .iter()
+                .filter(|channel| channel.enabled)
+                .map(|channel| channel.id.trim().to_string())
+                .filter(|id| !id.is_empty())
+                .collect(),
+            telegram_enabled: config
+                .channels
+                .telegram
+                .iter()
+                .filter(|channel| channel.enabled)
+                .map(|channel| channel.id.trim().to_string())
+                .filter(|id| !id.is_empty())
+                .collect(),
+            websocket_enabled: config.channels.websocket.iter().any(|channel| channel.enabled),
+        }
+    }
+
+    pub(crate) fn disabled_reason(&self, channel: &str, session_key: &str) -> Option<String> {
+        match channel {
+            "dingtalk" => {
+                let account_id = infer_account_id(session_key, "dingtalk")?;
+                (!self.dingtalk_enabled.contains(account_id)).then(|| {
+                    format!("target dingtalk channel '{account_id}' is disabled")
+                })
+            }
+            "telegram" => {
+                let account_id = infer_account_id(session_key, "telegram")?;
+                (!self.telegram_enabled.contains(account_id)).then(|| {
+                    format!("target telegram channel '{account_id}' is disabled")
+                })
+            }
+            "websocket" => (!self.websocket_enabled)
+                .then(|| "target websocket channel is disabled".to_string()),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BackgroundServiceConfig {
@@ -32,6 +84,7 @@ pub struct BackgroundServiceConfig {
     pub runtime_drain_batch: usize,
     pub cron_batch_limit: i64,
     pub cron_missed_run_policy: MissedRunPolicy,
+    channel_availability: ChannelAvailability,
     pub dingtalk_titles: BTreeMap<String, String>,
     pub dingtalk_proxies: BTreeMap<String, DingtalkProxyConfig>,
     pub telegram_configs: BTreeMap<String, klaw_config::TelegramConfig>,
@@ -48,6 +101,7 @@ impl BackgroundServiceConfig {
                 CronMissedRunPolicy::Skip => MissedRunPolicy::Skip,
                 CronMissedRunPolicy::CatchUp => MissedRunPolicy::CatchUp,
             },
+            channel_availability: ChannelAvailability::from_app_config(config),
             dingtalk_titles: config
                 .channels
                 .dingtalk
@@ -86,10 +140,75 @@ impl Default for BackgroundServiceConfig {
             runtime_drain_batch: 8,
             cron_batch_limit: 64,
             cron_missed_run_policy: MissedRunPolicy::Skip,
+            channel_availability: ChannelAvailability::default(),
             dingtalk_titles: BTreeMap::new(),
             dingtalk_proxies: BTreeMap::new(),
             telegram_configs: BTreeMap::new(),
         }
+    }
+}
+
+#[derive(Clone)]
+struct FilteringInboundTransport {
+    inner: InMemoryTransport<InboundMessage>,
+    availability: ChannelAvailability,
+}
+
+impl FilteringInboundTransport {
+    fn new(inner: InMemoryTransport<InboundMessage>, availability: ChannelAvailability) -> Self {
+        Self {
+            inner,
+            availability,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl MessageTransport<InboundMessage> for FilteringInboundTransport {
+    fn mode(&self) -> DeliveryMode {
+        self.inner.mode()
+    }
+
+    async fn publish(
+        &self,
+        topic: &'static str,
+        msg: Envelope<InboundMessage>,
+    ) -> Result<(), TransportError> {
+        if topic == klaw_core::MessageTopic::Inbound.as_str() {
+            if let Some(reason) = self
+                .availability
+                .disabled_reason(&msg.payload.channel, &msg.payload.session_key)
+            {
+                debug!(
+                    source = inbound_source(&msg.payload),
+                    channel = msg.payload.channel.as_str(),
+                    target_session_key = msg.payload.session_key.as_str(),
+                    reason = %reason,
+                    "skipping inbound publish because target channel is disabled"
+                );
+                return Ok(());
+            }
+        }
+        self.inner.publish(topic, msg).await
+    }
+
+    async fn consume(
+        &self,
+        subscription: &Subscription,
+    ) -> Result<klaw_core::TransportMessage<InboundMessage>, TransportError> {
+        self.inner.consume(subscription).await
+    }
+
+    async fn ack(&self, handle: &TransportAckHandle) -> Result<(), TransportError> {
+        self.inner.ack(handle).await
+    }
+
+    async fn nack(
+        &self,
+        handle: &TransportAckHandle,
+        requeue_after: Option<Duration>,
+    ) -> Result<(), TransportError> {
+        self.inner.nack(handle, requeue_after).await
     }
 }
 
@@ -109,9 +228,13 @@ impl BackgroundServices {
             runtime.session_store.clone(),
             runtime.websocket_broadcaster.clone(),
         );
+        let inbound_transport = FilteringInboundTransport::new(
+            runtime.inbound_transport.clone(),
+            config.channel_availability.clone(),
+        );
         let cron_worker = CronWorker::new(
             std::sync::Arc::new(runtime.session_store.clone()),
-            std::sync::Arc::new(runtime.inbound_transport.clone()),
+            std::sync::Arc::new(inbound_transport.clone()),
             CronWorkerConfig {
                 poll_interval: Duration::from_secs(1),
                 batch_limit: config.cron_batch_limit,
@@ -120,7 +243,7 @@ impl BackgroundServices {
         );
         let heartbeat_worker = HeartbeatWorker::new(
             std::sync::Arc::new(runtime.session_store.clone()),
-            std::sync::Arc::new(runtime.inbound_transport.clone()),
+            std::sync::Arc::new(inbound_transport),
             HeartbeatWorkerConfig {
                 poll_interval: Duration::from_secs(1),
                 batch_limit: config.cron_batch_limit,
@@ -476,6 +599,21 @@ fn infer_account_id<'a>(session_key: &'a str, expected_channel: &str) -> Option<
     parts.next()
 }
 
+fn inbound_source(payload: &InboundMessage) -> &'static str {
+    if payload.metadata.contains_key("cron_id") {
+        "cron"
+    } else if payload
+        .metadata
+        .get("trigger.kind")
+        .and_then(Value::as_str)
+        == Some("heartbeat")
+    {
+        "heartbeat"
+    } else {
+        "background"
+    }
+}
+
 fn resolve_outbound_account_id<'a>(
     msg: &'a Envelope<OutboundMessage>,
     expected_channel: &str,
@@ -576,10 +714,14 @@ fn render_outbound_markdown(output: &OutboundMessage) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_dingtalk_session_not_found_error, refresh_dingtalk_delivery_target,
-        resolve_outbound_account_id,
+        ChannelAvailability, FilteringInboundTransport, is_dingtalk_session_not_found_error,
+        refresh_dingtalk_delivery_target, resolve_outbound_account_id,
     };
-    use klaw_core::{Envelope, EnvelopeHeader, OutboundMessage};
+    use klaw_config::{AppConfig, DingtalkConfig};
+    use klaw_core::{
+        Envelope, EnvelopeHeader, InMemoryTransport, InboundMessage, MessageTopic,
+        MessageTransport, OutboundMessage,
+    };
     use klaw_session::{SessionManager, SqliteSessionManager};
     use klaw_storage::{DefaultSessionStore, StoragePaths};
     use serde_json::{Value, json};
@@ -784,5 +926,66 @@ mod tests {
         assert!(!is_dingtalk_session_not_found_error(
             "dingtalk session webhook markdown send failed: errcode=40035 errmsg=invalid"
         ));
+    }
+
+    #[test]
+    fn channel_availability_detects_disabled_dingtalk_target() {
+        let availability = ChannelAvailability::from_app_config(&AppConfig {
+            channels: klaw_config::ChannelsConfig {
+                dingtalk: vec![DingtalkConfig {
+                    id: "acc-enabled".to_string(),
+                    enabled: true,
+                    ..DingtalkConfig::default()
+                }],
+                ..klaw_config::ChannelsConfig::default()
+            },
+            ..AppConfig::default()
+        });
+
+        assert_eq!(
+            availability.disabled_reason("dingtalk", "dingtalk:acc-disabled:chat-1"),
+            Some("target dingtalk channel 'acc-disabled' is disabled".to_string())
+        );
+        assert_eq!(
+            availability.disabled_reason("dingtalk", "dingtalk:acc-enabled:chat-1"),
+            None
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn filtering_inbound_transport_skips_disabled_target_channel() {
+        let availability = ChannelAvailability::from_app_config(&AppConfig {
+            channels: klaw_config::ChannelsConfig {
+                telegram: vec![klaw_config::TelegramConfig {
+                    id: "bot-enabled".to_string(),
+                    enabled: true,
+                    ..klaw_config::TelegramConfig::default()
+                }],
+                ..klaw_config::ChannelsConfig::default()
+            },
+            ..AppConfig::default()
+        });
+        let inner = InMemoryTransport::new();
+        let transport = FilteringInboundTransport::new(inner.clone(), availability);
+        let envelope = Envelope {
+            header: EnvelopeHeader::new("cron:job-1:run-1"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "telegram".to_string(),
+                sender_id: "system-cron".to_string(),
+                chat_id: "chat-1".to_string(),
+                session_key: "telegram:bot-disabled:chat-1".to_string(),
+                content: "ping".to_string(),
+                metadata: BTreeMap::from([("cron_id".to_string(), json!("job-1"))]),
+                media_references: Vec::new(),
+            },
+        };
+
+        transport
+            .publish(MessageTopic::Inbound.as_str(), envelope)
+            .await
+            .expect("publish should succeed");
+
+        assert!(inner.published_messages().await.is_empty());
     }
 }
