@@ -7,6 +7,8 @@ pub(crate) use klaw_ui_kit::ThemeMode;
 
 #[cfg(test)]
 use std::collections::VecDeque;
+#[cfg(any(test, target_arch = "wasm32"))]
+use std::ops::Range;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 use serde::{Deserialize, Serialize};
@@ -137,6 +139,75 @@ pub(crate) struct ResolvedSessionRoute {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SlashCommandCompletion {
+    pub(crate) command: &'static str,
+    pub(crate) insert_text: &'static str,
+    pub(crate) description: &'static str,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveSlashCommand {
+    pub(crate) replace_range: Range<usize>,
+    pub(crate) query: String,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+const SLASH_COMMANDS: [SlashCommandCompletion; 9] = [
+    SlashCommandCompletion {
+        command: "/new",
+        insert_text: "/new",
+        description: "Start a new session context",
+    },
+    SlashCommandCompletion {
+        command: "/start",
+        insert_text: "/start",
+        description: "Alias of /new for a fresh session",
+    },
+    SlashCommandCompletion {
+        command: "/help",
+        insert_text: "/help",
+        description: "Show available session commands",
+    },
+    SlashCommandCompletion {
+        command: "/stop",
+        insert_text: "/stop",
+        description: "Stop the current turn without calling the agent",
+    },
+    SlashCommandCompletion {
+        command: "/model_provider",
+        insert_text: "/model_provider ",
+        description: "List or switch the provider for this session",
+    },
+    SlashCommandCompletion {
+        command: "/model",
+        insert_text: "/model ",
+        description: "Show or update the current session model",
+    },
+    SlashCommandCompletion {
+        command: "/approve",
+        insert_text: "/approve ",
+        description: "Approve a pending tool action",
+    },
+    SlashCommandCompletion {
+        command: "/reject",
+        insert_text: "/reject ",
+        description: "Reject a pending tool action",
+    },
+    SlashCommandCompletion {
+        command: "/card_answer",
+        insert_text: "/card_answer ",
+        description: "Answer an interactive question card",
+    },
+];
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) const fn slash_command_catalog() -> &'static [SlashCommandCompletion] {
+    &SLASH_COMMANDS
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn resolve_session_route_inputs(
     model_provider: Option<&str>,
     model: Option<&str>,
@@ -193,6 +264,75 @@ pub(crate) fn build_websocket_submit_params(
         params["archive_id"] = json!(archive_id);
     }
     params
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn detect_active_slash_command(
+    text: &str,
+    cursor_char_index: usize,
+) -> Option<ActiveSlashCommand> {
+    let cursor_byte_index = char_index_to_byte_index(text, cursor_char_index);
+    let start_byte_index = text[..cursor_byte_index]
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map(|(index, ch)| index + ch.len_utf8())
+        .unwrap_or(0);
+    let end_byte_index = text[cursor_byte_index..]
+        .find(char::is_whitespace)
+        .map(|offset| cursor_byte_index + offset)
+        .unwrap_or(text.len());
+    let token = &text[start_byte_index..end_byte_index];
+    if !token.starts_with('/') {
+        return None;
+    }
+    if token.contains('\n') {
+        return None;
+    }
+    Some(ActiveSlashCommand {
+        replace_range: start_byte_index..end_byte_index,
+        query: token.trim_start_matches('/').to_string(),
+    })
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn slash_command_matches(query: &str) -> Vec<SlashCommandCompletion> {
+    let normalized_query = query.trim().to_ascii_lowercase().replace('-', "_");
+    slash_command_catalog()
+        .iter()
+        .copied()
+        .filter(|completion| {
+            if normalized_query.is_empty() {
+                return true;
+            }
+            let normalized_command = completion
+                .command
+                .trim_start_matches('/')
+                .to_ascii_lowercase();
+            normalized_command.starts_with(&normalized_query)
+                || normalized_command.contains(&normalized_query)
+        })
+        .collect()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn apply_slash_completion(
+    text: &mut String,
+    replace_range: Range<usize>,
+    completion: SlashCommandCompletion,
+) -> usize {
+    text.replace_range(replace_range.clone(), completion.insert_text);
+    text[..replace_range.start + completion.insert_text.len()]
+        .chars()
+        .count()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn char_index_to_byte_index(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len())
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -402,13 +542,15 @@ mod tests {
         ArchiveRecord, ArchiveUploadResponse, ConnectionState, MessageRole, PageMode,
         ProviderCatalog, ProviderCatalogEntry, ResolvedSessionRoute, SessionListEntry,
         StreamMessageAction, ThemeMode, attachment_action_in_progress,
-        build_websocket_submit_params, can_trigger_file_picker, classify_message_role,
-        classify_stream_message_action, connection_action_label, delete_confirmation_body,
-        derive_page_mode, next_selected_archive_id_after_submit, normalize_gateway_token_input,
+        apply_slash_completion, build_websocket_submit_params, can_trigger_file_picker,
+        classify_message_role, classify_stream_message_action, connection_action_label,
+        delete_confirmation_body, derive_page_mode, detect_active_slash_command,
+        next_selected_archive_id_after_submit, normalize_gateway_token_input,
         resolve_gateway_token, resolve_session_route_inputs, session_card_activity_label,
         should_activate_session_window, should_cancel_file_picker_selection,
         should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
-        should_request_window_history, sort_session_entries_by_created_at_desc,
+        should_request_window_history, slash_command_matches,
+        sort_session_entries_by_created_at_desc,
     };
 
     #[test]
@@ -824,5 +966,43 @@ mod tests {
             params.get("archive_id").and_then(serde_json::Value::as_str),
             Some("archive-1")
         );
+    }
+
+    #[test]
+    fn detect_active_slash_command_at_input_start() {
+        let detected = detect_active_slash_command("/mo", 3).expect("slash command");
+        assert_eq!(detected.replace_range, 0..3);
+        assert_eq!(detected.query, "mo");
+    }
+
+    #[test]
+    fn detect_active_slash_command_inside_multiline_draft() {
+        let text = "hello\n/model_provider";
+        let cursor = text.chars().count();
+        let detected = detect_active_slash_command(text, cursor).expect("slash command");
+        assert_eq!(detected.query, "model_provider");
+    }
+
+    #[test]
+    fn slash_command_matches_filter_known_commands() {
+        let matched = slash_command_matches("mod");
+        assert!(matched.iter().any(|item| item.command == "/model"));
+        assert!(
+            matched
+                .iter()
+                .any(|item| item.command == "/model_provider")
+        );
+    }
+
+    #[test]
+    fn apply_slash_completion_replaces_current_token() {
+        let mut draft = "/mod".to_string();
+        let completion = slash_command_matches("mod")
+            .into_iter()
+            .find(|item| item.command == "/model")
+            .expect("model command");
+        let cursor = apply_slash_completion(&mut draft, 0..4, completion);
+        assert_eq!(draft, "/model ");
+        assert_eq!(cursor, "/model ".chars().count());
     }
 }

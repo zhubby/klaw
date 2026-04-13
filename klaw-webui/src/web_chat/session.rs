@@ -80,6 +80,15 @@ impl Default for SessionBuffers {
     }
 }
 
+#[derive(Clone, Default)]
+pub(super) struct SlashCompleterState {
+    pub(in crate::web_chat) selected_index: usize,
+    pub(in crate::web_chat) last_query: String,
+    pub(in crate::web_chat) replace_range: Option<std::ops::Range<usize>>,
+    pub(in crate::web_chat) dismissed_query: Option<String>,
+    pub(in crate::web_chat) dismissed_start: Option<usize>,
+}
+
 pub(super) struct SessionWindow {
     pub(in crate::web_chat) session_key: String,
     pub(in crate::web_chat) title: String,
@@ -96,6 +105,7 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) selected_archive_id: Rc<RefCell<Option<String>>>,
     pub(in crate::web_chat) selecting_file: Rc<RefCell<bool>>,
     pub(in crate::web_chat) uploading_file: Rc<RefCell<bool>>,
+    pub(in crate::web_chat) slash_completer: SlashCompleterState,
 }
 
 impl SessionWindow {
@@ -125,6 +135,7 @@ impl SessionWindow {
             selected_archive_id: Rc::new(RefCell::new(None)),
             selecting_file: Rc::new(RefCell::new(false)),
             uploading_file: Rc::new(RefCell::new(false)),
+            slash_completer: SlashCompleterState::default(),
         }
     }
 

@@ -2,9 +2,20 @@
 
 ## 2026-04-13
 
+### Added
+
+- 顶部菜单栏新增 `Help` 菜单，并提供 `About` 弹窗；弹窗复用连接页同一张 `crab.png` 网络图片，显示当前版本和仓库链接
+- agent 对话输入框新增 slash command 自动补全面板；输入 `/` 后会根据当前 token 过滤 `/new`、`/help`、`/model_provider`、`/model`、`/approve` 等 runtime 命令，并支持点击或 `Tab` / `Enter` 插入
+
+### Fixed
+
+- 修正 webui 底部状态栏右侧 `FPS` 显示，改为基于当前 egui 帧间隔计算实时帧率，而不再错误读取可用矩形尺寸
+- 调整 agent 对话输入框的 slash command 补全面板：恢复更接近原布局的输入区高度，面板改为锚定到输入光标附近，并在接受命令后按当前 slash token 立即关闭而不是停留到下一次输入
+
 ### Changed
 
 - 底部状态栏的主题模式入口已改为复用 `klaw-ui-kit::ThemeSwitch` 三态滑块，浏览器端不再使用普通下拉框切换 system/light/dark
+- 底部状态栏新增 `Open` 计数，以及当前 agent 的路由、消息数和即时活动状态，便于排查 websocket 会话和 streaming/upload 运行情况
 
 ## 2026-04-12
 

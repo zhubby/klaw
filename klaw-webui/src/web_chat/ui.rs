@@ -1,6 +1,7 @@
 use eframe::egui::{
     self, Align, Align2, Button, Color32, ComboBox, Context, Frame, Image, Key, Layout, RichText,
-    ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText, vec2,
+    ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText,
+    text_edit::TextEditState, vec2,
 };
 use egui_phosphor::regular;
 use klaw_ui_kit::{ThemeSwitch, text_animator::TextAnimator};
@@ -8,21 +9,25 @@ use klaw_ui_kit::toggle::toggle;
 use std::collections::HashMap;
 
 use crate::{
-    ConnectionState, MessageRole, PageMode, attachment_action_in_progress, can_trigger_file_picker,
+    ActiveSlashCommand, ConnectionState, MessageRole, PageMode, SlashCommandCompletion,
+    apply_slash_completion, attachment_action_in_progress, can_trigger_file_picker,
     connection_action_label, delete_confirmation_body, derive_page_mode,
-    normalize_gateway_token_input, should_activate_session_window,
+    detect_active_slash_command, normalize_gateway_token_input,
+    should_activate_session_window, slash_command_matches,
 };
 
 use super::{
     app::ChatApp,
     markdown::{MarkdownCache, render_markdown, render_plain_message},
     session::{
-        BUBBLE_MAX_WIDTH, ChatMessage, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH,
+        BUBBLE_MAX_WIDTH, ChatMessage, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH, SessionWindow,
         SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT,
         SESSION_WINDOW_MIN_WIDTH, current_timestamp_ms, format_datetime, format_message_timestamp,
         format_relative_time, session_window_id,
     },
 };
+
+const ABOUT_GITHUB_URL: &str = "https://github.com/zhubby/klaw";
 
 impl ChatApp {
     fn render_top_bar(&mut self, ctx: &Context) {
@@ -77,6 +82,13 @@ impl ChatApp {
                     }
                 });
 
+                ui.menu_button(format!("{} Help", regular::QUESTION), |ui| {
+                    if ui.button(format!("{} About", regular::INFO)).clicked() {
+                        self.show_about_dialog = true;
+                        ui.close();
+                    }
+                });
+
                 let row_height = ui.spacing().interact_size.y;
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), row_height),
@@ -106,6 +118,7 @@ impl ChatApp {
     fn render_status_bar(&mut self, ctx: &Context) {
         let mut requested_theme = None;
         let mut stream_changed = false;
+        let open_sessions = self.sessions.iter().filter(|session| session.open).count();
         TopBottomPanel::bottom("klaw-webui-status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Theme Mode:");
@@ -115,7 +128,8 @@ impl ChatApp {
                     requested_theme = Some(next_theme);
                 }
                 ui.separator();
-                ui.label(format!("Agents: {}", self.sessions.len()));
+                ui.label(format!("Agents: {}/{}", self.sessions.len(), open_sessions))
+                    .on_hover_text("Total agent windows / currently open windows.");
                 ui.separator();
                 ui.label("Stream");
                 let response = ui.add(toggle(&mut self.stream_enabled)).on_hover_text(
@@ -126,17 +140,29 @@ impl ChatApp {
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let fps = self.ctx.available_rect();
-                    ui.label(RichText::new(format!("{fps:.0} FPS")).small().weak());
-                    if let Some(active_session_key) = self.active_session_key.as_deref()
-                        && let Some(session) = self
-                            .sessions
-                            .iter()
-                            .find(|session| session.session_key == active_session_key)
-                        && self.is_workspace_ready()
-                    {
+                    let fps = live_fps(ctx);
+                    ui.label(RichText::new(format!("{fps:.0} FPS")).small().weak())
+                        .on_hover_text("Approximate live frame rate from the latest egui frame delta.");
+                    if let Some(session) = self.active_session() {
                         ui.separator();
-                        ui.label(&session.title);
+                        if let Some(activity) = session_activity_label(session) {
+                            ui.label(RichText::new(activity).small().weak())
+                                .on_hover_text("Current activity for the active agent.");
+                            ui.separator();
+                        }
+
+                        let message_count = session.buffers.messages.borrow().len();
+                        ui.label(RichText::new(format!("{message_count} msgs")).small().weak())
+                            .on_hover_text("Messages currently loaded in the active agent window.");
+                        ui.separator();
+
+                        let route = session_route_label(session);
+                        ui.label(RichText::new(compact_status_text(&route, 28)).small().weak())
+                            .on_hover_text(route);
+                        ui.separator();
+
+                        ui.label(compact_status_text(&session.title, 24))
+                            .on_hover_text(&session.title);
                     } else {
                         ui.separator();
                         ui.label("No active agent");
@@ -151,6 +177,53 @@ impl ChatApp {
         if stream_changed {
             self.persist_workspace_state();
         }
+    }
+
+    fn render_about_dialog(&mut self, ctx: &Context) {
+        if !self.show_about_dialog {
+            return;
+        }
+
+        let mut open = self.show_about_dialog;
+        let mut close_requested = false;
+        egui::Window::new("About Klaw")
+            .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(360.0);
+                ui.vertical_centered(|ui| {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Klaw").strong().size(22.0));
+                    ui.add_space(18.0);
+
+                    if let Some(origin) = &self.gateway_origin {
+                        ui.add(
+                            Image::from_uri(format!("{origin}/images/crab.png"))
+                                .max_size(vec2(160.0, 160.0)),
+                        );
+                        ui.add_space(12.0);
+                    }
+
+                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    ui.add_space(4.0);
+                    ui.hyperlink_to(ABOUT_GITHUB_URL, ABOUT_GITHUB_URL);
+                    ui.add_space(12.0);
+
+                    if ui.button("Close").clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+        self.show_about_dialog = open && !close_requested;
+    }
+
+    fn active_session(&self) -> Option<&SessionWindow> {
+        let active_session_key = self.active_session_key.as_deref()?;
+        self.sessions
+            .iter()
+            .find(|session| session.session_key == active_session_key)
     }
 
     fn session_list_order(&self) -> Vec<String> {
@@ -198,18 +271,17 @@ impl ChatApp {
                             continue;
                         };
                         let session = &self.sessions[index];
-                        let is_active = self.active_session_key.as_deref()
-                            == Some(session.session_key.as_str());
+                        let is_open = session.open;
                         let now_ms = current_timestamp_ms();
                         let relative_time = format_relative_time(session.created_at_ms, now_ms);
                         let compact_title = compact_sidebar_title(&session.title);
                         let card = Frame::group(ui.style())
-                            .fill(if is_active {
+                            .fill(if is_open {
                                 ui.visuals().faint_bg_color
                             } else {
                                 ui.visuals().widgets.noninteractive.bg_fill
                             })
-                            .stroke(if is_active {
+                            .stroke(if is_open {
                                 ui.visuals().selection.stroke
                             } else {
                                 ui.visuals().widgets.noninteractive.bg_stroke
@@ -517,16 +589,65 @@ impl ChatApp {
                     let attachment_busy =
                         attachment_action_in_progress(selecting_file, uploading_file);
                     let can_send = self.connection_state.borrow().can_send();
-                    let input = TextEdit::multiline(&mut session.draft)
-                        .desired_rows(3)
-                        .hint_text(self.connection_state.borrow().composer_hint_text())
-                        .interactive(can_send && !attachment_busy);
-                    let response = ui.add_sized([ui.available_width(), 72.0], input);
+                    ui.label(
+                        RichText::new("Type / to open command completion.")
+                            .small()
+                            .weak(),
+                    );
+                    ui.add_space(4.0);
+                    let previous_slash_state = session.slash_completer.clone();
+                    let mut input_output = ui
+                        .allocate_ui_with_layout(
+                            vec2(ui.available_width(), 80.0),
+                            Layout::left_to_right(Align::Min),
+                            |ui| {
+                                TextEdit::multiline(&mut session.draft)
+                                    .desired_rows(4)
+                                    .desired_width(ui.available_width())
+                                    .hint_text(self.connection_state.borrow().composer_hint_text())
+                                    .interactive(can_send && !attachment_busy)
+                                    .show(ui)
+                            },
+                        )
+                        .inner;
+                    let response = &input_output.response;
 
-                    let send_on_enter = response.has_focus()
-                        && ui.input(|input| {
-                            input.key_pressed(Key::Enter) && !input.modifiers.command
-                        });
+                    let raw_slash_trigger = input_output.cursor_range.and_then(|cursor_range| {
+                        detect_active_slash_command(&session.draft, cursor_range.primary.index)
+                    });
+                    let slash_trigger = raw_slash_trigger.as_ref().and_then(|trigger| {
+                        let dismissed = session.slash_completer.dismissed_query.as_deref()
+                            == Some(trigger.query.as_str())
+                            && session.slash_completer.dismissed_start
+                                == Some(trigger.replace_range.start);
+                        (!dismissed).then_some(trigger.clone())
+                    });
+                    let slash_matches =
+                        slash_trigger.as_ref().map(|trigger| slash_command_matches(&trigger.query));
+                    if let Some(trigger) = slash_trigger.as_ref() {
+                        update_slash_selection_state(
+                            &mut session.slash_completer,
+                            &trigger.query,
+                            trigger.replace_range.clone(),
+                            slash_matches.as_ref().map_or(0, Vec::len),
+                        );
+                    } else if raw_slash_trigger.is_none() {
+                        session.slash_completer.dismissed_query = None;
+                        session.slash_completer.dismissed_start = None;
+                        session.slash_completer.selected_index = 0;
+                        session.slash_completer.last_query.clear();
+                        session.slash_completer.replace_range = None;
+                    } else {
+                        session.slash_completer.selected_index = 0;
+                        session.slash_completer.last_query.clear();
+                        session.slash_completer.replace_range = None;
+                    }
+
+                    let mut slash_completion_accepted = false;
+                    let complete_on_enter = response.has_focus()
+                        && ui.input(|input| input.key_pressed(Key::Enter) && !input.modifiers.command)
+                        && slash_trigger.is_none()
+                        && previous_slash_state.replace_range.is_some();
                     let insert_newline = response.has_focus()
                         && ui.input(|input| {
                             input.key_pressed(Key::Enter) && input.modifiers.command
@@ -535,6 +656,103 @@ impl ChatApp {
                     if insert_newline {
                         session.draft.push('\n');
                     }
+
+                    if response.has_focus() {
+                        if let (Some(trigger), Some(matches)) =
+                            (slash_trigger.as_ref(), slash_matches.as_ref())
+                        {
+                            let popup_pos = input_output
+                                .cursor_range
+                                .map(|cursor_range| {
+                                    let cursor_rect =
+                                        input_output.galley.pos_from_cursor(cursor_range.primary);
+                                    response.rect.min
+                                        + cursor_rect.left_bottom().to_vec2()
+                                        + vec2(0.0, 6.0)
+                                })
+                                .unwrap_or_else(|| {
+                                    egui::pos2(response.rect.left(), response.rect.bottom() + 4.0)
+                                });
+                            slash_completion_accepted = handle_slash_completion_keyboard(
+                                ui,
+                                &mut session.draft,
+                                trigger,
+                                matches,
+                                &mut session.slash_completer.selected_index,
+                                &mut input_output.state,
+                                response.id,
+                            );
+                            if slash_completion_accepted {
+                                clear_slash_completion_state(
+                                    &mut session.slash_completer,
+                                    Some(trigger),
+                                );
+                            }
+                            if !slash_completion_accepted
+                                && render_slash_completion_popup(
+                                    ui,
+                                    popup_pos,
+                                    response.id,
+                                    response.rect.width(),
+                                    &mut session.draft,
+                                    trigger,
+                                    matches,
+                                    &mut session.slash_completer.selected_index,
+                                    &mut input_output.state,
+                                )
+                            {
+                                clear_slash_completion_state(
+                                    &mut session.slash_completer,
+                                    Some(trigger),
+                                );
+                                ui.ctx().request_repaint();
+                            }
+                        } else if complete_on_enter
+                            && let Some(replace_range) =
+                                previous_slash_state.replace_range.clone()
+                        {
+                            let matches = slash_command_matches(&previous_slash_state.last_query);
+                            if let Some(completion) = matches
+                                .get(
+                                    previous_slash_state
+                                        .selected_index
+                                        .min(matches.len().saturating_sub(1)),
+                                )
+                                .copied()
+                            {
+                                if session.draft[replace_range.end..].starts_with('\n') {
+                                    session
+                                        .draft
+                                        .replace_range(replace_range.end..replace_range.end + 1, "");
+                                }
+                                apply_slash_completion_selection(
+                                    &mut session.draft,
+                                    &ActiveSlashCommand {
+                                        replace_range: replace_range.clone(),
+                                        query: previous_slash_state.last_query.clone(),
+                                    },
+                                    completion,
+                                    &mut input_output.state,
+                                    response.id,
+                                    ui.ctx(),
+                                );
+                                clear_slash_completion_state(
+                                    &mut session.slash_completer,
+                                    Some(&ActiveSlashCommand {
+                                        replace_range,
+                                        query: previous_slash_state.last_query.clone(),
+                                    }),
+                                );
+                                slash_completion_accepted = true;
+                            }
+                        }
+                    }
+
+                    let send_on_enter = !slash_completion_accepted
+                        && response.has_focus()
+                        && ui.input(|input| {
+                            input.key_pressed(Key::Enter) && !input.modifiers.command
+                        });
 
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -747,6 +965,7 @@ impl eframe::App for ChatApp {
         self.render_session_list(ctx);
         self.render_workbench(ctx);
         self.render_gateway_dialog(ctx);
+        self.render_about_dialog(ctx);
         self.render_rename_dialog(ctx);
         self.render_delete_dialog(ctx);
         self.toasts.borrow_mut().show(ctx);
@@ -951,11 +1170,193 @@ fn render_message_body(
 
 fn compact_sidebar_title(title: &str) -> String {
     const MAX_CHARS: usize = 24;
-    let count = title.chars().count();
-    if count <= MAX_CHARS {
-        return title.to_string();
+    compact_status_text(title, MAX_CHARS)
+}
+
+fn compact_status_text(text: &str, max_chars: usize) -> String {
+    let count = text.chars().count();
+    if count <= max_chars {
+        return text.to_string();
     }
 
-    let shortened = title.chars().take(MAX_CHARS - 1).collect::<String>();
+    let shortened = text.chars().take(max_chars - 1).collect::<String>();
     format!("{shortened}…")
+}
+
+fn update_slash_selection_state(
+    state: &mut super::session::SlashCompleterState,
+    query: &str,
+    replace_range: std::ops::Range<usize>,
+    match_count: usize,
+) {
+    if state.last_query != query {
+        state.last_query = query.to_string();
+        state.selected_index = 0;
+    }
+    state.replace_range = Some(replace_range);
+    if match_count == 0 {
+        state.selected_index = 0;
+    } else {
+        state.selected_index = state.selected_index.min(match_count - 1);
+    }
+}
+
+fn clear_slash_completion_state(
+    state: &mut super::session::SlashCompleterState,
+    dismissed_trigger: Option<&ActiveSlashCommand>,
+) {
+    state.selected_index = 0;
+    state.last_query.clear();
+    state.replace_range = None;
+    state.dismissed_query = dismissed_trigger.map(|trigger| trigger.query.clone());
+    state.dismissed_start = dismissed_trigger.map(|trigger| trigger.replace_range.start);
+}
+
+fn handle_slash_completion_keyboard(
+    ui: &egui::Ui,
+    draft: &mut String,
+    trigger: &ActiveSlashCommand,
+    matches: &[SlashCommandCompletion],
+    selected_index: &mut usize,
+    text_edit_state: &mut TextEditState,
+    text_edit_id: egui::Id,
+) -> bool {
+    if matches.is_empty() {
+        return ui.input(|input| input.key_pressed(Key::Escape));
+    }
+
+    if ui.input(|input| input.key_pressed(Key::Escape)) {
+        return true;
+    }
+    if ui.input(|input| input.key_pressed(Key::ArrowDown)) {
+        *selected_index = (*selected_index + 1) % matches.len();
+    }
+    if ui.input(|input| input.key_pressed(Key::ArrowUp)) {
+        *selected_index = if *selected_index == 0 {
+            matches.len() - 1
+        } else {
+            *selected_index - 1
+        };
+    }
+    if ui.input(|input| input.key_pressed(Key::Tab) || input.key_pressed(Key::Enter)) {
+        apply_slash_completion_selection(
+            draft,
+            trigger,
+            matches[*selected_index],
+            text_edit_state,
+            text_edit_id,
+            ui.ctx(),
+        );
+        return true;
+    }
+    false
+}
+
+fn render_slash_completion_popup(
+    ui: &mut egui::Ui,
+    popup_pos: egui::Pos2,
+    text_edit_id: egui::Id,
+    response_width: f32,
+    draft: &mut String,
+    trigger: &ActiveSlashCommand,
+    matches: &[SlashCommandCompletion],
+    selected_index: &mut usize,
+    text_edit_state: &mut TextEditState,
+) -> bool {
+    if matches.is_empty() {
+        return false;
+    }
+
+    let mut accepted = false;
+    let popup_id = text_edit_id.with("slash-completer");
+    egui::Area::new(popup_id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(popup_pos)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(response_width.clamp(240.0, 420.0));
+                ui.spacing_mut().item_spacing.y = 2.0;
+                for (index, completion) in matches.iter().copied().enumerate() {
+                    let selected = *selected_index == index;
+                    let row = ui.selectable_label(
+                        selected,
+                        format!("{:<18} {}", completion.command, completion.description),
+                    );
+                    if row.hovered() {
+                        *selected_index = index;
+                    }
+                    if row.clicked() {
+                        apply_slash_completion_selection(
+                            draft,
+                            trigger,
+                            completion,
+                            text_edit_state,
+                            text_edit_id,
+                            ui.ctx(),
+                        );
+                        accepted = true;
+                    }
+                }
+            });
+        });
+    accepted
+}
+
+fn apply_slash_completion_selection(
+    draft: &mut String,
+    trigger: &ActiveSlashCommand,
+    completion: SlashCommandCompletion,
+    text_edit_state: &mut TextEditState,
+    text_edit_id: egui::Id,
+    ctx: &Context,
+) {
+    let cursor_char_index = apply_slash_completion(draft, trigger.replace_range.clone(), completion);
+    let cursor = egui::text::CCursor::new(cursor_char_index);
+    text_edit_state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(cursor)));
+    text_edit_state.clone().store(ctx, text_edit_id);
+    ctx.request_repaint();
+}
+
+fn live_fps(ctx: &Context) -> f32 {
+    let dt = ctx.input(|input| input.unstable_dt);
+    if dt.is_finite() && dt > f32::EPSILON {
+        1.0 / dt
+    } else {
+        0.0
+    }
+}
+
+fn session_route_label(session: &SessionWindow) -> String {
+    let provider = session.selected_route.model_provider.trim();
+    let model = session.selected_route.model.trim();
+    match (provider.is_empty(), model.is_empty()) {
+        (true, true) => "Route: default".to_string(),
+        (false, true) => format!("Route: {provider}"),
+        (true, false) => format!("Route: {model}"),
+        (false, false) => format!("Route: {provider}/{model}"),
+    }
+}
+
+fn session_activity_label(session: &SessionWindow) -> Option<&'static str> {
+    if *session.buffers.history_loading.borrow() {
+        Some("History")
+    } else if *session.uploading_file.borrow() {
+        Some("Uploading")
+    } else if *session.selecting_file.borrow() {
+        Some("Picking File")
+    } else if session
+        .buffers
+        .active_stream_request_id
+        .borrow()
+        .as_deref()
+        .is_some()
+    {
+        Some("Streaming")
+    } else if session.selected_archive_id.borrow().as_deref().is_some() {
+        Some("File Attached")
+    } else {
+        None
+    }
 }
