@@ -29,9 +29,25 @@ pub const fn theme_preference(theme_mode: ThemeMode) -> egui::ThemePreference {
     }
 }
 
+#[must_use]
+pub const fn theme_mode_from_preference(theme: egui::ThemePreference) -> ThemeMode {
+    match theme {
+        egui::ThemePreference::System => ThemeMode::System,
+        egui::ThemePreference::Light => ThemeMode::Light,
+        egui::ThemePreference::Dark => ThemeMode::Dark,
+    }
+}
+
+#[must_use]
+pub const fn theme_preference_label(theme: egui::ThemePreference) -> &'static str {
+    theme_mode_from_preference(theme).label()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ThemeMode, theme_preference};
+    use super::{
+        ThemeMode, theme_mode_from_preference, theme_preference, theme_preference_label,
+    };
 
     #[test]
     fn theme_mode_labels_match_expected_copy() {
@@ -54,5 +70,28 @@ mod tests {
             theme_preference(ThemeMode::Dark),
             egui::ThemePreference::Dark
         );
+    }
+
+    #[test]
+    fn theme_mode_from_preference_maps_all_preferences() {
+        assert_eq!(
+            theme_mode_from_preference(egui::ThemePreference::System),
+            ThemeMode::System
+        );
+        assert_eq!(
+            theme_mode_from_preference(egui::ThemePreference::Light),
+            ThemeMode::Light
+        );
+        assert_eq!(
+            theme_mode_from_preference(egui::ThemePreference::Dark),
+            ThemeMode::Dark
+        );
+    }
+
+    #[test]
+    fn theme_preference_labels_match_expected_copy() {
+        assert_eq!(theme_preference_label(egui::ThemePreference::System), "System");
+        assert_eq!(theme_preference_label(egui::ThemePreference::Light), "Light");
+        assert_eq!(theme_preference_label(egui::ThemePreference::Dark), "Dark");
     }
 }

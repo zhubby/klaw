@@ -25,6 +25,7 @@
 
 - `ThemeMode`
 - `theme_preference()`
+- `ThemeSwitch`
 - `NotificationCenter`
 - `install_fonts()`
 

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-13
+
+### Changed
+
+- 底部状态栏的主题模式入口已从普通下拉框切换为共享 `klaw-ui-kit::ThemeSwitch` 三态滑块，桌面端和 Web 端现在复用同一套 theme switch 交互
+
 ## 2026-04-10
 
 ### Changed

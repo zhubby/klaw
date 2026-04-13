@@ -8,7 +8,7 @@ use crate::runtime_bridge::{
 };
 use crate::settings::{AppSettings, SyncMode, load_settings, save_settings};
 use crate::state::workbench::TabId;
-use crate::state::{ThemeMode, UiAction, UiState};
+use crate::state::{UiAction, UiState};
 use crate::sync_runtime::{
     SyncRuntimeTaskKind, sync_runtime_finish_task, sync_runtime_set_last_snapshot,
     sync_runtime_set_remote_snapshots, sync_runtime_set_remote_update,
@@ -16,6 +16,7 @@ use crate::sync_runtime::{
 };
 use crate::ui::{sidebar, workbench};
 use egui_phosphor::regular;
+use klaw_ui_kit::{ThemeSwitch, theme_mode_from_preference, theme_preference};
 use klaw_storage::{
     BackupItem, BackupPlan, BackupService, S3SnapshotStoreConfig, SnapshotListItem, SnapshotMode,
 };
@@ -304,28 +305,12 @@ impl ShellUi {
 
         egui::TopBottomPanel::bottom("klaw-status-bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let theme_icon = match state.theme_mode {
-                    ThemeMode::System => regular::CIRCLE_HALF,
-                    ThemeMode::Light => regular::SUN,
-                    ThemeMode::Dark => regular::MOON,
-                };
-
-                ui.label(theme_icon);
                 ui.label("Theme Mode:");
-                egui::ComboBox::from_id_salt("status-theme-mode")
-                    .width(110.0)
-                    .selected_text(state.theme_mode.label())
-                    .show_ui(ui, |ui| {
-                        for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
-                            if ui
-                                .selectable_label(state.theme_mode == mode, mode.label())
-                                .clicked()
-                            {
-                                actions.push(UiAction::SetThemeMode(mode));
-                                ui.close();
-                            }
-                        }
-                    });
+                let mut preference = theme_preference(state.theme_mode);
+                let response = ui.add(ThemeSwitch::new(&mut preference));
+                if response.changed() {
+                    actions.push(UiAction::SetThemeMode(theme_mode_from_preference(preference)));
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(update) = self.release_update.as_ref() {

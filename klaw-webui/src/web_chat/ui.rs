@@ -3,7 +3,7 @@ use eframe::egui::{
     ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText, vec2,
 };
 use egui_phosphor::regular;
-use klaw_ui_kit::text_animator::TextAnimator;
+use klaw_ui_kit::{ThemeSwitch, text_animator::TextAnimator};
 use klaw_ui_kit::toggle::toggle;
 use std::collections::HashMap;
 
@@ -110,27 +110,10 @@ impl ChatApp {
             ui.horizontal(|ui| {
                 ui.label("Theme Mode:");
                 let current_theme = self.ctx.options(|opt| opt.theme_preference);
-                ComboBox::from_id_salt("klaw-webui-theme-mode")
-                    .width(110.0)
-                    .selected_text(theme_preference_label(current_theme))
-                    .show_ui(ui, |ui| {
-                        for mode in [
-                            egui::ThemePreference::System,
-                            egui::ThemePreference::Light,
-                            egui::ThemePreference::Dark,
-                        ] {
-                            if ui
-                                .selectable_label(
-                                    current_theme == mode,
-                                    theme_preference_label(mode),
-                                )
-                                .clicked()
-                            {
-                                requested_theme = Some(mode);
-                                ui.close();
-                            }
-                        }
-                    });
+                let mut next_theme = current_theme;
+                if ui.add(ThemeSwitch::new(&mut next_theme)).changed() {
+                    requested_theme = Some(next_theme);
+                }
                 ui.separator();
                 ui.label(format!("Agents: {}", self.sessions.len()));
                 ui.separator();
@@ -975,12 +958,4 @@ fn compact_sidebar_title(title: &str) -> String {
 
     let shortened = title.chars().take(MAX_CHARS - 1).collect::<String>();
     format!("{shortened}…")
-}
-
-fn theme_preference_label(theme: egui::ThemePreference) -> &'static str {
-    match theme {
-        egui::ThemePreference::System => "System",
-        egui::ThemePreference::Light => "Light",
-        egui::ThemePreference::Dark => "Dark",
-    }
 }

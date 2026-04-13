@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-13
+
+### Changed
+
+- 底部状态栏的主题模式入口已改为复用 `klaw-ui-kit::ThemeSwitch` 三态滑块，浏览器端不再使用普通下拉框切换 system/light/dark
+
 ## 2026-04-12
 
 ### Added

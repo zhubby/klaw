@@ -2131,6 +2131,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-theme-switch"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28dcf005ec870849977d014f0413d2ce42c0dbb81d9b59e9c3fdb7dff617d3fd"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui-twemoji"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4519,6 +4528,7 @@ dependencies = [
  "egui",
  "egui-notify",
  "egui-phosphor",
+ "egui-theme-switch",
  "egui-twemoji",
  "fontdb",
  "getrandom 0.4.2",

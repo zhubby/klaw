@@ -107,6 +107,7 @@ egui-file-dialog = "0.12.0"
 egui-phosphor = "0.11.0"
 egui_extras = "0.33.3"
 egui-notify = "0.21.0"
+egui-theme-switch = "0.5.1"
 egui_plot = { git = "https://github.com/emilk/egui_plot", rev = "445273e7edbb338d300b0e9e6c351d003f37a5a8" }
 egui-twemoji = "0.8.0"
 tray-icon = "0.19"

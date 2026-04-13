@@ -11,7 +11,7 @@
 - Workbench sidebar now includes a dedicated `Voice` panel for voice config editing and split STT/TTS testing
 - Top menu bar (File/View/Window/Help)
   - File menu includes `Force Persist Layout` to immediately flush layout state to disk
-- Bottom status bar with version and theme-mode dropdown
+- Bottom status bar with version and animated tri-state theme switch
   - Runtime provider override dropdown on the right (select from `model_providers` without editing config; applies immediately to the running runtime's default provider for new routes and `/new`)
 - `About Klaw` dialog now centers the title and shows the embedded app icon, version, build-time git commit sha, and repository link
 - System tray / macOS menu bar icon loaded from embedded PNG assets at runtime

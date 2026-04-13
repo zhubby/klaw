@@ -9,6 +9,7 @@ description = "Shared UI foundation for klaw-gui and klaw-webui"
 egui = { workspace = true }
 egui-phosphor = { workspace = true }
 egui-notify = { workspace = true }
+egui-theme-switch = { workspace = true }
 egui-twemoji = { workspace = true }
 eframe = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
