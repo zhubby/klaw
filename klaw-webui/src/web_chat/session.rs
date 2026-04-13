@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    MessageRole, ProviderCatalog, ResolvedSessionRoute, SessionListEntry, WorkspaceSessionEntry,
+    MessageRole, ProviderCatalog, ResolvedSessionRoute, WorkspaceSessionEntry,
     resolve_session_route_inputs,
 };
 use eframe::epaint::{Color32, FontFamily, FontId};

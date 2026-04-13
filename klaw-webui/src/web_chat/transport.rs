@@ -448,7 +448,7 @@ impl ChatApp {
                     }
                     crate::StreamMessageAction::PushAssistant => {
                         history.push(ChatMessage::new(
-                            content,
+                            content.clone(),
                             MessageRole::Assistant,
                             timestamp_ms,
                         ));
@@ -456,6 +456,8 @@ impl ChatApp {
                             .buffers
                             .active_stream_request_id
                             .borrow_mut() = request_id;
+                        drop(history);
+                        self.notify_new_assistant_reply(session_key, &content);
                     }
                 }
             }

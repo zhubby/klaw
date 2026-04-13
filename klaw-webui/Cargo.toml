@@ -50,6 +50,7 @@ web-sys = { workspace = true, features = [
     "RequestInit",
     "Response",
     "Storage",
+    "NotificationOptions",
     "WebSocket",
     "Window",
     "Notification",

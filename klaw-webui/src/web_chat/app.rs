@@ -110,6 +110,49 @@ impl ChatApp {
         self.persist_workspace_state();
     }
 
+    pub(in crate::web_chat) fn notify_new_assistant_reply(
+        &self,
+        session_key: &str,
+        content: &str,
+    ) {
+        if content.trim().is_empty() {
+            return;
+        }
+        if notification_permission().as_deref() != Some("granted") {
+            return;
+        }
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let has_focus = window
+            .document()
+            .and_then(|document| document.has_focus().ok())
+            .unwrap_or(false);
+        if has_focus && self.active_session_key.as_deref() == Some(session_key) {
+            return;
+        }
+
+        let title = self
+            .sessions
+            .iter()
+            .find(|session| session.session_key == session_key)
+            .map(|session| {
+                if session.title.trim().is_empty() {
+                    "New reply".to_string()
+                } else {
+                    session.title.clone()
+                }
+            })
+            .unwrap_or_else(|| "New reply".to_string());
+        let body = truncate_notification_body(content);
+        let options = web_sys::NotificationOptions::new();
+        options.set_body(&body);
+        let _ = Notification::new_with_options(
+            &title,
+            &options,
+        );
+    }
+
     /// Fetch server history for open windows that have not initialized yet.
     pub(in crate::web_chat) fn subscribe_sessions_needing_history(&mut self) {
         let workspace_ready = self.is_workspace_ready();
@@ -352,6 +395,30 @@ impl ChatApp {
             .map(SessionWindow::workspace_entry)
             .collect()
     }
+}
+
+fn truncate_notification_body(content: &str) -> String {
+    const MAX_CHARS: usize = 140;
+    let trimmed = content.trim();
+    if trimmed.chars().count() <= MAX_CHARS {
+        return trimmed.to_string();
+    }
+
+    let truncated = trimmed.chars().take(MAX_CHARS).collect::<String>();
+    format!("{truncated}...")
+}
+
+fn notification_permission() -> Option<String> {
+    let window = web_sys::window()?;
+    let notification_ctor =
+        js_sys::Reflect::get(window.as_ref(), &wasm_bindgen::JsValue::from_str("Notification"))
+            .ok()?;
+    js_sys::Reflect::get(
+        notification_ctor.as_ref(),
+        &wasm_bindgen::JsValue::from_str("permission"),
+    )
+    .ok()?
+    .as_string()
 }
 
 fn gateway_token_from_page() -> Option<String> {
