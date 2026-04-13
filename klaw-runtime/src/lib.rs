@@ -29,8 +29,9 @@ use klaw_core::{
     TransportError, build_runtime_system_prompt, ensure_workspace_prompt_templates,
 };
 use klaw_gateway::{
-    GatewayRuntimeInfo, GatewayWebhookAgentRequest, GatewayWebhookRequest, META_WEBSOCKET_MODEL,
-    META_WEBSOCKET_MODEL_PROVIDER, TailscaleHostInfo,
+    GatewayRuntimeInfo, GatewayWebhookAgentRequest, GatewayWebhookRequest,
+    GatewayWebsocketBroadcaster, META_WEBSOCKET_MODEL, META_WEBSOCKET_MODEL_PROVIDER,
+    TailscaleHostInfo,
 };
 use klaw_heartbeat::{HeartbeatManager, should_suppress_output};
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
@@ -121,6 +122,7 @@ pub struct RuntimeBundle {
     pub llm_audit_tx: std::sync::mpsc::SyncSender<NewLlmAuditRecord>,
     pub tool_audit_tx: std::sync::mpsc::SyncSender<NewToolAuditRecord>,
     pub env_check: EnvironmentCheckReport,
+    pub websocket_broadcaster: Arc<GatewayWebsocketBroadcaster>,
 }
 
 pub struct SharedChannelRuntime {
@@ -1867,6 +1869,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
 
     let env_check = env_check::check_environment();
     let tool_names = runtime.tools.list();
+    let websocket_broadcaster = Arc::new(GatewayWebsocketBroadcaster::new());
 
     info!(
         tool_count = tool_names.len(),
@@ -1925,6 +1928,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         llm_audit_tx,
         tool_audit_tx,
         env_check,
+        websocket_broadcaster,
     })
 }
 
@@ -3751,6 +3755,7 @@ mod tests {
                 checks: Vec::new(),
                 checked_at: OffsetDateTime::UNIX_EPOCH,
             },
+            websocket_broadcaster: Arc::new(GatewayWebsocketBroadcaster::new()),
         }
     }
 

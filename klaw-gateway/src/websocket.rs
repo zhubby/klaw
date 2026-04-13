@@ -1,4 +1,4 @@
-use crate::state::{GatewayState, GatewayWebsocketConnection};
+use crate::state::GatewayState;
 use async_trait::async_trait;
 use axum::{
     extract::{
@@ -287,7 +287,13 @@ async fn handle_socket(
 ) {
     let connection_id = Uuid::new_v4().to_string();
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<GatewayWebsocketServerFrame>();
-    register_connection(&state, &connection_id, initial_session_key.clone()).await;
+    register_connection(
+        &state,
+        &connection_id,
+        initial_session_key.clone(),
+        outgoing_tx.clone(),
+    )
+    .await;
 
     let mut current_session_key = initial_session_key;
     if outgoing_tx
@@ -825,11 +831,12 @@ async fn register_connection(
     state: &GatewayState,
     connection_id: &str,
     session_key: Option<String>,
+    frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
 ) {
-    state.websocket_connections.write().await.insert(
-        connection_id.to_string(),
-        GatewayWebsocketConnection { session_key },
-    );
+    state
+        .websocket_broadcaster
+        .register(connection_id.to_string(), session_key, frame_tx)
+        .await;
 }
 
 async fn update_connection_session_key(
@@ -837,16 +844,12 @@ async fn update_connection_session_key(
     connection_id: &str,
     session_key: Option<String>,
 ) {
-    let mut connections = state.websocket_connections.write().await;
-    if let Some(connection) = connections.get_mut(connection_id) {
-        connection.session_key = session_key;
-    }
+    state
+        .websocket_broadcaster
+        .update_session_key(connection_id, session_key)
+        .await;
 }
 
 async fn cleanup_connection(state: Arc<GatewayState>, connection_id: String) {
-    state
-        .websocket_connections
-        .write()
-        .await
-        .remove(&connection_id);
+    state.websocket_broadcaster.cleanup(&connection_id).await;
 }

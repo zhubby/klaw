@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-04-13
+
+### Added
+
+- 新增共享 websocket broadcaster；gateway 现在会把每条 `/ws/chat` 连接的 sender 和订阅 session 一起登记，供 runtime 后台任务按 session 回推消息
+
+### Changed
+
+- `GatewayOptions` / `GatewayState` 现在支持注入并复用共享 websocket broadcaster，而不再只在连接处理协程里临时持有 frame sender
+
 ## 2026-04-12
 
 ### Added

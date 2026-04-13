@@ -22,6 +22,7 @@ use tracing::{debug, warn};
 
 pub fn gateway_options(runtime: Arc<RuntimeBundle>, config: &AppConfig) -> GatewayOptions {
     GatewayOptions {
+        websocket_broadcaster: Some(Arc::clone(&runtime.websocket_broadcaster)),
         webhook_handler: Some(Arc::new(RuntimeWebhookHandler {
             runtime: Arc::clone(&runtime),
         })),

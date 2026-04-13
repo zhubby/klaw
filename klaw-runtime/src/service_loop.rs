@@ -4,15 +4,17 @@ use klaw_channel::telegram::dispatch_background_outbound as dispatch_telegram_ba
 use klaw_config::{AppConfig, CronMissedRunPolicy};
 use klaw_core::{Envelope, InboundMessage, OutboundMessage};
 use klaw_cron::{CronWorker, CronWorkerConfig, MissedRunPolicy};
+use klaw_gateway::{GatewayWebsocketServerFrame, OutboundEvent};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig};
 use klaw_session::{SessionManager, SqliteSessionManager};
-use klaw_storage::DefaultSessionStore;
+use klaw_storage::{ChatRecord, DefaultSessionStore, SessionStorage};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, mpsc},
     thread,
     time::Duration,
+    time::SystemTime,
 };
 use tokio::time::timeout;
 use tracing::warn;
@@ -102,8 +104,11 @@ pub struct BackgroundServices {
 
 impl BackgroundServices {
     pub fn new(runtime: &RuntimeBundle, config: BackgroundServiceConfig) -> Self {
-        let outbound_dispatch_tx =
-            spawn_outbound_dispatcher(config.clone(), runtime.session_store.clone());
+        let outbound_dispatch_tx = spawn_outbound_dispatcher(
+            config.clone(),
+            runtime.session_store.clone(),
+            runtime.websocket_broadcaster.clone(),
+        );
         let cron_worker = CronWorker::new(
             std::sync::Arc::new(runtime.session_store.clone()),
             std::sync::Arc::new(runtime.inbound_transport.clone()),
@@ -218,6 +223,7 @@ impl BackgroundServices {
 fn spawn_outbound_dispatcher(
     config: BackgroundServiceConfig,
     session_store: DefaultSessionStore,
+    websocket_broadcaster: std::sync::Arc<klaw_gateway::GatewayWebsocketBroadcaster>,
 ) -> mpsc::Sender<Envelope<OutboundMessage>> {
     let (tx, rx) = mpsc::channel::<Envelope<OutboundMessage>>();
     thread::Builder::new()
@@ -235,9 +241,12 @@ fn spawn_outbound_dispatcher(
             };
 
             for msg in rx {
-                if let Err(err) =
-                    runtime.block_on(dispatch_outbound_message(&msg, &config, &session_store))
-                {
+                if let Err(err) = runtime.block_on(dispatch_outbound_message(
+                    &msg,
+                    &config,
+                    &session_store,
+                    websocket_broadcaster.as_ref(),
+                )) {
                     warn!(
                         session_key = msg.header.session_key.as_str(),
                         channel = msg.payload.channel.as_str(),
@@ -255,6 +264,7 @@ async fn dispatch_outbound_message(
     msg: &Envelope<OutboundMessage>,
     config: &BackgroundServiceConfig,
     session_store: &DefaultSessionStore,
+    websocket_broadcaster: &klaw_gateway::GatewayWebsocketBroadcaster,
 ) -> Result<(), String> {
     if msg
         .payload
@@ -266,9 +276,12 @@ async fn dispatch_outbound_message(
         return Ok(());
     }
 
+    mirror_outbound_to_delivery_session(msg, session_store).await?;
+
     match msg.payload.channel.as_str() {
         "dingtalk" => dispatch_dingtalk_outbound_message(msg, config, session_store).await,
         "telegram" => dispatch_telegram_outbound_message(msg, config).await,
+        "websocket" => dispatch_websocket_outbound_message(msg, websocket_broadcaster).await,
         _ => Ok(()),
     }
 }
@@ -354,6 +367,80 @@ async fn dispatch_dingtalk_outbound_message(
         )
     })?
     .map_err(|retry_err| format!("{err}; retry_after_refresh={retry_err}"))
+}
+
+async fn mirror_outbound_to_delivery_session(
+    msg: &Envelope<OutboundMessage>,
+    session_store: &DefaultSessionStore,
+) -> Result<(), String> {
+    let Some(target_session_key) = resolve_delivery_session_key(&msg.payload.metadata) else {
+        return Ok(());
+    };
+    if target_session_key == msg.header.session_key {
+        return Ok(());
+    }
+
+    session_store
+        .touch_session(
+            &target_session_key,
+            &msg.payload.chat_id,
+            &msg.payload.channel,
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    session_store
+        .append_chat_record(
+            &target_session_key,
+            &ChatRecord::new("assistant", msg.payload.content.clone(), None),
+        )
+        .await
+        .map_err(|err| err.to_string())
+}
+
+fn resolve_delivery_session_key(metadata: &BTreeMap<String, Value>) -> Option<String> {
+    ["channel.delivery_session_key", "channel.base_session_key"]
+        .into_iter()
+        .find_map(|key| {
+            metadata
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+}
+
+async fn dispatch_websocket_outbound_message(
+    msg: &Envelope<OutboundMessage>,
+    websocket_broadcaster: &klaw_gateway::GatewayWebsocketBroadcaster,
+) -> Result<(), String> {
+    let Some(target_session_key) = resolve_delivery_session_key(&msg.payload.metadata) else {
+        return Ok(());
+    };
+
+    let delivered = websocket_broadcaster
+        .broadcast_to_session(
+            &target_session_key,
+            GatewayWebsocketServerFrame::Event {
+                event: OutboundEvent::SessionMessage,
+                payload: serde_json::json!({
+                    "session_key": target_session_key,
+                    "response": {
+                        "content": msg.payload.content,
+                    },
+                    "role": "assistant",
+                    "timestamp_ms": SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as i64,
+                }),
+            },
+        )
+        .await;
+    if delivered == 0 {
+        return Ok(());
+    }
+    Ok(())
 }
 
 async fn dispatch_telegram_outbound_message(

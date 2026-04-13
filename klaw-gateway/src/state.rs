@@ -1,4 +1,8 @@
-use crate::{GatewayError, webhook::GatewayWebhookHandler, websocket::GatewayWebsocketHandler};
+use crate::{
+    GatewayError,
+    webhook::GatewayWebhookHandler,
+    websocket::{GatewayWebsocketHandler, GatewayWebsocketServerFrame},
+};
 use crate::{
     auth::WebhookAuth,
     tailscale::{TailscaleManager, TailscaleRuntimeInfo},
@@ -13,7 +17,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    sync::{RwLock, oneshot},
+    sync::{RwLock, mpsc, oneshot},
     task::JoinHandle,
 };
 
@@ -38,10 +42,84 @@ pub struct GatewayProvidersState {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct GatewayWebsocketConnection {
     pub(crate) session_key: Option<String>,
+    pub(crate) frame_tx: Option<mpsc::UnboundedSender<GatewayWebsocketServerFrame>>,
+}
+
+#[derive(Debug, Default)]
+pub struct GatewayWebsocketBroadcaster {
+    connections: RwLock<HashMap<String, GatewayWebsocketConnection>>,
+}
+
+impl GatewayWebsocketBroadcaster {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub async fn register(
+        &self,
+        connection_id: String,
+        session_key: Option<String>,
+        frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    ) {
+        self.connections.write().await.insert(
+            connection_id,
+            GatewayWebsocketConnection {
+                session_key,
+                frame_tx: Some(frame_tx),
+            },
+        );
+    }
+
+    pub async fn update_session_key(&self, connection_id: &str, session_key: Option<String>) {
+        let mut connections = self.connections.write().await;
+        if let Some(connection) = connections.get_mut(connection_id) {
+            connection.session_key = session_key;
+        }
+    }
+
+    pub async fn cleanup(&self, connection_id: &str) {
+        self.connections.write().await.remove(connection_id);
+    }
+
+    pub async fn broadcast_to_session(
+        &self,
+        session_key: &str,
+        frame: GatewayWebsocketServerFrame,
+    ) -> usize {
+        let mut stale_connection_ids = Vec::new();
+        let mut delivered = 0usize;
+        {
+            let connections = self.connections.read().await;
+            for (connection_id, connection) in connections.iter() {
+                if connection.session_key.as_deref() != Some(session_key) {
+                    continue;
+                }
+                let Some(frame_tx) = connection.frame_tx.as_ref() else {
+                    stale_connection_ids.push(connection_id.clone());
+                    continue;
+                };
+                if frame_tx.send(frame.clone()).is_ok() {
+                    delivered += 1;
+                } else {
+                    stale_connection_ids.push(connection_id.clone());
+                }
+            }
+        }
+
+        if !stale_connection_ids.is_empty() {
+            let mut connections = self.connections.write().await;
+            for connection_id in stale_connection_ids {
+                connections.remove(&connection_id);
+            }
+        }
+
+        delivered
+    }
 }
 
 pub(crate) struct GatewayState {
-    pub(crate) websocket_connections: RwLock<HashMap<String, GatewayWebsocketConnection>>,
+    pub(crate) websocket_broadcaster: Arc<GatewayWebsocketBroadcaster>,
     pub(crate) health: Arc<HealthRegistry>,
     pub(crate) prometheus: Option<PrometheusExporter>,
     pub(crate) webhook: Option<GatewayWebhookState>,
@@ -52,6 +130,7 @@ pub(crate) struct GatewayState {
 
 impl GatewayState {
     pub(crate) fn new(
+        websocket_broadcaster: Arc<GatewayWebsocketBroadcaster>,
         health: Arc<HealthRegistry>,
         prometheus: Option<PrometheusExporter>,
         webhook: Option<GatewayWebhookState>,
@@ -60,7 +139,7 @@ impl GatewayState {
         providers: Option<Arc<GatewayProvidersState>>,
     ) -> Self {
         Self {
-            websocket_connections: RwLock::new(HashMap::new()),
+            websocket_broadcaster,
             health,
             prometheus,
             webhook,

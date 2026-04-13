@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-13
+
+### Changed
+- `cron_manager.create` 现在收口为基于 `source_session_key` 的交互式会话绑定模型：调用方必须传当前对话 session，tool 会自动生成 cron payload 并固化 `cron.source_session_key` / `cron.base_session_key`
+
+### Removed
+- `cron_manager.create` / `update` 不再接受手工路由用的 `payload`、`payload_json`、`channel`、`chat_id`、`session_key` 参数，避免模型创建出无法投递的定时任务
+
+### Fixed
+- `cron_manager` 现在会从当前对话 session 反查 base session，覆盖 terminal active child、DingTalk/Telegram 当前会话和 websocket 会话的 cron 绑定场景
+
 ## 2026-04-07
 
 ### Fixed

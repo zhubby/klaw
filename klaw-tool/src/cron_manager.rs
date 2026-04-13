@@ -3,13 +3,12 @@ use chrono::Utc;
 use chrono_tz::Tz;
 use klaw_storage::{
     CronJob, CronScheduleKind, CronStorage, CronTaskRun, DefaultSessionStore, NewCronJob,
-    StorageError, UpdateCronJobPatch, open_default_store,
+    SessionIndex, SessionStorage, StorageError, UpdateCronJobPatch, open_default_store,
 };
 use klaw_util::system_timezone_name;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::str::FromStr;
-use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
@@ -18,7 +17,7 @@ const DEFAULT_LIST_LIMIT: i64 = 20;
 const MAX_LIST_LIMIT: i64 = 200;
 
 pub struct CronManagerTool {
-    storage: Arc<dyn CronStorage>,
+    storage: DefaultSessionStore,
 }
 
 impl CronManagerTool {
@@ -30,13 +29,11 @@ impl CronManagerTool {
     }
 
     pub fn with_store(store: DefaultSessionStore) -> Self {
-        Self {
-            storage: Arc::new(store),
-        }
+        Self { storage: store }
     }
 
     #[cfg(test)]
-    fn from_storage(storage: Arc<dyn CronStorage>) -> Self {
+    fn from_storage(storage: DefaultSessionStore) -> Self {
         Self { storage }
     }
 
@@ -132,43 +129,50 @@ impl CronManagerTool {
         Ok((schedule_kind, schedule_expr))
     }
 
-    fn parse_payload_json(
+    async fn parse_payload_json(
+        &self,
         args: &Value,
         ctx: &ToolContext,
         default_session_key: Option<&str>,
     ) -> Result<String, ToolError> {
-        if let Some(raw) = args.get("payload_json") {
-            let payload = raw
-                .as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    ToolError::InvalidArgs("`payload_json` must be a string".to_string())
-                })?;
-            return parse_payload_object(payload, "`payload_json`");
-        }
+        build_payload_from_shortcut(self, args, ctx, default_session_key).await
+    }
 
-        if let Some(payload) = args.get("payload").cloned() {
-            if let Some(raw) = payload.as_str() {
-                return parse_payload_object(raw.trim(), "`payload`");
-            }
-            if !payload.is_object() {
-                return Err(ToolError::InvalidArgs(
-                    "`payload` must be a JSON object, or a JSON string that decodes to an object"
-                        .to_string(),
-                ));
-            }
-            validate_inbound_payload_value(&payload).map_err(|err| {
-                ToolError::InvalidArgs(format!(
-                    "`payload` must decode to a valid InboundMessage-like object: {err}"
-                ))
-            })?;
-            return serde_json::to_string(&payload).map_err(|err| {
-                ToolError::ExecutionFailed(format!("serialize `payload` to json failed: {err}"))
-            });
-        }
+    async fn resolve_source_session_route(
+        &self,
+        source_session_key: &str,
+    ) -> Result<CronSourceSessionRoute, ToolError> {
+        let source = self
+            .storage
+            .get_session(source_session_key)
+            .await
+            .map_err(map_storage_err)?;
+        let base = match self
+            .storage
+            .get_session_by_active_session_key(source_session_key)
+            .await
+        {
+            Ok(base) if base.session_key != source.session_key => base,
+            Ok(base) => base,
+            Err(_) => source.clone(),
+        };
+        validate_cron_source_channel(&source.channel)?;
 
-        build_payload_from_shortcut(args, ctx, default_session_key)
+        let delivery_metadata = source
+            .delivery_metadata_json
+            .as_deref()
+            .and_then(parse_delivery_metadata_json)
+            .or_else(|| {
+                base.delivery_metadata_json
+                    .as_deref()
+                    .and_then(parse_delivery_metadata_json)
+            })
+            .unwrap_or_default();
+        Ok(CronSourceSessionRoute {
+            source,
+            base,
+            delivery_metadata,
+        })
     }
 
     fn compute_next_run_ms(
@@ -223,13 +227,12 @@ impl CronManagerTool {
         let name = Self::require_str(args, "name")?;
         let (schedule_kind, schedule_expr) = Self::resolve_create_schedule(args)?;
         let default_session_key = format!("cron:{id}");
-        let payload_json = Self::parse_payload_json(args, ctx, Some(&default_session_key))?;
+        let payload_json = self
+            .parse_payload_json(args, ctx, Some(&default_session_key))
+            .await?;
         let enabled = Self::optional_bool(args, "enabled")?.unwrap_or(true);
-        let timezone = Self::optional_str(args, "timezone")?.unwrap_or_else(system_timezone_name);
-        let next_run_at_ms = match Self::optional_i64(args, "next_run_at_ms")? {
-            Some(v) => v,
-            None => Self::compute_next_run_ms(schedule_kind, &schedule_expr, &timezone)?,
-        };
+        let timezone = system_timezone_name();
+        let next_run_at_ms = Self::compute_next_run_ms(schedule_kind, &schedule_expr, &timezone)?;
 
         let job = self
             .storage
@@ -261,15 +264,11 @@ impl CronManagerTool {
 
         let (schedule_kind, schedule_expr) = Self::resolve_update_schedule(args, &current)?;
 
-        let payload_json = if args.get("payload").is_some()
-            || args.get("payload_json").is_some()
-            || args.get("message").is_some()
-        {
-            Some(Self::parse_payload_json(
-                args,
-                ctx,
-                Some(&format!("cron:{cron_id}")),
-            )?)
+        let payload_json = if args.get("message").is_some() {
+            Some(
+                self.parse_payload_json(args, ctx, Some(&format!("cron:{cron_id}")))
+                    .await?,
+            )
         } else {
             None
         };
@@ -279,23 +278,22 @@ impl CronManagerTool {
             schedule_kind,
             schedule_expr,
             payload_json,
-            timezone: Self::optional_str(args, "timezone")?,
-            next_run_at_ms: Self::optional_i64(args, "next_run_at_ms")?,
+            timezone: None,
+            next_run_at_ms: None,
         };
 
-        if patch.next_run_at_ms.is_none()
-            && (patch.schedule_kind.is_some() || patch.schedule_expr.is_some())
-        {
+        if patch.schedule_kind.is_some() || patch.schedule_expr.is_some() {
             let effective_kind = patch.schedule_kind.unwrap_or(current.schedule_kind);
             let effective_expr = patch
                 .schedule_expr
                 .as_deref()
                 .unwrap_or(&current.schedule_expr);
-            let effective_timezone = patch.timezone.as_deref().unwrap_or(&current.timezone);
+            let effective_timezone = system_timezone_name();
+            patch.timezone = Some(effective_timezone.clone());
             patch.next_run_at_ms = Some(Self::compute_next_run_ms(
                 effective_kind,
                 effective_expr,
-                effective_timezone,
+                &effective_timezone,
             )?);
         }
 
@@ -438,24 +436,11 @@ impl Tool for CronManagerTool {
                         "name": { "type": "string", "description": "Cron display name." },
                         "schedule_kind": { "type": "string", "enum": ["cron", "every"], "description": "Optional when it can be inferred from `schedule_expr`. Use `every` for intervals like `24h`; use `cron` for calendar schedules." },
                         "schedule_expr": { "type": "string", "description": "Schedule expression. Accepted examples: `24h`, `every 24h`, `0 8 * * *`, `0 0 8 * * *`, or daily shorthand `8:00`." },
-                        "message": { "type": "string", "description": "Preferred shortcut. If set and `payload`/`payload_json` are omitted, the tool builds an inbound payload automatically using the current conversation context. Use this for 'run this prompt on a schedule in the current chat'." },
-                        "payload": { "description": "InboundMessage payload to publish when triggered. Prefer a JSON object. A JSON string that decodes to an object is also accepted.", "oneOf": [{ "type": "object" }, { "type": "string" }] },
-                        "payload_json": { "type": "string", "description": "Payload JSON string alternative to `payload`. Must decode to a JSON object." },
-                        "channel": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to the current session channel, or `cron` if it cannot be inferred." },
-                        "sender_id": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to `system`." },
-                        "chat_id": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to the current session chat id when it can be inferred." },
-                        "session_key": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to an isolated cron session such as `cron:<job_id>`." },
+                        "message": { "type": "string", "description": "Prompt content to run on the schedule. The tool always binds the cron to the current tool-call session automatically." },
                         "metadata": { "type": "object", "description": "Optional metadata object used only with `message` shortcut. Defaults to `{}`." },
-                        "enabled": { "description": "Whether the cron starts enabled. Defaults to true. Prefer a boolean; string values like `\"true\"` and `\"false\"` are also accepted.", "oneOf": [{ "type": "boolean" }, { "type": "string" }] },
-                        "timezone": { "type": "string", "description": "Timezone label. Defaults to the detected system timezone." },
-                        "next_run_at_ms": { "type": "integer", "description": "Optional explicit next run timestamp in ms." }
+                        "enabled": { "description": "Whether the cron starts enabled. Defaults to true. Prefer a boolean; string values like `\"true\"` and `\"false\"` are also accepted.", "oneOf": [{ "type": "boolean" }, { "type": "string" }] }
                     },
-                    "required": ["action", "name", "schedule_expr"],
-                    "anyOf": [
-                        { "required": ["message"] },
-                        { "required": ["payload"] },
-                        { "required": ["payload_json"] }
-                    ],
+                    "required": ["action", "name", "schedule_expr", "message"],
                     "additionalProperties": false
                 },
                 {
@@ -466,16 +451,8 @@ impl Tool for CronManagerTool {
                         "name": { "type": "string", "description": "Updated cron display name." },
                         "schedule_kind": { "type": "string", "enum": ["cron", "every"], "description": "Optional schedule kind override." },
                         "schedule_expr": { "type": "string", "description": "Updated schedule expression. Accepted examples: `24h`, `every 24h`, `0 8 * * *`, `0 0 8 * * *`, or `8:00` for daily 08:00." },
-                        "message": { "type": "string", "description": "Shortcut to rebuild the payload for the current conversation context." },
-                        "payload": { "description": "Updated payload object or JSON string that decodes to an object.", "oneOf": [{ "type": "object" }, { "type": "string" }] },
-                        "payload_json": { "type": "string", "description": "Updated payload JSON string." },
-                        "channel": { "type": "string", "description": "Optional override used only with `message` shortcut." },
-                        "sender_id": { "type": "string", "description": "Optional override used only with `message` shortcut." },
-                        "chat_id": { "type": "string", "description": "Optional override used only with `message` shortcut." },
-                        "session_key": { "type": "string", "description": "Optional override used only with `message` shortcut. Defaults to an isolated cron session such as `cron:<job_id>`." },
-                        "metadata": { "type": "object", "description": "Optional metadata object used only with `message` shortcut." },
-                        "timezone": { "type": "string", "description": "Updated timezone label." },
-                        "next_run_at_ms": { "type": "integer", "description": "Optional explicit next run timestamp in ms." }
+                        "message": { "type": "string", "description": "Shortcut to rebuild the payload for the current tool-call session." },
+                        "metadata": { "type": "object", "description": "Optional metadata object used only with `message` shortcut." }
                     },
                     "required": ["action", "id"],
                     "additionalProperties": false
@@ -624,25 +601,27 @@ fn parse_bool_like(raw: &str) -> Result<bool, ()> {
     }
 }
 
-fn parse_payload_object(raw: &str, field_name: &str) -> Result<String, ToolError> {
-    let payload = serde_json::from_str::<Value>(raw)
-        .map_err(|err| ToolError::InvalidArgs(format!("{field_name} is not valid json: {err}")))?;
-    if !payload.is_object() {
-        return Err(ToolError::InvalidArgs(format!(
-            "{field_name} must decode to a JSON object"
-        )));
-    }
-    validate_inbound_payload_value(&payload).map_err(|err| {
-        ToolError::InvalidArgs(format!(
-            "{field_name} must decode to a valid InboundMessage-like object: {err}"
-        ))
-    })?;
-    serde_json::to_string(&payload).map_err(|err| {
-        ToolError::ExecutionFailed(format!("serialize {field_name} to json failed: {err}"))
-    })
+struct CronSourceSessionRoute {
+    source: SessionIndex,
+    base: SessionIndex,
+    delivery_metadata: serde_json::Map<String, Value>,
 }
 
-fn build_payload_from_shortcut(
+fn parse_delivery_metadata_json(raw: &str) -> Option<serde_json::Map<String, Value>> {
+    serde_json::from_str(raw).ok()
+}
+
+fn validate_cron_source_channel(channel: &str) -> Result<(), ToolError> {
+    match channel {
+        "dingtalk" | "telegram" | "terminal" | "websocket" => Ok(()),
+        other => Err(ToolError::InvalidArgs(format!(
+            "cron jobs must be created from an interactive session; current channel is `{other}`"
+        ))),
+    }
+}
+
+async fn build_payload_from_shortcut(
+    tool: &CronManagerTool,
     args: &Value,
     ctx: &ToolContext,
     default_session_key: Option<&str>,
@@ -652,50 +631,29 @@ fn build_payload_from_shortcut(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            ToolError::InvalidArgs("missing `payload`, `payload_json`, or `message`".to_string())
-        })?;
-
-    let inferred = infer_channel_and_chat_id(&ctx.session_key);
-    let channel = args
-        .get("channel")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
-        .or_else(|| inferred.as_ref().map(|(channel, _)| channel.clone()))
-        .unwrap_or_else(|| "cron".to_string());
-    let chat_id = args
-        .get("chat_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
-        .or_else(|| inferred.as_ref().map(|(_, chat_id)| chat_id.clone()))
-        .unwrap_or_else(|| ctx.session_key.clone());
-    let session_key = args
-        .get("session_key")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
-        .or_else(|| default_session_key.map(ToString::to_string))
-        .unwrap_or_else(|| "cron".to_string());
-    let sender_id = args
-        .get("sender_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("system");
-    let mut metadata = inherited_channel_metadata(&ctx.metadata);
-    if let Some(base_session_key) =
-        infer_base_session_key_for_cron_shortcut(&ctx.session_key, &channel)
-    {
-        metadata.insert(
-            "cron.base_session_key".to_string(),
-            serde_json::Value::String(base_session_key),
-        );
+        .ok_or_else(|| ToolError::InvalidArgs("missing required field `message`".to_string()))?;
+    let source_session_key = ctx.session_key.trim().to_string();
+    if source_session_key.is_empty() {
+        return Err(ToolError::InvalidArgs(
+            "cron jobs require a current interactive session context".to_string(),
+        ));
     }
+    let route = tool
+        .resolve_source_session_route(&source_session_key)
+        .await?;
+    let execution_session_key = default_session_key
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "cron".to_string());
+    let mut metadata = inherited_channel_metadata(&ctx.metadata);
+    metadata.extend(route.delivery_metadata);
+    metadata.insert(
+        "cron.source_session_key".to_string(),
+        Value::String(route.source.session_key.clone()),
+    );
+    metadata.insert(
+        "cron.base_session_key".to_string(),
+        Value::String(route.base.session_key.clone()),
+    );
     match args.get("metadata") {
         None | Some(Value::Null) => {}
         Some(Value::Object(map)) => metadata.extend(map.clone()),
@@ -707,10 +665,10 @@ fn build_payload_from_shortcut(
     }
 
     let payload = json!({
-        "channel": channel,
-        "sender_id": sender_id,
-        "chat_id": chat_id,
-        "session_key": session_key,
+        "channel": route.source.channel,
+        "sender_id": "system",
+        "chat_id": route.source.chat_id,
+        "session_key": execution_session_key,
         "content": message,
         "metadata": metadata
     });
@@ -722,70 +680,6 @@ fn build_payload_from_shortcut(
     serde_json::to_string(&payload).map_err(|err| {
         ToolError::ExecutionFailed(format!("serialize shortcut payload to json failed: {err}"))
     })
-}
-
-fn infer_channel_and_chat_id(session_key: &str) -> Option<(String, String)> {
-    let (channel, _) = session_key.split_once(':')?;
-    let channel = channel.trim();
-    if channel.is_empty() {
-        return None;
-    }
-
-    match channel {
-        "dingtalk" | "telegram" => {
-            let mut parts = session_key.split(':');
-            let prefix = parts.next()?.trim();
-            if prefix != channel {
-                return None;
-            }
-
-            let second = parts.next()?.trim();
-            if second.is_empty() {
-                return None;
-            }
-
-            let chat_id = match parts.next().map(str::trim) {
-                Some(value) if !value.is_empty() => value,
-                Some(_) => return None,
-                None => second,
-            };
-
-            Some((channel.to_string(), chat_id.to_string()))
-        }
-        _ => {
-            let (_, rest) = session_key.split_once(':')?;
-            let chat_id = rest
-                .rsplit_once(':')
-                .map(|(_, value)| value)
-                .unwrap_or(rest)
-                .trim();
-            if chat_id.is_empty() {
-                return None;
-            }
-            Some((channel.to_string(), chat_id.to_string()))
-        }
-    }
-}
-
-fn infer_base_session_key_for_cron_shortcut(session_key: &str, channel: &str) -> Option<String> {
-    match channel {
-        "dingtalk" | "telegram" => {
-            let mut parts = session_key.split(':');
-            let prefix = parts.next()?.trim();
-            if prefix != channel {
-                return None;
-            }
-
-            let account_id = parts.next()?.trim();
-            let chat_id = parts.next()?.trim();
-            if account_id.is_empty() || chat_id.is_empty() {
-                return None;
-            }
-
-            Some(format!("{channel}:{account_id}:{chat_id}"))
-        }
-        _ => None,
-    }
 }
 
 fn inherited_channel_metadata(
@@ -947,194 +841,24 @@ fn require_string_field(object: &serde_json::Map<String, Value>, key: &str) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_storage::{CronTaskStatus, NewCronTaskRun};
+    use klaw_storage::StoragePaths;
     use serde_json::json;
     use std::collections::BTreeMap;
-    use tokio::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    #[derive(Default)]
-    struct MockCronStorage {
-        jobs: Mutex<BTreeMap<String, CronJob>>,
-        runs: Mutex<Vec<CronTaskRun>>,
-    }
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    #[async_trait]
-    impl CronStorage for MockCronStorage {
-        async fn create_cron(&self, input: &NewCronJob) -> Result<CronJob, StorageError> {
-            let now = now_ms();
-            let job = CronJob {
-                id: input.id.clone(),
-                name: input.name.clone(),
-                schedule_kind: input.schedule_kind,
-                schedule_expr: input.schedule_expr.clone(),
-                payload_json: input.payload_json.clone(),
-                enabled: input.enabled,
-                timezone: input.timezone.clone(),
-                next_run_at_ms: input.next_run_at_ms,
-                last_run_at_ms: None,
-                created_at_ms: now,
-                updated_at_ms: now,
-            };
-            self.jobs.lock().await.insert(job.id.clone(), job.clone());
-            Ok(job)
-        }
-
-        async fn update_cron(
-            &self,
-            cron_id: &str,
-            patch: &UpdateCronJobPatch,
-        ) -> Result<CronJob, StorageError> {
-            let mut jobs = self.jobs.lock().await;
-            let current = jobs
-                .get_mut(cron_id)
-                .ok_or_else(|| StorageError::backend("cron not found"))?;
-            if let Some(v) = patch.name.as_ref() {
-                current.name = v.clone();
-            }
-            if let Some(v) = patch.schedule_kind {
-                current.schedule_kind = v;
-            }
-            if let Some(v) = patch.schedule_expr.as_ref() {
-                current.schedule_expr = v.clone();
-            }
-            if let Some(v) = patch.payload_json.as_ref() {
-                current.payload_json = v.clone();
-            }
-            if let Some(v) = patch.timezone.as_ref() {
-                current.timezone = v.clone();
-            }
-            if let Some(v) = patch.next_run_at_ms {
-                current.next_run_at_ms = v;
-            }
-            current.updated_at_ms = now_ms();
-            Ok(current.clone())
-        }
-
-        async fn set_enabled(&self, cron_id: &str, enabled: bool) -> Result<(), StorageError> {
-            let mut jobs = self.jobs.lock().await;
-            let current = jobs
-                .get_mut(cron_id)
-                .ok_or_else(|| StorageError::backend("cron not found"))?;
-            current.enabled = enabled;
-            Ok(())
-        }
-
-        async fn delete_cron(&self, cron_id: &str) -> Result<(), StorageError> {
-            let removed = self.jobs.lock().await.remove(cron_id);
-            if removed.is_none() {
-                return Err(StorageError::backend("cron not found"));
-            }
-            Ok(())
-        }
-
-        async fn get_cron(&self, cron_id: &str) -> Result<CronJob, StorageError> {
-            self.jobs
-                .lock()
-                .await
-                .get(cron_id)
-                .cloned()
-                .ok_or_else(|| StorageError::backend("cron not found"))
-        }
-
-        async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError> {
-            let mut out = self.jobs.lock().await.values().cloned().collect::<Vec<_>>();
-            out.sort_by_key(|j| std::cmp::Reverse(j.updated_at_ms));
-            let skip = offset.max(0) as usize;
-            let take = limit.max(1) as usize;
-            Ok(out.into_iter().skip(skip).take(take).collect())
-        }
-
-        async fn list_due_crons(
-            &self,
-            now_ms: i64,
-            limit: i64,
-        ) -> Result<Vec<CronJob>, StorageError> {
-            let mut out = self
-                .jobs
-                .lock()
-                .await
-                .values()
-                .filter(|j| j.enabled && j.next_run_at_ms <= now_ms)
-                .cloned()
-                .collect::<Vec<_>>();
-            out.sort_by_key(|j| j.next_run_at_ms);
-            out.truncate(limit.max(1) as usize);
-            Ok(out)
-        }
-
-        async fn claim_next_run(
-            &self,
-            _cron_id: &str,
-            _expected_next_run_at_ms: i64,
-            _new_next_run_at_ms: i64,
-            _now_ms: i64,
-        ) -> Result<bool, StorageError> {
-            Ok(true)
-        }
-
-        async fn append_task_run(
-            &self,
-            input: &NewCronTaskRun,
-        ) -> Result<CronTaskRun, StorageError> {
-            let run = CronTaskRun {
-                id: input.id.clone(),
-                cron_id: input.cron_id.clone(),
-                scheduled_at_ms: input.scheduled_at_ms,
-                started_at_ms: None,
-                finished_at_ms: None,
-                status: input.status,
-                attempt: input.attempt,
-                error_message: None,
-                published_message_id: None,
-                created_at_ms: input.created_at_ms,
-            };
-            self.runs.lock().await.push(run.clone());
-            Ok(run)
-        }
-
-        async fn mark_task_running(
-            &self,
-            _run_id: &str,
-            _started_at_ms: i64,
-        ) -> Result<(), StorageError> {
-            Ok(())
-        }
-
-        async fn mark_task_result(
-            &self,
-            _run_id: &str,
-            _status: CronTaskStatus,
-            _finished_at_ms: i64,
-            _error_message: Option<&str>,
-            _published_message_id: Option<&str>,
-        ) -> Result<(), StorageError> {
-            Ok(())
-        }
-
-        async fn list_task_runs(
-            &self,
-            cron_id: &str,
-            limit: i64,
-            offset: i64,
-        ) -> Result<Vec<CronTaskRun>, StorageError> {
-            let mut out = self
-                .runs
-                .lock()
-                .await
-                .iter()
-                .filter(|r| r.cron_id == cron_id)
-                .cloned()
-                .collect::<Vec<_>>();
-            out.sort_by_key(|r| r.created_at_ms);
-            let skip = offset.max(0) as usize;
-            let take = limit.max(1) as usize;
-            Ok(out.into_iter().skip(skip).take(take).collect())
-        }
+    async fn create_store() -> DefaultSessionStore {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!("klaw-cron-tool-test-{}-{suffix}", now_ms()));
+        DefaultSessionStore::open(StoragePaths::from_root(base))
+            .await
+            .expect("store should open")
     }
 
     fn ctx() -> ToolContext {
         ToolContext {
-            session_key: "s1".to_string(),
+            session_key: "terminal:test".to_string(),
             metadata: BTreeMap::new(),
         }
     }
@@ -1165,7 +889,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_get_cron_job() {
-        let storage = Arc::new(MockCronStorage::default());
+        let storage = create_store().await;
+        storage
+            .touch_session("terminal:test", "chat-1", "terminal")
+            .await
+            .expect("source session should exist");
         let tool = CronManagerTool::from_storage(storage.clone());
 
         let create = tool
@@ -1176,14 +904,7 @@ mod tests {
                     "name": "heartbeat",
                     "schedule_kind": "every",
                     "schedule_expr": "30s",
-                    "payload": {
-                        "channel": "cron",
-                        "sender_id": "system",
-                        "chat_id": "chat-1",
-                        "session_key": "cron:chat-1",
-                        "content": "ping",
-                        "metadata": {}
-                    }
+                    "message": "ping"
                 }),
                 &ctx(),
             )
@@ -1203,21 +924,24 @@ mod tests {
 
     #[tokio::test]
     async fn set_enabled_and_delete_cron_job() {
-        let storage = Arc::new(MockCronStorage::default());
+        let storage = create_store().await;
         let tool = CronManagerTool::from_storage(storage.clone());
         storage
-            .create_cron(&NewCronJob {
-                id: "job-2".to_string(),
-                name: "disable-me".to_string(),
-                schedule_kind: CronScheduleKind::Every,
-                schedule_expr: "1m".to_string(),
-                payload_json: "{\"channel\":\"cron\",\"sender_id\":\"s\",\"chat_id\":\"c\",\"session_key\":\"cron:c\",\"content\":\"x\",\"metadata\":{}}".to_string(),
-                enabled: true,
-                timezone: "UTC".to_string(),
-                next_run_at_ms: now_ms() + 60_000,
-            })
+            .touch_session("terminal:test", "chat-1", "terminal")
             .await
-            .expect("seed");
+            .expect("source session should exist");
+        tool.execute(
+            json!({
+                "action": "create",
+                "id": "job-2",
+                "name": "disable-me",
+                "schedule_expr": "1m",
+                "message": "x"
+            }),
+            &ctx(),
+        )
+        .await
+        .expect("seed");
 
         let out = tool
             .execute(
@@ -1237,7 +961,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_returns_error_for_missing_cron_job() {
-        let tool = CronManagerTool::from_storage(Arc::new(MockCronStorage::default()));
+        let tool = CronManagerTool::from_storage(create_store().await);
 
         let err = tool
             .execute(
@@ -1247,12 +971,12 @@ mod tests {
             .await
             .expect_err("missing cron should fail");
 
-        assert!(err.to_string().contains("cron not found"));
+        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
     async fn set_enabled_returns_error_for_missing_cron_job() {
-        let tool = CronManagerTool::from_storage(Arc::new(MockCronStorage::default()));
+        let tool = CronManagerTool::from_storage(create_store().await);
 
         let err = tool
             .execute(
@@ -1262,24 +986,28 @@ mod tests {
             .await
             .expect_err("missing cron should fail");
 
-        assert!(err.to_string().contains("cron not found"));
+        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
     async fn delete_returns_error_for_missing_cron_job() {
-        let tool = CronManagerTool::from_storage(Arc::new(MockCronStorage::default()));
+        let tool = CronManagerTool::from_storage(create_store().await);
 
         let err = tool
             .execute(json!({"action":"delete","id":"missing-job"}), &ctx())
             .await
             .expect_err("missing cron should fail");
 
-        assert!(err.to_string().contains("cron not found"));
+        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
-    async fn create_accepts_string_payload_boolean_string_and_inferred_every() {
-        let storage = Arc::new(MockCronStorage::default());
+    async fn create_accepts_boolean_string_and_inferred_every() {
+        let storage = create_store().await;
+        storage
+            .touch_session("terminal:test", "chat-1", "terminal")
+            .await
+            .expect("source session should exist");
         let tool = CronManagerTool::from_storage(storage.clone());
 
         tool.execute(
@@ -1288,7 +1016,7 @@ mod tests {
                 "id": "job-3",
                 "name": "weather",
                 "schedule_expr": "every 24h",
-                "payload": "{\"channel\":\"cron\",\"sender_id\":\"system\",\"chat_id\":\"chat-1\",\"session_key\":\"cron:chat-1\",\"content\":\"weather\",\"metadata\":{}}",
+                "message": "weather",
                 "enabled": "true"
             }),
             &ctx(),
@@ -1304,7 +1032,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_accepts_five_field_cron() {
-        let storage = Arc::new(MockCronStorage::default());
+        let storage = create_store().await;
+        storage
+            .touch_session("terminal:test", "chat-1", "terminal")
+            .await
+            .expect("source session should exist");
         let tool = CronManagerTool::from_storage(storage.clone());
 
         tool.execute(
@@ -1314,14 +1046,7 @@ mod tests {
                 "name": "daily weather",
                 "schedule_kind": "cron",
                 "schedule_expr": "0 8 * * *",
-                "payload": {
-                    "channel": "cron",
-                    "sender_id": "system",
-                    "chat_id": "chat-1",
-                    "session_key": "cron:chat-1",
-                    "content": "weather",
-                    "metadata": {}
-                }
+                "message": "weather"
             }),
             &ctx(),
         )
@@ -1335,7 +1060,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_accepts_daily_time_shorthand() {
-        let storage = Arc::new(MockCronStorage::default());
+        let storage = create_store().await;
+        storage
+            .touch_session("terminal:test", "chat-1", "terminal")
+            .await
+            .expect("source session should exist");
         let tool = CronManagerTool::from_storage(storage.clone());
 
         tool.execute(
@@ -1344,14 +1073,7 @@ mod tests {
                 "id": "job-5",
                 "name": "daily shorthand",
                 "schedule_expr": "8:00",
-                "payload": {
-                    "channel": "cron",
-                    "sender_id": "system",
-                    "chat_id": "chat-1",
-                    "session_key": "cron:chat-1",
-                    "content": "weather",
-                    "metadata": {}
-                }
+                "message": "weather"
             }),
             &ctx(),
         )
@@ -1364,8 +1086,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_rejects_payload_missing_inbound_message_fields() {
-        let storage = Arc::new(MockCronStorage::default());
+    async fn create_rejects_non_interactive_context() {
+        let storage = create_store().await;
+        storage
+            .touch_session("cron:job-1", "chat-1", "cron")
+            .await
+            .expect("cron session should exist");
         let tool = CronManagerTool::from_storage(storage);
 
         let err = tool
@@ -1375,28 +1101,26 @@ mod tests {
                     "id": "job-invalid",
                     "name": "invalid payload",
                     "schedule_expr": "5m",
-                    "payload": {
-                        "sender_id": "system",
-                        "chat_id": "chat-1",
-                        "session_key": "cron:chat-1",
-                        "content": "weather",
-                        "metadata": {}
-                    }
+                    "message": "weather"
                 }),
-                &ctx(),
+                &ToolContext {
+                    session_key: "cron:job-1".to_string(),
+                    metadata: BTreeMap::new(),
+                },
             )
             .await
             .expect_err("create should fail");
 
-        assert!(
-            err.to_string()
-                .contains("must decode to a valid InboundMessage-like object")
-        );
+        assert!(err.to_string().contains("current channel is `cron`"));
     }
 
     #[tokio::test]
-    async fn create_accepts_message_shortcut_and_infers_context_payload() {
-        let storage = Arc::new(MockCronStorage::default());
+    async fn create_accepts_message_shortcut_and_infers_terminal_context_payload() {
+        let storage = create_store().await;
+        storage
+            .touch_session("terminal:test", "chat-99", "terminal")
+            .await
+            .expect("source session should exist");
         let tool = CronManagerTool::from_storage(storage.clone());
 
         tool.execute(
@@ -1407,10 +1131,7 @@ mod tests {
                 "schedule_expr": "24h",
                 "message": "请查询无锡今天的天气情况"
             }),
-            &ToolContext {
-                session_key: "dingtalk:chat-99".to_string(),
-                metadata: BTreeMap::new(),
-            },
+            &ctx(),
         )
         .await
         .expect("create should succeed");
@@ -1422,7 +1143,7 @@ mod tests {
         let payload: Value = serde_json::from_str(&job.payload_json).expect("payload json");
         assert_eq!(
             payload.get("channel").and_then(Value::as_str),
-            Some("dingtalk")
+            Some("terminal")
         );
         assert_eq!(
             payload.get("chat_id").and_then(Value::as_str),
@@ -1440,16 +1161,24 @@ mod tests {
 
     #[tokio::test]
     async fn create_message_shortcut_inherits_dingtalk_webhook_metadata() {
-        let storage = Arc::new(MockCronStorage::default());
+        let storage = create_store().await;
         let tool = CronManagerTool::from_storage(storage.clone());
 
-        let mut metadata = BTreeMap::new();
-        metadata.insert(
-            "channel.dingtalk.session_webhook".to_string(),
-            json!("https://example/session"),
-        );
-        metadata.insert("channel.dingtalk.bot_title".to_string(), json!("Klaw Bot"));
-        metadata.insert("channel.delivery_mode".to_string(), json!("direct_reply"));
+        storage
+            .touch_session("dingtalk:account-1:chat-99", "chat-99", "dingtalk")
+            .await
+            .expect("base session should exist");
+        storage
+            .set_delivery_metadata(
+                "dingtalk:account-1:chat-99",
+                "chat-99",
+                "dingtalk",
+                Some(
+                    "{\"channel.dingtalk.session_webhook\":\"https://example/session\",\"channel.dingtalk.bot_title\":\"Klaw Bot\"}",
+                ),
+            )
+            .await
+            .expect("delivery metadata should persist");
 
         tool.execute(
             json!({
@@ -1461,7 +1190,7 @@ mod tests {
             }),
             &ToolContext {
                 session_key: "dingtalk:account-1:chat-99".to_string(),
-                metadata,
+                metadata: BTreeMap::new(),
             },
         )
         .await
@@ -1490,7 +1219,6 @@ mod tests {
             meta.get("cron.base_session_key").and_then(Value::as_str),
             Some("dingtalk:account-1:chat-99")
         );
-        assert!(meta.get("channel.delivery_mode").is_none());
         assert_eq!(
             payload.get("chat_id").and_then(Value::as_str),
             Some("chat-99")
@@ -1502,20 +1230,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_message_shortcut_records_telegram_base_session() {
-        let storage = Arc::new(MockCronStorage::default());
+    async fn create_message_shortcut_derives_base_session_from_terminal_active_child() {
+        let storage = create_store().await;
         let tool = CronManagerTool::from_storage(storage.clone());
+        storage
+            .touch_session("terminal:base", "chat-99", "terminal")
+            .await
+            .expect("base session should exist");
+        storage
+            .touch_session("terminal:base:child-1", "chat-99", "terminal")
+            .await
+            .expect("child session should exist");
+        storage
+            .set_active_session(
+                "terminal:base",
+                "chat-99",
+                "terminal",
+                "terminal:base:child-1",
+            )
+            .await
+            .expect("active session should persist");
 
         tool.execute(
             json!({
                 "action": "create",
-                "id": "job-telegram-shortcut",
-                "name": "telegram shortcut",
+                "id": "job-terminal-shortcut",
+                "name": "terminal shortcut",
                 "schedule_expr": "24h",
                 "message": "请汇报状态"
             }),
             &ToolContext {
-                session_key: "telegram:bot-1:chat-99:child-1".to_string(),
+                session_key: "terminal:base:child-1".to_string(),
                 metadata: BTreeMap::new(),
             },
         )
@@ -1523,7 +1268,7 @@ mod tests {
         .expect("create should succeed");
 
         let job = storage
-            .get_cron("job-telegram-shortcut")
+            .get_cron("job-terminal-shortcut")
             .await
             .expect("job should exist");
         let payload: Value = serde_json::from_str(&job.payload_json).expect("payload json");
@@ -1533,7 +1278,7 @@ mod tests {
             .expect("metadata object");
         assert_eq!(
             meta.get("cron.base_session_key").and_then(Value::as_str),
-            Some("telegram:bot-1:chat-99")
+            Some("terminal:base")
         );
         assert_eq!(
             payload.get("chat_id").and_then(Value::as_str),
@@ -1541,7 +1286,7 @@ mod tests {
         );
         assert_eq!(
             payload.get("session_key").and_then(Value::as_str),
-            Some("cron:job-telegram-shortcut")
+            Some("cron:job-terminal-shortcut")
         );
     }
 }

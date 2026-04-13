@@ -1,10 +1,5 @@
-use axum::{
-    Json,
-    extract::{Query, State},
-    http::StatusCode,
-    response::IntoResponse,
-};
-use serde::{Deserialize, Serialize};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use serde::Serialize;
 use std::sync::Arc;
 use tracing::info;
 
@@ -21,12 +16,6 @@ pub struct ProviderInfo {
     pub has_api_key: bool,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ProvidersListQuery {
-    #[serde(default)]
-    pub include_disabled: bool,
-}
-
 #[derive(Debug, Serialize)]
 pub struct ProvidersListResponse {
     pub success: bool,
@@ -35,10 +24,7 @@ pub struct ProvidersListResponse {
     pub error: Option<String>,
 }
 
-pub async fn providers_list_handler(
-    State(state): State<Arc<GatewayState>>,
-    Query(_params): Query<ProvidersListQuery>,
-) -> impl IntoResponse {
+pub async fn providers_list_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let Some(ref providers_state) = state.providers else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,

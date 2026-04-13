@@ -11,7 +11,7 @@ use crate::{
     routes::Route,
     state::{
         GatewayArchiveState, GatewayHandle, GatewayProvidersState, GatewayRuntimeInfo,
-        GatewayState, GatewayWebsocketState,
+        GatewayState, GatewayWebsocketBroadcaster, GatewayWebsocketState,
     },
     tailscale::{TailscaleError, TailscaleManager},
     webhook::{
@@ -32,6 +32,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tracing::info;
 
 pub struct GatewayOptions {
+    pub websocket_broadcaster: Option<Arc<GatewayWebsocketBroadcaster>>,
     pub health: Option<Arc<HealthRegistry>>,
     pub prometheus: Option<PrometheusExporter>,
     pub webhook_handler: Option<Arc<dyn GatewayWebhookHandler>>,
@@ -43,6 +44,7 @@ pub struct GatewayOptions {
 impl Default for GatewayOptions {
     fn default() -> Self {
         Self {
+            websocket_broadcaster: None,
             health: None,
             prometheus: None,
             webhook_handler: None,
@@ -97,7 +99,11 @@ pub async fn spawn_gateway_with_options(
         .enabled
         .then(|| config.auth.resolve_token())
         .flatten();
+    let websocket_broadcaster = options
+        .websocket_broadcaster
+        .unwrap_or_else(|| Arc::new(GatewayWebsocketBroadcaster::new()));
     let state = Arc::new(GatewayState::new(
+        websocket_broadcaster,
         health,
         options.prometheus,
         webhook,
