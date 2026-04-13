@@ -52,7 +52,11 @@ impl ChannelAvailability {
                 .map(|channel| channel.id.trim().to_string())
                 .filter(|id| !id.is_empty())
                 .collect(),
-            websocket_enabled: config.channels.websocket.iter().any(|channel| channel.enabled),
+            websocket_enabled: config
+                .channels
+                .websocket
+                .iter()
+                .any(|channel| channel.enabled),
         }
     }
 
@@ -60,15 +64,13 @@ impl ChannelAvailability {
         match channel {
             "dingtalk" => {
                 let account_id = infer_account_id(session_key, "dingtalk")?;
-                (!self.dingtalk_enabled.contains(account_id)).then(|| {
-                    format!("target dingtalk channel '{account_id}' is disabled")
-                })
+                (!self.dingtalk_enabled.contains(account_id))
+                    .then(|| format!("target dingtalk channel '{account_id}' is disabled"))
             }
             "telegram" => {
                 let account_id = infer_account_id(session_key, "telegram")?;
-                (!self.telegram_enabled.contains(account_id)).then(|| {
-                    format!("target telegram channel '{account_id}' is disabled")
-                })
+                (!self.telegram_enabled.contains(account_id))
+                    .then(|| format!("target telegram channel '{account_id}' is disabled"))
             }
             "websocket" => (!self.websocket_enabled)
                 .then(|| "target websocket channel is disabled".to_string()),
@@ -399,12 +401,24 @@ async fn dispatch_outbound_message(
         return Ok(());
     }
 
-    mirror_outbound_to_delivery_session(msg, session_store).await?;
+    let delivery_target = resolve_outbound_delivery_target(msg, session_store).await;
+    mirror_outbound_to_delivery_session(msg, delivery_target.as_ref(), session_store).await?;
 
-    match msg.payload.channel.as_str() {
+    match delivery_target
+        .as_ref()
+        .map(|target| target.channel.as_str())
+        .unwrap_or(msg.payload.channel.as_str())
+    {
         "dingtalk" => dispatch_dingtalk_outbound_message(msg, config, session_store).await,
         "telegram" => dispatch_telegram_outbound_message(msg, config).await,
-        "websocket" => dispatch_websocket_outbound_message(msg, websocket_broadcaster).await,
+        "websocket" => {
+            dispatch_websocket_outbound_message(
+                msg,
+                delivery_target.as_ref(),
+                websocket_broadcaster,
+            )
+            .await
+        }
         _ => Ok(()),
     }
 }
@@ -492,11 +506,23 @@ async fn dispatch_dingtalk_outbound_message(
     .map_err(|retry_err| format!("{err}; retry_after_refresh={retry_err}"))
 }
 
+struct OutboundDeliveryTarget {
+    channel: String,
+    session_key: Option<String>,
+}
+
 async fn mirror_outbound_to_delivery_session(
     msg: &Envelope<OutboundMessage>,
+    delivery_target: Option<&OutboundDeliveryTarget>,
     session_store: &DefaultSessionStore,
 ) -> Result<(), String> {
-    let Some(target_session_key) = resolve_delivery_session_key(&msg.payload.metadata) else {
+    let target_channel = delivery_target
+        .map(|target| target.channel.as_str())
+        .unwrap_or(msg.payload.channel.as_str());
+    let Some(target_session_key) = delivery_target
+        .and_then(|target| target.session_key.as_deref())
+        .map(ToString::to_string)
+    else {
         return Ok(());
     };
     if target_session_key == msg.header.session_key {
@@ -504,11 +530,7 @@ async fn mirror_outbound_to_delivery_session(
     }
 
     session_store
-        .touch_session(
-            &target_session_key,
-            &msg.payload.chat_id,
-            &msg.payload.channel,
-        )
+        .touch_session(&target_session_key, &msg.payload.chat_id, target_channel)
         .await
         .map_err(|err| err.to_string())?;
     session_store
@@ -533,11 +555,41 @@ fn resolve_delivery_session_key(metadata: &BTreeMap<String, Value>) -> Option<St
         })
 }
 
+async fn resolve_outbound_delivery_target(
+    msg: &Envelope<OutboundMessage>,
+    session_store: &DefaultSessionStore,
+) -> Option<OutboundDeliveryTarget> {
+    if let Some(target_session_key) = resolve_delivery_session_key(&msg.payload.metadata) {
+        let channel = session_store
+            .get_session(&target_session_key)
+            .await
+            .ok()
+            .map(|session| session.channel)
+            .unwrap_or_else(|| msg.payload.channel.clone());
+        return Some(OutboundDeliveryTarget {
+            channel,
+            session_key: Some(target_session_key),
+        });
+    }
+
+    match msg.payload.channel.as_str() {
+        "websocket" | "terminal" => Some(OutboundDeliveryTarget {
+            channel: msg.payload.channel.clone(),
+            session_key: Some(msg.header.session_key.clone()),
+        }),
+        _ => None,
+    }
+}
+
 async fn dispatch_websocket_outbound_message(
     msg: &Envelope<OutboundMessage>,
+    delivery_target: Option<&OutboundDeliveryTarget>,
     websocket_broadcaster: &klaw_gateway::GatewayWebsocketBroadcaster,
 ) -> Result<(), String> {
-    let Some(target_session_key) = resolve_delivery_session_key(&msg.payload.metadata) else {
+    let Some(target_session_key) = delivery_target
+        .and_then(|target| target.session_key.as_deref())
+        .map(ToString::to_string)
+    else {
         return Ok(());
     };
 
@@ -602,12 +654,7 @@ fn infer_account_id<'a>(session_key: &'a str, expected_channel: &str) -> Option<
 fn inbound_source(payload: &InboundMessage) -> &'static str {
     if payload.metadata.contains_key("cron_id") {
         "cron"
-    } else if payload
-        .metadata
-        .get("trigger.kind")
-        .and_then(Value::as_str)
-        == Some("heartbeat")
-    {
+    } else if payload.metadata.get("trigger.kind").and_then(Value::as_str) == Some("heartbeat") {
         "heartbeat"
     } else {
         "background"
