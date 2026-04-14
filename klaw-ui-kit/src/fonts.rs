@@ -3,12 +3,32 @@ use std::collections::HashSet;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
+#[cfg(all(feature = "fonts-lxgw", feature = "fonts-noto-sans"))]
+compile_error!(
+    "features `fonts-lxgw` and `fonts-noto-sans` are mutually exclusive; enable at most one"
+);
+
+#[cfg(feature = "fonts-lxgw")]
 const LXGW_WENKAI_REGULAR_TTF: &[u8] =
     include_bytes!("../fonts/lxgw-wenkai/LXGWWenKai-Regular.ttf");
+#[cfg(feature = "fonts-lxgw")]
 const LXGW_WENKAI_MONO_REGULAR_TTF: &[u8] =
     include_bytes!("../fonts/lxgw-wenkai/LXGWWenKaiMono-Regular.ttf");
+#[cfg(feature = "fonts-lxgw")]
 const LXGW_WENKAI_PROPORTIONAL_NAME: &str = "lxgw-wenkai-regular";
+#[cfg(feature = "fonts-lxgw")]
 const LXGW_WENKAI_MONOSPACE_NAME: &str = "lxgw-wenkai-mono-regular";
+
+#[cfg(feature = "fonts-noto-sans")]
+const NOTO_SANS_SC_REGULAR_TTF: &[u8] =
+    include_bytes!("../fonts/noto-sans/NotoSansSC-Regular.ttf");
+#[cfg(feature = "fonts-noto-sans")]
+const NOTO_SANS_MONO_REGULAR_TTF: &[u8] =
+    include_bytes!("../fonts/noto-sans/NotoSansMono-Regular.ttf");
+#[cfg(feature = "fonts-noto-sans")]
+const NOTO_SANS_PROPORTIONAL_NAME: &str = "noto-sans-sc-regular";
+#[cfg(feature = "fonts-noto-sans")]
+const NOTO_SANS_MONOSPACE_NAME: &str = "noto-sans-mono-regular";
 
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -20,28 +40,61 @@ pub fn install_fonts(ctx: &egui::Context) {
 }
 
 fn install_embedded_preferred_fonts(fonts: &mut egui::FontDefinitions) {
-    fonts.font_data.insert(
-        LXGW_WENKAI_PROPORTIONAL_NAME.to_string(),
-        egui::FontData::from_static(LXGW_WENKAI_REGULAR_TTF).into(),
-    );
-    fonts.font_data.insert(
-        LXGW_WENKAI_MONOSPACE_NAME.to_string(),
-        egui::FontData::from_static(LXGW_WENKAI_MONO_REGULAR_TTF).into(),
-    );
+    #[cfg(feature = "fonts-lxgw")]
+    {
+        fonts.font_data.insert(
+            LXGW_WENKAI_PROPORTIONAL_NAME.to_string(),
+            egui::FontData::from_static(LXGW_WENKAI_REGULAR_TTF).into(),
+        );
+        fonts.font_data.insert(
+            LXGW_WENKAI_MONOSPACE_NAME.to_string(),
+            egui::FontData::from_static(LXGW_WENKAI_MONO_REGULAR_TTF).into(),
+        );
 
-    let proportional = fonts
-        .families
-        .entry(egui::FontFamily::Proportional)
-        .or_default();
-    prepend_font_family(proportional, LXGW_WENKAI_PROPORTIONAL_NAME);
+        let proportional = fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default();
+        prepend_font_family(proportional, LXGW_WENKAI_PROPORTIONAL_NAME);
 
-    let monospace = fonts
-        .families
-        .entry(egui::FontFamily::Monospace)
-        .or_default();
-    prepend_font_family(monospace, LXGW_WENKAI_MONOSPACE_NAME);
+        let monospace = fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default();
+        prepend_font_family(monospace, LXGW_WENKAI_MONOSPACE_NAME);
+    }
+
+    #[cfg(feature = "fonts-noto-sans")]
+    {
+        fonts.font_data.insert(
+            NOTO_SANS_PROPORTIONAL_NAME.to_string(),
+            egui::FontData::from_static(NOTO_SANS_SC_REGULAR_TTF).into(),
+        );
+        fonts.font_data.insert(
+            NOTO_SANS_MONOSPACE_NAME.to_string(),
+            egui::FontData::from_static(NOTO_SANS_MONO_REGULAR_TTF).into(),
+        );
+
+        let proportional = fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default();
+        prepend_font_family(proportional, NOTO_SANS_PROPORTIONAL_NAME);
+
+        let monospace = fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default();
+        prepend_font_family(monospace, NOTO_SANS_MONOSPACE_NAME);
+    }
+
+    #[cfg(not(any(feature = "fonts-lxgw", feature = "fonts-noto-sans")))]
+    {
+        let _ = fonts;
+    }
 }
 
+#[cfg(any(feature = "fonts-lxgw", feature = "fonts-noto-sans"))]
 fn prepend_font_family(family: &mut Vec<String>, font_name: &str) {
     family.retain(|existing| existing != font_name);
     family.insert(0, font_name.to_string());
@@ -141,10 +194,7 @@ fn is_preferred_cjk_family(family_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        LXGW_WENKAI_MONOSPACE_NAME, LXGW_WENKAI_PROPORTIONAL_NAME,
-        install_embedded_preferred_fonts, is_preferred_cjk_family,
-    };
+    use super::{install_embedded_preferred_fonts, is_preferred_cjk_family};
 
     #[test]
     fn preferred_cjk_family_match_is_case_insensitive() {
@@ -155,18 +205,49 @@ mod tests {
     }
 
     #[test]
-    fn embedded_preferred_fonts_are_prepended() {
+    #[cfg(feature = "fonts-noto-sans")]
+    fn embedded_noto_fonts_are_prepended() {
         let mut fonts = egui::FontDefinitions::default();
 
         install_embedded_preferred_fonts(&mut fonts);
 
         assert_eq!(
             fonts.families[&egui::FontFamily::Proportional].first(),
-            Some(&LXGW_WENKAI_PROPORTIONAL_NAME.to_string())
+            Some(&"noto-sans-sc-regular".to_string())
         );
         assert_eq!(
             fonts.families[&egui::FontFamily::Monospace].first(),
-            Some(&LXGW_WENKAI_MONOSPACE_NAME.to_string())
+            Some(&"noto-sans-mono-regular".to_string())
         );
+    }
+
+    #[test]
+    #[cfg(feature = "fonts-lxgw")]
+    fn embedded_lxgw_fonts_are_prepended() {
+        let mut fonts = egui::FontDefinitions::default();
+
+        install_embedded_preferred_fonts(&mut fonts);
+
+        assert_eq!(
+            fonts.families[&egui::FontFamily::Proportional].first(),
+            Some(&"lxgw-wenkai-regular".to_string())
+        );
+        assert_eq!(
+            fonts.families[&egui::FontFamily::Monospace].first(),
+            Some(&"lxgw-wenkai-mono-regular".to_string())
+        );
+    }
+
+    #[test]
+    #[cfg(not(any(feature = "fonts-lxgw", feature = "fonts-noto-sans")))]
+    fn no_embedded_fonts_are_registered_when_all_font_features_are_disabled() {
+        let mut fonts = egui::FontDefinitions::default();
+
+        install_embedded_preferred_fonts(&mut fonts);
+
+        assert!(!fonts.font_data.contains_key("lxgw-wenkai-regular"));
+        assert!(!fonts.font_data.contains_key("lxgw-wenkai-mono-regular"));
+        assert!(!fonts.font_data.contains_key("noto-sans-sc-regular"));
+        assert!(!fonts.font_data.contains_key("noto-sans-mono-regular"));
     }
 }

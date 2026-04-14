@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "Shared UI foundation for klaw-gui and klaw-webui"
 
+[features]
+default = ["fonts-lxgw"]
+fonts-lxgw = []
+fonts-noto-sans = []
+
 [dependencies]
 egui = { workspace = true }
 egui-phosphor = { workspace = true }
