@@ -2,9 +2,9 @@
 mod tests {
     use crate::{
         GatewayOptions, GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
-        GatewayWebsocketHandler, GatewayWebsocketHandlerError, GatewayWebsocketServerFrame,
-        GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap, GatewayWorkspaceSession,
-        OutboundEvent, Route, spawn_gateway, spawn_gateway_with_options,
+        GatewaySessionHistoryPage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
+        GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
+        GatewayWorkspaceSession, OutboundEvent, Route, spawn_gateway, spawn_gateway_with_options,
         webhook::{
             GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
             normalize_webhook_request,
@@ -88,17 +88,44 @@ mod tests {
         async fn load_session_history(
             &self,
             session_key: &str,
-        ) -> Result<Vec<GatewaySessionHistoryMessage>, GatewayWebsocketHandlerError> {
+            before_message_id: Option<&str>,
+            limit: usize,
+        ) -> Result<GatewaySessionHistoryPage, GatewayWebsocketHandlerError> {
             if session_key == "websocket:history" {
-                return Ok(vec![GatewaySessionHistoryMessage {
-                    role: "assistant".to_string(),
-                    content: "previous answer".to_string(),
-                    timestamp_ms: 42,
-                    metadata: std::collections::BTreeMap::new(),
-                    message_id: Some("msg-1".to_string()),
-                }]);
+                let messages = match before_message_id {
+                    None => vec![GatewaySessionHistoryMessage {
+                        role: "assistant".to_string(),
+                        content: format!("previous answer ({limit})"),
+                        timestamp_ms: 42,
+                        metadata: std::collections::BTreeMap::new(),
+                        message_id: Some("msg-2".to_string()),
+                    }],
+                    Some("msg-2") => vec![GatewaySessionHistoryMessage {
+                        role: "user".to_string(),
+                        content: "older question".to_string(),
+                        timestamp_ms: 21,
+                        metadata: std::collections::BTreeMap::new(),
+                        message_id: Some("msg-1".to_string()),
+                    }],
+                    Some(other) => {
+                        return Err(GatewayWebsocketHandlerError::invalid_request(format!(
+                            "unknown cursor {other}"
+                        )));
+                    }
+                };
+                return Ok(GatewaySessionHistoryPage {
+                    has_more: before_message_id.is_none(),
+                    oldest_loaded_message_id: messages
+                        .first()
+                        .and_then(|message| message.message_id.clone()),
+                    messages,
+                });
             }
-            Ok(Vec::new())
+            Ok(GatewaySessionHistoryPage {
+                messages: Vec::new(),
+                has_more: false,
+                oldest_loaded_message_id: None,
+            })
         }
 
         async fn list_providers(
@@ -997,7 +1024,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn websocket_subscribe_emits_existing_chat_history_for_session() {
+    async fn websocket_subscribe_only_acknowledges_realtime_subscription() {
         let config = test_gateway_config();
         let handle = match spawn_gateway_with_options(
             &config,
@@ -1046,17 +1073,6 @@ mod tests {
             .await
             .expect("subscribed event")
             .expect("subscribed event frame");
-        let third = timeout(Duration::from_millis(250), socket.next())
-            .await
-            .expect("history event should arrive before timeout")
-            .expect("history event")
-            .expect("history event frame");
-        let fourth = timeout(Duration::from_millis(250), socket.next())
-            .await
-            .expect("history done should arrive before timeout")
-            .expect("history done")
-            .expect("history done frame");
-
         let first = match first {
             Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
                 .expect("valid result frame"),
@@ -1065,16 +1081,6 @@ mod tests {
         let second = match second {
             Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
                 .expect("valid event frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-        let third = match third {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid history frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-        let fourth = match fourth {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid history done frame"),
             other => panic!("unexpected frame: {other:?}"),
         };
 
@@ -1094,40 +1100,90 @@ mod tests {
             }
             other => panic!("unexpected subscribe event: {other:?}"),
         }
-        match third {
-            GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, OutboundEvent::SessionMessage);
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_history_load_returns_paginated_result() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _ = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "history-1",
+                    "method": "session.history.load",
+                    "params": {
+                        "session_key": "websocket:history",
+                        "limit": 10
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("history.load should send");
+
+        let frame = timeout(Duration::from_millis(250), socket.next())
+            .await
+            .expect("history result should arrive before timeout")
+            .expect("history result")
+            .expect("history result frame");
+        let frame = match frame {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid result frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        match frame {
+            GatewayWebsocketServerFrame::Result { id, result } => {
+                assert_eq!(id, "history-1");
                 assert_eq!(
-                    payload.get("session_key").and_then(|value| value.as_str()),
+                    result.get("session_key").and_then(|value| value.as_str()),
                     Some("websocket:history")
                 );
                 assert_eq!(
-                    payload
-                        .get("response")
-                        .and_then(|response| response.get("content"))
-                        .and_then(|value| value.as_str()),
-                    Some("previous answer")
-                );
-                assert_eq!(
-                    payload.get("role").and_then(|value| value.as_str()),
-                    Some("assistant")
-                );
-                assert_eq!(
-                    payload.get("history").and_then(|value| value.as_bool()),
+                    result.get("has_more").and_then(|value| value.as_bool()),
                     Some(true)
                 );
-            }
-            other => panic!("unexpected history event: {other:?}"),
-        }
-        match fourth {
-            GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, OutboundEvent::SessionHistoryDone);
                 assert_eq!(
-                    payload.get("session_key").and_then(|value| value.as_str()),
-                    Some("websocket:history")
+                    result
+                        .get("oldest_loaded_message_id")
+                        .and_then(|value| value.as_str()),
+                    Some("msg-2")
+                );
+                assert_eq!(
+                    result
+                        .get("messages")
+                        .and_then(|value| value.as_array())
+                        .and_then(|messages| messages.first())
+                        .and_then(|message| message.get("content"))
+                        .and_then(|value| value.as_str()),
+                    Some("previous answer (10)")
                 );
             }
-            other => panic!("unexpected history done event: {other:?}"),
+            other => panic!("unexpected history result: {other:?}"),
         }
 
         handle.shutdown().await.expect("gateway should stop");
@@ -1177,7 +1233,7 @@ mod tests {
                 .await
                 .expect("subscribe should send");
 
-            for _ in 0..3 {
+            for _ in 0..2 {
                 let _ = timeout(Duration::from_millis(250), socket.next())
                     .await
                     .expect("subscribe response should arrive before timeout")

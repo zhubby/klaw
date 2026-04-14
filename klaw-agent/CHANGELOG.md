@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-14
+
+### Changed
+- `run_agent_execution` no longer emits the placeholder `Current turn stopped. No further tool calls were made.` text for `ask_question` stops that also carry an IM card; the turn still stops for the asynchronous user choice, but callers now receive an empty visible reply plus the card metadata/signals so the resumed follow-up can continue cleanly
+
 ## 2026-04-11
 
 ### Changed

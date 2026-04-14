@@ -2683,6 +2683,7 @@ mod tests {
         };
         let outcome = agent.process_message(inbound, false).await;
         let response = outcome.final_response.expect("response should be present");
+        assert_eq!(response.payload.content, "");
         let im_card = response
             .payload
             .metadata

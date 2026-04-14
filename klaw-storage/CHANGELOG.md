@@ -4,6 +4,7 @@
 
 ### Added
 - added optional `metadata_json` on persisted `ChatRecord` history rows so websocket/webui clients can restore structured assistant message state such as interactive IM cards after reloads
+- added cursor-based `read_chat_records_page` storage APIs plus reverse JSONL paging so websocket history consumers can load only the latest N chat records and continue older history from a `message_id` cursor
 
 ## 2026-04-07
 

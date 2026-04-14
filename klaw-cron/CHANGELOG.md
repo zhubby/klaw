@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-14
+
+### Changed
+
+- 测试用 `FakeStorage` 已补齐新的游标分页历史接口，保持 `SessionStorage` trait 升级后的覆盖完整性
+
 ## 2026-04-09
 
 ### Fixed

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-14
+
+### Changed
+- `AgentLoop` now preserves `ask_question` IM-card stop metadata while allowing the underlying agent execution to surface an empty visible reply instead of the generic stopped-turn placeholder, so websocket/webui channels can show the card without the misleading extra assistant text
+
 ## 2026-04-11
 
 ### Changed

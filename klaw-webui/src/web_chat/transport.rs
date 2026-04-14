@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
@@ -14,6 +14,7 @@ use super::{
     app::ChatApp,
     protocol::{ServerFrame, send_method},
     session::ChatMessage,
+    session::PendingHistoryScrollRestore,
     session::SessionWindow,
     session::current_timestamp_ms,
     session::window_anchor_for_slot,
@@ -45,6 +46,9 @@ impl ChatApp {
         }
         *self.connection_state.borrow_mut() = ConnectionState::Disconnected;
         self.workspace_loaded = false;
+        for session in &mut self.sessions {
+            session.reset_connection_state();
+        }
     }
 
     pub(in crate::web_chat) fn reconnect_all_sessions(&mut self) {
@@ -169,13 +173,16 @@ impl ChatApp {
         let _ = send_method(&ws, &request_id, "session.create", json!({}));
     }
 
+    pub(in crate::web_chat) fn ensure_session_ready(&mut self, session_key: &str) {
+        self.subscribe_session(session_key);
+        self.load_history_page(session_key, None);
+    }
+
     pub(in crate::web_chat) fn subscribe_session(&mut self, session_key: &str) {
         let Some(index) = self.session_index(session_key) else {
             return;
         };
-        if *self.sessions[index].buffers.history_loaded.borrow()
-            || *self.sessions[index].buffers.history_loading.borrow()
-        {
+        if self.sessions[index].subscribed {
             return;
         }
         let Some(ws) = self.ws.borrow().as_ref().cloned() else {
@@ -185,14 +192,53 @@ impl ChatApp {
             return;
         }
         let request_id = Uuid::new_v4().to_string();
-        *self.sessions[index].buffers.history_loading.borrow_mut() = true;
         if let Err(err) = send_method(
             &ws,
             &request_id,
             "session.subscribe",
             json!({ "session_key": session_key }),
         ) {
+            self.toasts.borrow_mut().error(err);
+            return;
+        }
+        self.sessions[index].subscribed = true;
+    }
+
+    pub(in crate::web_chat) fn load_history_page(
+        &mut self,
+        session_key: &str,
+        scroll_restore: Option<PendingHistoryScrollRestore>,
+    ) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
+        if *self.sessions[index].buffers.history_loading.borrow()
+            || !self.sessions[index].history_has_more
+        {
+            return;
+        }
+        let Some(ws) = self.ws.borrow().as_ref().cloned() else {
+            return;
+        };
+        if ws.ready_state() != WebSocket::OPEN {
+            return;
+        }
+        let before_message_id = self.sessions[index].oldest_loaded_message_id.clone();
+        let request_id = Uuid::new_v4().to_string();
+        *self.sessions[index].buffers.history_loading.borrow_mut() = true;
+        self.sessions[index].pending_history_scroll_restore = scroll_restore;
+        if let Err(err) = send_method(
+            &ws,
+            &request_id,
+            "session.history.load",
+            json!({
+                "session_key": session_key,
+                "before_message_id": before_message_id,
+                "limit": 10,
+            }),
+        ) {
             *self.sessions[index].buffers.history_loading.borrow_mut() = false;
+            self.sessions[index].pending_history_scroll_restore = None;
             self.toasts.borrow_mut().error(err);
         }
     }
@@ -259,6 +305,32 @@ impl ChatApp {
     }
 
     fn process_result_frame(&mut self, result: &Value) {
+        if let Some(messages_value) = result.get("messages").cloned() {
+            let Some(session_key) = result.get("session_key").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(index) = self.session_index(session_key) else {
+                return;
+            };
+            let page_messages = serde_json::from_value::<Vec<HistoryPageMessage>>(messages_value)
+                .unwrap_or_default();
+            let mut history = self.sessions[index].buffers.messages.borrow_mut();
+            prepend_history_page(&mut history, page_messages);
+            let messages = history.clone();
+            drop(history);
+            sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
+            *self.sessions[index].buffers.history_loading.borrow_mut() = false;
+            self.sessions[index].history_has_more = result
+                .get("has_more")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            self.sessions[index].oldest_loaded_message_id = result
+                .get("oldest_loaded_message_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            return;
+        }
+
         if let Some(providers_value) = result.get("providers").cloned() {
             let providers =
                 serde_json::from_value::<Vec<crate::ProviderCatalogEntry>>(providers_value)
@@ -382,6 +454,16 @@ impl ChatApp {
                     .and_then(|value| serde_json::from_value::<BTreeMap<String, Value>>(value).ok())
                     .unwrap_or_default(),
             );
+            if message_id_exists(
+                &self.sessions[index].buffers.messages.borrow(),
+                message.message_id.as_deref(),
+            ) {
+                *self.sessions[index]
+                    .buffers
+                    .active_stream_request_id
+                    .borrow_mut() = None;
+                return;
+            }
             if should_register_non_stream_fade(message.role, streamed, false, &message.text) {
                 self.sessions[index].register_fade_in_message(&message);
             }
@@ -403,21 +485,6 @@ impl ChatApp {
         match event {
             "session.connected" => {
                 *self.connection_state.borrow_mut() = ConnectionState::Connected;
-            }
-            "session.history.done" => {
-                let Some(session_key) = payload.get("session_key").and_then(Value::as_str) else {
-                    return;
-                };
-                let Some(index) = self.session_index(session_key) else {
-                    return;
-                };
-                let messages = self.sessions[index].buffers.messages.borrow().clone();
-                sync_card_state_overrides(
-                    &messages,
-                    &mut self.sessions[index].card_state_overrides,
-                );
-                *self.sessions[index].buffers.history_loading.borrow_mut() = false;
-                *self.sessions[index].buffers.history_loaded.borrow_mut() = true;
             }
             "session.message" => {
                 let Some(session_key) = payload.get("session_key").and_then(Value::as_str) else {
@@ -457,6 +524,12 @@ impl ChatApp {
                     .unwrap_or_default();
                 let mut history = self.sessions[index].buffers.messages.borrow_mut();
                 if history_event || !matches!(role, MessageRole::Assistant) {
+                    if message_id_exists(
+                        &history,
+                        payload.get("message_id").and_then(Value::as_str),
+                    ) {
+                        return;
+                    }
                     let message = ChatMessage::new_with_metadata(
                         content,
                         role,
@@ -526,6 +599,15 @@ impl ChatApp {
                         self.notify_new_assistant_reply(session_key, &content);
                     }
                 }
+            }
+            "session.subscribed" => {
+                let Some(session_key) = payload.get("session_key").and_then(Value::as_str) else {
+                    return;
+                };
+                let Some(index) = self.session_index(session_key) else {
+                    return;
+                };
+                self.sessions[index].subscribed = true;
             }
             "session.stream.clear" | "session.stream.done" => {
                 let Some(session_key) = payload.get("session_key").and_then(Value::as_str) else {
@@ -676,9 +758,66 @@ fn build_submit_params(
     )
 }
 
+#[derive(serde::Deserialize)]
+struct HistoryPageMessage {
+    role: String,
+    content: String,
+    timestamp_ms: i64,
+    #[serde(default)]
+    metadata: BTreeMap<String, Value>,
+    #[serde(default)]
+    message_id: Option<String>,
+}
+
+fn prepend_history_page(history: &mut Vec<ChatMessage>, page_messages: Vec<HistoryPageMessage>) {
+    let existing_message_ids = history
+        .iter()
+        .filter_map(|message| message.message_id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut prepended = page_messages
+        .into_iter()
+        .filter(|message| {
+            message
+                .message_id
+                .as_ref()
+                .is_none_or(|message_id| !existing_message_ids.contains(message_id))
+        })
+        .map(|message| {
+            ChatMessage::new_with_metadata(
+                message.content,
+                parse_message_role(&message.role),
+                message.timestamp_ms,
+                message.message_id,
+                message.metadata,
+            )
+        })
+        .collect::<Vec<_>>();
+    prepended.append(history);
+    *history = prepended;
+}
+
+fn parse_message_role(role: &str) -> MessageRole {
+    match role {
+        "user" => MessageRole::User,
+        "system" => MessageRole::System,
+        _ => MessageRole::Assistant,
+    }
+}
+
+fn message_id_exists(messages: &[ChatMessage], message_id: Option<&str>) -> bool {
+    let Some(message_id) = message_id else {
+        return false;
+    };
+    messages
+        .iter()
+        .any(|message| message.message_id.as_deref() == Some(message_id))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::build_submit_params;
+    use super::{HistoryPageMessage, build_submit_params, prepend_history_page};
+    use crate::MessageRole;
+    use std::collections::BTreeMap;
 
     #[test]
     fn submit_params_include_model_route_and_archive() {
@@ -745,5 +884,42 @@ mod tests {
             params.get("model").and_then(serde_json::Value::as_str),
             Some("gpt-4.1-mini")
         );
+    }
+
+    #[test]
+    fn prepend_history_page_deduplicates_existing_message_ids() {
+        let mut history = vec![crate::web_chat::session::ChatMessage::new_with_metadata(
+            "current".to_string(),
+            MessageRole::Assistant,
+            2,
+            Some("msg-2".to_string()),
+            BTreeMap::new(),
+        )];
+
+        prepend_history_page(
+            &mut history,
+            vec![
+                HistoryPageMessage {
+                    role: "user".to_string(),
+                    content: "older".to_string(),
+                    timestamp_ms: 1,
+                    metadata: BTreeMap::new(),
+                    message_id: Some("msg-1".to_string()),
+                },
+                HistoryPageMessage {
+                    role: "assistant".to_string(),
+                    content: "duplicate".to_string(),
+                    timestamp_ms: 2,
+                    metadata: BTreeMap::new(),
+                    message_id: Some("msg-2".to_string()),
+                },
+            ],
+        );
+
+        let summary = history
+            .iter()
+            .map(|message| message.text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(summary, vec!["older", "current"]);
     }
 }

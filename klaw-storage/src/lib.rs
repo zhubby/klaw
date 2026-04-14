@@ -18,7 +18,7 @@ pub use backup::{
 pub use error::StorageError;
 pub use memory_db::{DbRow, DbValue, MemoryDb};
 pub use paths::StoragePaths;
-pub use traits::{CronStorage, HeartbeatStorage, SessionStorage};
+pub use traits::{ChatRecordPage, CronStorage, HeartbeatStorage, SessionStorage};
 pub use types::{
     ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronTaskRun,
     CronTaskStatus, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions,

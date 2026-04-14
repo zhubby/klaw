@@ -1121,9 +1121,10 @@ mod tests {
             .await
             .expect_err("create should fail");
 
-        assert!(err
-            .to_string()
-            .contains("cron jobs cannot be created from a cron execution session"));
+        assert!(
+            err.to_string()
+                .contains("cron jobs cannot be created from a cron execution session")
+        );
     }
 
     #[tokio::test]
@@ -1152,9 +1153,10 @@ mod tests {
             .await
             .expect_err("create should fail");
 
-        assert!(err
-            .to_string()
-            .contains("cron jobs cannot be created from a cron execution session"));
+        assert!(
+            err.to_string()
+                .contains("cron jobs cannot be created from a cron execution session")
+        );
     }
 
     #[tokio::test]

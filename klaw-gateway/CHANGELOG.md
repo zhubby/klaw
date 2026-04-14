@@ -7,6 +7,7 @@
 - websocket `session.subscribe` 历史消息现在会把持久化的 `response.metadata` 一并回传，不再只包含纯文本 `content`
 - `/ws/chat` 协议的实时与历史消息现在统一支持结构化 `response.metadata`，便于 webui 恢复并渲染 IM 卡片
 - `/ws/chat` 连接现在可同时保留多个会话订阅；重复调用 `session.subscribe` 不再覆盖旧订阅，实时消息会按所属 `session_key` 广播到同一浏览器连接中的对应 agent 窗口
+- `/ws/chat` 已将实时订阅与历史加载拆分：`session.subscribe` 仅负责订阅实时消息，新增 `session.history.load` 以 `message_id` 游标按页返回历史记录
 
 ## 2026-04-13
 

@@ -730,6 +730,15 @@ impl SessionStorage for TursoSessionStore {
         jsonl::read_chat_records(&self.paths, session_key).await
     }
 
+    async fn read_chat_records_page(
+        &self,
+        session_key: &str,
+        before_message_id: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::ChatRecordPage, StorageError> {
+        jsonl::read_chat_records_page(&self.paths, session_key, before_message_id, limit).await
+    }
+
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let sql = format!(
             "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path

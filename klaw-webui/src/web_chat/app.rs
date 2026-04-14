@@ -10,7 +10,7 @@ use crate::{
     ConnectionState, ProviderCatalog, SessionListEntry, WorkspaceSessionEntry,
     attachment_action_in_progress, normalize_gateway_token_input, resolve_gateway_token,
     should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
-    should_request_window_history, sort_session_entries_by_created_at_desc,
+    sort_session_entries_by_created_at_desc,
 };
 
 use super::{
@@ -154,18 +154,11 @@ impl ChatApp {
         let keys = self
             .sessions
             .iter()
-            .filter(|session| {
-                should_request_window_history(
-                    workspace_ready,
-                    session.open,
-                    *session.buffers.history_loaded.borrow(),
-                    *session.buffers.history_loading.borrow(),
-                )
-            })
+            .filter(|session| workspace_ready && session.open)
             .map(|session| session.session_key.clone())
             .collect::<Vec<_>>();
         for session_key in keys {
-            self.subscribe_session(&session_key);
+            self.ensure_session_ready(&session_key);
         }
     }
 
@@ -190,29 +183,19 @@ impl ChatApp {
 
     pub(in crate::web_chat) fn focus_session(&mut self, session_key: &str) {
         let mut changed = false;
-        let mut should_subscribe_history = false;
-        let workspace_ready = self.is_workspace_ready();
         if let Some(index) = self.session_index(session_key) {
             let session = &mut self.sessions[index];
             if !session.open {
                 session.open = true;
                 changed = true;
             }
-            should_subscribe_history = should_request_window_history(
-                workspace_ready,
-                true,
-                *session.buffers.history_loaded.borrow(),
-                *session.buffers.history_loading.borrow(),
-            );
         }
         if self.active_session_key.as_deref() != Some(session_key) {
             self.active_session_key = Some(session_key.to_string());
             changed = true;
         }
         let moved_to_front = self.bring_session_to_front(session_key);
-        if should_subscribe_history {
-            self.subscribe_session(session_key);
-        }
+        self.ensure_session_ready(session_key);
         if changed || moved_to_front {
             self.persist_workspace_state();
         }
@@ -382,13 +365,6 @@ impl ChatApp {
                 &self.provider_catalog,
             );
         }
-    }
-
-    pub(in crate::web_chat) fn workspace_entries(&self) -> Vec<WorkspaceSessionEntry> {
-        self.sessions
-            .iter()
-            .map(SessionWindow::workspace_entry)
-            .collect()
     }
 }
 

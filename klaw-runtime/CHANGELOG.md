@@ -10,6 +10,7 @@
 
 - runtime 持久化 assistant 聊天历史时，现会同时写入 outbound metadata 与 assistant `message_id`，使 websocket/webui 客户端可以在刷新后恢复 `im.card` 等结构化消息状态
 - gateway websocket 历史加载现在会解析并回传持久化的聊天 metadata，而不再把历史 assistant 消息降级为纯文本
+- runtime gateway websocket handler 现在按页读取会话历史，并把无效历史游标映射为 websocket `invalid_request` 错误而不是全量读取后静默截断
 
 ## 2026-04-13
 

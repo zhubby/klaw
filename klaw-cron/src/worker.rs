@@ -602,6 +602,19 @@ mod tests {
             Ok(Vec::new())
         }
 
+        async fn read_chat_records_page(
+            &self,
+            _session_key: &str,
+            _before_message_id: Option<&str>,
+            _limit: usize,
+        ) -> Result<klaw_storage::ChatRecordPage, StorageError> {
+            Ok(klaw_storage::ChatRecordPage {
+                records: Vec::new(),
+                has_more: false,
+                oldest_message_id: None,
+            })
+        }
+
         async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
             self.sessions
                 .lock()
@@ -738,11 +751,12 @@ mod tests {
 
         async fn list_sessions(
             &self,
-            _limit: i64,
+            _limit: Option<i64>,
             _offset: i64,
             _updated_from_ms: Option<i64>,
             _updated_to_ms: Option<i64>,
             _channel: Option<&str>,
+            _session_key_prefix: Option<&str>,
             _sort_order: klaw_storage::SessionSortOrder,
         ) -> Result<Vec<SessionIndex>, StorageError> {
             Ok(self.sessions.lock().expect("lock").clone())

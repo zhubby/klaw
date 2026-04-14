@@ -42,10 +42,6 @@ pub(super) struct ChatMessage {
 }
 
 impl ChatMessage {
-    pub(super) fn new(text: String, role: MessageRole, timestamp_ms: i64) -> Self {
-        Self::new_with_metadata(text, role, timestamp_ms, None, BTreeMap::new())
-    }
-
     pub(super) fn new_with_metadata(
         text: String,
         role: MessageRole,
@@ -93,7 +89,6 @@ pub(super) fn session_window_id(session_key: &str) -> egui::Id {
 pub(super) struct SessionBuffers {
     pub(in crate::web_chat) messages: Rc<RefCell<Vec<ChatMessage>>>,
     pub(in crate::web_chat) active_stream_request_id: Rc<RefCell<Option<String>>>,
-    pub(in crate::web_chat) history_loaded: Rc<RefCell<bool>>,
     pub(in crate::web_chat) history_loading: Rc<RefCell<bool>>,
 }
 
@@ -102,7 +97,6 @@ impl Default for SessionBuffers {
         Self {
             messages: Rc::new(RefCell::new(Vec::new())),
             active_stream_request_id: Rc::new(RefCell::new(None)),
-            history_loaded: Rc::new(RefCell::new(false)),
             history_loading: Rc::new(RefCell::new(false)),
         }
     }
@@ -115,6 +109,12 @@ pub(super) struct SlashCompleterState {
     pub(in crate::web_chat) replace_range: Option<std::ops::Range<usize>>,
     pub(in crate::web_chat) dismissed_query: Option<String>,
     pub(in crate::web_chat) dismissed_start: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PendingHistoryScrollRestore {
+    pub(in crate::web_chat) offset_y: f32,
+    pub(in crate::web_chat) content_height: f32,
 }
 
 pub(super) struct SessionWindow {
@@ -135,6 +135,10 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) selecting_file: Rc<RefCell<bool>>,
     pub(in crate::web_chat) uploading_file: Rc<RefCell<bool>>,
     pub(in crate::web_chat) slash_completer: SlashCompleterState,
+    pub(in crate::web_chat) subscribed: bool,
+    pub(in crate::web_chat) history_has_more: bool,
+    pub(in crate::web_chat) oldest_loaded_message_id: Option<String>,
+    pub(in crate::web_chat) pending_history_scroll_restore: Option<PendingHistoryScrollRestore>,
 }
 
 impl SessionWindow {
@@ -166,6 +170,10 @@ impl SessionWindow {
             selecting_file: Rc::new(RefCell::new(false)),
             uploading_file: Rc::new(RefCell::new(false)),
             slash_completer: SlashCompleterState::default(),
+            subscribed: false,
+            history_has_more: true,
+            oldest_loaded_message_id: None,
+            pending_history_scroll_restore: None,
         }
     }
 
@@ -173,16 +181,6 @@ impl SessionWindow {
         PersistedSession {
             session_key: self.session_key.clone(),
             open: self.open,
-        }
-    }
-
-    pub(super) fn workspace_entry(&self) -> WorkspaceSessionEntry {
-        WorkspaceSessionEntry {
-            session_key: self.session_key.clone(),
-            title: self.title.clone(),
-            created_at_ms: self.created_at_ms,
-            model_provider: self.workspace_model_provider.clone(),
-            model: self.workspace_model.clone(),
         }
     }
 
@@ -223,6 +221,12 @@ impl SessionWindow {
     pub(super) fn prune_finished_animations(&mut self) {
         self.fade_in_messages
             .retain(|_, animator| !animator.is_animation_finished());
+    }
+
+    pub(super) fn reset_connection_state(&mut self) {
+        self.subscribed = false;
+        *self.buffers.history_loading.borrow_mut() = false;
+        self.pending_history_scroll_restore = None;
     }
 }
 

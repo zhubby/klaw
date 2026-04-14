@@ -13,6 +13,13 @@ use crate::{
 use async_trait::async_trait;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone)]
+pub struct ChatRecordPage {
+    pub records: Vec<ChatRecord>,
+    pub has_more: bool,
+    pub oldest_message_id: Option<String>,
+}
+
 #[async_trait]
 pub trait SessionStorage: Send + Sync {
     async fn touch_session(
@@ -36,6 +43,13 @@ pub trait SessionStorage: Send + Sync {
     ) -> Result<(), StorageError>;
 
     async fn read_chat_records(&self, session_key: &str) -> Result<Vec<ChatRecord>, StorageError>;
+
+    async fn read_chat_records_page(
+        &self,
+        session_key: &str,
+        before_message_id: Option<&str>,
+        limit: usize,
+    ) -> Result<ChatRecordPage, StorageError>;
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError>;
 

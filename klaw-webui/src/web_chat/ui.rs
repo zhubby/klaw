@@ -21,9 +21,10 @@ use super::{
     markdown::{MarkdownCache, render_markdown, render_plain_message},
     session::{
         BUBBLE_MAX_WIDTH, CardInteractionState, ChatMessage, INPUT_PANEL_HEIGHT,
-        SESSION_LIST_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH,
-        SESSION_WINDOW_MIN_HEIGHT, SESSION_WINDOW_MIN_WIDTH, SessionWindow, current_timestamp_ms,
-        format_datetime, format_message_timestamp, format_relative_time, session_window_id,
+        PendingHistoryScrollRestore, SESSION_LIST_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT,
+        SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT, SESSION_WINDOW_MIN_WIDTH,
+        SessionWindow, current_timestamp_ms, format_datetime, format_message_timestamp,
+        format_relative_time, session_window_id,
     },
 };
 
@@ -537,6 +538,7 @@ impl ChatApp {
         let mut trigger_send = false;
         let mut trigger_file_picker = false;
         let mut trigger_card_action: Option<CardActionRequest> = None;
+        let mut trigger_history_load: Option<PendingHistoryScrollRestore> = None;
         let mut set_active = false;
         {
             let session = &mut self.sessions[index];
@@ -567,9 +569,10 @@ impl ChatApp {
 
                 let messages_height = (ui.available_height() - INPUT_PANEL_HEIGHT).max(140.0);
                 ui.allocate_ui(vec2(ui.available_width(), messages_height), |ui| {
-                    ScrollArea::vertical()
+                    let scroll_output = ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)
+                        .id_salt(("session-messages", &session.session_key))
                         .show(ui, |ui| {
                             if *session.buffers.history_loading.borrow() && messages.is_empty() {
                                 render_history_loading_state(ui);
@@ -581,6 +584,10 @@ impl ChatApp {
                             }
 
                             session.prune_finished_animations();
+                            if *session.buffers.history_loading.borrow() {
+                                render_history_page_loading_state(ui);
+                                ui.add_space(8.0);
+                            }
                             let mut card_action = None;
                             for (message_index, message) in messages.iter().enumerate() {
                                 if is_hidden_internal_card_command(message) {
@@ -602,6 +609,28 @@ impl ChatApp {
                             }
                             trigger_card_action = card_action;
                         });
+                    if let Some(restore) = session.pending_history_scroll_restore.as_ref()
+                        && !*session.buffers.history_loading.borrow()
+                    {
+                        let mut state = scroll_output.state;
+                        state.offset.y = (restore.offset_y
+                            + (scroll_output.content_size.y - restore.content_height))
+                            .max(0.0);
+                        state.store(ui.ctx(), scroll_output.id);
+                        session.pending_history_scroll_restore = None;
+                        ui.ctx().request_repaint();
+                    }
+                    if scroll_output.state.offset.y <= 12.0
+                        && session.history_has_more
+                        && !*session.buffers.history_loading.borrow()
+                        && session.pending_history_scroll_restore.is_none()
+                        && !messages.is_empty()
+                    {
+                        trigger_history_load = Some(PendingHistoryScrollRestore {
+                            offset_y: scroll_output.state.offset.y,
+                            content_height: scroll_output.content_size.y,
+                        });
+                    }
                 });
 
                 ui.separator();
@@ -888,6 +917,9 @@ impl ChatApp {
         if became_active || moved_to_front {
             self.persist_workspace_state();
         }
+        if let Some(scroll_restore) = trigger_history_load {
+            self.load_history_page(session_key, Some(scroll_restore));
+        }
         if trigger_file_picker {
             self.trigger_file_picker(session_key);
         }
@@ -1080,6 +1112,13 @@ fn render_history_loading_state(ui: &mut egui::Ui) {
         );
         ui.add_space(4.0);
         ui.label(RichText::new("Fetching messages from Klaw gateway.").weak());
+    });
+}
+
+fn render_history_page_loading_state(ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.add(egui::Spinner::new().size(12.0));
+        ui.label(RichText::new("Loading older messages…").small().weak());
     });
 }
 

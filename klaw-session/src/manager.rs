@@ -1,13 +1,14 @@
 use crate::SessionError;
 use async_trait::async_trait;
 use klaw_storage::{
-    ChatRecord, DefaultSessionStore, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
-    LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord, LlmUsageRecord, LlmUsageSummary,
-    NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord, NewWebhookAgentRecord,
-    NewWebhookEventRecord, SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
-    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
-    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
-    WebhookEventQuery, WebhookEventRecord, open_default_store,
+    ChatRecord, ChatRecordPage, DefaultSessionStore, LlmAuditFilterOptions,
+    LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord,
+    LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
+    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
+    SessionSortOrder, SessionStorage, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
+    ToolAuditQuery, ToolAuditRecord, UpdateWebhookAgentResult, UpdateWebhookEventResult,
+    WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
+    open_default_store,
 };
 
 #[derive(Debug, Clone)]
@@ -35,6 +36,13 @@ impl Default for SessionListQuery {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionHistoryPage {
+    pub records: Vec<ChatRecord>,
+    pub has_more: bool,
+    pub oldest_message_id: Option<String>,
+}
+
 #[async_trait]
 pub trait SessionManager: Send + Sync {
     async fn touch_session(
@@ -58,6 +66,13 @@ pub trait SessionManager: Send + Sync {
     ) -> Result<(), SessionError>;
 
     async fn read_chat_records(&self, session_key: &str) -> Result<Vec<ChatRecord>, SessionError>;
+
+    async fn read_chat_records_page(
+        &self,
+        session_key: &str,
+        before_message_id: Option<&str>,
+        limit: usize,
+    ) -> Result<SessionHistoryPage, SessionError>;
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, SessionError>;
 
@@ -279,6 +294,27 @@ impl SessionManager for SqliteSessionManager {
 
     async fn read_chat_records(&self, session_key: &str) -> Result<Vec<ChatRecord>, SessionError> {
         Ok(self.store.read_chat_records(session_key).await?)
+    }
+
+    async fn read_chat_records_page(
+        &self,
+        session_key: &str,
+        before_message_id: Option<&str>,
+        limit: usize,
+    ) -> Result<SessionHistoryPage, SessionError> {
+        let ChatRecordPage {
+            records,
+            has_more,
+            oldest_message_id,
+        } = self
+            .store
+            .read_chat_records_page(session_key, before_message_id, limit)
+            .await?;
+        Ok(SessionHistoryPage {
+            records,
+            has_more,
+            oldest_message_id,
+        })
     }
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, SessionError> {

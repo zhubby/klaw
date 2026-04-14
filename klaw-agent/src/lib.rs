@@ -30,6 +30,7 @@ const META_PARENT_SESSION_KEY: &str = "agent.parent_session_key";
 const META_MESSAGE_ID_KEY: &str = "agent.message_id";
 const META_CURRENT_ATTACHMENTS_KEY: &str = "agent.current_attachments";
 const APPROVAL_REQUIRED_SIGNAL: &str = "approval_required";
+const IM_CARD_SIGNAL: &str = "im_card";
 const STOP_SIGNAL: &str = "stop";
 const STOPPED_TURN_MESSAGE: &str = "Current turn stopped. No further tool calls were made.";
 const FINAL_ITERATION_PROMPT: &str = "You are about to reach the maximum tool call limit. This is your final iteration. Please respond directly to the user with a summary of what you have accomplished so far, and explain that you have reached the tool call limit. Do NOT call any more tools in this response.";
@@ -547,7 +548,7 @@ pub async fn run_agent_execution(
                 content: if approval_required && !assistant_content.trim().is_empty() {
                     assistant_content
                 } else if stopped {
-                    STOPPED_TURN_MESSAGE.to_string()
+                    stopped_turn_content(&short_circuit.signals)
                 } else {
                     short_circuit.content_for_model
                 },
@@ -642,6 +643,29 @@ async fn apply_tool_calls(
 
 fn now_ms() -> i64 {
     (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
+}
+
+fn stopped_turn_content(signals: &[ToolInvocationSignal]) -> String {
+    let stop_source = signals
+        .iter()
+        .find(|signal| signal.kind == STOP_SIGNAL)
+        .and_then(|signal| signal.payload.get("source"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let has_question_single_select_card = signals.iter().any(|signal| {
+        signal.kind == IM_CARD_SIGNAL
+            && signal
+                .payload
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind == "question_single_select")
+    });
+    if has_question_single_select_card || stop_source == Some("ask_question") {
+        String::new()
+    } else {
+        STOPPED_TURN_MESSAGE.to_string()
+    }
 }
 
 pub fn resolve_api_key(provider: &ModelProviderConfig) -> Option<String> {
@@ -1313,6 +1337,86 @@ mod tests {
             *tools.call_count.lock().expect("mutex poisoned"),
             1,
             "tool should only be called once"
+        );
+    }
+
+    #[derive(Default)]
+    struct AskQuestionStopToolExecutor;
+
+    #[async_trait]
+    impl ToolExecutor for AskQuestionStopToolExecutor {
+        fn definitions(&self) -> Vec<ToolDefinition> {
+            vec![ToolDefinition {
+                name: "ask_question".to_string(),
+                description: "asks a single-select question".to_string(),
+                parameters: serde_json::json!({"type":"object"}),
+            }]
+        }
+
+        async fn execute(
+            &self,
+            _name: &str,
+            _arguments: Value,
+            _session_key: &str,
+            _metadata: &BTreeMap<String, Value>,
+        ) -> ToolInvocationResult {
+            ToolInvocationResult::success_with_signals(
+                "{\"question_id\":\"q1\",\"status\":\"pending\"}".to_string(),
+                vec![
+                    ToolInvocationSignal {
+                        kind: IM_CARD_SIGNAL.to_string(),
+                        payload: serde_json::json!({
+                            "kind": "question_single_select",
+                            "metadata": {
+                                "question_id": "q1"
+                            }
+                        }),
+                    },
+                    ToolInvocationSignal {
+                        kind: STOP_SIGNAL.to_string(),
+                        payload: serde_json::json!({
+                            "reason": "awaiting ask_question user selection",
+                            "source": "ask_question"
+                        }),
+                    },
+                ],
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn run_agent_execution_suppresses_stop_placeholder_for_ask_question_cards() {
+        let provider = StopShortCircuitProvider::default();
+        let tools = AskQuestionStopToolExecutor;
+        let output = run_agent_execution(
+            &provider,
+            &tools,
+            AgentExecutionInput {
+                user_content: "help me choose".to_string(),
+                user_media: Vec::new(),
+                conversation_history: Vec::new(),
+                session_key: "s1".to_string(),
+                execution_context: test_execution_context(),
+            },
+            AgentExecutionLimits {
+                max_tool_iterations: 4,
+                max_tool_calls: 4,
+                token_budget: 0,
+            },
+            None,
+        )
+        .await
+        .expect("agent execution should short-circuit successfully");
+
+        assert_eq!(output.content, "");
+        assert_eq!(output.disposition, AgentExecutionDisposition::Stopped);
+        assert_eq!(output.tool_signals.len(), 2);
+        assert!(output.tool_signals.iter().any(|signal| signal.kind == IM_CARD_SIGNAL));
+        assert!(output.tool_signals.iter().any(|signal| signal.kind == STOP_SIGNAL));
+        assert_eq!(
+            *provider.call_count.lock().expect("mutex poisoned"),
+            1,
+            "provider should only be called once"
         );
     }
 

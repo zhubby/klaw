@@ -657,16 +657,6 @@ pub(crate) fn sort_session_entries_by_created_at_desc(entries: &mut [SessionList
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-pub(crate) fn should_request_window_history(
-    workspace_ready: bool,
-    window_open: bool,
-    history_loaded: bool,
-    history_loading: bool,
-) -> bool {
-    workspace_ready && window_open && !history_loaded && !history_loading
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn classify_stream_message_action(
     last_role: Option<MessageRole>,
     active_stream_request_id: Option<&str>,
@@ -769,7 +759,7 @@ mod tests {
         normalize_gateway_token_input, resolve_gateway_token, resolve_im_card,
         resolve_session_route_inputs, session_card_activity_label, should_activate_session_window,
         should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
-        should_register_non_stream_fade, should_request_window_history, slash_command_matches,
+        should_register_non_stream_fade, slash_command_matches,
         sort_session_entries_by_created_at_desc,
     };
 
@@ -1064,15 +1054,6 @@ mod tests {
 
         assert_eq!(sessions[0].session_key, "websocket:2");
         assert_eq!(sessions[1].session_key, "websocket:1");
-    }
-
-    #[test]
-    fn window_history_request_waits_until_open_and_uninitialized() {
-        assert!(should_request_window_history(true, true, false, false));
-        assert!(!should_request_window_history(true, false, false, false));
-        assert!(!should_request_window_history(true, true, true, false));
-        assert!(!should_request_window_history(true, true, false, true));
-        assert!(!should_request_window_history(false, true, false, false));
     }
 
     #[test]

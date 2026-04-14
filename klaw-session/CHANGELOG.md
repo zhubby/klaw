@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-14
+
+### Added
+
+- added session-manager history paging wrappers so callers can request the latest N chat records or fetch older history before a given `message_id`
+
 ## 2026-03-30
 
 ### Added

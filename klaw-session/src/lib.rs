@@ -12,4 +12,4 @@ pub use klaw_storage::{
     UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
     WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
 };
-pub use manager::{SessionListQuery, SessionManager, SqliteSessionManager};
+pub use manager::{SessionHistoryPage, SessionListQuery, SessionManager, SqliteSessionManager};

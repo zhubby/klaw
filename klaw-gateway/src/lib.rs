@@ -31,8 +31,8 @@ pub use webhook::{
 };
 pub use websocket::{
     GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
-    GatewayWebsocketErrorFrame, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
-    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-    GatewayWorkspaceSession, InboundMethod, META_WEBSOCKET_MODEL, META_WEBSOCKET_MODEL_PROVIDER,
-    OutboundEvent,
+    GatewaySessionHistoryPage, GatewayWebsocketErrorFrame, GatewayWebsocketHandler,
+    GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
+    GatewayWorkspaceBootstrap, GatewayWorkspaceSession, InboundMethod, META_WEBSOCKET_MODEL,
+    META_WEBSOCKET_MODEL_PROVIDER, OutboundEvent,
 };

@@ -18,6 +18,8 @@ pub enum StorageError {
     ReadJsonl(#[source] std::io::Error),
     #[error("failed to serialize JSONL record: {0}")]
     SerializeJson(#[source] serde_json::Error),
+    #[error("invalid history cursor: {0}")]
+    InvalidHistoryCursor(String),
     #[error("backend error: {0}")]
     Backend(String),
 }

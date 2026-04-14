@@ -1629,12 +1629,14 @@ mod tests {
             ts_ms: 1,
             role: "assistant".to_string(),
             content: "deploy rollback procedure".to_string(),
+            metadata_json: None,
             message_id: None,
         };
         let user = ChatRecord {
             ts_ms: 1,
             role: "user".to_string(),
             content: "deploy rollback".to_string(),
+            metadata_json: None,
             message_id: None,
         };
 

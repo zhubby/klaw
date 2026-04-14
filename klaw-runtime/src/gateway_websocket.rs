@@ -6,11 +6,12 @@ use klaw_channel::{ChannelResponse, websocket::WebsocketSubmitEnvelope};
 use klaw_config::{AppConfig, WebsocketConfig};
 use klaw_gateway::{
     GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
-    GatewayWebsocketHandler, GatewayWebsocketHandlerError, GatewayWebsocketServerFrame,
-    GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap, GatewayWorkspaceSession,
-    OutboundEvent,
+    GatewaySessionHistoryPage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
+    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
+    GatewayWorkspaceSession, OutboundEvent,
 };
 use klaw_session::{SessionListQuery, SessionManager};
+use klaw_storage::StorageError;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::mpsc;
@@ -162,27 +163,43 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
     async fn load_session_history(
         &self,
         session_key: &str,
-    ) -> Result<Vec<GatewaySessionHistoryMessage>, GatewayWebsocketHandlerError> {
+        before_message_id: Option<&str>,
+        limit: usize,
+    ) -> Result<GatewaySessionHistoryPage, GatewayWebsocketHandlerError> {
         let manager =
             klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone());
         let session = manager
             .get_session(session_key)
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
-        let records = manager
-            .read_chat_records(resolved_history_session_key(&session))
+        let page = manager
+            .read_chat_records_page(
+                resolved_history_session_key(&session),
+                before_message_id,
+                limit,
+            )
             .await
-            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
-        Ok(records
-            .into_iter()
-            .map(|record| GatewaySessionHistoryMessage {
-                role: record.role,
-                content: record.content,
-                timestamp_ms: record.ts_ms,
-                metadata: parse_chat_record_metadata(record.metadata_json.as_deref()),
-                message_id: record.message_id,
-            })
-            .collect())
+            .map_err(|err| match err {
+                klaw_session::SessionError::Storage(StorageError::InvalidHistoryCursor(_)) => {
+                    GatewayWebsocketHandlerError::invalid_request(err.to_string())
+                }
+                _ => GatewayWebsocketHandlerError::internal(err.to_string()),
+            })?;
+        Ok(GatewaySessionHistoryPage {
+            messages: page
+                .records
+                .into_iter()
+                .map(|record| GatewaySessionHistoryMessage {
+                    role: record.role,
+                    content: record.content,
+                    timestamp_ms: record.ts_ms,
+                    metadata: parse_chat_record_metadata(record.metadata_json.as_deref()),
+                    message_id: record.message_id,
+                })
+                .collect(),
+            has_more: page.has_more,
+            oldest_loaded_message_id: page.oldest_message_id,
+        })
     }
 
     async fn submit(
@@ -415,7 +432,12 @@ fn build_web_workspace_bootstrap(
             title: session
                 .title
                 .filter(|title| !title.trim().is_empty())
-                .unwrap_or_else(|| format!("Agent {}", &session.session_key.trim_start_matches("websocket:")[..8])),
+                .unwrap_or_else(|| {
+                    format!(
+                        "Agent {}",
+                        &session.session_key.trim_start_matches("websocket:")[..8]
+                    )
+                }),
             created_at_ms: session.created_at_ms,
             model_provider: session.model_provider,
             model: session.model,
@@ -585,7 +607,10 @@ mod tests {
             Some("websocket:a1b2c3d4-5678-9012-abcd-ef0123456789")
         );
         assert_eq!(workspace.sessions.len(), 2);
-        assert_eq!(workspace.sessions[0].session_key, "websocket:a1b2c3d4-5678-9012-abcd-ef0123456789");
+        assert_eq!(
+            workspace.sessions[0].session_key,
+            "websocket:a1b2c3d4-5678-9012-abcd-ef0123456789"
+        );
         assert_eq!(workspace.sessions[0].title, "Agent a1b2c3d4");
         assert_eq!(workspace.sessions[1].session_key, "websocket:old");
         assert_eq!(workspace.sessions[1].title, "Saved old");
