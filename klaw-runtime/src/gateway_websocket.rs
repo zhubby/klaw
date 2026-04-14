@@ -75,6 +75,11 @@ fn resolved_history_session_key(session: &klaw_storage::SessionIndex) -> &str {
         .unwrap_or(&session.session_key)
 }
 
+fn parse_chat_record_metadata(raw: Option<&str>) -> BTreeMap<String, Value> {
+    raw.and_then(|value| serde_json::from_str::<BTreeMap<String, Value>>(value).ok())
+        .unwrap_or_default()
+}
+
 #[async_trait]
 impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
     async fn bootstrap(&self) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError> {
@@ -168,6 +173,7 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
                 role: record.role,
                 content: record.content,
                 timestamp_ms: record.ts_ms,
+                metadata: parse_chat_record_metadata(record.metadata_json.as_deref()),
                 message_id: record.message_id,
             })
             .collect())

@@ -440,6 +440,12 @@ pub struct AssistantOutput {
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct AssistantTurnOutcome {
+    pub output: Option<AssistantOutput>,
+    pub tool_audits: Vec<klaw_agent::AgentToolAudit>,
+}
+
 fn parse_outbound_attachments(
     metadata: &BTreeMap<String, serde_json::Value>,
 ) -> Vec<OutboundAttachment> {
@@ -1045,10 +1051,17 @@ fn build_new_session_bootstrap_request_metadata(
 
 fn build_approved_shell_followup_request_metadata(
     request_metadata: &BTreeMap<String, Value>,
+    require_tool_choice: bool,
 ) -> BTreeMap<String, Value> {
     let mut metadata = inherited_channel_runtime_metadata(request_metadata);
     metadata.insert(META_MAX_TOOL_ITERATIONS_KEY.to_string(), Value::from(2_u64));
     metadata.insert(META_MAX_TOOL_CALLS_KEY.to_string(), Value::from(1_u64));
+    if require_tool_choice {
+        metadata.insert(
+            META_TOOL_CHOICE_KEY.to_string(),
+            Value::String("required".to_string()),
+        );
+    }
     metadata
 }
 
@@ -1622,6 +1635,12 @@ fn parse_delivery_metadata_json(raw: &str) -> Option<BTreeMap<String, Value>> {
     serde_json::from_str::<serde_json::Map<String, Value>>(raw)
         .ok()
         .map(|metadata| metadata.into_iter().collect())
+}
+
+fn chat_record_metadata_json(metadata: &BTreeMap<String, Value>) -> Option<String> {
+    (!metadata.is_empty())
+        .then(|| serde_json::to_string(metadata).ok())
+        .flatten()
 }
 
 fn validate_webhook_delivery_target(route: &WebhookDeliveryRoute) -> Result<(), String> {
@@ -2483,7 +2502,7 @@ async fn maybe_refresh_summary(
     next_summary
 }
 
-pub async fn submit_and_get_output(
+pub(crate) async fn submit_and_get_turn_outcome(
     runtime: &RuntimeBundle,
     channel: String,
     input: String,
@@ -2494,7 +2513,7 @@ pub async fn submit_and_get_output(
     model: String,
     media_references: Vec<MediaReference>,
     request_metadata: BTreeMap<String, serde_json::Value>,
-) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
+) -> Result<AssistantTurnOutcome, Box<dyn std::error::Error>> {
     let sessions = session_manager(runtime);
     let full_history = sessions.read_chat_records(&session_key).await?;
     let summary = maybe_refresh_summary(
@@ -2577,9 +2596,15 @@ pub async fn submit_and_get_output(
 
     let outcome = run_runtime_once(runtime).await?;
     enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
+    let tool_audits = outcome.tool_audits.clone();
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
-            let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
+            let agent_record = ChatRecord::new(
+                "assistant",
+                msg.payload.content.clone(),
+                Some(msg.header.message_id.to_string()),
+            )
+            .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
             persist_assistant_response_state(
                 runtime,
                 &msg.header.session_key,
@@ -2609,6 +2634,38 @@ pub async fn submit_and_get_output(
             Ok(None)
         }
     }
+    .map(|output| AssistantTurnOutcome {
+        output,
+        tool_audits,
+    })
+}
+
+pub async fn submit_and_get_output(
+    runtime: &RuntimeBundle,
+    channel: String,
+    input: String,
+    session_key: String,
+    chat_id: String,
+    sender_id: String,
+    model_provider: String,
+    model: String,
+    media_references: Vec<MediaReference>,
+    request_metadata: BTreeMap<String, serde_json::Value>,
+) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
+    submit_and_get_turn_outcome(
+        runtime,
+        channel,
+        input,
+        session_key,
+        chat_id,
+        sender_id,
+        model_provider,
+        model,
+        media_references,
+        request_metadata,
+    )
+    .await
+    .map(|outcome| outcome.output)
 }
 
 async fn submit_webhook_isolated_turn(
@@ -2717,7 +2774,12 @@ async fn submit_webhook_isolated_turn(
             .await?;
     }
 
-    let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
+    let agent_record = ChatRecord::new(
+        "assistant",
+        msg.payload.content.clone(),
+        Some(msg.header.message_id.to_string()),
+    )
+    .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
     persist_assistant_response_state(
         runtime,
         &msg.header.session_key,
@@ -3016,7 +3078,12 @@ pub async fn submit_and_stream_output(
 
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
-            let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
+            let agent_record = ChatRecord::new(
+                "assistant",
+                msg.payload.content.clone(),
+                Some(msg.header.message_id.to_string()),
+            )
+            .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
             persist_assistant_response_state(
                 runtime,
                 &msg.header.session_key,
@@ -3186,7 +3253,12 @@ where
 
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
-            let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
+            let agent_record = ChatRecord::new(
+                "assistant",
+                msg.payload.content.clone(),
+                Some(msg.header.message_id.to_string()),
+            )
+            .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
             persist_assistant_response_state(
                 runtime,
                 &msg.header.session_key,
@@ -3245,7 +3317,12 @@ pub async fn drain_runtime_queue(
             enqueue_llm_audit_records_from_outcome(runtime, turn_index, &outcome);
             break;
         };
-        let agent_record = ChatRecord::new("assistant", msg.payload.content.clone(), None);
+        let agent_record = ChatRecord::new(
+            "assistant",
+            msg.payload.content.clone(),
+            Some(msg.header.message_id.to_string()),
+        )
+        .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
         let sessions = session_manager(runtime);
         let turn_index = sessions
             .get_session(&msg.header.session_key)
@@ -3453,7 +3530,7 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        RuntimeBundle, StartupReport, approval_manager, ask_question_manager,
+        META_TOOL_CHOICE_KEY, RuntimeBundle, StartupReport, approval_manager, ask_question_manager,
         build_approved_shell_followup_request_metadata,
         build_ask_question_followup_request_metadata, build_history_for_model,
         build_new_session_bootstrap_user_message, build_unavailable_provider, builtin_tool_names,
@@ -5136,14 +5213,17 @@ A .docx file is a ZIP archive containing XML files.
 
     #[test]
     fn approved_shell_followup_metadata_inherits_channel_state_and_limits_retries() {
-        let metadata = build_approved_shell_followup_request_metadata(&BTreeMap::from([
-            ("channel.delivery_mode".to_string(), json!("direct_reply")),
-            (
-                "channel.base_session_key".to_string(),
-                json!("telegram:base:chat-1"),
-            ),
-            ("other".to_string(), json!("ignored")),
-        ]));
+        let metadata = build_approved_shell_followup_request_metadata(
+            &BTreeMap::from([
+                ("channel.delivery_mode".to_string(), json!("direct_reply")),
+                (
+                    "channel.base_session_key".to_string(),
+                    json!("telegram:base:chat-1"),
+                ),
+                ("other".to_string(), json!("ignored")),
+            ]),
+            false,
+        );
 
         assert_eq!(
             metadata.get("channel.delivery_mode"),
@@ -5156,6 +5236,26 @@ A .docx file is a ZIP archive containing XML files.
         assert_eq!(metadata.get("agent.max_tool_iterations"), Some(&json!(2)));
         assert_eq!(metadata.get("agent.max_tool_calls"), Some(&json!(1)));
         assert!(!metadata.contains_key("other"));
+    }
+
+    #[test]
+    fn approved_shell_followup_metadata_can_require_a_tool_choice() {
+        let metadata = build_approved_shell_followup_request_metadata(&BTreeMap::new(), true);
+
+        assert_eq!(metadata.get(META_TOOL_CHOICE_KEY), Some(&json!("required")));
+    }
+
+    #[test]
+    fn approved_shell_followup_input_requires_automatic_retry_before_asking_user() {
+        let prompt = im_commands::build_approved_shell_followup_input(
+            "approval-1",
+            "rm -rf /tmp/demo",
+            "tool `shell` failed: exit code 1",
+        );
+
+        assert!(prompt.contains("你必须在这一轮里直接发起那次修复或重试"));
+        assert!(prompt.contains("不要先让用户手动重试"));
+        assert!(prompt.contains("最多只允许一次额外工具调用"));
     }
 
     #[test]

@@ -1,8 +1,12 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashMap},
+    rc::Rc,
+};
 
 use crate::{
-    MessageRole, ProviderCatalog, ResolvedSessionRoute, WorkspaceSessionEntry,
-    resolve_session_route_inputs,
+    ImCard, MessageRole, ProviderCatalog, ResolvedSessionRoute, WorkspaceSessionEntry,
+    resolve_im_card, resolve_session_route_inputs,
 };
 use eframe::epaint::{Color32, FontFamily, FontId};
 use js_sys::Date;
@@ -32,17 +36,41 @@ pub(super) struct ChatMessage {
     pub(in crate::web_chat) text: String,
     pub(in crate::web_chat) role: MessageRole,
     pub(in crate::web_chat) timestamp_ms: i64,
+    pub(in crate::web_chat) message_id: Option<String>,
+    pub(in crate::web_chat) metadata: BTreeMap<String, serde_json::Value>,
+    pub(in crate::web_chat) card: Option<ImCard>,
 }
 
 impl ChatMessage {
     pub(super) fn new(text: String, role: MessageRole, timestamp_ms: i64) -> Self {
+        Self::new_with_metadata(text, role, timestamp_ms, None, BTreeMap::new())
+    }
+
+    pub(super) fn new_with_metadata(
+        text: String,
+        role: MessageRole,
+        timestamp_ms: i64,
+        message_id: Option<String>,
+        metadata: BTreeMap<String, serde_json::Value>,
+    ) -> Self {
+        let card = resolve_im_card(&text, &metadata);
         Self {
             id: Uuid::new_v4().to_string(),
             text,
             role,
             timestamp_ms,
+            message_id,
+            metadata,
+            card,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum CardInteractionState {
+    Pending { label: String },
+    Completed { label: String },
+    Failed { message: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +130,7 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) buffers: SessionBuffers,
     pub(in crate::web_chat) markdown_cache: MarkdownCache,
     pub(in crate::web_chat) fade_in_messages: HashMap<String, TextAnimator>,
+    pub(in crate::web_chat) card_state_overrides: HashMap<String, CardInteractionState>,
     pub(in crate::web_chat) selected_archive_id: Rc<RefCell<Option<String>>>,
     pub(in crate::web_chat) selecting_file: Rc<RefCell<bool>>,
     pub(in crate::web_chat) uploading_file: Rc<RefCell<bool>>,
@@ -132,6 +161,7 @@ impl SessionWindow {
             buffers: SessionBuffers::default(),
             markdown_cache: MarkdownCache::default(),
             fade_in_messages: HashMap::new(),
+            card_state_overrides: HashMap::new(),
             selected_archive_id: Rc::new(RefCell::new(None)),
             selecting_file: Rc::new(RefCell::new(false)),
             uploading_file: Rc::new(RefCell::new(false)),

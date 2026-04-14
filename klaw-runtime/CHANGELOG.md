@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-04-14
+
+### Fixed
+
+- `/approve` 在 shell 命令执行失败或超时后，runtime 现在会显式检查首轮 follow-up 是否真的发起了工具调用；若没有，则自动注入第二轮必须调用工具的修复/重试子回合，而不再只靠 prompt 提示模型“准备重试”
+
+### Changed
+
+- runtime 持久化 assistant 聊天历史时，现会同时写入 outbound metadata 与 assistant `message_id`，使 websocket/webui 客户端可以在刷新后恢复 `im.card` 等结构化消息状态
+- gateway websocket 历史加载现在会解析并回传持久化的聊天 metadata，而不再把历史 assistant 消息降级为纯文本
+
 ## 2026-04-13
 
 ### Fixed

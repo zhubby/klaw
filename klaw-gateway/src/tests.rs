@@ -94,6 +94,7 @@ mod tests {
                     role: "assistant".to_string(),
                     content: "previous answer".to_string(),
                     timestamp_ms: 42,
+                    metadata: std::collections::BTreeMap::new(),
                     message_id: Some("msg-1".to_string()),
                 }]);
             }

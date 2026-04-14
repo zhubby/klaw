@@ -16,10 +16,10 @@ use crate::sync_runtime::{
 };
 use crate::ui::{sidebar, workbench};
 use egui_phosphor::regular;
-use klaw_ui_kit::{ThemeSwitch, theme_mode_from_preference, theme_preference};
 use klaw_storage::{
     BackupItem, BackupPlan, BackupService, S3SnapshotStoreConfig, SnapshotListItem, SnapshotMode,
 };
+use klaw_ui_kit::{ThemeSwitch, theme_mode_from_preference, theme_preference};
 use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -309,7 +309,9 @@ impl ShellUi {
                 let mut preference = theme_preference(state.theme_mode);
                 let response = ui.add(ThemeSwitch::new(&mut preference));
                 if response.changed() {
-                    actions.push(UiAction::SetThemeMode(theme_mode_from_preference(preference)));
+                    actions.push(UiAction::SetThemeMode(theme_mode_from_preference(
+                        preference,
+                    )));
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

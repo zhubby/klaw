@@ -112,11 +112,7 @@ impl ChatApp {
         self.persist_workspace_state();
     }
 
-    pub(in crate::web_chat) fn notify_new_assistant_reply(
-        &self,
-        session_key: &str,
-        content: &str,
-    ) {
+    pub(in crate::web_chat) fn notify_new_assistant_reply(&self, session_key: &str, content: &str) {
         if content.trim().is_empty() {
             return;
         }
@@ -149,10 +145,7 @@ impl ChatApp {
         let body = truncate_notification_body(content);
         let options = web_sys::NotificationOptions::new();
         options.set_body(&body);
-        let _ = Notification::new_with_options(
-            &title,
-            &options,
-        );
+        let _ = Notification::new_with_options(&title, &options);
     }
 
     /// Fetch server history for open windows that have not initialized yet.
@@ -412,9 +405,11 @@ fn truncate_notification_body(content: &str) -> String {
 
 fn notification_permission() -> Option<String> {
     let window = web_sys::window()?;
-    let notification_ctor =
-        js_sys::Reflect::get(window.as_ref(), &wasm_bindgen::JsValue::from_str("Notification"))
-            .ok()?;
+    let notification_ctor = js_sys::Reflect::get(
+        window.as_ref(),
+        &wasm_bindgen::JsValue::from_str("Notification"),
+    )
+    .ok()?;
     js_sys::Reflect::get(
         notification_ctor.as_ref(),
         &wasm_bindgen::JsValue::from_str("permission"),

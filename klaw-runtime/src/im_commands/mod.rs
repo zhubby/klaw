@@ -5,7 +5,7 @@ mod usage;
 use super::*;
 
 use parser::now_ms;
-use shell::{execute_approved_shell, execute_im_shell};
+use shell::{ApprovedShellExecution, execute_approved_shell, execute_im_shell};
 use usage::usage_response;
 
 pub(super) fn parse_im_command(input: &str) -> Option<(&str, Option<&str>)> {
@@ -18,6 +18,111 @@ pub(super) fn first_arg_token(arg: Option<&str>) -> Option<&str> {
 
 pub(super) fn second_arg_token(arg: Option<&str>) -> Option<&str> {
     parser::second_arg_token(arg)
+}
+
+pub(super) fn build_approved_shell_followup_input(
+    approval_id: &str,
+    command_preview: &str,
+    execution_result: &str,
+) -> String {
+    format!(
+        "审批已通过并已执行命令。请基于以下执行结果继续处理本轮任务。\n\
+        要求：\n\
+        1) 先判断这次命令执行是成功、失败还是超时\n\
+        2) 如果失败或超时，而且看起来属于一次额外工具调用就能修复的命令/参数/环境问题，你必须在这一轮里直接发起那次修复或重试，不要先让用户手动重试\n\
+        3) 最多只允许一次额外工具调用；若执行已成功，或失败明显无法靠一次额外工具调用修复，直接给出最终结论\n\
+        4) 只有在你明确判断一次额外工具调用也无法合理解决时，才向用户说明最关键原因和下一步建议\n\n\
+        approval_id: {}\n\
+        command: {}\n\
+        shell_result:\n{}",
+        approval_id, command_preview, execution_result
+    )
+}
+
+fn build_approved_shell_forced_retry_input(
+    approval_id: &str,
+    command_preview: &str,
+    execution_result: &str,
+    prior_reply: Option<&str>,
+) -> String {
+    let prior_reply_section = prior_reply
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("\n\n上一条 assistant 回复（未实际调用工具）:\n{value}"))
+        .unwrap_or_default();
+    format!(
+        "审批已通过并已执行命令，但上一次 follow-up 没有真正发起工具调用。\
+        这次你必须立刻发起一次工具调用，直接尝试修复或重试；不要先解释计划，不要先让用户手动重试。\
+        如果有多个候选方案，选择最可能成功的一种并直接执行。\
+        只有在确实不存在任何合理工具调用可做时，才停止并给出最终结论。\n\n\
+        approval_id: {}\n\
+        command: {}\n\
+        shell_result:\n{}{}",
+        approval_id, command_preview, execution_result, prior_reply_section
+    )
+}
+
+fn should_force_approved_shell_retry(
+    execution: &ApprovedShellExecution,
+    tool_audits: &[klaw_agent::AgentToolAudit],
+) -> bool {
+    execution.needs_recovery_followup() && tool_audits.is_empty()
+}
+
+async fn submit_approved_shell_followup(
+    runtime: &RuntimeBundle,
+    followup_channel: String,
+    followup_chat_id: String,
+    session_key: String,
+    model_provider: String,
+    model: String,
+    request_metadata: BTreeMap<String, Value>,
+    approval_id: &str,
+    command_preview: &str,
+    execution: &ApprovedShellExecution,
+) -> Result<Option<AssistantOutput>, Box<dyn Error>> {
+    let first_input =
+        build_approved_shell_followup_input(approval_id, command_preview, &execution.raw_output);
+    let first_outcome = submit_and_get_turn_outcome(
+        runtime,
+        followup_channel.clone(),
+        first_input,
+        session_key.clone(),
+        followup_chat_id.clone(),
+        "local-user".to_string(),
+        model_provider.clone(),
+        model.clone(),
+        Vec::new(),
+        build_approved_shell_followup_request_metadata(&request_metadata, false),
+    )
+    .await?;
+    if !should_force_approved_shell_retry(execution, &first_outcome.tool_audits) {
+        return Ok(first_outcome.output);
+    }
+
+    let second_input = build_approved_shell_forced_retry_input(
+        approval_id,
+        command_preview,
+        &execution.raw_output,
+        first_outcome
+            .output
+            .as_ref()
+            .map(|output| output.content.as_str()),
+    );
+    let second_outcome = submit_and_get_turn_outcome(
+        runtime,
+        followup_channel,
+        second_input,
+        session_key,
+        followup_chat_id,
+        "local-user".to_string(),
+        model_provider,
+        model,
+        Vec::new(),
+        build_approved_shell_followup_request_metadata(&request_metadata, true),
+    )
+    .await?;
+    Ok(second_outcome.output.or(first_outcome.output))
 }
 
 fn approval_link_metadata_matches_route(
@@ -396,18 +501,6 @@ pub(super) async fn handle_im_command(
                         &approved.command_text,
                     )
                     .await?;
-                    let model_followup_input = format!(
-                        "审批已通过并已执行命令。请基于以下执行结果继续处理本轮任务。\n\
-                        要求：\n\
-                        1) 先说明成功/失败\n\
-                        2) 如果失败且属于明显可修复的命令/参数问题，你可以再调用一次工具进行修复重试\n\
-                        3) 最多只允许一次额外工具调用；若不需要重试，直接给出最终回复\n\
-                        4) 若失败原因不是一次重试可解决的问题，直接总结最关键原因和下一步建议\n\n\
-                        approval_id: {}\n\
-                        command: {}\n\
-                        shell_result:\n{}",
-                        approved.id, approved.command_preview, execution_result
-                    );
                     let (followup_channel, followup_chat_id, stored_delivery_metadata) =
                         approval_followup_context(
                             runtime,
@@ -417,23 +510,23 @@ pub(super) async fn handle_im_command(
                         )
                         .await;
                     let mut followup_request_metadata =
-                        build_approved_shell_followup_request_metadata(&request_metadata);
+                        inherited_channel_runtime_metadata(&request_metadata);
                     for (key, value) in stored_delivery_metadata {
                         if key.starts_with("channel.") || key.starts_with("webhook.") {
                             followup_request_metadata.entry(key).or_insert(value);
                         }
                     }
-                    let maybe_output = submit_and_get_output(
+                    let maybe_output = submit_approved_shell_followup(
                         runtime,
                         followup_channel,
-                        model_followup_input,
-                        approved.session_key.clone(),
                         followup_chat_id,
-                        "local-user".to_string(),
+                        approved.session_key.clone(),
                         route.model_provider.clone(),
                         route.model.clone(),
-                        Vec::new(),
                         followup_request_metadata,
+                        &approved.id,
+                        &approved.command_preview,
+                        &execution_result,
                     )
                     .await?;
                     match maybe_output {
@@ -443,7 +536,7 @@ pub(super) async fn handle_im_command(
                         None => channel_response(
                             format!(
                                 "✅ **Approval granted and command executed**\n\n{}",
-                                execution_result
+                                execution_result.raw_output
                             ),
                             None,
                             BTreeMap::new(),
@@ -658,6 +751,47 @@ pub(super) async fn handle_im_command(
         }
     };
     Ok(Some(response))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_failure_without_tool_call_forces_second_recovery_turn() {
+        let execution = ApprovedShellExecution {
+            raw_output: "{\"success\":false,\"timed_out\":false}".to_string(),
+            parsed: Some(shell::ApprovedShellExecutionPayload {
+                success: false,
+                timed_out: false,
+            }),
+        };
+
+        assert!(should_force_approved_shell_retry(&execution, &[]));
+    }
+
+    #[test]
+    fn shell_failure_with_tool_call_does_not_force_second_recovery_turn() {
+        let execution = ApprovedShellExecution {
+            raw_output: "{\"success\":false,\"timed_out\":false}".to_string(),
+            parsed: Some(shell::ApprovedShellExecutionPayload {
+                success: false,
+                timed_out: false,
+            }),
+        };
+        let tool_audits = vec![klaw_agent::AgentToolAudit {
+            request_seq: 1,
+            tool_call_seq: 1,
+            tool_call_id: Some("call-1".to_string()),
+            tool_name: "shell".to_string(),
+            arguments: json!({"command":"retry"}),
+            result: klaw_agent::ToolInvocationResult::success("ok".to_string()),
+            started_at_ms: 0,
+            finished_at_ms: 1,
+        }];
+
+        assert!(!should_force_approved_shell_retry(&execution, &tool_audits));
+    }
 }
 
 fn render_help_text(runtime: &RuntimeBundle) -> String {

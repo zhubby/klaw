@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-04-14
+
+### Changed
+
+- websocket `session.subscribe` 历史消息现在会把持久化的 `response.metadata` 一并回传，不再只包含纯文本 `content`
+- `/ws/chat` 协议的实时与历史消息现在统一支持结构化 `response.metadata`，便于 webui 恢复并渲染 IM 卡片
+
 ## 2026-04-13
 
 ### Added

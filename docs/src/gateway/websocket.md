@@ -113,6 +113,7 @@ ws://127.0.0.1:18080/ws/chat?token=secret
 - `Binary` 帧：返回 `invalid_message_type` 错误。
 - `session.subscribe`：更新当前连接的 `session_key` 路由，并下发 `session.subscribed`。
 - `session.submit`：映射到 runtime `ChannelRequest`；返回 `result`，并在 streaming 模式下追加 `session.message` / `session.stream.*` 事件。
+- `session.message` / `result.response`：`response` 结构除 `content` 外还会携带 `metadata` 与 `attachments`；浏览器端可据此恢复 `im.card` 等结构化消息状态。
 - `Ping/Pong`：保留 websocket 心跳语义，不参与业务处理。
 - `Close`：结束连接并触发连接注册表清理。
 

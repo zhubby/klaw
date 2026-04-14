@@ -5,6 +5,8 @@
 #[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) use klaw_ui_kit::ThemeMode;
 
+#[cfg(any(test, target_arch = "wasm32"))]
+use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::VecDeque;
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -14,6 +16,220 @@ use std::ops::Range;
 use serde::{Deserialize, Serialize};
 #[cfg(any(test, target_arch = "wasm32"))]
 use serde_json::{Value, json};
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ImCardKind {
+    Approval,
+    QuestionSingleSelect,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ImCardActionKind {
+    Approve,
+    Reject,
+    OpenUrl,
+    SubmitCommand,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+impl ImCardActionKind {
+    fn default_label(&self) -> &'static str {
+        match self {
+            Self::Approve => "Approve",
+            Self::Reject => "Reject",
+            Self::OpenUrl => "Open",
+            Self::SubmitCommand => "Select",
+        }
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ImCardAction {
+    pub(crate) kind: ImCardActionKind,
+    #[serde(default)]
+    pub(crate) label: Option<String>,
+    #[serde(default)]
+    pub(crate) value: Option<String>,
+    #[serde(default)]
+    pub(crate) url: Option<String>,
+    #[serde(default)]
+    pub(crate) command: Option<String>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+impl ImCardAction {
+    fn label_or_default(&self) -> &str {
+        self.label
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| self.kind.default_label())
+    }
+
+    fn approval_id(&self) -> Option<&str> {
+        match self.kind {
+            ImCardActionKind::Approve | ImCardActionKind::Reject => self
+                .value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+            ImCardActionKind::OpenUrl | ImCardActionKind::SubmitCommand => None,
+        }
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ImCard {
+    pub(crate) kind: ImCardKind,
+    #[serde(default)]
+    pub(crate) title: Option<String>,
+    #[serde(default)]
+    pub(crate) body: String,
+    #[serde(default)]
+    pub(crate) actions: Vec<ImCardAction>,
+    #[serde(default)]
+    pub(crate) fallback_text: Option<String>,
+    #[serde(default)]
+    pub(crate) metadata: BTreeMap<String, Value>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+impl ImCard {
+    pub(crate) fn title_or<'a>(&'a self, fallback: &'a str) -> &'a str {
+        self.title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(fallback)
+    }
+
+    pub(crate) fn body_or<'a>(&'a self, fallback: &'a str) -> &'a str {
+        let body = self.body.trim();
+        if body.is_empty() { fallback } else { body }
+    }
+
+    pub(crate) fn fallback_text_or<'a>(&'a self, fallback: &'a str) -> &'a str {
+        self.fallback_text
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(fallback)
+    }
+
+    pub(crate) fn approval_id(&self) -> Option<&str> {
+        self.actions
+            .iter()
+            .find_map(ImCardAction::approval_id)
+            .or_else(|| {
+                self.metadata
+                    .get("approval_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+    }
+
+    pub(crate) fn command_preview(&self) -> Option<&str> {
+        self.metadata
+            .get("command_preview")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn resolve_im_card(content: &str, metadata: &BTreeMap<String, Value>) -> Option<ImCard> {
+    metadata
+        .get("im.card")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ImCard>(value).ok())
+        .or_else(|| resolve_approval_card(content, metadata))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn resolve_approval_card(content: &str, metadata: &BTreeMap<String, Value>) -> Option<ImCard> {
+    let approval_id = metadata
+        .get("approval.id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            metadata
+                .get("approval.signal")
+                .and_then(Value::as_object)
+                .and_then(|value| value.get("approval_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| extract_shell_approval_id(content))?;
+    let mut card_metadata = BTreeMap::new();
+    card_metadata.insert(
+        "approval_id".to_string(),
+        Value::String(approval_id.clone()),
+    );
+    if let Some(command_preview) = metadata
+        .get("approval.signal")
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("command_preview"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        card_metadata.insert(
+            "command_preview".to_string(),
+            Value::String(command_preview.to_string()),
+        );
+    }
+    Some(ImCard {
+        kind: ImCardKind::Approval,
+        title: None,
+        body: content.trim().to_string(),
+        actions: vec![
+            ImCardAction {
+                kind: ImCardActionKind::Approve,
+                label: None,
+                value: Some(approval_id.clone()),
+                url: None,
+                command: None,
+            },
+            ImCardAction {
+                kind: ImCardActionKind::Reject,
+                label: None,
+                value: Some(approval_id),
+                url: None,
+                command: None,
+            },
+        ],
+        fallback_text: (!content.trim().is_empty()).then(|| content.trim().to_string()),
+        metadata: card_metadata,
+    })
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn extract_shell_approval_id(content: &str) -> Option<String> {
+    let marker = "approval_id=";
+    if let Some(idx) = content.find(marker) {
+        let rest = &content[idx + marker.len()..];
+        let token = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
+            .collect::<String>();
+        if !token.is_empty() {
+            return Some(token);
+        }
+    }
+    None
+}
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -251,6 +467,7 @@ pub(crate) fn build_websocket_submit_params(
     archive_id: Option<&str>,
     model_provider: &str,
     model: &str,
+    metadata: Option<&BTreeMap<String, Value>>,
 ) -> Value {
     let mut params = json!({
         "session_key": session_key,
@@ -262,6 +479,9 @@ pub(crate) fn build_websocket_submit_params(
     });
     if let Some(archive_id) = archive_id.filter(|value| !value.is_empty()) {
         params["archive_id"] = json!(archive_id);
+    }
+    if let Some(metadata) = metadata.filter(|metadata| !metadata.is_empty()) {
+        params["metadata"] = json!(metadata);
     }
     params
 }
@@ -534,22 +754,22 @@ pub use web_chat::start_chat_ui;
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::collections::VecDeque;
 
     use serde_json::json;
 
     use super::{
-        ArchiveRecord, ArchiveUploadResponse, ConnectionState, MessageRole, PageMode,
+        ArchiveRecord, ArchiveUploadResponse, ConnectionState, ImCardKind, MessageRole, PageMode,
         ProviderCatalog, ProviderCatalogEntry, ResolvedSessionRoute, SessionListEntry,
-        StreamMessageAction, ThemeMode, attachment_action_in_progress,
-        apply_slash_completion, build_websocket_submit_params, can_trigger_file_picker,
-        classify_message_role, classify_stream_message_action, connection_action_label,
-        delete_confirmation_body, derive_page_mode, detect_active_slash_command,
-        next_selected_archive_id_after_submit, normalize_gateway_token_input,
-        resolve_gateway_token, resolve_session_route_inputs, session_card_activity_label,
-        should_activate_session_window, should_cancel_file_picker_selection,
-        should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
-        should_request_window_history, slash_command_matches,
+        StreamMessageAction, ThemeMode, apply_slash_completion, attachment_action_in_progress,
+        build_websocket_submit_params, can_trigger_file_picker, classify_message_role,
+        classify_stream_message_action, connection_action_label, delete_confirmation_body,
+        derive_page_mode, detect_active_slash_command, next_selected_archive_id_after_submit,
+        normalize_gateway_token_input, resolve_gateway_token, resolve_im_card,
+        resolve_session_route_inputs, session_card_activity_label, should_activate_session_window,
+        should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
+        should_register_non_stream_fade, should_request_window_history, slash_command_matches,
         sort_session_entries_by_created_at_desc,
     };
 
@@ -932,6 +1152,7 @@ mod tests {
             Some("archive-1"),
             "anthropic",
             "claude-sonnet-4-5",
+            None,
         );
 
         assert_eq!(
@@ -969,6 +1190,79 @@ mod tests {
     }
 
     #[test]
+    fn websocket_submit_params_include_card_metadata() {
+        let metadata = BTreeMap::from([(
+            "webui.card.action".to_string(),
+            serde_json::Value::Bool(true),
+        )]);
+        let params = build_websocket_submit_params(
+            "websocket:test",
+            "/approve approval-1",
+            false,
+            None,
+            "anthropic",
+            "claude-sonnet-4-5",
+            Some(&metadata),
+        );
+
+        assert_eq!(
+            params
+                .get("metadata")
+                .and_then(|value| value.get("webui.card.action"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn resolve_im_card_reads_explicit_question_card_metadata() {
+        let metadata = BTreeMap::from([(
+            "im.card".to_string(),
+            serde_json::json!({
+                "kind": "question_single_select",
+                "title": "Choose",
+                "body": "Pick one provider",
+                "actions": [
+                    {
+                        "kind": "submit_command",
+                        "label": "Anthropic",
+                        "command": "/card_answer q-1 anthropic"
+                    }
+                ],
+                "metadata": {
+                    "question_id": "q-1"
+                }
+            }),
+        )]);
+
+        let card = resolve_im_card("ignored", &metadata).expect("card");
+        assert_eq!(card.kind, ImCardKind::QuestionSingleSelect);
+        assert_eq!(card.title.as_deref(), Some("Choose"));
+        assert_eq!(
+            card.metadata
+                .get("question_id")
+                .and_then(serde_json::Value::as_str),
+            Some("q-1")
+        );
+    }
+
+    #[test]
+    fn resolve_im_card_falls_back_to_approval_signal_metadata() {
+        let metadata = BTreeMap::from([(
+            "approval.signal".to_string(),
+            serde_json::json!({
+                "approval_id": "approval-2",
+                "command_preview": "git push origin HEAD"
+            }),
+        )]);
+
+        let card = resolve_im_card("Approval required", &metadata).expect("card");
+        assert_eq!(card.kind, ImCardKind::Approval);
+        assert_eq!(card.approval_id(), Some("approval-2"));
+        assert_eq!(card.command_preview(), Some("git push origin HEAD"));
+    }
+
+    #[test]
     fn detect_active_slash_command_at_input_start() {
         let detected = detect_active_slash_command("/mo", 3).expect("slash command");
         assert_eq!(detected.replace_range, 0..3);
@@ -987,11 +1281,7 @@ mod tests {
     fn slash_command_matches_filter_known_commands() {
         let matched = slash_command_matches("mod");
         assert!(matched.iter().any(|item| item.command == "/model"));
-        assert!(
-            matched
-                .iter()
-                .any(|item| item.command == "/model_provider")
-        );
+        assert!(matched.iter().any(|item| item.command == "/model_provider"));
     }
 
     #[test]

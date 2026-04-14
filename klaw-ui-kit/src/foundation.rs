@@ -45,9 +45,7 @@ pub const fn theme_preference_label(theme: egui::ThemePreference) -> &'static st
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ThemeMode, theme_mode_from_preference, theme_preference, theme_preference_label,
-    };
+    use super::{ThemeMode, theme_mode_from_preference, theme_preference, theme_preference_label};
 
     #[test]
     fn theme_mode_labels_match_expected_copy() {
@@ -90,8 +88,14 @@ mod tests {
 
     #[test]
     fn theme_preference_labels_match_expected_copy() {
-        assert_eq!(theme_preference_label(egui::ThemePreference::System), "System");
-        assert_eq!(theme_preference_label(egui::ThemePreference::Light), "Light");
+        assert_eq!(
+            theme_preference_label(egui::ThemePreference::System),
+            "System"
+        );
+        assert_eq!(
+            theme_preference_label(egui::ThemePreference::Light),
+            "Light"
+        );
         assert_eq!(theme_preference_label(egui::ThemePreference::Dark), "Dark");
     }
 }

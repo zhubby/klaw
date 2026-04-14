@@ -111,10 +111,10 @@ flowchart LR
 | `session.connected` | 连接建立完成 | `connection_id`, `session_key` |
 | `session.subscribed` | 会话订阅完成 | `session_key` |
 | `session.unsubscribed` | 会话取消订阅 | `session_key` |
-| `session.message` | 推送消息（历史或新增）| `session_key`, `role`, `content`, `timestamp_ms`, `message_id`, `history` |
+| `session.message` | 推送消息（历史或新增）| `session_key`, `role`, `response.content`, `response.metadata`, `timestamp_ms`, `message_id`, `history` |
 | `session.stream.clear` | 清除上次流式响应占位 | `session_key` |
 | `session.stream.delta` | 流式响应增量 | `session_key`, `delta`, `done` |
-| `session.stream.done` | 流式响应完成 | `session_key`, `full_content` |
+| `session.stream.done` | 流式响应完成 | `session_key`, `response` |
 
 ## 使用示例
 
@@ -195,7 +195,8 @@ sendFrame({
   params: { session_key: 'my-session-key' }
 });
 
-// 订阅后会推送所有历史消息作为 session.message 事件
+// 订阅后会推送所有历史消息作为 session.message 事件，
+// 历史与实时消息都会放在 payload.response 下
 
 // 发送提问
 sendFrame({
@@ -214,9 +215,9 @@ sendFrame({
 onEvent('session.stream.delta', (payload) => {
   appendToOutput(payload.delta);
 });
-// 3. session.stream.done 标记完成
+// 3. session.stream.done 标记完成，完整快照在 payload.response 中
 onEvent('session.stream.done', (payload) => {
-  finalizeResponse(payload.full_content);
+  finalizeResponse(payload.response.content);
 });
 ```
 

@@ -133,7 +133,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn append_chat_record_writes_jsonl() {
         let store = create_store().await;
-        let record = ChatRecord::new("user", "hello", Some("m1".to_string()));
+        let record = ChatRecord::new("user", "hello", Some("m1".to_string()))
+            .with_metadata_json(Some("{\"im.card\":true}".to_string()));
         store
             .append_chat_record("terminal:test3", &record)
             .await
@@ -145,6 +146,7 @@ mod tests {
             .expect("jsonl file should exist");
         assert!(contents.contains("\"role\":\"user\""));
         assert!(contents.contains("\"content\":\"hello\""));
+        assert!(contents.contains("\"metadata_json\":\"{\\\"im.card\\\":true}\""));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -153,7 +155,8 @@ mod tests {
         store
             .append_chat_record(
                 "terminal:test-history",
-                &ChatRecord::new("user", "hello", Some("m1".to_string())),
+                &ChatRecord::new("user", "hello", Some("m1".to_string()))
+                    .with_metadata_json(Some("{\"kind\":\"plain\"}".to_string())),
             )
             .await
             .expect("first append should succeed");
@@ -174,6 +177,10 @@ mod tests {
             .map(|record| (record.role.as_str(), record.content.as_str()))
             .collect();
         assert_eq!(summary, vec![("user", "hello"), ("assistant", "world")]);
+        assert_eq!(
+            records[0].metadata_json.as_deref(),
+            Some("{\"kind\":\"plain\"}")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

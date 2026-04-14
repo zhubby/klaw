@@ -6,6 +6,8 @@ pub struct ChatRecord {
     pub role: String,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message_id: Option<String>,
 }
 
@@ -19,8 +21,15 @@ impl ChatRecord {
             ts_ms: crate::util::now_ms(),
             role: role.into(),
             content: content.into(),
+            metadata_json: None,
             message_id,
         }
+    }
+
+    #[must_use]
+    pub fn with_metadata_json(mut self, metadata_json: Option<String>) -> Self {
+        self.metadata_json = metadata_json;
+        self
     }
 }
 

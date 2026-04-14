@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-04-14
+
+### Added
+
+- webui 对话消息现在支持解析并渲染 `im.card` 交互卡片，首批覆盖 `approval` 与 `question_single_select`（`ask_question`）两类 websocket channel 卡片
+
+### Changed
+
+- 卡片动作现在通过 `session.submit` 回传结构化 `webui.card.*` metadata，并在浏览器端就地展示 pending / completed / failed 交互状态
+- 历史消息恢复时会优先读取持久化的消息 metadata 还原卡片；对 `/approve`、`/reject`、`/card_answer` 这类内部卡片命令，UI 会隐藏原始 slash 文本并回填卡片完成态
+- websocket 历史与实时消息的前端模型已从纯文本扩展为“文本 + metadata + 派生卡片”，为后续更多 IM 卡片类型留出协议位
+
 ## 2026-04-13
 
 ### Added

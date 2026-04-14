@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-14
+
+### Added
+- added optional `metadata_json` on persisted `ChatRecord` history rows so websocket/webui clients can restore structured assistant message state such as interactive IM cards after reloads
+
 ## 2026-04-07
 
 ### Added

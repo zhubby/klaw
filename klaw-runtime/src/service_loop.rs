@@ -536,7 +536,16 @@ async fn mirror_outbound_to_delivery_session(
     session_store
         .append_chat_record(
             &target_session_key,
-            &ChatRecord::new("assistant", msg.payload.content.clone(), None),
+            &ChatRecord::new(
+                "assistant",
+                msg.payload.content.clone(),
+                Some(msg.header.message_id.to_string()),
+            )
+            .with_metadata_json(
+                (!msg.payload.metadata.is_empty())
+                    .then(|| serde_json::to_string(&msg.payload.metadata).ok())
+                    .flatten(),
+            ),
         )
         .await
         .map_err(|err| err.to_string())

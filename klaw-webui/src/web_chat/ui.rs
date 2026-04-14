@@ -1,29 +1,29 @@
 use eframe::egui::{
     self, Align, Align2, Button, Color32, ComboBox, Context, Frame, Image, Key, Layout, RichText,
-    ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText,
-    text_edit::TextEditState, vec2,
+    ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText, text_edit::TextEditState,
+    vec2,
 };
 use egui_phosphor::regular;
-use klaw_ui_kit::{ThemeSwitch, text_animator::TextAnimator};
 use klaw_ui_kit::toggle::toggle;
-use std::collections::HashMap;
+use klaw_ui_kit::{ThemeSwitch, text_animator::TextAnimator};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::{
-    ActiveSlashCommand, ConnectionState, MessageRole, PageMode, SlashCommandCompletion,
-    apply_slash_completion, attachment_action_in_progress, can_trigger_file_picker,
-    connection_action_label, delete_confirmation_body, derive_page_mode,
-    detect_active_slash_command, normalize_gateway_token_input,
-    should_activate_session_window, slash_command_matches,
+    ActiveSlashCommand, ConnectionState, ImCard, ImCardAction, ImCardActionKind, ImCardKind,
+    MessageRole, PageMode, SlashCommandCompletion, apply_slash_completion,
+    attachment_action_in_progress, can_trigger_file_picker, connection_action_label,
+    delete_confirmation_body, derive_page_mode, detect_active_slash_command,
+    normalize_gateway_token_input, should_activate_session_window, slash_command_matches,
 };
 
 use super::{
     app::ChatApp,
     markdown::{MarkdownCache, render_markdown, render_plain_message},
     session::{
-        BUBBLE_MAX_WIDTH, ChatMessage, INPUT_PANEL_HEIGHT, SESSION_LIST_WIDTH, SessionWindow,
-        SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT,
-        SESSION_WINDOW_MIN_WIDTH, current_timestamp_ms, format_datetime, format_message_timestamp,
-        format_relative_time, session_window_id,
+        BUBBLE_MAX_WIDTH, CardInteractionState, ChatMessage, INPUT_PANEL_HEIGHT,
+        SESSION_LIST_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH,
+        SESSION_WINDOW_MIN_HEIGHT, SESSION_WINDOW_MIN_WIDTH, SessionWindow, current_timestamp_ms,
+        format_datetime, format_message_timestamp, format_relative_time, session_window_id,
     },
 };
 
@@ -142,7 +142,9 @@ impl ChatApp {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let fps = live_fps(ctx);
                     ui.label(RichText::new(format!("{fps:.0} FPS")).small().weak())
-                        .on_hover_text("Approximate live frame rate from the latest egui frame delta.");
+                        .on_hover_text(
+                            "Approximate live frame rate from the latest egui frame delta.",
+                        );
                     if let Some(session) = self.active_session() {
                         ui.separator();
                         if let Some(activity) = session_activity_label(session) {
@@ -152,13 +154,21 @@ impl ChatApp {
                         }
 
                         let message_count = session.buffers.messages.borrow().len();
-                        ui.label(RichText::new(format!("{message_count} msgs")).small().weak())
-                            .on_hover_text("Messages currently loaded in the active agent window.");
+                        ui.label(
+                            RichText::new(format!("{message_count} msgs"))
+                                .small()
+                                .weak(),
+                        )
+                        .on_hover_text("Messages currently loaded in the active agent window.");
                         ui.separator();
 
                         let route = session_route_label(session);
-                        ui.label(RichText::new(compact_status_text(&route, 28)).small().weak())
-                            .on_hover_text(route);
+                        ui.label(
+                            RichText::new(compact_status_text(&route, 28))
+                                .small()
+                                .weak(),
+                        )
+                        .on_hover_text(route);
                         ui.separator();
 
                         ui.label(compact_status_text(&session.title, 24))
@@ -526,6 +536,7 @@ impl ChatApp {
 
         let mut trigger_send = false;
         let mut trigger_file_picker = false;
+        let mut trigger_card_action: Option<CardActionRequest> = None;
         let mut set_active = false;
         {
             let session = &mut self.sessions[index];
@@ -570,15 +581,26 @@ impl ChatApp {
                             }
 
                             session.prune_finished_animations();
-                            for message in &messages {
-                                render_message(
+                            let mut card_action = None;
+                            for (message_index, message) in messages.iter().enumerate() {
+                                if is_hidden_internal_card_command(message) {
+                                    continue;
+                                }
+                                if let Some(action) = render_message(
                                     ui,
                                     &mut session.markdown_cache,
                                     &mut session.fade_in_messages,
+                                    &session.session_key,
                                     message,
-                                );
+                                    &messages,
+                                    message_index,
+                                    &session.card_state_overrides,
+                                ) {
+                                    card_action = Some(action);
+                                }
                                 ui.add_space(8.0);
                             }
+                            trigger_card_action = card_action;
                         });
                 });
 
@@ -622,8 +644,9 @@ impl ChatApp {
                                 == Some(trigger.replace_range.start);
                         (!dismissed).then_some(trigger.clone())
                     });
-                    let slash_matches =
-                        slash_trigger.as_ref().map(|trigger| slash_command_matches(&trigger.query));
+                    let slash_matches = slash_trigger
+                        .as_ref()
+                        .map(|trigger| slash_command_matches(&trigger.query));
                     if let Some(trigger) = slash_trigger.as_ref() {
                         update_slash_selection_state(
                             &mut session.slash_completer,
@@ -645,7 +668,9 @@ impl ChatApp {
 
                     let mut slash_completion_accepted = false;
                     let complete_on_enter = response.has_focus()
-                        && ui.input(|input| input.key_pressed(Key::Enter) && !input.modifiers.command)
+                        && ui.input(|input| {
+                            input.key_pressed(Key::Enter) && !input.modifiers.command
+                        })
                         && slash_trigger.is_none()
                         && previous_slash_state.replace_range.is_some();
                     let insert_newline = response.has_focus()
@@ -708,8 +733,7 @@ impl ChatApp {
                                 ui.ctx().request_repaint();
                             }
                         } else if complete_on_enter
-                            && let Some(replace_range) =
-                                previous_slash_state.replace_range.clone()
+                            && let Some(replace_range) = previous_slash_state.replace_range.clone()
                         {
                             let matches = slash_command_matches(&previous_slash_state.last_query);
                             if let Some(completion) = matches
@@ -721,9 +745,10 @@ impl ChatApp {
                                 .copied()
                             {
                                 if session.draft[replace_range.end..].starts_with('\n') {
-                                    session
-                                        .draft
-                                        .replace_range(replace_range.end..replace_range.end + 1, "");
+                                    session.draft.replace_range(
+                                        replace_range.end..replace_range.end + 1,
+                                        "",
+                                    );
                                 }
                                 apply_slash_completion_selection(
                                     &mut session.draft,
@@ -868,6 +893,33 @@ impl ChatApp {
         }
         if trigger_send {
             self.send_session_draft(session_key);
+        }
+        if let Some(action) = trigger_card_action {
+            if let Some(index) = self.session_index(session_key) {
+                self.sessions[index].card_state_overrides.insert(
+                    action.card_key.clone(),
+                    CardInteractionState::Pending {
+                        label: action.pending_label.clone(),
+                    },
+                );
+            }
+            let sent = self.send_card_action(session_key, &action.command, action.metadata);
+            if let Some(index) = self.session_index(session_key) {
+                if sent {
+                    if let Some(label) = action.completion_label {
+                        self.sessions[index]
+                            .card_state_overrides
+                            .insert(action.card_key, CardInteractionState::Completed { label });
+                    }
+                } else {
+                    self.sessions[index].card_state_overrides.insert(
+                        action.card_key,
+                        CardInteractionState::Failed {
+                            message: "Failed to send card action.".to_string(),
+                        },
+                    );
+                }
+            }
         }
     }
 
@@ -1035,8 +1087,12 @@ fn render_message(
     ui: &mut egui::Ui,
     markdown_cache: &mut MarkdownCache,
     fade_in_messages: &mut HashMap<String, TextAnimator>,
+    session_key: &str,
     message: &ChatMessage,
-) {
+    messages: &[ChatMessage],
+    message_index: usize,
+    card_state_overrides: &HashMap<String, CardInteractionState>,
+) -> Option<CardActionRequest> {
     let time_label = format_message_timestamp(message.timestamp_ms);
     match message.role {
         MessageRole::System => {
@@ -1047,6 +1103,7 @@ fn render_message(
                 });
                 render_plain_message(ui, &message.text, ui.visuals().weak_text_color());
             });
+            None
         }
         MessageRole::Assistant | MessageRole::User => {
             let role_label = match message.role {
@@ -1091,6 +1148,7 @@ fn render_message(
             } else {
                 None
             };
+            let mut action_request = None;
             let mut show_bubble = |ui: &mut egui::Ui, inner_max_width: f32| {
                 Frame::group(ui.style())
                     .fill(bubble_fill)
@@ -1107,14 +1165,29 @@ fn render_message(
                                 ui.label(RichText::new(&time_label).small().color(heading_color));
                             });
                             ui.add_space(4.0);
-                            render_message_body(
-                                ui,
-                                markdown_cache,
-                                fade_in_messages,
-                                message,
-                                body_color,
-                                link_color,
-                            );
+                            if let Some(card) = message.card.as_ref() {
+                                if let Some(action) = render_card_message(
+                                    ui,
+                                    markdown_cache,
+                                    session_key,
+                                    message,
+                                    card,
+                                    messages,
+                                    message_index,
+                                    card_state_overrides,
+                                ) {
+                                    action_request = Some(action);
+                                }
+                            } else {
+                                render_message_body(
+                                    ui,
+                                    markdown_cache,
+                                    fade_in_messages,
+                                    message,
+                                    body_color,
+                                    link_color,
+                                );
+                            }
                         });
                     });
             };
@@ -1134,8 +1207,371 @@ fn render_message(
             } else {
                 show_bubble(ui, BUBBLE_MAX_WIDTH);
             }
+            action_request
         }
     }
+}
+
+#[derive(Clone)]
+pub(super) struct CardActionRequest {
+    card_key: String,
+    command: String,
+    metadata: BTreeMap<String, serde_json::Value>,
+    pending_label: String,
+    completion_label: Option<String>,
+}
+
+fn render_card_message(
+    ui: &mut egui::Ui,
+    markdown_cache: &mut MarkdownCache,
+    session_key: &str,
+    message: &ChatMessage,
+    card: &ImCard,
+    messages: &[ChatMessage],
+    message_index: usize,
+    card_state_overrides: &HashMap<String, CardInteractionState>,
+) -> Option<CardActionRequest> {
+    let card_key = message
+        .message_id
+        .clone()
+        .unwrap_or_else(|| message.id.clone());
+    let derived_state = derived_card_state(messages, message_index, card);
+    let effective_state = card_state_overrides
+        .get(&card_key)
+        .cloned()
+        .or(derived_state);
+    let interactive = effective_state.is_none() && !has_follow_up_messages(messages, message_index);
+
+    let (fill, stroke, badge) = match card.kind {
+        ImCardKind::Approval => (
+            Color32::from_rgb(255, 247, 235),
+            Stroke::new(1.0, Color32::from_rgb(219, 159, 84)),
+            ("Approval", Color32::from_rgb(140, 82, 16)),
+        ),
+        ImCardKind::QuestionSingleSelect => (
+            Color32::from_rgb(237, 246, 255),
+            Stroke::new(1.0, Color32::from_rgb(107, 157, 214)),
+            ("Question", Color32::from_rgb(25, 84, 148)),
+        ),
+    };
+
+    let mut action_request = None;
+    Frame::group(ui.style())
+        .fill(fill)
+        .stroke(stroke)
+        .corner_radius(10.0)
+        .inner_margin(12.0)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(card.title_or(match card.kind {
+                        ImCardKind::Approval => "Approval Required",
+                        ImCardKind::QuestionSingleSelect => "Question",
+                    }))
+                    .strong(),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(badge.0).small().color(badge.1));
+                });
+            });
+            if let Some(command_preview) = card.command_preview() {
+                ui.add_space(6.0);
+                ui.label(RichText::new("Command").small().strong());
+                let mut preview = command_preview.to_string();
+                ui.add(
+                    TextEdit::multiline(&mut preview)
+                        .desired_rows(2)
+                        .interactive(false),
+                );
+            }
+            let body = card.body_or(card.fallback_text_or(""));
+            if !body.trim().is_empty() {
+                ui.add_space(6.0);
+                render_markdown(
+                    ui,
+                    markdown_cache,
+                    body,
+                    ui.visuals().text_color(),
+                    ui.visuals().hyperlink_color,
+                );
+            }
+            if matches!(card.kind, ImCardKind::Approval)
+                && let Some(approval_id) = card.approval_id()
+            {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!("Approval ID: {approval_id}"))
+                        .small()
+                        .weak(),
+                );
+            }
+            ui.add_space(8.0);
+            if let Some(state) = effective_state.as_ref() {
+                render_card_state_banner(ui, &state);
+            }
+            ui.horizontal_wrapped(|ui| {
+                for action in &card.actions {
+                    match action.kind {
+                        ImCardActionKind::OpenUrl => {
+                            if let Some(url) = action
+                                .url
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                            {
+                                ui.hyperlink_to(action.label_or_default(), url);
+                            }
+                        }
+                        ImCardActionKind::Approve
+                        | ImCardActionKind::Reject
+                        | ImCardActionKind::SubmitCommand => {
+                            let enabled = interactive
+                                || matches!(
+                                    effective_state.as_ref(),
+                                    Some(CardInteractionState::Failed { .. })
+                                );
+                            let button =
+                                ui.add_enabled(enabled, Button::new(action.label_or_default()));
+                            if button.clicked() {
+                                action_request =
+                                    build_card_action_request(session_key, &card_key, card, action);
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    action_request
+}
+
+fn render_card_state_banner(ui: &mut egui::Ui, state: &CardInteractionState) {
+    let (text, color) = match state {
+        CardInteractionState::Pending { label } => {
+            (format!("{label}…"), Color32::from_rgb(171, 111, 26))
+        }
+        CardInteractionState::Completed { label } => {
+            (label.clone(), Color32::from_rgb(40, 130, 76))
+        }
+        CardInteractionState::Failed { message } => {
+            (message.clone(), Color32::from_rgb(186, 64, 64))
+        }
+    };
+    ui.label(RichText::new(text).small().strong().color(color));
+}
+
+fn build_card_action_request(
+    session_key: &str,
+    card_key: &str,
+    card: &ImCard,
+    action: &ImCardAction,
+) -> Option<CardActionRequest> {
+    let command = match action.kind {
+        ImCardActionKind::Approve => {
+            let approval_id = action.approval_id()?;
+            format!("/approve {approval_id}")
+        }
+        ImCardActionKind::Reject => {
+            let approval_id = action.approval_id()?;
+            format!("/reject {approval_id}")
+        }
+        ImCardActionKind::SubmitCommand => action
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?
+            .to_string(),
+        ImCardActionKind::OpenUrl => return None,
+    };
+    let mut metadata = BTreeMap::new();
+    metadata.insert(
+        "webui.card.action".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    metadata.insert(
+        "webui.card.kind".to_string(),
+        serde_json::Value::String(match card.kind {
+            ImCardKind::Approval => "approval".to_string(),
+            ImCardKind::QuestionSingleSelect => "question_single_select".to_string(),
+        }),
+    );
+    metadata.insert(
+        "webui.card.action_kind".to_string(),
+        serde_json::Value::String(match action.kind {
+            ImCardActionKind::Approve => "approve".to_string(),
+            ImCardActionKind::Reject => "reject".to_string(),
+            ImCardActionKind::OpenUrl => "open_url".to_string(),
+            ImCardActionKind::SubmitCommand => "submit_command".to_string(),
+        }),
+    );
+    metadata.insert(
+        "webui.card.source_message_id".to_string(),
+        serde_json::Value::String(card_key.to_string()),
+    );
+    metadata.insert(
+        "webui.card.session_key".to_string(),
+        serde_json::Value::String(session_key.to_string()),
+    );
+    if let Some(question_id) = card
+        .metadata
+        .get("question_id")
+        .and_then(serde_json::Value::as_str)
+    {
+        metadata.insert(
+            "webui.card.question_id".to_string(),
+            serde_json::Value::String(question_id.to_string()),
+        );
+    }
+    if let Some(approval_id) = card.approval_id() {
+        metadata.insert(
+            "webui.card.approval_id".to_string(),
+            serde_json::Value::String(approval_id.to_string()),
+        );
+    }
+    let completion_label = match card.kind {
+        ImCardKind::Approval => None,
+        ImCardKind::QuestionSingleSelect => {
+            Some(format!("Selected: {}", action.label_or_default()))
+        }
+    };
+    Some(CardActionRequest {
+        card_key: card_key.to_string(),
+        command,
+        metadata,
+        pending_label: action.label_or_default().to_string(),
+        completion_label,
+    })
+}
+
+pub(super) fn sync_card_state_overrides(
+    messages: &[ChatMessage],
+    overrides: &mut HashMap<String, CardInteractionState>,
+) {
+    let updates = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(message_index, message)| {
+            let card = message.card.as_ref()?;
+            let derived_state = derived_card_state(messages, message_index, card)?;
+            let card_key = message
+                .message_id
+                .clone()
+                .unwrap_or_else(|| message.id.clone());
+            Some((card_key, derived_state))
+        })
+        .collect::<Vec<_>>();
+    for (card_key, state) in updates {
+        overrides.insert(card_key, state);
+    }
+}
+
+fn derived_card_state(
+    messages: &[ChatMessage],
+    message_index: usize,
+    card: &ImCard,
+) -> Option<CardInteractionState> {
+    match card.kind {
+        ImCardKind::Approval => {
+            let approval_id = card.approval_id()?;
+            messages.iter().skip(message_index + 1).find_map(|message| {
+                parse_internal_card_command(&message.text).and_then(|command| match command {
+                    InternalCardCommand::Approve(id) if id == approval_id => {
+                        Some(CardInteractionState::Completed {
+                            label: "Approved".to_string(),
+                        })
+                    }
+                    InternalCardCommand::Reject(id) if id == approval_id => {
+                        Some(CardInteractionState::Completed {
+                            label: "Rejected".to_string(),
+                        })
+                    }
+                    _ => None,
+                })
+            })
+        }
+        ImCardKind::QuestionSingleSelect => {
+            let question_id = card.metadata.get("question_id")?.as_str()?;
+            messages.iter().skip(message_index + 1).find_map(|message| {
+                parse_internal_card_command(&message.text).and_then(|command| match command {
+                    InternalCardCommand::Answer {
+                        question_id: answered_question_id,
+                        option_id,
+                    } if answered_question_id == question_id => {
+                        Some(CardInteractionState::Completed {
+                            label: format!(
+                                "Selected: {}",
+                                find_card_option_label(card, &option_id).unwrap_or(option_id)
+                            ),
+                        })
+                    }
+                    _ => None,
+                })
+            })
+        }
+    }
+}
+
+fn find_card_option_label(card: &ImCard, option_id: &str) -> Option<String> {
+    card.actions.iter().find_map(|action| {
+        action
+            .command
+            .as_deref()
+            .and_then(parse_card_answer_command)
+            .filter(|(_, candidate_option_id)| candidate_option_id == option_id)
+            .map(|_| action.label_or_default().to_string())
+    })
+}
+
+fn has_follow_up_messages(messages: &[ChatMessage], message_index: usize) -> bool {
+    messages
+        .iter()
+        .skip(message_index + 1)
+        .any(|message| !is_hidden_internal_card_command(message))
+}
+
+enum InternalCardCommand {
+    Approve(String),
+    Reject(String),
+    Answer {
+        question_id: String,
+        option_id: String,
+    },
+}
+
+fn parse_internal_card_command(text: &str) -> Option<InternalCardCommand> {
+    let trimmed = text.trim();
+    if let Some(approval_id) = trimmed.strip_prefix("/approve ") {
+        let approval_id = approval_id.trim();
+        if !approval_id.is_empty() {
+            return Some(InternalCardCommand::Approve(approval_id.to_string()));
+        }
+    }
+    if let Some(approval_id) = trimmed.strip_prefix("/reject ") {
+        let approval_id = approval_id.trim();
+        if !approval_id.is_empty() {
+            return Some(InternalCardCommand::Reject(approval_id.to_string()));
+        }
+    }
+    parse_card_answer_command(trimmed).map(|(question_id, option_id)| InternalCardCommand::Answer {
+        question_id,
+        option_id,
+    })
+}
+
+fn parse_card_answer_command(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim();
+    let rest = trimmed.strip_prefix("/card_answer ")?;
+    let mut parts = rest.split_whitespace();
+    let question_id = parts.next()?.trim();
+    let option_id = parts.next()?.trim();
+    if question_id.is_empty() || option_id.is_empty() {
+        return None;
+    }
+    Some((question_id.to_string(), option_id.to_string()))
+}
+
+pub(super) fn is_hidden_internal_card_command(message: &ChatMessage) -> bool {
+    matches!(message.role, MessageRole::User)
+        && parse_internal_card_command(&message.text).is_some()
 }
 
 fn render_message_body(
@@ -1310,7 +1746,8 @@ fn apply_slash_completion_selection(
     text_edit_id: egui::Id,
     ctx: &Context,
 ) {
-    let cursor_char_index = apply_slash_completion(draft, trigger.replace_range.clone(), completion);
+    let cursor_char_index =
+        apply_slash_completion(draft, trigger.replace_range.clone(), completion);
     let cursor = egui::text::CCursor::new(cursor_char_index);
     text_edit_state
         .cursor

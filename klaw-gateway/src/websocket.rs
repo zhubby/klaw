@@ -161,6 +161,8 @@ pub struct GatewaySessionHistoryMessage {
     pub role: String,
     pub content: String,
     pub timestamp_ms: i64,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, Value>,
     pub message_id: Option<String>,
 }
 
@@ -657,6 +659,7 @@ async fn handle_text_message(
                                 "session_key": session_key,
                                 "response": {
                                     "content": message.content,
+                                    "metadata": message.metadata,
                                 },
                                 "role": message.role,
                                 "timestamp_ms": message.timestamp_ms,

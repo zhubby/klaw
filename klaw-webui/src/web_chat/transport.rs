@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
@@ -14,6 +15,7 @@ use super::{
     protocol::{ServerFrame, send_method},
     session::ChatMessage,
     session::current_timestamp_ms,
+    ui::sync_card_state_overrides,
 };
 
 fn ws_chat_url(token: Option<&str>) -> Result<String, String> {
@@ -362,7 +364,20 @@ impl ChatApp {
             .unwrap_or_default()
             .to_string();
         if !streamed && !content.is_empty() {
-            let message = ChatMessage::new(content, MessageRole::Assistant, current_timestamp_ms());
+            let message = ChatMessage::new_with_metadata(
+                content,
+                MessageRole::Assistant,
+                current_timestamp_ms(),
+                result
+                    .get("message_id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                response
+                    .get("metadata")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<BTreeMap<String, Value>>(value).ok())
+                    .unwrap_or_default(),
+            );
             if should_register_non_stream_fade(message.role, streamed, false, &message.text) {
                 self.sessions[index].register_fade_in_message(&message);
             }
@@ -371,6 +386,8 @@ impl ChatApp {
                 .messages
                 .borrow_mut()
                 .push(message);
+            let messages = self.sessions[index].buffers.messages.borrow().clone();
+            sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
         }
         *self.sessions[index]
             .buffers
@@ -390,6 +407,11 @@ impl ChatApp {
                 let Some(index) = self.session_index(session_key) else {
                     return;
                 };
+                let messages = self.sessions[index].buffers.messages.borrow().clone();
+                sync_card_state_overrides(
+                    &messages,
+                    &mut self.sessions[index].card_state_overrides,
+                );
                 *self.sessions[index].buffers.history_loading.borrow_mut() = false;
                 *self.sessions[index].buffers.history_loaded.borrow_mut() = true;
             }
@@ -423,9 +445,31 @@ impl ChatApp {
                     .get("history")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                let response_metadata = payload
+                    .get("response")
+                    .and_then(|response| response.get("metadata"))
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<BTreeMap<String, Value>>(value).ok())
+                    .unwrap_or_default();
                 let mut history = self.sessions[index].buffers.messages.borrow_mut();
                 if history_event || !matches!(role, MessageRole::Assistant) {
-                    history.push(ChatMessage::new(content, role, timestamp_ms));
+                    let message = ChatMessage::new_with_metadata(
+                        content,
+                        role,
+                        timestamp_ms,
+                        payload
+                            .get("message_id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string),
+                        response_metadata,
+                    );
+                    history.push(message);
+                    let messages = history.clone();
+                    drop(history);
+                    sync_card_state_overrides(
+                        &messages,
+                        &mut self.sessions[index].card_state_overrides,
+                    );
                     return;
                 }
                 let action = classify_stream_message_action(
@@ -444,19 +488,37 @@ impl ChatApp {
                         if let Some(message) = history.last_mut() {
                             message.text = content;
                             message.timestamp_ms = current_timestamp_ms();
+                            message.metadata = response_metadata.clone();
+                            message.card = crate::resolve_im_card(&message.text, &message.metadata);
                         }
+                        let messages = history.clone();
+                        drop(history);
+                        sync_card_state_overrides(
+                            &messages,
+                            &mut self.sessions[index].card_state_overrides,
+                        );
                     }
                     crate::StreamMessageAction::PushAssistant => {
-                        history.push(ChatMessage::new(
+                        history.push(ChatMessage::new_with_metadata(
                             content.clone(),
                             MessageRole::Assistant,
                             timestamp_ms,
+                            payload
+                                .get("message_id")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string),
+                            response_metadata,
                         ));
+                        let messages = history.clone();
                         *self.sessions[index]
                             .buffers
                             .active_stream_request_id
                             .borrow_mut() = request_id;
                         drop(history);
+                        sync_card_state_overrides(
+                            &messages,
+                            &mut self.sessions[index].card_state_overrides,
+                        );
                         self.notify_new_assistant_reply(session_key, &content);
                     }
                 }
@@ -489,46 +551,104 @@ impl ChatApp {
         let Some(index) = self.session_index(session_key) else {
             return;
         };
-        let session = &mut self.sessions[index];
-        let text = session.draft.trim().to_string();
+        let text = self.sessions[index].draft.trim().to_string();
         if text.is_empty() {
             return;
         }
 
-        let Some(ws) = self.ws.borrow().as_ref().cloned() else {
-            return;
-        };
-        if ws.ready_state() != WebSocket::OPEN {
-            return;
-        }
-        let request_id = Uuid::new_v4().to_string();
-        session.buffers.messages.borrow_mut().push(ChatMessage::new(
-            text.clone(),
-            MessageRole::User,
-            current_timestamp_ms(),
-        ));
-        *session.buffers.active_stream_request_id.borrow_mut() =
-            self.stream_enabled.then_some(request_id.clone());
-
-        let archive_id = session.selected_archive_id.borrow().clone();
-        let params = build_submit_params(
+        let archive_id = self.sessions[index].selected_archive_id.borrow().clone();
+        let model_provider = self.sessions[index].selected_route.model_provider.clone();
+        let model = self.sessions[index].selected_route.model.clone();
+        let sent = self.send_session_input(
             session_key,
             &text,
             self.stream_enabled,
             archive_id.as_deref(),
-            &session.selected_route.model_provider,
-            &session.selected_route.model,
+            &model_provider,
+            &model,
+            None,
+            true,
         );
+        *self.sessions[index].selected_archive_id.borrow_mut() =
+            next_selected_archive_id_after_submit(archive_id.as_deref(), sent);
+        if sent {
+            self.sessions[index].draft.clear();
+        }
+    }
 
+    pub(in crate::web_chat) fn send_card_action(
+        &mut self,
+        session_key: &str,
+        command: &str,
+        metadata: BTreeMap<String, Value>,
+    ) -> bool {
+        let Some(index) = self.session_index(session_key) else {
+            return false;
+        };
+        let model_provider = self.sessions[index].selected_route.model_provider.clone();
+        let model = self.sessions[index].selected_route.model.clone();
+        self.send_session_input(
+            session_key,
+            command,
+            false,
+            None,
+            &model_provider,
+            &model,
+            Some(&metadata),
+            true,
+        )
+    }
+
+    fn send_session_input(
+        &mut self,
+        session_key: &str,
+        text: &str,
+        stream: bool,
+        archive_id: Option<&str>,
+        model_provider: &str,
+        model: &str,
+        metadata: Option<&BTreeMap<String, Value>>,
+        local_echo: bool,
+    ) -> bool {
+        let Some(ws) = self.ws.borrow().as_ref().cloned() else {
+            return false;
+        };
+        if ws.ready_state() != WebSocket::OPEN {
+            return false;
+        }
+        let request_id = Uuid::new_v4().to_string();
+        if let Some(index) = self.session_index(session_key)
+            && local_echo
+        {
+            self.sessions[index].buffers.messages.borrow_mut().push(
+                ChatMessage::new_with_metadata(
+                    text.to_string(),
+                    MessageRole::User,
+                    current_timestamp_ms(),
+                    None,
+                    metadata.cloned().unwrap_or_default(),
+                ),
+            );
+            *self.sessions[index]
+                .buffers
+                .active_stream_request_id
+                .borrow_mut() = stream.then_some(request_id.clone());
+        }
+        let params = build_submit_params(
+            session_key,
+            text,
+            stream,
+            archive_id,
+            model_provider,
+            model,
+            metadata,
+        );
         let send_result = send_method(&ws, &request_id, "session.submit", params);
-        *session.selected_archive_id.borrow_mut() =
-            next_selected_archive_id_after_submit(archive_id.as_deref(), send_result.is_ok());
-
         if let Err(err) = send_result {
             *self.connection_state.borrow_mut() = ConnectionState::Error(err);
-            return;
+            return false;
         }
-        session.draft.clear();
+        true
     }
 }
 
@@ -539,6 +659,7 @@ fn build_submit_params(
     archive_id: Option<&str>,
     model_provider: &str,
     model: &str,
+    metadata: Option<&BTreeMap<String, Value>>,
 ) -> Value {
     build_websocket_submit_params(
         session_key,
@@ -547,6 +668,7 @@ fn build_submit_params(
         archive_id,
         model_provider,
         model,
+        metadata,
     )
 }
 
@@ -563,6 +685,7 @@ mod tests {
             Some("archive-1"),
             "anthropic",
             "claude-sonnet-4-5",
+            None,
         );
 
         assert_eq!(
@@ -604,6 +727,7 @@ mod tests {
             None,
             "openai",
             "gpt-4.1-mini",
+            None,
         );
 
         assert!(params.get("archive_id").is_none());
