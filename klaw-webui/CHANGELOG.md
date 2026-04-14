@@ -92,3 +92,8 @@
 ### Changed
 
 - 收平 crate 内部结构：移除独立 `presentation` 层，改为由 crate 根部复用纯逻辑并由 `web_chat` 直接消费单一连接状态
+# 2026-04-14
+
+## Fixed
+
+- webui 文件上传现在优先监听浏览器 `input[type=file]` 的 `change` 事件，并把取消选择的回焦 grace time 放宽到 1 秒，减少“已选中文件但没有触发上传”的竞态

@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use eframe::egui::{self, Context};
 use klaw_ui_kit::{NotificationCenter, theme_preference};
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::Notification;
 use web_sys::WebSocket;
 
@@ -605,14 +605,29 @@ async fn wait_for_selected_file(
     input_element: &web_sys::HtmlInputElement,
 ) -> Result<Option<web_sys::File>, String> {
     const FILE_PICKER_TIMEOUT_MS: f64 = 120_000.0;
-    const FILE_PICKER_CANCEL_GRACE_MS: f64 = 250.0;
+    const FILE_PICKER_CANCEL_GRACE_MS: f64 = 1_000.0;
+
+    let change_selected_file = Rc::new(RefCell::new(None));
+    let onchange_selected_file = change_selected_file.clone();
+    let onchange_input = input_element.clone();
+    let onchange = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+        let file = onchange_input.files().and_then(|files| files.get(0));
+        *onchange_selected_file.borrow_mut() = Some(file);
+    }) as Box<dyn FnMut(_)>);
+    input_element.set_onchange(Some(onchange.as_ref().unchecked_ref()));
 
     let mut picker_took_focus = false;
     let mut focus_returned_at_ms = None;
     let started_at = js_sys::Date::now();
 
     loop {
+        if let Some(file) = change_selected_file.borrow_mut().take().flatten() {
+            input_element.set_onchange(None);
+            return Ok(Some(file));
+        }
+
         if let Some(file) = input_element.files().and_then(|files| files.get(0)) {
+            input_element.set_onchange(None);
             return Ok(Some(file));
         }
 
@@ -627,10 +642,12 @@ async fn wait_for_selected_file(
             let grace_elapsed =
                 js_sys::Date::now() - focus_returned_at >= FILE_PICKER_CANCEL_GRACE_MS;
             if should_cancel_file_picker_selection(picker_took_focus, has_focus, grace_elapsed) {
+                input_element.set_onchange(None);
                 return Ok(None);
             }
         }
         if js_sys::Date::now() - started_at >= FILE_PICKER_TIMEOUT_MS {
+            input_element.set_onchange(None);
             return Ok(None);
         }
 
@@ -639,7 +656,7 @@ async fn wait_for_selected_file(
 }
 
 async fn sleep_ms(window: &web_sys::Window, ms: i32) {
-    use wasm_bindgen::{JsValue, closure::Closure};
+    use wasm_bindgen::JsValue;
     use wasm_bindgen_futures::JsFuture;
 
     let window = window.clone();
