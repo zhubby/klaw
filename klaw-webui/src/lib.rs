@@ -145,6 +145,65 @@ impl ImCard {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ImCardPalette {
+    pub(crate) fill: [u8; 3],
+    pub(crate) stroke: [u8; 3],
+    pub(crate) badge: [u8; 3],
+    pub(crate) title: [u8; 3],
+    pub(crate) body: [u8; 3],
+    pub(crate) preview_fill: [u8; 3],
+    pub(crate) preview_stroke: [u8; 3],
+    pub(crate) preview_text: [u8; 3],
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn resolve_im_card_palette(kind: ImCardKind, dark_mode: bool) -> ImCardPalette {
+    match (kind, dark_mode) {
+        (ImCardKind::Approval, true) => ImCardPalette {
+            fill: [54, 41, 23],
+            stroke: [173, 122, 54],
+            badge: [255, 204, 138],
+            title: [255, 242, 222],
+            body: [241, 224, 198],
+            preview_fill: [26, 21, 15],
+            preview_stroke: [110, 83, 43],
+            preview_text: [245, 231, 208],
+        },
+        (ImCardKind::Approval, false) => ImCardPalette {
+            fill: [255, 247, 235],
+            stroke: [219, 159, 84],
+            badge: [140, 82, 16],
+            title: [86, 52, 14],
+            body: [110, 72, 28],
+            preview_fill: [255, 252, 246],
+            preview_stroke: [228, 190, 133],
+            preview_text: [72, 47, 18],
+        },
+        (ImCardKind::QuestionSingleSelect, true) => ImCardPalette {
+            fill: [24, 44, 63],
+            stroke: [76, 126, 184],
+            badge: [167, 213, 255],
+            title: [230, 243, 255],
+            body: [205, 225, 244],
+            preview_fill: [16, 30, 43],
+            preview_stroke: [58, 92, 136],
+            preview_text: [223, 238, 255],
+        },
+        (ImCardKind::QuestionSingleSelect, false) => ImCardPalette {
+            fill: [237, 246, 255],
+            stroke: [107, 157, 214],
+            badge: [25, 84, 148],
+            title: [22, 66, 116],
+            body: [39, 72, 112],
+            preview_fill: [248, 252, 255],
+            preview_stroke: [172, 204, 237],
+            preview_text: [28, 59, 96],
+        },
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn resolve_im_card(content: &str, metadata: &BTreeMap<String, Value>) -> Option<ImCard> {
     metadata
         .get("im.card")
@@ -757,10 +816,10 @@ mod tests {
         classify_stream_message_action, connection_action_label, delete_confirmation_body,
         derive_page_mode, detect_active_slash_command, next_selected_archive_id_after_submit,
         normalize_gateway_token_input, resolve_gateway_token, resolve_im_card,
-        resolve_session_route_inputs, session_card_activity_label, should_activate_session_window,
-        should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
-        should_register_non_stream_fade, slash_command_matches,
-        sort_session_entries_by_created_at_desc,
+        resolve_im_card_palette, resolve_session_route_inputs, session_card_activity_label,
+        should_activate_session_window, should_cancel_file_picker_selection,
+        should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
+        slash_command_matches, sort_session_entries_by_created_at_desc,
     };
 
     #[test]
@@ -1241,6 +1300,22 @@ mod tests {
         assert_eq!(card.kind, ImCardKind::Approval);
         assert_eq!(card.approval_id(), Some("approval-2"));
         assert_eq!(card.command_preview(), Some("git push origin HEAD"));
+    }
+
+    #[test]
+    fn approval_card_palette_uses_dark_surface_in_dark_mode() {
+        let palette = resolve_im_card_palette(ImCardKind::Approval, true);
+        assert_eq!(palette.fill, [54, 41, 23]);
+        assert_eq!(palette.title, [255, 242, 222]);
+        assert_eq!(palette.preview_fill, [26, 21, 15]);
+    }
+
+    #[test]
+    fn question_card_palette_uses_dark_surface_in_dark_mode() {
+        let palette = resolve_im_card_palette(ImCardKind::QuestionSingleSelect, true);
+        assert_eq!(palette.fill, [24, 44, 63]);
+        assert_eq!(palette.body, [205, 225, 244]);
+        assert_eq!(palette.preview_stroke, [58, 92, 136]);
     }
 
     #[test]

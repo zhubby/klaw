@@ -13,7 +13,8 @@ use crate::{
     MessageRole, PageMode, SlashCommandCompletion, apply_slash_completion,
     attachment_action_in_progress, can_trigger_file_picker, connection_action_label,
     delete_confirmation_body, derive_page_mode, detect_active_slash_command,
-    normalize_gateway_token_input, should_activate_session_window, slash_command_matches,
+    normalize_gateway_token_input, resolve_im_card_palette, should_activate_session_window,
+    slash_command_matches,
 };
 
 use super::{
@@ -29,6 +30,10 @@ use super::{
 };
 
 const ABOUT_GITHUB_URL: &str = "https://github.com/zhubby/klaw";
+
+fn rgb(color: [u8; 3]) -> Color32 {
+    Color32::from_rgb(color[0], color[1], color[2])
+}
 
 impl ChatApp {
     fn render_top_bar(&mut self, ctx: &Context) {
@@ -1281,23 +1286,16 @@ fn render_card_message(
         .or(derived_state);
     let interactive = effective_state.is_none() && !has_follow_up_messages(messages, message_index);
 
-    let (fill, stroke, badge) = match card.kind {
-        ImCardKind::Approval => (
-            Color32::from_rgb(255, 247, 235),
-            Stroke::new(1.0, Color32::from_rgb(219, 159, 84)),
-            ("Approval", Color32::from_rgb(140, 82, 16)),
-        ),
-        ImCardKind::QuestionSingleSelect => (
-            Color32::from_rgb(237, 246, 255),
-            Stroke::new(1.0, Color32::from_rgb(107, 157, 214)),
-            ("Question", Color32::from_rgb(25, 84, 148)),
-        ),
+    let palette = resolve_im_card_palette(card.kind.clone(), ui.visuals().dark_mode);
+    let badge_label = match card.kind {
+        ImCardKind::Approval => "Approval",
+        ImCardKind::QuestionSingleSelect => "Question",
     };
 
     let mut action_request = None;
     Frame::group(ui.style())
-        .fill(fill)
-        .stroke(stroke)
+        .fill(rgb(palette.fill))
+        .stroke(Stroke::new(1.0, rgb(palette.stroke)))
         .corner_radius(10.0)
         .inner_margin(12.0)
         .show(ui, |ui| {
@@ -1308,20 +1306,33 @@ fn render_card_message(
                         ImCardKind::QuestionSingleSelect => "Question",
                     }))
                     .strong(),
+                    .color(rgb(palette.title)),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(badge.0).small().color(badge.1));
+                    ui.label(RichText::new(badge_label).small().color(rgb(palette.badge)));
                 });
             });
             if let Some(command_preview) = card.command_preview() {
                 ui.add_space(6.0);
-                ui.label(RichText::new("Command").small().strong());
-                let mut preview = command_preview.to_string();
-                ui.add(
-                    TextEdit::multiline(&mut preview)
-                        .desired_rows(2)
-                        .interactive(false),
+                ui.label(
+                    RichText::new("Command")
+                        .small()
+                        .strong()
+                        .color(rgb(palette.title)),
                 );
+                Frame::group(ui.style())
+                    .fill(rgb(palette.preview_fill))
+                    .stroke(Stroke::new(1.0, rgb(palette.preview_stroke)))
+                    .corner_radius(8.0)
+                    .inner_margin(10.0)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(
+                            RichText::new(command_preview)
+                                .monospace()
+                                .color(rgb(palette.preview_text)),
+                        );
+                    });
             }
             let body = card.body_or(card.fallback_text_or(""));
             if !body.trim().is_empty() {
@@ -1330,7 +1341,7 @@ fn render_card_message(
                     ui,
                     markdown_cache,
                     body,
-                    ui.visuals().text_color(),
+                    rgb(palette.body),
                     ui.visuals().hyperlink_color,
                 );
             }
@@ -1341,7 +1352,7 @@ fn render_card_message(
                 ui.label(
                     RichText::new(format!("Approval ID: {approval_id}"))
                         .small()
-                        .weak(),
+                        .color(rgb(palette.body)),
                 );
             }
             ui.add_space(8.0);

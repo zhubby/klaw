@@ -2,6 +2,10 @@
 
 ## 2026-04-14
 
+### Fixed
+
+- `approval` 与 `question_single_select` 交互卡片现在会按亮色/暗色主题分别使用对应调色板，暗色模式下不再沿用浅色背景；命令预览区也改为跟随卡片主题的高对比代码块样式
+
 ### Added
 
 - webui 对话消息现在支持解析并渲染 `im.card` 交互卡片，首批覆盖 `approval` 与 `question_single_select`（`ask_question`）两类 websocket channel 卡片
