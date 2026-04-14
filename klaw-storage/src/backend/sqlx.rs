@@ -2620,9 +2620,10 @@ impl SessionStorage for SqlxSessionStore {
         self.get_approval(approval_id).await
     }
 
-    async fn consume_approved_shell_command(
+    async fn consume_approved_tool_command(
         &self,
         approval_id: &str,
+        tool_name: &str,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
@@ -2633,16 +2634,17 @@ impl SessionStorage for SqlxSessionStore {
                  consumed_at_ms = ?2,
                  updated_at_ms = ?2
              WHERE id = ?3
-               AND session_key = ?4
-               AND tool_name = 'shell'
-               AND command_hash = ?5
-               AND status = ?6
+               AND tool_name = ?4
+               AND session_key = ?5
+               AND command_hash = ?6
+               AND status = ?7
                AND consumed_at_ms IS NULL
                AND expires_at_ms >= ?2",
         )
         .bind(ApprovalStatus::Consumed.as_str())
         .bind(now_ms)
         .bind(approval_id)
+        .bind(tool_name)
         .bind(session_key)
         .bind(command_hash)
         .bind(ApprovalStatus::Approved.as_str())
@@ -2652,8 +2654,9 @@ impl SessionStorage for SqlxSessionStore {
         Ok(updated.rows_affected() > 0)
     }
 
-    async fn consume_latest_approved_shell_command(
+    async fn consume_latest_approved_tool_command(
         &self,
+        tool_name: &str,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
@@ -2661,15 +2664,16 @@ impl SessionStorage for SqlxSessionStore {
         let approval_id = sqlx::query_scalar::<_, String>(
             "SELECT id
              FROM approvals
-             WHERE session_key = ?1
-               AND tool_name = 'shell'
-               AND command_hash = ?2
-               AND status = ?3
+             WHERE tool_name = ?1
+               AND session_key = ?2
+               AND command_hash = ?3
+               AND status = ?4
                AND consumed_at_ms IS NULL
-               AND expires_at_ms >= ?4
+               AND expires_at_ms >= ?5
              ORDER BY created_at_ms DESC
              LIMIT 1",
         )
+        .bind(tool_name)
         .bind(session_key)
         .bind(command_hash)
         .bind(ApprovalStatus::Approved.as_str())
@@ -2680,7 +2684,7 @@ impl SessionStorage for SqlxSessionStore {
         let Some(approval_id) = approval_id else {
             return Ok(false);
         };
-        self.consume_approved_shell_command(&approval_id, session_key, command_hash, now_ms)
+        self.consume_approved_tool_command(&approval_id, tool_name, session_key, command_hash, now_ms)
             .await
     }
 

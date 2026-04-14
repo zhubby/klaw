@@ -245,20 +245,43 @@ pub trait SessionStorage: Send + Sync {
         approved_by: Option<&str>,
     ) -> Result<ApprovalRecord, StorageError>;
 
+    async fn consume_approved_tool_command(
+        &self,
+        approval_id: &str,
+        tool_name: &str,
+        session_key: &str,
+        command_hash: &str,
+        now_ms: i64,
+    ) -> Result<bool, StorageError>;
+
+    async fn consume_latest_approved_tool_command(
+        &self,
+        tool_name: &str,
+        session_key: &str,
+        command_hash: &str,
+        now_ms: i64,
+    ) -> Result<bool, StorageError>;
+
     async fn consume_approved_shell_command(
         &self,
         approval_id: &str,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
-    ) -> Result<bool, StorageError>;
+    ) -> Result<bool, StorageError> {
+        self.consume_approved_tool_command(approval_id, "shell", session_key, command_hash, now_ms)
+            .await
+    }
 
     async fn consume_latest_approved_shell_command(
         &self,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
-    ) -> Result<bool, StorageError>;
+    ) -> Result<bool, StorageError> {
+        self.consume_latest_approved_tool_command("shell", session_key, command_hash, now_ms)
+            .await
+    }
 
     async fn create_pending_question(
         &self,

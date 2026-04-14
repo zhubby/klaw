@@ -1343,7 +1343,7 @@ async fn register_configured_tools(
         info!("voice tool disabled because voice.enabled=false");
     }
     if config.tools.apply_patch.enabled() {
-        tools.register(ApplyPatchTool::new(config));
+        tools.register(ApplyPatchTool::with_store(config, session_store.clone()));
     }
     if config.tools.shell.enabled() {
         tools.register(ShellTool::with_store(config, session_store.clone()));
