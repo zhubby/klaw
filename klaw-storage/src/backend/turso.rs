@@ -2093,9 +2093,10 @@ impl SessionStorage for TursoSessionStore {
         self.get_approval(approval_id).await
     }
 
-    async fn consume_approved_shell_command(
+    async fn consume_approved_tool_command(
         &self,
         approval_id: &str,
+        tool_name: &str,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
@@ -2106,8 +2107,8 @@ impl SessionStorage for TursoSessionStore {
                  consumed_at_ms = {},
                  updated_at_ms = {}
              WHERE id = '{}'
+               AND tool_name = '{}'
                AND session_key = '{}'
-               AND tool_name = 'shell'
                AND command_hash = '{}'
                AND status = '{}'
                AND consumed_at_ms IS NULL
@@ -2116,6 +2117,7 @@ impl SessionStorage for TursoSessionStore {
             now_ms,
             now_ms,
             escape_sql_text(approval_id),
+            escape_sql_text(tool_name),
             escape_sql_text(session_key),
             escape_sql_text(command_hash),
             ApprovalStatus::Approved.as_str(),
@@ -2129,8 +2131,9 @@ impl SessionStorage for TursoSessionStore {
         Ok(affected > 0)
     }
 
-    async fn consume_latest_approved_shell_command(
+    async fn consume_latest_approved_tool_command(
         &self,
+        tool_name: &str,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
@@ -2138,14 +2141,15 @@ impl SessionStorage for TursoSessionStore {
         let sql = format!(
             "SELECT id
              FROM approvals
-             WHERE session_key = '{}'
-               AND tool_name = 'shell'
+             WHERE tool_name = '{}'
+               AND session_key = '{}'
                AND command_hash = '{}'
                AND status = '{}'
                AND consumed_at_ms IS NULL
                AND expires_at_ms >= {}
              ORDER BY created_at_ms DESC
              LIMIT 1",
+            escape_sql_text(tool_name),
             escape_sql_text(session_key),
             escape_sql_text(command_hash),
             ApprovalStatus::Approved.as_str(),
@@ -2159,7 +2163,7 @@ impl SessionStorage for TursoSessionStore {
             };
             value_to_string(row.get_value(0).map_err(StorageError::backend)?)?
         };
-        self.consume_approved_shell_command(&approval_id, session_key, command_hash, now_ms)
+        self.consume_approved_tool_command(&approval_id, tool_name, session_key, command_hash, now_ms)
             .await
     }
 

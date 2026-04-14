@@ -3,6 +3,9 @@
 ## 2026-04-14
 
 ### Fixed
+- `apply_patch` 现在会在请求写入未授权目录时创建审批记录并返回 `approval_required` 结构化错误/信号，而不是直接以 `ExecutionFailed` 中断 agent loop；批准后可通过 `apply_patch.approval_id` 或最近一次匹配审批重试同一补丁请求
+
+### Fixed
 - `cron_manager` 现在会拒绝来自 `cron:*` 执行会话的 `create(message=...)` 调用，避免已触发的 cron 任务再次把建定时任务指令投回模型后自我复制出大量重复 cron
 
 ## 2026-04-13

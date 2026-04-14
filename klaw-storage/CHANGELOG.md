@@ -2,6 +2,9 @@
 
 ## 2026-04-14
 
+### Changed
+- approvals 的存储消费 API 现已支持按任意 `tool_name` 匹配并消费已批准请求，shell 专用入口改为复用通用实现，避免新增写类工具时重复维护第二套审批消费逻辑
+
 ### Added
 - added optional `metadata_json` on persisted `ChatRecord` history rows so websocket/webui clients can restore structured assistant message state such as interactive IM cards after reloads
 - added cursor-based `read_chat_records_page` storage APIs plus reverse JSONL paging so websocket history consumers can load only the latest N chat records and continue older history from a `message_id` cursor

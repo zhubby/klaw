@@ -1,30 +1,37 @@
 use async_trait::async_trait;
+use klaw_approval::{ApprovalCreateInput, ApprovalManager, SqliteApprovalManager};
 use klaw_config::{AppConfig, ApplyPatchConfig};
 use klaw_util::{default_data_dir, workspace_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use time::OffsetDateTime;
 
-use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
+use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolSignal};
 
 const META_WORKSPACE: &str = "workspace";
+const META_APPLY_PATCH_APPROVED: &str = "apply_patch.approved";
+const META_APPLY_PATCH_APPROVAL_ID: &str = "apply_patch.approval_id";
 const MAX_PATCH_OPERATIONS: usize = 50;
 const MAX_CONTENT_BYTES: usize = 1_000_000;
+const APPROVAL_TTL_MINUTES: i64 = 10;
 
 pub struct ApplyPatchTool {
     config: ApplyPatchConfig,
     storage_root_dir: Option<String>,
+    approval_manager: Option<SqliteApprovalManager>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ApplyPatchRequest {
     operations: Vec<PatchOperation>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum PatchOperation {
     AddFile { path: String, content: String },
@@ -52,6 +59,15 @@ impl ApplyPatchTool {
         Self {
             config: config.tools.apply_patch.clone(),
             storage_root_dir: config.storage.root_dir.clone(),
+            approval_manager: None,
+        }
+    }
+
+    pub fn with_store(config: &AppConfig, store: klaw_storage::DefaultSessionStore) -> Self {
+        Self {
+            config: config.tools.apply_patch.clone(),
+            storage_root_dir: config.storage.root_dir.clone(),
+            approval_manager: Some(SqliteApprovalManager::from_store(store)),
         }
     }
 
@@ -143,7 +159,129 @@ impl ApplyPatchTool {
         })
     }
 
-    fn resolve_workspace_path(&self, base: &Path, input_path: &str) -> Result<PathBuf, ToolError> {
+    async fn check_approval(
+        &self,
+        base: &Path,
+        request: &ApplyPatchRequest,
+        ctx: &ToolContext,
+    ) -> Result<bool, ToolError> {
+        let unauthorized_paths = self.collect_unauthorized_paths(base, &request.operations)?;
+        if unauthorized_paths.is_empty() {
+            return Ok(false);
+        }
+
+        let approved_via_flag = ctx
+            .metadata
+            .get(META_APPLY_PATCH_APPROVED)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if approved_via_flag {
+            return Ok(true);
+        }
+
+        let request_hash = Self::request_hash(request)?;
+        if let (Some(manager), Some(approval_id)) = (
+            self.approval_manager.as_ref(),
+            ctx.metadata
+                .get(META_APPLY_PATCH_APPROVAL_ID)
+                .and_then(Value::as_str),
+        ) {
+            let consumed = manager
+                .consume_tool_approval(
+                    approval_id,
+                    self.name(),
+                    &ctx.session_key,
+                    &request_hash,
+                    Self::now_ms(),
+                )
+                .await
+                .map_err(|err| {
+                    ToolError::ExecutionFailed(format!(
+                        "failed to validate approval `{approval_id}`: {err}"
+                    ))
+                })?;
+            if consumed {
+                return Ok(true);
+            }
+        }
+
+        if let Some(manager) = self.approval_manager.as_ref() {
+            let consumed = manager
+                .consume_latest_tool_approval(
+                    self.name(),
+                    &ctx.session_key,
+                    &request_hash,
+                    Self::now_ms(),
+                )
+                .await
+                .map_err(|err| {
+                    ToolError::ExecutionFailed(format!(
+                        "failed to consume approved apply_patch request for session `{}`: {err}",
+                        ctx.session_key
+                    ))
+                })?;
+            if consumed {
+                return Ok(true);
+            }
+        }
+
+        let preview = Self::request_preview(request);
+        let unauthorized = unauthorized_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+        if let Some(manager) = self.approval_manager.as_ref() {
+            let approval = manager
+                .create_approval(ApprovalCreateInput {
+                    session_key: ctx.session_key.clone(),
+                    tool_name: self.name().to_string(),
+                    command_text: preview.clone(),
+                    command_preview: Some(preview.clone()),
+                    command_hash: Some(request_hash),
+                    risk_level: Some("outside_workspace".to_string()),
+                    requested_by: Some("agent".to_string()),
+                    justification: None,
+                    expires_in_minutes: Some(APPROVAL_TTL_MINUTES),
+                })
+                .await
+                .map_err(|err| {
+                    ToolError::ExecutionFailed(format!("failed to create approval: {err}"))
+                })?;
+            let approval_id = approval.id.clone();
+            return Err(ToolError::structured_execution_failed(
+                format!(
+                    "This apply_patch request writes outside the allowed workspace and requires approval.\nApproval ID: {approval_id}\nPaths: {}\nAfter approval, retry the same tool call with metadata `apply_patch.approval_id` set to this ID.",
+                    unauthorized.join(", ")
+                ),
+                "approval_required",
+                Some(json!({
+                    "approval_id": approval_id,
+                    "tool_name": self.name(),
+                    "session_key": ctx.session_key,
+                    "risk_level": "outside_workspace",
+                    "command_preview": approval.command_preview,
+                    "command_hash": approval.command_hash,
+                    "expires_at_ms": approval.expires_at_ms,
+                    "unauthorized_paths": unauthorized,
+                })),
+                true,
+                vec![ToolSignal::approval_required(
+                    &approval.id,
+                    self.name(),
+                    &ctx.session_key,
+                    Some("outside_workspace"),
+                    Some(&approval.command_preview),
+                )],
+            ));
+        }
+
+        Err(ToolError::ExecutionFailed(format!(
+            "This apply_patch request writes outside the allowed workspace and requires approval. Unauthorized paths: {}. Retry with approval metadata once it has been granted.",
+            unauthorized.join(", ")
+        )))
+    }
+
+    fn resolve_candidate_path(&self, base: &Path, input_path: &str) -> Result<PathBuf, ToolError> {
         let raw = PathBuf::from(input_path.trim());
         let candidate = if raw.is_absolute() {
             raw
@@ -158,13 +296,7 @@ impl ApplyPatchTool {
                     candidate.display()
                 ))
             })?;
-            if self.is_allowed_path(base, &canonical)? {
-                return Ok(canonical);
-            }
-            return Err(ToolError::ExecutionFailed(format!(
-                "path `{}` is not allowed by apply_patch policy",
-                canonical.display(),
-            )));
+            return Ok(canonical);
         }
 
         let mut ancestor = candidate.as_path();
@@ -180,17 +312,26 @@ impl ApplyPatchTool {
                 ancestor.display()
             ))
         })?;
-        if !self.is_allowed_path(base, &canonical_ancestor)? {
-            return Err(ToolError::ExecutionFailed(format!(
-                "path `{}` is not allowed by apply_patch policy",
-                candidate.display(),
-            )));
-        }
-
         let suffix = candidate.strip_prefix(ancestor).map_err(|_| {
             ToolError::ExecutionFailed(format!("failed to resolve path `{}`", candidate.display()))
         })?;
         Ok(canonical_ancestor.join(suffix))
+    }
+
+    fn resolve_workspace_path(
+        &self,
+        base: &Path,
+        input_path: &str,
+        approval_granted: bool,
+    ) -> Result<PathBuf, ToolError> {
+        let candidate = self.resolve_candidate_path(base, input_path)?;
+        if approval_granted || self.is_allowed_path(base, &candidate)? {
+            return Ok(candidate);
+        }
+        Err(ToolError::ExecutionFailed(format!(
+            "path `{}` is not allowed by apply_patch policy",
+            candidate.display(),
+        )))
     }
 
     fn is_allowed_path(&self, workspace_base: &Path, path: &Path) -> Result<bool, ToolError> {
@@ -236,29 +377,87 @@ impl ApplyPatchTool {
         &self,
         base: &Path,
         operations: Vec<PatchOperation>,
+        approval_granted: bool,
     ) -> Result<Vec<ResolvedPatchOperation>, ToolError> {
         operations
             .into_iter()
             .map(|operation| match operation {
                 PatchOperation::AddFile { path, content } => Ok(ResolvedPatchOperation::AddFile {
-                    path: self.resolve_workspace_path(base, &path)?,
+                    path: self.resolve_workspace_path(base, &path, approval_granted)?,
                     content,
                 }),
                 PatchOperation::UpdateFile { path, content } => {
                     Ok(ResolvedPatchOperation::UpdateFile {
-                        path: self.resolve_workspace_path(base, &path)?,
+                        path: self.resolve_workspace_path(base, &path, approval_granted)?,
                         content,
                     })
                 }
                 PatchOperation::DeleteFile { path } => Ok(ResolvedPatchOperation::DeleteFile {
-                    path: self.resolve_workspace_path(base, &path)?,
+                    path: self.resolve_workspace_path(base, &path, approval_granted)?,
                 }),
                 PatchOperation::MoveFile { from, to } => Ok(ResolvedPatchOperation::MoveFile {
-                    from: self.resolve_workspace_path(base, &from)?,
-                    to: self.resolve_workspace_path(base, &to)?,
+                    from: self.resolve_workspace_path(base, &from, approval_granted)?,
+                    to: self.resolve_workspace_path(base, &to, approval_granted)?,
                 }),
             })
             .collect()
+    }
+
+    fn collect_unauthorized_paths(
+        &self,
+        base: &Path,
+        operations: &[PatchOperation],
+    ) -> Result<Vec<PathBuf>, ToolError> {
+        let mut unauthorized = BTreeSet::new();
+        for operation in operations {
+            let paths = match operation {
+                PatchOperation::AddFile { path, .. }
+                | PatchOperation::UpdateFile { path, .. }
+                | PatchOperation::DeleteFile { path } => vec![path.as_str()],
+                PatchOperation::MoveFile { from, to } => vec![from.as_str(), to.as_str()],
+            };
+            for raw_path in paths {
+                let resolved = self.resolve_candidate_path(base, raw_path)?;
+                if !self.is_allowed_path(base, &resolved)? {
+                    unauthorized.insert(resolved);
+                }
+            }
+        }
+        Ok(unauthorized.into_iter().collect())
+    }
+
+    fn request_hash(request: &ApplyPatchRequest) -> Result<String, ToolError> {
+        let serialized = serde_json::to_vec(request).map_err(|err| {
+            ToolError::ExecutionFailed(format!("failed to serialize apply_patch request: {err}"))
+        })?;
+        let mut hasher = Sha256::new();
+        hasher.update(&serialized);
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
+    fn request_preview(request: &ApplyPatchRequest) -> String {
+        let mut summary = request
+            .operations
+            .iter()
+            .map(|operation| match operation {
+                PatchOperation::AddFile { path, .. } => format!("add_file:{path}"),
+                PatchOperation::UpdateFile { path, .. } => format!("update_file:{path}"),
+                PatchOperation::DeleteFile { path } => format!("delete_file:{path}"),
+                PatchOperation::MoveFile { from, to } => format!("move_file:{from}->{to}"),
+            })
+            .collect::<Vec<_>>();
+        let extra_count = summary.len().saturating_sub(3);
+        summary.truncate(3);
+        let preview = summary.join(", ");
+        if extra_count == 0 {
+            preview
+        } else {
+            format!("{preview}, +{extra_count} more")
+        }
+    }
+
+    fn now_ms() -> i64 {
+        (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
     }
 
     fn validate_operations(operations: &[ResolvedPatchOperation]) -> Result<(), ToolError> {
@@ -326,8 +525,9 @@ impl ApplyPatchTool {
         &self,
         base: &Path,
         operations: Vec<PatchOperation>,
+        approval_granted: bool,
     ) -> Result<PatchResult, ToolError> {
-        let operations = self.resolve_operations(base, operations)?;
+        let operations = self.resolve_operations(base, operations, approval_granted)?;
         Self::validate_operations(&operations)?;
 
         let mut summary = Vec::with_capacity(operations.len());
@@ -402,6 +602,7 @@ impl Default for ApplyPatchTool {
         Self {
             config: ApplyPatchConfig::default(),
             storage_root_dir: None,
+            approval_manager: None,
         }
     }
 }
@@ -497,8 +698,11 @@ impl Tool for ApplyPatchTool {
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let request = Self::parse_request(args)?;
         let base = self.resolve_workspace_base(ctx)?;
-        let payload =
-            serde_json::to_value(self.apply_patch(&base, request.operations)?).map_err(|err| {
+        let approval_granted = self.check_approval(&base, &request, ctx).await?;
+        let payload = serde_json::to_value(
+            self.apply_patch(&base, request.operations, approval_granted)?,
+        )
+        .map_err(|err| {
                 ToolError::ExecutionFailed(format!("serialize apply_patch result: {err}"))
             })?;
 
@@ -516,9 +720,13 @@ impl Tool for ApplyPatchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_storage::{ApprovalStatus, DefaultSessionStore, SessionStorage, StoragePaths};
     use klaw_config::AppConfig;
     use serde_json::json;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn temp_workspace() -> PathBuf {
         let nanos = SystemTime::now()
@@ -528,6 +736,18 @@ mod tests {
         let path = std::env::temp_dir().join(format!("klaw-fs-test-{nanos}"));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    async fn create_store() -> DefaultSessionStore {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!("klaw-apply-patch-test-{now_ms}-{suffix}"));
+        DefaultSessionStore::open(StoragePaths::from_root(root))
+            .await
+            .expect("session store should open")
     }
 
     fn test_ctx(workspace: &Path) -> ToolContext {
@@ -616,7 +836,166 @@ mod tests {
             .await;
 
         assert!(out.is_err());
-        assert!(out.unwrap_err().to_string().contains("not allowed"));
+        assert!(out.unwrap_err().to_string().contains("requires approval"));
+    }
+
+    #[tokio::test]
+    async fn unauthorized_path_returns_approval_required_when_store_is_available() {
+        let workspace = temp_workspace();
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "terminal")
+            .await
+            .expect("session should exist");
+        let tool = ApplyPatchTool::with_store(&AppConfig::default(), store);
+
+        let out = tool
+            .execute(
+                json!({
+                    "operations": [
+                        {"op": "add_file", "path": "/etc/hosts", "content": "x"}
+                    ]
+                }),
+                &test_ctx(&workspace),
+            )
+            .await;
+
+        let err = out.expect_err("approval should be required");
+        assert_eq!(err.code(), "approval_required");
+        let approval_signal = err
+            .signals()
+            .iter()
+            .find(|signal| signal.kind == "approval_required")
+            .expect("approval signal should be present");
+        assert_eq!(
+            approval_signal.payload.get("tool_name"),
+            Some(&json!("apply_patch"))
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_apply_patch_request_succeeds_once_with_approval_id() {
+        let workspace = temp_workspace();
+        let outside_dir = temp_workspace();
+        let outside_file = outside_dir.join("approved.txt");
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "terminal")
+            .await
+            .expect("session should exist");
+        let tool = ApplyPatchTool::with_store(&AppConfig::default(), store.clone());
+
+        let first = tool
+            .execute(
+                json!({
+                    "operations": [
+                        {"op": "add_file", "path": outside_file.to_string_lossy(), "content": "ok"}
+                    ]
+                }),
+                &test_ctx(&workspace),
+            )
+            .await;
+        let first_err = first.expect_err("approval should be required").to_string();
+        let approval_id = first_err
+            .split("Approval ID: ")
+            .nth(1)
+            .and_then(|tail| tail.lines().next())
+            .map(str::trim)
+            .expect("approval id should be present")
+            .to_string();
+
+        store
+            .update_approval_status(&approval_id, ApprovalStatus::Approved, Some("user"))
+            .await
+            .expect("approval should transition to approved");
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            META_WORKSPACE.to_string(),
+            json!(workspace.to_string_lossy().to_string()),
+        );
+        metadata.insert("apply_patch.approval_id".to_string(), json!(approval_id.clone()));
+        let approved_ctx = ToolContext {
+            session_key: "s1".to_string(),
+            metadata,
+        };
+
+        let approved_exec = tool
+            .execute(
+                json!({
+                    "operations": [
+                        {"op": "add_file", "path": outside_file.to_string_lossy(), "content": "ok"}
+                    ]
+                }),
+                &approved_ctx,
+            )
+            .await
+            .expect("approved apply_patch should execute");
+        assert!(approved_exec.content_for_model.contains("\"operations_applied\": 1"));
+        assert_eq!(fs::read_to_string(&outside_file).unwrap(), "ok");
+
+        let consumed = store
+            .get_approval(&approval_id)
+            .await
+            .expect("approval should exist");
+        assert_eq!(consumed.status, ApprovalStatus::Consumed);
+    }
+
+    #[tokio::test]
+    async fn approved_apply_patch_request_succeeds_with_latest_approval() {
+        let workspace = temp_workspace();
+        let outside_dir = temp_workspace();
+        let outside_file = outside_dir.join("latest-approved.txt");
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "terminal")
+            .await
+            .expect("session should exist");
+        let tool = ApplyPatchTool::with_store(&AppConfig::default(), store.clone());
+
+        let first = tool
+            .execute(
+                json!({
+                    "operations": [
+                        {"op": "add_file", "path": outside_file.to_string_lossy(), "content": "ok"}
+                    ]
+                }),
+                &test_ctx(&workspace),
+            )
+            .await;
+        let first_err = first.expect_err("approval should be required").to_string();
+        let approval_id = first_err
+            .split("Approval ID: ")
+            .nth(1)
+            .and_then(|tail| tail.lines().next())
+            .map(str::trim)
+            .expect("approval id should be present")
+            .to_string();
+
+        store
+            .update_approval_status(&approval_id, ApprovalStatus::Approved, Some("user"))
+            .await
+            .expect("approval should transition to approved");
+
+        let approved_exec = tool
+            .execute(
+                json!({
+                    "operations": [
+                        {"op": "add_file", "path": outside_file.to_string_lossy(), "content": "ok"}
+                    ]
+                }),
+                &test_ctx(&workspace),
+            )
+            .await
+            .expect("approved apply_patch should execute via latest approval");
+        assert!(approved_exec.content_for_model.contains("\"operations_applied\": 1"));
+        assert_eq!(fs::read_to_string(&outside_file).unwrap(), "ok");
+
+        let consumed = store
+            .get_approval(&approval_id)
+            .await
+            .expect("approval should exist");
+        assert_eq!(consumed.status, ApprovalStatus::Consumed);
     }
 
     #[tokio::test]

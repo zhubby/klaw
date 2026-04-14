@@ -81,20 +81,43 @@ pub trait ApprovalManager: Send + Sync {
         now_ms: i64,
     ) -> Result<ApprovalResolveOutcome, ApprovalError>;
 
+    async fn consume_tool_approval(
+        &self,
+        approval_id: &str,
+        tool_name: &str,
+        session_key: &str,
+        command_hash: &str,
+        now_ms: i64,
+    ) -> Result<bool, ApprovalError>;
+
+    async fn consume_latest_tool_approval(
+        &self,
+        tool_name: &str,
+        session_key: &str,
+        command_hash: &str,
+        now_ms: i64,
+    ) -> Result<bool, ApprovalError>;
+
     async fn consume_shell_approval(
         &self,
         approval_id: &str,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
-    ) -> Result<bool, ApprovalError>;
+    ) -> Result<bool, ApprovalError> {
+        self.consume_tool_approval(approval_id, "shell", session_key, command_hash, now_ms)
+            .await
+    }
 
     async fn consume_latest_shell_approval(
         &self,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
-    ) -> Result<bool, ApprovalError>;
+    ) -> Result<bool, ApprovalError> {
+        self.consume_latest_tool_approval("shell", session_key, command_hash, now_ms)
+            .await
+    }
 
     async fn consume_approval(
         &self,
@@ -292,33 +315,43 @@ impl ApprovalManager for SqliteApprovalManager {
         })
     }
 
-    async fn consume_shell_approval(
+    async fn consume_tool_approval(
         &self,
         approval_id: &str,
+        tool_name: &str,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
     ) -> Result<bool, ApprovalError> {
         let approval_id = normalize_non_empty(approval_id, "approval_id")?;
+        let tool_name = normalize_non_empty(tool_name, "tool_name")?;
         let session_key = normalize_non_empty(session_key, "session_key")?;
         let command_hash = normalize_non_empty(command_hash, "command_hash")?;
         Ok(self
             .store
-            .consume_approved_shell_command(&approval_id, &session_key, &command_hash, now_ms)
+            .consume_approved_tool_command(
+                &approval_id,
+                &tool_name,
+                &session_key,
+                &command_hash,
+                now_ms,
+            )
             .await?)
     }
 
-    async fn consume_latest_shell_approval(
+    async fn consume_latest_tool_approval(
         &self,
+        tool_name: &str,
         session_key: &str,
         command_hash: &str,
         now_ms: i64,
     ) -> Result<bool, ApprovalError> {
+        let tool_name = normalize_non_empty(tool_name, "tool_name")?;
         let session_key = normalize_non_empty(session_key, "session_key")?;
         let command_hash = normalize_non_empty(command_hash, "command_hash")?;
         Ok(self
             .store
-            .consume_latest_approved_shell_command(&session_key, &command_hash, now_ms)
+            .consume_latest_approved_tool_command(&tool_name, &session_key, &command_hash, now_ms)
             .await?)
     }
 
@@ -328,13 +361,11 @@ impl ApprovalManager for SqliteApprovalManager {
         now_ms: i64,
     ) -> Result<ApprovalResolveOutcome, ApprovalError> {
         let approval = self.get_approval(approval_id).await?;
-        if approval.tool_name != "shell" {
-            return Err(ApprovalError::NotShellApproval(approval.id));
-        }
         let updated = self
             .store
-            .consume_approved_shell_command(
+            .consume_approved_tool_command(
                 &approval.id,
+                &approval.tool_name,
                 &approval.session_key,
                 &approval.command_hash,
                 now_ms,
@@ -626,6 +657,46 @@ mod tests {
             .consume_approval(&approval.id, now_ms())
             .await
             .expect("approval should consume");
+        assert!(outcome.updated);
+        assert_eq!(outcome.approval.status, ApprovalStatus::Consumed);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn consume_approval_marks_apply_patch_record_consumed() {
+        let store = create_store().await;
+        store
+            .touch_session("terminal:test", "chat-1", "terminal")
+            .await
+            .expect("session should exist");
+        let manager = SqliteApprovalManager::from_store(store);
+        let approval = manager
+            .create_approval(ApprovalCreateInput {
+                session_key: "terminal:test".to_string(),
+                tool_name: "apply_patch".to_string(),
+                command_text: "add_file:/tmp/outside.txt".to_string(),
+                command_preview: Some("add_file:/tmp/outside.txt".to_string()),
+                command_hash: Some("patchhash".to_string()),
+                risk_level: None,
+                requested_by: None,
+                justification: None,
+                expires_in_minutes: Some(10),
+            })
+            .await
+            .expect("approval should be created");
+        let _ = manager
+            .resolve_approval(
+                &approval.id,
+                ApprovalResolveDecision::Approve,
+                Some("tester"),
+                now_ms(),
+            )
+            .await
+            .expect("approval should resolve");
+
+        let outcome = manager
+            .consume_approval(&approval.id, now_ms())
+            .await
+            .expect("apply_patch approval should consume");
         assert!(outcome.updated);
         assert_eq!(outcome.approval.status, ApprovalStatus::Consumed);
     }

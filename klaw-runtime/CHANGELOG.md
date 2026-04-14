@@ -2,6 +2,10 @@
 
 ## 2026-04-14
 
+### Changed
+
+- runtime 注册本地工具时，`apply_patch` 现在会像 `shell` 一样复用共享 session store 注入审批管理器，使越权补丁请求能进入统一的审批流并在批准后重试执行
+
 ### Fixed
 
 - `/approve` 现在会优先按触发审批的 `tool_audit` 重放原始 tool call，并把已批准工具的实际结果作为结构化 tool 历史交回模型；shell 与其它接入审批的工具都不再依赖 prompt 式 follow-up 或 runtime 侧第二轮强制重试

@@ -1120,6 +1120,154 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn approval_consume_tool_command_supports_non_shell_tools() {
+        let store = create_store().await;
+        store
+            .touch_session("terminal:approval3", "approval-chat3", "terminal")
+            .await
+            .expect("session should exist for approval foreign key");
+
+        store
+            .create_approval(&NewApprovalRecord {
+                id: "approval-apply-patch-1".to_string(),
+                session_key: "terminal:approval3".to_string(),
+                tool_name: "apply_patch".to_string(),
+                command_hash: "patchhash".to_string(),
+                command_preview: "add_file:/tmp/outside.txt".to_string(),
+                command_text: "add_file:/tmp/outside.txt".to_string(),
+                risk_level: "mutating".to_string(),
+                requested_by: "agent".to_string(),
+                justification: None,
+                expires_at_ms: util::now_ms() + 60_000,
+            })
+            .await
+            .expect("create approval should succeed");
+        store
+            .update_approval_status(
+                "approval-apply-patch-1",
+                ApprovalStatus::Approved,
+                Some("user"),
+            )
+            .await
+            .expect("approve should succeed");
+
+        let consumed = store
+            .consume_approved_tool_command(
+                "approval-apply-patch-1",
+                "apply_patch",
+                "terminal:approval3",
+                "patchhash",
+                util::now_ms(),
+            )
+            .await
+            .expect("generic consume should succeed");
+        assert!(consumed);
+
+        let post = store
+            .get_approval("approval-apply-patch-1")
+            .await
+            .expect("approval should still exist");
+        assert_eq!(post.status, ApprovalStatus::Consumed);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approval_consume_tool_command_rejects_tool_name_mismatch() {
+        let store = create_store().await;
+        store
+            .touch_session("terminal:approval4", "approval-chat4", "terminal")
+            .await
+            .expect("session should exist for approval foreign key");
+
+        store
+            .create_approval(&NewApprovalRecord {
+                id: "approval-shell-only-1".to_string(),
+                session_key: "terminal:approval4".to_string(),
+                tool_name: "shell".to_string(),
+                command_hash: "shellhash".to_string(),
+                command_preview: "rm -rf /tmp/demo".to_string(),
+                command_text: "rm -rf /tmp/demo".to_string(),
+                risk_level: "unsafe".to_string(),
+                requested_by: "agent".to_string(),
+                justification: None,
+                expires_at_ms: util::now_ms() + 60_000,
+            })
+            .await
+            .expect("create approval should succeed");
+        store
+            .update_approval_status("approval-shell-only-1", ApprovalStatus::Approved, Some("user"))
+            .await
+            .expect("approve should succeed");
+
+        let consumed = store
+            .consume_approved_tool_command(
+                "approval-shell-only-1",
+                "apply_patch",
+                "terminal:approval4",
+                "shellhash",
+                util::now_ms(),
+            )
+            .await
+            .expect("generic consume should still return a boolean");
+        assert!(!consumed);
+
+        let post = store
+            .get_approval("approval-shell-only-1")
+            .await
+            .expect("approval should still exist");
+        assert_eq!(post.status, ApprovalStatus::Approved);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approval_consume_latest_tool_command_supports_non_shell_tools() {
+        let store = create_store().await;
+        store
+            .touch_session("terminal:approval5", "approval-chat5", "terminal")
+            .await
+            .expect("session should exist for approval foreign key");
+
+        store
+            .create_approval(&NewApprovalRecord {
+                id: "approval-apply-patch-latest-1".to_string(),
+                session_key: "terminal:approval5".to_string(),
+                tool_name: "apply_patch".to_string(),
+                command_hash: "latesthash".to_string(),
+                command_preview: "move_file:/tmp/a->/tmp/b".to_string(),
+                command_text: "move_file:/tmp/a->/tmp/b".to_string(),
+                risk_level: "outside_workspace".to_string(),
+                requested_by: "agent".to_string(),
+                justification: None,
+                expires_at_ms: util::now_ms() + 60_000,
+            })
+            .await
+            .expect("create approval should succeed");
+        store
+            .update_approval_status(
+                "approval-apply-patch-latest-1",
+                ApprovalStatus::Approved,
+                Some("user"),
+            )
+            .await
+            .expect("approve should succeed");
+
+        let consumed = store
+            .consume_latest_approved_tool_command(
+                "apply_patch",
+                "terminal:approval5",
+                "latesthash",
+                util::now_ms(),
+            )
+            .await
+            .expect("generic latest consume should succeed");
+        assert!(consumed);
+
+        let post = store
+            .get_approval("approval-apply-patch-latest-1")
+            .await
+            .expect("approval should still exist");
+        assert_eq!(post.status, ApprovalStatus::Consumed);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn webhook_event_supports_append_update_and_filtering() {
         let store = create_store().await;
         store
