@@ -384,11 +384,11 @@ pub(crate) struct AssistantBubblePalette {
 pub(crate) fn resolve_assistant_bubble_palette(dark_mode: bool) -> AssistantBubblePalette {
     if dark_mode {
         AssistantBubblePalette {
-            fill: [14, 17, 22],
-            stroke: [28, 33, 41],
-            heading: [242, 245, 250],
-            body: [221, 226, 234],
-            link: [133, 188, 255],
+            fill: [12, 12, 14],
+            stroke: [34, 34, 38],
+            heading: [244, 244, 246],
+            body: [224, 224, 228],
+            link: [170, 188, 206],
         }
     } else {
         AssistantBubblePalette {
@@ -1176,9 +1176,9 @@ mod tests {
     #[test]
     fn assistant_bubble_palette_uses_darker_surface_in_dark_mode() {
         let palette = resolve_assistant_bubble_palette(true);
-        assert_eq!(palette.fill, [14, 17, 22]);
-        assert_eq!(palette.stroke, [28, 33, 41]);
-        assert_eq!(palette.body, [221, 226, 234]);
+        assert_eq!(palette.fill, [12, 12, 14]);
+        assert_eq!(palette.stroke, [34, 34, 38]);
+        assert_eq!(palette.body, [224, 224, 228]);
     }
 
     #[test]

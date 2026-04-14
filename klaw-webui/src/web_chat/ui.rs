@@ -147,11 +147,14 @@ impl ChatApp {
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    const FPS_STATUS_WIDTH: f32 = 56.0;
                     let fps = live_fps(ctx);
-                    ui.label(RichText::new(format!("{fps:.0} FPS")).small().weak())
-                        .on_hover_text(
-                            "Approximate live frame rate from the latest egui frame delta.",
-                        );
+                    ui.add_sized(
+                        [FPS_STATUS_WIDTH, ui.spacing().interact_size.y],
+                        egui::Label::new(RichText::new(format!("{fps:.0} FPS")).small().weak())
+                            .sense(egui::Sense::hover()),
+                    )
+                    .on_hover_text("Approximate live frame rate from the latest egui frame delta.");
                     if let Some(session) = self.active_session() {
                         ui.separator();
                         if let Some(activity) = session_activity_label(session) {
