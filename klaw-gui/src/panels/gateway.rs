@@ -651,14 +651,6 @@ impl PanelRenderer for GatewayPanel {
                     }
                 });
 
-                if !tailscale_available {
-                    ui.add_space(4.0);
-                    ui.colored_label(
-                        ui.visuals().warn_fg_color,
-                        "Tailscale service unavailable. Refresh status after the local Tailscale service recovers.",
-                    );
-                }
-
                 ui.add_space(8.0);
                 ui.label("Host Status");
                 egui::Grid::new("gateway-panel-tailscale-host-grid")
@@ -840,6 +832,14 @@ mod tests {
 
         status.tailscale_host.status = TailscaleStatus::Connected;
         assert!(tailscale_service_available(&status));
+    }
+
+    #[test]
+    fn tailscale_error_does_not_count_as_available() {
+        let mut status = GatewayStatusSnapshot::default();
+        status.tailscale_host.status = TailscaleStatus::Error("unavailable".to_string());
+
+        assert!(!tailscale_service_available(&status));
     }
 
     #[test]

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-14
+
+### Fixed
+
+- `Gateway` 面板不再把所有非 `Connected` 的 Tailscale 主机状态都渲染成统一的 `Tailscale service unavailable` 警告；当前面板改为只在 `Host Status` 区块展示实际状态，避免 daemon 恢复后顶部提示仍然误导
+
 ## 2026-04-13
 
 ### Changed

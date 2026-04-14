@@ -1,8 +1,16 @@
 use klaw_config::TailscaleMode;
 use klaw_util::command_search_path;
-use std::process::Command;
+use std::{
+    io,
+    process::{Command, Output, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use tracing::{info, warn};
+
+const TAILSCALE_PROBE_TIMEOUT: Duration = Duration::from_millis(400);
+const TAILSCALE_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Clone, Error)]
 pub enum TailscaleError {
@@ -57,6 +65,12 @@ pub struct TailscaleManager {
     reset_on_exit: bool,
 }
 
+#[derive(Debug)]
+enum CommandProbeError {
+    Io(io::Error),
+    TimedOut,
+}
+
 impl TailscaleManager {
     pub fn new(mode: TailscaleMode, port: u16, reset_on_exit: bool) -> Self {
         Self {
@@ -97,18 +111,33 @@ impl TailscaleManager {
 
     #[must_use]
     pub fn inspect_host() -> TailscaleHostInfo {
-        let version_output = match tailscale_command().arg("version").output() {
-            Ok(output) if output.status.success() => output,
-            Ok(_) | Err(_) => {
-                return TailscaleHostInfo {
-                    status: TailscaleStatus::Error("tailscale CLI not found".to_string()),
-                    message: Some(
-                        "Install Tailscale and ensure the `tailscale` CLI is on PATH.".to_string(),
-                    ),
-                    ..TailscaleHostInfo::default()
-                };
-            }
-        };
+        let mut version_command = tailscale_command();
+        version_command.arg("version");
+        let version_output =
+            match run_command_with_timeout(&mut version_command, TAILSCALE_PROBE_TIMEOUT) {
+                Ok(output) if output.status.success() => output,
+                Ok(_) | Err(CommandProbeError::Io(_)) => {
+                    return TailscaleHostInfo {
+                        status: TailscaleStatus::Error("tailscale CLI not found".to_string()),
+                        message: Some(
+                            "Install Tailscale and ensure the `tailscale` CLI is on PATH."
+                                .to_string(),
+                        ),
+                        ..TailscaleHostInfo::default()
+                    };
+                }
+                Err(CommandProbeError::TimedOut) => {
+                    return TailscaleHostInfo {
+                        status: TailscaleStatus::Error(
+                            "tailscale version command timed out".to_string(),
+                        ),
+                        message: Some(
+                            "Timed out while checking the local Tailscale CLI.".to_string(),
+                        ),
+                        ..TailscaleHostInfo::default()
+                    };
+                }
+            };
 
         let version = String::from_utf8_lossy(&version_output.stdout)
             .lines()
@@ -117,19 +146,33 @@ impl TailscaleManager {
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
 
-        let status_output = match tailscale_command().args(["status", "--json"]).output() {
-            Ok(output) => output,
-            Err(err) => {
-                return TailscaleHostInfo {
-                    status: TailscaleStatus::Error(format!(
-                        "failed to get tailscale status: {err}"
-                    )),
-                    version,
-                    message: Some("Unable to query local Tailscale status.".to_string()),
-                    ..TailscaleHostInfo::default()
-                };
-            }
-        };
+        let mut status_command = tailscale_command();
+        status_command.args(["status", "--json"]);
+        let status_output =
+            match run_command_with_timeout(&mut status_command, TAILSCALE_PROBE_TIMEOUT) {
+                Ok(output) => output,
+                Err(CommandProbeError::Io(err)) => {
+                    return TailscaleHostInfo {
+                        status: TailscaleStatus::Error(format!(
+                            "failed to get tailscale status: {err}"
+                        )),
+                        version,
+                        message: Some("Unable to query local Tailscale status.".to_string()),
+                        ..TailscaleHostInfo::default()
+                    };
+                }
+                Err(CommandProbeError::TimedOut) => {
+                    return TailscaleHostInfo {
+                        status: TailscaleStatus::Disconnected,
+                        version,
+                        message: Some(
+                            "Tailscale is installed but the local daemon is unavailable."
+                                .to_string(),
+                        ),
+                        ..TailscaleHostInfo::default()
+                    };
+                }
+            };
 
         if !status_output.status.success() {
             return TailscaleHostInfo {
@@ -378,6 +421,34 @@ fn tailscale_command() -> Command {
     command
 }
 
+fn run_command_with_timeout(
+    command: &mut Command,
+    timeout: Duration,
+) -> Result<Output, CommandProbeError> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(CommandProbeError::Io)?;
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().map_err(CommandProbeError::Io),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(CommandProbeError::TimedOut);
+                }
+                thread::sleep(TAILSCALE_PROBE_POLL_INTERVAL);
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CommandProbeError::Io(err));
+            }
+        }
+    }
+}
+
 fn command_error_output(output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !stderr.is_empty() {
@@ -431,8 +502,12 @@ fn has_non_empty_value(value: &serde_json::Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{has_active_funnel_config, has_active_serve_config};
+    use super::{
+        CommandProbeError, has_active_funnel_config, has_active_serve_config,
+        run_command_with_timeout,
+    };
     use serde_json::json;
+    use std::{process::Command, time::Duration};
 
     #[test]
     fn detects_active_funnel_from_allow_funnel_flag() {
@@ -474,5 +549,16 @@ mod tests {
 
         assert!(!has_active_serve_config(&status));
         assert!(!has_active_funnel_config(&status));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probe_timeout_aborts_slow_command() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 1"]);
+
+        let result = run_command_with_timeout(&mut command, Duration::from_millis(50));
+
+        assert!(matches!(result, Err(CommandProbeError::TimedOut)));
     }
 }

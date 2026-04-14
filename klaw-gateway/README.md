@@ -42,7 +42,7 @@
 - webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 仅可分别启停并配置独立 body limit，路径固定不再开放配置
 - archive 路由在 `GatewayOptions` 中提供 `archive_service` 时自动注册，所有 archive 接口均需要 Bearer 鉴权
 - 仅 `/ws/chat` 和 `/archive/*` 会走 gateway Bearer 鉴权中间件（含 query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics 不做鉴权
-- `TailscaleManager::inspect_host()` 可独立读取本机 Tailscale 状态，供 GUI 在 gateway 未运行时展示主机连接信息
+- `TailscaleManager::inspect_host()` 可独立读取本机 Tailscale 状态，供 GUI 在 gateway 未运行时展示主机连接信息；当本机 daemon 无响应时会在短超时后回落为 host 侧不可用状态，避免拖慢整个 gateway 状态刷新
 - Tailscale Serve/Funnel 会在 gateway 绑定完成后使用实际监听端口做反向代理，并在 setup 后回读 `tailscale serve status --json` / `tailscale funnel status --json` 确认配置是否生效；Funnel 未配置 auth 时允许启动，但应视为公网裸露入口
 
 ## Web UI（WASM）构建

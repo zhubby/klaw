@@ -13,7 +13,7 @@ use crate::{
         GatewayArchiveState, GatewayHandle, GatewayProvidersState, GatewayRuntimeInfo,
         GatewayState, GatewayWebsocketBroadcaster, GatewayWebsocketState,
     },
-    tailscale::{TailscaleError, TailscaleManager},
+    tailscale::{TailscaleError, TailscaleManager, TailscaleRuntimeInfo, TailscaleStatus},
     webhook::{
         GatewayWebhookHandler, build_webhook_state, webhook_agents_handler, webhook_handler,
     },
@@ -29,7 +29,7 @@ use klaw_archive::ArchiveService;
 use klaw_config::{AppConfig, GatewayConfig, TailscaleMode};
 use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{net::SocketAddr, sync::Arc};
-use tracing::info;
+use tracing::{info, warn};
 
 pub struct GatewayOptions {
     pub websocket_broadcaster: Option<Arc<GatewayWebsocketBroadcaster>>,
@@ -117,7 +117,7 @@ pub async fn spawn_gateway_with_options(
         .await
         .map_err(GatewayError::Bind)?;
     let actual_addr = listener.local_addr().map_err(GatewayError::Bind)?;
-    let tailscale_info = setup_tailscale(config, actual_addr.port())?;
+    let tailscale_info = setup_tailscale(config, actual_addr.port());
     let tailscale_manager = create_tailscale_manager(config, actual_addr.port());
     let info = GatewayRuntimeInfo::from_socket_addr(config, actual_addr, tailscale_info);
 
@@ -154,12 +154,9 @@ pub async fn spawn_gateway_with_options(
     ))
 }
 
-fn setup_tailscale(
-    config: &GatewayConfig,
-    actual_port: u16,
-) -> Result<Option<crate::tailscale::TailscaleRuntimeInfo>, GatewayError> {
+fn setup_tailscale(config: &GatewayConfig, actual_port: u16) -> Option<TailscaleRuntimeInfo> {
     if config.tailscale.mode == TailscaleMode::Off {
-        return Ok(None);
+        return None;
     }
 
     let manager = TailscaleManager::new(
@@ -168,14 +165,13 @@ fn setup_tailscale(
         config.tailscale.reset_on_exit,
     );
 
-    let info = manager.setup().map_err(|e| match e {
-        TailscaleError::CliNotFound => GatewayError::TailscaleCliNotFound,
-        TailscaleError::NotLoggedIn => GatewayError::TailscaleNotLoggedIn,
-        TailscaleError::HttpsNotEnabled => GatewayError::TailscaleHttpsNotEnabled,
-        other => GatewayError::TailscaleSetupFailed(other.to_string()),
-    })?;
-
-    Ok(Some(info))
+    match manager.setup() {
+        Ok(info) => Some(info),
+        Err(err) => {
+            warn!(error = %err, mode = ?config.tailscale.mode, "tailscale setup failed; gateway will continue without exposure");
+            Some(tailscale_runtime_error(config.tailscale.mode, err))
+        }
+    }
 }
 
 fn create_tailscale_manager(config: &GatewayConfig, actual_port: u16) -> Option<TailscaleManager> {
@@ -188,6 +184,49 @@ fn create_tailscale_manager(config: &GatewayConfig, actual_port: u16) -> Option<
         actual_port,
         config.tailscale.reset_on_exit,
     ))
+}
+
+fn tailscale_runtime_error(mode: TailscaleMode, err: TailscaleError) -> TailscaleRuntimeInfo {
+    let message = match err {
+        TailscaleError::CliNotFound => {
+            "Tailscale CLI not found. Gateway started without Tailscale exposure.".to_string()
+        }
+        TailscaleError::NotLoggedIn => {
+            "Tailscale is not connected. Gateway started without Tailscale exposure.".to_string()
+        }
+        TailscaleError::HttpsNotEnabled => {
+            "Tailnet HTTPS is not enabled. Gateway started without Tailscale exposure.".to_string()
+        }
+        other => format!("Tailscale setup failed: {other}"),
+    };
+
+    TailscaleRuntimeInfo {
+        mode,
+        status: TailscaleStatus::Error(message.clone()),
+        public_url: None,
+        message: Some(message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tailscale_runtime_error;
+    use crate::tailscale::{TailscaleError, TailscaleStatus};
+    use klaw_config::TailscaleMode;
+
+    #[test]
+    fn tailscale_runtime_error_keeps_mode_and_error_status() {
+        let info = tailscale_runtime_error(TailscaleMode::Serve, TailscaleError::NotLoggedIn);
+
+        assert_eq!(info.mode, TailscaleMode::Serve);
+        assert!(matches!(info.status, TailscaleStatus::Error(_)));
+        assert!(info.public_url.is_none());
+        assert!(
+            info.message
+                .as_deref()
+                .is_some_and(|message| message.contains("without Tailscale exposure"))
+        );
+    }
 }
 
 fn parse_socket_addr(config: &GatewayConfig) -> Result<SocketAddr, GatewayError> {

@@ -2,6 +2,11 @@
 
 ## 2026-04-14
 
+### Fixed
+
+- `TailscaleHostInfo` 主机探测现在对 `tailscale version` / `tailscale status --json` 使用短超时；当本机 Tailscale daemon 未启动或无响应时，GUI 会在 `tailscale Host Status` 中显示不可用，而不会把整个 gateway 状态刷新拖成超时错误
+- gateway 在启用 `tailscale.mode = "serve" | "funnel"` 时，即使 Tailscale 配置失败也会继续启动本地 HTTP/WebSocket 服务；失败信息仅记录在 Tailscale 运行态摘要里，不再阻断 gateway server 本身
+
 ### Changed
 
 - `/ws/chat` 的 `session.submit` 现在支持结构化 `attachments` 数组；gateway 会兼容旧的单 `archive_id` 请求，并把附件信息原样转交 runtime handler
