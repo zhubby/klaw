@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-14
+
+### Fixed
+- `cron_manager` 现在会拒绝来自 `cron:*` 执行会话的 `create(message=...)` 调用，避免已触发的 cron 任务再次把建定时任务指令投回模型后自我复制出大量重复 cron
+
 ## 2026-04-13
 
 ### Changed

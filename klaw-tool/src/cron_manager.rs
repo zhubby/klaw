@@ -620,6 +620,15 @@ fn validate_cron_source_channel(channel: &str) -> Result<(), ToolError> {
     }
 }
 
+fn validate_cron_source_session_key(session_key: &str) -> Result<(), ToolError> {
+    if session_key.trim().starts_with("cron:") {
+        return Err(ToolError::InvalidArgs(
+            "cron jobs cannot be created from a cron execution session".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 async fn build_payload_from_shortcut(
     tool: &CronManagerTool,
     args: &Value,
@@ -638,6 +647,7 @@ async fn build_payload_from_shortcut(
             "cron jobs require a current interactive session context".to_string(),
         ));
     }
+    validate_cron_source_session_key(&source_session_key)?;
     let route = tool
         .resolve_source_session_route(&source_session_key)
         .await?;
@@ -1111,7 +1121,40 @@ mod tests {
             .await
             .expect_err("create should fail");
 
-        assert!(err.to_string().contains("current channel is `cron`"));
+        assert!(err
+            .to_string()
+            .contains("cron jobs cannot be created from a cron execution session"));
+    }
+
+    #[tokio::test]
+    async fn create_rejects_cron_execution_session_even_if_channel_looks_interactive() {
+        let storage = create_store().await;
+        storage
+            .touch_session("cron:job-1:run-1", "chat-1", "websocket")
+            .await
+            .expect("cron execution session should exist");
+        let tool = CronManagerTool::from_storage(storage);
+
+        let err = tool
+            .execute(
+                json!({
+                    "action": "create",
+                    "id": "job-invalid",
+                    "name": "invalid payload",
+                    "schedule_expr": "5m",
+                    "message": "weather"
+                }),
+                &ToolContext {
+                    session_key: "cron:job-1:run-1".to_string(),
+                    metadata: BTreeMap::new(),
+                },
+            )
+            .await
+            .expect_err("create should fail");
+
+        assert!(err
+            .to_string()
+            .contains("cron jobs cannot be created from a cron execution session"));
     }
 
     #[tokio::test]

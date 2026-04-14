@@ -686,6 +686,7 @@ mod tests {
                         .saturating_div(1_000_000) as i64,
                     role: "assistant".to_string(),
                     content: "old answer about deploy".to_string(),
+                    metadata_json: None,
                     message_id: None,
                 },
             )
@@ -700,6 +701,7 @@ mod tests {
                         .saturating_div(1_000_000) as i64,
                     role: "assistant".to_string(),
                     content: "recent answer about deploy rollback".to_string(),
+                    metadata_json: None,
                     message_id: None,
                 },
             )
@@ -714,6 +716,7 @@ mod tests {
                         .saturating_div(1_000_000) as i64,
                     role: "user".to_string(),
                     content: "deploy rollback question".to_string(),
+                    metadata_json: None,
                     message_id: None,
                 },
             )
