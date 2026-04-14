@@ -1852,11 +1852,12 @@ impl SessionStorage for SqlxSessionStore {
 
     async fn list_sessions(
         &self,
-        limit: i64,
+        limit: Option<i64>,
         offset: i64,
         updated_from_ms: Option<i64>,
         updated_to_ms: Option<i64>,
         channel: Option<&str>,
+        session_key_prefix: Option<&str>,
         sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let mut query = String::from(
@@ -1872,10 +1873,13 @@ impl SessionStorage for SqlxSessionStore {
         if channel.is_some() {
             query.push_str(" AND channel = ?");
         }
-        query.push_str(&format!(
-            " ORDER BY {} LIMIT ? OFFSET ?",
-            sort_order.sql_order_by()
-        ));
+        if session_key_prefix.is_some() {
+            query.push_str(" AND session_key LIKE ?");
+        }
+        query.push_str(&format!(" ORDER BY {}", sort_order.sql_order_by()));
+        if let Some(limit) = limit {
+            query.push_str(" LIMIT ? OFFSET ?");
+        }
 
         let mut q = sqlx::query_as::<_, SessionIndexRow>(&query);
         if let Some(from) = updated_from_ms {
@@ -1887,7 +1891,12 @@ impl SessionStorage for SqlxSessionStore {
         if let Some(channel) = channel {
             q = q.bind(channel);
         }
-        q = q.bind(limit.max(1)).bind(offset.max(0));
+        if let Some(prefix) = session_key_prefix {
+            q = q.bind(format!("{}%", prefix));
+        }
+        if let Some(limit) = limit {
+            q = q.bind(limit.max(1)).bind(offset.max(0));
+        }
 
         let rows = q
             .fetch_all(&self.pool)

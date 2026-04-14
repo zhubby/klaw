@@ -60,7 +60,13 @@ impl RuntimeWebsocketHandler {
     ) -> Result<GatewayWorkspaceBootstrap, GatewayWebsocketHandlerError> {
         let sessions =
             klaw_session::SqliteSessionManager::from_store(self.runtime.session_store.clone())
-                .list_sessions(SessionListQuery::default())
+                .list_sessions(SessionListQuery {
+                    limit: None,
+                    channel: Some("websocket".to_string()),
+                    session_key_prefix: Some("websocket:".to_string()),
+                    sort_order: klaw_storage::SessionSortOrder::CreatedAtDesc,
+                    ..SessionListQuery::default()
+                })
                 .await
                 .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
         Ok(build_web_workspace_bootstrap(sessions))
@@ -400,34 +406,21 @@ fn serialize_response(response: &ChannelResponse, show_reasoning: bool) -> Value
 }
 
 fn build_web_workspace_bootstrap(
-    mut sessions: Vec<klaw_storage::SessionIndex>,
+    sessions: Vec<klaw_storage::SessionIndex>,
 ) -> GatewayWorkspaceBootstrap {
-    sessions.retain(|session| session.session_key.starts_with("websocket:"));
-    sessions.sort_by(|left, right| {
-        left.created_at_ms
-            .cmp(&right.created_at_ms)
-            .then_with(|| left.session_key.cmp(&right.session_key))
-    });
-    let mut sessions = sessions
+    let sessions = sessions
         .into_iter()
-        .enumerate()
-        .map(|(index, session)| GatewayWorkspaceSession {
-            session_key: session.session_key,
+        .map(|session| GatewayWorkspaceSession {
+            session_key: session.session_key.clone(),
             title: session
                 .title
                 .filter(|title| !title.trim().is_empty())
-                .unwrap_or_else(|| format!("Agent {}", index + 1)),
+                .unwrap_or_else(|| format!("Agent {}", &session.session_key.trim_start_matches("websocket:")[..8])),
             created_at_ms: session.created_at_ms,
             model_provider: session.model_provider,
             model: session.model,
         })
         .collect::<Vec<_>>();
-    sessions.sort_by(|left, right| {
-        right
-            .created_at_ms
-            .cmp(&left.created_at_ms)
-            .then_with(|| right.session_key.cmp(&left.session_key))
-    });
     let active_session_key = sessions.first().map(|session| session.session_key.clone());
     GatewayWorkspaceBootstrap {
         sessions,
@@ -552,6 +545,23 @@ mod tests {
     fn web_workspace_bootstrap_keeps_web_sessions_after_channel_changes() {
         let workspace = build_web_workspace_bootstrap(vec![
             SessionIndex {
+                session_key: "websocket:a1b2c3d4-5678-9012-abcd-ef0123456789".to_string(),
+                chat_id: "chat-new".to_string(),
+                channel: "websocket".to_string(),
+                title: None,
+                active_session_key: None,
+                model_provider: None,
+                model_provider_explicit: false,
+                model: None,
+                model_explicit: false,
+                delivery_metadata_json: None,
+                created_at_ms: 50,
+                updated_at_ms: 60,
+                last_message_at_ms: 60,
+                turn_count: 1,
+                jsonl_path: "new.jsonl".to_string(),
+            },
+            SessionIndex {
                 session_key: "websocket:old".to_string(),
                 chat_id: "chat-old".to_string(),
                 channel: "websocket".to_string(),
@@ -568,49 +578,15 @@ mod tests {
                 turn_count: 1,
                 jsonl_path: "old.jsonl".to_string(),
             },
-            SessionIndex {
-                session_key: "terminal:ignore".to_string(),
-                chat_id: "chat-ignore".to_string(),
-                channel: "terminal".to_string(),
-                title: Some("Terminal".to_string()),
-                active_session_key: None,
-                model_provider: None,
-                model_provider_explicit: false,
-                model: None,
-                model_explicit: false,
-                delivery_metadata_json: None,
-                created_at_ms: 30,
-                updated_at_ms: 40,
-                last_message_at_ms: 40,
-                turn_count: 1,
-                jsonl_path: "ignore.jsonl".to_string(),
-            },
-            SessionIndex {
-                session_key: "websocket:new".to_string(),
-                chat_id: "chat-new".to_string(),
-                channel: "websocket".to_string(),
-                title: None,
-                active_session_key: None,
-                model_provider: None,
-                model_provider_explicit: false,
-                model: None,
-                model_explicit: false,
-                delivery_metadata_json: None,
-                created_at_ms: 50,
-                updated_at_ms: 60,
-                last_message_at_ms: 60,
-                turn_count: 1,
-                jsonl_path: "new.jsonl".to_string(),
-            },
         ]);
 
         assert_eq!(
             workspace.active_session_key.as_deref(),
-            Some("websocket:new")
+            Some("websocket:a1b2c3d4-5678-9012-abcd-ef0123456789")
         );
         assert_eq!(workspace.sessions.len(), 2);
-        assert_eq!(workspace.sessions[0].session_key, "websocket:new");
-        assert_eq!(workspace.sessions[0].title, "Agent 2");
+        assert_eq!(workspace.sessions[0].session_key, "websocket:a1b2c3d4-5678-9012-abcd-ef0123456789");
+        assert_eq!(workspace.sessions[0].title, "Agent a1b2c3d4");
         assert_eq!(workspace.sessions[1].session_key, "websocket:old");
         assert_eq!(workspace.sessions[1].title, "Saved old");
     }

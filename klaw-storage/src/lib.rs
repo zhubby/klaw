@@ -248,11 +248,12 @@ mod tests {
 
         let filtered = store
             .list_sessions(
-                10,
+                Some(10),
                 0,
                 None,
                 None,
                 Some("terminal"),
+                None,
                 SessionSortOrder::UpdatedAtAsc,
             )
             .await

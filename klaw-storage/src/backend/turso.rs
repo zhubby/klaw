@@ -1093,11 +1093,12 @@ impl SessionStorage for TursoSessionStore {
 
     async fn list_sessions(
         &self,
-        limit: i64,
+        limit: Option<i64>,
         offset: i64,
         updated_from_ms: Option<i64>,
         updated_to_ms: Option<i64>,
         channel: Option<&str>,
+        session_key_prefix: Option<&str>,
         sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError> {
         let mut sql = String::from(
@@ -1113,12 +1114,16 @@ impl SessionStorage for TursoSessionStore {
         if let Some(channel) = channel {
             sql.push_str(&format!(" AND channel = '{}'", escape_sql_text(channel)));
         }
-        sql.push_str(&format!(
-            " ORDER BY {} LIMIT {} OFFSET {}",
-            sort_order.sql_order_by(),
-            limit.max(1),
-            offset.max(0)
-        ));
+        if let Some(prefix) = session_key_prefix {
+            sql.push_str(&format!(
+                " AND session_key LIKE '{}%'",
+                escape_sql_text(prefix)
+            ));
+        }
+        sql.push_str(&format!(" ORDER BY {}", sort_order.sql_order_by()));
+        if let Some(limit) = limit {
+            sql.push_str(&format!(" LIMIT {} OFFSET {}", limit.max(1), offset.max(0)));
+        }
         let conn = self.connection().await?;
         let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();

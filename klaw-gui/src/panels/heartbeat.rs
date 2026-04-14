@@ -830,8 +830,9 @@ fn run_session_query(limit: i64, offset: i64) -> Result<Vec<SessionIndex>, Strin
                 .map_err(|err| format!("failed to open session store: {err}"))?;
             store
                 .list_sessions(
-                    limit,
+                    Some(limit),
                     offset,
+                    None,
                     None,
                     None,
                     None,

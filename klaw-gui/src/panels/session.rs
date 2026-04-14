@@ -69,11 +69,12 @@ impl SessionPanel {
         let page = self.page.max(1);
         let offset = (page - 1) * size;
         let query = SessionListQuery {
-            limit: size,
+            limit: Some(size),
             offset,
             updated_from_ms: self.start_date.and_then(date_start_ms),
             updated_to_ms: self.end_date.and_then(date_end_ms),
             channel: self.channel_filter.clone(),
+            session_key_prefix: None,
             sort_order: self.sort_order,
         };
 
@@ -126,7 +127,9 @@ impl SessionPanel {
     fn toggle_sort_order(&mut self) {
         self.sort_order = match self.sort_order {
             SessionSortOrder::UpdatedAtAsc => SessionSortOrder::UpdatedAtDesc,
-            SessionSortOrder::UpdatedAtDesc => SessionSortOrder::UpdatedAtAsc,
+            SessionSortOrder::UpdatedAtDesc | SessionSortOrder::CreatedAtDesc => {
+                SessionSortOrder::UpdatedAtAsc
+            }
         };
     }
 
@@ -134,6 +137,7 @@ impl SessionPanel {
         match self.sort_order {
             SessionSortOrder::UpdatedAtAsc => "Updated At ↑",
             SessionSortOrder::UpdatedAtDesc => "Updated At ↓",
+            SessionSortOrder::CreatedAtDesc => "Created At ↓",
         }
     }
 }

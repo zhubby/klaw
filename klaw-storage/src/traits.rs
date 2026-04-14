@@ -114,11 +114,12 @@ pub trait SessionStorage: Send + Sync {
 
     async fn list_sessions(
         &self,
-        limit: i64,
+        limit: Option<i64>,
         offset: i64,
         updated_from_ms: Option<i64>,
         updated_to_ms: Option<i64>,
         channel: Option<&str>,
+        session_key_prefix: Option<&str>,
         sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError>;
 

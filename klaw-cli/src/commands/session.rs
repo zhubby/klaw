@@ -47,11 +47,12 @@ impl SessionListCommand {
     async fn run(self, manager: &impl SessionManager) -> Result<(), Box<dyn std::error::Error>> {
         let sessions = manager
             .list_sessions(SessionListQuery {
-                limit: self.limit,
+                limit: Some(self.limit),
                 offset: self.offset,
                 updated_from_ms: None,
                 updated_to_ms: None,
                 channel: None,
+                session_key_prefix: None,
                 sort_order: Default::default(),
             })
             .await?;

@@ -65,6 +65,7 @@ pub enum SessionSortOrder {
     UpdatedAtAsc,
     #[default]
     UpdatedAtDesc,
+    CreatedAtDesc,
 }
 
 impl SessionSortOrder {
@@ -73,6 +74,7 @@ impl SessionSortOrder {
         match self {
             Self::UpdatedAtAsc => "updated_at_ms ASC, session_key ASC",
             Self::UpdatedAtDesc => "updated_at_ms DESC, session_key DESC",
+            Self::CreatedAtDesc => "created_at_ms DESC, session_key DESC",
         }
     }
 }
