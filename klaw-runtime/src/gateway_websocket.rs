@@ -410,13 +410,12 @@ fn build_web_workspace_bootstrap(
 ) -> GatewayWorkspaceBootstrap {
     let sessions = sessions
         .into_iter()
-        .enumerate()
-        .map(|(index, session)| GatewayWorkspaceSession {
-            session_key: session.session_key,
+        .map(|session| GatewayWorkspaceSession {
+            session_key: session.session_key.clone(),
             title: session
                 .title
                 .filter(|title| !title.trim().is_empty())
-                .unwrap_or_else(|| format!("Agent {}", index + 1)),
+                .unwrap_or_else(|| format!("Agent {}", &session.session_key.trim_start_matches("websocket:")[..8])),
             created_at_ms: session.created_at_ms,
             model_provider: session.model_provider,
             model: session.model,
@@ -546,7 +545,7 @@ mod tests {
     fn web_workspace_bootstrap_keeps_web_sessions_after_channel_changes() {
         let workspace = build_web_workspace_bootstrap(vec![
             SessionIndex {
-                session_key: "websocket:new".to_string(),
+                session_key: "websocket:a1b2c3d4-5678-9012-abcd-ef0123456789".to_string(),
                 chat_id: "chat-new".to_string(),
                 channel: "websocket".to_string(),
                 title: None,
@@ -583,11 +582,11 @@ mod tests {
 
         assert_eq!(
             workspace.active_session_key.as_deref(),
-            Some("websocket:new")
+            Some("websocket:a1b2c3d4-5678-9012-abcd-ef0123456789")
         );
         assert_eq!(workspace.sessions.len(), 2);
-        assert_eq!(workspace.sessions[0].session_key, "websocket:new");
-        assert_eq!(workspace.sessions[0].title, "Agent 1");
+        assert_eq!(workspace.sessions[0].session_key, "websocket:a1b2c3d4-5678-9012-abcd-ef0123456789");
+        assert_eq!(workspace.sessions[0].title, "Agent a1b2c3d4");
         assert_eq!(workspace.sessions[1].session_key, "websocket:old");
         assert_eq!(workspace.sessions[1].title, "Saved old");
     }
