@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-14
+
+### Changed
+
+- `install_fonts()` now selects embedded fonts through Cargo features: `fonts-lxgw` is the default, `fonts-noto-sans` is the alternate option, disabling both falls back to `egui` defaults plus existing desktop system CJK fallback loading, and enabling both now fails compilation
+
 ## 2026-04-13
 
 ### Added
