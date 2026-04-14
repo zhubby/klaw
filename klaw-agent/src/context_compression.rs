@@ -138,6 +138,8 @@ mod tests {
             &[ConversationMessage {
                 role: "user".to_string(),
                 content: "continue work".to_string(),
+                tool_calls: None,
+                tool_call_id: None,
             }],
         );
 

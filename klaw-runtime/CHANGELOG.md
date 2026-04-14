@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- `/approve` 在 shell 命令执行失败或超时后，runtime 现在会显式检查首轮 follow-up 是否真的发起了工具调用；若没有，则自动注入第二轮必须调用工具的修复/重试子回合，而不再只靠 prompt 提示模型“准备重试”
+- `/approve` 现在会优先按触发审批的 `tool_audit` 重放原始 tool call，并把已批准工具的实际结果作为结构化 tool 历史交回模型；shell 与其它接入审批的工具都不再依赖 prompt 式 follow-up 或 runtime 侧第二轮强制重试
 
 ### Changed
 

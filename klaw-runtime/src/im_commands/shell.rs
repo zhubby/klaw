@@ -1,81 +1,5 @@
 use super::*;
 
-#[derive(Debug, Clone)]
-pub(super) struct ApprovedShellExecution {
-    pub raw_output: String,
-    pub parsed: Option<ApprovedShellExecutionPayload>,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct ApprovedShellExecutionPayload {
-    pub success: bool,
-    pub timed_out: bool,
-}
-
-impl ApprovedShellExecution {
-    pub(super) fn needs_recovery_followup(&self) -> bool {
-        self.parsed
-            .as_ref()
-            .is_some_and(|payload| payload.timed_out || !payload.success)
-    }
-}
-
-pub(super) async fn execute_approved_shell(
-    runtime: &RuntimeBundle,
-    approval_id: &str,
-    session_key: &str,
-    command_text: &str,
-) -> Result<ApprovedShellExecution, Box<dyn Error>> {
-    let Some(shell_tool) = runtime.runtime.tools.get("shell") else {
-        let raw_output =
-            "⚠️ shell tool unavailable; approval has been recorded but command was not executed."
-                .to_string();
-        return Ok(ApprovedShellExecution {
-            parsed: parse_shell_execution_payload(&raw_output),
-            raw_output,
-        });
-    };
-    let mut metadata = BTreeMap::new();
-    metadata.insert(
-        "shell.approval_id".to_string(),
-        serde_json::Value::String(approval_id.to_string()),
-    );
-    let output = shell_tool
-        .execute(
-            json!({ "command": command_text }),
-            &ToolContext {
-                session_key: session_key.to_string(),
-                metadata,
-            },
-        )
-        .await;
-    match output {
-        Ok(output) => {
-            let raw_output = output
-                .content_for_user
-                .unwrap_or_else(|| output.content_for_model);
-            Ok(ApprovedShellExecution {
-                parsed: parse_shell_execution_payload(&raw_output),
-                raw_output,
-            })
-        }
-        Err(err) if err.code() == "approval_required" => {
-            let raw_output = err.message().to_string();
-            Ok(ApprovedShellExecution {
-                parsed: parse_shell_execution_payload(&raw_output),
-                raw_output,
-            })
-        }
-        Err(err) => {
-            let raw_output = format!("tool `shell` failed: {err}");
-            Ok(ApprovedShellExecution {
-                parsed: parse_shell_execution_payload(&raw_output),
-                raw_output,
-            })
-        }
-    }
-}
-
 pub(super) async fn execute_im_shell(
     runtime: &RuntimeBundle,
     session_key: &str,
@@ -193,16 +117,3 @@ fn append_stream_block(
     }
 }
 
-fn parse_shell_execution_payload(raw: &str) -> Option<ApprovedShellExecutionPayload> {
-    let payload = serde_json::from_str::<Value>(raw).ok()?;
-    Some(ApprovedShellExecutionPayload {
-        success: payload
-            .get("success")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        timed_out: payload
-            .get("timed_out")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    })
-}

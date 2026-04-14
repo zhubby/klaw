@@ -772,7 +772,13 @@ impl AgentLoop {
                 .await;
         }
 
-        if msg.payload.content.trim().is_empty() {
+        let allow_empty_content = msg
+            .payload
+            .metadata
+            .get("agent.resume_turn")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if msg.payload.content.trim().is_empty() && !allow_empty_content {
             if let Some(ref telemetry) = self.telemetry {
                 telemetry
                     .emit_audit_event(

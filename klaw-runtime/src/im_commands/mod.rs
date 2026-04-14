@@ -3,9 +3,11 @@ mod shell;
 mod usage;
 
 use super::*;
+use klaw_storage::{SessionStorage, ToolAuditQuery, ToolAuditRecord, ToolAuditSortOrder};
+use klaw_tool::ToolOutput;
 
 use parser::now_ms;
-use shell::{ApprovedShellExecution, execute_approved_shell, execute_im_shell};
+use shell::execute_im_shell;
 use usage::usage_response;
 
 pub(super) fn parse_im_command(input: &str) -> Option<(&str, Option<&str>)> {
@@ -20,56 +22,243 @@ pub(super) fn second_arg_token(arg: Option<&str>) -> Option<&str> {
     parser::second_arg_token(arg)
 }
 
-pub(super) fn build_approved_shell_followup_input(
-    approval_id: &str,
-    command_preview: &str,
-    execution_result: &str,
-) -> String {
-    format!(
-        "审批已通过并已执行命令。请基于以下执行结果继续处理本轮任务。\n\
-        要求：\n\
-        1) 先判断这次命令执行是成功、失败还是超时\n\
-        2) 如果失败或超时，而且看起来属于一次额外工具调用就能修复的命令/参数/环境问题，你必须在这一轮里直接发起那次修复或重试，不要先让用户手动重试\n\
-        3) 最多只允许一次额外工具调用；若执行已成功，或失败明显无法靠一次额外工具调用修复，直接给出最终结论\n\
-        4) 只有在你明确判断一次额外工具调用也无法合理解决时，才向用户说明最关键原因和下一步建议\n\n\
-        approval_id: {}\n\
-        command: {}\n\
-        shell_result:\n{}",
-        approval_id, command_preview, execution_result
-    )
+fn parse_chat_record_metadata_json(raw: &str) -> Option<BTreeMap<String, Value>> {
+    serde_json::from_str::<serde_json::Map<String, Value>>(raw)
+        .ok()
+        .map(|metadata| metadata.into_iter().collect())
 }
 
-fn build_approved_shell_forced_retry_input(
-    approval_id: &str,
-    command_preview: &str,
-    execution_result: &str,
-    prior_reply: Option<&str>,
-) -> String {
-    let prior_reply_section = prior_reply
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("\n\n上一条 assistant 回复（未实际调用工具）:\n{value}"))
-        .unwrap_or_default();
-    format!(
-        "审批已通过并已执行命令，但上一次 follow-up 没有真正发起工具调用。\
-        这次你必须立刻发起一次工具调用，直接尝试修复或重试；不要先解释计划，不要先让用户手动重试。\
-        如果有多个候选方案，选择最可能成功的一种并直接执行。\
-        只有在确实不存在任何合理工具调用可做时，才停止并给出最终结论。\n\n\
-        approval_id: {}\n\
-        command: {}\n\
-        shell_result:\n{}{}",
-        approval_id, command_preview, execution_result, prior_reply_section
-    )
+fn is_approval_prompt_record(record: &ChatRecord, approval_id: &str) -> bool {
+    if record.role != "assistant" {
+        return false;
+    }
+    let Some(metadata) = record
+        .metadata_json
+        .as_deref()
+        .and_then(parse_chat_record_metadata_json)
+    else {
+        return false;
+    };
+    let is_approval = metadata
+        .get("approval.required")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let matches_approval_id = metadata
+        .get("approval.id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == approval_id);
+    is_approval && matches_approval_id
 }
 
-fn should_force_approved_shell_retry(
-    execution: &ApprovedShellExecution,
-    tool_audits: &[klaw_agent::AgentToolAudit],
+#[derive(Debug, Clone)]
+struct ApprovedToolReplay {
+    tool_name: String,
+    tool_call_id: String,
+    arguments: Value,
+    tool_message_content: String,
+}
+
+fn parse_tool_signals_json(raw: Option<&str>) -> Vec<klaw_tool::ToolSignal> {
+    raw.and_then(|value| serde_json::from_str::<Vec<klaw_tool::ToolSignal>>(value).ok())
+        .unwrap_or_default()
+}
+
+fn parse_tool_call_id(metadata_json: Option<&str>) -> Option<String> {
+    metadata_json
+        .and_then(parse_chat_record_metadata_json)
+        .and_then(|metadata| {
+            metadata
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+}
+
+fn tool_audit_matches_approval(
+    audit: &ToolAuditRecord,
+    tool_name: &str,
+    approval_id: &str,
 ) -> bool {
-    execution.needs_recovery_followup() && tool_audits.is_empty()
+    if audit.tool_name != tool_name || !audit.approval_required {
+        return false;
+    }
+    parse_tool_signals_json(audit.signals_json.as_deref())
+        .into_iter()
+        .filter(|signal| signal.kind == "approval_required")
+        .any(|signal| {
+            signal
+                .payload
+                .get("approval_id")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value == approval_id)
+        })
 }
 
-async fn submit_approved_shell_followup(
+async fn find_approved_tool_audit(
+    runtime: &RuntimeBundle,
+    session_key: &str,
+    tool_name: &str,
+    approval_id: &str,
+) -> Option<ToolAuditRecord> {
+    runtime
+        .session_store
+        .list_tool_audit(&ToolAuditQuery {
+            session_key: Some(session_key.to_string()),
+            tool_name: Some(tool_name.to_string()),
+            started_from_ms: None,
+            started_to_ms: None,
+            limit: 100,
+            offset: 0,
+            sort_order: ToolAuditSortOrder::StartedAtDesc,
+        })
+        .await
+        .ok()?
+        .into_iter()
+        .find(|audit| tool_audit_matches_approval(audit, tool_name, approval_id))
+}
+
+fn replay_tool_result_content(
+    tool_name: &str,
+    output: Result<ToolOutput, klaw_tool::ToolError>,
+) -> String {
+    match output {
+        Ok(output) => {
+            let signals = output
+                .signals
+                .into_iter()
+                .map(|signal| klaw_agent::ToolInvocationSignal {
+                    kind: signal.kind,
+                    payload: signal.payload,
+                })
+                .collect::<Vec<_>>();
+            let result = if signals.is_empty() {
+                klaw_agent::ToolInvocationResult::success(output.content_for_model)
+            } else {
+                klaw_agent::ToolInvocationResult::success_with_signals(
+                    output.content_for_model,
+                    signals,
+                )
+            };
+            result.to_tool_message_content(tool_name)
+        }
+        Err(err) => klaw_agent::ToolInvocationResult::error(
+            err.message().to_string(),
+            err.code().to_string(),
+            err.details().cloned(),
+            err.retryable(),
+            err.signals()
+                .iter()
+                .cloned()
+                .map(|signal| klaw_agent::ToolInvocationSignal {
+                    kind: signal.kind,
+                    payload: signal.payload,
+                })
+                .collect(),
+        )
+        .to_tool_message_content(tool_name),
+    }
+}
+
+async fn replay_approved_tool(
+    runtime: &RuntimeBundle,
+    approval_id: &str,
+    session_key: &str,
+    tool_name: &str,
+    command_text: &str,
+) -> Result<Option<ApprovedToolReplay>, Box<dyn Error>> {
+    let audit = find_approved_tool_audit(runtime, session_key, tool_name, approval_id).await;
+    let arguments = audit
+        .as_ref()
+        .and_then(|record| serde_json::from_str::<Value>(&record.arguments_json).ok())
+        .or_else(|| (tool_name == "shell").then(|| json!({ "command": command_text })));
+    let Some(arguments) = arguments else {
+        return Ok(None);
+    };
+    let tool_call_id = audit
+        .as_ref()
+        .and_then(|record| parse_tool_call_id(record.metadata_json.as_deref()))
+        .unwrap_or_else(|| format!("approved-{tool_name}-{approval_id}"));
+    let Some(tool) = runtime.runtime.tools.get(tool_name) else {
+        return Ok(Some(ApprovedToolReplay {
+            tool_name: tool_name.to_string(),
+            tool_call_id,
+            arguments,
+            tool_message_content: klaw_agent::ToolInvocationResult::error(
+                format!("tool `{tool_name}` not found"),
+                "tool_not_found".to_string(),
+                None,
+                false,
+                Vec::new(),
+            )
+            .to_tool_message_content(tool_name),
+        }));
+    };
+    let mut metadata = BTreeMap::new();
+    metadata.insert("approval.id".to_string(), Value::String(approval_id.to_string()));
+    metadata.insert(
+        "approval.tool_name".to_string(),
+        Value::String(tool_name.to_string()),
+    );
+    metadata.insert("approval.approved".to_string(), Value::Bool(true));
+    if tool_name == "shell" {
+        metadata.insert(
+            "shell.approval_id".to_string(),
+            Value::String(approval_id.to_string()),
+        );
+    }
+    let tool_message_content = replay_tool_result_content(
+        tool_name,
+        tool.execute(
+            arguments.clone(),
+            &ToolContext {
+                session_key: session_key.to_string(),
+                metadata,
+            },
+        )
+        .await,
+    );
+    Ok(Some(ApprovedToolReplay {
+        tool_name: tool_name.to_string(),
+        tool_call_id,
+        arguments,
+        tool_message_content,
+    }))
+}
+
+fn build_approved_tool_resume_history(
+    mut full_history: Vec<ChatRecord>,
+    approval_id: &str,
+    replay: &ApprovedToolReplay,
+) -> Vec<ConversationMessage> {
+    if full_history
+        .last()
+        .is_some_and(|record| is_approval_prompt_record(record, approval_id))
+    {
+        full_history.pop();
+    }
+    let mut conversation_history = to_conversation_messages(&full_history);
+    conversation_history.push(ConversationMessage {
+        role: "assistant".to_string(),
+        content: String::new(),
+        tool_calls: Some(vec![klaw_llm::ToolCall {
+            id: Some(replay.tool_call_id.clone()),
+            name: replay.tool_name.clone(),
+            arguments: replay.arguments.clone(),
+        }]),
+        tool_call_id: None,
+    });
+    conversation_history.push(ConversationMessage {
+        role: "tool".to_string(),
+        content: replay.tool_message_content.clone(),
+        tool_calls: None,
+        tool_call_id: Some(replay.tool_call_id.clone()),
+    });
+    conversation_history
+}
+
+async fn submit_approved_tool_resume(
     runtime: &RuntimeBundle,
     followup_channel: String,
     followup_chat_id: String,
@@ -78,51 +267,30 @@ async fn submit_approved_shell_followup(
     model: String,
     request_metadata: BTreeMap<String, Value>,
     approval_id: &str,
-    command_preview: &str,
-    execution: &ApprovedShellExecution,
+    tool_name: &str,
+    command_text: &str,
 ) -> Result<Option<AssistantOutput>, Box<dyn Error>> {
-    let first_input =
-        build_approved_shell_followup_input(approval_id, command_preview, &execution.raw_output);
-    let first_outcome = submit_and_get_turn_outcome(
-        runtime,
-        followup_channel.clone(),
-        first_input,
-        session_key.clone(),
-        followup_chat_id.clone(),
-        "local-user".to_string(),
-        model_provider.clone(),
-        model.clone(),
-        Vec::new(),
-        build_approved_shell_followup_request_metadata(&request_metadata, false),
-    )
-    .await?;
-    if !should_force_approved_shell_retry(execution, &first_outcome.tool_audits) {
-        return Ok(first_outcome.output);
-    }
-
-    let second_input = build_approved_shell_forced_retry_input(
-        approval_id,
-        command_preview,
-        &execution.raw_output,
-        first_outcome
-            .output
-            .as_ref()
-            .map(|output| output.content.as_str()),
-    );
-    let second_outcome = submit_and_get_turn_outcome(
+    let Some(replay) =
+        replay_approved_tool(runtime, approval_id, &session_key, tool_name, command_text).await?
+    else {
+        return Ok(None);
+    };
+    let full_history = session_manager(runtime).read_chat_records(&session_key).await?;
+    let conversation_history = build_approved_tool_resume_history(full_history, approval_id, &replay);
+    let outcome = submit_history_only_turn_outcome(
         runtime,
         followup_channel,
-        second_input,
         session_key,
         followup_chat_id,
         "local-user".to_string(),
         model_provider,
         model,
         Vec::new(),
-        build_approved_shell_followup_request_metadata(&request_metadata, true),
+        inherited_channel_runtime_metadata(&request_metadata),
+        conversation_history,
     )
     .await?;
-    Ok(second_outcome.output.or(first_outcome.output))
+    Ok(outcome.output)
 }
 
 fn approval_link_metadata_matches_route(
@@ -484,23 +652,6 @@ pub(super) async fn handle_im_command(
                         )
                         .await?
                         .approval;
-                    if approved.tool_name != "shell" {
-                        return Ok(Some(channel_response(
-                            format!(
-                                "✅ Approval granted: `{}` (`{}`).\n\n请重试之前触发审批的操作。",
-                                approved.id, approved.tool_name
-                            ),
-                            None,
-                            BTreeMap::new(),
-                        )));
-                    }
-                    let execution_result = execute_approved_shell(
-                        runtime,
-                        &approved.id,
-                        &approved.session_key,
-                        &approved.command_text,
-                    )
-                    .await?;
                     let (followup_channel, followup_chat_id, stored_delivery_metadata) =
                         approval_followup_context(
                             runtime,
@@ -516,7 +667,7 @@ pub(super) async fn handle_im_command(
                             followup_request_metadata.entry(key).or_insert(value);
                         }
                     }
-                    let maybe_output = submit_approved_shell_followup(
+                    let maybe_output = submit_approved_tool_resume(
                         runtime,
                         followup_channel,
                         followup_chat_id,
@@ -525,8 +676,8 @@ pub(super) async fn handle_im_command(
                         route.model.clone(),
                         followup_request_metadata,
                         &approved.id,
-                        &approved.command_preview,
-                        &execution_result,
+                        &approved.tool_name,
+                        &approved.command_text,
                     )
                     .await?;
                     match maybe_output {
@@ -535,8 +686,8 @@ pub(super) async fn handle_im_command(
                         }
                         None => channel_response(
                             format!(
-                                "✅ **Approval granted and command executed**\n\n{}",
-                                execution_result.raw_output
+                                "✅ Approval granted: `{}` (`{}`).\n\n找不到原始工具调用审计，无法自动恢复；请重新触发该操作。",
+                                approved.id, approved.tool_name
                             ),
                             None,
                             BTreeMap::new(),
@@ -751,47 +902,6 @@ pub(super) async fn handle_im_command(
         }
     };
     Ok(Some(response))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shell_failure_without_tool_call_forces_second_recovery_turn() {
-        let execution = ApprovedShellExecution {
-            raw_output: "{\"success\":false,\"timed_out\":false}".to_string(),
-            parsed: Some(shell::ApprovedShellExecutionPayload {
-                success: false,
-                timed_out: false,
-            }),
-        };
-
-        assert!(should_force_approved_shell_retry(&execution, &[]));
-    }
-
-    #[test]
-    fn shell_failure_with_tool_call_does_not_force_second_recovery_turn() {
-        let execution = ApprovedShellExecution {
-            raw_output: "{\"success\":false,\"timed_out\":false}".to_string(),
-            parsed: Some(shell::ApprovedShellExecutionPayload {
-                success: false,
-                timed_out: false,
-            }),
-        };
-        let tool_audits = vec![klaw_agent::AgentToolAudit {
-            request_seq: 1,
-            tool_call_seq: 1,
-            tool_call_id: Some("call-1".to_string()),
-            tool_name: "shell".to_string(),
-            arguments: json!({"command":"retry"}),
-            result: klaw_agent::ToolInvocationResult::success("ok".to_string()),
-            started_at_ms: 0,
-            finished_at_ms: 1,
-        }];
-
-        assert!(!should_force_approved_shell_retry(&execution, &tool_audits));
-    }
 }
 
 fn render_help_text(runtime: &RuntimeBundle) -> String {

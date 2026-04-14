@@ -45,6 +45,10 @@ pub struct AgentExecutionLimits {
 pub struct ConversationMessage {
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<klaw_llm::ToolCall>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -352,17 +356,19 @@ pub async fn run_agent_execution(
                 role: message.role,
                 content: message.content,
                 media: Vec::new(),
-                tool_calls: None,
-                tool_call_id: None,
+                tool_calls: message.tool_calls,
+                tool_call_id: message.tool_call_id,
             }),
     );
-    llm_messages.push(LlmMessage {
-        role: "user".to_string(),
-        content: input.user_content,
-        media: input.user_media,
-        tool_calls: None,
-        tool_call_id: None,
-    });
+    if !input.user_content.trim().is_empty() || !input.user_media.is_empty() {
+        llm_messages.push(LlmMessage {
+            role: "user".to_string(),
+            content: input.user_content,
+            media: input.user_media,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
     let mut tool_calls_used = 0u32;
     let mut tool_signals = Vec::new();
     let mut request_usages = Vec::new();
@@ -988,10 +994,14 @@ mod tests {
                     ConversationMessage {
                         role: "user".to_string(),
                         content: "previous user".to_string(),
+                        tool_calls: None,
+                        tool_call_id: None,
                     },
                     ConversationMessage {
                         role: "assistant".to_string(),
                         content: "previous assistant".to_string(),
+                        tool_calls: None,
+                        tool_call_id: None,
                     },
                 ],
                 session_key: "s1".to_string(),

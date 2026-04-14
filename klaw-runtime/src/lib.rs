@@ -443,7 +443,6 @@ pub struct AssistantOutput {
 #[derive(Debug, Clone)]
 pub(crate) struct AssistantTurnOutcome {
     pub output: Option<AssistantOutput>,
-    pub tool_audits: Vec<klaw_agent::AgentToolAudit>,
 }
 
 fn parse_outbound_attachments(
@@ -514,8 +513,6 @@ const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
 const META_PROVIDER_KEY: &str = "agent.provider_id";
 const META_MODEL_KEY: &str = "agent.model";
 const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
-const META_MAX_TOOL_ITERATIONS_KEY: &str = "agent.max_tool_iterations";
-const META_MAX_TOOL_CALLS_KEY: &str = "agent.max_tool_calls";
 
 #[derive(Debug, Clone)]
 struct SessionRoute {
@@ -1046,22 +1043,6 @@ fn build_new_session_bootstrap_request_metadata(
         META_TOOL_CHOICE_KEY.to_string(),
         Value::String("required".to_string()),
     );
-    metadata
-}
-
-fn build_approved_shell_followup_request_metadata(
-    request_metadata: &BTreeMap<String, Value>,
-    require_tool_choice: bool,
-) -> BTreeMap<String, Value> {
-    let mut metadata = inherited_channel_runtime_metadata(request_metadata);
-    metadata.insert(META_MAX_TOOL_ITERATIONS_KEY.to_string(), Value::from(2_u64));
-    metadata.insert(META_MAX_TOOL_CALLS_KEY.to_string(), Value::from(1_u64));
-    if require_tool_choice {
-        metadata.insert(
-            META_TOOL_CHOICE_KEY.to_string(),
-            Value::String("required".to_string()),
-        );
-    }
     metadata
 }
 
@@ -2363,8 +2344,19 @@ fn to_conversation_messages(records: &[ChatRecord]) -> Vec<ConversationMessage> 
         .map(|record| ConversationMessage {
             role: record.role.clone(),
             content: record.content.clone(),
+            tool_calls: None,
+            tool_call_id: None,
         })
         .collect()
+}
+
+fn serialize_conversation_history(messages: Vec<ConversationMessage>) -> Value {
+    Value::Array(
+        messages
+            .into_iter()
+            .map(|message| serde_json::to_value(message).unwrap_or(Value::Null))
+            .collect(),
+    )
 }
 
 fn build_history_for_model(
@@ -2524,11 +2516,11 @@ pub(crate) async fn submit_and_get_turn_outcome(
         &full_history,
     )
     .await;
-    let conversation_history = build_history_for_model(
+    let conversation_history = to_conversation_messages(&build_history_for_model(
         full_history,
         runtime.conversation_history_limit,
         summary.as_ref(),
-    );
+    ));
     let header = EnvelopeHeader::new(session_key.clone());
     let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
     sessions
@@ -2557,17 +2549,7 @@ pub(crate) async fn submit_and_get_turn_outcome(
             let mut metadata = request_metadata;
             metadata.insert(
                 META_CONVERSATION_HISTORY_KEY.to_string(),
-                json!(
-                    conversation_history
-                        .into_iter()
-                        .map(|record| {
-                            json!({
-                                "role": record.role,
-                                "content": record.content,
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                ),
+                serialize_conversation_history(conversation_history),
             );
             metadata.insert(
                 META_PROVIDER_KEY.to_string(),
@@ -2596,7 +2578,6 @@ pub(crate) async fn submit_and_get_turn_outcome(
 
     let outcome = run_runtime_once(runtime).await?;
     enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
-    let tool_audits = outcome.tool_audits.clone();
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
             let agent_record = ChatRecord::new(
@@ -2634,10 +2615,114 @@ pub(crate) async fn submit_and_get_turn_outcome(
             Ok(None)
         }
     }
-    .map(|output| AssistantTurnOutcome {
-        output,
-        tool_audits,
-    })
+    .map(|output| AssistantTurnOutcome { output })
+}
+
+pub(crate) async fn submit_history_only_turn_outcome(
+    runtime: &RuntimeBundle,
+    channel: String,
+    session_key: String,
+    chat_id: String,
+    sender_id: String,
+    model_provider: String,
+    model: String,
+    media_references: Vec<MediaReference>,
+    request_metadata: BTreeMap<String, serde_json::Value>,
+    conversation_history: Vec<ConversationMessage>,
+) -> Result<AssistantTurnOutcome, Box<dyn std::error::Error>> {
+    let sessions = session_manager(runtime);
+    let session_state = sessions
+        .touch_session(&session_key, &chat_id, &channel)
+        .await?;
+    persist_session_delivery_metadata(
+        &sessions,
+        &session_key,
+        &chat_id,
+        &channel,
+        &request_metadata,
+    )
+    .await?;
+
+    let header = EnvelopeHeader::new(session_key.clone());
+    let inbound_payload = InboundMessage {
+        channel: channel.to_string(),
+        sender_id,
+        chat_id: chat_id.clone(),
+        session_key,
+        content: String::new(),
+        media_references,
+        metadata: {
+            let mut metadata = request_metadata;
+            metadata.insert(
+                META_CONVERSATION_HISTORY_KEY.to_string(),
+                serialize_conversation_history(conversation_history),
+            );
+            metadata.insert("agent.resume_turn".to_string(), Value::Bool(true));
+            metadata.insert(
+                META_PROVIDER_KEY.to_string(),
+                serde_json::Value::String(model_provider),
+            );
+            metadata.insert(META_MODEL_KEY.to_string(), serde_json::Value::String(model));
+            metadata
+        },
+    };
+    info!(
+        channel = %inbound_payload.channel,
+        chat_id = %inbound_payload.chat_id,
+        session_key = %inbound_payload.session_key,
+        "channel history-only inbound normalized"
+    );
+    trace!(inbound = ?inbound_payload, "channel history-only inbound normalized");
+
+    runtime
+        .inbound_transport
+        .enqueue(Envelope {
+            header,
+            metadata: BTreeMap::new(),
+            payload: inbound_payload,
+        })
+        .await;
+
+    let outcome = run_runtime_once(runtime).await?;
+    enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
+    match outcome.final_response {
+        Some(msg) if should_emit_outbound(&msg) => {
+            let agent_record = ChatRecord::new(
+                "assistant",
+                msg.payload.content.clone(),
+                Some(msg.header.message_id.to_string()),
+            )
+            .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
+            persist_assistant_response_state(
+                runtime,
+                &msg.header.session_key,
+                &msg.payload.chat_id,
+                &msg.payload.channel,
+                session_state.turn_count,
+                &msg.header.message_id,
+                &msg.payload.metadata,
+                &agent_record,
+            )
+            .await;
+            let reasoning = msg
+                .payload
+                .metadata
+                .get("reasoning")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+                .filter(|value| !value.trim().is_empty());
+            Ok(Some(AssistantOutput {
+                content: msg.payload.content.clone(),
+                reasoning,
+                metadata: msg.payload.metadata.clone(),
+            }))
+        }
+        Some(_) | None => {
+            warn!("no outbound response produced");
+            Ok(None)
+        }
+    }
+    .map(|output| AssistantTurnOutcome { output })
 }
 
 pub async fn submit_and_get_output(
@@ -3530,8 +3615,7 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        META_TOOL_CHOICE_KEY, RuntimeBundle, StartupReport, approval_manager, ask_question_manager,
-        build_approved_shell_followup_request_metadata,
+        RuntimeBundle, StartupReport, approval_manager, ask_question_manager,
         build_ask_question_followup_request_metadata, build_history_for_model,
         build_new_session_bootstrap_user_message, build_unavailable_provider, builtin_tool_names,
         compression_trigger_interval, configured_default_model, extract_skill_short_description,
@@ -3545,7 +3629,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use klaw_agent::{AgentExecutionOutput, AgentRequestAudit, ConversationSummary};
-    use klaw_approval::{ApprovalCreateInput, ApprovalManager};
+    use klaw_approval::{ApprovalCreateInput, ApprovalManager, SqliteApprovalManager};
     use klaw_archive::{
         ArchiveBlob, ArchiveError, ArchiveIngestInput, ArchiveMediaKind, ArchiveQuery,
         ArchiveRecord, ArchiveService, ArchiveSourceKind,
@@ -3561,11 +3645,10 @@ mod tests {
     use klaw_gateway::{
         GatewayWebhookAgentRequest, GatewayWebhookRequest, GatewayWebsocketBroadcaster,
     };
-    use klaw_llm::{ChatOptions, LlmAuditPayload, LlmError, LlmProvider};
-    use klaw_session::{ChatRecord, SessionManager, SqliteSessionManager};
-    use klaw_storage::{ApprovalStatus, HeartbeatStorage};
-    use klaw_storage::{DefaultSessionStore, NewLlmUsageRecord, StoragePaths};
-    use klaw_tool::{ShellTool, SubAgentAuditSink, ToolRegistry};
+    use klaw_llm::{ChatOptions, LlmAuditPayload, LlmError, LlmProvider, ToolCall};
+    use klaw_session::{ChatRecord, NewToolAuditRecord, SessionManager, SqliteSessionManager, ToolAuditStatus};
+    use klaw_storage::{ApprovalStatus, DefaultSessionStore, HeartbeatStorage, NewLlmUsageRecord, SessionStorage, StoragePaths};
+    use klaw_tool::{ShellTool, SubAgentAuditSink, Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolRegistry, ToolSignal};
     use klaw_util::EnvironmentCheckReport;
     use serde_json::{Value, json};
     use std::{
@@ -3581,8 +3664,227 @@ mod tests {
     #[derive(Default, Clone)]
     struct BootstrapCaptureProvider {
         last_user_message: Arc<Mutex<Option<String>>>,
+        last_messages: Arc<Mutex<Vec<klaw_llm::LlmMessage>>>,
         last_model: Arc<Mutex<Option<String>>>,
         last_tool_choice: Arc<Mutex<Option<Value>>>,
+    }
+
+    #[derive(Default, Clone)]
+    struct ApprovalResumeShellProvider {
+        observed_messages: Arc<Mutex<Vec<klaw_llm::LlmMessage>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for ApprovalResumeShellProvider {
+        fn name(&self) -> &str {
+            "approval-resume-shell"
+        }
+
+        fn default_model(&self) -> &str {
+            "approval-resume-shell-model"
+        }
+
+        async fn chat(
+            &self,
+            messages: Vec<klaw_llm::LlmMessage>,
+            _tools: Vec<klaw_llm::ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<klaw_llm::LlmResponse, LlmError> {
+            *self
+                .observed_messages
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = messages.clone();
+
+            let saw_failed_shell_tool = messages.iter().any(|message| {
+                message.role == "tool"
+                    && message.content.contains("\"tool\":\"shell\"")
+                    && message.content.contains("command")
+                    && message.content.contains("false")
+                    && !message.content.contains("recovered-after-approval")
+            });
+            let saw_recovery_shell_tool = messages.iter().any(|message| {
+                message.role == "tool"
+                    && message.content.contains("printf recovered-after-approval")
+                    && message.content.contains("recovered-after-approval")
+            });
+
+            if saw_recovery_shell_tool {
+                return Ok(klaw_llm::LlmResponse {
+                    content: "handled approval failure via normal tool loop".to_string(),
+                    reasoning: None,
+                    tool_calls: Vec::new(),
+                    usage: None,
+                    usage_source: None,
+                    audit: None,
+                });
+            }
+
+            if saw_failed_shell_tool {
+                return Ok(klaw_llm::LlmResponse {
+                    content: String::new(),
+                    reasoning: None,
+                    tool_calls: vec![ToolCall {
+                        id: Some("call_recover_shell".to_string()),
+                        name: "shell".to_string(),
+                        arguments: json!({ "command": "printf recovered-after-approval" }),
+                    }],
+                    usage: None,
+                    usage_source: None,
+                    audit: None,
+                });
+            }
+
+            Ok(klaw_llm::LlmResponse {
+                content: "missing approved tool history".to_string(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
+                audit: None,
+            })
+        }
+    }
+
+    #[derive(Default, Clone)]
+    struct ApprovalResumeGenericProvider {
+        observed_messages: Arc<Mutex<Vec<klaw_llm::LlmMessage>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for ApprovalResumeGenericProvider {
+        fn name(&self) -> &str {
+            "approval-resume-generic"
+        }
+
+        fn default_model(&self) -> &str {
+            "approval-resume-generic-model"
+        }
+
+        async fn chat(
+            &self,
+            messages: Vec<klaw_llm::LlmMessage>,
+            _tools: Vec<klaw_llm::ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<klaw_llm::LlmResponse, LlmError> {
+            *self
+                .observed_messages
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = messages.clone();
+
+            let saw_generic_tool = messages.iter().any(|message| {
+                message.role == "tool"
+                    && message.content.contains("\"tool\":\"approval_echo\"")
+                    && message.content.contains("approved echo: generic-ok")
+            });
+
+            Ok(klaw_llm::LlmResponse {
+                content: if saw_generic_tool {
+                    "generic approval resumed automatically".to_string()
+                } else {
+                    "missing generic approval tool history".to_string()
+                },
+                reasoning: None,
+                tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
+                audit: None,
+            })
+        }
+    }
+
+    struct ApprovalEchoTool {
+        manager: SqliteApprovalManager,
+    }
+
+    impl ApprovalEchoTool {
+        fn with_store(store: DefaultSessionStore) -> Self {
+            Self {
+                manager: SqliteApprovalManager::from_store(store),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Tool for ApprovalEchoTool {
+        fn name(&self) -> &str {
+            "approval_echo"
+        }
+
+        fn description(&self) -> &str {
+            "Test-only tool that requires approval once and then echoes a value."
+        }
+
+        fn parameters(&self) -> Value {
+            json!({
+                "type": "object",
+                "properties": {
+                    "value": { "type": "string" }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+            })
+        }
+
+        fn category(&self) -> ToolCategory {
+            ToolCategory::Messaging
+        }
+
+        async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+            let value = args
+                .get("value")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| ToolError::InvalidArgs("`value` cannot be empty".to_string()))?;
+            if ctx
+                .metadata
+                .get("approval.id")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                let content = format!("approved echo: {value}");
+                return Ok(ToolOutput {
+                    content_for_model: content.clone(),
+                    content_for_user: Some(content),
+                    signals: Vec::new(),
+                });
+            }
+
+            let approval = self
+                .manager
+                .create_approval(ApprovalCreateInput {
+                    session_key: ctx.session_key.clone(),
+                    tool_name: self.name().to_string(),
+                    command_text: serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string()),
+                    command_preview: Some(format!("approval_echo {value}")),
+                    command_hash: None,
+                    risk_level: Some("mutating".to_string()),
+                    requested_by: Some("agent".to_string()),
+                    justification: None,
+                    expires_in_minutes: Some(10),
+                })
+                .await
+                .map_err(|err| ToolError::ExecutionFailed(format!("failed to create approval: {err}")))?;
+            Err(ToolError::structured_execution_failed(
+                format!("approval required for approval_echo `{value}`"),
+                "approval_required",
+                Some(json!({
+                    "approval_id": approval.id,
+                    "tool_name": self.name(),
+                    "session_key": ctx.session_key,
+                })),
+                true,
+                vec![ToolSignal::approval_required(
+                    &approval.id,
+                    self.name(),
+                    &ctx.session_key,
+                    Some("mutating"),
+                    Some(&format!("approval_echo {value}")),
+                )],
+            ))
+        }
     }
 
     #[derive(Default)]
@@ -3721,6 +4023,10 @@ mod tests {
             model: Option<&str>,
             options: ChatOptions,
         ) -> Result<klaw_llm::LlmResponse, LlmError> {
+            *self
+                .last_messages
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = messages.clone();
             let last_user_message = messages
                 .iter()
                 .rev()
@@ -5212,53 +5518,6 @@ A .docx file is a ZIP archive containing XML files.
     }
 
     #[test]
-    fn approved_shell_followup_metadata_inherits_channel_state_and_limits_retries() {
-        let metadata = build_approved_shell_followup_request_metadata(
-            &BTreeMap::from([
-                ("channel.delivery_mode".to_string(), json!("direct_reply")),
-                (
-                    "channel.base_session_key".to_string(),
-                    json!("telegram:base:chat-1"),
-                ),
-                ("other".to_string(), json!("ignored")),
-            ]),
-            false,
-        );
-
-        assert_eq!(
-            metadata.get("channel.delivery_mode"),
-            Some(&json!("direct_reply"))
-        );
-        assert_eq!(
-            metadata.get("channel.base_session_key"),
-            Some(&json!("telegram:base:chat-1"))
-        );
-        assert_eq!(metadata.get("agent.max_tool_iterations"), Some(&json!(2)));
-        assert_eq!(metadata.get("agent.max_tool_calls"), Some(&json!(1)));
-        assert!(!metadata.contains_key("other"));
-    }
-
-    #[test]
-    fn approved_shell_followup_metadata_can_require_a_tool_choice() {
-        let metadata = build_approved_shell_followup_request_metadata(&BTreeMap::new(), true);
-
-        assert_eq!(metadata.get(META_TOOL_CHOICE_KEY), Some(&json!("required")));
-    }
-
-    #[test]
-    fn approved_shell_followup_input_requires_automatic_retry_before_asking_user() {
-        let prompt = im_commands::build_approved_shell_followup_input(
-            "approval-1",
-            "rm -rf /tmp/demo",
-            "tool `shell` failed: exit code 1",
-        );
-
-        assert!(prompt.contains("你必须在这一轮里直接发起那次修复或重试"));
-        assert!(prompt.contains("不要先让用户手动重试"));
-        assert!(prompt.contains("最多只允许一次额外工具调用"));
-    }
-
-    #[test]
     fn ask_question_followup_metadata_inherits_channel_state_and_structured_answer() {
         let metadata = build_ask_question_followup_request_metadata(
             &BTreeMap::from([
@@ -5411,7 +5670,7 @@ A .docx file is a ZIP archive containing XML files.
     #[tokio::test(flavor = "current_thread")]
     async fn approve_command_accepts_linked_execution_session_approval() {
         let provider = Arc::new(BootstrapCaptureProvider::default());
-        let runtime = build_test_runtime(provider.clone()).await;
+        let mut runtime = build_test_runtime(provider.clone()).await;
         let channel = "telegram".to_string();
         let base_session_key = "telegram:tg7:chat-linked".to_string();
         let active_session_key = "telegram:tg7:chat-linked:active".to_string();
@@ -5464,6 +5723,17 @@ A .docx file is a ZIP archive containing XML files.
             .await
             .expect("execution delivery metadata should persist");
 
+        let workspace =
+            std::env::temp_dir().join(format!("klaw-linked-approval-shell-{}", Uuid::new_v4()));
+        fs::create_dir_all(&workspace).expect("workspace should be created");
+        let workspace = fs::canonicalize(workspace).expect("workspace should canonicalize");
+        let mut config = AppConfig::default();
+        config.tools.shell.workspace = Some(workspace.display().to_string());
+        runtime.runtime.tools.register(ShellTool::with_store(
+            &config,
+            runtime.session_store.clone(),
+        ));
+
         let manager = approval_manager(&runtime);
         let approval = manager
             .create_approval(ApprovalCreateInput {
@@ -5471,7 +5741,7 @@ A .docx file is a ZIP archive containing XML files.
                 tool_name: "shell".to_string(),
                 command_text: "printf linked-approval".to_string(),
                 command_preview: Some("printf linked-approval".to_string()),
-                command_hash: Some("linked-command-hash-1".to_string()),
+                command_hash: None,
                 risk_level: Some("unsafe".to_string()),
                 requested_by: Some("agent".to_string()),
                 justification: None,
@@ -5494,13 +5764,201 @@ A .docx file is a ZIP archive containing XML files.
 
         assert_eq!(response.content, "bootstrap reply");
         let captured = provider
-            .last_user_message
+            .last_messages
             .lock()
             .unwrap_or_else(|err| err.into_inner())
-            .clone()
-            .expect("follow-up user message should be captured");
-        assert!(captured.contains("shell_result:"));
-        assert!(captured.contains("linked-approval"));
+            .clone();
+        assert!(
+            captured.iter().any(|message| {
+                message.role == "tool"
+                    && message.tool_call_id.is_some()
+                    && message.content.contains("linked-approval")
+            })
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approve_command_feeds_failed_shell_back_into_normal_tool_loop() {
+        let provider = Arc::new(ApprovalResumeShellProvider::default());
+        let mut runtime = build_test_runtime(provider.clone()).await;
+        runtime.runtime.limits = RunLimits {
+            max_tool_iterations: 4,
+            max_tool_calls: 4,
+            token_budget: 0,
+            agent_timeout: Duration::from_secs(5),
+            tool_timeout: Duration::from_secs(5),
+        };
+        let channel = "telegram".to_string();
+        let session_key = "telegram:chat-approval-normal-loop".to_string();
+        let chat_id = "chat-approval-normal-loop".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("session should exist");
+
+        let workspace =
+            std::env::temp_dir().join(format!("klaw-approval-shell-loop-{}", Uuid::new_v4()));
+        fs::create_dir_all(&workspace).expect("workspace should be created");
+        let workspace = fs::canonicalize(workspace).expect("workspace should canonicalize");
+
+        let mut config = AppConfig::default();
+        config.tools.shell.workspace = Some(workspace.display().to_string());
+        config.tools.shell.unsafe_patterns = vec!["false".to_string()];
+        runtime.runtime.tools.register(ShellTool::with_store(
+            &config,
+            runtime.session_store.clone(),
+        ));
+
+        let manager = approval_manager(&runtime);
+        let approval = manager
+            .create_approval(ApprovalCreateInput {
+                session_key: session_key.clone(),
+                tool_name: "shell".to_string(),
+                command_text: "false".to_string(),
+                command_preview: Some("false".to_string()),
+                command_hash: None,
+                risk_level: Some("unsafe".to_string()),
+                requested_by: Some("agent".to_string()),
+                justification: None,
+                expires_in_minutes: Some(10),
+            })
+            .await
+            .expect("approval should be created");
+
+        let response = im_commands::handle_im_command(
+            &runtime,
+            channel,
+            session_key,
+            chat_id,
+            format!("/approve {}", approval.id),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("approve command should succeed")
+        .expect("approve command should return a response");
+
+        let observed = provider
+            .observed_messages
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
+        assert_eq!(response.content, "handled approval failure via normal tool loop");
+        assert!(
+            observed
+                .iter()
+                .any(|message| message.role == "tool"
+                    && message.content.contains("\"tool\":\"shell\"")
+                    && message.content.contains("command")
+                    && message.content.contains("false"))
+        );
+        assert!(
+            observed
+                .iter()
+                .all(|message| !message.content.contains("审批已通过并已执行命令"))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approve_command_replays_non_shell_tool_from_audit_history() {
+        let provider = Arc::new(ApprovalResumeGenericProvider::default());
+        let mut runtime = build_test_runtime(provider.clone()).await;
+        runtime.runtime.tools.register(ApprovalEchoTool::with_store(
+            runtime.session_store.clone(),
+        ));
+        let channel = "telegram".to_string();
+        let session_key = "telegram:chat-approval-generic".to_string();
+        let chat_id = "chat-approval-generic".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("session should exist");
+
+        let manager = approval_manager(&runtime);
+        let approval = manager
+            .create_approval(ApprovalCreateInput {
+                session_key: session_key.clone(),
+                tool_name: "approval_echo".to_string(),
+                command_text: "{\"value\":\"generic-ok\"}".to_string(),
+                command_preview: Some("approval_echo generic-ok".to_string()),
+                command_hash: None,
+                risk_level: Some("mutating".to_string()),
+                requested_by: Some("agent".to_string()),
+                justification: None,
+                expires_in_minutes: Some(10),
+            })
+            .await
+            .expect("approval should be created");
+        runtime
+            .session_store
+            .append_tool_audit(&NewToolAuditRecord {
+                id: "tool-audit-approval-echo".to_string(),
+                session_key: session_key.clone(),
+                chat_id: chat_id.clone(),
+                turn_index: 1,
+                request_seq: 1,
+                tool_call_seq: 1,
+                tool_name: "approval_echo".to_string(),
+                status: ToolAuditStatus::Failed,
+                error_code: Some("approval_required".to_string()),
+                error_message: Some("approval requested".to_string()),
+                retryable: Some(true),
+                approval_required: true,
+                arguments_json: "{\"value\":\"generic-ok\"}".to_string(),
+                result_content: "approval requested".to_string(),
+                error_details_json: None,
+                signals_json: Some(
+                    format!(
+                        "[{{\"kind\":\"approval_required\",\"payload\":{{\"approval_id\":\"{}\",\"tool_name\":\"approval_echo\"}}}}]",
+                        approval.id
+                    ),
+                ),
+                metadata_json: Some("{\"tool_call_id\":\"call_approval_echo_1\"}".to_string()),
+                started_at_ms: 10,
+                finished_at_ms: 20,
+            })
+            .await
+            .expect("tool audit should append");
+
+        let response = im_commands::handle_im_command(
+            &runtime,
+            channel,
+            session_key,
+            chat_id,
+            format!("/approve {}", approval.id),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("approve command should succeed")
+        .expect("approve command should return a response");
+
+        assert_eq!(response.content, "generic approval resumed automatically");
+        let observed = provider
+            .observed_messages
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
+        assert!(
+            observed.iter().any(|message| {
+                message.role == "tool"
+                    && message.tool_call_id.as_deref() == Some("call_approval_echo_1")
+                    && message.content.contains("\"tool\":\"approval_echo\"")
+                    && message.content.contains("approved echo: generic-ok")
+            })
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
