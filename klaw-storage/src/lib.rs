@@ -1194,7 +1194,11 @@ mod tests {
             .await
             .expect("create approval should succeed");
         store
-            .update_approval_status("approval-shell-only-1", ApprovalStatus::Approved, Some("user"))
+            .update_approval_status(
+                "approval-shell-only-1",
+                ApprovalStatus::Approved,
+                Some("user"),
+            )
             .await
             .expect("approve should succeed");
 

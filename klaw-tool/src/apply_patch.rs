@@ -699,12 +699,11 @@ impl Tool for ApplyPatchTool {
         let request = Self::parse_request(args)?;
         let base = self.resolve_workspace_base(ctx)?;
         let approval_granted = self.check_approval(&base, &request, ctx).await?;
-        let payload = serde_json::to_value(
-            self.apply_patch(&base, request.operations, approval_granted)?,
-        )
-        .map_err(|err| {
-                ToolError::ExecutionFailed(format!("serialize apply_patch result: {err}"))
-            })?;
+        let payload =
+            serde_json::to_value(self.apply_patch(&base, request.operations, approval_granted)?)
+                .map_err(|err| {
+                    ToolError::ExecutionFailed(format!("serialize apply_patch result: {err}"))
+                })?;
 
         let content = serde_json::to_string_pretty(&payload).map_err(|err| {
             ToolError::ExecutionFailed(format!("failed to render fs output: {err}"))
@@ -720,8 +719,8 @@ impl Tool for ApplyPatchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klaw_storage::{ApprovalStatus, DefaultSessionStore, SessionStorage, StoragePaths};
     use klaw_config::AppConfig;
+    use klaw_storage::{ApprovalStatus, DefaultSessionStore, SessionStorage, StoragePaths};
     use serde_json::json;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -914,7 +913,10 @@ mod tests {
             META_WORKSPACE.to_string(),
             json!(workspace.to_string_lossy().to_string()),
         );
-        metadata.insert("apply_patch.approval_id".to_string(), json!(approval_id.clone()));
+        metadata.insert(
+            "apply_patch.approval_id".to_string(),
+            json!(approval_id.clone()),
+        );
         let approved_ctx = ToolContext {
             session_key: "s1".to_string(),
             metadata,
@@ -931,7 +933,11 @@ mod tests {
             )
             .await
             .expect("approved apply_patch should execute");
-        assert!(approved_exec.content_for_model.contains("\"operations_applied\": 1"));
+        assert!(
+            approved_exec
+                .content_for_model
+                .contains("\"operations_applied\": 1")
+        );
         assert_eq!(fs::read_to_string(&outside_file).unwrap(), "ok");
 
         let consumed = store
@@ -988,7 +994,11 @@ mod tests {
             )
             .await
             .expect("approved apply_patch should execute via latest approval");
-        assert!(approved_exec.content_for_model.contains("\"operations_applied\": 1"));
+        assert!(
+            approved_exec
+                .content_for_model
+                .contains("\"operations_applied\": 1")
+        );
         assert_eq!(fs::read_to_string(&outside_file).unwrap(), "ok");
 
         let consumed = store

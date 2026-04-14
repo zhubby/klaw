@@ -125,8 +125,20 @@ pub struct GatewayWebsocketSubmitRequest {
     pub session_key: String,
     pub chat_id: String,
     pub input: String,
+    pub attachments: Vec<GatewayWebsocketAttachmentRef>,
     pub metadata: BTreeMap<String, Value>,
     pub stream: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayWebsocketAttachmentRef {
+    pub archive_id: String,
+    #[serde(default)]
+    pub filename: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub size_bytes: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,6 +247,45 @@ pub trait GatewayWebsocketHandler: Send + Sync {
     ) -> Result<(), GatewayWebsocketHandlerError>;
 }
 
+fn normalize_submit_attachments(
+    archive_id: Option<String>,
+    attachments: Vec<GatewayWebsocketAttachmentRef>,
+) -> Vec<GatewayWebsocketAttachmentRef> {
+    let mut normalized = attachments
+        .into_iter()
+        .filter_map(|attachment| {
+            let archive_id = attachment.archive_id.trim().to_string();
+            (!archive_id.is_empty()).then_some(GatewayWebsocketAttachmentRef {
+                archive_id,
+                filename: attachment
+                    .filename
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                mime_type: attachment
+                    .mime_type
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                size_bytes: attachment.size_bytes,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if normalized.is_empty()
+        && let Some(archive_id) = archive_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    {
+        normalized.push(GatewayWebsocketAttachmentRef {
+            archive_id,
+            filename: None,
+            mime_type: None,
+            size_bytes: 0,
+        });
+    }
+
+    normalized
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum GatewayWebsocketClientFrame {
@@ -286,6 +337,10 @@ struct SessionSubmitParams {
     model_provider: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    archive_id: Option<String>,
+    #[serde(default)]
+    attachments: Vec<GatewayWebsocketAttachmentRef>,
     #[serde(default)]
     metadata: BTreeMap<String, Value>,
 }
@@ -748,14 +803,16 @@ async fn handle_text_message(
                         stream,
                         model_provider,
                         model,
+                        archive_id,
+                        attachments,
                         mut metadata,
                     } = params;
                     let input = input.trim().to_string();
-                    if input.is_empty() {
+                    if input.is_empty() && attachments.is_empty() && archive_id.is_none() {
                         return vec![error_frame(
                             Some(id),
                             "invalid_params",
-                            "session.submit requires a non-empty input",
+                            "session.submit requires non-empty input or attachments",
                         )];
                     }
                     if let Some(model_provider) = model_provider
@@ -794,6 +851,7 @@ async fn handle_text_message(
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| "default".to_string());
+                    let attachments = normalize_submit_attachments(archive_id, attachments);
                     let Some(websocket) = state.websocket.as_ref() else {
                         return vec![error_frame(
                             Some(id),
@@ -813,6 +871,7 @@ async fn handle_text_message(
                                     session_key,
                                     chat_id,
                                     input,
+                                    attachments,
                                     metadata,
                                     stream,
                                 },

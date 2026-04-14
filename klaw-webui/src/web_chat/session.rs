@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    ImCard, MessageRole, ProviderCatalog, ResolvedSessionRoute, WorkspaceSessionEntry,
-    resolve_im_card, resolve_session_route_inputs,
+    ImCard, MessageRole, ProviderCatalog, ResolvedSessionRoute, WebArchiveAttachment,
+    WorkspaceSessionEntry, resolve_im_card, resolve_session_route_inputs,
 };
 use eframe::epaint::{Color32, FontFamily, FontId};
 use js_sys::Date;
@@ -131,9 +131,10 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) markdown_cache: MarkdownCache,
     pub(in crate::web_chat) fade_in_messages: HashMap<String, TextAnimator>,
     pub(in crate::web_chat) card_state_overrides: HashMap<String, CardInteractionState>,
-    pub(in crate::web_chat) selected_archive_id: Rc<RefCell<Option<String>>>,
+    pub(in crate::web_chat) pending_attachments: Rc<RefCell<Vec<WebArchiveAttachment>>>,
     pub(in crate::web_chat) selecting_file: Rc<RefCell<bool>>,
     pub(in crate::web_chat) uploading_file: Rc<RefCell<bool>>,
+    pub(in crate::web_chat) show_file_dialog: bool,
     pub(in crate::web_chat) slash_completer: SlashCompleterState,
     pub(in crate::web_chat) subscribed: bool,
     pub(in crate::web_chat) history_has_more: bool,
@@ -166,9 +167,10 @@ impl SessionWindow {
             markdown_cache: MarkdownCache::default(),
             fade_in_messages: HashMap::new(),
             card_state_overrides: HashMap::new(),
-            selected_archive_id: Rc::new(RefCell::new(None)),
+            pending_attachments: Rc::new(RefCell::new(Vec::new())),
             selecting_file: Rc::new(RefCell::new(false)),
             uploading_file: Rc::new(RefCell::new(false)),
+            show_file_dialog: false,
             slash_completer: SlashCompleterState::default(),
             subscribed: false,
             history_has_more: true,

@@ -4,11 +4,12 @@ use crate::{
 use async_trait::async_trait;
 use klaw_channel::{ChannelResponse, websocket::WebsocketSubmitEnvelope};
 use klaw_config::{AppConfig, WebsocketConfig};
+use klaw_core::{MediaReference, MediaSourceKind};
 use klaw_gateway::{
     GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
-    GatewaySessionHistoryPage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
-    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-    GatewayWorkspaceSession, OutboundEvent,
+    GatewaySessionHistoryPage, GatewayWebsocketAttachmentRef, GatewayWebsocketHandler,
+    GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
+    GatewayWorkspaceBootstrap, GatewayWorkspaceSession, OutboundEvent,
 };
 use klaw_session::{SessionListQuery, SessionManager};
 use klaw_storage::StorageError;
@@ -85,6 +86,39 @@ fn resolved_history_session_key(session: &klaw_storage::SessionIndex) -> &str {
 fn parse_chat_record_metadata(raw: Option<&str>) -> BTreeMap<String, Value> {
     raw.and_then(|value| serde_json::from_str::<BTreeMap<String, Value>>(value).ok())
         .unwrap_or_default()
+}
+
+fn build_websocket_media_references(
+    attachments: &[GatewayWebsocketAttachmentRef],
+) -> Vec<MediaReference> {
+    attachments
+        .iter()
+        .map(|attachment| {
+            let mut metadata = BTreeMap::new();
+            metadata.insert(
+                "archive.id".to_string(),
+                Value::String(attachment.archive_id.clone()),
+            );
+            if let Some(mime_type) = attachment.mime_type.clone() {
+                metadata.insert("archive.mime_type".to_string(), Value::String(mime_type));
+            }
+            if attachment.size_bytes > 0 {
+                metadata.insert(
+                    "archive.size_bytes".to_string(),
+                    Value::from(attachment.size_bytes),
+                );
+            }
+            MediaReference {
+                source_kind: MediaSourceKind::UserUpload,
+                filename: attachment.filename.clone(),
+                mime_type: attachment.mime_type.clone(),
+                remote_url: None,
+                bytes: None,
+                message_id: None,
+                metadata,
+            }
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -218,6 +252,7 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
             session_key: request.session_key.clone(),
             chat_id: request.chat_id.clone(),
             input: request.input,
+            media_references: build_websocket_media_references(&request.attachments),
             metadata: request.metadata,
         }
         .into_channel_request();

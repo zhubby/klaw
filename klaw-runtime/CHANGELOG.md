@@ -4,6 +4,7 @@
 
 ### Changed
 
+- runtime gateway websocket handler 现在会把 `session.submit.attachments` 转成标准 `media_references` 注入 inbound turn，使浏览器一次提交的多个上传文件都能作为当前消息附件进入 agent loop
 - runtime 注册本地工具时，`apply_patch` 现在会像 `shell` 一样复用共享 session store 注入审批管理器，使越权补丁请求能进入统一的审批流并在批准后重试执行
 
 ### Fixed

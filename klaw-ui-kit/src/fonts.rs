@@ -20,8 +20,7 @@ const LXGW_WENKAI_PROPORTIONAL_NAME: &str = "lxgw-wenkai-regular";
 const LXGW_WENKAI_MONOSPACE_NAME: &str = "lxgw-wenkai-mono-regular";
 
 #[cfg(feature = "fonts-noto-sans")]
-const NOTO_SANS_SC_REGULAR_TTF: &[u8] =
-    include_bytes!("../fonts/noto-sans/NotoSansSC-Regular.ttf");
+const NOTO_SANS_SC_REGULAR_TTF: &[u8] = include_bytes!("../fonts/noto-sans/NotoSansSC-Regular.ttf");
 #[cfg(feature = "fonts-noto-sans")]
 const NOTO_SANS_MONO_REGULAR_TTF: &[u8] =
     include_bytes!("../fonts/noto-sans/NotoSansMono-Regular.ttf");

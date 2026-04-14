@@ -3,6 +3,7 @@ use eframe::egui::{
     ScrollArea, Stroke, TextEdit, TextStyle, TopBottomPanel, WidgetText, text_edit::TextEditState,
     vec2,
 };
+use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_ui_kit::toggle::toggle;
 use klaw_ui_kit::{ThemeSwitch, text_animator::TextAnimator};
@@ -10,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     ActiveSlashCommand, ConnectionState, ImCard, ImCardAction, ImCardActionKind, ImCardKind,
-    MessageRole, PageMode, SlashCommandCompletion, apply_slash_completion,
+    MessageRole, PageMode, SlashCommandCompletion, WebArchiveAttachment, apply_slash_completion,
     attachment_action_in_progress, can_trigger_file_picker, connection_action_label,
     delete_confirmation_body, derive_page_mode, detect_active_slash_command,
     normalize_gateway_token_input, resolve_im_card_palette, should_activate_session_window,
@@ -544,6 +545,9 @@ impl ChatApp {
         let mut trigger_file_picker = false;
         let mut trigger_card_action: Option<CardActionRequest> = None;
         let mut trigger_history_load: Option<PendingHistoryScrollRestore> = None;
+        let mut trigger_open_file_dialog = false;
+        let mut trigger_preview_attachment: Option<String> = None;
+        let mut remove_attachment_at: Option<usize> = None;
         let mut set_active = false;
         {
             let session = &mut self.sessions[index];
@@ -644,6 +648,7 @@ impl ChatApp {
                     let uploading_file = *session.uploading_file.borrow();
                     let attachment_busy =
                         attachment_action_in_progress(selecting_file, uploading_file);
+                    let attachment_count = session.pending_attachments.borrow().len();
                     let can_send = self.connection_state.borrow().can_send();
                     ui.label(
                         RichText::new("Type / to open command completion.")
@@ -821,12 +826,26 @@ impl ChatApp {
                         if ui
                             .add_enabled(
                                 can_trigger_file_picker(can_send, selecting_file, uploading_file),
-                                egui::Button::new(regular::PAPERCLIP).small(),
+                                egui::Button::new(format!("{} Upload", regular::PAPERCLIP)).small(),
                             )
-                            .on_hover_text("Attach file")
+                            .on_hover_text("Upload and attach files")
                             .clicked()
                         {
                             trigger_file_picker = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                attachment_count > 0,
+                                egui::Button::new(format!(
+                                    "{} File ({attachment_count})",
+                                    regular::FILE
+                                ))
+                                .small(),
+                            )
+                            .on_hover_text("Show uploaded files")
+                            .clicked()
+                        {
+                            trigger_open_file_dialog = true;
                         }
 
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -876,17 +895,7 @@ impl ChatApp {
                                     );
                                 }
                             });
-
-                            if session.selected_archive_id.borrow().is_some() {
-                                ui.label(
-                                    RichText::new(format!("{} File attached", regular::CHECK))
-                                        .small()
-                                        .color(ui.visuals().hyperlink_color),
-                                );
-                                if ui.small_button("✕").on_hover_text("Remove file").clicked() {
-                                    *session.selected_archive_id.borrow_mut() = None;
-                                }
-                            } else if selecting_file {
+                            if selecting_file {
                                 ui.spinner();
                                 ui.label(RichText::new("Selecting file...").small().weak());
                             } else if uploading_file {
@@ -910,6 +919,30 @@ impl ChatApp {
             }
         }
 
+        if let Some(index) = self.session_index(session_key) {
+            if trigger_open_file_dialog {
+                self.sessions[index].show_file_dialog = true;
+            }
+            if self.sessions[index].show_file_dialog {
+                let mut show_file_dialog = self.sessions[index].show_file_dialog;
+                let attachments = self.sessions[index].pending_attachments.borrow().clone();
+                render_session_file_dialog(
+                    ctx,
+                    &mut show_file_dialog,
+                    &attachments,
+                    &mut trigger_preview_attachment,
+                    &mut remove_attachment_at,
+                );
+                self.sessions[index].show_file_dialog = show_file_dialog;
+            }
+            if let Some(remove_index) = remove_attachment_at {
+                let attachments = &mut *self.sessions[index].pending_attachments.borrow_mut();
+                if remove_index < attachments.len() {
+                    attachments.remove(remove_index);
+                }
+            }
+        }
+
         let became_active = set_active && self.active_session_key.as_deref() != Some(session_key);
         let moved_to_front = if set_active {
             self.bring_session_to_front(session_key)
@@ -927,6 +960,9 @@ impl ChatApp {
         }
         if trigger_file_picker {
             self.trigger_file_picker(session_key);
+        }
+        if let Some(archive_id) = trigger_preview_attachment {
+            self.preview_archive_attachment(&archive_id);
         }
         if trigger_send {
             self.send_session_draft(session_key);
@@ -1078,17 +1114,40 @@ fn user_bubble_inner_max_width(
 
     let body_w = {
         let t = message.text.as_str();
-        let looks_structured = t.contains("```")
-            || t.contains('\n')
-            || t.trim_start().starts_with('#')
-            || t.contains("**");
-        if looks_structured {
-            BUBBLE_MAX_WIDTH
+        let attachments = message_attachments(message);
+        let text_width = if t.trim().is_empty() {
+            0.0
         } else {
-            WidgetText::from(RichText::new(t))
+            let looks_structured = t.contains("```")
+                || t.contains('\n')
+                || t.trim_start().starts_with('#')
+                || t.contains("**");
+            if looks_structured {
+                BUBBLE_MAX_WIDTH
+            } else {
+                WidgetText::from(RichText::new(t))
+                    .into_galley(ui, None, f32::INFINITY, TextStyle::Body)
+                    .size()
+                    .x
+            }
+        };
+        let attachment_width = attachments
+            .iter()
+            .map(|attachment| {
+                WidgetText::from(RichText::new(format!(
+                    "{} {}",
+                    regular::FILE,
+                    attachment.filename.as_deref().unwrap_or("unknown")
+                )))
                 .into_galley(ui, None, f32::INFINITY, TextStyle::Body)
                 .size()
                 .x
+            })
+            .fold(0.0, f32::max);
+        if text_width >= BUBBLE_MAX_WIDTH || attachment_width >= BUBBLE_MAX_WIDTH {
+            BUBBLE_MAX_WIDTH
+        } else {
+            text_width.max(attachment_width)
         }
     };
 
@@ -1632,26 +1691,61 @@ fn render_message_body(
     body_color: Color32,
     link_color: Color32,
 ) {
-    let mut should_remove_animation = false;
-    if matches!(message.role, MessageRole::Assistant)
-        && let Some(animator) = fade_in_messages.get_mut(&message.id)
-    {
-        animator.font = TextStyle::Body.resolve(ui.style());
-        animator.color = body_color;
-        animator.process_animation(ui.ctx());
-        animator.render(ui);
-        if animator.is_animation_finished() {
-            should_remove_animation = true;
+    let attachments = message_attachments(message);
+    let has_text = !message.text.trim().is_empty();
+    let has_attachments = !attachments.is_empty();
+
+    if has_text {
+        let mut should_remove_animation = false;
+        if matches!(message.role, MessageRole::Assistant)
+            && let Some(animator) = fade_in_messages.get_mut(&message.id)
+        {
+            animator.font = TextStyle::Body.resolve(ui.style());
+            animator.color = body_color;
+            animator.process_animation(ui.ctx());
+            animator.render(ui);
+            if animator.is_animation_finished() {
+                should_remove_animation = true;
+            } else {
+                ui.ctx().request_repaint();
+            }
         } else {
-            ui.ctx().request_repaint();
+            render_markdown(ui, markdown_cache, &message.text, body_color, link_color);
         }
-    } else {
-        render_markdown(ui, markdown_cache, &message.text, body_color, link_color);
+
+        if should_remove_animation {
+            fade_in_messages.remove(&message.id);
+        }
     }
 
-    if should_remove_animation {
-        fade_in_messages.remove(&message.id);
+    if has_text && has_attachments {
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(8.0);
     }
+
+    if has_attachments {
+        ui.vertical(|ui| {
+            for attachment in attachments {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(regular::FILE).color(body_color));
+                    ui.label(
+                        RichText::new(attachment.filename.unwrap_or_else(|| "unknown".to_string()))
+                            .color(body_color),
+                    );
+                });
+            }
+        });
+    }
+}
+
+fn message_attachments(message: &ChatMessage) -> Vec<WebArchiveAttachment> {
+    message
+        .metadata
+        .get("attachments")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
 }
 
 fn compact_sidebar_title(title: &str) -> String {
@@ -1841,9 +1935,139 @@ fn session_activity_label(session: &SessionWindow) -> Option<&'static str> {
         .is_some()
     {
         Some("Streaming")
-    } else if session.selected_archive_id.borrow().as_deref().is_some() {
-        Some("File Attached")
+    } else if !session.pending_attachments.borrow().is_empty() {
+        Some("Files Ready")
     } else {
         None
+    }
+}
+
+fn render_session_file_dialog(
+    ctx: &Context,
+    open: &mut bool,
+    attachments: &[WebArchiveAttachment],
+    trigger_preview_attachment: &mut Option<String>,
+    remove_attachment_at: &mut Option<usize>,
+) {
+    let mut keep_open = *open;
+    egui::Window::new("Uploaded Files")
+        .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false)
+        .resizable(true)
+        .default_size(vec2(560.0, 320.0))
+        .min_width(460.0)
+        .open(&mut keep_open)
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new("Right-click a row to preview or remove it from this page.")
+                    .small()
+                    .weak(),
+            );
+            ui.add_space(8.0);
+
+            if attachments.is_empty() {
+                ui.label("No uploaded files.");
+                return;
+            }
+
+            TableBuilder::new(ui)
+                .striped(true)
+                .resizable(true)
+                .column(Column::remainder())
+                .column(Column::remainder().at_least(180.0))
+                .column(Column::auto().at_least(72.0))
+                .header(24.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("File Name");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Archive ID");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Size");
+                    });
+                })
+                .body(|body| {
+                    body.rows(26.0, attachments.len(), |mut row| {
+                        let index = row.index();
+                        let attachment = &attachments[index];
+                        row.col(|ui| {
+                            let response = ui.selectable_label(
+                                false,
+                                attachment.filename.as_deref().unwrap_or("unknown"),
+                            );
+                            render_attachment_context_menu(
+                                &response,
+                                attachment,
+                                index,
+                                trigger_preview_attachment,
+                                remove_attachment_at,
+                            );
+                        });
+                        row.col(|ui| {
+                            let response = ui.monospace(&attachment.archive_id);
+                            render_attachment_context_menu(
+                                &response,
+                                attachment,
+                                index,
+                                trigger_preview_attachment,
+                                remove_attachment_at,
+                            );
+                        });
+                        row.col(|ui| {
+                            let response = ui.label(format_file_size(attachment.size_bytes));
+                            render_attachment_context_menu(
+                                &response,
+                                attachment,
+                                index,
+                                trigger_preview_attachment,
+                                remove_attachment_at,
+                            );
+                        });
+                    });
+                });
+        });
+    *open = keep_open;
+}
+
+fn render_attachment_context_menu(
+    response: &egui::Response,
+    attachment: &WebArchiveAttachment,
+    index: usize,
+    trigger_preview_attachment: &mut Option<String>,
+    remove_attachment_at: &mut Option<usize>,
+) {
+    response.context_menu(|ui| {
+        if ui.button(format!("{} Preview", regular::EYE)).clicked() {
+            *trigger_preview_attachment = Some(attachment.archive_id.clone());
+            ui.close();
+        }
+        if ui
+            .add(Button::new(
+                RichText::new(format!("{} Delete", regular::TRASH))
+                    .color(ui.visuals().error_fg_color),
+            ))
+            .clicked()
+        {
+            *remove_attachment_at = Some(index);
+            ui.close();
+        }
+    });
+}
+
+fn format_file_size(size_bytes: i64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let size = size_bytes.max(0) as f64;
+    if size >= GB {
+        format!("{:.1} GB", size / GB)
+    } else if size >= MB {
+        format!("{:.1} MB", size / MB)
+    } else if size >= KB {
+        format!("{:.1} KB", size / KB)
+    } else {
+        format!("{} B", size_bytes.max(0))
     }
 }

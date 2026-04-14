@@ -2163,8 +2163,14 @@ impl SessionStorage for TursoSessionStore {
             };
             value_to_string(row.get_value(0).map_err(StorageError::backend)?)?
         };
-        self.consume_approved_tool_command(&approval_id, tool_name, session_key, command_hash, now_ms)
-            .await
+        self.consume_approved_tool_command(
+            &approval_id,
+            tool_name,
+            session_key,
+            command_hash,
+            now_ms,
+        )
+        .await
     }
 
     async fn create_pending_question(

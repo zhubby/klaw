@@ -2684,8 +2684,14 @@ impl SessionStorage for SqlxSessionStore {
         let Some(approval_id) = approval_id else {
             return Ok(false);
         };
-        self.consume_approved_tool_command(&approval_id, tool_name, session_key, command_hash, now_ms)
-            .await
+        self.consume_approved_tool_command(
+            &approval_id,
+            tool_name,
+            session_key,
+            command_hash,
+            now_ms,
+        )
+        .await
     }
 
     async fn create_pending_question(

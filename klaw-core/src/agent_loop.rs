@@ -778,7 +778,8 @@ impl AgentLoop {
             .get("agent.resume_turn")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        if msg.payload.content.trim().is_empty() && !allow_empty_content {
+        let has_media_attachments = !msg.payload.media_references.is_empty();
+        if msg.payload.content.trim().is_empty() && !allow_empty_content && !has_media_attachments {
             if let Some(ref telemetry) = self.telemetry {
                 telemetry
                     .emit_audit_event(
@@ -2536,6 +2537,61 @@ mod tests {
             },
         };
         let _ = agent.process_message(inbound, false).await;
+        let captured_count = *capture
+            .user_media_count
+            .lock()
+            .expect("capture media mutex poisoned");
+        assert_eq!(captured_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn process_message_allows_attachment_only_user_turn() {
+        let capture = Arc::new(CaptureMediaProvider::default());
+        let provider = Arc::clone(&capture) as Arc<dyn LlmProvider>;
+        let agent = AgentLoop::new_with_identity(
+            RunLimits {
+                max_tool_iterations: 1,
+                max_tool_calls: 1,
+                token_budget: 0,
+                agent_timeout: Duration::from_secs(1),
+                tool_timeout: Duration::from_secs(1),
+            },
+            SessionSchedulingPolicy {
+                strategy: QueueStrategy::Collect,
+                max_queue_depth: 1,
+                lock_ttl: Duration::from_secs(1),
+            },
+            Arc::clone(&provider),
+            "capture-media".to_string(),
+            "capture-media-v1".to_string(),
+            ToolRegistry::default(),
+        )
+        .with_provider_registry(BTreeMap::from([("capture-media".to_string(), provider)]));
+
+        let inbound = crate::protocol::Envelope {
+            header: EnvelopeHeader::new("im:chat-attachments-only"),
+            metadata: BTreeMap::new(),
+            payload: InboundMessage {
+                channel: "im".to_string(),
+                sender_id: "u1".to_string(),
+                chat_id: "chat-attachments-only".to_string(),
+                session_key: "im:chat-attachments-only".to_string(),
+                content: String::new(),
+                media_references: vec![crate::MediaReference {
+                    source_kind: crate::MediaSourceKind::ChannelInbound,
+                    filename: Some("image.png".to_string()),
+                    mime_type: Some("image/png".to_string()),
+                    remote_url: Some("data:image/png;base64,AAAA".to_string()),
+                    bytes: None,
+                    message_id: None,
+                    metadata: BTreeMap::new(),
+                }],
+                metadata: BTreeMap::new(),
+            },
+        };
+        let outcome = agent.process_message(inbound, false).await;
+        let response = outcome.final_response.expect("response should be present");
+        assert_eq!(response.payload.content, "ok");
         let captured_count = *capture
             .user_media_count
             .lock()

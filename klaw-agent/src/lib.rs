@@ -1411,8 +1411,18 @@ mod tests {
         assert_eq!(output.content, "");
         assert_eq!(output.disposition, AgentExecutionDisposition::Stopped);
         assert_eq!(output.tool_signals.len(), 2);
-        assert!(output.tool_signals.iter().any(|signal| signal.kind == IM_CARD_SIGNAL));
-        assert!(output.tool_signals.iter().any(|signal| signal.kind == STOP_SIGNAL));
+        assert!(
+            output
+                .tool_signals
+                .iter()
+                .any(|signal| signal.kind == IM_CARD_SIGNAL)
+        );
+        assert!(
+            output
+                .tool_signals
+                .iter()
+                .any(|signal| signal.kind == STOP_SIGNAL)
+        );
         assert_eq!(
             *provider.call_count.lock().expect("mutex poisoned"),
             1,

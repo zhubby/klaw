@@ -523,7 +523,7 @@ pub(crate) fn build_websocket_submit_params(
     session_key: &str,
     input: &str,
     stream: bool,
-    archive_id: Option<&str>,
+    attachments: &[WebArchiveAttachment],
     model_provider: &str,
     model: &str,
     metadata: Option<&BTreeMap<String, Value>>,
@@ -536,8 +536,15 @@ pub(crate) fn build_websocket_submit_params(
         "model_provider": model_provider,
         "model": model,
     });
-    if let Some(archive_id) = archive_id.filter(|value| !value.is_empty()) {
+    if let Some(archive_id) = attachments
+        .first()
+        .map(|attachment| attachment.archive_id.trim())
+        .filter(|value| !value.is_empty())
+    {
         params["archive_id"] = json!(archive_id);
+    }
+    if !attachments.is_empty() {
+        params["attachments"] = json!(attachments);
     }
     if let Some(metadata) = metadata.filter(|metadata| !metadata.is_empty()) {
         params["metadata"] = json!(metadata);
@@ -627,6 +634,15 @@ pub(crate) struct ArchiveUploadResponse {
 pub(crate) struct ArchiveRecord {
     pub(crate) id: String,
     pub(crate) original_filename: Option<String>,
+    pub(crate) mime_type: Option<String>,
+    pub(crate) size_bytes: i64,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WebArchiveAttachment {
+    pub(crate) archive_id: String,
+    pub(crate) filename: Option<String>,
     pub(crate) mime_type: Option<String>,
     pub(crate) size_bytes: i64,
 }
@@ -761,14 +777,14 @@ pub(crate) fn can_trigger_file_picker(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-pub(crate) fn next_selected_archive_id_after_submit(
-    selected_archive_id: Option<&str>,
+pub(crate) fn next_pending_attachments_after_submit(
+    attachments: &[WebArchiveAttachment],
     send_succeeded: bool,
-) -> Option<String> {
+) -> Vec<WebArchiveAttachment> {
     if send_succeeded {
-        None
+        Vec::new()
     } else {
-        selected_archive_id.map(str::to_owned)
+        attachments.to_vec()
     }
 }
 
@@ -811,15 +827,16 @@ mod tests {
     use super::{
         ArchiveRecord, ArchiveUploadResponse, ConnectionState, ImCardKind, MessageRole, PageMode,
         ProviderCatalog, ProviderCatalogEntry, ResolvedSessionRoute, SessionListEntry,
-        StreamMessageAction, ThemeMode, apply_slash_completion, attachment_action_in_progress,
-        build_websocket_submit_params, can_trigger_file_picker, classify_message_role,
-        classify_stream_message_action, connection_action_label, delete_confirmation_body,
-        derive_page_mode, detect_active_slash_command, next_selected_archive_id_after_submit,
-        normalize_gateway_token_input, resolve_gateway_token, resolve_im_card,
-        resolve_im_card_palette, resolve_session_route_inputs, session_card_activity_label,
-        should_activate_session_window, should_cancel_file_picker_selection,
-        should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
-        slash_command_matches, sort_session_entries_by_created_at_desc,
+        StreamMessageAction, ThemeMode, WebArchiveAttachment, apply_slash_completion,
+        attachment_action_in_progress, build_websocket_submit_params, can_trigger_file_picker,
+        classify_message_role, classify_stream_message_action, connection_action_label,
+        delete_confirmation_body, derive_page_mode, detect_active_slash_command,
+        next_pending_attachments_after_submit, normalize_gateway_token_input,
+        resolve_gateway_token, resolve_im_card, resolve_im_card_palette,
+        resolve_session_route_inputs, session_card_activity_label, should_activate_session_window,
+        should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
+        should_register_non_stream_fade, slash_command_matches,
+        sort_session_entries_by_created_at_desc,
     };
 
     #[test]
@@ -1039,20 +1056,41 @@ mod tests {
     }
 
     #[test]
-    fn failed_submit_keeps_selected_archive() {
+    fn failed_submit_keeps_pending_attachments() {
         assert_eq!(
-            next_selected_archive_id_after_submit(Some("archive-1"), false),
-            Some("archive-1".to_string())
+            next_pending_attachments_after_submit(
+                &[WebArchiveAttachment {
+                    archive_id: "archive-1".to_string(),
+                    filename: Some("report.pdf".to_string()),
+                    mime_type: None,
+                    size_bytes: 0,
+                }],
+                false,
+            ),
+            vec![WebArchiveAttachment {
+                archive_id: "archive-1".to_string(),
+                filename: Some("report.pdf".to_string()),
+                mime_type: None,
+                size_bytes: 0,
+            }]
         );
     }
 
     #[test]
-    fn successful_submit_clears_selected_archive() {
+    fn successful_submit_clears_pending_attachments() {
         assert_eq!(
-            next_selected_archive_id_after_submit(Some("archive-1"), true),
-            None
+            next_pending_attachments_after_submit(
+                &[WebArchiveAttachment {
+                    archive_id: "archive-1".to_string(),
+                    filename: None,
+                    mime_type: None,
+                    size_bytes: 0,
+                }],
+                true,
+            ),
+            Vec::<WebArchiveAttachment>::new()
         );
-        assert_eq!(next_selected_archive_id_after_submit(None, true), None);
+        assert!(next_pending_attachments_after_submit(&[], true).is_empty());
     }
 
     #[test]
@@ -1189,7 +1227,12 @@ mod tests {
             "websocket:test",
             "hello",
             true,
-            Some("archive-1"),
+            &[WebArchiveAttachment {
+                archive_id: "archive-1".to_string(),
+                filename: Some("report.pdf".to_string()),
+                mime_type: Some("application/pdf".to_string()),
+                size_bytes: 42,
+            }],
             "anthropic",
             "claude-sonnet-4-5",
             None,
@@ -1227,6 +1270,15 @@ mod tests {
             params.get("archive_id").and_then(serde_json::Value::as_str),
             Some("archive-1")
         );
+        assert_eq!(
+            params["attachments"],
+            json!([{
+                "archive_id": "archive-1",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+                "size_bytes": 42
+            }])
+        );
     }
 
     #[test]
@@ -1239,7 +1291,7 @@ mod tests {
             "websocket:test",
             "/approve approval-1",
             false,
-            None,
+            &[],
             "anthropic",
             "claude-sonnet-4-5",
             Some(&metadata),

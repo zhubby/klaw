@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-14
+
+### Changed
+
+- websocket channel submit envelope 现在支持透传浏览器侧构造的 `media_references`，不再把 webui 上传的附件在进入 runtime 前固定丢弃
+
 ## 2026-04-09
 
 ### Fixed

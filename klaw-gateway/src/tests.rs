@@ -606,6 +606,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn websocket_submit_accepts_attachment_only_payload() {
+        let config = test_gateway_config();
+        let handler = RecordingWebsocketHandler::default();
+        let requests = Arc::clone(&handler.requests);
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(handler)),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _ = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "sub-attachments",
+                    "method": "session.subscribe",
+                    "params": { "session_key": "websocket:attachments-only" }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("subscribe should send");
+
+        for _ in 0..3 {
+            let _ = socket.next().await;
+        }
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "method",
+                    "id": "req-attachments-only",
+                    "method": "session.submit",
+                    "params": {
+                        "input": "",
+                        "attachments": [{
+                            "archive_id": "archive-1",
+                            "filename": "report.pdf",
+                            "mime_type": "application/pdf",
+                            "size_bytes": 42
+                        }]
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("submit should send");
+
+        let result = socket
+            .next()
+            .await
+            .expect("submit response")
+            .expect("submit message");
+        let result = match result {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid result frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        match result {
+            GatewayWebsocketServerFrame::Result { id, .. } => {
+                assert_eq!(id, "req-attachments-only");
+            }
+            other => panic!("unexpected submit frame: {other:?}"),
+        }
+
+        let recorded = requests.lock().unwrap_or_else(|err| err.into_inner());
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].session_key, "websocket:attachments-only");
+        assert_eq!(recorded[0].input, "");
+        assert_eq!(recorded[0].attachments.len(), 1);
+        assert_eq!(recorded[0].attachments[0].archive_id, "archive-1");
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
     async fn websocket_workspace_bootstrap_returns_sessions_sorted_by_created_at_desc() {
         let config = test_gateway_config();
         let handle = match spawn_gateway_with_options(

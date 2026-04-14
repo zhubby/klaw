@@ -2,6 +2,9 @@
 
 ## 2026-04-14
 
+### Fixed
+- `AgentLoop` 入站校验现在允许“空文本但带附件”的用户消息继续执行，不再把 websocket/webui 的图片-only、文件-only turn 提前判定为 `validation_failed(empty_content)`
+
 ### Changed
 - `AgentLoop` now preserves `ask_question` IM-card stop metadata while allowing the underlying agent execution to surface an empty visible reply instead of the generic stopped-turn placeholder, so websocket/webui channels can show the card without the misleading extra assistant text
 

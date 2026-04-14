@@ -4,6 +4,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use klaw_config::WebsocketConfig;
+use klaw_core::MediaReference;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use tokio::sync::watch;
@@ -20,6 +21,7 @@ pub struct WebsocketSubmitEnvelope {
     pub session_key: String,
     pub chat_id: String,
     pub input: String,
+    pub media_references: Vec<MediaReference>,
     pub metadata: BTreeMap<String, Value>,
 }
 
@@ -44,7 +46,7 @@ impl WebsocketSubmitEnvelope {
             input: self.input,
             session_key: self.session_key,
             chat_id: self.chat_id,
-            media_references: Vec::new(),
+            media_references: self.media_references,
             metadata,
         }
     }

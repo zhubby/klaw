@@ -5,9 +5,9 @@ use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
 use crate::{
-    ConnectionState, MessageRole, ProviderCatalog, WorkspaceSessionEntry,
+    ConnectionState, MessageRole, ProviderCatalog, WebArchiveAttachment, WorkspaceSessionEntry,
     build_websocket_submit_params, classify_stream_message_action,
-    next_selected_archive_id_after_submit, should_register_non_stream_fade,
+    next_pending_attachments_after_submit, should_register_non_stream_fade,
 };
 
 use super::{
@@ -638,25 +638,25 @@ impl ChatApp {
             return;
         };
         let text = self.sessions[index].draft.trim().to_string();
-        if text.is_empty() {
+        let attachments = self.sessions[index].pending_attachments.borrow().clone();
+        if text.is_empty() && attachments.is_empty() {
             return;
         }
 
-        let archive_id = self.sessions[index].selected_archive_id.borrow().clone();
         let model_provider = self.sessions[index].selected_route.model_provider.clone();
         let model = self.sessions[index].selected_route.model.clone();
         let sent = self.send_session_input(
             session_key,
             &text,
             self.stream_enabled,
-            archive_id.as_deref(),
+            &attachments,
             &model_provider,
             &model,
             None,
             true,
         );
-        *self.sessions[index].selected_archive_id.borrow_mut() =
-            next_selected_archive_id_after_submit(archive_id.as_deref(), sent);
+        *self.sessions[index].pending_attachments.borrow_mut() =
+            next_pending_attachments_after_submit(&attachments, sent);
         if sent {
             self.sessions[index].draft.clear();
         }
@@ -677,7 +677,7 @@ impl ChatApp {
             session_key,
             command,
             false,
-            None,
+            &[],
             &model_provider,
             &model,
             Some(&metadata),
@@ -690,7 +690,7 @@ impl ChatApp {
         session_key: &str,
         text: &str,
         stream: bool,
-        archive_id: Option<&str>,
+        attachments: &[WebArchiveAttachment],
         model_provider: &str,
         model: &str,
         metadata: Option<&BTreeMap<String, Value>>,
@@ -706,13 +706,17 @@ impl ChatApp {
         if let Some(index) = self.session_index(session_key)
             && local_echo
         {
+            let mut local_metadata = metadata.cloned().unwrap_or_default();
+            if !attachments.is_empty() {
+                local_metadata.insert("attachments".to_string(), json!(attachments));
+            }
             self.sessions[index].buffers.messages.borrow_mut().push(
                 ChatMessage::new_with_metadata(
                     text.to_string(),
                     MessageRole::User,
                     current_timestamp_ms(),
                     None,
-                    metadata.cloned().unwrap_or_default(),
+                    local_metadata,
                 ),
             );
             *self.sessions[index]
@@ -724,7 +728,7 @@ impl ChatApp {
             session_key,
             text,
             stream,
-            archive_id,
+            attachments,
             model_provider,
             model,
             metadata,
@@ -742,7 +746,7 @@ fn build_submit_params(
     session_key: &str,
     input: &str,
     stream: bool,
-    archive_id: Option<&str>,
+    attachments: &[WebArchiveAttachment],
     model_provider: &str,
     model: &str,
     metadata: Option<&BTreeMap<String, Value>>,
@@ -751,7 +755,7 @@ fn build_submit_params(
         session_key,
         input,
         stream,
-        archive_id,
+        attachments,
         model_provider,
         model,
         metadata,
@@ -816,7 +820,7 @@ fn message_id_exists(messages: &[ChatMessage], message_id: Option<&str>) -> bool
 #[cfg(test)]
 mod tests {
     use super::{HistoryPageMessage, build_submit_params, prepend_history_page};
-    use crate::MessageRole;
+    use crate::{MessageRole, WebArchiveAttachment};
     use std::collections::BTreeMap;
 
     #[test]
@@ -825,7 +829,12 @@ mod tests {
             "websocket:test",
             "hello",
             true,
-            Some("archive-1"),
+            &[WebArchiveAttachment {
+                archive_id: "archive-1".to_string(),
+                filename: Some("report.pdf".to_string()),
+                mime_type: Some("application/pdf".to_string()),
+                size_bytes: 42,
+            }],
             "anthropic",
             "claude-sonnet-4-5",
             None,
@@ -859,6 +868,7 @@ mod tests {
             params.get("archive_id").and_then(serde_json::Value::as_str),
             Some("archive-1")
         );
+        assert_eq!(params["attachments"][0]["archive_id"], "archive-1");
     }
 
     #[test]
@@ -867,7 +877,7 @@ mod tests {
             "websocket:test",
             "hello",
             false,
-            None,
+            &[],
             "openai",
             "gpt-4.1-mini",
             None,

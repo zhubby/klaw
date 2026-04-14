@@ -12,6 +12,9 @@
 
 ### Changed
 
+- agent 输入区上传控件现已改为 `Upload` 图标+文字按钮，并新增 `File` 按钮与已上传文件弹窗；弹窗使用表格展示文件名、archive id 和大小，支持右键预览或仅从当前页面移除
+- webui 会话附件状态已从单个 `archive_id` 扩展为多文件列表，支持连续上传多个不同文件；原右侧 `File attached` 状态文案已移除
+- `session.submit` 现会把当前待发送文件作为结构化 `attachments` 数组随 websocket 请求一起发出，同时保留首个 `archive_id` 兼容字段
 - 卡片动作现在通过 `session.submit` 回传结构化 `webui.card.*` metadata，并在浏览器端就地展示 pending / completed / failed 交互状态
 - 历史消息恢复时会优先读取持久化的消息 metadata 还原卡片；对 `/approve`、`/reject`、`/card_answer` 这类内部卡片命令，UI 会隐藏原始 slash 文本并回填卡片完成态
 - websocket 历史与实时消息的前端模型已从纯文本扩展为“文本 + metadata + 派生卡片”，为后续更多 IM 卡片类型留出协议位

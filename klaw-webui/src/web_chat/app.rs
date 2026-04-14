@@ -7,10 +7,10 @@ use web_sys::Notification;
 use web_sys::WebSocket;
 
 use crate::{
-    ConnectionState, ProviderCatalog, SessionListEntry, WorkspaceSessionEntry,
-    attachment_action_in_progress, normalize_gateway_token_input, resolve_gateway_token,
-    should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
-    sort_session_entries_by_created_at_desc,
+    ArchiveRecord, ConnectionState, ProviderCatalog, SessionListEntry, WebArchiveAttachment,
+    WorkspaceSessionEntry, attachment_action_in_progress, normalize_gateway_token_input,
+    resolve_gateway_token, should_cancel_file_picker_selection,
+    should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
 };
 
 use super::{
@@ -434,7 +434,7 @@ impl ChatApp {
         let toasts = self.toasts.clone();
         let ctx = self.ctx.clone();
 
-        let selected_archive_id = self.sessions[index].selected_archive_id.clone();
+        let pending_attachments = self.sessions[index].pending_attachments.clone();
         let selecting_flag = self.sessions[index].selecting_file.clone();
         let uploading_flag = self.sessions[index].uploading_file.clone();
 
@@ -542,7 +542,9 @@ impl ChatApp {
                         "File uploaded: {}",
                         record.original_filename.as_deref().unwrap_or("unknown")
                     ));
-                    *selected_archive_id.borrow_mut() = Some(record.id);
+                    pending_attachments
+                        .borrow_mut()
+                        .push(web_archive_attachment_from_record(record));
                     set_attachment_flag(&uploading_flag, false, &ctx);
                 }
                 Err(err) => {
@@ -551,6 +553,40 @@ impl ChatApp {
                 }
             }
         });
+    }
+
+    pub(in crate::web_chat) fn preview_archive_attachment(&mut self, archive_id: &str) {
+        let Some(gateway_origin) = self.gateway_origin.clone() else {
+            self.toasts
+                .borrow_mut()
+                .error("Gateway origin not available");
+            return;
+        };
+
+        let gateway_token = self.gateway_token.clone();
+        let archive_id = archive_id.to_string();
+        let toasts = self.toasts.clone();
+
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Err(err) = super::upload::preview_archive_file(
+                &gateway_origin,
+                gateway_token.as_deref(),
+                &archive_id,
+            )
+            .await
+            {
+                toasts.borrow_mut().error(format!("Preview failed: {err}"));
+            }
+        });
+    }
+}
+
+fn web_archive_attachment_from_record(record: ArchiveRecord) -> WebArchiveAttachment {
+    WebArchiveAttachment {
+        archive_id: record.id,
+        filename: record.original_filename,
+        mime_type: record.mime_type,
+        size_bytes: record.size_bytes,
     }
 }
 
