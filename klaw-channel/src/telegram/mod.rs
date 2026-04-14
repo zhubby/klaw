@@ -120,8 +120,11 @@ impl TelegramChannel {
         self.client
             .set_my_commands(vec![
                 BotCommand::new("start", "Start a new session context"),
-                BotCommand::new("help", "Show help and available commands"),
                 BotCommand::new("new", "Start a new session context"),
+                BotCommand::new("help", "Show help and available commands"),
+                BotCommand::new("stop", "Stop the current turn"),
+                BotCommand::new("usage", "Show token usage"),
+                BotCommand::new("shell", "Run a shell command"),
                 BotCommand::new("model_provider", "List or switch model providers"),
                 BotCommand::new("model", "Show or update current model"),
                 BotCommand::new("approve", "Approve a pending tool action"),
