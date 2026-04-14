@@ -287,8 +287,9 @@ impl MemoryPanel {
                 let session_store = open_default_store().await.map_err(MemoryError::Storage)?;
                 let sessions = session_store
                     .list_sessions(
-                        1000,
+                        Some(1000),
                         0,
+                        None,
                         None,
                         None,
                         None,

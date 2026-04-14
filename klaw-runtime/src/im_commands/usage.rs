@@ -10,7 +10,7 @@ pub(super) async fn usage_response(
         .list_llm_usage(
             session_key,
             klaw_session::SessionListQuery {
-                limit: 1,
+                limit: Some(1),
                 ..Default::default()
             },
         )

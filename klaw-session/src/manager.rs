@@ -12,22 +12,24 @@ use klaw_storage::{
 
 #[derive(Debug, Clone)]
 pub struct SessionListQuery {
-    pub limit: i64,
+    pub limit: Option<i64>,
     pub offset: i64,
     pub updated_from_ms: Option<i64>,
     pub updated_to_ms: Option<i64>,
     pub channel: Option<String>,
+    pub session_key_prefix: Option<String>,
     pub sort_order: SessionSortOrder,
 }
 
 impl Default for SessionListQuery {
     fn default() -> Self {
         Self {
-            limit: 100,
+            limit: Some(100),
             offset: 0,
             updated_from_ms: None,
             updated_to_ms: None,
             channel: None,
+            session_key_prefix: None,
             sort_order: SessionSortOrder::UpdatedAtDesc,
         }
     }
@@ -405,7 +407,7 @@ impl SessionManager for SqliteSessionManager {
         &self,
         query: SessionListQuery,
     ) -> Result<Vec<SessionIndex>, SessionError> {
-        let limit = query.limit.max(1);
+        let limit = query.limit.map(|l| l.max(1));
         let offset = query.offset.max(0);
         Ok(self
             .store
@@ -415,6 +417,7 @@ impl SessionManager for SqliteSessionManager {
                 query.updated_from_ms,
                 query.updated_to_ms,
                 query.channel.as_deref(),
+                query.session_key_prefix.as_deref(),
                 query.sort_order,
             )
             .await?)
@@ -436,7 +439,7 @@ impl SessionManager for SqliteSessionManager {
         session_key: &str,
         query: SessionListQuery,
     ) -> Result<Vec<LlmUsageRecord>, SessionError> {
-        let limit = query.limit.max(1);
+        let limit = query.limit.unwrap_or(100).max(1);
         let offset = query.offset.max(0);
         Ok(self
             .store
@@ -603,11 +606,12 @@ mod tests {
         let manager = SqliteSessionManager::from_store(store);
         let sessions = manager
             .list_sessions(SessionListQuery {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
                 updated_from_ms: None,
                 updated_to_ms: None,
                 channel: None,
+                session_key_prefix: None,
                 sort_order: SessionSortOrder::UpdatedAtDesc,
             })
             .await
@@ -629,11 +633,12 @@ mod tests {
         let manager = SqliteSessionManager::from_store(store);
         let sessions = manager
             .list_sessions(SessionListQuery {
-                limit: 0,
+                limit: None,
                 offset: -5,
                 updated_from_ms: None,
                 updated_to_ms: None,
                 channel: None,
+                session_key_prefix: None,
                 sort_order: SessionSortOrder::UpdatedAtDesc,
             })
             .await
@@ -658,11 +663,12 @@ mod tests {
         let manager = SqliteSessionManager::from_store(store);
         let sessions = manager
             .list_sessions(SessionListQuery {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
                 updated_from_ms: None,
                 updated_to_ms: None,
                 channel: Some("terminal".to_string()),
+                session_key_prefix: None,
                 sort_order: SessionSortOrder::UpdatedAtAsc,
             })
             .await

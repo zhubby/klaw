@@ -14,7 +14,9 @@ use super::{
     app::ChatApp,
     protocol::{ServerFrame, send_method},
     session::ChatMessage,
+    session::SessionWindow,
     session::current_timestamp_ms,
+    session::window_anchor_for_slot,
     ui::sync_card_state_overrides,
 };
 
@@ -322,8 +324,7 @@ impl ChatApp {
             result.get("title").and_then(Value::as_str),
             result.get("created_at_ms").and_then(Value::as_i64),
         ) {
-            let mut entries = self.workspace_entries();
-            entries.push(WorkspaceSessionEntry {
+            let entry = WorkspaceSessionEntry {
                 session_key: session_key.to_string(),
                 title: title.to_string(),
                 created_at_ms,
@@ -335,13 +336,16 @@ impl ChatApp {
                     .get("model")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
-            });
-            self.sync_sessions_from_workspace(entries, Some(session_key.to_string()));
-            if let Some(index) = self.session_index(session_key) {
-                self.sessions[index].open = true;
+            };
+            let session = SessionWindow::new(entry, true, &self.provider_catalog);
+            self.sessions.push(session);
+            self.sessions
+                .sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+            for (index, s) in self.sessions.iter_mut().enumerate() {
+                s.window_anchor = window_anchor_for_slot(index as u32);
             }
+            self.active_session_key = Some(session_key.to_string());
             self.persist_workspace_state();
-            self.subscribe_sessions_needing_history();
             return;
         }
 
