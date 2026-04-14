@@ -14,8 +14,8 @@ use crate::{
     MessageRole, PageMode, SlashCommandCompletion, WebArchiveAttachment, apply_slash_completion,
     attachment_action_in_progress, can_trigger_file_picker, connection_action_label,
     delete_confirmation_body, derive_page_mode, detect_active_slash_command,
-    normalize_gateway_token_input, resolve_im_card_palette, should_activate_session_window,
-    slash_command_matches,
+    has_exact_slash_command_match, normalize_gateway_token_input, resolve_assistant_bubble_palette,
+    resolve_im_card_palette, should_activate_session_window, slash_command_matches,
 };
 
 use super::{
@@ -677,6 +677,9 @@ impl ChatApp {
                         detect_active_slash_command(&session.draft, cursor_range.primary.index)
                     });
                     let slash_trigger = raw_slash_trigger.as_ref().and_then(|trigger| {
+                        if has_exact_slash_command_match(&trigger.query) {
+                            return None;
+                        }
                         let dismissed = session.slash_completer.dismissed_query.as_deref()
                             == Some(trigger.query.as_str())
                             && session.slash_completer.dismissed_start
@@ -721,22 +724,21 @@ impl ChatApp {
                         session.draft.push('\n');
                     }
 
-                    if response.has_focus() {
-                        if let (Some(trigger), Some(matches)) =
-                            (slash_trigger.as_ref(), slash_matches.as_ref())
-                        {
-                            let popup_pos = input_output
-                                .cursor_range
-                                .map(|cursor_range| {
-                                    let cursor_rect =
-                                        input_output.galley.pos_from_cursor(cursor_range.primary);
-                                    response.rect.min
-                                        + cursor_rect.left_bottom().to_vec2()
-                                        + vec2(0.0, 6.0)
-                                })
-                                .unwrap_or_else(|| {
-                                    egui::pos2(response.rect.left(), response.rect.bottom() + 4.0)
-                                });
+                    let popup_pos = input_output
+                        .cursor_range
+                        .map(|cursor_range| {
+                            let cursor_rect =
+                                input_output.galley.pos_from_cursor(cursor_range.primary);
+                            response.rect.min + cursor_rect.left_bottom().to_vec2() + vec2(0.0, 6.0)
+                        })
+                        .unwrap_or_else(|| {
+                            egui::pos2(response.rect.left(), response.rect.bottom() + 4.0)
+                        });
+
+                    if let (Some(trigger), Some(matches)) =
+                        (slash_trigger.as_ref(), slash_matches.as_ref())
+                    {
+                        if response.has_focus() {
                             slash_completion_accepted = handle_slash_completion_keyboard(
                                 ui,
                                 &mut session.draft,
@@ -752,63 +754,63 @@ impl ChatApp {
                                     Some(trigger),
                                 );
                             }
-                            if !slash_completion_accepted
-                                && render_slash_completion_popup(
-                                    ui,
-                                    popup_pos,
-                                    response.id,
-                                    response.rect.width(),
-                                    &mut session.draft,
-                                    trigger,
-                                    matches,
-                                    &mut session.slash_completer.selected_index,
-                                    &mut input_output.state,
-                                )
-                            {
-                                clear_slash_completion_state(
-                                    &mut session.slash_completer,
-                                    Some(trigger),
-                                );
-                                ui.ctx().request_repaint();
-                            }
-                        } else if complete_on_enter
-                            && let Some(replace_range) = previous_slash_state.replace_range.clone()
+                        }
+                        if !slash_completion_accepted
+                            && render_slash_completion_popup(
+                                ui,
+                                popup_pos,
+                                response.id,
+                                response.rect.width(),
+                                &mut session.draft,
+                                trigger,
+                                matches,
+                                &mut session.slash_completer.selected_index,
+                                &mut input_output.state,
+                            )
                         {
-                            let matches = slash_command_matches(&previous_slash_state.last_query);
-                            if let Some(completion) = matches
-                                .get(
-                                    previous_slash_state
-                                        .selected_index
-                                        .min(matches.len().saturating_sub(1)),
-                                )
-                                .copied()
-                            {
-                                if session.draft[replace_range.end..].starts_with('\n') {
-                                    session.draft.replace_range(
-                                        replace_range.end..replace_range.end + 1,
-                                        "",
-                                    );
-                                }
-                                apply_slash_completion_selection(
-                                    &mut session.draft,
-                                    &ActiveSlashCommand {
-                                        replace_range: replace_range.clone(),
-                                        query: previous_slash_state.last_query.clone(),
-                                    },
-                                    completion,
-                                    &mut input_output.state,
-                                    response.id,
-                                    ui.ctx(),
-                                );
-                                clear_slash_completion_state(
-                                    &mut session.slash_completer,
-                                    Some(&ActiveSlashCommand {
-                                        replace_range,
-                                        query: previous_slash_state.last_query.clone(),
-                                    }),
-                                );
-                                slash_completion_accepted = true;
+                            clear_slash_completion_state(
+                                &mut session.slash_completer,
+                                Some(trigger),
+                            );
+                            ui.ctx().request_repaint();
+                        }
+                    } else if response.has_focus()
+                        && complete_on_enter
+                        && let Some(replace_range) = previous_slash_state.replace_range.clone()
+                    {
+                        let matches = slash_command_matches(&previous_slash_state.last_query);
+                        if let Some(completion) = matches
+                            .get(
+                                previous_slash_state
+                                    .selected_index
+                                    .min(matches.len().saturating_sub(1)),
+                            )
+                            .copied()
+                        {
+                            if session.draft[replace_range.end..].starts_with('\n') {
+                                session
+                                    .draft
+                                    .replace_range(replace_range.end..replace_range.end + 1, "");
                             }
+                            apply_slash_completion_selection(
+                                &mut session.draft,
+                                &ActiveSlashCommand {
+                                    replace_range: replace_range.clone(),
+                                    query: previous_slash_state.last_query.clone(),
+                                },
+                                completion,
+                                &mut input_output.state,
+                                response.id,
+                                ui.ctx(),
+                            );
+                            clear_slash_completion_state(
+                                &mut session.slash_completer,
+                                Some(&ActiveSlashCommand {
+                                    replace_range,
+                                    query: previous_slash_state.last_query.clone(),
+                                }),
+                            );
+                            slash_completion_accepted = true;
                         }
                     }
 
@@ -1232,13 +1234,27 @@ fn render_message(
                         Color32::from_rgb(32, 43, 67),
                         Color32::from_rgb(20, 83, 181),
                     ),
-                    _ => (
-                        ui.visuals().widgets.noninteractive.bg_fill,
-                        ui.visuals().widgets.noninteractive.bg_stroke,
-                        ui.visuals().strong_text_color(),
-                        ui.visuals().text_color(),
-                        ui.visuals().hyperlink_color,
-                    ),
+                    _ => {
+                        let palette = resolve_assistant_bubble_palette(dark_mode);
+                        (
+                            Color32::from_rgb(palette.fill[0], palette.fill[1], palette.fill[2]),
+                            Stroke::new(
+                                1.0,
+                                Color32::from_rgb(
+                                    palette.stroke[0],
+                                    palette.stroke[1],
+                                    palette.stroke[2],
+                                ),
+                            ),
+                            Color32::from_rgb(
+                                palette.heading[0],
+                                palette.heading[1],
+                                palette.heading[2],
+                            ),
+                            Color32::from_rgb(palette.body[0], palette.body[1], palette.body[2]),
+                            Color32::from_rgb(palette.link[0], palette.link[1], palette.link[2]),
+                        )
+                    }
                 };
 
             let inner_w_user = if is_user {

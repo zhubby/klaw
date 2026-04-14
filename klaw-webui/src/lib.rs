@@ -371,6 +371,37 @@ pub(crate) struct EmptyStateCopy {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AssistantBubblePalette {
+    pub(crate) fill: [u8; 3],
+    pub(crate) stroke: [u8; 3],
+    pub(crate) heading: [u8; 3],
+    pub(crate) body: [u8; 3],
+    pub(crate) link: [u8; 3],
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn resolve_assistant_bubble_palette(dark_mode: bool) -> AssistantBubblePalette {
+    if dark_mode {
+        AssistantBubblePalette {
+            fill: [14, 17, 22],
+            stroke: [28, 33, 41],
+            heading: [242, 245, 250],
+            body: [221, 226, 234],
+            link: [133, 188, 255],
+        }
+    } else {
+        AssistantBubblePalette {
+            fill: [252, 248, 242],
+            stroke: [229, 220, 206],
+            heading: [53, 43, 34],
+            body: [74, 63, 53],
+            link: [155, 88, 31],
+        }
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SessionListEntry {
     pub(crate) session_key: String,
@@ -429,7 +460,7 @@ pub(crate) struct ActiveSlashCommand {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-const SLASH_COMMANDS: [SlashCommandCompletion; 9] = [
+const SLASH_COMMANDS: [SlashCommandCompletion; 11] = [
     SlashCommandCompletion {
         command: "/new",
         insert_text: "/new",
@@ -449,6 +480,16 @@ const SLASH_COMMANDS: [SlashCommandCompletion; 9] = [
         command: "/stop",
         insert_text: "/stop",
         description: "Stop the current turn without calling the agent",
+    },
+    SlashCommandCompletion {
+        command: "/usage",
+        insert_text: "/usage",
+        description: "Show latest turn and current session token usage",
+    },
+    SlashCommandCompletion {
+        command: "/shell",
+        insert_text: "/shell ",
+        description: "Run a shell command from the shell workspace",
     },
     SlashCommandCompletion {
         command: "/model_provider",
@@ -599,6 +640,21 @@ pub(crate) fn slash_command_matches(query: &str) -> Vec<SlashCommandCompletion> 
                 || normalized_command.contains(&normalized_query)
         })
         .collect()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn has_exact_slash_command_match(query: &str) -> bool {
+    let normalized_query = query.trim().to_ascii_lowercase().replace('-', "_");
+    if normalized_query.is_empty() {
+        return false;
+    }
+    slash_command_catalog().iter().any(|completion| {
+        completion
+            .command
+            .trim_start_matches('/')
+            .to_ascii_lowercase()
+            == normalized_query
+    })
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -831,9 +887,10 @@ mod tests {
         attachment_action_in_progress, build_websocket_submit_params, can_trigger_file_picker,
         classify_message_role, classify_stream_message_action, connection_action_label,
         delete_confirmation_body, derive_page_mode, detect_active_slash_command,
-        next_pending_attachments_after_submit, normalize_gateway_token_input,
-        resolve_gateway_token, resolve_im_card, resolve_im_card_palette,
-        resolve_session_route_inputs, session_card_activity_label, should_activate_session_window,
+        has_exact_slash_command_match, next_pending_attachments_after_submit,
+        normalize_gateway_token_input, resolve_assistant_bubble_palette, resolve_gateway_token,
+        resolve_im_card, resolve_im_card_palette, resolve_session_route_inputs,
+        session_card_activity_label, should_activate_session_window,
         should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
         should_register_non_stream_fade, slash_command_matches,
         sort_session_entries_by_created_at_desc,
@@ -1117,6 +1174,22 @@ mod tests {
     }
 
     #[test]
+    fn assistant_bubble_palette_uses_darker_surface_in_dark_mode() {
+        let palette = resolve_assistant_bubble_palette(true);
+        assert_eq!(palette.fill, [14, 17, 22]);
+        assert_eq!(palette.stroke, [28, 33, 41]);
+        assert_eq!(palette.body, [221, 226, 234]);
+    }
+
+    #[test]
+    fn assistant_bubble_palette_uses_warm_surface_in_light_mode() {
+        let palette = resolve_assistant_bubble_palette(false);
+        assert_eq!(palette.fill, [252, 248, 242]);
+        assert_eq!(palette.stroke, [229, 220, 206]);
+        assert_eq!(palette.heading, [53, 43, 34]);
+    }
+
+    #[test]
     fn derive_page_mode_hides_workspace_until_bootstrap_is_ready() {
         assert_eq!(
             derive_page_mode(&ConnectionState::Disconnected, false),
@@ -1390,6 +1463,20 @@ mod tests {
         let matched = slash_command_matches("mod");
         assert!(matched.iter().any(|item| item.command == "/model"));
         assert!(matched.iter().any(|item| item.command == "/model_provider"));
+    }
+
+    #[test]
+    fn slash_command_matches_include_usage_and_shell() {
+        let matched = slash_command_matches("");
+        assert!(matched.iter().any(|item| item.command == "/usage"));
+        assert!(matched.iter().any(|item| item.command == "/shell"));
+    }
+
+    #[test]
+    fn exact_slash_command_match_detects_known_command() {
+        assert!(has_exact_slash_command_match("model"));
+        assert!(has_exact_slash_command_match("model-provider"));
+        assert!(!has_exact_slash_command_match("mod"));
     }
 
     #[test]
