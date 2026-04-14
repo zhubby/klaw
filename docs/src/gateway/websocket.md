@@ -111,7 +111,7 @@ ws://127.0.0.1:18080/ws/chat?token=secret
 
 - `Text` 帧：按 JSON 解析为结构化 websocket method。
 - `Binary` 帧：返回 `invalid_message_type` 错误。
-- `session.subscribe`：更新当前连接的 `session_key` 路由，并下发 `session.subscribed`。
+- `session.subscribe`：把目标会话加入当前连接的实时订阅集合，并把它设为默认提交会话，然后下发 `session.subscribed`。
 - `session.submit`：映射到 runtime `ChannelRequest`；返回 `result`，并在 streaming 模式下追加 `session.message` / `session.stream.*` 事件。
 - `session.message` / `result.response`：`response` 结构除 `content` 外还会携带 `metadata` 与 `attachments`；浏览器端可据此恢复 `im.card` 等结构化消息状态。
 - `Ping/Pong`：保留 websocket 心跳语义，不参与业务处理。
@@ -121,7 +121,8 @@ ws://127.0.0.1:18080/ws/chat?token=secret
 
 - 每条连接在进程内连接表中维护：
   - `connection_id`
-  - 当前订阅的 `session_key`
+  - 默认提交会话 `current_session_key`
+  - 当前连接已订阅的 `session_key` 集合
 - 握手成功后服务端会先发送 `session.connected` 事件。
 - 连接断开后会移除对应连接记录。
 

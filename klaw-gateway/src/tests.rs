@@ -1134,6 +1134,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn websocket_connection_keeps_realtime_delivery_for_all_subscribed_sessions() {
+        let config = test_gateway_config();
+        let broadcaster = Arc::new(crate::state::GatewayWebsocketBroadcaster::new());
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_broadcaster: Some(Arc::clone(&broadcaster)),
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _ = socket.next().await;
+
+        for (request_id, session_key) in [("sub-a", "websocket:alpha"), ("sub-b", "websocket:beta")]
+        {
+            socket
+                .send(Message::Text(
+                    json!({
+                        "type": "method",
+                        "id": request_id,
+                        "method": "session.subscribe",
+                        "params": { "session_key": session_key }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("subscribe should send");
+
+            for _ in 0..3 {
+                let _ = timeout(Duration::from_millis(250), socket.next())
+                    .await
+                    .expect("subscribe response should arrive before timeout")
+                    .expect("subscribe frame should exist");
+            }
+        }
+
+        let delivered = broadcaster
+            .broadcast_to_session(
+                "websocket:alpha",
+                GatewayWebsocketServerFrame::Event {
+                    event: OutboundEvent::SessionMessage,
+                    payload: json!({
+                        "session_key": "websocket:alpha",
+                        "response": {
+                            "content": "background alpha reply",
+                        },
+                        "role": "assistant",
+                        "timestamp_ms": 99,
+                    }),
+                },
+            )
+            .await;
+        assert_eq!(delivered, 1);
+
+        let frame = timeout(Duration::from_millis(250), socket.next())
+            .await
+            .expect("realtime alpha event should arrive before timeout")
+            .expect("realtime alpha event")
+            .expect("realtime alpha frame");
+        let frame = match frame {
+            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
+                .expect("valid websocket event frame"),
+            other => panic!("unexpected frame: {other:?}"),
+        };
+        match frame {
+            GatewayWebsocketServerFrame::Event { event, payload } => {
+                assert_eq!(event, OutboundEvent::SessionMessage);
+                assert_eq!(
+                    payload.get("session_key").and_then(|value| value.as_str()),
+                    Some("websocket:alpha")
+                );
+                assert_eq!(
+                    payload
+                        .get("response")
+                        .and_then(|response| response.get("content"))
+                        .and_then(|value| value.as_str()),
+                    Some("background alpha reply")
+                );
+            }
+            other => panic!("unexpected realtime frame: {other:?}"),
+        }
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
     async fn websocket_unknown_method_returns_structured_error() {
         let config = test_gateway_config();
         let handle = match spawn_gateway(&config).await {

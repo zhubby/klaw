@@ -473,10 +473,10 @@ async fn handle_text_message(
                     match websocket.handler.create_session().await {
                         Ok(session) => {
                             *current_session_key = Some(session.session_key.clone());
-                            update_connection_session_key(
+                            track_connection_session_key(
                                 state,
                                 connection_id,
-                                Some(session.session_key.clone()),
+                                session.session_key.clone(),
                             )
                             .await;
                             vec![GatewayWebsocketServerFrame::Result {
@@ -620,8 +620,7 @@ async fn handle_text_message(
                         )];
                     }
                     *current_session_key = Some(session_key.clone());
-                    update_connection_session_key(state, connection_id, Some(session_key.clone()))
-                        .await;
+                    track_connection_session_key(state, connection_id, session_key.clone()).await;
                     let Some(websocket) = state.websocket.as_ref() else {
                         return vec![error_frame(
                             Some(id),
@@ -649,7 +648,7 @@ async fn handle_text_message(
                         },
                         GatewayWebsocketServerFrame::Event {
                             event: OutboundEvent::SessionSubscribed,
-                            payload: json!({ "session_key": current_session_key }),
+                            payload: json!({ "session_key": session_key }),
                         },
                     ];
                     frames.extend(history.into_iter().map(|message| {
@@ -676,7 +675,7 @@ async fn handle_text_message(
                 }
                 InboundMethod::SessionUnsubscribe => {
                     let previous_session_key = current_session_key.take();
-                    update_connection_session_key(state, connection_id, None).await;
+                    clear_connection_session_keys(state, connection_id).await;
                     vec![
                         GatewayWebsocketServerFrame::Result {
                             id,
@@ -744,8 +743,7 @@ async fn handle_text_message(
                         )];
                     };
                     *current_session_key = Some(session_key.clone());
-                    update_connection_session_key(state, connection_id, Some(session_key.clone()))
-                        .await;
+                    track_connection_session_key(state, connection_id, session_key.clone()).await;
                     let chat_id = submit_chat_id
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
@@ -842,14 +840,21 @@ async fn register_connection(
         .await;
 }
 
-async fn update_connection_session_key(
+async fn track_connection_session_key(
     state: &GatewayState,
     connection_id: &str,
-    session_key: Option<String>,
+    session_key: String,
 ) {
     state
         .websocket_broadcaster
-        .update_session_key(connection_id, session_key)
+        .track_session_key(connection_id, session_key)
+        .await;
+}
+
+async fn clear_connection_session_keys(state: &GatewayState, connection_id: &str) {
+    state
+        .websocket_broadcaster
+        .clear_session_keys(connection_id)
         .await;
 }
 

@@ -58,8 +58,8 @@ flowchart LR
 | `session.create` | 创建新会话 | - |
 | `session.update` | 更新会话标题 | `session_key`, `title` |
 | `session.delete` | 删除会话 | `session_key` |
-| `session.subscribe` | 订阅会话（切换当前会话） | `session_key` |
-| `session.unsubscribe` | 取消订阅 | - |
+| `session.subscribe` | 订阅会话，并更新默认提交会话 | `session_key` |
+| `session.unsubscribe` | 清空当前连接的全部订阅 | - |
 | `session.submit` | 提交用户输入获取响应 | `input`, 可选 `session_key`, `chat_id`, `channel_id`, `stream`, `metadata` |
 
 ### 服务端 → 客户端：帧类型
@@ -195,7 +195,8 @@ sendFrame({
   params: { session_key: 'my-session-key' }
 });
 
-// 订阅后会推送所有历史消息作为 session.message 事件，
+// 订阅后会推送该会话的历史消息作为 session.message 事件，
+// 并把该会话加入当前连接的实时订阅集合。
 // 历史与实时消息都会放在 payload.response 下
 
 // 发送提问
@@ -336,7 +337,7 @@ Channel 面板（`Channel`）提供：
 ## 客户端实现要点
 
 1.** Ping 保活 **: 建议客户端每 30 秒发送一次 `session.ping` 保持连接
-2.** 重连机制 **: 连接断开后应使用指数退避重连，恢复当前订阅会话
+2.** 重连机制 **: 连接断开后应使用指数退避重连，恢复需要接收实时消息的全部订阅会话
 3.** 增量渲染**: 流式输出需要做 DOM 增量更新，避免全量重绘影响性能
 4.** 请求 ID 唯一性**: 使用 UUID v4 保证请求 ID 唯一
 
@@ -344,7 +345,7 @@ Channel 面板（`Channel`）提供：
 
 **Q: 一个连接可以同时处理多个会话吗？**
 
-A: 同一时间一个连接只能订阅一个会话，但可以通过 `session.subscribe` 切换到不同会话。
+A: 可以。一个连接可以连续调用 `session.subscribe` 订阅多个会话，并接收这些会话各自的实时消息；最近一次 `session.subscribe` 会更新默认提交会话，供未显式携带 `session_key` 的 `session.submit` 回退使用。
 
 **Q: 支持二进制消息吗？**
 

@@ -111,9 +111,9 @@ Webhook 请求在鉴权和参数校验通过后会立即返回 `202 Accepted`，
 
 ## 连接生命周期
 
-- 每条连接维护独立的连接上下文与当前订阅的 `session_key`
-- `session.subscribe` 会更新当前连接的会话路由
-- `session.submit` 会把输入映射为 runtime `ChannelRequest`
+- 每条连接维护独立的连接上下文、默认提交会话，以及当前连接已订阅的 `session_key` 集合
+- `session.subscribe` 会把目标会话加入当前连接的实时订阅集合，并更新默认提交会话
+- `session.submit` 会把输入映射为 runtime `ChannelRequest`；未显式携带 `session_key` 时回退到默认提交会话
 - 连接断开后，进程内连接注册表会立即清理
 
 ## 当前限制

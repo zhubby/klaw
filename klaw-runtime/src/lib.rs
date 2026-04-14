@@ -3646,9 +3646,17 @@ mod tests {
         GatewayWebhookAgentRequest, GatewayWebhookRequest, GatewayWebsocketBroadcaster,
     };
     use klaw_llm::{ChatOptions, LlmAuditPayload, LlmError, LlmProvider, ToolCall};
-    use klaw_session::{ChatRecord, NewToolAuditRecord, SessionManager, SqliteSessionManager, ToolAuditStatus};
-    use klaw_storage::{ApprovalStatus, DefaultSessionStore, HeartbeatStorage, NewLlmUsageRecord, SessionStorage, StoragePaths};
-    use klaw_tool::{ShellTool, SubAgentAuditSink, Tool, ToolCategory, ToolContext, ToolError, ToolOutput, ToolRegistry, ToolSignal};
+    use klaw_session::{
+        ChatRecord, NewToolAuditRecord, SessionManager, SqliteSessionManager, ToolAuditStatus,
+    };
+    use klaw_storage::{
+        ApprovalStatus, DefaultSessionStore, HeartbeatStorage, NewLlmUsageRecord, SessionStorage,
+        StoragePaths,
+    };
+    use klaw_tool::{
+        ShellTool, SubAgentAuditSink, Tool, ToolCategory, ToolContext, ToolError, ToolOutput,
+        ToolRegistry, ToolSignal,
+    };
     use klaw_util::EnvironmentCheckReport;
     use serde_json::{Value, json};
     use std::{
@@ -3866,7 +3874,9 @@ mod tests {
                     expires_in_minutes: Some(10),
                 })
                 .await
-                .map_err(|err| ToolError::ExecutionFailed(format!("failed to create approval: {err}")))?;
+                .map_err(|err| {
+                    ToolError::ExecutionFailed(format!("failed to create approval: {err}"))
+                })?;
             Err(ToolError::structured_execution_failed(
                 format!("approval required for approval_echo `{value}`"),
                 "approval_required",
@@ -5768,13 +5778,11 @@ A .docx file is a ZIP archive containing XML files.
             .lock()
             .unwrap_or_else(|err| err.into_inner())
             .clone();
-        assert!(
-            captured.iter().any(|message| {
-                message.role == "tool"
-                    && message.tool_call_id.is_some()
-                    && message.content.contains("linked-approval")
-            })
-        );
+        assert!(captured.iter().any(|message| {
+            message.role == "tool"
+                && message.tool_call_id.is_some()
+                && message.content.contains("linked-approval")
+        }));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -5849,15 +5857,14 @@ A .docx file is a ZIP archive containing XML files.
             .lock()
             .unwrap_or_else(|err| err.into_inner())
             .clone();
-        assert_eq!(response.content, "handled approval failure via normal tool loop");
-        assert!(
-            observed
-                .iter()
-                .any(|message| message.role == "tool"
-                    && message.content.contains("\"tool\":\"shell\"")
-                    && message.content.contains("command")
-                    && message.content.contains("false"))
+        assert_eq!(
+            response.content,
+            "handled approval failure via normal tool loop"
         );
+        assert!(observed.iter().any(|message| message.role == "tool"
+            && message.content.contains("\"tool\":\"shell\"")
+            && message.content.contains("command")
+            && message.content.contains("false")));
         assert!(
             observed
                 .iter()
@@ -5869,9 +5876,10 @@ A .docx file is a ZIP archive containing XML files.
     async fn approve_command_replays_non_shell_tool_from_audit_history() {
         let provider = Arc::new(ApprovalResumeGenericProvider::default());
         let mut runtime = build_test_runtime(provider.clone()).await;
-        runtime.runtime.tools.register(ApprovalEchoTool::with_store(
-            runtime.session_store.clone(),
-        ));
+        runtime
+            .runtime
+            .tools
+            .register(ApprovalEchoTool::with_store(runtime.session_store.clone()));
         let channel = "telegram".to_string();
         let session_key = "telegram:chat-approval-generic".to_string();
         let chat_id = "chat-approval-generic".to_string();
@@ -5951,14 +5959,12 @@ A .docx file is a ZIP archive containing XML files.
             .lock()
             .unwrap_or_else(|err| err.into_inner())
             .clone();
-        assert!(
-            observed.iter().any(|message| {
-                message.role == "tool"
-                    && message.tool_call_id.as_deref() == Some("call_approval_echo_1")
-                    && message.content.contains("\"tool\":\"approval_echo\"")
-                    && message.content.contains("approved echo: generic-ok")
-            })
-        );
+        assert!(observed.iter().any(|message| {
+            message.role == "tool"
+                && message.tool_call_id.as_deref() == Some("call_approval_echo_1")
+                && message.content.contains("\"tool\":\"approval_echo\"")
+                && message.content.contains("approved echo: generic-ok")
+        }));
     }
 
     #[tokio::test(flavor = "current_thread")]

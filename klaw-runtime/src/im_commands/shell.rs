@@ -116,4 +116,3 @@ fn append_stream_block(
         lines.push(format!("_{} was truncated_", label));
     }
 }
-

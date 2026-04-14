@@ -11,7 +11,7 @@ use klaw_archive::ArchiveService;
 use klaw_config::{GatewayConfig, ModelProviderConfig};
 use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     net::SocketAddr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -41,7 +41,8 @@ pub struct GatewayProvidersState {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct GatewayWebsocketConnection {
-    pub(crate) session_key: Option<String>,
+    pub(crate) current_session_key: Option<String>,
+    pub(crate) subscribed_session_keys: BTreeSet<String>,
     pub(crate) frame_tx: Option<mpsc::UnboundedSender<GatewayWebsocketServerFrame>>,
 }
 
@@ -62,19 +63,30 @@ impl GatewayWebsocketBroadcaster {
         session_key: Option<String>,
         frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
     ) {
+        let subscribed_session_keys = session_key.iter().cloned().collect();
         self.connections.write().await.insert(
             connection_id,
             GatewayWebsocketConnection {
-                session_key,
+                current_session_key: session_key,
+                subscribed_session_keys,
                 frame_tx: Some(frame_tx),
             },
         );
     }
 
-    pub async fn update_session_key(&self, connection_id: &str, session_key: Option<String>) {
+    pub async fn track_session_key(&self, connection_id: &str, session_key: String) {
         let mut connections = self.connections.write().await;
         if let Some(connection) = connections.get_mut(connection_id) {
-            connection.session_key = session_key;
+            connection.current_session_key = Some(session_key.clone());
+            connection.subscribed_session_keys.insert(session_key);
+        }
+    }
+
+    pub async fn clear_session_keys(&self, connection_id: &str) {
+        let mut connections = self.connections.write().await;
+        if let Some(connection) = connections.get_mut(connection_id) {
+            connection.current_session_key = None;
+            connection.subscribed_session_keys.clear();
         }
     }
 
@@ -92,7 +104,7 @@ impl GatewayWebsocketBroadcaster {
         {
             let connections = self.connections.read().await;
             for (connection_id, connection) in connections.iter() {
-                if connection.session_key.as_deref() != Some(session_key) {
+                if !connection.subscribed_session_keys.contains(session_key) {
                     continue;
                 }
                 let Some(frame_tx) = connection.frame_tx.as_ref() else {
@@ -115,6 +127,83 @@ impl GatewayWebsocketBroadcaster {
         }
 
         delivered
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GatewayWebsocketBroadcaster;
+    use crate::{GatewayWebsocketServerFrame, OutboundEvent};
+    use serde_json::json;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn broadcaster_keeps_all_tracked_sessions_for_connection() {
+        let broadcaster = GatewayWebsocketBroadcaster::new();
+        let (frame_tx, mut frame_rx) = mpsc::unbounded_channel();
+        broadcaster
+            .register(
+                "conn-1".to_string(),
+                Some("websocket:alpha".to_string()),
+                frame_tx,
+            )
+            .await;
+        broadcaster
+            .track_session_key("conn-1", "websocket:beta".to_string())
+            .await;
+
+        let delivered_alpha = broadcaster
+            .broadcast_to_session(
+                "websocket:alpha",
+                GatewayWebsocketServerFrame::Event {
+                    event: OutboundEvent::SessionMessage,
+                    payload: json!({ "session_key": "websocket:alpha" }),
+                },
+            )
+            .await;
+        let delivered_beta = broadcaster
+            .broadcast_to_session(
+                "websocket:beta",
+                GatewayWebsocketServerFrame::Event {
+                    event: OutboundEvent::SessionMessage,
+                    payload: json!({ "session_key": "websocket:beta" }),
+                },
+            )
+            .await;
+
+        assert_eq!(delivered_alpha, 1);
+        assert_eq!(delivered_beta, 1);
+        assert!(frame_rx.recv().await.is_some());
+        assert!(frame_rx.recv().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn broadcaster_clear_session_keys_removes_all_subscriptions() {
+        let broadcaster = GatewayWebsocketBroadcaster::new();
+        let (frame_tx, _frame_rx) = mpsc::unbounded_channel();
+        broadcaster
+            .register(
+                "conn-1".to_string(),
+                Some("websocket:alpha".to_string()),
+                frame_tx,
+            )
+            .await;
+        broadcaster
+            .track_session_key("conn-1", "websocket:beta".to_string())
+            .await;
+
+        broadcaster.clear_session_keys("conn-1").await;
+
+        let delivered = broadcaster
+            .broadcast_to_session(
+                "websocket:alpha",
+                GatewayWebsocketServerFrame::Event {
+                    event: OutboundEvent::SessionMessage,
+                    payload: json!({ "session_key": "websocket:alpha" }),
+                },
+            )
+            .await;
+        assert_eq!(delivered, 0);
     }
 }
 

@@ -196,7 +196,10 @@ async fn replay_approved_tool(
         }));
     };
     let mut metadata = BTreeMap::new();
-    metadata.insert("approval.id".to_string(), Value::String(approval_id.to_string()));
+    metadata.insert(
+        "approval.id".to_string(),
+        Value::String(approval_id.to_string()),
+    );
     metadata.insert(
         "approval.tool_name".to_string(),
         Value::String(tool_name.to_string()),
@@ -275,8 +278,11 @@ async fn submit_approved_tool_resume(
     else {
         return Ok(None);
     };
-    let full_history = session_manager(runtime).read_chat_records(&session_key).await?;
-    let conversation_history = build_approved_tool_resume_history(full_history, approval_id, &replay);
+    let full_history = session_manager(runtime)
+        .read_chat_records(&session_key)
+        .await?;
+    let conversation_history =
+        build_approved_tool_resume_history(full_history, approval_id, &replay);
     let outcome = submit_history_only_turn_outcome(
         runtime,
         followup_channel,

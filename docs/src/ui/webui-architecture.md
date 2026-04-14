@@ -335,8 +335,10 @@ resolve_gateway_token(query_token, persisted_token) -> Option<String>
 | `session.create` → `Result` | |
 | `session.update` → `Result` | |
 | `session.delete` → `Result` | |
-| `session.subscribe` | `session.subscribed` → 多个 `session.message` |
+| `session.subscribe` | `session.subscribed` → 该会话历史 `session.message`，并保留该会话的实时订阅 |
 | `session.submit` (`stream=true`) | `session.message` (增量) → `session.stream.done` |
+
+单条 websocket 连接可以为多个已打开 agent 窗口重复调用 `session.subscribe`；服务端会把这些会话都保留在实时订阅集合中，而最近一次订阅的会话仅作为默认提交目标。
 
 完整协议文档参见 [WebSocket Channel](./websocket-channel.md)。
 

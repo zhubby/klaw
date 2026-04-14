@@ -11,6 +11,7 @@
 - 卡片动作现在通过 `session.submit` 回传结构化 `webui.card.*` metadata，并在浏览器端就地展示 pending / completed / failed 交互状态
 - 历史消息恢复时会优先读取持久化的消息 metadata 还原卡片；对 `/approve`、`/reject`、`/card_answer` 这类内部卡片命令，UI 会隐藏原始 slash 文本并回填卡片完成态
 - websocket 历史与实时消息的前端模型已从纯文本扩展为“文本 + metadata + 派生卡片”，为后续更多 IM 卡片类型留出协议位
+- 多个已打开 agent 窗口现在可以通过同一条 `/ws/chat` 连接持续接收各自会话的实时消息；后台推送不再被最后一次 `session.subscribe` 或最后激活窗口错误覆盖
 
 ## 2026-04-13
 
