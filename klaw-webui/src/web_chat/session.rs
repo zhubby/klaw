@@ -117,6 +117,12 @@ pub(super) struct PendingHistoryScrollRestore {
     pub(in crate::web_chat) content_height: f32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum HistoryRequestCursor {
+    InitialPage,
+    BeforeMessage(String),
+}
+
 pub(super) struct SessionWindow {
     pub(in crate::web_chat) session_key: String,
     pub(in crate::web_chat) title: String,
@@ -139,6 +145,7 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) subscribed: bool,
     pub(in crate::web_chat) history_has_more: bool,
     pub(in crate::web_chat) oldest_loaded_message_id: Option<String>,
+    pub(in crate::web_chat) last_requested_history_cursor: Option<HistoryRequestCursor>,
     pub(in crate::web_chat) pending_history_scroll_restore: Option<PendingHistoryScrollRestore>,
 }
 
@@ -175,6 +182,7 @@ impl SessionWindow {
             subscribed: false,
             history_has_more: true,
             oldest_loaded_message_id: None,
+            last_requested_history_cursor: None,
             pending_history_scroll_restore: None,
         }
     }
@@ -228,6 +236,7 @@ impl SessionWindow {
     pub(super) fn reset_connection_state(&mut self) {
         self.subscribed = false;
         *self.buffers.history_loading.borrow_mut() = false;
+        self.last_requested_history_cursor = None;
         self.pending_history_scroll_restore = None;
     }
 }

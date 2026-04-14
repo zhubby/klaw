@@ -14,6 +14,7 @@ use super::{
     app::ChatApp,
     protocol::{ServerFrame, send_method},
     session::ChatMessage,
+    session::HistoryRequestCursor,
     session::PendingHistoryScrollRestore,
     session::SessionWindow,
     session::current_timestamp_ms,
@@ -217,6 +218,14 @@ impl ChatApp {
         {
             return;
         }
+        let request_cursor =
+            history_request_cursor(self.sessions[index].oldest_loaded_message_id.clone());
+        if !self.sessions[index].buffers.messages.borrow().is_empty()
+            && self.sessions[index].last_requested_history_cursor.as_ref() == Some(&request_cursor)
+        {
+            self.sessions[index].history_has_more = false;
+            return;
+        }
         let Some(ws) = self.ws.borrow().as_ref().cloned() else {
             return;
         };
@@ -226,6 +235,7 @@ impl ChatApp {
         let before_message_id = self.sessions[index].oldest_loaded_message_id.clone();
         let request_id = Uuid::new_v4().to_string();
         *self.sessions[index].buffers.history_loading.borrow_mut() = true;
+        self.sessions[index].last_requested_history_cursor = Some(request_cursor);
         self.sessions[index].pending_history_scroll_restore = scroll_restore;
         if let Err(err) = send_method(
             &ws,
@@ -320,14 +330,20 @@ impl ChatApp {
             drop(history);
             sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
             *self.sessions[index].buffers.history_loading.borrow_mut() = false;
-            self.sessions[index].history_has_more = result
+            let has_more = result
                 .get("has_more")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            self.sessions[index].oldest_loaded_message_id = result
+            let next_oldest_loaded_message_id = result
                 .get("oldest_loaded_message_id")
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
+            self.sessions[index].history_has_more = history_cursor_can_advance(
+                self.sessions[index].last_requested_history_cursor.as_ref(),
+                next_oldest_loaded_message_id.as_deref(),
+                has_more,
+            );
+            self.sessions[index].oldest_loaded_message_id = next_oldest_loaded_message_id;
             return;
         }
 
@@ -817,9 +833,36 @@ fn message_id_exists(messages: &[ChatMessage], message_id: Option<&str>) -> bool
         .any(|message| message.message_id.as_deref() == Some(message_id))
 }
 
+fn history_request_cursor(oldest_loaded_message_id: Option<String>) -> HistoryRequestCursor {
+    match oldest_loaded_message_id {
+        Some(message_id) => HistoryRequestCursor::BeforeMessage(message_id),
+        None => HistoryRequestCursor::InitialPage,
+    }
+}
+
+fn history_cursor_can_advance(
+    last_requested_cursor: Option<&HistoryRequestCursor>,
+    next_oldest_loaded_message_id: Option<&str>,
+    has_more: bool,
+) -> bool {
+    if !has_more {
+        return false;
+    }
+
+    match (last_requested_cursor, next_oldest_loaded_message_id) {
+        (_, None) => false,
+        (Some(HistoryRequestCursor::InitialPage), Some(_)) => true,
+        (Some(HistoryRequestCursor::BeforeMessage(previous)), Some(next)) => previous != next,
+        (None, Some(_)) => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{HistoryPageMessage, build_submit_params, prepend_history_page};
+    use super::{
+        HistoryPageMessage, build_submit_params, history_cursor_can_advance,
+        history_request_cursor, prepend_history_page,
+    };
     use crate::{MessageRole, WebArchiveAttachment};
     use std::collections::BTreeMap;
 
@@ -931,5 +974,21 @@ mod tests {
             .map(|message| message.text.as_str())
             .collect::<Vec<_>>();
         assert_eq!(summary, vec!["older", "current"]);
+    }
+
+    #[test]
+    fn repeated_history_cursor_is_not_treated_as_progress() {
+        let cursor = history_request_cursor(Some("msg-10".to_string()));
+        assert!(!history_cursor_can_advance(
+            Some(&cursor),
+            Some("msg-10"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn history_pagination_stops_when_server_has_more_but_no_cursor() {
+        let cursor = history_request_cursor(None);
+        assert!(!history_cursor_can_advance(Some(&cursor), None, true));
     }
 }

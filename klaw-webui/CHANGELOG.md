@@ -97,3 +97,4 @@
 ## Fixed
 
 - webui 文件上传现在优先监听浏览器 `input[type=file]` 的 `change` 事件，并把取消选择的回焦 grace time 放宽到 1 秒，减少“已选中文件但没有触发上传”的竞态
+- webui agent 历史分页现在要求 `oldest_loaded_message_id` 真正推进才继续向前拉取；当服务端返回缺失或未推进的游标时，前端会停止重复请求，避免顶部滚动时同一条历史消息反复刷新
