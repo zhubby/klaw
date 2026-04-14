@@ -1305,7 +1305,7 @@ fn render_card_message(
                         ImCardKind::Approval => "Approval Required",
                         ImCardKind::QuestionSingleSelect => "Question",
                     }))
-                    .strong(),
+                    .strong()
                     .color(rgb(palette.title)),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
