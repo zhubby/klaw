@@ -3,6 +3,7 @@ use super::{
         build_unsupported_file_attachment_markdown, infer_dingtalk_file_type,
         supported_dingtalk_file_type,
     },
+    callback_runtime_metadata,
     client::DingtalkApiClient,
     parsing::{
         ApprovalAction, CardCallbackEvent, EventDeduper, InboundEvent,
@@ -23,6 +24,19 @@ use std::thread;
 use std::time::Duration;
 
 const BOT_TITLE: &str = "Klaw";
+
+#[test]
+fn callback_runtime_metadata_marks_turn_as_isolated() {
+    let metadata = callback_runtime_metadata(Some("https://example/session"), BOT_TITLE);
+    assert_eq!(
+        metadata.get("agent.isolated_turn"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        metadata.get("channel.delivery_mode"),
+        Some(&serde_json::Value::String("direct_reply".to_string()))
+    );
+}
 
 #[test]
 fn parse_inbound_text_event_reads_dingtalk_shape() {

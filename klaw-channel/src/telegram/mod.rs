@@ -43,6 +43,10 @@ type TelegramPollResult = Result<Vec<TelegramUpdate>, String>;
 fn callback_runtime_metadata() -> BTreeMap<String, serde_json::Value> {
     let mut metadata = BTreeMap::new();
     metadata.insert(
+        "agent.isolated_turn".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    metadata.insert(
         "channel.delivery_mode".to_string(),
         serde_json::Value::String("direct_reply".to_string()),
     );
@@ -1015,6 +1019,7 @@ impl Channel for TelegramChannel {
 
 #[cfg(test)]
 mod tests {
+    use super::callback_runtime_metadata;
     use super::render::{build_im_card_message, render_telegram_response, resolve_approval_card};
     use super::types::{
         TelegramAudio, TelegramCallbackInbound, TelegramCallbackQuery, TelegramChat,
@@ -1185,6 +1190,19 @@ mod tests {
 
         assert_eq!(inbound.chat_id, "10");
         assert_eq!(inbound.command, "/approve approval-1");
+    }
+
+    #[test]
+    fn callback_runtime_metadata_marks_turn_as_isolated() {
+        let metadata = callback_runtime_metadata();
+        assert_eq!(
+            metadata.get("agent.isolated_turn"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            metadata.get("channel.delivery_mode"),
+            Some(&Value::String("direct_reply".to_string()))
+        );
     }
 
     #[test]

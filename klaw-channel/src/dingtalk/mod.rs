@@ -68,6 +68,10 @@ fn callback_runtime_metadata(
     bot_title: &str,
 ) -> BTreeMap<String, serde_json::Value> {
     let mut metadata = BTreeMap::new();
+    metadata.insert(
+        "agent.isolated_turn".to_string(),
+        serde_json::Value::Bool(true),
+    );
     if let Some(session_webhook) = session_webhook
         .map(str::trim)
         .filter(|value| !value.is_empty())
