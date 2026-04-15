@@ -11,6 +11,7 @@ use klaw_gateway::{
     GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
     GatewayWorkspaceBootstrap, GatewayWorkspaceSession, OutboundEvent,
 };
+use klaw_heartbeat::HeartbeatManager;
 use klaw_session::{SessionListQuery, SessionManager};
 use klaw_storage::StorageError;
 use serde_json::{Value, json};
@@ -148,6 +149,10 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
         let session_key = format!("websocket:{}", Uuid::new_v4());
         manager
             .touch_session(&session_key, &session_key, "websocket")
+            .await
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        HeartbeatManager::new(Arc::new(self.runtime.session_store.clone()))
+            .sync_job_to_session(&session_key, "websocket", &session_key)
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
         let workspace = self.load_web_workspace().await?;

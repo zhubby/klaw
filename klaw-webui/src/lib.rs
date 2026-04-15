@@ -819,6 +819,27 @@ pub(crate) fn should_register_non_stream_fade(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn should_hide_heartbeat_silent_ack(
+    content: &str,
+    metadata: &BTreeMap<String, Value>,
+) -> bool {
+    let Some(token) = metadata
+        .get("heartbeat.silent_ack_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+
+    metadata
+        .get("trigger.kind")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == "heartbeat")
+        && content.trim() == token
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn attachment_action_in_progress(selecting_file: bool, uploading_file: bool) -> bool {
     selecting_file || uploading_file
 }

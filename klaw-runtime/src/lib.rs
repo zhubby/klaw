@@ -1551,7 +1551,7 @@ fn session_manager(runtime: &RuntimeBundle) -> SqliteSessionManager {
 }
 
 fn supports_channel_heartbeat(channel: &str) -> bool {
-    matches!(channel, "telegram" | "dingtalk")
+    matches!(channel, "telegram" | "dingtalk" | "websocket")
 }
 
 async fn sync_base_session_heartbeat(
@@ -5150,6 +5150,24 @@ A .docx file is a ZIP archive containing XML files.
             .await
             .expect("heartbeat should be created");
         assert_eq!(heartbeat.channel, "telegram");
+        assert_eq!(heartbeat.chat_id, "chat-1");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resolve_session_route_syncs_heartbeat_for_websocket() {
+        let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+
+        resolve_session_route(&runtime, "websocket", "websocket:test", "chat-1")
+            .await
+            .expect("route should resolve");
+
+        let heartbeat = runtime
+            .session_store
+            .get_heartbeat_by_session_key("websocket:test")
+            .await
+            .expect("heartbeat should be created");
+        assert_eq!(heartbeat.channel, "websocket");
         assert_eq!(heartbeat.chat_id, "chat-1");
     }
 

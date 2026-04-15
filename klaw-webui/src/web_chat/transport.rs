@@ -7,7 +7,8 @@ use web_sys::{CloseEvent, MessageEvent, WebSocket};
 use crate::{
     ConnectionState, MessageRole, ProviderCatalog, WebArchiveAttachment, WorkspaceSessionEntry,
     build_websocket_submit_params, classify_stream_message_action,
-    next_pending_attachments_after_submit, should_register_non_stream_fade,
+    next_pending_attachments_after_submit, should_hide_heartbeat_silent_ack,
+    should_register_non_stream_fade,
 };
 
 use super::{
@@ -456,6 +457,18 @@ impl ChatApp {
             .unwrap_or_default()
             .to_string();
         if !streamed && !content.is_empty() {
+            let response_metadata = response
+                .get("metadata")
+                .cloned()
+                .and_then(|value| serde_json::from_value::<BTreeMap<String, Value>>(value).ok())
+                .unwrap_or_default();
+            if should_hide_heartbeat_silent_ack(&content, &response_metadata) {
+                *self.sessions[index]
+                    .buffers
+                    .active_stream_request_id
+                    .borrow_mut() = None;
+                return;
+            }
             let message = ChatMessage::new_with_metadata(
                 content,
                 MessageRole::Assistant,
@@ -464,11 +477,7 @@ impl ChatApp {
                     .get("message_id")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
-                response
-                    .get("metadata")
-                    .cloned()
-                    .and_then(|value| serde_json::from_value::<BTreeMap<String, Value>>(value).ok())
-                    .unwrap_or_default(),
+                response_metadata,
             );
             if message_id_exists(
                 &self.sessions[index].buffers.messages.borrow(),
@@ -546,6 +555,11 @@ impl ChatApp {
                     ) {
                         return;
                     }
+                    if matches!(role, MessageRole::Assistant)
+                        && should_hide_heartbeat_silent_ack(&content, &response_metadata)
+                    {
+                        return;
+                    }
                     let message = ChatMessage::new_with_metadata(
                         content,
                         role,
@@ -563,6 +577,13 @@ impl ChatApp {
                         &messages,
                         &mut self.sessions[index].card_state_overrides,
                     );
+                    return;
+                }
+                if should_hide_heartbeat_silent_ack(&content, &response_metadata) {
+                    *self.sessions[index]
+                        .buffers
+                        .active_stream_request_id
+                        .borrow_mut() = request_id;
                     return;
                 }
                 let action = classify_stream_message_action(
@@ -796,6 +817,7 @@ fn prepend_history_page(history: &mut Vec<ChatMessage>, page_messages: Vec<Histo
         .collect::<BTreeSet<_>>();
     let mut prepended = page_messages
         .into_iter()
+        .filter(|message| !should_hide_heartbeat_silent_ack(&message.content, &message.metadata))
         .filter(|message| {
             message
                 .message_id
@@ -863,6 +885,7 @@ mod tests {
         HistoryPageMessage, build_submit_params, history_cursor_can_advance,
         history_request_cursor, prepend_history_page,
     };
+    use crate::should_hide_heartbeat_silent_ack;
     use crate::{MessageRole, WebArchiveAttachment};
     use std::collections::BTreeMap;
 
@@ -990,5 +1013,47 @@ mod tests {
     fn history_pagination_stops_when_server_has_more_but_no_cursor() {
         let cursor = history_request_cursor(None);
         assert!(!history_cursor_can_advance(Some(&cursor), None, true));
+    }
+
+    #[test]
+    fn prepend_history_page_drops_heartbeat_silent_ack_messages() {
+        let mut history = Vec::new();
+
+        prepend_history_page(
+            &mut history,
+            vec![HistoryPageMessage {
+                role: "assistant".to_string(),
+                content: "HEARTBEAT_OK".to_string(),
+                timestamp_ms: 1,
+                metadata: BTreeMap::from([
+                    ("trigger.kind".to_string(), json!("heartbeat")),
+                    (
+                        "heartbeat.silent_ack_token".to_string(),
+                        json!("HEARTBEAT_OK"),
+                    ),
+                ]),
+                message_id: Some("msg-hb".to_string()),
+            }],
+        );
+
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn heartbeat_silent_ack_detection_requires_matching_metadata() {
+        assert!(should_hide_heartbeat_silent_ack(
+            " HEARTBEAT_OK ",
+            &BTreeMap::from([
+                ("trigger.kind".to_string(), json!("heartbeat")),
+                (
+                    "heartbeat.silent_ack_token".to_string(),
+                    json!("HEARTBEAT_OK"),
+                ),
+            ])
+        ));
+        assert!(!should_hide_heartbeat_silent_ack(
+            "HEARTBEAT_OK",
+            &BTreeMap::new()
+        ));
     }
 }

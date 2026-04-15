@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-04-15
+
+### Fixed
+
+- webui 现在会忽略带 heartbeat metadata 且内容等于 `silent_ack_token` 的历史/实时 assistant 消息，避免 `HEARTBEAT_OK` 之类的静默确认文本出现在会话窗口
+- websocket 新建会话在 runtime 侧同步 heartbeat 后，webui 创建的新 session 也会立即具备默认 heartbeat 绑定
+
 ## 2026-04-14
 
 ### Fixed

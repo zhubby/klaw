@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-15
+
+### Fixed
+
+- websocket 会话现在和 telegram / dingtalk 一样会自动同步创建 session-bound heartbeat；gateway `session.create` 不再因为绕过常规路由初始化而漏掉 heartbeat 绑定
+
 ## 2026-04-14
 
 ### Changed
