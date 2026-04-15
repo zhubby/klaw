@@ -4246,7 +4246,6 @@ name = "klaw-gui"
 version = "0.12.0"
 dependencies = [
  "anyhow",
- "catppuccin-egui",
  "chrono",
  "cpal 0.16.0",
  "eframe",
@@ -4524,6 +4523,7 @@ dependencies = [
 name = "klaw-ui-kit"
 version = "0.12.0"
 dependencies = [
+ "catppuccin-egui",
  "eframe",
  "egui",
  "egui-notify",

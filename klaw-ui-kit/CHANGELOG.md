@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-04-15
+
+### Added
+
+- 新增共享主题模块，统一提供 `LightThemePreset`、`DarkThemePreset`、preset 标签文案，以及 light/dark `egui::Visuals` 构建逻辑
+
+### Changed
+
+- `klaw-ui-kit` 现在导出共享 `apply_theme()`，供 `klaw-gui` 与 `klaw-webui` 复用同一套主题 mode + preset 应用逻辑
+
 ## 2026-04-14
 
 ### Changed

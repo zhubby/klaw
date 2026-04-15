@@ -2,6 +2,15 @@
 
 ## 2026-04-15
 
+### Added
+
+- 顶部菜单栏最前面新增 `File` 菜单，并提供 `Settings` 弹窗入口；弹窗中的主题配置对齐 GUI `General Settings`，支持分别选择 Light / Dark 主题系列
+
+### Changed
+
+- webui 主题状态现在会持久化 `theme_mode`、`light_theme` 与 `dark_theme`，刷新页面后可恢复完整主题选择而不只保留旧的明暗模式
+- 浏览器端主题应用现改为复用 `klaw-ui-kit` 的共享 preset 和 `apply_theme()` 逻辑，与桌面端保持同一套主题体系
+
 ### Fixed
 
 - webui 现在会忽略带 heartbeat metadata 且内容等于 `silent_ack_token` 的历史/实时 assistant 消息，避免 `HEARTBEAT_OK` 之类的静默确认文本出现在会话窗口

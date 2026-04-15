@@ -2,7 +2,7 @@ pub mod persistence;
 pub mod workbench;
 
 use crate::domain::menu::WorkbenchMenu;
-pub use klaw_ui_kit::ThemeMode;
+pub use klaw_ui_kit::{DarkThemePreset, LightThemePreset, ThemeMode};
 use serde::{Deserialize, Serialize};
 use workbench::TabId;
 
@@ -22,46 +22,6 @@ pub enum UiAction {
     StartWindowDrag,
     ShowAbout,
     HideAbout,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum LightThemePreset {
-    #[default]
-    Default,
-    Latte,
-    Crab,
-}
-
-impl LightThemePreset {
-    pub const fn label(self) -> &'static str {
-        match self {
-            LightThemePreset::Default => "Default",
-            LightThemePreset::Latte => "Latte",
-            LightThemePreset::Crab => "Crab",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum DarkThemePreset {
-    #[default]
-    Default,
-    Frappe,
-    Macchiato,
-    Mocha,
-}
-
-impl DarkThemePreset {
-    pub const fn label(self) -> &'static str {
-        match self {
-            DarkThemePreset::Default => "Default",
-            DarkThemePreset::Frappe => "Frappé",
-            DarkThemePreset::Macchiato => "Macchiato",
-            DarkThemePreset::Mocha => "Mocha",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

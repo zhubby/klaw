@@ -6,7 +6,10 @@ use eframe::egui::{
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_ui_kit::toggle::toggle;
-use klaw_ui_kit::{ThemeSwitch, text_animator::TextAnimator};
+use klaw_ui_kit::{
+    DarkThemePreset, LightThemePreset, ThemeMode, ThemeSwitch, text_animator::TextAnimator,
+    theme_mode_from_preference,
+};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{
@@ -40,6 +43,13 @@ impl ChatApp {
     fn render_top_bar(&mut self, ctx: &Context) {
         TopBottomPanel::top("klaw-webui-toolbar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button(format!("{} File", regular::FILE), |ui| {
+                    if ui.button(format!("{} Settings", regular::GEAR)).clicked() {
+                        self.show_settings_dialog = true;
+                        ui.close();
+                    }
+                });
+
                 ui.menu_button(format!("{} Window", regular::APP_WINDOW), |ui| {
                     if ui
                         .button(format!("{} Tile Windows", regular::APP_WINDOW))
@@ -132,7 +142,7 @@ impl ChatApp {
                 let current_theme = self.ctx.options(|opt| opt.theme_preference);
                 let mut next_theme = current_theme;
                 if ui.add(ThemeSwitch::new(&mut next_theme)).changed() {
-                    requested_theme = Some(next_theme);
+                    requested_theme = Some(theme_mode_from_preference(next_theme));
                 }
                 ui.separator();
                 ui.label(format!("Agents: {}/{}", self.sessions.len(), open_sessions))
@@ -196,6 +206,121 @@ impl ChatApp {
         }
         if stream_changed {
             self.persist_workspace_state();
+        }
+    }
+
+    fn render_settings_dialog(&mut self, ctx: &Context) {
+        if !self.show_settings_dialog {
+            return;
+        }
+
+        let mut open = self.show_settings_dialog;
+        let mut requested_theme_mode = None;
+        let mut requested_light_theme = None;
+        let mut requested_dark_theme = None;
+
+        egui::Window::new("Settings")
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(420.0);
+                ui.strong("General Settings");
+                ui.add_space(8.0);
+                ui.label(format!("Current theme mode: {}", self.theme_mode.label()));
+                ui.add_space(8.0);
+
+                egui::Grid::new("webui-general-theme-grid")
+                    .num_columns(2)
+                    .spacing([8.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Theme Mode:");
+                        ComboBox::from_id_salt("webui-settings-theme-mode")
+                            .width(160.0)
+                            .selected_text(self.theme_mode.label())
+                            .show_ui(ui, |ui| {
+                                for theme_mode in
+                                    [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark]
+                                {
+                                    if ui
+                                        .selectable_label(
+                                            self.theme_mode == theme_mode,
+                                            theme_mode.label(),
+                                        )
+                                        .clicked()
+                                    {
+                                        requested_theme_mode = Some(theme_mode);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        ui.end_row();
+
+                        ui.label("Light Theme:");
+                        ComboBox::from_id_salt("webui-settings-light-theme")
+                            .width(160.0)
+                            .selected_text(self.light_theme.label())
+                            .show_ui(ui, |ui| {
+                                for preset in [
+                                    LightThemePreset::Default,
+                                    LightThemePreset::Latte,
+                                    LightThemePreset::Crab,
+                                ] {
+                                    if ui
+                                        .selectable_label(
+                                            self.light_theme == preset,
+                                            preset.label(),
+                                        )
+                                        .clicked()
+                                    {
+                                        requested_light_theme = Some(preset);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        ui.end_row();
+
+                        ui.label("Dark Theme:");
+                        ComboBox::from_id_salt("webui-settings-dark-theme")
+                            .width(160.0)
+                            .selected_text(self.dark_theme.label())
+                            .show_ui(ui, |ui| {
+                                for preset in [
+                                    DarkThemePreset::Default,
+                                    DarkThemePreset::Frappe,
+                                    DarkThemePreset::Macchiato,
+                                    DarkThemePreset::Mocha,
+                                ] {
+                                    if ui
+                                        .selectable_label(
+                                            self.dark_theme == preset,
+                                            preset.label(),
+                                        )
+                                        .clicked()
+                                    {
+                                        requested_dark_theme = Some(preset);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                    });
+
+                ui.add_space(8.0);
+                ui.small("Default keeps the existing egui light/dark visuals.");
+            });
+
+        self.show_settings_dialog = open;
+
+        if let Some(theme_mode) = requested_theme_mode {
+            self.set_theme_mode(theme_mode);
+        }
+        if let Some(light_theme) = requested_light_theme {
+            self.set_light_theme(light_theme);
+        }
+        if let Some(dark_theme) = requested_dark_theme {
+            self.set_dark_theme(dark_theme);
         }
     }
 
@@ -1095,6 +1220,7 @@ impl eframe::App for ChatApp {
         self.render_session_list(ctx);
         self.render_workbench(ctx);
         self.render_gateway_dialog(ctx);
+        self.render_settings_dialog(ctx);
         self.render_about_dialog(ctx);
         self.render_rename_dialog(ctx);
         self.render_delete_dialog(ctx);

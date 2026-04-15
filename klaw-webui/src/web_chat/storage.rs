@@ -1,4 +1,5 @@
-use crate::{ThemeMode, normalize_gateway_token_input};
+use crate::normalize_gateway_token_input;
+use klaw_ui_kit::{DarkThemePreset, LightThemePreset, ThemeMode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use web_sys::Storage;
@@ -14,6 +15,12 @@ pub(super) struct PersistedSession {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct PersistedWorkspaceState {
+    #[serde(default)]
+    pub(in crate::web_chat) theme_mode: ThemeMode,
+    #[serde(default)]
+    pub(in crate::web_chat) light_theme: LightThemePreset,
+    #[serde(default)]
+    pub(in crate::web_chat) dark_theme: DarkThemePreset,
     #[serde(default)]
     pub(in crate::web_chat) legacy_theme_mode: Option<ThemeMode>,
     #[serde(default)]
@@ -32,6 +39,9 @@ const fn default_session_open() -> bool {
 
 fn default_workspace_state() -> PersistedWorkspaceState {
     PersistedWorkspaceState {
+        theme_mode: ThemeMode::System,
+        light_theme: LightThemePreset::Default,
+        dark_theme: DarkThemePreset::Default,
         legacy_theme_mode: None,
         sessions: Vec::new(),
         active_session_key: None,
@@ -64,6 +74,10 @@ pub(super) fn load_workspace_state() -> PersistedWorkspaceState {
             .and_then(|storage| storage.get_item(APP_STATE_STORAGE_KEY).ok().flatten())
             .and_then(|raw| serde_json::from_str::<LegacyWorkspaceTheme>(&raw).ok())
             .and_then(|legacy| legacy.theme_mode);
+    }
+
+    if let Some(legacy_theme_mode) = state.legacy_theme_mode {
+        state.theme_mode = legacy_theme_mode;
     }
 
     state
@@ -113,10 +127,14 @@ fn is_valid_session_key(session_key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{default_stream_enabled, default_workspace_state, is_valid_session_key};
+    use klaw_ui_kit::{DarkThemePreset, LightThemePreset, ThemeMode};
 
     #[test]
     fn persisted_workspace_state_defaults_without_local_sessions() {
         let state = default_workspace_state();
+        assert_eq!(state.theme_mode, ThemeMode::System);
+        assert_eq!(state.light_theme, LightThemePreset::Default);
+        assert_eq!(state.dark_theme, DarkThemePreset::Default);
         assert!(state.active_session_key.is_none());
         assert!(state.gateway_token.is_none());
         assert!(state.sessions.is_empty());

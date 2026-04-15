@@ -1,7 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use eframe::egui::{self, Context};
-use klaw_ui_kit::{NotificationCenter, theme_preference};
+use klaw_ui_kit::{
+    DarkThemePreset, LightThemePreset, NotificationCenter, ThemeMode, apply_theme,
+};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::Notification;
 use web_sys::WebSocket;
@@ -34,11 +36,15 @@ pub(super) struct ChatApp {
     pub(in crate::web_chat) toasts: Rc<RefCell<NotificationCenter>>,
     pub(in crate::web_chat) show_gateway_dialog: bool,
     pub(in crate::web_chat) show_about_dialog: bool,
+    pub(in crate::web_chat) show_settings_dialog: bool,
     pub(in crate::web_chat) rename_session_key: Option<String>,
     pub(in crate::web_chat) rename_session_input: String,
     pub(in crate::web_chat) delete_session_key: Option<String>,
     pub(in crate::web_chat) did_attempt_prefilled_token: bool,
     pub(in crate::web_chat) stream_enabled: bool,
+    pub(in crate::web_chat) theme_mode: ThemeMode,
+    pub(in crate::web_chat) light_theme: LightThemePreset,
+    pub(in crate::web_chat) dark_theme: DarkThemePreset,
 }
 
 impl ChatApp {
@@ -51,6 +57,9 @@ impl ChatApp {
         let persisted_active_session_key = persisted.active_session_key;
         let persisted_sessions = persisted.sessions;
         let stream_enabled = persisted.stream_enabled;
+        let theme_mode = persisted.theme_mode;
+        let light_theme = persisted.light_theme;
+        let dark_theme = persisted.dark_theme;
 
         let mut app = Self {
             ctx: cc.egui_ctx.clone(),
@@ -67,30 +76,36 @@ impl ChatApp {
             toasts: Rc::new(RefCell::new(NotificationCenter::default())),
             show_gateway_dialog: false,
             show_about_dialog: false,
+            show_settings_dialog: false,
             rename_session_key: None,
             rename_session_input: String::new(),
             delete_session_key: None,
             did_attempt_prefilled_token: false,
             stream_enabled,
+            theme_mode,
+            light_theme,
+            dark_theme,
         };
         app.restore_window_state(persisted_sessions);
-        if let Some(legacy_theme_mode) = persisted.legacy_theme_mode {
-            app.ctx.set_theme(theme_preference(legacy_theme_mode));
-        }
         app.apply_theme();
         app
     }
 
     pub(in crate::web_chat) fn apply_theme(&self) {
-        self.ctx
-            .set_visuals_of(egui::Theme::Light, egui::Visuals::light());
-        self.ctx
-            .set_visuals_of(egui::Theme::Dark, egui::Visuals::dark());
+        apply_theme(
+            &self.ctx,
+            self.theme_mode,
+            self.light_theme,
+            self.dark_theme,
+        );
     }
 
     pub(in crate::web_chat) fn persist_workspace_state(&self) {
         save_workspace_state(&PersistedWorkspaceState {
-            legacy_theme_mode: None,
+            theme_mode: self.theme_mode,
+            light_theme: self.light_theme,
+            dark_theme: self.dark_theme,
+            legacy_theme_mode: Some(self.theme_mode),
             sessions: self.sessions.iter().map(SessionWindow::metadata).collect(),
             active_session_key: self.active_session_key.clone(),
             gateway_token: self.gateway_token.clone(),
@@ -201,11 +216,30 @@ impl ChatApp {
         }
     }
 
-    pub(in crate::web_chat) fn set_theme_mode(&mut self, theme_mode: egui::ThemePreference) {
-        if self.ctx.options(|opt| opt.theme_preference) == theme_mode {
+    pub(in crate::web_chat) fn set_theme_mode(&mut self, theme_mode: ThemeMode) {
+        if self.theme_mode == theme_mode {
             return;
         }
-        self.ctx.set_theme(theme_mode);
+        self.theme_mode = theme_mode;
+        self.apply_theme();
+        self.persist_workspace_state();
+    }
+
+    pub(in crate::web_chat) fn set_light_theme(&mut self, light_theme: LightThemePreset) {
+        if self.light_theme == light_theme {
+            return;
+        }
+        self.light_theme = light_theme;
+        self.apply_theme();
+        self.persist_workspace_state();
+    }
+
+    pub(in crate::web_chat) fn set_dark_theme(&mut self, dark_theme: DarkThemePreset) {
+        if self.dark_theme == dark_theme {
+            return;
+        }
+        self.dark_theme = dark_theme;
+        self.apply_theme();
         self.persist_workspace_state();
     }
 

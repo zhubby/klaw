@@ -12,6 +12,7 @@ fonts-noto-sans = []
 
 [dependencies]
 egui = { workspace = true }
+catppuccin-egui = { workspace = true }
 egui-phosphor = { workspace = true }
 egui-notify = { workspace = true }
 egui-theme-switch = { workspace = true }

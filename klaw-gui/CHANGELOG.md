@@ -2,6 +2,14 @@
 
 ## 2026-04-15
 
+### Changed
+
+- GUI 主题 preset 与 `egui::Visuals` 生成逻辑现已下沉到 `klaw-ui-kit`，桌面端设置面板继续保持原交互，但不再单独维护 light/dark preset 定义
+
+### Fixed
+
+- GUI `UiState` 的亮色/暗色主题 preset 现在直接复用共享类型，避免与 WebUI 的可选主题系列发生漂移
+
 ### Fixed
 
 - gateway 状态轮询的 GUI runtime bridge 超时已从 `1s` 放宽到 `10s`，避免 Tailscale 主机探测放宽到 `5s` 后 `Refresh Gateway` / `Refresh Tailscale` 被上层状态请求提前判成超时
