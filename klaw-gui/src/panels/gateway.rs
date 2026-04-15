@@ -3,14 +3,14 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_seconds;
 use crate::{
     GatewayStatusSnapshot, request_gateway_status, request_restart_gateway,
-    request_set_tailscale_mode, request_start_gateway,
+    request_set_tailscale_mode, request_start_gateway, request_tailscale_host_status,
 };
 use egui::Color32;
 use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayConfig, TailscaleMode,
 };
-use klaw_gateway::TailscaleStatus;
+use klaw_gateway::{TailscaleHostInfo, TailscaleStatus};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
@@ -99,15 +99,21 @@ enum PendingGatewayAction {
     SetTailscaleMode(TailscaleMode),
 }
 
+enum PendingGatewayResult {
+    Snapshot(Result<GatewayStatusSnapshot, String>),
+    TailscaleHost(Result<TailscaleHostInfo, String>),
+}
+
 struct PendingGatewayRequest {
     action: PendingGatewayAction,
-    receiver: Receiver<Result<GatewayStatusSnapshot, String>>,
+    receiver: Receiver<PendingGatewayResult>,
 }
 
 pub struct GatewayPanel {
     status: Option<GatewayStatusSnapshot>,
     load_error: Option<String>,
     loaded: bool,
+    tailscale_needs_refresh: bool,
     store: Option<ConfigStore>,
     config_path: Option<PathBuf>,
     config: AppConfig,
@@ -124,6 +130,7 @@ impl Default for GatewayPanel {
             status: None,
             load_error: None,
             loaded: false,
+            tailscale_needs_refresh: true,
             store: None,
             config_path: None,
             config: AppConfig::default(),
@@ -173,9 +180,23 @@ impl GatewayPanel {
         self.status = Some(status);
     }
 
+    fn maybe_queue_tailscale_refresh(&mut self) {
+        if !self.tailscale_needs_refresh || self.pending_request.is_some() {
+            return;
+        }
+        self.tailscale_needs_refresh = false;
+        self.queue_request(
+            PendingGatewayAction::Refresh {
+                announce: false,
+                tailscale_only: true,
+            },
+            || PendingGatewayResult::TailscaleHost(request_tailscale_host_status()),
+        );
+    }
+
     fn queue_request<F>(&mut self, action: PendingGatewayAction, request: F)
     where
-        F: FnOnce() -> Result<GatewayStatusSnapshot, String> + Send + 'static,
+        F: FnOnce() -> PendingGatewayResult + Send + 'static,
     {
         if self.pending_request.is_some() {
             return;
@@ -198,84 +219,108 @@ impl GatewayPanel {
 
         match pending.receiver.try_recv() {
             Ok(result) => match result {
-                Ok(status) => {
-                    self.apply_status(status);
-                    match pending.action {
-                        PendingGatewayAction::Refresh {
-                            announce,
-                            tailscale_only,
-                        } => {
-                            if announce {
-                                notifications.success(if tailscale_only {
-                                    "Tailscale status refreshed"
+                PendingGatewayResult::Snapshot(result) => match result {
+                    Ok(status) => {
+                        self.apply_status(status);
+                        match pending.action {
+                            PendingGatewayAction::Refresh {
+                                announce,
+                                tailscale_only,
+                            } => {
+                                if announce {
+                                    notifications.success(if tailscale_only {
+                                        "Tailscale status refreshed"
+                                    } else {
+                                        "Gateway status refreshed"
+                                    });
+                                }
+                            }
+                            PendingGatewayAction::Start => {
+                                self.tailscale_needs_refresh = true;
+                                let message = self
+                                    .status
+                                    .as_ref()
+                                    .and_then(|snapshot| snapshot.info.as_ref())
+                                    .map(|info| format!("Gateway started at {}", info.ws_url))
+                                    .unwrap_or_else(|| "Gateway started".to_string());
+                                notifications.success(message);
+                            }
+                            PendingGatewayAction::Restart => {
+                                self.tailscale_needs_refresh = true;
+                                let message = self
+                                    .status
+                                    .as_ref()
+                                    .and_then(|snapshot| snapshot.info.as_ref())
+                                    .map(|info| format!("Gateway restarted at {}", info.ws_url))
+                                    .unwrap_or_else(|| "Gateway restarted".to_string());
+                                notifications.success(message);
+                            }
+                            PendingGatewayAction::SetTailscaleMode(mode) => {
+                                self.tailscale_needs_refresh = true;
+                                let mode_str = match mode {
+                                    TailscaleMode::Off => "disabled",
+                                    TailscaleMode::Serve => "serve (tailnet only)",
+                                    TailscaleMode::Funnel => "funnel (public)",
+                                };
+                                notifications
+                                    .success(format!("Tailscale mode set to {}", mode_str));
+                            }
+                        }
+                        self.maybe_queue_tailscale_refresh();
+                    }
+                    Err(err) => {
+                        if matches!(pending.action, PendingGatewayAction::SetTailscaleMode(_)) {
+                            self.selected_tailscale_mode = self
+                                .status
+                                .as_ref()
+                                .map(|status| status.tailscale_mode)
+                                .unwrap_or(self.config.gateway.tailscale.mode);
+                        }
+                        notifications.error(match pending.action {
+                            PendingGatewayAction::Refresh { tailscale_only, .. } => {
+                                if tailscale_only {
+                                    format!("Failed to refresh tailscale status: {err}")
                                 } else {
-                                    "Gateway status refreshed"
-                                });
+                                    format!("Failed to load gateway status: {err}")
+                                }
                             }
+                            PendingGatewayAction::Start => {
+                                format!("Failed to start gateway: {err}")
+                            }
+                            PendingGatewayAction::Restart => {
+                                format!("Failed to restart gateway: {err}")
+                            }
+                            PendingGatewayAction::SetTailscaleMode(_) => {
+                                format!("Failed to set tailscale mode: {err}")
+                            }
+                        });
+                        self.load_error = Some(err);
+                        self.queue_request(
+                            PendingGatewayAction::Refresh {
+                                announce: false,
+                                tailscale_only: false,
+                            },
+                            || PendingGatewayResult::Snapshot(request_gateway_status()),
+                        );
+                    }
+                },
+                PendingGatewayResult::TailscaleHost(result) => match result {
+                    Ok(tailscale_host) => {
+                        if let Some(status) = self.status.as_mut() {
+                            status.tailscale_host = tailscale_host;
                         }
-                        PendingGatewayAction::Start => {
-                            let message = self
-                                .status
-                                .as_ref()
-                                .and_then(|snapshot| snapshot.info.as_ref())
-                                .map(|info| format!("Gateway started at {}", info.ws_url))
-                                .unwrap_or_else(|| "Gateway started".to_string());
-                            notifications.success(message);
-                        }
-                        PendingGatewayAction::Restart => {
-                            let message = self
-                                .status
-                                .as_ref()
-                                .and_then(|snapshot| snapshot.info.as_ref())
-                                .map(|info| format!("Gateway restarted at {}", info.ws_url))
-                                .unwrap_or_else(|| "Gateway restarted".to_string());
-                            notifications.success(message);
-                        }
-                        PendingGatewayAction::SetTailscaleMode(mode) => {
-                            let mode_str = match mode {
-                                TailscaleMode::Off => "disabled",
-                                TailscaleMode::Serve => "serve (tailnet only)",
-                                TailscaleMode::Funnel => "funnel (public)",
-                            };
-                            notifications.success(format!("Tailscale mode set to {}", mode_str));
+                        if let PendingGatewayAction::Refresh { announce, .. } = pending.action
+                            && announce
+                        {
+                            notifications.success("Tailscale status refreshed");
                         }
                     }
-                }
-                Err(err) => {
-                    if matches!(pending.action, PendingGatewayAction::SetTailscaleMode(_)) {
-                        self.selected_tailscale_mode = self
-                            .status
-                            .as_ref()
-                            .map(|status| status.tailscale_mode)
-                            .unwrap_or(self.config.gateway.tailscale.mode);
+                    Err(err) => {
+                        self.tailscale_needs_refresh = true;
+                        notifications.error(format!("Failed to refresh tailscale status: {err}"));
+                        self.load_error = Some(err);
                     }
-                    notifications.error(match pending.action {
-                        PendingGatewayAction::Refresh { tailscale_only, .. } => {
-                            if tailscale_only {
-                                format!("Failed to refresh tailscale status: {err}")
-                            } else {
-                                format!("Failed to load gateway status: {err}")
-                            }
-                        }
-                        PendingGatewayAction::Start => {
-                            format!("Failed to start gateway: {err}")
-                        }
-                        PendingGatewayAction::Restart => {
-                            format!("Failed to restart gateway: {err}")
-                        }
-                        PendingGatewayAction::SetTailscaleMode(_) => {
-                            format!("Failed to set tailscale mode: {err}")
-                        }
-                    });
-                    self.load_error = Some(err);
-                    self.queue_request(
-                        PendingGatewayAction::Refresh {
-                            announce: false,
-                            tailscale_only: false,
-                        },
-                        request_gateway_status,
-                    );
-                }
+                },
             },
             Err(TryRecvError::Empty) => {
                 self.pending_request = Some(pending);
@@ -297,7 +342,13 @@ impl GatewayPanel {
                 announce,
                 tailscale_only,
             },
-            request_gateway_status,
+            move || {
+                if tailscale_only {
+                    PendingGatewayResult::TailscaleHost(request_tailscale_host_status())
+                } else {
+                    PendingGatewayResult::Snapshot(request_gateway_status())
+                }
+            },
         );
     }
 
@@ -352,16 +403,20 @@ impl GatewayPanel {
     }
 
     fn start(&mut self, _notifications: &mut NotificationCenter) {
-        self.queue_request(PendingGatewayAction::Start, request_start_gateway);
+        self.queue_request(PendingGatewayAction::Start, || {
+            PendingGatewayResult::Snapshot(request_start_gateway())
+        });
     }
 
     fn restart(&mut self, _notifications: &mut NotificationCenter) {
-        self.queue_request(PendingGatewayAction::Restart, request_restart_gateway);
+        self.queue_request(PendingGatewayAction::Restart, || {
+            PendingGatewayResult::Snapshot(request_restart_gateway())
+        });
     }
 
     fn set_tailscale_mode(&mut self, mode: TailscaleMode, _notifications: &mut NotificationCenter) {
         self.queue_request(PendingGatewayAction::SetTailscaleMode(mode), move || {
-            request_set_tailscale_mode(mode)
+            PendingGatewayResult::Snapshot(request_set_tailscale_mode(mode))
         });
     }
 

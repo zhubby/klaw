@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026-04-15
+
+### Fixed
+
+- GUI gateway 面板中的 `tailscale Host Status` 现在会把 `tailscale status --json` 的 daemon/CLI 执行失败显示为明确的 `Error`，不再把 `failed to connect to local Tailscaled process` 一类错误误报成 `Disconnected`
+
+### Added
+
+- `tailscale` 主机探测现在会输出 debug 日志，记录 `tailscale version` / `tailscale status --json` 的执行结果、退出码与 stdout/stderr 摘要，便于排查 GUI 中的主机状态误判
+
+### Changed
+
+- `tailscale version` / `tailscale status --json` 的 GUI 主机探测超时从 `400ms` 放宽到 `30s`，避免本机 Tailscale CLI 偶发稍慢时被过早判成超时
+
 ## 2026-04-14
 
 ### Fixed

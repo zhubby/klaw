@@ -1,6 +1,8 @@
 use super::{GatewayStatusSnapshot, RuntimeBundle, webhook};
 use klaw_config::{AppConfig, ConfigError, ConfigStore, TailscaleMode};
-use klaw_gateway::{GatewayHandle, TailscaleManager, spawn_gateway_with_options};
+use klaw_gateway::{
+    GatewayHandle, TailscaleHostInfo, TailscaleManager, spawn_gateway_with_options,
+};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::warn;
@@ -75,13 +77,11 @@ impl GatewayManager {
         match start_result {
             Ok(handle) => {
                 self.handle = Some(handle);
-                self.refresh_tailscale_host_status();
                 self.last_error = None;
                 Ok(self.snapshot())
             }
             Err(err) => {
                 let message = err.to_string();
-                self.refresh_tailscale_host_status();
                 self.last_error = Some(message.clone());
                 Err(message)
             }
@@ -98,12 +98,10 @@ impl GatewayManager {
 
         match stop_result {
             Ok(()) => {
-                self.refresh_tailscale_host_status();
                 self.last_error = None;
                 Ok(self.snapshot())
             }
             Err(err) => {
-                self.refresh_tailscale_host_status();
                 self.last_error = Some(err.clone());
                 Err(err)
             }
@@ -124,8 +122,18 @@ impl GatewayManager {
     pub fn refresh_from_store(&mut self) -> Result<GatewayStatusSnapshot, String> {
         let config = load_config_from_store()?;
         self.sync_metadata_from_config(&config);
-        self.refresh_tailscale_host_status();
         Ok(self.snapshot())
+    }
+
+    pub fn refresh_tailscale_host_from_store(&mut self) -> Result<TailscaleHostInfo, String> {
+        let config = load_config_from_store()?;
+        self.sync_metadata_from_config(&config);
+        self.refresh_tailscale_host_status();
+        Ok(self.tailscale_host.clone())
+    }
+
+    pub fn set_tailscale_host(&mut self, host: TailscaleHostInfo) {
+        self.tailscale_host = host;
     }
 
     pub async fn start_from_store(&mut self) -> Result<GatewayStatusSnapshot, String> {
@@ -165,12 +173,10 @@ impl GatewayManager {
             match save_gateway_enabled(false) {
                 Ok(config) => {
                     self.configured_enabled = config.gateway.enabled;
-                    self.refresh_tailscale_host_status();
                     self.last_error = None;
                     Ok(self.snapshot())
                 }
                 Err(err) => {
-                    self.refresh_tailscale_host_status();
                     self.last_error = Some(err.clone());
                     Err(err)
                 }
@@ -203,17 +209,14 @@ impl GatewayManager {
                             );
                         }
                         self.tailscale_mode = previous_mode;
-                        self.refresh_tailscale_host_status();
                         self.last_error = Some(err.clone());
                         Err(err)
                     }
                 }
             } else {
-                self.refresh_tailscale_host_status();
                 Ok(self.snapshot())
             }
         } else {
-            self.refresh_tailscale_host_status();
             Ok(self.snapshot())
         }
     }

@@ -3,6 +3,7 @@ use klaw_acp::{
 };
 use klaw_channel::{ChannelInstanceKey, ChannelInstanceStatus, ChannelSyncResult};
 use klaw_config::TailscaleMode;
+use klaw_gateway::TailscaleHostInfo;
 use klaw_llm::ToolDefinition;
 use klaw_mcp::{McpRuntimeSnapshot, McpServerKey, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
@@ -111,6 +112,9 @@ pub enum RuntimeCommand {
     GetGatewayStatus {
         response: mpsc::Sender<GatewayStatusSnapshot>,
     },
+    GetTailscaleHostStatus {
+        response: mpsc::Sender<Result<TailscaleHostInfo, String>>,
+    },
     StartGateway {
         response: mpsc::Sender<Result<GatewayStatusSnapshot, String>>,
     },
@@ -130,7 +134,7 @@ pub enum RuntimeCommand {
 static RUNTIME_COMMAND_SENDER: OnceLock<Mutex<Option<UnboundedSender<RuntimeCommand>>>> =
     OnceLock::new();
 static LOG_BRIDGE: OnceLock<Mutex<Option<Arc<GuiLogBridge>>>> = OnceLock::new();
-const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(1);
+const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 const RUNTIME_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_MCP_RESTART_TIMEOUT: Duration = Duration::from_secs(90);
 const LOG_BRIDGE_MAX_CHUNKS: usize = 8_192;
@@ -568,6 +572,22 @@ pub fn request_gateway_status() -> Result<GatewayStatusSnapshot, String> {
         .map_err(|_| "failed to send runtime command".to_string())?;
 
     recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "gateway status")
+}
+
+pub fn request_tailscale_host_status() -> Result<TailscaleHostInfo, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::GetTailscaleHostStatus {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "tailscale host status")?
 }
 
 pub fn request_start_gateway() -> Result<GatewayStatusSnapshot, String> {

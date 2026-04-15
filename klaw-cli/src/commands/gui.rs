@@ -14,7 +14,7 @@ use std::{
     collections::BTreeMap,
     io,
     sync::{
-        Arc,
+        Arc, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -236,6 +236,10 @@ impl GuiCommand {
                         &config_for_thread,
                         Arc::clone(&runtime),
                     )));
+                    let gateway_status_cache = Arc::new(StdMutex::new({
+                        let manager = gateway_manager.lock().await;
+                        manager.snapshot()
+                    }));
                     if let Err(err) = gateway_manager
                         .lock()
                         .await
@@ -243,6 +247,13 @@ impl GuiCommand {
                         .await
                     {
                         warn!(error = %err, "failed to start gateway for gui runtime");
+                    }
+                    {
+                        let snapshot = gateway_manager.lock().await.snapshot();
+                        let mut cache = gateway_status_cache
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        *cache = snapshot;
                     }
                     let adapter = Arc::clone(&hosted.adapter);
                     let local = tokio::task::LocalSet::new();
@@ -557,39 +568,132 @@ impl GuiCommand {
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetGatewayStatus { response }) => {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
+                                                let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
-                                                    let mut gateway_manager = gateway_manager.lock().await;
-                                                    if let Err(err) = gateway_manager.refresh_from_store() {
-                                                        warn!(error = %err, "failed to refresh gateway config metadata");
+                                                    if let Ok(mut gateway_manager) = gateway_manager.try_lock() {
+                                                        if let Err(err) = gateway_manager.refresh_from_store() {
+                                                            warn!(error = %err, "failed to refresh gateway config metadata");
+                                                        }
+                                                        let snapshot = gateway_manager.snapshot();
+                                                        let mut cache = gateway_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                        *cache = snapshot.clone();
+                                                        let _ = response.send(snapshot);
+                                                        return;
                                                     }
-                                                    let _ = response.send(gateway_manager.snapshot());
+                                                    let snapshot = gateway_status_cache
+                                                        .lock()
+                                                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                                        .clone();
+                                                    let _ = response.send(snapshot);
+                                                });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::GetTailscaleHostStatus { response }) => {
+                                                let gateway_manager = Arc::clone(&gateway_manager);
+                                                let gateway_status_cache = Arc::clone(&gateway_status_cache);
+                                                tokio::task::spawn_local(async move {
+                                                    let host = tokio::task::spawn_blocking(
+                                                        klaw_gateway::TailscaleManager::inspect_host,
+                                                    )
+                                                    .await
+                                                    .unwrap_or_else(|err| klaw_gateway::TailscaleHostInfo {
+                                                        status: klaw_gateway::TailscaleStatus::Error(
+                                                            format!("failed to join tailscale host probe: {err}"),
+                                                        ),
+                                                        message: Some(
+                                                            "Tailscale host probe worker failed unexpectedly."
+                                                                .to_string(),
+                                                        ),
+                                                        ..Default::default()
+                                                    });
+                                                    let mut gateway_manager = gateway_manager.lock().await;
+                                                    gateway_manager.set_tailscale_host(host.clone());
+                                                    let snapshot = gateway_manager.snapshot();
+                                                    let mut cache = gateway_status_cache
+                                                        .lock()
+                                                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                    *cache = snapshot;
+                                                    let _ = response.send(Ok(host));
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::StartGateway { response }) => {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
+                                                let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
+                                                    {
+                                                        let mut cache = gateway_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                        cache.transitioning = true;
+                                                    }
                                                     let result = gateway_manager.lock().await.start_from_store().await;
+                                                    if let Ok(snapshot) = &result {
+                                                        let mut cache = gateway_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                        *cache = snapshot.clone();
+                                                    }
                                                     let _ = response.send(result);
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::SetGatewayEnabled { enabled, response }) => {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
+                                                let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
+                                                    {
+                                                        let mut cache = gateway_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                        cache.transitioning = true;
+                                                    }
                                                     let result = gateway_manager.lock().await.set_enabled(enabled).await;
+                                                    if let Ok(snapshot) = &result {
+                                                        let mut cache = gateway_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                        *cache = snapshot.clone();
+                                                    }
                                                     let _ = response.send(result);
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::RestartGateway { response }) => {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
+                                                let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
+                                                    {
+                                                        let mut cache = gateway_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                        cache.transitioning = true;
+                                                    }
                                                     let result = gateway_manager.lock().await.restart_from_store().await;
+                                                    if let Ok(snapshot) = &result {
+                                                        let mut cache = gateway_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                        *cache = snapshot.clone();
+                                                    }
                                                     let _ = response.send(result);
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::SetTailscaleMode { mode, response }) => {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
+                                                let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
+                                                    {
+                                                        let mut cache = gateway_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                        cache.transitioning = true;
+                                                    }
                                                     let result = gateway_manager.lock().await.set_tailscale_mode(mode).await;
+                                                    if let Ok(snapshot) = &result {
+                                                        let mut cache = gateway_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                                        *cache = snapshot.clone();
+                                                    }
                                                     let _ = response.send(result);
                                                 });
                                             }

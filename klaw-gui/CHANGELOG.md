@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-04-15
+
+### Fixed
+
+- gateway 状态轮询的 GUI runtime bridge 超时已从 `1s` 放宽到 `10s`，避免 Tailscale 主机探测放宽到 `5s` 后 `Refresh Gateway` / `Refresh Tailscale` 被上层状态请求提前判成超时
+- `Gateway` 面板里的普通 `Refresh` 与 `Refresh Tailscale` 现已拆成独立 runtime 请求；gateway 配置/运行态读取不再同步触发 Tailscale host probe，Tailscale 刷新也不再经过整份 gateway status
+
 ## 2026-04-14
 
 ### Fixed
