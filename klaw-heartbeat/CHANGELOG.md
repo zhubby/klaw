@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-15
+
+### Changed
+- heartbeat worker now drops overdue runs that were missed while the runtime was down and reschedules from the current tick instead of replaying them on restart
+
 ## 2026-04-02
 
 ### Added

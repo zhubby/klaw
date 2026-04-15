@@ -240,6 +240,7 @@ where
 {
     pub async fn run_tick(&self) -> Result<usize, HeartbeatError> {
         let now = now_ms();
+        let overdue_grace_ms = duration_millis_i64(self.config.poll_interval);
         let due_jobs = self
             .storage
             .list_due_heartbeats(now, self.config.batch_limit)
@@ -247,12 +248,21 @@ where
         let mut executed = 0usize;
 
         for job in due_jobs {
-            let next_run_at_ms = next_run_after(&job.every, job.next_run_at_ms)?;
+            let is_missed_run = now.saturating_sub(job.next_run_at_ms) > overdue_grace_ms;
+            let next_run_at_ms = if is_missed_run {
+                next_run_after(&job.every, now)?
+            } else {
+                next_run_after(&job.every, job.next_run_at_ms)?
+            };
             let claimed = self
                 .storage
                 .claim_next_heartbeat_run(&job.id, job.next_run_at_ms, next_run_at_ms, now)
                 .await?;
             if !claimed {
+                continue;
+            }
+
+            if is_missed_run {
                 continue;
             }
 
@@ -626,6 +636,10 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
+fn duration_millis_i64(value: Duration) -> i64 {
+    value.as_millis().min(i64::MAX as u128) as i64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -905,6 +919,53 @@ mod tests {
         );
         assert_eq!(history[1]["content"].as_str(), Some("keep-1"));
         assert_eq!(history[2]["content"].as_str(), Some("keep-2"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn worker_skips_missed_runs_instead_of_replaying_them() {
+        let store = Arc::new(create_store().await);
+        let overdue_next_run_at_ms = now_ms().saturating_sub(5_000);
+        store
+            .create_heartbeat(&NewHeartbeatJob {
+                id: "hb-missed".to_string(),
+                session_key: "terminal:main".to_string(),
+                channel: "terminal".to_string(),
+                chat_id: "main".to_string(),
+                enabled: true,
+                every: "1m".to_string(),
+                prompt: String::new(),
+                silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+                recent_messages_limit: DEFAULT_RECENT_MESSAGES_LIMIT,
+                timezone: "UTC".to_string(),
+                next_run_at_ms: overdue_next_run_at_ms,
+            })
+            .await
+            .expect("create heartbeat");
+        let transport = Arc::new(InMemoryTransport::<InboundMessage>::default());
+        let worker = HeartbeatWorker::new(
+            store.clone(),
+            transport.clone(),
+            HeartbeatWorkerConfig {
+                poll_interval: Duration::from_secs(1),
+                batch_limit: 64,
+            },
+        );
+
+        let before_tick = now_ms();
+        let executed = worker.run_tick().await.expect("tick");
+
+        assert_eq!(executed, 0);
+        let job = store.get_heartbeat("hb-missed").await.expect("job");
+        assert!(job.next_run_at_ms >= before_tick + 60_000);
+        assert!(job.next_run_at_ms > overdue_next_run_at_ms + 60_000);
+        assert!(
+            store
+                .list_heartbeat_task_runs("hb-missed", 10, 0)
+                .await
+                .expect("runs")
+                .is_empty()
+        );
+        assert!(transport.published_messages().await.is_empty());
     }
 
     #[test]

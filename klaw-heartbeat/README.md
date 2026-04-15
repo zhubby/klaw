@@ -15,5 +15,6 @@
 - runtime delivery resolves the current `active_session_key` when present, so heartbeat follows the active conversation branch
 - each heartbeat stores an optional custom prompt prefix, while runtime delivery always appends a fixed heartbeat instruction that requires an exact silent-ack token when no user-visible action is needed
 - heartbeat jobs can persist a per-job recent-message window, allowing each run to inject bounded session history from the resolved conversation branch instead of replaying the full transcript
+- heartbeat does not replay runs missed during downtime; overdue jobs are rescheduled from the current tick instead of being backfilled after restart
 - heartbeat output is considered silent only when it carries heartbeat metadata and exactly matches the configured silent-ack token
 - persistence lives in `klaw-storage` heartbeat tables rather than being projected into cron rows
