@@ -2,8 +2,14 @@
 
 ## 2026-04-15
 
+### Changed
+
+- IM callback commands now opt into isolated execution sessions instead of resuming directly inside the routed chat session, aligning callback turns with cron/webhook-style one-shot execution semantics
+
 ### Fixed
 
+- `/approve` follow-up resumes triggered from isolated IM callbacks now replay approval context into a fresh `callback:*` execution session, so approval-triggered turns no longer append into the live IM chat history
+- `/card_answer` follow-ups triggered from isolated IM callbacks now execute from a fresh `callback:*` session built from the source conversation history, so callback answers no longer pollute the active chat transcript
 - websocket 会话现在和 telegram / dingtalk 一样会自动同步创建 session-bound heartbeat；gateway `session.create` 不再因为绕过常规路由初始化而漏掉 heartbeat 绑定
 
 ## 2026-04-14

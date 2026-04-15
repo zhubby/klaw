@@ -264,8 +264,9 @@ fn build_approved_tool_resume_history(
 async fn submit_approved_tool_resume(
     runtime: &RuntimeBundle,
     followup_channel: String,
+    execution_session_key: String,
     followup_chat_id: String,
-    session_key: String,
+    source_session_key: String,
     model_provider: String,
     model: String,
     request_metadata: BTreeMap<String, Value>,
@@ -273,20 +274,26 @@ async fn submit_approved_tool_resume(
     tool_name: &str,
     command_text: &str,
 ) -> Result<Option<AssistantOutput>, Box<dyn Error>> {
-    let Some(replay) =
-        replay_approved_tool(runtime, approval_id, &session_key, tool_name, command_text).await?
+    let Some(replay) = replay_approved_tool(
+        runtime,
+        approval_id,
+        &source_session_key,
+        tool_name,
+        command_text,
+    )
+    .await?
     else {
         return Ok(None);
     };
     let full_history = session_manager(runtime)
-        .read_chat_records(&session_key)
+        .read_chat_records(&source_session_key)
         .await?;
     let conversation_history =
         build_approved_tool_resume_history(full_history, approval_id, &replay);
     let outcome = submit_history_only_turn_outcome(
         runtime,
         followup_channel,
-        session_key,
+        execution_session_key,
         followup_chat_id,
         "local-user".to_string(),
         model_provider,
@@ -297,6 +304,72 @@ async fn submit_approved_tool_resume(
     )
     .await?;
     Ok(outcome.output)
+}
+
+async fn submit_isolated_session_followup(
+    runtime: &RuntimeBundle,
+    channel: String,
+    execution_session_key: String,
+    chat_id: String,
+    source_session_key: &str,
+    model_provider: &str,
+    model: &str,
+    request_metadata: BTreeMap<String, Value>,
+    followup_input: String,
+) -> Result<Option<AssistantOutput>, Box<dyn Error>> {
+    let full_history = session_manager(runtime)
+        .read_chat_records(source_session_key)
+        .await?;
+    let summary = maybe_refresh_summary(
+        runtime,
+        source_session_key,
+        model_provider,
+        model,
+        &full_history,
+    )
+    .await;
+    let mut conversation_history = to_conversation_messages(&build_history_for_model(
+        full_history,
+        runtime.conversation_history_limit,
+        summary.as_ref(),
+    ));
+    conversation_history.push(ConversationMessage {
+        role: "user".to_string(),
+        content: followup_input,
+        tool_calls: None,
+        tool_call_id: None,
+    });
+    let outcome = submit_history_only_turn_outcome(
+        runtime,
+        channel,
+        execution_session_key,
+        chat_id,
+        "channel-user".to_string(),
+        model_provider.to_string(),
+        model.to_string(),
+        Vec::new(),
+        request_metadata,
+        conversation_history,
+    )
+    .await?;
+    Ok(outcome.output)
+}
+
+fn isolated_followup_request_metadata(
+    request_metadata: &BTreeMap<String, Value>,
+    base_session_key: &str,
+    delivery_session_key: &str,
+) -> BTreeMap<String, Value> {
+    let mut metadata = inherited_channel_runtime_metadata(request_metadata);
+    metadata.insert(
+        "channel.base_session_key".to_string(),
+        Value::String(base_session_key.to_string()),
+    );
+    metadata.insert(
+        "channel.delivery_session_key".to_string(),
+        Value::String(delivery_session_key.to_string()),
+    );
+    metadata
 }
 
 fn approval_link_metadata_matches_route(
@@ -667,16 +740,38 @@ pub(super) async fn handle_im_command(
                         )
                         .await;
                     let mut followup_request_metadata =
-                        inherited_channel_runtime_metadata(&request_metadata);
+                        if request_wants_isolated_turn(&request_metadata) {
+                            isolated_followup_request_metadata(
+                                &request_metadata,
+                                &base_session_key,
+                                &route.active_session_key,
+                            )
+                        } else {
+                            inherited_channel_runtime_metadata(&request_metadata)
+                        };
                     for (key, value) in stored_delivery_metadata {
                         if key.starts_with("channel.") || key.starts_with("webhook.") {
                             followup_request_metadata.entry(key).or_insert(value);
                         }
                     }
+                    let execution_session_key = if request_wants_isolated_turn(&request_metadata) {
+                        build_callback_execution_session_key(&channel)
+                    } else {
+                        approved.session_key.clone()
+                    };
                     let maybe_output = submit_approved_tool_resume(
                         runtime,
-                        followup_channel,
-                        followup_chat_id,
+                        if request_wants_isolated_turn(&request_metadata) {
+                            channel.clone()
+                        } else {
+                            followup_channel
+                        },
+                        execution_session_key,
+                        if request_wants_isolated_turn(&request_metadata) {
+                            chat_id.clone()
+                        } else {
+                            followup_chat_id
+                        },
                         approved.session_key.clone(),
                         route.model_provider.clone(),
                         route.model.clone(),
@@ -870,25 +965,45 @@ pub(super) async fn handle_im_command(
                 selected_option.id,
                 selected_option.label
             );
-            let maybe_output = submit_and_get_output(
-                runtime,
-                channel.clone(),
-                followup_input,
-                outcome.question.session_key.clone(),
-                question.chat_id.clone(),
-                "channel-user".to_string(),
-                route.model_provider.clone(),
-                route.model.clone(),
-                Vec::new(),
-                build_ask_question_followup_request_metadata(
-                    &request_metadata,
-                    &outcome.question.id,
-                    &outcome.question.question_text,
-                    &selected_option.id,
-                    &selected_option.label,
-                ),
-            )
-            .await?;
+            let followup_request_metadata = build_ask_question_followup_request_metadata(
+                &request_metadata,
+                &outcome.question.id,
+                &outcome.question.question_text,
+                &selected_option.id,
+                &selected_option.label,
+            );
+            let maybe_output = if request_wants_isolated_turn(&request_metadata) {
+                submit_isolated_session_followup(
+                    runtime,
+                    channel.clone(),
+                    build_callback_execution_session_key(&channel),
+                    question.chat_id.clone(),
+                    &outcome.question.session_key,
+                    &route.model_provider,
+                    &route.model,
+                    isolated_followup_request_metadata(
+                        &followup_request_metadata,
+                        &base_session_key,
+                        &route.active_session_key,
+                    ),
+                    followup_input,
+                )
+                .await?
+            } else {
+                submit_and_get_output(
+                    runtime,
+                    channel.clone(),
+                    followup_input,
+                    outcome.question.session_key.clone(),
+                    question.chat_id.clone(),
+                    "channel-user".to_string(),
+                    route.model_provider.clone(),
+                    route.model.clone(),
+                    Vec::new(),
+                    followup_request_metadata,
+                )
+                .await?
+            };
             match maybe_output {
                 Some(output) => channel_response(output.content, output.reasoning, output.metadata),
                 None => channel_response(

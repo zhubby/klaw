@@ -260,6 +260,19 @@ pub async fn submit_channel_request(
         }
     }
 
+    if request_wants_isolated_turn(&request.metadata) {
+        let route = resolve_session_route(
+            runtime,
+            &request.channel,
+            &request.session_key,
+            &request.chat_id,
+        )
+        .await?;
+        let maybe_output = submit_channel_isolated_turn(runtime, request, route).await?;
+        return Ok(maybe_output
+            .map(|output| channel_response(output.content, output.reasoning, output.metadata)));
+    }
+
     apply_websocket_route_override_from_metadata(
         runtime,
         &request.channel,
@@ -291,6 +304,55 @@ pub async fn submit_channel_request(
 
     Ok(maybe_output
         .map(|output| channel_response(output.content, output.reasoning, output.metadata)))
+}
+
+fn request_wants_isolated_turn(metadata: &BTreeMap<String, Value>) -> bool {
+    metadata
+        .get(META_ISOLATED_TURN_KEY)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn build_callback_execution_session_key(channel: &str) -> String {
+    format!("callback:{channel}:{}", Uuid::new_v4())
+}
+
+async fn submit_channel_isolated_turn(
+    runtime: &RuntimeBundle,
+    request: ChannelRequest,
+    route: SessionRoute,
+) -> Result<Option<AssistantOutput>, Box<dyn Error>> {
+    let ChannelRequest {
+        channel,
+        input,
+        session_key: base_session_key,
+        chat_id,
+        media_references,
+        mut metadata,
+    } = request;
+    metadata.insert(
+        "channel.base_session_key".to_string(),
+        Value::String(base_session_key),
+    );
+    metadata.insert(
+        "channel.delivery_session_key".to_string(),
+        Value::String(route.active_session_key.clone()),
+    );
+    submit_isolated_turn(
+        runtime,
+        input,
+        "local-user".to_string(),
+        IsolatedExecutionRoute {
+            session_key: build_callback_execution_session_key(&channel),
+            chat_id,
+            channel,
+            model_provider: route.model_provider,
+            model: route.model,
+        },
+        media_references,
+        metadata,
+    )
+    .await
 }
 
 pub async fn submit_channel_request_streaming(
@@ -510,6 +572,7 @@ pub fn build_channel_driver_factory(
 }
 
 const META_CONVERSATION_HISTORY_KEY: &str = "agent.conversation_history";
+const META_ISOLATED_TURN_KEY: &str = "agent.isolated_turn";
 const META_PROVIDER_KEY: &str = "agent.provider_id";
 const META_MODEL_KEY: &str = "agent.model";
 const META_TOOL_CHOICE_KEY: &str = "agent.tool_choice";
@@ -522,9 +585,10 @@ struct SessionRoute {
 }
 
 #[derive(Debug, Clone)]
-struct WebhookExecutionRoute {
+struct IsolatedExecutionRoute {
     session_key: String,
     chat_id: String,
+    channel: String,
     model_provider: String,
     model: String,
 }
@@ -1749,10 +1813,11 @@ fn build_webhook_execution_route(
     request_chat_id: &str,
     default_provider: &str,
     default_model: &str,
-) -> WebhookExecutionRoute {
-    WebhookExecutionRoute {
+) -> IsolatedExecutionRoute {
+    IsolatedExecutionRoute {
         session_key: request_session_key.to_string(),
         chat_id: request_chat_id.to_string(),
+        channel: "webhook".to_string(),
         model_provider: default_provider.to_string(),
         model: default_model.to_string(),
     }
@@ -2753,13 +2818,12 @@ pub async fn submit_and_get_output(
     .map(|outcome| outcome.output)
 }
 
-async fn submit_webhook_isolated_turn(
+async fn submit_isolated_turn(
     runtime: &RuntimeBundle,
     input: String,
     sender_id: String,
-    execution: WebhookExecutionRoute,
-    delivery_route: Option<WebhookDeliveryRoute>,
-    base_session_key: Option<&str>,
+    execution: IsolatedExecutionRoute,
+    media_references: Vec<MediaReference>,
     request_metadata: BTreeMap<String, Value>,
 ) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
     let sessions = session_manager(runtime);
@@ -2769,7 +2833,117 @@ async fn submit_webhook_isolated_turn(
         .append_chat_record(&execution.session_key, &user_record)
         .await?;
     let session_state = sessions
-        .touch_session(&execution.session_key, &execution.chat_id, "webhook")
+        .touch_session(
+            &execution.session_key,
+            &execution.chat_id,
+            &execution.channel,
+        )
+        .await?;
+
+    let mut inbound_metadata = request_metadata;
+    inbound_metadata.insert(
+        META_CONVERSATION_HISTORY_KEY.to_string(),
+        Value::Array(Vec::new()),
+    );
+    inbound_metadata.insert(
+        META_PROVIDER_KEY.to_string(),
+        Value::String(execution.model_provider.clone()),
+    );
+    inbound_metadata.insert(
+        META_MODEL_KEY.to_string(),
+        Value::String(execution.model.clone()),
+    );
+    if let Some(delivery_metadata_json) =
+        persistable_session_delivery_metadata_json(&inbound_metadata)
+    {
+        sessions
+            .set_delivery_metadata(
+                &execution.session_key,
+                &execution.chat_id,
+                &execution.channel,
+                Some(&delivery_metadata_json),
+            )
+            .await?;
+    }
+
+    refresh_runtime_system_prompt(runtime).await;
+    let outcome = runtime
+        .runtime
+        .process_message(
+            Envelope {
+                header,
+                metadata: BTreeMap::new(),
+                payload: InboundMessage {
+                    channel: execution.channel.clone(),
+                    sender_id,
+                    chat_id: execution.chat_id.clone(),
+                    session_key: execution.session_key.clone(),
+                    content: input,
+                    media_references,
+                    metadata: inbound_metadata,
+                },
+            },
+            false,
+        )
+        .await;
+    enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
+
+    let Some(msg) = outcome.final_response else {
+        return Ok(None);
+    };
+    if !should_emit_outbound(&msg) {
+        return Ok(None);
+    }
+
+    let agent_record = ChatRecord::new(
+        "assistant",
+        msg.payload.content.clone(),
+        Some(msg.header.message_id.to_string()),
+    )
+    .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
+    persist_assistant_response_state(
+        runtime,
+        &msg.header.session_key,
+        &execution.chat_id,
+        &execution.channel,
+        session_state.turn_count,
+        &msg.header.message_id,
+        &msg.payload.metadata,
+        &agent_record,
+    )
+    .await;
+    let reasoning = msg
+        .payload
+        .metadata
+        .get("reasoning")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+        .filter(|value| !value.trim().is_empty());
+    Ok(Some(AssistantOutput {
+        content: msg.payload.content,
+        reasoning,
+        metadata: msg.payload.metadata,
+    }))
+}
+
+async fn submit_webhook_isolated_turn(
+    runtime: &RuntimeBundle,
+    input: String,
+    sender_id: String,
+    execution: IsolatedExecutionRoute,
+    delivery_route: Option<WebhookDeliveryRoute>,
+    base_session_key: Option<&str>,
+    request_metadata: BTreeMap<String, Value>,
+) -> Result<Option<AssistantOutput>, Box<dyn std::error::Error>> {
+    let channel = execution.channel.clone();
+    let sessions = session_manager(runtime);
+    let header = EnvelopeHeader::new(execution.session_key.clone());
+    let user_record = ChatRecord::new("user", input.clone(), Some(header.message_id.to_string()));
+    sessions
+        .append_chat_record(&execution.session_key, &user_record)
+        .await?;
+    let session_state = sessions
+        .touch_session(&execution.session_key, &execution.chat_id, &channel)
         .await?;
 
     let mut inbound_metadata = request_metadata;
@@ -2819,7 +2993,7 @@ async fn submit_webhook_isolated_turn(
             .set_delivery_metadata(
                 &execution.session_key,
                 &execution.chat_id,
-                "webhook",
+                &channel,
                 Some(&delivery_metadata_json),
             )
             .await?;
@@ -2829,7 +3003,7 @@ async fn submit_webhook_isolated_turn(
         header,
         metadata: BTreeMap::new(),
         payload: InboundMessage {
-            channel: "webhook".to_string(),
+            channel: channel.clone(),
             sender_id,
             chat_id: execution.chat_id.clone(),
             session_key: execution.session_key.clone(),
@@ -2869,7 +3043,7 @@ async fn submit_webhook_isolated_turn(
         runtime,
         &msg.header.session_key,
         &execution.chat_id,
-        "webhook",
+        &channel,
         session_state.turn_count,
         &msg.header.message_id,
         &msg.payload.metadata,
@@ -2948,9 +3122,10 @@ pub async fn submit_webhook_agent(
         request.provider.as_deref(),
         request.model.as_deref(),
     )?;
-    let execution = WebhookExecutionRoute {
+    let execution = IsolatedExecutionRoute {
         session_key: request.session_key.clone(),
         chat_id: request.chat_id.clone(),
+        channel: "webhook".to_string(),
         model_provider: model_provider.clone(),
         model: model.clone(),
     };
@@ -3615,10 +3790,11 @@ fn should_emit_outbound(msg: &Envelope<OutboundMessage>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        RuntimeBundle, StartupReport, approval_manager, ask_question_manager,
-        build_ask_question_followup_request_metadata, build_history_for_model,
-        build_new_session_bootstrap_user_message, build_unavailable_provider, builtin_tool_names,
-        compression_trigger_interval, configured_default_model, extract_skill_short_description,
+        META_ISOLATED_TURN_KEY, RuntimeBundle, StartupReport, approval_manager,
+        ask_question_manager, build_ask_question_followup_request_metadata,
+        build_history_for_model, build_new_session_bootstrap_user_message,
+        build_unavailable_provider, builtin_tool_names, compression_trigger_interval,
+        configured_default_model, extract_skill_short_description,
         format_approve_already_handled_message, format_new_session_started_message, im_commands,
         normalize_runtime_provider_override, parse_outbound_attachments, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
@@ -3647,11 +3823,12 @@ mod tests {
     };
     use klaw_llm::{ChatOptions, LlmAuditPayload, LlmError, LlmProvider, ToolCall};
     use klaw_session::{
-        ChatRecord, NewToolAuditRecord, SessionManager, SqliteSessionManager, ToolAuditStatus,
+        ChatRecord, NewToolAuditRecord, SessionListQuery, SessionManager, SqliteSessionManager,
+        ToolAuditStatus,
     };
     use klaw_storage::{
-        ApprovalStatus, DefaultSessionStore, HeartbeatStorage, NewLlmUsageRecord, SessionStorage,
-        StoragePaths,
+        ApprovalStatus, DefaultSessionStore, HeartbeatStorage, NewLlmUsageRecord, SessionSortOrder,
+        SessionStorage, StoragePaths,
     };
     use klaw_tool::{
         ShellTool, SubAgentAuditSink, Tool, ToolCategory, ToolContext, ToolError, ToolOutput,
@@ -5986,6 +6163,121 @@ A .docx file is a ZIP archive containing XML files.
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn approve_command_with_isolated_turn_writes_followup_into_callback_session() {
+        let provider = Arc::new(ApprovalResumeGenericProvider::default());
+        let mut runtime = build_test_runtime(provider).await;
+        runtime
+            .runtime
+            .tools
+            .register(ApprovalEchoTool::with_store(runtime.session_store.clone()));
+        let channel = "telegram".to_string();
+        let session_key = "telegram:chat-approval-isolated".to_string();
+        let chat_id = "chat-approval-isolated".to_string();
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                &session_key,
+                &chat_id,
+                &channel,
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("session should exist");
+
+        let manager = approval_manager(&runtime);
+        let approval = manager
+            .create_approval(ApprovalCreateInput {
+                session_key: session_key.clone(),
+                tool_name: "approval_echo".to_string(),
+                command_text: "{\"value\":\"generic-ok\"}".to_string(),
+                command_preview: Some("approval_echo generic-ok".to_string()),
+                command_hash: None,
+                risk_level: Some("mutating".to_string()),
+                requested_by: Some("agent".to_string()),
+                justification: None,
+                expires_in_minutes: Some(10),
+            })
+            .await
+            .expect("approval should be created");
+        runtime
+            .session_store
+            .append_tool_audit(&NewToolAuditRecord {
+                id: "tool-audit-approval-echo-isolated".to_string(),
+                session_key: session_key.clone(),
+                chat_id: chat_id.clone(),
+                turn_index: 1,
+                request_seq: 1,
+                tool_call_seq: 1,
+                tool_name: "approval_echo".to_string(),
+                status: ToolAuditStatus::Failed,
+                error_code: Some("approval_required".to_string()),
+                error_message: Some("approval requested".to_string()),
+                retryable: Some(true),
+                approval_required: true,
+                arguments_json: "{\"value\":\"generic-ok\"}".to_string(),
+                result_content: "approval requested".to_string(),
+                error_details_json: None,
+                signals_json: Some(
+                    format!(
+                        "[{{\"kind\":\"approval_required\",\"payload\":{{\"approval_id\":\"{}\",\"tool_name\":\"approval_echo\"}}}}]",
+                        approval.id
+                    ),
+                ),
+                metadata_json: Some("{\"tool_call_id\":\"call_approval_echo_1\"}".to_string()),
+                started_at_ms: 10,
+                finished_at_ms: 20,
+            })
+            .await
+            .expect("tool audit should append");
+
+        let response = im_commands::handle_im_command(
+            &runtime,
+            channel.clone(),
+            session_key.clone(),
+            chat_id.clone(),
+            format!("/approve {}", approval.id),
+            BTreeMap::from([
+                (META_ISOLATED_TURN_KEY.to_string(), Value::Bool(true)),
+                ("channel.delivery_mode".to_string(), json!("direct_reply")),
+            ]),
+        )
+        .await
+        .expect("approve command should succeed")
+        .expect("approve command should return a response");
+
+        assert_eq!(response.content, "generic approval resumed automatically");
+        let base_history = sessions
+            .read_chat_records(&session_key)
+            .await
+            .expect("base history should load");
+        assert!(base_history.is_empty());
+
+        let callback_sessions = sessions
+            .list_sessions(SessionListQuery {
+                limit: Some(10),
+                offset: 0,
+                updated_from_ms: None,
+                updated_to_ms: None,
+                channel: Some(channel),
+                session_key_prefix: Some("callback:telegram:".to_string()),
+                sort_order: SessionSortOrder::UpdatedAtDesc,
+            })
+            .await
+            .expect("callback sessions should list");
+        assert_eq!(callback_sessions.len(), 1);
+        let callback_history = sessions
+            .read_chat_records(&callback_sessions[0].session_key)
+            .await
+            .expect("callback history should load");
+        assert_eq!(callback_history.len(), 1);
+        assert_eq!(
+            callback_history[0].content,
+            "generic approval resumed automatically"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn submit_and_get_output_persists_dingtalk_delivery_metadata_on_active_session() {
         let provider = Arc::new(BootstrapCaptureProvider::default());
         let runtime = build_test_runtime(provider).await;
@@ -6053,6 +6345,191 @@ A .docx file is a ZIP archive containing XML files.
                 "{\"channel.dingtalk.bot_title\":\"Klaw\",\"channel.dingtalk.session_webhook\":\"https://example/session-latest\"}",
             )
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_channel_request_isolates_dingtalk_callback_turns() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+        sessions
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1:active",
+                "chat-1",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("active session should exist");
+        sessions
+            .set_active_session(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "dingtalk:acc:chat-1:active",
+            )
+            .await
+            .expect("active session should switch");
+
+        let output = submit_channel_request(
+            &runtime,
+            ChannelRequest {
+                channel: "dingtalk".to_string(),
+                input: "callback hello".to_string(),
+                session_key: "dingtalk:acc:chat-1".to_string(),
+                chat_id: "chat-1".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::from([
+                    (META_ISOLATED_TURN_KEY.to_string(), Value::Bool(true)),
+                    (
+                        "channel.dingtalk.session_webhook".to_string(),
+                        json!("https://example/session-active"),
+                    ),
+                    ("channel.dingtalk.bot_title".to_string(), json!("Klaw")),
+                    ("channel.delivery_mode".to_string(), json!("direct_reply")),
+                ]),
+            },
+        )
+        .await
+        .expect("callback submit should succeed")
+        .expect("callback submit should produce output");
+
+        assert_eq!(output.content, "bootstrap reply");
+        assert_eq!(
+            provider
+                .last_user_message
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .as_deref(),
+            Some("callback hello")
+        );
+
+        let base_history = sessions
+            .read_chat_records("dingtalk:acc:chat-1")
+            .await
+            .expect("base history should load");
+        assert!(base_history.is_empty());
+        let active_history = sessions
+            .read_chat_records("dingtalk:acc:chat-1:active")
+            .await
+            .expect("active history should load");
+        assert!(active_history.is_empty());
+
+        let callback_sessions = sessions
+            .list_sessions(SessionListQuery {
+                limit: Some(10),
+                offset: 0,
+                updated_from_ms: None,
+                updated_to_ms: None,
+                channel: Some("dingtalk".to_string()),
+                session_key_prefix: Some("callback:dingtalk:".to_string()),
+                sort_order: SessionSortOrder::UpdatedAtDesc,
+            })
+            .await
+            .expect("callback sessions should list");
+        assert_eq!(callback_sessions.len(), 1);
+        let callback_session_key = callback_sessions[0].session_key.clone();
+        let callback_history = sessions
+            .read_chat_records(&callback_session_key)
+            .await
+            .expect("callback history should load");
+        assert_eq!(callback_history.len(), 2);
+        assert_eq!(callback_history[0].content, "callback hello");
+        assert_eq!(callback_history[1].content, "bootstrap reply");
+
+        let callback_session = sessions
+            .get_session(&callback_session_key)
+            .await
+            .expect("callback session should reload");
+        assert_eq!(
+            callback_session.delivery_metadata_json.as_deref(),
+            Some(
+                "{\"channel.base_session_key\":\"dingtalk:acc:chat-1\",\"channel.delivery_session_key\":\"dingtalk:acc:chat-1:active\",\"channel.dingtalk.bot_title\":\"Klaw\",\"channel.dingtalk.session_webhook\":\"https://example/session-active\"}",
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_channel_request_isolates_telegram_callback_turns() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "telegram:acc:chat-1",
+                "chat-1",
+                "telegram",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("base session should exist");
+
+        let output = submit_channel_request(
+            &runtime,
+            ChannelRequest {
+                channel: "telegram".to_string(),
+                input: "callback hello".to_string(),
+                session_key: "telegram:acc:chat-1".to_string(),
+                chat_id: "chat-1".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::from([
+                    (META_ISOLATED_TURN_KEY.to_string(), Value::Bool(true)),
+                    ("channel.delivery_mode".to_string(), json!("direct_reply")),
+                ]),
+            },
+        )
+        .await
+        .expect("callback submit should succeed")
+        .expect("callback submit should produce output");
+
+        assert_eq!(output.content, "bootstrap reply");
+        assert_eq!(
+            provider
+                .last_user_message
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .as_deref(),
+            Some("callback hello")
+        );
+
+        let base_history = sessions
+            .read_chat_records("telegram:acc:chat-1")
+            .await
+            .expect("base history should load");
+        assert!(base_history.is_empty());
+
+        let callback_sessions = sessions
+            .list_sessions(SessionListQuery {
+                limit: Some(10),
+                offset: 0,
+                updated_from_ms: None,
+                updated_to_ms: None,
+                channel: Some("telegram".to_string()),
+                session_key_prefix: Some("callback:telegram:".to_string()),
+                sort_order: SessionSortOrder::UpdatedAtDesc,
+            })
+            .await
+            .expect("callback sessions should list");
+        assert_eq!(callback_sessions.len(), 1);
+        let callback_history = sessions
+            .read_chat_records(&callback_sessions[0].session_key)
+            .await
+            .expect("callback history should load");
+        assert_eq!(callback_history.len(), 2);
+        assert_eq!(callback_history[0].content, "callback hello");
+        assert_eq!(callback_history[1].content, "bootstrap reply");
     }
 
     #[tokio::test(flavor = "current_thread")]

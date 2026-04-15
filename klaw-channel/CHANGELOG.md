@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-15
+
+### Fixed
+
+- `dingtalk` and `telegram` callback metadata now explicitly marks callback submits as isolated turns, allowing runtime to route approval/card callbacks through dedicated execution sessions instead of leaking follow-up turns into the active IM chat history
+
 ## 2026-04-14
 
 ### Changed
