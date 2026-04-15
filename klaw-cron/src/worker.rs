@@ -1065,6 +1065,27 @@ mod tests {
         fn session_jsonl_path(&self, _session_key: &str) -> PathBuf {
             PathBuf::new()
         }
+
+        async fn consume_approved_tool_command(
+            &self,
+            _approval_id: &str,
+            _tool_name: &str,
+            _session_key: &str,
+            _command_hash: &str,
+            _now_ms: i64,
+        ) -> Result<bool, StorageError> {
+            Err(StorageError::backend("not implemented for test"))
+        }
+
+        async fn consume_latest_approved_tool_command(
+            &self,
+            _tool_name: &str,
+            _session_key: &str,
+            _command_hash: &str,
+            _now_ms: i64,
+        ) -> Result<bool, StorageError> {
+            Err(StorageError::backend("not implemented for test"))
+        }
     }
 
     #[test]
