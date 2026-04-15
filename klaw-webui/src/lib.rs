@@ -37,6 +37,14 @@ pub(crate) enum ImCardActionKind {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 impl ImCardActionKind {
+    fn default_label(&self) -> &'static str {
+        match self {
+            Self::Approve => "Approve",
+            Self::Reject => "Reject",
+            Self::OpenUrl => "Open",
+            Self::SubmitCommand => "Select",
+        }
+    }
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -55,6 +63,14 @@ pub(crate) struct ImCardAction {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 impl ImCardAction {
+    fn label_or_default(&self) -> &str {
+        self.label
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| self.kind.default_label())
+    }
+
     fn approval_id(&self) -> Option<&str> {
         match self.kind {
             ImCardActionKind::Approve | ImCardActionKind::Reject => self
@@ -85,6 +101,27 @@ pub(crate) struct ImCard {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 impl ImCard {
+    pub(crate) fn title_or<'a>(&'a self, fallback: &'a str) -> &'a str {
+        self.title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(fallback)
+    }
+
+    pub(crate) fn body_or<'a>(&'a self, fallback: &'a str) -> &'a str {
+        let body = self.body.trim();
+        if body.is_empty() { fallback } else { body }
+    }
+
+    pub(crate) fn fallback_text_or<'a>(&'a self, fallback: &'a str) -> &'a str {
+        self.fallback_text
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(fallback)
+    }
+
     pub(crate) fn approval_id(&self) -> Option<&str> {
         self.actions
             .iter()
@@ -370,6 +407,18 @@ pub(crate) struct SessionListEntry {
     pub(crate) session_key: String,
     pub(crate) title: String,
     pub(crate) created_at_ms: i64,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WorkspaceSessionEntry {
+    pub(crate) session_key: String,
+    pub(crate) title: String,
+    pub(crate) created_at_ms: i64,
+    #[serde(default)]
+    pub(crate) model_provider: Option<String>,
+    #[serde(default)]
+    pub(crate) model: Option<String>,
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -855,6 +904,7 @@ mod tests {
     use super::{
         ArchiveRecord, ArchiveUploadResponse, ConnectionState, ImCardKind, MessageRole, PageMode,
         ProviderCatalog, ProviderCatalogEntry, ResolvedSessionRoute, SessionListEntry,
+        WorkspaceSessionEntry,
         StreamMessageAction, ThemeMode, WebArchiveAttachment, apply_slash_completion,
         attachment_action_in_progress, build_websocket_submit_params, can_trigger_file_picker,
         classify_message_role, classify_stream_message_action, connection_action_label,
