@@ -8,7 +8,7 @@ use klaw_core::{
 };
 use klaw_cron::{CronWorker, CronWorkerConfig, MissedRunPolicy};
 use klaw_gateway::{GatewayWebsocketServerFrame, OutboundEvent};
-use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig};
+use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig, should_suppress_output};
 use klaw_session::{SessionManager, SqliteSessionManager};
 use klaw_storage::{ChatRecord, DefaultSessionStore, SessionStorage};
 use serde_json::Value;
@@ -400,6 +400,9 @@ async fn dispatch_outbound_message(
     {
         return Ok(());
     }
+    if should_suppress_output(&msg.payload.content, &msg.payload.metadata) {
+        return Ok(());
+    }
 
     let delivery_target = resolve_outbound_delivery_target(msg, session_store).await;
     mirror_outbound_to_delivery_session(msg, delivery_target.as_ref(), session_store).await?;
@@ -608,9 +611,11 @@ async fn dispatch_websocket_outbound_message(
             GatewayWebsocketServerFrame::Event {
                 event: OutboundEvent::SessionMessage,
                 payload: serde_json::json!({
+                    "message_id": msg.header.message_id.to_string(),
                     "session_key": target_session_key,
                     "response": {
                         "content": msg.payload.content,
+                        "metadata": msg.payload.metadata,
                     },
                     "role": "assistant",
                     "timestamp_ms": SystemTime::now()
@@ -770,7 +775,8 @@ fn render_outbound_markdown(output: &OutboundMessage) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChannelAvailability, FilteringInboundTransport, is_dingtalk_session_not_found_error,
+        BackgroundServiceConfig, ChannelAvailability, FilteringInboundTransport,
+        dispatch_outbound_message, is_dingtalk_session_not_found_error,
         refresh_dingtalk_delivery_target, resolve_outbound_account_id,
     };
     use klaw_config::{AppConfig, DingtalkConfig};
@@ -778,6 +784,7 @@ mod tests {
         Envelope, EnvelopeHeader, InMemoryTransport, InboundMessage, MessageTopic,
         MessageTransport, OutboundMessage,
     };
+    use klaw_gateway::GatewayWebsocketBroadcaster;
     use klaw_session::{SessionManager, SqliteSessionManager};
     use klaw_storage::{DefaultSessionStore, StoragePaths};
     use serde_json::{Value, json};
@@ -1043,5 +1050,138 @@ mod tests {
             .expect("publish should succeed");
 
         assert!(inner.published_messages().await.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_outbound_message_skips_heartbeat_silent_ack_for_websocket() {
+        let store = create_store().await;
+        let manager = SqliteSessionManager::from_store(store.clone());
+        manager
+            .get_or_create_session_state(
+                "websocket:test",
+                "chat-1",
+                "websocket",
+                "provider",
+                "model",
+            )
+            .await
+            .expect("session should exist");
+
+        let broadcaster = GatewayWebsocketBroadcaster::new();
+        let (frame_tx, mut frame_rx) = tokio::sync::mpsc::unbounded_channel();
+        broadcaster
+            .register(
+                "conn-1".to_string(),
+                Some("websocket:test".to_string()),
+                frame_tx,
+            )
+            .await;
+
+        let msg = Envelope {
+            header: EnvelopeHeader::new("websocket:test"),
+            metadata: BTreeMap::new(),
+            payload: OutboundMessage {
+                channel: "websocket".to_string(),
+                chat_id: "chat-1".to_string(),
+                content: " HEARTBEAT_OK ".to_string(),
+                reply_to: None,
+                metadata: BTreeMap::from([
+                    ("trigger.kind".to_string(), json!("heartbeat")),
+                    (
+                        "heartbeat.silent_ack_token".to_string(),
+                        json!("HEARTBEAT_OK"),
+                    ),
+                ]),
+            },
+        };
+
+        dispatch_outbound_message(&msg, &BackgroundServiceConfig::default(), &store, &broadcaster)
+            .await
+            .expect("dispatch should succeed");
+
+        assert!(frame_rx.try_recv().is_err());
+        assert!(
+            manager
+                .read_chat_records("websocket:test")
+                .await
+                .expect("history should load")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_outbound_message_websocket_frame_includes_metadata_and_message_id() {
+        let store = create_store().await;
+        let manager = SqliteSessionManager::from_store(store.clone());
+        manager
+            .get_or_create_session_state(
+                "websocket:test",
+                "chat-1",
+                "websocket",
+                "provider",
+                "model",
+            )
+            .await
+            .expect("session should exist");
+
+        let broadcaster = GatewayWebsocketBroadcaster::new();
+        let (frame_tx, mut frame_rx) = tokio::sync::mpsc::unbounded_channel();
+        broadcaster
+            .register(
+                "conn-1".to_string(),
+                Some("websocket:test".to_string()),
+                frame_tx,
+            )
+            .await;
+
+        let msg = Envelope {
+            header: EnvelopeHeader::new("websocket:test"),
+            metadata: BTreeMap::new(),
+            payload: OutboundMessage {
+                channel: "websocket".to_string(),
+                chat_id: "chat-1".to_string(),
+                content: "Need action".to_string(),
+                reply_to: None,
+                metadata: BTreeMap::from([
+                    ("trigger.kind".to_string(), json!("heartbeat")),
+                    ("custom.flag".to_string(), json!(true)),
+                ]),
+            },
+        };
+        let expected_message_id = msg.header.message_id.to_string();
+
+        dispatch_outbound_message(&msg, &BackgroundServiceConfig::default(), &store, &broadcaster)
+            .await
+            .expect("dispatch should succeed");
+
+        let frame = frame_rx.try_recv().expect("frame should be broadcast");
+        let payload = match frame {
+            klaw_gateway::GatewayWebsocketServerFrame::Event { event, payload } => {
+                assert_eq!(event, klaw_gateway::OutboundEvent::SessionMessage);
+                payload
+            }
+            other => panic!("unexpected frame: {other:?}"),
+        };
+
+        assert_eq!(
+            payload.get("message_id").and_then(Value::as_str),
+            Some(expected_message_id.as_str())
+        );
+        assert_eq!(
+            payload
+                .get("response")
+                .and_then(|response| response.get("content"))
+                .and_then(Value::as_str),
+            Some("Need action")
+        );
+        assert_eq!(
+            payload
+                .get("response")
+                .and_then(|response| response.get("metadata"))
+                .and_then(Value::as_object)
+                .and_then(|metadata| metadata.get("custom.flag"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 }
