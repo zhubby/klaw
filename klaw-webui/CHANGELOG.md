@@ -5,6 +5,7 @@
 ### Added
 
 - 顶部菜单栏最前面新增 `File` 菜单，并提供 `Settings` 弹窗入口；弹窗中的主题配置对齐 GUI `General Settings`，支持分别选择 Light / Dark 主题系列
+- webui 的暗色主题系列新增 `Blackpink`，可在 `File > Settings` 中选择黑粉高对比主题
 
 ### Changed
 

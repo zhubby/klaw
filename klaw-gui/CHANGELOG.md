@@ -5,6 +5,7 @@
 ### Changed
 
 - GUI 主题 preset 与 `egui::Visuals` 生成逻辑现已下沉到 `klaw-ui-kit`，桌面端设置面板继续保持原交互，但不再单独维护 light/dark preset 定义
+- `Settings > General` 的暗色主题系列新增 `Blackpink`，提供高对比黑粉风格选项
 
 ### Fixed
 

@@ -291,6 +291,7 @@ impl ChatApp {
                                     DarkThemePreset::Frappe,
                                     DarkThemePreset::Macchiato,
                                     DarkThemePreset::Mocha,
+                                    DarkThemePreset::Blackpink,
                                 ] {
                                     if ui
                                         .selectable_label(

@@ -5,6 +5,7 @@
 ### Added
 
 - 新增共享主题模块，统一提供 `LightThemePreset`、`DarkThemePreset`、preset 标签文案，以及 light/dark `egui::Visuals` 构建逻辑
+- 新增暗色主题 preset `Blackpink`，使用高对比黑底与粉色高亮风格
 
 ### Changed
 

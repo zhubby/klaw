@@ -28,6 +28,7 @@ pub enum DarkThemePreset {
     Frappe,
     Macchiato,
     Mocha,
+    Blackpink,
 }
 
 impl DarkThemePreset {
@@ -38,6 +39,7 @@ impl DarkThemePreset {
             Self::Frappe => "Frappé",
             Self::Macchiato => "Macchiato",
             Self::Mocha => "Mocha",
+            Self::Blackpink => "Blackpink",
         }
     }
 }
@@ -69,6 +71,7 @@ pub fn dark_visuals(preset: DarkThemePreset) -> egui::Visuals {
         DarkThemePreset::Frappe => catppuccin_visuals(catppuccin_egui::FRAPPE, true),
         DarkThemePreset::Macchiato => catppuccin_visuals(catppuccin_egui::MACCHIATO, true),
         DarkThemePreset::Mocha => catppuccin_visuals(catppuccin_egui::MOCHA, true),
+        DarkThemePreset::Blackpink => blackpink_visuals(),
     }
 }
 
@@ -94,6 +97,22 @@ struct CrabTheme {
     surface2: egui::Color32,
     overlay1: egui::Color32,
     accent: egui::Color32,
+    warn: egui::Color32,
+    error: egui::Color32,
+}
+
+#[derive(Clone, Copy)]
+struct BlackpinkTheme {
+    text: egui::Color32,
+    base: egui::Color32,
+    mantle: egui::Color32,
+    crust: egui::Color32,
+    surface0: egui::Color32,
+    surface1: egui::Color32,
+    surface2: egui::Color32,
+    overlay1: egui::Color32,
+    accent: egui::Color32,
+    accent_strong: egui::Color32,
     warn: egui::Color32,
     error: egui::Color32,
 }
@@ -162,6 +181,91 @@ fn crab_widget_visual(
     }
 }
 
+fn blackpink_visuals() -> egui::Visuals {
+    let old = egui::Visuals::dark();
+    let theme = blackpink_theme();
+
+    egui::Visuals {
+        hyperlink_color: theme.accent,
+        faint_bg_color: theme.surface0,
+        extreme_bg_color: theme.crust,
+        code_bg_color: theme.mantle,
+        warn_fg_color: theme.warn,
+        error_fg_color: theme.error,
+        window_fill: theme.base,
+        panel_fill: theme.base,
+        window_stroke: egui::Stroke {
+            color: theme.overlay1,
+            ..old.window_stroke
+        },
+        widgets: egui::style::Widgets {
+            noninteractive: blackpink_widget_visual(
+                old.widgets.noninteractive,
+                theme,
+                theme.base,
+                theme.text,
+            ),
+            inactive: blackpink_widget_visual(
+                old.widgets.inactive,
+                theme,
+                theme.surface0,
+                theme.text,
+            ),
+            hovered: blackpink_widget_visual(
+                old.widgets.hovered,
+                theme,
+                theme.surface2,
+                theme.accent,
+            ),
+            active: blackpink_widget_visual(
+                old.widgets.active,
+                theme,
+                theme.surface1,
+                theme.accent_strong,
+            ),
+            open: blackpink_widget_visual(old.widgets.open, theme, theme.surface0, theme.text),
+        },
+        selection: egui::style::Selection {
+            bg_fill: theme.accent.linear_multiply(0.32),
+            stroke: egui::Stroke {
+                color: theme.text,
+                ..old.selection.stroke
+            },
+        },
+        window_shadow: egui::epaint::Shadow {
+            color: egui::Color32::from_black_alpha(72),
+            ..old.window_shadow
+        },
+        popup_shadow: egui::epaint::Shadow {
+            color: egui::Color32::from_black_alpha(84),
+            ..old.popup_shadow
+        },
+        dark_mode: true,
+        ..old
+    }
+}
+
+fn blackpink_widget_visual(
+    old: egui::style::WidgetVisuals,
+    theme: BlackpinkTheme,
+    bg_fill: egui::Color32,
+    fg_color: egui::Color32,
+) -> egui::style::WidgetVisuals {
+    egui::style::WidgetVisuals {
+        bg_fill,
+        weak_bg_fill: bg_fill,
+        bg_stroke: egui::Stroke {
+            color: theme.overlay1,
+            ..old.bg_stroke
+        },
+        fg_stroke: egui::Stroke {
+            color: fg_color,
+            ..old.fg_stroke
+        },
+        ..old
+    }
+}
+
 const fn crab_theme() -> CrabTheme {
     CrabTheme {
         text: egui::Color32::from_rgb(0x60, 0x30, 0x38),
@@ -175,6 +279,23 @@ const fn crab_theme() -> CrabTheme {
         accent: egui::Color32::from_rgb(0xE8, 0x70, 0x50),
         warn: egui::Color32::from_rgb(0xD0, 0xA0, 0x58),
         error: egui::Color32::from_rgb(0xC0, 0x5A, 0x44),
+    }
+}
+
+const fn blackpink_theme() -> BlackpinkTheme {
+    BlackpinkTheme {
+        text: egui::Color32::from_rgb(0xFB, 0xF3, 0xF8),
+        base: egui::Color32::from_rgb(0x0B, 0x08, 0x0D),
+        mantle: egui::Color32::from_rgb(0x12, 0x0D, 0x14),
+        crust: egui::Color32::from_rgb(0x05, 0x03, 0x06),
+        surface0: egui::Color32::from_rgb(0x18, 0x11, 0x1B),
+        surface1: egui::Color32::from_rgb(0x24, 0x14, 0x22),
+        surface2: egui::Color32::from_rgb(0x32, 0x19, 0x2E),
+        overlay1: egui::Color32::from_rgb(0xB8, 0x51, 0x90),
+        accent: egui::Color32::from_rgb(0xFF, 0x69, 0xB4),
+        accent_strong: egui::Color32::from_rgb(0xFF, 0xA6, 0xD5),
+        warn: egui::Color32::from_rgb(0xFF, 0xC5, 0x6E),
+        error: egui::Color32::from_rgb(0xFF, 0x77, 0x9E),
     }
 }
 
@@ -192,6 +313,7 @@ mod tests {
         assert_eq!(DarkThemePreset::Frappe.label(), "Frappé");
         assert_eq!(DarkThemePreset::Macchiato.label(), "Macchiato");
         assert_eq!(DarkThemePreset::Mocha.label(), "Mocha");
+        assert_eq!(DarkThemePreset::Blackpink.label(), "Blackpink");
     }
 
     #[test]
@@ -201,10 +323,13 @@ mod tests {
         let crab = light_visuals(LightThemePreset::Crab);
         let default_dark = dark_visuals(DarkThemePreset::Default);
         let mocha = dark_visuals(DarkThemePreset::Mocha);
+        let blackpink = dark_visuals(DarkThemePreset::Blackpink);
 
         assert_ne!(latte.panel_fill, default_light.panel_fill);
         assert_ne!(crab.panel_fill, default_light.panel_fill);
         assert_ne!(mocha.panel_fill, default_dark.panel_fill);
+        assert_ne!(blackpink.panel_fill, default_dark.panel_fill);
+        assert_ne!(blackpink.hyperlink_color, default_dark.hyperlink_color);
     }
 
     #[test]
