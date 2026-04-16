@@ -1,9 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use eframe::egui::{self, Context};
-use klaw_ui_kit::{
-    DarkThemePreset, LightThemePreset, NotificationCenter, ThemeMode, apply_theme,
-};
+use klaw_ui_kit::{DarkThemePreset, LightThemePreset, NotificationCenter, ThemeMode, apply_theme};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::Notification;
 use web_sys::WebSocket;

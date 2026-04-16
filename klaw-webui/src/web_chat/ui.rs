@@ -294,10 +294,7 @@ impl ChatApp {
                                     DarkThemePreset::Blackpink,
                                 ] {
                                     if ui
-                                        .selectable_label(
-                                            self.dark_theme == preset,
-                                            preset.label(),
-                                        )
+                                        .selectable_label(self.dark_theme == preset, preset.label())
                                         .clicked()
                                     {
                                         requested_dark_theme = Some(preset);

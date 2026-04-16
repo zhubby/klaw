@@ -1095,9 +1095,14 @@ mod tests {
             },
         };
 
-        dispatch_outbound_message(&msg, &BackgroundServiceConfig::default(), &store, &broadcaster)
-            .await
-            .expect("dispatch should succeed");
+        dispatch_outbound_message(
+            &msg,
+            &BackgroundServiceConfig::default(),
+            &store,
+            &broadcaster,
+        )
+        .await
+        .expect("dispatch should succeed");
 
         assert!(frame_rx.try_recv().is_err());
         assert!(
@@ -1150,9 +1155,14 @@ mod tests {
         };
         let expected_message_id = msg.header.message_id.to_string();
 
-        dispatch_outbound_message(&msg, &BackgroundServiceConfig::default(), &store, &broadcaster)
-            .await
-            .expect("dispatch should succeed");
+        dispatch_outbound_message(
+            &msg,
+            &BackgroundServiceConfig::default(),
+            &store,
+            &broadcaster,
+        )
+        .await
+        .expect("dispatch should succeed");
 
         let frame = frame_rx.try_recv().expect("frame should be broadcast");
         let payload = match frame {

@@ -63,15 +63,18 @@ async fn wait_reconnect_delay_or_shutdown(
     }
 }
 
-fn callback_runtime_metadata(
+fn runtime_metadata(
     session_webhook: Option<&str>,
     bot_title: &str,
+    isolated_turn: bool,
 ) -> BTreeMap<String, serde_json::Value> {
     let mut metadata = BTreeMap::new();
-    metadata.insert(
-        "agent.isolated_turn".to_string(),
-        serde_json::Value::Bool(true),
-    );
+    if isolated_turn {
+        metadata.insert(
+            "agent.isolated_turn".to_string(),
+            serde_json::Value::Bool(true),
+        );
+    }
     if let Some(session_webhook) = session_webhook
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -536,9 +539,10 @@ impl DingtalkChannel {
                     session_key,
                     chat_id: card_callback.chat_id.clone(),
                     media_references: Vec::new(),
-                    metadata: callback_runtime_metadata(
+                    metadata: runtime_metadata(
                         card_callback.session_webhook.as_deref(),
                         &self.config.bot_title,
+                        true,
                     ),
                 })
                 .await;
@@ -622,9 +626,10 @@ impl DingtalkChannel {
                 session_key,
                 chat_id: inbound.chat_id.clone(),
                 media_references: inbound.media_references.clone(),
-                metadata: callback_runtime_metadata(
+                metadata: runtime_metadata(
                     Some(&inbound.session_webhook),
                     &self.config.bot_title,
+                    false,
                 ),
             })
             .await;

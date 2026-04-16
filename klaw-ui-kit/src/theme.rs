@@ -343,7 +343,10 @@ mod tests {
             DarkThemePreset::Mocha,
         );
 
-        assert_eq!(ctx.options(|options| options.theme_preference), egui::ThemePreference::Dark);
+        assert_eq!(
+            ctx.options(|options| options.theme_preference),
+            egui::ThemePreference::Dark
+        );
         assert_eq!(
             ctx.style().visuals.panel_fill,
             dark_visuals(DarkThemePreset::Mocha).panel_fill

@@ -3,7 +3,6 @@ use super::{
         build_unsupported_file_attachment_markdown, infer_dingtalk_file_type,
         supported_dingtalk_file_type,
     },
-    callback_runtime_metadata,
     client::DingtalkApiClient,
     parsing::{
         ApprovalAction, CardCallbackEvent, EventDeduper, InboundEvent,
@@ -13,6 +12,7 @@ use super::{
         parse_card_callback_event, parse_inbound_event, parse_stream_data, resolve_approval_card,
         resolve_chat_id, resolve_download_code_candidates,
     },
+    runtime_metadata,
 };
 use crate::{
     ChannelResponse,
@@ -27,11 +27,21 @@ const BOT_TITLE: &str = "Klaw";
 
 #[test]
 fn callback_runtime_metadata_marks_turn_as_isolated() {
-    let metadata = callback_runtime_metadata(Some("https://example/session"), BOT_TITLE);
+    let metadata = runtime_metadata(Some("https://example/session"), BOT_TITLE, true);
     assert_eq!(
         metadata.get("agent.isolated_turn"),
         Some(&serde_json::Value::Bool(true))
     );
+    assert_eq!(
+        metadata.get("channel.delivery_mode"),
+        Some(&serde_json::Value::String("direct_reply".to_string()))
+    );
+}
+
+#[test]
+fn regular_runtime_metadata_does_not_mark_turn_as_isolated() {
+    let metadata = runtime_metadata(Some("https://example/session"), BOT_TITLE, false);
+    assert!(!metadata.contains_key("agent.isolated_turn"));
     assert_eq!(
         metadata.get("channel.delivery_mode"),
         Some(&serde_json::Value::String("direct_reply".to_string()))

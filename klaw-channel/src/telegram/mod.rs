@@ -40,12 +40,14 @@ const UPDATE_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const UPDATE_DEDUP_MAX_ENTRIES: usize = 20_000;
 type TelegramPollResult = Result<Vec<TelegramUpdate>, String>;
 
-fn callback_runtime_metadata() -> BTreeMap<String, serde_json::Value> {
+fn runtime_metadata(isolated_turn: bool) -> BTreeMap<String, serde_json::Value> {
     let mut metadata = BTreeMap::new();
-    metadata.insert(
-        "agent.isolated_turn".to_string(),
-        serde_json::Value::Bool(true),
-    );
+    if isolated_turn {
+        metadata.insert(
+            "agent.isolated_turn".to_string(),
+            serde_json::Value::Bool(true),
+        );
+    }
     metadata.insert(
         "channel.delivery_mode".to_string(),
         serde_json::Value::String("direct_reply".to_string()),
@@ -381,7 +383,7 @@ impl TelegramChannel {
                     chat_id: inbound.chat_id.clone(),
                     media_references: inbound.media_references.clone(),
                     metadata: {
-                        let mut metadata = callback_runtime_metadata();
+                        let mut metadata = runtime_metadata(false);
                         metadata.extend(inbound.metadata.clone());
                         metadata
                     },
@@ -432,7 +434,7 @@ impl TelegramChannel {
                     session_key,
                     chat_id: inbound.chat_id.clone(),
                     media_references: Vec::new(),
-                    metadata: callback_runtime_metadata(),
+                    metadata: runtime_metadata(true),
                 },
                 Some(inbound.chat_id.as_str()),
             )
@@ -1019,8 +1021,8 @@ impl Channel for TelegramChannel {
 
 #[cfg(test)]
 mod tests {
-    use super::callback_runtime_metadata;
     use super::render::{build_im_card_message, render_telegram_response, resolve_approval_card};
+    use super::runtime_metadata;
     use super::types::{
         TelegramAudio, TelegramCallbackInbound, TelegramCallbackQuery, TelegramChat,
         TelegramChatType, TelegramDocument, TelegramInlineKeyboardMarkup, TelegramMessage,
@@ -1194,11 +1196,21 @@ mod tests {
 
     #[test]
     fn callback_runtime_metadata_marks_turn_as_isolated() {
-        let metadata = callback_runtime_metadata();
+        let metadata = runtime_metadata(true);
         assert_eq!(
             metadata.get("agent.isolated_turn"),
             Some(&Value::Bool(true))
         );
+        assert_eq!(
+            metadata.get("channel.delivery_mode"),
+            Some(&Value::String("direct_reply".to_string()))
+        );
+    }
+
+    #[test]
+    fn regular_runtime_metadata_does_not_mark_turn_as_isolated() {
+        let metadata = runtime_metadata(false);
+        assert!(!metadata.contains_key("agent.isolated_turn"));
         assert_eq!(
             metadata.get("channel.delivery_mode"),
             Some(&Value::String("direct_reply".to_string()))
