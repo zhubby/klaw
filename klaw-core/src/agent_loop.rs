@@ -256,7 +256,11 @@ impl ToolExecutor for RegistryToolExecutor<'_> {
                         payload: signal.payload,
                     })
                     .collect();
-                ToolInvocationResult::success_with_signals(output.content_for_model, signals)
+                ToolInvocationResult::success_with_media(
+                    output.content_for_model,
+                    signals,
+                    output.media,
+                )
             }
             Err(err) => {
                 let error_code = err.code().to_string();
@@ -2153,6 +2157,7 @@ mod tests {
             Ok(ToolOutput {
                 content_for_model: "question card emitted".to_string(),
                 content_for_user: None,
+                media: Vec::new(),
                 signals: vec![
                     klaw_tool::ToolSignal::im_card(json!({
                         "kind": "question_single_select",

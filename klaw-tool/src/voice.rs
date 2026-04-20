@@ -357,6 +357,7 @@ impl Tool for VoiceTool {
                 ToolError::ExecutionFailed(format!("failed to serialize voice response: {err}"))
             })?,
             content_for_user: None,
+            media: Vec::new(),
             signals: Vec::new(),
         })
     }

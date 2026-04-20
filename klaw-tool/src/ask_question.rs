@@ -308,6 +308,7 @@ impl Tool for AskQuestionTool {
         Ok(ToolOutput {
             content_for_model,
             content_for_user: None,
+            media: Vec::new(),
             signals: vec![
                 ToolSignal::im_card(json!({
                     "kind": "question_single_select",

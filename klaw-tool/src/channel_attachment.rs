@@ -385,6 +385,7 @@ impl Tool for ChannelAttachmentTool {
                 ),
             },
             content_for_user: None,
+            media: Vec::new(),
             signals: vec![signal],
         })
     }

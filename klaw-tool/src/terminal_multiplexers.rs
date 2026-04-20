@@ -760,6 +760,7 @@ impl TerminalMultiplexerTool {
         Ok(ToolOutput {
             content_for_model: rendered.clone(),
             content_for_user: Some(rendered),
+            media: Vec::new(),
             signals: Vec::new(),
         })
     }
@@ -1203,6 +1204,7 @@ impl TerminalMultiplexerTool {
         Ok(ToolOutput {
             content_for_model: rendered.clone(),
             content_for_user: Some(rendered),
+            media: Vec::new(),
             signals: Vec::new(),
         })
     }
@@ -1236,6 +1238,7 @@ impl TerminalMultiplexerTool {
         Ok(ToolOutput {
             content_for_model: rendered.clone(),
             content_for_user: Some(rendered),
+            media: Vec::new(),
             signals: Vec::new(),
         })
     }
@@ -1268,6 +1271,7 @@ impl TerminalMultiplexerTool {
         Ok(ToolOutput {
             content_for_model: rendered.clone(),
             content_for_user: Some(rendered),
+            media: Vec::new(),
             signals: Vec::new(),
         })
     }
