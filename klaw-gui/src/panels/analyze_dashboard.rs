@@ -5,8 +5,8 @@ use egui_plot::{GridMark, Legend, Line, Plot, PlotPoints};
 use klaw_config::{ConfigStore, ObservabilityConfig};
 use klaw_observability::{
     LocalMetricsStore, LocalStoreConfig, ModelDashboardSnapshot, ModelStatsQuery, ModelStatsRow,
-    ModelToolBreakdownRow, SqliteLocalMetricsStore, ToolDashboardSnapshot, ToolSampleBucket,
-    ToolStatsQuery, ToolStatsRow, ToolTimeRange,
+    ModelToolBreakdownRow, PriceEntry, PriceTable, SqliteLocalMetricsStore, ToolDashboardSnapshot,
+    ToolSampleBucket, ToolStatsQuery, ToolStatsRow, ToolTimeRange,
 };
 use klaw_util::{default_data_dir, observability_db_path};
 use std::path::PathBuf;
@@ -89,6 +89,30 @@ impl AnalyzeDashboardPanel {
         }
     }
 
+    fn price_table(&self) -> PriceTable {
+        self.observability
+            .price
+            .iter()
+            .map(|(provider, models)| {
+                (
+                    provider.clone(),
+                    models
+                        .iter()
+                        .map(|(model, entry)| {
+                            (
+                                model.clone(),
+                                PriceEntry {
+                                    input_rate: entry.input_rate,
+                                    output_rate: entry.output_rate,
+                                },
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
     fn should_refresh(&self) -> bool {
         !self.loading
             && self
@@ -116,6 +140,7 @@ impl AnalyzeDashboardPanel {
         let model_query = self.model_query();
         let selected_tool = self.selected_tool.clone();
         let config = self.local_store_config();
+        let price_table = self.price_table();
         let (tx, rx) = mpsc::channel();
         self.load_rx = Some(rx);
         self.loading = true;
@@ -141,7 +166,7 @@ impl AnalyzeDashboardPanel {
                     .await
                     .map_err(|err| err.to_string())?;
                 let model_snapshot = store
-                    .query_model_dashboard_snapshot(&model_query)
+                    .query_model_dashboard_snapshot(&model_query, &price_table)
                     .await
                     .map_err(|err| err.to_string())?;
                 Ok(DashboardLoad {

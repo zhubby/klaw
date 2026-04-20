@@ -1,4 +1,4 @@
-use crate::config::LocalStoreConfig;
+use crate::config::{LocalStoreConfig, PriceTable};
 use async_trait::async_trait;
 use klaw_core::observability::{
     ModelRequestRecord, ModelRequestStatus, ModelToolOutcomeRecord, ToolOutcomeStatus,
@@ -360,6 +360,7 @@ pub trait LocalMetricsStore: Send + Sync {
     async fn query_model_dashboard_snapshot(
         &self,
         query: &ModelStatsQuery,
+        price_table: &PriceTable,
     ) -> Result<ModelDashboardSnapshot, LocalMetricsStoreError>;
 }
 
@@ -1173,6 +1174,7 @@ impl LocalMetricsStore for SqliteLocalMetricsStore {
     async fn query_model_dashboard_snapshot(
         &self,
         query: &ModelStatsQuery,
+        price_table: &PriceTable,
     ) -> Result<ModelDashboardSnapshot, LocalMetricsStoreError> {
         let now_unix_ms = now_unix_ms();
         let from_unix_ms = query.time_range.window_start_unix_ms(now_unix_ms);
@@ -1383,8 +1385,13 @@ impl LocalMetricsStore for SqliteLocalMetricsStore {
                     .get(&(provider.clone(), model.clone()))
                     .map(|values| percentile(values, 0.95))
                     .unwrap_or(0.0);
-                let estimated_cost_usd =
-                    estimate_cost_usd(&provider, &model, total_input_tokens, total_output_tokens);
+                let estimated_cost_usd = estimate_cost_usd(
+                    price_table,
+                    &provider,
+                    &model,
+                    total_input_tokens,
+                    total_output_tokens,
+                );
                 let completed_turns = turn_agg.completed;
                 let successful_tool_calls = tool_agg.successes;
 
@@ -2002,24 +2009,18 @@ fn sum_rows<T>(rows: &[T], value: impl Fn(&T) -> u64) -> u64 {
 }
 
 fn estimate_cost_usd(
+    price_table: &PriceTable,
     provider: &str,
     model: &str,
     input_tokens: u64,
     output_tokens: u64,
 ) -> Option<f64> {
-    let (input_rate, output_rate) = match (provider, model) {
-        ("openai", "gpt-4.1") => (2.0, 8.0),
-        ("openai", "gpt-4.1-mini") => (0.4, 1.6),
-        ("openai", "gpt-4o") => (2.5, 10.0),
-        ("openai", "gpt-4o-mini") => (0.15, 0.6),
-        ("anthropic", "claude-3-7-sonnet") => (3.0, 15.0),
-        ("anthropic", "claude-sonnet-4") => (3.0, 15.0),
-        ("anthropic", "claude-opus-4") => (15.0, 75.0),
-        _ => return None,
-    };
+    let entry = price_table
+        .get(provider)
+        .and_then(|models| models.get(model))?;
     Some(
-        (input_tokens as f64 / 1_000_000.0) * input_rate
-            + (output_tokens as f64 / 1_000_000.0) * output_rate,
+        (input_tokens as f64 / 1_000_000.0) * entry.input_rate
+            + (output_tokens as f64 / 1_000_000.0) * entry.output_rate,
     )
 }
 
@@ -2195,7 +2196,10 @@ mod tests {
             .expect("turn outcome should persist");
 
         let snapshot = store
-            .query_model_dashboard_snapshot(&ModelStatsQuery::default())
+            .query_model_dashboard_snapshot(
+                &ModelStatsQuery::default(),
+                &crate::config::default_price_table(),
+            )
             .await
             .expect("model snapshot should load");
         assert_eq!(snapshot.summary.total_requests, 2);
@@ -2203,6 +2207,7 @@ mod tests {
         assert_eq!(snapshot.model_rows.len(), 1);
         assert_eq!(snapshot.model_rows[0].provider, "openai");
         assert_eq!(snapshot.model_rows[0].model, "gpt-4o-mini");
+        assert!(snapshot.model_rows[0].estimated_cost_usd.is_some());
         assert_eq!(snapshot.error_breakdown[0].error_code, "timeout");
         assert_eq!(snapshot.tool_breakdown[0].tool_name, "shell");
     }

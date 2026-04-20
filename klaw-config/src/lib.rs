@@ -1808,6 +1808,72 @@ fn default_tavily_search_depth() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceEntry {
+    pub input_rate: f64,
+    pub output_rate: f64,
+}
+
+pub type PriceTable = BTreeMap<String, BTreeMap<String, PriceEntry>>;
+
+fn default_price_table() -> PriceTable {
+    let mut openai = BTreeMap::new();
+    openai.insert(
+        "gpt-4.1".to_string(),
+        PriceEntry {
+            input_rate: 2.0,
+            output_rate: 8.0,
+        },
+    );
+    openai.insert(
+        "gpt-4.1-mini".to_string(),
+        PriceEntry {
+            input_rate: 0.4,
+            output_rate: 1.6,
+        },
+    );
+    openai.insert(
+        "gpt-4o".to_string(),
+        PriceEntry {
+            input_rate: 2.5,
+            output_rate: 10.0,
+        },
+    );
+    openai.insert(
+        "gpt-4o-mini".to_string(),
+        PriceEntry {
+            input_rate: 0.15,
+            output_rate: 0.6,
+        },
+    );
+    let mut anthropic = BTreeMap::new();
+    anthropic.insert(
+        "claude-3-7-sonnet".to_string(),
+        PriceEntry {
+            input_rate: 3.0,
+            output_rate: 15.0,
+        },
+    );
+    anthropic.insert(
+        "claude-sonnet-4".to_string(),
+        PriceEntry {
+            input_rate: 3.0,
+            output_rate: 15.0,
+        },
+    );
+    anthropic.insert(
+        "claude-opus-4".to_string(),
+        PriceEntry {
+            input_rate: 15.0,
+            output_rate: 75.0,
+        },
+    );
+    let mut table = BTreeMap::new();
+    table.insert("openai".to_string(), openai);
+    table.insert("anthropic".to_string(), anthropic);
+    table
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     #[serde(default = "default_observability_enabled")]
     pub enabled: bool,
@@ -1827,6 +1893,8 @@ pub struct ObservabilityConfig {
     pub audit: ObservabilityAuditConfig,
     #[serde(default)]
     pub local_store: ObservabilityLocalStoreConfig,
+    #[serde(default = "default_price_table")]
+    pub price: PriceTable,
 }
 
 impl Default for ObservabilityConfig {
@@ -1841,6 +1909,7 @@ impl Default for ObservabilityConfig {
             prometheus: ObservabilityPrometheusConfig::default(),
             audit: ObservabilityAuditConfig::default(),
             local_store: ObservabilityLocalStoreConfig::default(),
+            price: default_price_table(),
         }
     }
 }
@@ -2064,9 +2133,9 @@ mod io;
 mod validate;
 
 pub use io::{
-    default_config_path, default_config_template, load_or_init, migrate_with_defaults,
-    reset_to_defaults, validate_config_file, ConfigSnapshot, ConfigStore, LoadedConfig,
-    MigratedConfig,
+    ConfigSnapshot, ConfigStore, LoadedConfig, MigratedConfig, default_config_path,
+    default_config_template, load_or_init, migrate_with_defaults, reset_to_defaults,
+    validate_config_file,
 };
 #[cfg(test)]
 pub(crate) use io::{load_from_path, migrate_path_with_defaults, reset_path_to_defaults};

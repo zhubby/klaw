@@ -3735,6 +3735,27 @@ async fn init_observability_from_config(config: &AppConfig) -> Option<Observabil
             retention_days: obs.local_store.retention_days,
             flush_interval_seconds: obs.local_store.flush_interval_seconds,
         },
+        price: obs
+            .price
+            .iter()
+            .map(|(provider, models)| {
+                (
+                    provider.clone(),
+                    models
+                        .iter()
+                        .map(|(model, entry)| {
+                            (
+                                model.clone(),
+                                klaw_observability::PriceEntry {
+                                    input_rate: entry.input_rate,
+                                    output_rate: entry.output_rate,
+                                },
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
     };
     let data_root = config.storage.root_dir.as_ref().map(PathBuf::from);
     match init_observability(&obs_config, data_root).await {
