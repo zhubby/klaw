@@ -124,6 +124,7 @@ impl ShellUi {
     }
 
     fn sync_provider_choices(&mut self) {
+        puffin::profile_scope!("sync_provider_choices");
         if let Some(request) = self.provider_status_request.as_mut()
             && let Some(result) = request.try_take_result()
         {
@@ -157,6 +158,7 @@ impl ShellUi {
     }
 
     fn poll_release_check(&mut self) {
+        puffin::profile_scope!("poll_release_check");
         let Some(rx) = self.release_check_request.as_ref() else {
             return;
         };
@@ -201,6 +203,7 @@ impl ShellUi {
     }
 
     pub fn render(&mut self, ctx: &egui::Context, state: &UiState) -> Vec<UiAction> {
+        puffin::profile_function!();
         let mut actions = Vec::new();
         self.panels.tick(ctx);
         self.sync_provider_choices();

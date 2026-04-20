@@ -152,6 +152,8 @@ opentelemetry-otlp = { version = "0.27", features = ["metrics", "trace", "grpc-t
 opentelemetry-prometheus = "0.27"
 prometheus = "0.13"
 tracing-opentelemetry = "0.28"
+puffin = { git = "https://github.com/zhubby/puffin", branch = "dev-egui-0.33" }
+puffin_egui = { git = "https://github.com/zhubby/puffin", branch = "dev-egui-0.33" }
 cpal = "0.16"
 hound = "3.5"
 rodio = "0.20"

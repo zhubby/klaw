@@ -1,4 +1,4 @@
-use crate::{AppConfig, ConfigError, validate};
+use crate::{validate, AppConfig, ConfigError};
 use klaw_util::{config_path, default_data_dir};
 use std::{
     fs,
