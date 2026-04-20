@@ -1,4 +1,4 @@
-use crate::runtime_bridge::{RuntimeRequestHandle, begin_set_provider_override_request};
+use crate::runtime_bridge::{begin_set_provider_override_request, RuntimeRequestHandle};
 use crate::state::persistence;
 use crate::state::{UiAction, UiState, WindowSize};
 use crate::theme;
@@ -45,6 +45,8 @@ impl KlawGuiApp {
             should_quit: false,
             pending_provider_override: None,
         };
+        puffin::set_scopes_on(true);
+
         install_fonts(&creation_ctx.egui_ctx);
         theme::apply_theme(&creation_ctx.egui_ctx, &app.state);
         creation_ctx
@@ -247,6 +249,9 @@ impl KlawGuiApp {
 
 impl eframe::App for KlawGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        puffin::profile_function!();
+        puffin::GlobalProfiler::lock().new_frame();
+
         self.drain_tray_commands(ctx);
         self.poll_pending_actions();
         self.sync_fullscreen_from_viewport(ctx);

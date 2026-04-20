@@ -42,6 +42,8 @@ semver = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
 sysinfo = { workspace = true }
+puffin = { workspace = true }
+puffin_egui = { workspace = true }
 hostname = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }

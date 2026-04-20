@@ -201,6 +201,7 @@ impl ShellUi {
     }
 
     pub fn render(&mut self, ctx: &egui::Context, state: &UiState) -> Vec<UiAction> {
+        puffin::profile_function!();
         let mut actions = Vec::new();
         self.panels.tick(ctx);
         self.sync_provider_choices();
