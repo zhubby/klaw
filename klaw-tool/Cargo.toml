@@ -36,6 +36,7 @@ sha2.workspace = true
 time.workspace = true
 globset.workspace = true
 walkdir.workspace = true
+ignore.workspace = true
 regex.workspace = true
 objc2 = { workspace = true }
 objc2-foundation = { workspace = true, features = ["NSArray", "NSDate", "NSError", "NSObject", "NSRunLoop", "NSString", "NSThread", "dispatch"] }

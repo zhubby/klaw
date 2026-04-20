@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-20
+
+### Changed
+- `local_search` now returns structured JSON in `content_for_model`, including `matches`, `total_matches`, `total_matches_known`, `returned_matches`, and explicit limit truncation metadata; once a search stops early at `limit`, it marks the total as unknown instead of scanning the entire tree just to count the remainder
+- `local_search` fallback discovery now respects repository ignore rules through the `ignore` crate instead of only skipping hard-coded directories, while explicit file targets still bypass parent-directory ignore rules
+
 ## 2026-04-14
 
 ### Fixed

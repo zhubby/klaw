@@ -1,15 +1,19 @@
 use async_trait::async_trait;
 use globset::{Glob, GlobMatcher};
+use ignore::WalkBuilder;
 use klaw_util::command_search_path;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::{process::Command, time::timeout};
-use walkdir::WalkDir;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
+    process::{Child, Command},
+    time::timeout,
+};
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 
@@ -33,6 +37,41 @@ struct LocalSearchRequest {
     limit: Option<usize>,
     #[serde(default)]
     timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct LocalSearchMatch {
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LocalSearchTruncation {
+    truncated: bool,
+    reason: &'static str,
+    limit: usize,
+    total_matches: Option<usize>,
+    total_matches_known: bool,
+    returned_matches: usize,
+    omitted_matches: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct LocalSearchResponse {
+    query: String,
+    path: String,
+    include_pattern: Option<String>,
+    total_matches: Option<usize>,
+    total_matches_known: bool,
+    returned_matches: usize,
+    matches: Vec<LocalSearchMatch>,
+    truncation: Option<LocalSearchTruncation>,
+}
+
+#[derive(Debug)]
+struct SearchExecution {
+    files: Vec<String>,
+    total_matches: Option<usize>,
+    limit_reached: bool,
 }
 
 impl LocalSearchTool {
@@ -96,26 +135,74 @@ impl LocalSearchTool {
         Ok(request)
     }
 
-    fn format_result(
+    fn build_response(
         query: &str,
-        search_path: &str,
+        display_path: &str,
+        include_pattern: Option<&str>,
         limit: usize,
-        total: usize,
-        files: &[String],
-    ) -> String {
-        if files.is_empty() {
-            return format!("query: {query}\npath: {search_path}\nno matching files");
+        execution: SearchExecution,
+    ) -> LocalSearchResponse {
+        let returned_matches = execution.files.len();
+        let truncation = execution.limit_reached.then_some(LocalSearchTruncation {
+            truncated: true,
+            reason: "limit",
+            limit,
+            total_matches: execution.total_matches,
+            total_matches_known: execution.total_matches.is_some(),
+            returned_matches,
+            omitted_matches: execution
+                .total_matches
+                .map(|total_matches| total_matches.saturating_sub(returned_matches)),
+        });
+
+        LocalSearchResponse {
+            query: query.to_string(),
+            path: display_path.to_string(),
+            include_pattern: include_pattern.map(ToString::to_string),
+            total_matches: execution.total_matches,
+            total_matches_known: execution.total_matches.is_some(),
+            returned_matches,
+            matches: execution
+                .files
+                .iter()
+                .cloned()
+                .map(|path| LocalSearchMatch { path })
+                .collect(),
+            truncation,
+        }
+    }
+
+    fn format_user_result(response: &LocalSearchResponse) -> String {
+        if response.matches.is_empty() {
+            return format!(
+                "query: {}\npath: {}\nno matching files",
+                response.query, response.path
+            );
         }
 
+        let total_label = response
+            .total_matches
+            .map(|total_matches| total_matches.to_string())
+            .unwrap_or_else(|| format!("at least {}", response.returned_matches));
         let mut out = format!(
-            "query: {query}\npath: {search_path}\nmatched files: {} (showing up to {limit})\n",
-            total.min(limit)
+            "query: {}\npath: {}\nmatched files: {} (showing {})\n",
+            response.query, response.path, total_label, response.returned_matches
         );
-        for (idx, file) in files.iter().enumerate() {
-            out.push_str(&format!("{}. {}\n", idx + 1, file));
+        for (idx, file) in response.matches.iter().enumerate() {
+            out.push_str(&format!("{}. {}\n", idx + 1, file.path));
         }
-        if total > files.len() {
-            out.push_str(&format!("... truncated ({} more)", total - files.len()));
+        if let Some(truncation) = &response.truncation {
+            if let Some(omitted_matches) = truncation.omitted_matches {
+                out.push_str(&format!(
+                    "... truncated by {} ({} more)",
+                    truncation.reason, omitted_matches
+                ));
+            } else {
+                out.push_str(&format!(
+                    "... truncated by {} (additional matches not counted)",
+                    truncation.reason
+                ));
+            }
         } else {
             out = out.trim_end().to_string();
         }
@@ -130,20 +217,27 @@ impl LocalSearchTool {
     }
 
     fn resolve_paths<'a>(search_path: &'a str, workspace_root: Option<&'a Path>) -> SearchPaths {
-        match workspace_root {
-            Some(root) if Path::new(search_path).is_relative() => SearchPaths {
-                command_cwd: Some(root.to_path_buf()),
-                display_base: root.to_path_buf(),
-                search_root: root.join(search_path),
-            },
-            _ => {
-                let path = PathBuf::from(search_path);
-                SearchPaths {
-                    command_cwd: None,
-                    display_base: PathBuf::new(),
-                    search_root: path,
-                }
-            }
+        let workspace_root = workspace_root.map(Path::to_path_buf);
+        let requested_path = PathBuf::from(search_path);
+        let search_root = if requested_path.is_relative() {
+            workspace_root
+                .as_ref()
+                .map(|root| root.join(&requested_path))
+                .unwrap_or(requested_path.clone())
+        } else {
+            requested_path.clone()
+        };
+        let command_cwd = requested_path
+            .is_relative()
+            .then(|| workspace_root.clone())
+            .flatten();
+        let explicit_file = search_root.is_file();
+
+        SearchPaths {
+            command_cwd,
+            workspace_root,
+            search_root,
+            explicit_file,
         }
     }
 
@@ -153,6 +247,7 @@ impl LocalSearchTool {
         ctx: &ToolContext,
     ) -> Command {
         let mut command = binary_command("rg");
+        command.kill_on_drop(true);
         command.args([
             "--files-with-matches",
             "--hidden",
@@ -177,14 +272,89 @@ impl LocalSearchTool {
         command
     }
 
+    async fn collect_search_execution(
+        mut child: Child,
+        limit: usize,
+        normalize_path: impl Fn(&str) -> String,
+    ) -> Result<SearchExecution, ToolError> {
+        let stdout = child.stdout.take().ok_or_else(|| {
+            ToolError::ExecutionFailed("local_search failed to capture stdout".to_string())
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            ToolError::ExecutionFailed("local_search failed to capture stderr".to_string())
+        })?;
+        let stderr_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            let mut reader = BufReader::new(stderr);
+            let _ = reader.read_to_end(&mut bytes).await;
+            bytes
+        });
+
+        let mut reader = BufReader::new(stdout).lines();
+        let mut files = Vec::new();
+        let mut limit_reached = false;
+
+        while let Some(line) = reader.next_line().await.map_err(|err| {
+            ToolError::ExecutionFailed(format!("failed to read local_search output: {err}"))
+        })? {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if files.len() >= limit {
+                limit_reached = true;
+                break;
+            }
+            files.push(normalize_path(trimmed));
+        }
+
+        if limit_reached {
+            child.start_kill().map_err(|err| {
+                ToolError::ExecutionFailed(format!(
+                    "failed to stop local_search after limit: {err}"
+                ))
+            })?;
+        }
+
+        let status = child.wait().await.map_err(|err| {
+            ToolError::ExecutionFailed(format!("failed to wait for local_search: {err}"))
+        })?;
+        let stderr = stderr_task.await.unwrap_or_default();
+
+        if !limit_reached {
+            let exit_code = status.code().unwrap_or(-1);
+            if exit_code != 0 && exit_code != 1 {
+                let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+                return Err(ToolError::ExecutionFailed(format!(
+                    "local_search failed with exit code {exit_code}: {stderr}"
+                )));
+            }
+        }
+
+        Ok(SearchExecution {
+            total_matches: (!limit_reached).then_some(files.len()),
+            files,
+            limit_reached,
+        })
+    }
+
     async fn execute_rg(
         request: &LocalSearchRequest,
         search_path: &str,
+        search_paths: &SearchPaths,
+        limit: usize,
         ctx: &ToolContext,
-    ) -> Result<Result<Vec<String>, std::io::Error>, ToolError> {
-        let output = timeout(
+    ) -> Result<Result<SearchExecution, std::io::Error>, ToolError> {
+        let child = match Self::build_rg_command(request, search_path, ctx).spawn() {
+            Ok(child) => child,
+            Err(err) => return Ok(Err(err)),
+        };
+
+        let execution = timeout(
             Duration::from_millis(request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)),
-            Self::build_rg_command(request, search_path, ctx).output(),
+            Self::collect_search_execution(child, limit, |path| {
+                Self::normalize_rg_result_path(path, &search_paths)
+            }),
         )
         .await
         .map_err(|_| {
@@ -192,22 +362,9 @@ impl LocalSearchTool {
                 "local_search timed out after {}ms",
                 request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)
             ))
-        })?;
+        })??;
 
-        let output = match output {
-            Ok(output) => output,
-            Err(err) => return Ok(Err(err)),
-        };
-
-        let exit_code = output.status.code().unwrap_or(-1);
-        if exit_code != 0 && exit_code != 1 {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(ToolError::ExecutionFailed(format!(
-                "local_search failed with exit code {exit_code}: {stderr}"
-            )));
-        }
-
-        Ok(Ok(Self::collect_output_files(&output.stdout)))
+        Ok(Ok(execution))
     }
 
     fn build_include_matcher(
@@ -231,17 +388,45 @@ impl LocalSearchTool {
         include_pattern: Option<&str>,
     ) -> Result<Vec<PathBuf>, ToolError> {
         let include_matcher = Self::build_include_matcher(include_pattern)?;
-        let mut files = Vec::new();
+        if search_paths.search_root.is_file() {
+            let path = &search_paths.search_root;
+            if is_strongly_excluded(path) {
+                return Ok(Vec::new());
+            }
+            if let Some(matcher) = include_matcher.as_ref() {
+                let candidate = path
+                    .file_name()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| path.to_path_buf());
+                if !matcher.is_match(&normalize_path_for_glob(&candidate)) {
+                    return Ok(Vec::new());
+                }
+            }
+            return Ok(vec![path.to_path_buf()]);
+        }
 
-        for entry in WalkDir::new(&search_paths.search_root)
+        let mut files = Vec::new();
+        let mut builder = WalkBuilder::new(&search_paths.search_root);
+        builder
+            .hidden(false)
             .follow_links(false)
-            .into_iter()
-            .filter_entry(Self::keep_walk_entry)
-        {
+            .require_git(false)
+            .git_ignore(true)
+            .git_global(true)
+            .git_exclude(true)
+            .ignore(true);
+
+        for entry in builder.build() {
             let entry = entry.map_err(|err| {
                 ToolError::ExecutionFailed(format!("failed to walk search path: {err}"))
             })?;
-            if !entry.file_type().is_file() {
+            if is_strongly_excluded(entry.path()) {
+                continue;
+            }
+            if !entry
+                .file_type()
+                .is_some_and(|file_type| file_type.is_file())
+            {
                 continue;
             }
 
@@ -260,26 +445,25 @@ impl LocalSearchTool {
         Ok(files)
     }
 
-    fn keep_walk_entry(entry: &walkdir::DirEntry) -> bool {
-        let Some(name) = entry.file_name().to_str() else {
-            return true;
-        };
-        name != ".git" && name != "node_modules"
-    }
-
     async fn execute_grep(
         request: &LocalSearchRequest,
         search_paths: &SearchPaths,
-    ) -> Result<Vec<String>, ToolError> {
+        limit: usize,
+    ) -> Result<SearchExecution, ToolError> {
         let candidates =
             Self::collect_fallback_candidates(search_paths, request.include_pattern.as_deref())?;
         if candidates.is_empty() {
-            return Ok(Vec::new());
+            return Ok(SearchExecution {
+                files: Vec::new(),
+                total_matches: Some(0),
+                limit_reached: false,
+            });
         }
 
         let mut matches = BTreeSet::new();
         for chunk in candidates.chunks(GREP_BATCH_SIZE) {
             let mut command = binary_command("grep");
+            command.kill_on_drop(true);
             command.args(["-R", "-l", "-E", &request.query]);
             command.args(chunk.iter().map(|path| path.as_os_str()));
             command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -287,7 +471,7 @@ impl LocalSearchTool {
                 command.current_dir(cwd);
             }
 
-            let output = command.output().await.map_err(|err| {
+            let child = command.spawn().map_err(|err| {
                 if err.kind() == ErrorKind::NotFound {
                     ToolError::ExecutionFailed(
                         "both ripgrep (`rg`) and grep are not available in PATH".to_string(),
@@ -297,44 +481,70 @@ impl LocalSearchTool {
                 }
             })?;
 
-            let exit_code = output.status.code().unwrap_or(-1);
-            if exit_code != 0 && exit_code != 1 {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                return Err(ToolError::ExecutionFailed(format!(
-                    "local_search failed with exit code {exit_code}: {stderr}"
-                )));
-            }
+            let remaining = limit.saturating_sub(matches.len());
+            let execution = Self::collect_search_execution(child, remaining, |path| {
+                Self::normalize_result_path(path, search_paths)
+            })
+            .await?;
 
-            matches.extend(
-                Self::collect_output_files(&output.stdout)
-                    .into_iter()
-                    .map(|path| Self::normalize_result_path(&path, search_paths)),
-            );
+            matches.extend(execution.files);
+            if execution.limit_reached || matches.len() >= limit {
+                return Ok(SearchExecution {
+                    files: matches.into_iter().collect(),
+                    total_matches: None,
+                    limit_reached: true,
+                });
+            }
         }
 
-        Ok(matches.into_iter().collect())
+        let files: Vec<String> = matches.into_iter().collect();
+        Ok(SearchExecution {
+            total_matches: Some(files.len()),
+            files,
+            limit_reached: false,
+        })
     }
 
     fn normalize_result_path(path: &str, search_paths: &SearchPaths) -> String {
         let path = Path::new(path);
-        if search_paths.command_cwd.is_some() {
-            return path
-                .strip_prefix(&search_paths.display_base)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else if search_paths.explicit_file {
+            search_paths.search_root.clone()
+        } else {
+            search_paths.search_root.join(path)
+        };
+
+        Self::format_result_path(&absolute, search_paths)
+    }
+
+    fn normalize_rg_result_path(path: &str, search_paths: &SearchPaths) -> String {
+        let path = Path::new(path);
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else if let Some(cwd) = &search_paths.command_cwd {
+            cwd.join(path)
+        } else if search_paths.explicit_file {
+            search_paths.search_root.clone()
+        } else {
+            search_paths.search_root.join(path)
+        };
+
+        Self::format_result_path(&absolute, search_paths)
+    }
+
+    fn format_result_path(path: &Path, search_paths: &SearchPaths) -> String {
+        if let Some(workspace_root) = &search_paths.workspace_root
+            && let Ok(relative) = path.strip_prefix(workspace_root)
+        {
+            return relative.to_string_lossy().to_string();
         }
 
         path.to_string_lossy().to_string()
     }
 
-    fn collect_output_files(stdout: &[u8]) -> Vec<String> {
-        String::from_utf8_lossy(stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(ToString::to_string)
-            .collect()
+    fn display_search_path(search_paths: &SearchPaths) -> String {
+        Self::format_result_path(&search_paths.search_root, search_paths)
     }
 }
 
@@ -348,8 +558,9 @@ fn binary_command(binary: &str) -> Command {
 
 struct SearchPaths {
     command_cwd: Option<PathBuf>,
-    display_base: PathBuf,
+    workspace_root: Option<PathBuf>,
     search_root: PathBuf,
+    explicit_file: bool,
 }
 
 fn normalize_path_for_glob(path: &Path) -> String {
@@ -357,6 +568,11 @@ fn normalize_path_for_glob(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn is_strongly_excluded(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == std::ffi::OsStr::new(".git"))
 }
 
 #[async_trait]
@@ -421,11 +637,13 @@ impl Tool for LocalSearchTool {
         let timeout_ms = request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
         let search_path = request.path.as_deref().unwrap_or(".");
         let search_paths = Self::resolve_paths(search_path, Self::workspace_root(ctx));
-        let all_files = match Self::execute_rg(&request, search_path, ctx).await? {
-            Ok(files) => files,
+        let execution = match Self::execute_rg(&request, search_path, &search_paths, limit, ctx)
+            .await?
+        {
+            Ok(execution) => execution,
             Err(err) if err.kind() == ErrorKind::NotFound => timeout(
                 Duration::from_millis(timeout_ms),
-                Self::execute_grep(&request, &search_paths),
+                Self::execute_grep(&request, &search_paths, limit),
             )
             .await
             .map_err(|_| {
@@ -437,13 +655,20 @@ impl Tool for LocalSearchTool {
                 )));
             }
         };
-        let files: Vec<String> = all_files.iter().take(limit).cloned().collect();
-
-        let content =
-            Self::format_result(&request.query, search_path, limit, all_files.len(), &files);
+        let response = Self::build_response(
+            &request.query,
+            &Self::display_search_path(&search_paths),
+            request.include_pattern.as_deref(),
+            limit,
+            execution,
+        );
+        let content_for_model = serde_json::to_string_pretty(&response).map_err(|err| {
+            ToolError::ExecutionFailed(format!("local_search serialization failed: {err}"))
+        })?;
+        let content_for_user = Self::format_user_result(&response);
         Ok(ToolOutput {
-            content_for_model: content.clone(),
-            content_for_user: Some(content),
+            content_for_model,
+            content_for_user: Some(content_for_user),
             media: Vec::new(),
             signals: Vec::new(),
         })
@@ -462,26 +687,6 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::fs;
-    use std::process::Output;
-
-    fn output(status: i32, stdout: &str, stderr: &str) -> Output {
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-
-            Output {
-                status: std::process::ExitStatus::from_raw(status << 8),
-                stdout: stdout.as_bytes().to_vec(),
-                stderr: stderr.as_bytes().to_vec(),
-            }
-        }
-
-        #[cfg(not(unix))]
-        {
-            panic!("tests require unix exit status support");
-        }
-    }
-
     fn test_context(workspace: &std::path::Path) -> ToolContext {
         let mut metadata = BTreeMap::new();
         metadata.insert(
@@ -506,6 +711,15 @@ mod tests {
         dir
     }
 
+    fn matches_path_suffix(value: &Value, suffix: &str) -> bool {
+        value["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item["path"].as_str())
+            .any(|path| path.ends_with(suffix))
+    }
+
     #[test]
     fn test_collect_fallback_candidates_respects_include_pattern() {
         let dir = temp_workspace();
@@ -515,8 +729,9 @@ mod tests {
 
         let search_paths = SearchPaths {
             command_cwd: Some(dir.clone()),
-            display_base: dir.clone(),
+            workspace_root: Some(dir.clone()),
             search_root: dir.clone(),
+            explicit_file: false,
         };
 
         let files =
@@ -539,19 +754,19 @@ mod tests {
     fn test_collect_fallback_candidates_skips_default_excluded_dirs() {
         let dir = temp_workspace();
         fs::create_dir_all(dir.join(".git")).unwrap();
-        fs::create_dir_all(dir.join("node_modules")).unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(dir.join(".git/ignored.txt"), "needle").unwrap();
-        fs::write(dir.join("node_modules/pkg.js"), "needle").unwrap();
         fs::write(dir.join("src/ok.rs"), "needle").unwrap();
 
         let search_paths = SearchPaths {
             command_cwd: Some(dir.clone()),
-            display_base: dir.clone(),
+            workspace_root: Some(dir.clone()),
             search_root: dir.clone(),
+            explicit_file: false,
         };
 
-        let files = LocalSearchTool::collect_fallback_candidates(&search_paths, None).unwrap();
+        let files =
+            LocalSearchTool::collect_fallback_candidates(&search_paths, Some("**/*.rs")).unwrap();
         let normalized: Vec<String> = files
             .iter()
             .map(|path| {
@@ -567,12 +782,66 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_fallback_candidates_respects_gitignore() {
+        let dir = temp_workspace();
+        fs::create_dir_all(dir.join("dist")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join(".gitignore"), "dist/\n").unwrap();
+        fs::write(dir.join("dist/generated.rs"), "needle").unwrap();
+        fs::write(dir.join("src/ok.rs"), "needle").unwrap();
+
+        let search_paths = SearchPaths {
+            command_cwd: Some(dir.clone()),
+            workspace_root: Some(dir.clone()),
+            search_root: dir.clone(),
+            explicit_file: false,
+        };
+
+        let files =
+            LocalSearchTool::collect_fallback_candidates(&search_paths, Some("**/*.rs")).unwrap();
+        let normalized: Vec<String> = files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+
+        assert_eq!(normalized, vec!["src/ok.rs"]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_collect_fallback_candidates_explicit_file_bypasses_gitignore() {
+        let dir = temp_workspace();
+        fs::create_dir_all(dir.join("dist")).unwrap();
+        fs::write(dir.join(".gitignore"), "dist/\n").unwrap();
+        fs::write(dir.join("dist/generated.rs"), "needle").unwrap();
+
+        let search_paths = SearchPaths {
+            command_cwd: Some(dir.clone()),
+            workspace_root: Some(dir.clone()),
+            search_root: dir.join("dist/generated.rs"),
+            explicit_file: true,
+        };
+
+        let files =
+            LocalSearchTool::collect_fallback_candidates(&search_paths, Some("**/*.rs")).unwrap();
+
+        assert_eq!(files, vec![dir.join("dist/generated.rs")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn test_normalize_result_path_matches_rg_relative_output() {
         let dir = temp_workspace();
         let search_paths = SearchPaths {
             command_cwd: Some(dir.clone()),
-            display_base: dir.clone(),
+            workspace_root: Some(dir.clone()),
             search_root: dir.clone(),
+            explicit_file: false,
         };
 
         let file = dir.join("src/a.rs");
@@ -584,9 +853,100 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_output_files_parses_stdout() {
-        let files = LocalSearchTool::collect_output_files(b"src/a.rs\n\nREADME.md\n");
-        assert_eq!(files, vec!["src/a.rs", "README.md"]);
+    fn test_normalize_rg_result_path_for_workspace_explicit_file_is_workspace_relative() {
+        let dir = temp_workspace();
+        let search_paths = SearchPaths {
+            command_cwd: Some(dir.clone()),
+            workspace_root: Some(dir.clone()),
+            search_root: dir.join("src/a.rs"),
+            explicit_file: true,
+        };
+
+        assert_eq!(
+            LocalSearchTool::normalize_rg_result_path("src/a.rs", &search_paths),
+            "src/a.rs"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_normalize_result_path_outside_workspace_stays_absolute() {
+        let dir = temp_workspace();
+        let outside = std::env::temp_dir().join("klaw-local-search-outside.rs");
+        let search_paths = SearchPaths {
+            command_cwd: None,
+            workspace_root: Some(dir.clone()),
+            search_root: outside.clone(),
+            explicit_file: true,
+        };
+
+        assert_eq!(
+            LocalSearchTool::normalize_result_path(&outside.to_string_lossy(), &search_paths),
+            outside.to_string_lossy()
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_display_search_path_is_workspace_relative_when_inside_workspace() {
+        let dir = temp_workspace();
+        let search_paths = SearchPaths {
+            command_cwd: Some(dir.clone()),
+            workspace_root: Some(dir.clone()),
+            search_root: dir.join("klaw-tool/src"),
+            explicit_file: false,
+        };
+
+        assert_eq!(
+            LocalSearchTool::display_search_path(&search_paths),
+            "klaw-tool/src"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_display_search_path_is_absolute_when_outside_workspace() {
+        let dir = temp_workspace();
+        let outside = std::env::temp_dir().join("klaw-local-search-outside-dir");
+        let search_paths = SearchPaths {
+            command_cwd: None,
+            workspace_root: Some(dir.clone()),
+            search_root: outside.clone(),
+            explicit_file: false,
+        };
+
+        assert_eq!(
+            LocalSearchTool::display_search_path(&search_paths),
+            outside.to_string_lossy()
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_build_response_includes_truncation_metadata() {
+        let response = LocalSearchTool::build_response(
+            "needle",
+            ".",
+            Some("**/*.rs"),
+            2,
+            SearchExecution {
+                files: vec!["src/a.rs".to_string(), "src/b.rs".to_string()],
+                total_matches: None,
+                limit_reached: true,
+            },
+        );
+
+        assert!(response.total_matches.is_none());
+        assert!(!response.total_matches_known);
+        assert_eq!(response.returned_matches, 2);
+        assert_eq!(response.matches.len(), 2);
+        assert_eq!(response.include_pattern.as_deref(), Some("**/*.rs"));
+        let truncation = response.truncation.expect("truncation metadata");
+        assert!(truncation.truncated);
+        assert_eq!(truncation.reason, "limit");
+        assert!(truncation.total_matches.is_none());
+        assert!(!truncation.total_matches_known);
+        assert!(truncation.omitted_matches.is_none());
     }
 
     #[test]
@@ -596,11 +956,22 @@ mod tests {
     }
 
     #[test]
-    fn test_grep_exit_code_one_means_no_matches() {
-        let grep_output = output(1, "", "");
-        let exit_code = grep_output.status.code().unwrap_or(-1);
-        assert_eq!(exit_code, 1);
-        assert!(LocalSearchTool::collect_output_files(&grep_output.stdout).is_empty());
+    fn test_build_response_without_truncation_keeps_exact_total() {
+        let response = LocalSearchTool::build_response(
+            "needle",
+            ".",
+            None,
+            20,
+            SearchExecution {
+                files: vec!["src/a.rs".to_string()],
+                total_matches: Some(1),
+                limit_reached: false,
+            },
+        );
+
+        assert_eq!(response.total_matches, Some(1));
+        assert!(response.total_matches_known);
+        assert!(response.truncation.is_none());
     }
 
     #[tokio::test]
@@ -623,9 +994,13 @@ mod tests {
             )
             .await
             .unwrap();
-
-        assert!(result.content_for_model.contains("a.rs"));
-        assert!(result.content_for_model.contains("README.md"));
+        let parsed: Value = serde_json::from_str(&result.content_for_model).unwrap();
+        assert_eq!(parsed["query"], "alpha");
+        assert_eq!(parsed["total_matches"], 2);
+        assert_eq!(parsed["total_matches_known"], true);
+        assert_eq!(parsed["returned_matches"], 2);
+        assert!(matches_path_suffix(&parsed, "src/a.rs"));
+        assert!(matches_path_suffix(&parsed, "README.md"));
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -648,9 +1023,11 @@ mod tests {
             )
             .await
             .unwrap();
-
-        assert!(result.content_for_model.contains("a.rs"));
-        assert!(!result.content_for_model.contains("notes.md"));
+        let parsed: Value = serde_json::from_str(&result.content_for_model).unwrap();
+        assert_eq!(parsed["total_matches"], 1);
+        assert_eq!(parsed["total_matches_known"], true);
+        assert!(matches_path_suffix(&parsed, "src/a.rs"));
+        assert!(!matches_path_suffix(&parsed, "notes.md"));
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -674,8 +1051,15 @@ mod tests {
             )
             .await
             .unwrap();
-
-        assert!(result.content_for_model.contains("truncated"));
+        let parsed: Value = serde_json::from_str(&result.content_for_model).unwrap();
+        assert!(parsed["total_matches"].is_null());
+        assert_eq!(parsed["total_matches_known"], false);
+        assert_eq!(parsed["returned_matches"], 2);
+        assert_eq!(parsed["truncation"]["truncated"], true);
+        assert_eq!(parsed["truncation"]["reason"], "limit");
+        assert!(parsed["truncation"]["total_matches"].is_null());
+        assert_eq!(parsed["truncation"]["total_matches_known"], false);
+        assert!(parsed["truncation"]["omitted_matches"].is_null());
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -695,8 +1079,12 @@ mod tests {
             )
             .await
             .unwrap();
-
-        assert!(result.content_for_model.contains("no matching files"));
+        let parsed: Value = serde_json::from_str(&result.content_for_model).unwrap();
+        assert_eq!(parsed["total_matches"], 0);
+        assert_eq!(parsed["total_matches_known"], true);
+        assert_eq!(parsed["returned_matches"], 0);
+        assert_eq!(parsed["matches"], json!([]));
+        assert!(parsed["truncation"].is_null());
         let _ = fs::remove_dir_all(dir);
     }
 

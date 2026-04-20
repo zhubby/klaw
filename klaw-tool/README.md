@@ -33,6 +33,8 @@
 - `skills_registry` now manages registry sources end to end: `add` persists `[skills.<source>]` into config, `sync` refreshes local mirrors, `delete` removes config + local clone + manifest state, and `list/show/search` browse synced registry skills
 - `skills_manager` owns installed-skill lifecycle actions, including `install_from_registry`
 - `local_search` uses `rg` first and falls back to BSD-compatible `grep` when ripgrep is not installed, while still honoring `include_pattern` and the default `.git` / `node_modules` exclusions
+- `local_search` now returns structured JSON to the model with `matches`, `total_matches`, `total_matches_known`, `returned_matches`, and `truncation` metadata; when search stops early at `limit`, it reports that the total count is unknown instead of pretending to know it, while keeping a readable summary in `content_for_user`
+- `local_search` fallback candidate discovery now uses repository ignore rules (`.gitignore`, `.ignore`, and git exclude/global ignore where available) instead of only hard-coded directory skips; explicit file paths still work even when their parent directory is ignored
 - multi-action tools use action-specific `oneOf` parameter schemas to keep requests explicit and avoid mixing unrelated fields in a single call
 - the `archive` tool distinguishes between current-message attachments (`list_current_attachments`) and session-wide archived attachments (`list_session_attachments`), and now explicitly prefers `get` when the model already has an `archive_id`
 - the `voice` tool exposes both `stt` and `tts`: `stt` reads archived audio by `archive_id` and returns transcript text, while `tts` synthesizes text, archives the generated audio, and returns the new archive record

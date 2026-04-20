@@ -210,9 +210,8 @@ impl FileReadTool {
             });
         }
 
-        let content = String::from_utf8(bytes.clone()).map_err(|e| {
-            ToolError::ExecutionFailed(format!("file contains invalid UTF-8: {e}"))
-        })?;
+        let content = String::from_utf8(bytes.clone())
+            .map_err(|e| ToolError::ExecutionFailed(format!("file contains invalid UTF-8: {e}")))?;
 
         let lines: Vec<String> = content.lines().map(str::to_string).collect();
         let total_bytes = bytes.len();
@@ -263,7 +262,10 @@ impl FileReadTool {
             display_path,
             result.total_lines,
             if result.truncated {
-                format!(", showing {} of {}", result.output_lines, result.total_lines)
+                format!(
+                    ", showing {} of {}",
+                    result.output_lines, result.total_lines
+                )
             } else {
                 String::new()
             }
@@ -277,14 +279,19 @@ impl FileReadTool {
         })
     }
 
-    async fn handle_image_file(&self, path: &Path, mime_type: &str) -> Result<ToolOutput, ToolError> {
+    async fn handle_image_file(
+        &self,
+        path: &Path,
+        mime_type: &str,
+    ) -> Result<ToolOutput, ToolError> {
         let bytes = self
             .read_ops
             .read_file(path)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("failed to read image: {e}")))?;
 
-        let mut base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+        let mut base64_data =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
 
         let final_mime = if self.auto_resize_images {
             match resize_image(&bytes, mime_type) {
@@ -298,7 +305,9 @@ impl FileReadTool {
                         content_for_model: format!(
                             "Read image file [{mime_type}]\n[Image omitted: could not be resized for display. Path: {display_path}]"
                         ),
-                        content_for_user: Some(format!("Image file: {display_path} ({mime_type}, resize failed)")),
+                        content_for_user: Some(format!(
+                            "Image file: {display_path} ({mime_type}, resize failed)"
+                        )),
                         media: Vec::new(),
                         signals: Vec::new(),
                     });
@@ -311,9 +320,8 @@ impl FileReadTool {
         let data_uri = format!("data:{final_mime};base64,{base64_data}");
         let display_path = path.display();
 
-        let model_content = format!(
-            "Read image file [{final_mime}]\nPath: {display_path}\nImage data included.",
-        );
+        let model_content =
+            format!("Read image file [{final_mime}]\nPath: {display_path}\nImage data included.",);
         let user_content = Some(format!("Image: {display_path} ({final_mime})"));
 
         Ok(ToolOutput {
@@ -374,10 +382,7 @@ impl Tool for FileReadTool {
             return Err(ToolError::InvalidArgs("path must not be empty".to_string()));
         }
 
-        let workspace = ctx
-            .metadata
-            .get("workspace")
-            .and_then(|v| v.as_str());
+        let workspace = ctx.metadata.get("workspace").and_then(|v| v.as_str());
         let path = self.resolve_path(&path_str, workspace);
 
         self.read_ops
@@ -451,31 +456,48 @@ fn resize_image(bytes: &[u8], original_mime: &str) -> Option<ResizedImage> {
 
 #[async_trait]
 pub trait ReadOperations: Send + Sync {
-    fn read_file(&self, path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>;
-    fn access(&self, path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>;
-    fn detect_image_mime_type(&self, path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + '_>>;
+    fn read_file(
+        &self,
+        path: &Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>;
+    fn access(
+        &self,
+        path: &Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>;
+    fn detect_image_mime_type(
+        &self,
+        path: &Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + '_>>;
 }
 
 pub struct LocalFsReadOperations;
 
 #[async_trait]
 impl ReadOperations for LocalFsReadOperations {
-    fn read_file(&self, path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>> {
+    fn read_file(
+        &self,
+        path: &Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send + '_>>
+    {
         let path = path.to_path_buf();
         Box::pin(async move { fs::read(&path).await.map_err(|e| e.to_string()) })
     }
 
-    fn access(&self, path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+    fn access(
+        &self,
+        path: &Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
         let path = path.to_path_buf();
         Box::pin(async move {
-            fs::metadata(&path)
-                .await
-                .map_err(|e| e.to_string())?;
+            fs::metadata(&path).await.map_err(|e| e.to_string())?;
             Ok(())
         })
     }
 
-    fn detect_image_mime_type(&self, path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + '_>> {
+    fn detect_image_mime_type(
+        &self,
+        path: &Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + '_>> {
         let mime = detect_image_mime_type(path);
         Box::pin(async move { mime })
     }

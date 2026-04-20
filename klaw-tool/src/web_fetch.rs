@@ -476,7 +476,7 @@ impl Tool for WebFetchTool {
                 content_for_model: rendered.clone(),
                 content_for_user: Some(rendered),
                 media: Vec::new(),
-            signals: Vec::new(),
+                signals: Vec::new(),
             });
         }
 
