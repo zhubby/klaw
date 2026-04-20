@@ -535,6 +535,7 @@ impl Tool for ShellTool {
         Ok(ToolOutput {
             content_for_model: content.clone(),
             content_for_user: Some(content),
+            media: Vec::new(),
             signals: Vec::new(),
         })
     }

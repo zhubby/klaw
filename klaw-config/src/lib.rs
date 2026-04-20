@@ -962,6 +962,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub apply_patch: ApplyPatchConfig,
     #[serde(default)]
+    pub file_read: FileReadConfig,
+    #[serde(default)]
     pub shell: ShellConfig,
     #[serde(default)]
     pub approval: ApprovalToolConfig,
@@ -1200,6 +1202,51 @@ impl ToolEnabled for LocalSearchConfig {
 }
 
 fn default_local_search_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileReadConfig {
+    #[serde(default = "default_file_read_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_file_read_max_lines")]
+    pub max_lines: usize,
+    #[serde(default = "default_file_read_max_bytes")]
+    pub max_bytes: usize,
+    #[serde(default = "default_file_read_auto_resize_images")]
+    pub auto_resize_images: bool,
+}
+
+impl Default for FileReadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_file_read_enabled(),
+            max_lines: default_file_read_max_lines(),
+            max_bytes: default_file_read_max_bytes(),
+            auto_resize_images: default_file_read_auto_resize_images(),
+        }
+    }
+}
+
+impl ToolEnabled for FileReadConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_file_read_enabled() -> bool {
+    true
+}
+
+fn default_file_read_max_lines() -> usize {
+    2000
+}
+
+fn default_file_read_max_bytes() -> usize {
+    50 * 1024
+}
+
+fn default_file_read_auto_resize_images() -> bool {
     true
 }
 
@@ -2002,9 +2049,9 @@ mod io;
 mod validate;
 
 pub use io::{
-    ConfigSnapshot, ConfigStore, LoadedConfig, MigratedConfig, default_config_path,
-    default_config_template, load_or_init, migrate_with_defaults, reset_to_defaults,
-    validate_config_file,
+    default_config_path, default_config_template, load_or_init, migrate_with_defaults,
+    reset_to_defaults, validate_config_file, ConfigSnapshot, ConfigStore, LoadedConfig,
+    MigratedConfig,
 };
 #[cfg(test)]
 pub(crate) use io::{load_from_path, migrate_path_with_defaults, reset_path_to_defaults};

@@ -54,8 +54,8 @@ use klaw_skill::{
 use klaw_storage::{DefaultSessionStore, MemoryDb, open_default_memory_db, open_default_store};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, ArchiveTool, AskQuestionTool, ChannelAttachmentTool,
-    CronManagerTool, GeoTool, HeartbeatManagerTool, LocalSearchTool, MemoryTool, ShellTool,
-    SkillsManagerTool, SkillsRegistryTool, SqliteAskQuestionManager, SubAgentAuditSink,
+    CronManagerTool, FileReadTool, GeoTool, HeartbeatManagerTool, LocalSearchTool, MemoryTool,
+    ShellTool, SkillsManagerTool, SkillsRegistryTool, SqliteAskQuestionManager, SubAgentAuditSink,
     SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool, WebFetchTool,
     WebSearchTool,
 };
@@ -1422,6 +1422,9 @@ async fn register_configured_tools(
     }
     if config.tools.geo.enabled() {
         tools.register(GeoTool::new());
+    }
+    if config.tools.file_read.enabled() {
+        tools.register(FileReadTool::new(&config.tools.file_read));
     }
     if config.tools.local_search.enabled() {
         tools.register(LocalSearchTool::new());
@@ -4033,6 +4036,7 @@ mod tests {
                 return Ok(ToolOutput {
                     content_for_model: content.clone(),
                     content_for_user: Some(content),
+                    media: Vec::new(),
                     signals: Vec::new(),
                 });
             }

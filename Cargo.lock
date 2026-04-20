@@ -4473,11 +4473,13 @@ name = "klaw-tool"
 version = "0.12.1"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "cron",
  "globset",
  "humantime",
+ "image",
  "ipnet",
  "klaw-agent",
  "klaw-approval",

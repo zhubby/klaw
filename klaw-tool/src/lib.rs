@@ -4,6 +4,7 @@ pub mod archive;
 pub mod ask_question;
 pub mod channel_attachment;
 pub mod cron_manager;
+pub mod file_read;
 pub mod geo;
 pub mod heartbeat_manager;
 pub mod local_search;
@@ -29,6 +30,7 @@ pub use archive::ArchiveTool;
 pub use ask_question::{AskQuestionRecord, AskQuestionTool, SqliteAskQuestionManager};
 pub use channel_attachment::ChannelAttachmentTool;
 pub use cron_manager::CronManagerTool;
+pub use file_read::{FileReadTool, LocalFsReadOperations, ReadOperations};
 pub use geo::GeoTool;
 pub use heartbeat_manager::HeartbeatManagerTool;
 pub use local_search::LocalSearchTool;
@@ -81,8 +83,22 @@ pub struct ToolOutput {
     pub content_for_model: String,
     /// 可直接给用户的可读内容。
     pub content_for_user: Option<String>,
+    /// 工具返回的媒体内容（如图片），将作为 LLM 消息的一部分发送。
+    pub media: Vec<klaw_llm::LlmMedia>,
     /// 成功执行后仍需上抛给 runtime 的结构化信号。
     pub signals: Vec<ToolSignal>,
+}
+
+impl ToolOutput {
+    /// 创建一个简单的文本输出。
+    pub fn text(content: impl Into<String>) -> Self {
+        Self {
+            content_for_model: content.into(),
+            content_for_user: None,
+            media: Vec::new(),
+            signals: Vec::new(),
+        }
+    }
 }
 
 /// 工具侧发出的结构化信号，可由 runtime/channel 消费。

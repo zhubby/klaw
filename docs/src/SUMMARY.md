@@ -15,6 +15,7 @@
   - [Apply Patch](./tools/built-in/apply_patch.md)
   - [Approval](./tools/built-in/approval.md)
   - [Channel Attachment](./tools/built-in/channel_attachment.md)
+  - [File Read](./tools/built-in/file_read.md)
   - [Geo](./tools/built-in/geo.md)
   - [Local Search](./tools/built-in/local_search.md)
   - [Memory](./tools/built-in/memory.md)

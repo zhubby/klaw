@@ -21,6 +21,8 @@ klaw-memory = { workspace = true }
 klaw-storage = { workspace = true }
 klaw-skill = { workspace = true }
 klaw-util = { workspace = true }
+base64 = { workspace = true }
+image = { workspace = true }
 uuid = { workspace = true }
 cron = { workspace = true }
 humantime = { workspace = true }

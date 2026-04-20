@@ -178,6 +178,7 @@ pub struct ToolInvocationResult {
     pub error_details: Option<Value>,
     pub retryable: Option<bool>,
     pub signals: Vec<ToolInvocationSignal>,
+    pub media: Vec<klaw_llm::LlmMedia>,
 }
 
 impl ToolInvocationResult {
@@ -190,6 +191,7 @@ impl ToolInvocationResult {
             error_details: None,
             retryable: None,
             signals: Vec::new(),
+            media: Vec::new(),
         }
     }
 
@@ -205,6 +207,24 @@ impl ToolInvocationResult {
             error_details: None,
             retryable: None,
             signals,
+            media: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn success_with_media(
+        content_for_model: String,
+        signals: Vec<ToolInvocationSignal>,
+        media: Vec<klaw_llm::LlmMedia>,
+    ) -> Self {
+        Self {
+            ok: true,
+            content_for_model,
+            error_code: None,
+            error_details: None,
+            retryable: None,
+            signals,
+            media,
         }
     }
 
@@ -223,6 +243,7 @@ impl ToolInvocationResult {
             error_details,
             retryable: Some(retryable),
             signals,
+            media: Vec::new(),
         }
     }
 
@@ -629,7 +650,7 @@ async fn apply_tool_calls(
         llm_messages.push(LlmMessage {
             role: "tool".to_string(),
             content: result.to_tool_message_content(&call.name),
-            media: Vec::new(),
+            media: result.media.clone(),
             tool_calls: None,
             tool_call_id: call.id,
         });
