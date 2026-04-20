@@ -1,9 +1,79 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use egui::Color32;
-use egui_extras::{Size, StripBuilder};
+use egui::{Color32, RichText};
+use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
-use klaw_config::{ConfigStore, ObservabilityConfig};
+use klaw_config::{ConfigStore, ObservabilityConfig, PriceEntry, PriceTable};
+
+const PRICE_TABLE_HEIGHT: f32 = 280.0;
+const PRICE_ROW_HEIGHT: f32 = 24.0;
+
+#[derive(Debug, Clone)]
+struct PriceForm {
+    original_provider: Option<String>,
+    original_model: Option<String>,
+    provider: String,
+    model: String,
+    input_rate: f64,
+    output_rate: f64,
+}
+
+impl PriceForm {
+    fn new() -> Self {
+        Self {
+            original_provider: None,
+            original_model: None,
+            provider: String::new(),
+            model: String::new(),
+            input_rate: 0.0,
+            output_rate: 0.0,
+        }
+    }
+
+    fn edit(provider: &str, model: &str, entry: &PriceEntry) -> Self {
+        Self {
+            original_provider: Some(provider.to_string()),
+            original_model: Some(model.to_string()),
+            provider: provider.to_string(),
+            model: model.to_string(),
+            input_rate: entry.input_rate,
+            output_rate: entry.output_rate,
+        }
+    }
+
+    fn title(&self) -> &'static str {
+        if self.original_provider.is_some() {
+            "Edit Price Entry"
+        } else {
+            "Add Price Entry"
+        }
+    }
+
+    fn validate(&self) -> Result<(String, String, PriceEntry), String> {
+        let provider = self.provider.trim().to_string();
+        if provider.is_empty() {
+            return Err("Provider must not be empty".to_string());
+        }
+        let model = self.model.trim().to_string();
+        if model.is_empty() {
+            return Err("Model must not be empty".to_string());
+        }
+        if self.input_rate < 0.0 {
+            return Err("Input rate must not be negative".to_string());
+        }
+        if self.output_rate < 0.0 {
+            return Err("Output rate must not be negative".to_string());
+        }
+        Ok((
+            provider,
+            model,
+            PriceEntry {
+                input_rate: self.input_rate,
+                output_rate: self.output_rate,
+            },
+        ))
+    }
+}
 
 #[derive(Default)]
 pub struct ObservabilityPanel {
@@ -21,6 +91,9 @@ pub struct ObservabilityPanel {
     export_interval_buffer: String,
     local_store_retention_days_buffer: String,
     local_store_flush_interval_buffer: String,
+    price_form: Option<PriceForm>,
+    price_delete_confirm: Option<(String, String)>,
+    selected_price_row: Option<(String, String)>,
 }
 
 impl ObservabilityPanel {
@@ -175,6 +248,345 @@ impl ObservabilityPanel {
 
     fn status_indicator(&self) -> (bool, &'static str, &'static str) {
         (self.config.enabled, "Enabled", "Disabled")
+    }
+
+    fn save_price_form(&mut self, notifications: &mut NotificationCenter) {
+        let Some(form) = self.price_form.take() else {
+            return;
+        };
+        match form.validate() {
+            Ok((provider, model, entry)) => {
+                if form.original_provider.is_some() {
+                    if let Some(old_provider) = &form.original_provider {
+                        if let Some(old_model) = &form.original_model {
+                            if old_provider != &provider || old_model != &model {
+                                if let Some(models) = self.config.price.get_mut(old_provider) {
+                                    models.remove(old_model.as_str());
+                                }
+                            }
+                        }
+                    }
+                }
+                let is_dup = self
+                    .config
+                    .price
+                    .get(&provider)
+                    .is_some_and(|m| m.contains_key(&model));
+                if is_dup && form.original_provider.is_none() {
+                    notifications
+                        .error(format!("Price entry for {provider}/{model} already exists"));
+                    self.price_form = Some(form);
+                    return;
+                }
+                self.config
+                    .price
+                    .entry(provider)
+                    .or_default()
+                    .insert(model, entry);
+                self.mark_dirty();
+            }
+            Err(err) => {
+                notifications.error(err);
+                self.price_form = Some(form);
+            }
+        }
+    }
+
+    fn delete_price_entry(&mut self, provider: &str, model: &str) {
+        if let Some(models) = self.config.price.get_mut(provider) {
+            models.remove(model);
+            if models.is_empty() {
+                self.config.price.remove(provider);
+            }
+        }
+        self.mark_dirty();
+    }
+
+    fn flattened_price_rows(price: &PriceTable) -> Vec<(String, String, PriceEntry)> {
+        let mut rows: Vec<(String, String, PriceEntry)> = Vec::new();
+        for (provider, models) in price {
+            for (model, entry) in models {
+                rows.push((provider.clone(), model.clone(), entry.clone()));
+            }
+        }
+        rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        rows
+    }
+
+    fn known_providers(&self) -> Vec<String> {
+        let mut providers: Vec<String> = self
+            .store
+            .as_ref()
+            .map(|store| {
+                store
+                    .snapshot()
+                    .config
+                    .model_providers
+                    .keys()
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        providers.sort();
+        providers
+    }
+
+    fn render_price_section(&mut self, ui: &mut egui::Ui) {
+        let mut edit_provider = None;
+        let mut edit_model = None;
+        let mut delete_provider = None;
+        let mut delete_model = None;
+
+        ui.collapsing("Model Pricing", |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .add(egui::Button::new(format!(
+                        "{} Add Price Entry",
+                        regular::PLUS_CIRCLE
+                    )))
+                    .clicked()
+                {
+                    self.price_form = Some(PriceForm::new());
+                }
+                ui.label("Rates are per 1M tokens in USD");
+            });
+            ui.add_space(4.0);
+
+            let rows = Self::flattened_price_rows(&self.config.price);
+
+            if rows.is_empty() {
+                ui.label("No price entries configured. Click Add to create one.");
+                return;
+            }
+
+            let selected_row = self.selected_price_row.clone();
+
+            TableBuilder::new(ui)
+                .striped(true)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::auto().at_least(100.0))
+                .column(Column::auto().at_least(140.0))
+                .column(Column::auto().at_least(96.0))
+                .column(Column::auto().at_least(96.0))
+                .min_scrolled_height(PRICE_TABLE_HEIGHT)
+                .max_scroll_height(PRICE_TABLE_HEIGHT)
+                .sense(egui::Sense::click())
+                .header(PRICE_ROW_HEIGHT, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("Provider");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Model");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Input Rate");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Output Rate");
+                    });
+                })
+                .body(|body| {
+                    body.rows(PRICE_ROW_HEIGHT, rows.len(), |mut row| {
+                        let idx = row.index();
+                        let (provider, model, entry) = &rows[idx];
+                        let is_selected =
+                            selected_row.as_ref() == Some(&(provider.clone(), model.clone()));
+
+                        row.set_selected(is_selected);
+                        row.col(|ui| {
+                            ui.label(provider);
+                        });
+                        row.col(|ui| {
+                            ui.label(model);
+                        });
+                        row.col(|ui| {
+                            ui.label(format!("${:.2}", entry.input_rate));
+                        });
+                        row.col(|ui| {
+                            ui.label(format!("${:.2}", entry.output_rate));
+                        });
+
+                        let response = row.response();
+                        if response.clicked() {
+                            self.selected_price_row = if is_selected {
+                                None
+                            } else {
+                                Some((provider.clone(), model.clone()))
+                            };
+                        }
+
+                        let p = provider.clone();
+                        let m = model.clone();
+                        response.context_menu(|ui: &mut egui::Ui| {
+                            if ui
+                                .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                .clicked()
+                            {
+                                edit_provider = Some(p.clone());
+                                edit_model = Some(m.clone());
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui
+                                .add(egui::Button::new(
+                                    RichText::new(format!("{} Delete", regular::TRASH))
+                                        .color(ui.visuals().warn_fg_color),
+                                ))
+                                .clicked()
+                            {
+                                delete_provider = Some(p.clone());
+                                delete_model = Some(m.clone());
+                                ui.close();
+                            }
+                        });
+                    });
+                });
+        });
+
+        if let (Some(provider), Some(model)) = (edit_provider, edit_model) {
+            if let Some(entry) = self
+                .config
+                .price
+                .get(&provider)
+                .and_then(|models| models.get(&model))
+            {
+                self.price_form = Some(PriceForm::edit(&provider, &model, entry));
+            }
+        }
+        if let (Some(provider), Some(model)) = (delete_provider, delete_model) {
+            self.price_delete_confirm = Some((provider, model));
+        }
+    }
+
+    fn render_price_form_window(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+    ) {
+        let providers = self.known_providers();
+        let Some(form) = self.price_form.as_mut() else {
+            return;
+        };
+        let mut save_clicked = false;
+        let mut cancel_clicked = false;
+
+        egui::Window::new(form.title())
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                ui.set_min_width(400.0);
+                egui::Grid::new("price-form-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Provider");
+                        egui::ComboBox::from_id_salt("price-form-provider")
+                            .selected_text(if form.provider.is_empty() {
+                                "Select or type"
+                            } else {
+                                &form.provider
+                            })
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(form.provider.is_empty(), "(custom)")
+                                    .clicked()
+                                {
+                                    form.provider.clear();
+                                }
+                                for p in &providers {
+                                    if ui.selectable_label(form.provider == *p, p).clicked() {
+                                        form.provider = p.clone();
+                                    }
+                                }
+                            });
+                        ui.end_row();
+
+                        ui.label("Model");
+                        ui.text_edit_singleline(&mut form.model);
+                        ui.end_row();
+
+                        ui.label("Input Rate ($/1M tokens)");
+                        ui.add(
+                            egui::DragValue::new(&mut form.input_rate)
+                                .speed(0.01)
+                                .range(0.0..=f64::MAX)
+                                .custom_formatter(|n, _| format!("${n:.2}"))
+                                .custom_parser(|s| s.trim_start_matches('$').parse().ok()),
+                        );
+                        ui.end_row();
+
+                        ui.label("Output Rate ($/1M tokens)");
+                        ui.add(
+                            egui::DragValue::new(&mut form.output_rate)
+                                .speed(0.01)
+                                .range(0.0..=f64::MAX)
+                                .custom_formatter(|n, _| format!("${n:.2}"))
+                                .custom_parser(|s| s.trim_start_matches('$').parse().ok()),
+                        );
+                        ui.end_row();
+                    });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        save_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                });
+            });
+
+        if save_clicked {
+            self.save_price_form(notifications);
+        }
+        if cancel_clicked {
+            self.price_form = None;
+        }
+    }
+
+    fn render_price_delete_confirm(&mut self, ui: &mut egui::Ui) {
+        let Some((provider, model)) = self.price_delete_confirm.clone() else {
+            return;
+        };
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        egui::Window::new("Delete Price Entry")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                ui.set_min_width(360.0);
+                ui.label(
+                    RichText::new(format!("Delete price entry for {provider}/{model}?")).strong(),
+                );
+                ui.add_space(8.0);
+                ui.label("This removes the pricing rule from config.toml.");
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(egui::Button::new(
+                            RichText::new(format!("{} Delete", regular::TRASH))
+                                .color(ui.visuals().warn_fg_color),
+                        ))
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            self.delete_price_entry(&provider, &model);
+            self.price_delete_confirm = None;
+        }
+        if cancelled {
+            self.price_delete_confirm = None;
+        }
     }
 }
 
@@ -412,6 +824,10 @@ impl PanelRenderer for ObservabilityPanel {
                                         }
                                     });
                                 });
+
+                                ui.separator();
+
+                                this.render_price_section(ui);
                             });
                     });
                 });
@@ -429,6 +845,9 @@ impl PanelRenderer for ObservabilityPanel {
         } else {
             render_strip(ui, self);
         }
+
+        self.render_price_form_window(ui, notifications);
+        self.render_price_delete_confirm(ui);
     }
 }
 
