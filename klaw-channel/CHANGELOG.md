@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-20
+
+### Fixed
+
+- `dingtalk` 群聊入站结构化 `@` 命中判断现在会同时识别事件中的 `chatbotUserId`，修复真实群聊 payload 里 `atUsers[].dingtalkId` 指向机器人用户 ID、正文又不再保留 `@bot_title` 时消息被误判为“未 @ 机器人”而不回复的问题
+
 ## 2026-04-15
 
 ### Fixed

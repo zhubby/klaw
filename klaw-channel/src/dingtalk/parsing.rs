@@ -179,6 +179,11 @@ pub(super) fn parse_inbound_event(value: &Value, bot_title: &str) -> Option<Inbo
         .map(str::trim)
         .filter(|s| !s.is_empty())?
         .to_string();
+    let chatbot_user_id = value
+        .get("chatbotUserId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let event_id = value
         .get("msgId")
         .and_then(Value::as_str)
@@ -197,6 +202,7 @@ pub(super) fn parse_inbound_event(value: &Value, bot_title: &str) -> Option<Inbo
         &msg_type,
         audio_recognition.as_deref(),
         &robot_code,
+        chatbot_user_id,
         bot_title,
     )?;
     let media_references = extract_dingtalk_media_references(value, &msg_type, &event_id);
@@ -327,11 +333,13 @@ pub(super) fn extract_dingtalk_message_text(
     msg_type: &str,
     audio_recognition: Option<&str>,
     robot_code: &str,
+    chatbot_user_id: Option<&str>,
     bot_title: &str,
 ) -> Option<String> {
+    let mention_targets = mention_targets(robot_code, chatbot_user_id, bot_title);
     let conversation_type = conversation_type(value);
     if conversation_type == DingtalkConversationType::Group
-        && !group_message_targets_bot(value, msg_type, robot_code, bot_title)
+        && !group_message_targets_bot(value, msg_type, &mention_targets, bot_title)
     {
         return None;
     }
@@ -357,7 +365,7 @@ pub(super) fn extract_dingtalk_message_text(
                     .map(|ty| ty.to_ascii_lowercase())
                     .unwrap_or_default();
                 if matches!(block_type.as_str(), "at" | "mention")
-                    && block_targets_bot(block, robot_code, bot_title)
+                    && block_targets_bot(block, &mention_targets)
                 {
                     return None;
                 }
@@ -460,10 +468,10 @@ pub(super) fn extract_dingtalk_message_text(
 fn group_message_targets_bot(
     value: &Value,
     msg_type: &str,
-    robot_code: &str,
+    mention_targets: &[String],
     bot_title: &str,
 ) -> bool {
-    if has_structured_bot_mention(value, robot_code, bot_title) {
+    if has_structured_bot_mention(value, mention_targets) {
         return true;
     }
 
@@ -480,7 +488,7 @@ fn group_message_targets_bot(
                         .map(|ty| ty.to_ascii_lowercase())
                         .unwrap_or_default();
                     matches!(block_type.as_str(), "at" | "mention")
-                        && block_targets_bot(block, robot_code, bot_title)
+                        && block_targets_bot(block, mention_targets)
                 })
             })
     {
@@ -503,7 +511,7 @@ fn group_message_targets_bot(
     .is_some_and(|text| contains_textual_bot_mention(&text, &bot_title))
 }
 
-fn has_structured_bot_mention(value: &Value, robot_code: &str, bot_title: &str) -> bool {
+fn has_structured_bot_mention(value: &Value, mention_targets: &[String]) -> bool {
     [
         "/atUsers",
         "/atOpenIds",
@@ -517,22 +525,33 @@ fn has_structured_bot_mention(value: &Value, robot_code: &str, bot_title: &str) 
     ]
     .iter()
     .filter_map(|pointer| value.pointer(pointer))
-    .any(|node| node_contains_bot_target(node, robot_code, bot_title))
+    .any(|node| node_contains_bot_target(node, mention_targets))
 }
 
-fn block_targets_bot(block: &Value, robot_code: &str, bot_title: &str) -> bool {
-    node_contains_bot_target(block, robot_code, bot_title)
+fn block_targets_bot(block: &Value, mention_targets: &[String]) -> bool {
+    node_contains_bot_target(block, mention_targets)
 }
 
-fn node_contains_bot_target(node: &Value, robot_code: &str, bot_title: &str) -> bool {
-    let targets = [
-        normalized_match_target(robot_code),
-        normalized_match_target(bot_title),
-    ];
+fn node_contains_bot_target(node: &Value, mention_targets: &[String]) -> bool {
     collect_strings(node)
         .into_iter()
         .filter_map(|value| normalized_match_target(value.as_str()))
-        .any(|candidate| targets.iter().flatten().any(|target| candidate == *target))
+        .any(|candidate| mention_targets.iter().any(|target| candidate == *target))
+}
+
+fn mention_targets(
+    robot_code: &str,
+    chatbot_user_id: Option<&str>,
+    bot_title: &str,
+) -> Vec<String> {
+    [
+        normalized_match_target(robot_code),
+        chatbot_user_id.and_then(normalized_match_target),
+        normalized_match_target(bot_title),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn collect_strings(node: &Value) -> Vec<String> {

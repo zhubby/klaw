@@ -114,6 +114,31 @@ fn parse_inbound_group_text_accepts_structured_bot_mention() {
 }
 
 #[test]
+fn parse_inbound_group_text_accepts_chatbot_user_id_structured_mention() {
+    let payload = serde_json::json!({
+        "conversationType": 2,
+        "conversationId": "cidmgXIUshYPp1JosMD6AY5fQ==",
+        "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession?session=test-session",
+        "msgId": "msgcIRbeNFLtQhPmC5ReyHLGw==",
+        "robotCode": "dingl0u5sqllfrrg9xwr",
+        "chatbotUserId": "$:LWCP_v1:$2fublW2r0FduGq0ZJ/fxuoxU4UNGwUqk",
+        "senderStaffId": "065966650026417",
+        "atUsers": [
+            {
+                "dingtalkId": "$:LWCP_v1:$2fublW2r0FduGq0ZJ/fxuoxU4UNGwUqk"
+            }
+        ],
+        "text": { "content": " 你咋不说话" }
+    });
+
+    let parsed = parse_inbound_event(&payload, BOT_TITLE)
+        .expect("should parse mentioned group text via chatbotUserId");
+    assert_eq!(parsed.chat_id, "cidmgXIUshYPp1JosMD6AY5fQ==");
+    assert_eq!(parsed.sender_id, "065966650026417");
+    assert_eq!(parsed.text, "你咋不说话");
+}
+
+#[test]
 fn parse_inbound_group_richtext_skips_bot_mention_block() {
     let payload = serde_json::json!({
         "conversationType": 2,
@@ -563,7 +588,7 @@ fn non_text_messages_fall_back_to_summary() {
     let payload = serde_json::json!({
         "audio": { "duration": 8 }
     });
-    let text = extract_dingtalk_message_text(&payload, "audio", None, "robot-a1", BOT_TITLE)
+    let text = extract_dingtalk_message_text(&payload, "audio", None, "robot-a1", None, BOT_TITLE)
         .expect("audio fallback");
     assert!(text.contains("语音消息"));
 }
@@ -616,6 +641,7 @@ fn audio_message_prefers_recognition_text() {
         "audio",
         Some("这是一段语音转文字"),
         "robot-a2",
+        None,
         BOT_TITLE,
     )
     .expect("audio recognition");
