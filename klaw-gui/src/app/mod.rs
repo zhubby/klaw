@@ -5,6 +5,7 @@ use crate::theme;
 use crate::tray::{self, TrayCommand, TrayIntegration};
 use crate::ui::shell::ShellUi;
 use crate::{hide_macos_app, show_macos_app};
+use klaw_config::ConfigStore;
 use klaw_ui_kit::install_fonts;
 use std::time::{Duration, Instant};
 
@@ -45,7 +46,7 @@ impl KlawGuiApp {
             should_quit: false,
             pending_provider_override: None,
         };
-        puffin::set_scopes_on(true);
+        puffin::set_scopes_on(Self::profiler_enabled());
 
         install_fonts(&creation_ctx.egui_ctx);
         theme::apply_theme(&creation_ctx.egui_ctx, &app.state);
@@ -136,6 +137,13 @@ impl KlawGuiApp {
         self.save_state_now();
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         hide_macos_app();
+    }
+
+    fn profiler_enabled() -> bool {
+        ConfigStore::open(None)
+            .ok()
+            .map(|store| store.snapshot().config.profiler.enabled)
+            .unwrap_or(false)
     }
 
     fn mark_state_dirty(&mut self) {

@@ -40,6 +40,8 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     #[serde(default)]
     pub observability: ObservabilityConfig,
+    #[serde(default)]
+    pub profiler: ProfilerConfig,
 }
 
 impl Default for AppConfig {
@@ -64,6 +66,7 @@ impl Default for AppConfig {
             skills: SkillsConfig::default(),
             storage: StorageConfig::default(),
             observability: ObservabilityConfig::default(),
+            profiler: ProfilerConfig::default(),
         }
     }
 }
@@ -1850,6 +1853,18 @@ fn default_observability_service_name() -> String {
     "klaw".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfilerConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for ProfilerConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 fn default_observability_service_version() -> String {
     "0.1.0".to_string()
 }
@@ -2049,9 +2064,9 @@ mod io;
 mod validate;
 
 pub use io::{
-    ConfigSnapshot, ConfigStore, LoadedConfig, MigratedConfig, default_config_path,
-    default_config_template, load_or_init, migrate_with_defaults, reset_to_defaults,
-    validate_config_file,
+    default_config_path, default_config_template, load_or_init, migrate_with_defaults,
+    reset_to_defaults, validate_config_file, ConfigSnapshot, ConfigStore, LoadedConfig,
+    MigratedConfig,
 };
 #[cfg(test)]
 pub(crate) use io::{load_from_path, migrate_path_with_defaults, reset_path_to_defaults};
