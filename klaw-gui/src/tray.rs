@@ -48,6 +48,7 @@ pub fn install(egui_ctx: &egui::Context) -> anyhow::Result<Option<TrayIntegratio
         .with_tooltip("Klaw")
         .with_menu(Box::new(menu))
         .with_icon(icon)
+        .with_icon_as_template(true)
         .with_menu_on_left_click(false)
         .build()
         .context("failed to create tray icon")?;
