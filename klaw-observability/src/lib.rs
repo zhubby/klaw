@@ -8,7 +8,7 @@ pub mod telemetry;
 pub mod tracing_ext;
 
 pub use audit::{AuditEvent, AuditLogger};
-pub use config::{LocalStoreConfig, ObservabilityConfig};
+pub use config::{LocalStoreConfig, ObservabilityConfig, PriceEntry, PriceTable};
 pub use health::{HealthRegistry, HealthStatus};
 pub use local_store::{
     LocalMetricsStore, LocalMetricsStoreError, ModelDashboardSnapshot, ModelErrorBreakdownRow,

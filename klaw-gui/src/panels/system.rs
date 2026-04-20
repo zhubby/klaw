@@ -12,9 +12,7 @@ use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
-use sysinfo::{
-    CpuRefreshKind, DiskRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System,
-};
+use sysinfo::{CpuRefreshKind, DiskRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
 
 const TASK_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const HOST_INFO_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -107,7 +105,8 @@ struct HostDataDirStats {
 
 fn collect_host_data_dir_stats(data_dir_path: &Path) -> HostDataDirStats {
     let (used_bytes, file_count) = host_dir_size_and_file_count(data_dir_path);
-    let (disk_total_bytes, disk_available_bytes, mount_point) = host_disk_space_for_path(data_dir_path);
+    let (disk_total_bytes, disk_available_bytes, mount_point) =
+        host_disk_space_for_path(data_dir_path);
 
     HostDataDirStats {
         used_bytes,
@@ -548,9 +547,21 @@ impl SystemPanel {
                         host_info_row(ui, "Total Memory", format_bytes_si(total_memory));
                         host_info_row(ui, "Used Memory", format_bytes_si(used_memory));
                         host_info_row(ui, "Free Memory", format_bytes_si(free_memory));
-                        host_info_row(ui, "Total Swap", format_bytes_si(self.host_info.system.total_swap()));
-                        host_info_row(ui, "Used Swap", format_bytes_si(self.host_info.system.used_swap()));
-                        host_info_row(ui, "System Uptime", format_host_duration(system_uptime_secs));
+                        host_info_row(
+                            ui,
+                            "Total Swap",
+                            format_bytes_si(self.host_info.system.total_swap()),
+                        );
+                        host_info_row(
+                            ui,
+                            "Used Swap",
+                            format_bytes_si(self.host_info.system.used_swap()),
+                        );
+                        host_info_row(
+                            ui,
+                            "System Uptime",
+                            format_host_duration(system_uptime_secs),
+                        );
                         host_info_row(
                             ui,
                             "System Boot Time",
@@ -564,7 +575,11 @@ impl SystemPanel {
                         );
 
                         if let Some(stats) = self.host_info.data_dir_stats.as_ref() {
-                            host_info_row(ui, "Data Directory Size", format_bytes_si(stats.used_bytes));
+                            host_info_row(
+                                ui,
+                                "Data Directory Size",
+                                format_bytes_si(stats.used_bytes),
+                            );
                             host_info_row(
                                 ui,
                                 "Data Directory File Count",
@@ -591,9 +606,21 @@ impl SystemPanel {
                             );
                         } else {
                             host_info_row(ui, "Data Directory Size", "Loading...".to_string());
-                            host_info_row(ui, "Data Directory File Count", "Loading...".to_string());
-                            host_info_row(ui, "Data Directory Mount Point", "Loading...".to_string());
-                            host_info_row(ui, "Data Directory Disk Capacity", "Loading...".to_string());
+                            host_info_row(
+                                ui,
+                                "Data Directory File Count",
+                                "Loading...".to_string(),
+                            );
+                            host_info_row(
+                                ui,
+                                "Data Directory Mount Point",
+                                "Loading...".to_string(),
+                            );
+                            host_info_row(
+                                ui,
+                                "Data Directory Disk Capacity",
+                                "Loading...".to_string(),
+                            );
                             host_info_row(
                                 ui,
                                 "Data Directory Disk Available",
@@ -880,10 +907,16 @@ impl PanelRenderer for SystemPanel {
             let disk_selected = self.current_view == SystemView::ProgramDiskUsage;
             let env_selected = self.current_view == SystemView::Environment;
 
-            if ui.selectable_label(host_selected, "Host Information").clicked() {
+            if ui
+                .selectable_label(host_selected, "Host Information")
+                .clicked()
+            {
                 self.current_view = SystemView::HostInformation;
             }
-            if ui.selectable_label(disk_selected, "Program Disk Usage").clicked() {
+            if ui
+                .selectable_label(disk_selected, "Program Disk Usage")
+                .clicked()
+            {
                 self.current_view = SystemView::ProgramDiskUsage;
             }
             if ui.selectable_label(env_selected, "Environment").clicked() {
