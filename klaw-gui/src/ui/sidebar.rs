@@ -12,16 +12,16 @@ fn grouped_menus() -> Vec<(WorkbenchMenuGroup, Vec<WorkbenchMenu>)> {
 pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
     let mut actions = Vec::new();
 
+    ui.label(
+        egui::RichText::new(format!("{} Klaw", regular::ROBOT))
+            .strong()
+            .size(20.0),
+    );
+    ui.separator();
+
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(format!("{} Klaw", regular::ROBOT))
-                    .strong()
-                    .size(20.0),
-            );
-            ui.separator();
-
             let groups = grouped_menus();
             for (index, (group, menus)) in groups.iter().enumerate() {
                 if index > 0 {

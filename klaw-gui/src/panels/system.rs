@@ -3,21 +3,243 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::{RuntimeRequestHandle, begin_env_check_request};
 use egui::RichText;
 use egui_phosphor::regular;
+use klaw_config::ConfigStore;
 use klaw_storage::StoragePaths;
-use klaw_util::{DependencyCategory, EnvironmentCheckReport};
+use klaw_util::{DependencyCategory, EnvironmentCheckReport, KLAW_DIR_NAME, default_data_dir};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use sysinfo::{
+    CpuRefreshKind, DiskRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System,
+};
 
 const TASK_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const HOST_INFO_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
+struct HostInfoData {
+    system: System,
+    last_refreshed_at: Instant,
+    app_started_at: Instant,
+    data_dir_path: PathBuf,
+    data_dir_stats: Option<HostDataDirStats>,
+    data_dir_stats_rx: Option<Receiver<HostDataDirStats>>,
+    data_dir_collect_started: bool,
+}
+
+impl Default for HostInfoData {
+    fn default() -> Self {
+        let mut system = System::new_with_specifics(
+            RefreshKind::nothing()
+                .with_cpu(CpuRefreshKind::everything())
+                .with_memory(MemoryRefreshKind::everything()),
+        );
+        system.refresh_cpu_usage();
+        system.refresh_memory();
+
+        Self {
+            system,
+            last_refreshed_at: Instant::now(),
+            app_started_at: Instant::now(),
+            data_dir_path: resolve_data_dir_path(),
+            data_dir_stats: None,
+            data_dir_stats_rx: None,
+            data_dir_collect_started: false,
+        }
+    }
+}
+
+impl HostInfoData {
+    fn refresh_if_due(&mut self) {
+        if self.last_refreshed_at.elapsed() < HOST_INFO_REFRESH_INTERVAL {
+            return;
+        }
+
+        self.system.refresh_cpu_usage();
+        self.system.refresh_memory();
+        self.last_refreshed_at = Instant::now();
+    }
+
+    fn ensure_data_dir_stats_collection_started(&mut self) {
+        if self.data_dir_collect_started {
+            return;
+        }
+
+        self.data_dir_collect_started = true;
+        let data_dir_path = self.data_dir_path.clone();
+        let (tx, rx) = mpsc::channel();
+        self.data_dir_stats_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let stats = collect_host_data_dir_stats(&data_dir_path);
+            let _ = tx.send(stats);
+        });
+    }
+
+    fn poll_data_dir_stats(&mut self) {
+        let Some(rx) = self.data_dir_stats_rx.as_ref() else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok(stats) => {
+                self.data_dir_stats = Some(stats);
+                self.data_dir_stats_rx = None;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.data_dir_stats_rx = None;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct HostDataDirStats {
+    used_bytes: u64,
+    file_count: u64,
+    disk_total_bytes: u64,
+    disk_available_bytes: u64,
+    mount_point: Option<PathBuf>,
+}
+
+fn collect_host_data_dir_stats(data_dir_path: &Path) -> HostDataDirStats {
+    let (used_bytes, file_count) = host_dir_size_and_file_count(data_dir_path);
+    let (disk_total_bytes, disk_available_bytes, mount_point) = host_disk_space_for_path(data_dir_path);
+
+    HostDataDirStats {
+        used_bytes,
+        file_count,
+        disk_total_bytes,
+        disk_available_bytes,
+        mount_point,
+    }
+}
+
+fn host_disk_space_for_path(path: &Path) -> (u64, u64, Option<PathBuf>) {
+    let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
+
+    let mut best: Option<(usize, u64, u64, PathBuf)> = None;
+    for disk in disks.list() {
+        let mount_point = disk.mount_point();
+        if !path.starts_with(mount_point) {
+            continue;
+        }
+        let mount_len = mount_point.as_os_str().len();
+        match best.as_ref() {
+            Some((best_len, _, _, _)) if *best_len > mount_len => {}
+            _ => {
+                best = Some((
+                    mount_len,
+                    disk.total_space(),
+                    disk.available_space(),
+                    mount_point.to_path_buf(),
+                ));
+            }
+        }
+    }
+
+    best.map(|(_, total, available, mount)| (total, available, Some(mount)))
+        .unwrap_or((0, 0, None))
+}
+
+fn host_dir_size_and_file_count(path: &Path) -> (u64, u64) {
+    let mut total_size = 0_u64;
+    let mut file_count = 0_u64;
+    let mut stack = vec![path.to_path_buf()];
+
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.is_file() {
+                total_size = total_size.saturating_add(metadata.len());
+                file_count = file_count.saturating_add(1);
+            } else if metadata.is_dir() {
+                stack.push(entry.path());
+            }
+        }
+    }
+
+    (total_size, file_count)
+}
+
+fn resolve_data_dir_path() -> PathBuf {
+    if let Ok(store) = ConfigStore::open(None) {
+        let root_dir = store
+            .snapshot()
+            .config
+            .storage
+            .root_dir
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty());
+        if let Some(root_dir) = root_dir {
+            return PathBuf::from(root_dir);
+        }
+    }
+
+    default_data_dir().unwrap_or_else(|| PathBuf::from(KLAW_DIR_NAME))
+}
+
+fn format_bytes_si(value: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let raw = value as f64;
+    if raw >= GB {
+        format!("{:.2} GB", raw / GB)
+    } else if raw >= MB {
+        format!("{:.2} MB", raw / MB)
+    } else if raw >= KB {
+        format!("{:.2} KB", raw / KB)
+    } else {
+        format!("{value} B")
+    }
+}
+
+fn host_info_row(ui: &mut egui::Ui, key: &str, value: String) {
+    ui.label(key);
+    ui.monospace(value);
+    ui.end_row();
+}
+
+fn host_optional_text(value: Option<String>) -> String {
+    value.unwrap_or_else(|| "N/A".to_string())
+}
+
+fn format_host_duration(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    let secs = seconds % 60;
+
+    if days > 0 {
+        format!("{days}d {hours:02}h {minutes:02}m {secs:02}s")
+    } else {
+        format!("{hours:02}h {minutes:02}m {secs:02}s")
+    }
+}
+
+fn format_host_load_avg(value: sysinfo::LoadAvg) -> String {
+    format!(
+        "1m: {:.2}, 5m: {:.2}, 15m: {:.2}",
+        value.one, value.five, value.fifteen
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum SystemView {
     #[default]
-    Cleanup,
+    HostInformation,
+    ProgramDiskUsage,
     Environment,
 }
 
@@ -103,6 +325,7 @@ pub struct SystemPanel {
     env_check_loaded: bool,
     env_check_request: Option<RuntimeRequestHandle<EnvironmentCheckReport>>,
     current_view: SystemView,
+    host_info: HostInfoData,
 }
 
 impl SystemPanel {
@@ -215,6 +438,170 @@ impl SystemPanel {
             return;
         }
         self.env_check_request = Some(begin_env_check_request());
+    }
+
+    fn render_host_information(&self, ui: &mut egui::Ui) {
+        let cpu_usage = self.host_info.system.global_cpu_usage();
+        let logical_cpus = self.host_info.system.cpus().len();
+        let physical_cores = System::physical_core_count().unwrap_or_default();
+
+        let total_memory = self.host_info.system.total_memory();
+        let used_memory = self.host_info.system.used_memory();
+        let free_memory = total_memory.saturating_sub(used_memory);
+        let memory_usage = if total_memory == 0 {
+            0.0
+        } else {
+            (used_memory as f32 / total_memory as f32) * 100.0
+        };
+
+        let uptime_secs = self.host_info.app_started_at.elapsed().as_secs();
+        let system_uptime_secs = System::uptime();
+        let load_avg = System::load_average();
+
+        const PROGRESS_BAR_HEIGHT: f32 = 12.0;
+
+        ui.columns(2, |cols| {
+            cols[0].vertical(|ui| {
+                ui.strong("CPU Usage");
+                ui.horizontal(|ui| {
+                    let bar = egui::ProgressBar::new((cpu_usage / 100.0).clamp(0.0, 1.0))
+                        .show_percentage()
+                        .desired_height(PROGRESS_BAR_HEIGHT);
+                    ui.add(bar);
+                    ui.monospace(format!("{cpu_usage:.1}%"));
+                });
+                ui.label(format!(
+                    "{} logical / {} physical cores",
+                    logical_cpus, physical_cores
+                ));
+            });
+
+            cols[1].vertical(|ui| {
+                ui.strong("Memory Usage");
+                ui.horizontal(|ui| {
+                    let bar = egui::ProgressBar::new((memory_usage / 100.0).clamp(0.0, 1.0))
+                        .show_percentage()
+                        .desired_height(PROGRESS_BAR_HEIGHT);
+                    ui.add(bar);
+                    ui.monospace(format!(
+                        "{:.1}% ({}/{})",
+                        memory_usage,
+                        format_bytes_si(used_memory),
+                        format_bytes_si(total_memory),
+                    ));
+                });
+                ui.label(format!("Free: {}", format_bytes_si(free_memory)));
+            });
+        });
+
+        ui.separator();
+        ui.strong("System Information");
+        ui.add_space(6.0);
+
+        egui::ScrollArea::vertical()
+            .id_salt("system-host-info-scroll")
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                egui::Grid::new("system-host-info-grid")
+                    .num_columns(2)
+                    .spacing([14.0, 6.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        host_info_row(ui, "App Uptime", format_host_duration(uptime_secs));
+                        host_info_row(ui, "Host Name", host_optional_text(System::host_name()));
+                        host_info_row(ui, "OS Name", host_optional_text(System::name()));
+                        host_info_row(ui, "OS Version", host_optional_text(System::os_version()));
+                        host_info_row(
+                            ui,
+                            "Long OS Version",
+                            host_optional_text(System::long_os_version()),
+                        );
+                        host_info_row(
+                            ui,
+                            "Kernel Version",
+                            host_optional_text(System::kernel_version()),
+                        );
+                        host_info_row(ui, "CPU Architecture", std::env::consts::ARCH.to_string());
+                        host_info_row(ui, "Logical CPU Count", logical_cpus.to_string());
+                        host_info_row(ui, "Physical Core Count", physical_cores.to_string());
+                        host_info_row(
+                            ui,
+                            "Primary CPU Brand",
+                            self.host_info
+                                .system
+                                .cpus()
+                                .first()
+                                .map(|cpu| cpu.brand().to_string())
+                                .filter(|value| !value.is_empty())
+                                .unwrap_or_else(|| "N/A".to_string()),
+                        );
+                        host_info_row(
+                            ui,
+                            "Primary CPU Frequency",
+                            self.host_info
+                                .system
+                                .cpus()
+                                .first()
+                                .map(|cpu| format!("{} MHz", cpu.frequency()))
+                                .unwrap_or_else(|| "N/A".to_string()),
+                        );
+                        host_info_row(ui, "Total Memory", format_bytes_si(total_memory));
+                        host_info_row(ui, "Used Memory", format_bytes_si(used_memory));
+                        host_info_row(ui, "Free Memory", format_bytes_si(free_memory));
+                        host_info_row(ui, "Total Swap", format_bytes_si(self.host_info.system.total_swap()));
+                        host_info_row(ui, "Used Swap", format_bytes_si(self.host_info.system.used_swap()));
+                        host_info_row(ui, "System Uptime", format_host_duration(system_uptime_secs));
+                        host_info_row(
+                            ui,
+                            "System Boot Time",
+                            crate::time_format::format_timestamp_seconds(System::boot_time()),
+                        );
+                        host_info_row(ui, "Load Average", format_host_load_avg(load_avg));
+                        host_info_row(
+                            ui,
+                            "Data Directory",
+                            self.host_info.data_dir_path.display().to_string(),
+                        );
+
+                        if let Some(stats) = self.host_info.data_dir_stats.as_ref() {
+                            host_info_row(ui, "Data Directory Size", format_bytes_si(stats.used_bytes));
+                            host_info_row(
+                                ui,
+                                "Data Directory File Count",
+                                stats.file_count.to_string(),
+                            );
+                            host_info_row(
+                                ui,
+                                "Data Directory Mount Point",
+                                stats
+                                    .mount_point
+                                    .as_ref()
+                                    .map(|path| path.display().to_string())
+                                    .unwrap_or_else(|| "N/A".to_string()),
+                            );
+                            host_info_row(
+                                ui,
+                                "Data Directory Disk Capacity",
+                                format_bytes_si(stats.disk_total_bytes),
+                            );
+                            host_info_row(
+                                ui,
+                                "Data Directory Disk Available",
+                                format_bytes_si(stats.disk_available_bytes),
+                            );
+                        } else {
+                            host_info_row(ui, "Data Directory Size", "Loading...".to_string());
+                            host_info_row(ui, "Data Directory File Count", "Loading...".to_string());
+                            host_info_row(ui, "Data Directory Mount Point", "Loading...".to_string());
+                            host_info_row(ui, "Data Directory Disk Capacity", "Loading...".to_string());
+                            host_info_row(
+                                ui,
+                                "Data Directory Disk Available",
+                                "Loading...".to_string(),
+                            );
+                        }
+                    });
+            });
     }
 
     fn render_env_check_section(&mut self, ui: &mut egui::Ui) {
@@ -481,14 +868,23 @@ impl PanelRenderer for SystemPanel {
             ui.ctx().request_repaint_after(TASK_POLL_INTERVAL);
         }
 
+        self.host_info.refresh_if_due();
+        self.host_info.ensure_data_dir_stats_collection_started();
+        self.host_info.poll_data_dir_stats();
+        ui.ctx().request_repaint_after(HOST_INFO_REFRESH_INTERVAL);
+
         ui.heading(ctx.tab_title);
 
         ui.horizontal(|ui| {
-            let cleanup_selected = self.current_view == SystemView::Cleanup;
+            let host_selected = self.current_view == SystemView::HostInformation;
+            let disk_selected = self.current_view == SystemView::ProgramDiskUsage;
             let env_selected = self.current_view == SystemView::Environment;
 
-            if ui.selectable_label(cleanup_selected, "Cleanup").clicked() {
-                self.current_view = SystemView::Cleanup;
+            if ui.selectable_label(host_selected, "Host Information").clicked() {
+                self.current_view = SystemView::HostInformation;
+            }
+            if ui.selectable_label(disk_selected, "Program Disk Usage").clicked() {
+                self.current_view = SystemView::ProgramDiskUsage;
             }
             if ui.selectable_label(env_selected, "Environment").clicked() {
                 self.current_view = SystemView::Environment;
@@ -500,7 +896,10 @@ impl PanelRenderer for SystemPanel {
             .id_salt("system-panel-scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| match self.current_view {
-                SystemView::Cleanup => {
+                SystemView::HostInformation => {
+                    self.render_host_information(ui);
+                }
+                SystemView::ProgramDiskUsage => {
                     ui.label("Inspect and clear data under the Klaw data directory.");
                     ui.add_space(8.0);
                     self.render_section(ui, DirKind::Tmp, notifications);
