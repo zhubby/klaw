@@ -76,6 +76,7 @@ pub struct PanelRegistry {
 
 impl PanelRegistry {
     pub fn tick(&mut self, ctx: &egui::Context) {
+        puffin::profile_scope!("panels_tick");
         self.logs.tick(ctx);
     }
 
@@ -86,34 +87,35 @@ impl PanelRegistry {
         notifications: &mut NotificationCenter,
     ) {
         match ctx.menu {
-            WorkbenchMenu::Profile => self.profile.render(ui, ctx, notifications),
-            WorkbenchMenu::System => self.system.render(ui, ctx, notifications),
-            WorkbenchMenu::Setting => self.setting.render(ui, ctx, notifications),
-            WorkbenchMenu::Terminal => self.terminal.render(ui, ctx, notifications),
-            WorkbenchMenu::Session => self.session.render(ui, ctx, notifications),
-            WorkbenchMenu::Approval => self.approval.render(ui, ctx, notifications),
-            WorkbenchMenu::Acp => self.acp.render(ui, ctx, notifications),
-            WorkbenchMenu::Configuration => self.configuration.render(ui, ctx, notifications),
-            WorkbenchMenu::Provider => self.provider.render(ui, ctx, notifications),
-            WorkbenchMenu::Llm => self.llm.render(ui, ctx, notifications),
-            WorkbenchMenu::Channel => self.channel.render(ui, ctx, notifications),
-            WorkbenchMenu::Voice => self.voice.render(ui, ctx, notifications),
-            WorkbenchMenu::Cron => self.cron.render(ui, ctx, notifications),
-            WorkbenchMenu::Heartbeat => self.heartbeat.render(ui, ctx, notifications),
-            WorkbenchMenu::Gateway => self.gateway.render(ui, ctx, notifications),
-            WorkbenchMenu::Webhook => self.webhook.render(ui, ctx, notifications),
-            WorkbenchMenu::Mcp => self.mcp.render(ui, ctx, notifications),
-            WorkbenchMenu::Skill => self.skills_registry.render(ui, ctx, notifications),
-            WorkbenchMenu::SkillsManager => self.skills_manager.render(ui, ctx, notifications),
-            WorkbenchMenu::Memory => self.memory.render(ui, ctx, notifications),
-            WorkbenchMenu::Archive => self.archive.render(ui, ctx, notifications),
-            WorkbenchMenu::Tool => self.tool.render(ui, ctx, notifications),
-            WorkbenchMenu::Monitor => self.monitor.render(ui, ctx, notifications),
-            WorkbenchMenu::Logs => self.logs.render(ui, ctx, notifications),
+            WorkbenchMenu::Profile => { puffin::profile_scope!("panel_profile"); self.profile.render(ui, ctx, notifications) }
+            WorkbenchMenu::System => { puffin::profile_scope!("panel_system"); self.system.render(ui, ctx, notifications) }
+            WorkbenchMenu::Setting => { puffin::profile_scope!("panel_setting"); self.setting.render(ui, ctx, notifications) }
+            WorkbenchMenu::Terminal => { puffin::profile_scope!("panel_terminal"); self.terminal.render(ui, ctx, notifications) }
+            WorkbenchMenu::Session => { puffin::profile_scope!("panel_session"); self.session.render(ui, ctx, notifications) }
+            WorkbenchMenu::Approval => { puffin::profile_scope!("panel_approval"); self.approval.render(ui, ctx, notifications) }
+            WorkbenchMenu::Acp => { puffin::profile_scope!("panel_acp"); self.acp.render(ui, ctx, notifications) }
+            WorkbenchMenu::Configuration => { puffin::profile_scope!("panel_configuration"); self.configuration.render(ui, ctx, notifications) }
+            WorkbenchMenu::Provider => { puffin::profile_scope!("panel_provider"); self.provider.render(ui, ctx, notifications) }
+            WorkbenchMenu::Llm => { puffin::profile_scope!("panel_llm"); self.llm.render(ui, ctx, notifications) }
+            WorkbenchMenu::Channel => { puffin::profile_scope!("panel_channel"); self.channel.render(ui, ctx, notifications) }
+            WorkbenchMenu::Voice => { puffin::profile_scope!("panel_voice"); self.voice.render(ui, ctx, notifications) }
+            WorkbenchMenu::Cron => { puffin::profile_scope!("panel_cron"); self.cron.render(ui, ctx, notifications) }
+            WorkbenchMenu::Heartbeat => { puffin::profile_scope!("panel_heartbeat"); self.heartbeat.render(ui, ctx, notifications) }
+            WorkbenchMenu::Gateway => { puffin::profile_scope!("panel_gateway"); self.gateway.render(ui, ctx, notifications) }
+            WorkbenchMenu::Webhook => { puffin::profile_scope!("panel_webhook"); self.webhook.render(ui, ctx, notifications) }
+            WorkbenchMenu::Mcp => { puffin::profile_scope!("panel_mcp"); self.mcp.render(ui, ctx, notifications) }
+            WorkbenchMenu::Skill => { puffin::profile_scope!("panel_skill"); self.skills_registry.render(ui, ctx, notifications) }
+            WorkbenchMenu::SkillsManager => { puffin::profile_scope!("panel_skills_manager"); self.skills_manager.render(ui, ctx, notifications) }
+            WorkbenchMenu::Memory => { puffin::profile_scope!("panel_memory"); self.memory.render(ui, ctx, notifications) }
+            WorkbenchMenu::Archive => { puffin::profile_scope!("panel_archive"); self.archive.render(ui, ctx, notifications) }
+            WorkbenchMenu::Tool => { puffin::profile_scope!("panel_tool"); self.tool.render(ui, ctx, notifications) }
+            WorkbenchMenu::Monitor => { puffin::profile_scope!("panel_monitor"); self.monitor.render(ui, ctx, notifications) }
+            WorkbenchMenu::Logs => { puffin::profile_scope!("panel_logs"); self.logs.render(ui, ctx, notifications) }
             WorkbenchMenu::AnalyzeDashboard => {
+                puffin::profile_scope!("panel_analyze_dashboard");
                 self.analyze_dashboard.render(ui, ctx, notifications)
             }
-            WorkbenchMenu::Observability => self.observability.render(ui, ctx, notifications),
+            WorkbenchMenu::Observability => { puffin::profile_scope!("panel_observability"); self.observability.render(ui, ctx, notifications) }
         }
     }
 

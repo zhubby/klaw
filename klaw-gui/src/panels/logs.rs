@@ -121,6 +121,7 @@ impl LogsPanel {
     }
 
     pub fn tick(&mut self, ctx: &egui::Context) {
+        puffin::profile_scope!("logs_tick");
         self.ensure_defaults();
         if !self.paused {
             self.drain_runtime_logs(LOG_BACKGROUND_DRAIN_BATCH);
@@ -129,6 +130,7 @@ impl LogsPanel {
     }
 
     fn drain_runtime_logs(&mut self, max_batch: usize) {
+        puffin::profile_scope!("drain_logs");
         let chunks = runtime_bridge::drain_log_chunks(max_batch);
         for chunk in chunks {
             self.absorb_chunk(&chunk);
