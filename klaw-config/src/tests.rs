@@ -63,14 +63,12 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.apply_patch.workspace.is_none());
     assert!(!parsed.tools.apply_patch.allow_absolute_paths);
     assert!(parsed.tools.apply_patch.allowed_roots.is_empty());
-    assert!(
-        parsed
-            .tools
-            .channel_attachment
-            .local_attachments
-            .allowlist
-            .is_empty()
-    );
+    assert!(parsed
+        .tools
+        .channel_attachment
+        .local_attachments
+        .allowlist
+        .is_empty());
     assert_eq!(
         parsed.tools.channel_attachment.local_attachments.max_bytes,
         10 * 1024 * 1024
@@ -109,13 +107,11 @@ fn parse_default_template_succeeds() {
             .map(|registry| registry.address.as_str()),
         Some("https://github.com/anthropics/skills")
     );
-    assert!(
-        parsed
-            .skills
-            .registries
-            .get("anthropic")
-            .is_some_and(|registry| registry.installed.is_empty())
-    );
+    assert!(parsed
+        .skills
+        .registries
+        .get("anthropic")
+        .is_some_and(|registry| registry.installed.is_empty()));
     assert_eq!(parsed.cron.tick_ms, 1_000);
     assert_eq!(parsed.cron.runtime_tick_ms, 200);
     assert_eq!(parsed.cron.runtime_drain_batch, 8);
