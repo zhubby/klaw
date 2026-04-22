@@ -700,7 +700,10 @@ fn inherited_channel_metadata(
     for (key, value) in metadata {
         if matches!(
             key.as_str(),
-            "channel.dingtalk.session_webhook" | "channel.dingtalk.bot_title"
+            "channel.base_session_key"
+                | "channel.delivery_session_key"
+                | "channel.dingtalk.session_webhook"
+                | "channel.dingtalk.bot_title"
         ) {
             out.insert(key.clone(), value.clone());
         }
@@ -1272,6 +1275,76 @@ mod tests {
         assert_eq!(
             payload.get("session_key").and_then(Value::as_str),
             Some("cron:job-dingtalk-shortcut")
+        );
+    }
+
+    #[tokio::test]
+    async fn create_message_shortcut_inherits_delivery_route_metadata_from_context() {
+        let storage = create_store().await;
+        let tool = CronManagerTool::from_storage(storage.clone());
+
+        storage
+            .touch_session("dingtalk:account-1:chat-99", "chat-99", "dingtalk")
+            .await
+            .expect("base session should exist");
+
+        tool.execute(
+            json!({
+                "action": "create",
+                "id": "job-dingtalk-route-shortcut",
+                "name": "weather route shortcut",
+                "schedule_expr": "24h",
+                "message": "请查询无锡今天的天气情况"
+            }),
+            &ToolContext {
+                session_key: "dingtalk:account-1:chat-99".to_string(),
+                metadata: BTreeMap::from([
+                    (
+                        "channel.base_session_key".to_string(),
+                        json!("dingtalk:account-1:chat-99"),
+                    ),
+                    (
+                        "channel.delivery_session_key".to_string(),
+                        json!("dingtalk:account-1:chat-99:active"),
+                    ),
+                    (
+                        "channel.dingtalk.session_webhook".to_string(),
+                        json!("https://example/session"),
+                    ),
+                    ("channel.dingtalk.bot_title".to_string(), json!("Klaw Bot")),
+                ]),
+            },
+        )
+        .await
+        .expect("create should succeed");
+
+        let job = storage
+            .get_cron("job-dingtalk-route-shortcut")
+            .await
+            .expect("job should exist");
+        let payload: Value = serde_json::from_str(&job.payload_json).expect("payload json");
+        let meta = payload
+            .get("metadata")
+            .and_then(Value::as_object)
+            .expect("metadata object");
+        assert_eq!(
+            meta.get("channel.base_session_key").and_then(Value::as_str),
+            Some("dingtalk:account-1:chat-99")
+        );
+        assert_eq!(
+            meta.get("channel.delivery_session_key")
+                .and_then(Value::as_str),
+            Some("dingtalk:account-1:chat-99:active")
+        );
+        assert_eq!(
+            meta.get("channel.dingtalk.session_webhook")
+                .and_then(Value::as_str),
+            Some("https://example/session")
+        );
+        assert_eq!(
+            meta.get("channel.dingtalk.bot_title")
+                .and_then(Value::as_str),
+            Some("Klaw Bot")
         );
     }
 
