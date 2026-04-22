@@ -677,7 +677,6 @@ impl ChatApp {
         let mut set_active = false;
         {
             let session = &mut self.sessions[index];
-            let messages = session.buffers.messages.borrow().clone();
             let mut open = session.open;
 
             let window = egui::Window::new(&session.title)
@@ -704,6 +703,7 @@ impl ChatApp {
 
                 let messages_height = (ui.available_height() - INPUT_PANEL_HEIGHT).max(140.0);
                 ui.allocate_ui(vec2(ui.available_width(), messages_height), |ui| {
+                    let messages = session.buffers.messages.borrow();
                     let scroll_output = ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)

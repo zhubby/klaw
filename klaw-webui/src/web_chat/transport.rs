@@ -245,7 +245,7 @@ impl ChatApp {
             json!({
                 "session_key": session_key,
                 "before_message_id": before_message_id,
-                "limit": 10,
+                "limit": 30,
             }),
         ) {
             *self.sessions[index].buffers.history_loading.borrow_mut() = false;

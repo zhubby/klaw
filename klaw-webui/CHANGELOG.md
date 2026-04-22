@@ -2,6 +2,16 @@
 
 ## 2026-04-22
 
+### Changed
+
+- webui `session.history.load` 现在每次请求 30 条历史而不是 10 条，减少长会话向上滚动时的 websocket 往返次数
+
+### Fixed
+
+- agent 会话窗口渲染不再在每一帧先全量 clone 当前消息列表，长历史场景下可减少前端 transcript 重绘时的内存复制开销
+
+## 2026-04-22
+
 ### Fixed
 
 - webui 历史分页现在会连同 heartbeat operational prompt 一起过滤，不再只隐藏 heartbeat silent-ack；真正需要展示给用户的 heartbeat assistant 输出仍会保留
