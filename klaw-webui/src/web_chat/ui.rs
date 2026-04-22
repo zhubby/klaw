@@ -11,6 +11,7 @@ use klaw_ui_kit::{
     theme_mode_from_preference,
 };
 use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 
 use crate::{
     ActiveSlashCommand, ConnectionState, ImCard, ImCardAction, ImCardActionKind, ImCardKind,
@@ -25,11 +26,11 @@ use super::{
     app::ChatApp,
     markdown::{MarkdownCache, render_markdown, render_plain_message},
     session::{
-        BUBBLE_MAX_WIDTH, CardInteractionState, ChatMessage, INPUT_PANEL_HEIGHT,
-        PendingHistoryScrollRestore, SESSION_LIST_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT,
-        SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT, SESSION_WINDOW_MIN_WIDTH,
-        SessionWindow, current_timestamp_ms, format_datetime, format_message_timestamp,
-        format_relative_time, session_window_id,
+        ALWAYS_RENDER_TAIL_COUNT, BUBBLE_MAX_WIDTH, CardInteractionState, ChatMessage,
+        INPUT_PANEL_HEIGHT, PendingHistoryScrollRestore, SESSION_LIST_WIDTH,
+        SESSION_WINDOW_DEFAULT_HEIGHT, SESSION_WINDOW_DEFAULT_WIDTH, SESSION_WINDOW_MIN_HEIGHT,
+        SESSION_WINDOW_MIN_WIDTH, VIRTUAL_SCROLL_BUFFER_PX, SessionWindow, current_timestamp_ms,
+        format_datetime, format_message_timestamp, format_relative_time, session_window_id,
     },
 };
 
@@ -703,12 +704,20 @@ impl ChatApp {
 
                 let messages_height = (ui.available_height() - INPUT_PANEL_HEIGHT).max(140.0);
                 ui.allocate_ui(vec2(ui.available_width(), messages_height), |ui| {
-                    let messages = session.buffers.messages.borrow();
+                    let messages_rc = Rc::clone(&session.buffers.messages);
+                    let total_count = messages_rc.borrow().len();
+                    let scroll_area_id =
+                        egui::Id::new(("session-messages", &session.session_key));
+                    let current_scroll_y = egui::scroll_area::State::load(ui.ctx(), scroll_area_id)
+                        .map(|s| s.offset.y)
+                        .unwrap_or(session.last_scroll_offset_y);
+                    let render_above_y = current_scroll_y - VIRTUAL_SCROLL_BUFFER_PX;
                     let scroll_output = ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)
                         .id_salt(("session-messages", &session.session_key))
                         .show(ui, |ui| {
+                            let messages = messages_rc.borrow();
                             if *session.buffers.history_loading.borrow() && messages.is_empty() {
                                 render_history_loading_state(ui);
                                 return;
@@ -728,6 +737,27 @@ impl ChatApp {
                                 if is_hidden_internal_card_command(message) {
                                     continue;
                                 }
+                                let is_tail = message_index
+                                    >= total_count.saturating_sub(ALWAYS_RENDER_TAIL_COUNT);
+
+                                let current_y = ui.cursor().top();
+                                let cached_height = session
+                                    .message_height_cache
+                                    .get(&message.id)
+                                    .copied();
+
+                                if !is_tail {
+                                    if let Some(height) = cached_height {
+                                        let msg_bottom = current_y + height + 8.0;
+                                        if msg_bottom < render_above_y {
+                                            ui.add_space(height);
+                                            ui.add_space(8.0);
+                                            continue;
+                                        }
+                                    }
+                                }
+
+                                let y_before = ui.cursor().top();
                                 if let Some(action) = render_message(
                                     ui,
                                     &mut session.markdown_cache,
@@ -741,6 +771,13 @@ impl ChatApp {
                                     card_action = Some(action);
                                 }
                                 ui.add_space(8.0);
+                                let y_after = ui.cursor().top();
+                                let rendered_height = y_after - y_before - 8.0;
+                                if rendered_height > 0.0 {
+                                    session
+                                        .message_height_cache
+                                        .insert(message.id.clone(), rendered_height);
+                                }
                             }
                             trigger_card_action = card_action;
                         });
@@ -759,13 +796,14 @@ impl ChatApp {
                         && session.history_has_more
                         && !*session.buffers.history_loading.borrow()
                         && session.pending_history_scroll_restore.is_none()
-                        && !messages.is_empty()
+                        && !messages_rc.borrow().is_empty()
                     {
                         trigger_history_load = Some(PendingHistoryScrollRestore {
                             offset_y: scroll_output.state.offset.y,
                             content_height: scroll_output.content_size.y,
                         });
                     }
+                    session.last_scroll_offset_y = scroll_output.state.offset.y;
                 });
 
                 ui.separator();

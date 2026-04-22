@@ -310,6 +310,9 @@ impl ChatApp {
                 let message = format!("{}: {}", error.code, error.message);
                 *self.connection_state.borrow_mut() = ConnectionState::Error(message.clone());
                 self.workspace_loaded = false;
+                for session in &mut self.sessions {
+                    *session.buffers.history_loading.borrow_mut() = false;
+                }
                 self.toasts.borrow_mut().error(message);
             }
         }

@@ -24,6 +24,9 @@ pub(super) const SESSION_WINDOW_MIN_WIDTH: f32 = 360.0;
 pub(super) const SESSION_WINDOW_MIN_HEIGHT: f32 = 420.0;
 pub(super) const INPUT_PANEL_HEIGHT: f32 = 124.0;
 
+pub(super) const VIRTUAL_SCROLL_BUFFER_PX: f32 = 1000.0;
+pub(super) const ALWAYS_RENDER_TAIL_COUNT: usize = 5;
+
 const WINDOW_START_X: f32 = SESSION_LIST_WIDTH + 28.0;
 const WINDOW_START_Y: f32 = 72.0;
 const WINDOW_OFFSET_X: f32 = 40.0;
@@ -147,6 +150,8 @@ pub(super) struct SessionWindow {
     pub(in crate::web_chat) oldest_loaded_message_id: Option<String>,
     pub(in crate::web_chat) last_requested_history_cursor: Option<HistoryRequestCursor>,
     pub(in crate::web_chat) pending_history_scroll_restore: Option<PendingHistoryScrollRestore>,
+    pub(in crate::web_chat) message_height_cache: HashMap<String, f32>,
+    pub(in crate::web_chat) last_scroll_offset_y: f32,
 }
 
 impl SessionWindow {
@@ -184,6 +189,8 @@ impl SessionWindow {
             oldest_loaded_message_id: None,
             last_requested_history_cursor: None,
             pending_history_scroll_restore: None,
+            message_height_cache: HashMap::new(),
+            last_scroll_offset_y: 0.0,
         }
     }
 
@@ -238,6 +245,7 @@ impl SessionWindow {
         *self.buffers.history_loading.borrow_mut() = false;
         self.last_requested_history_cursor = None;
         self.pending_history_scroll_restore = None;
+        self.message_height_cache.clear();
     }
 }
 
@@ -267,10 +275,10 @@ pub(super) fn format_message_timestamp(timestamp_ms: i64, now_ms: i64) -> String
     let elapsed_secs = elapsed_ms / 1000;
     if elapsed_secs < 60 {
         let s = elapsed_secs.max(0);
-        format!("{s} sec{suffix(&s)} ago")
+        format!("{s} sec{} ago", suffix(&s))
     } else if elapsed_secs < 3600 {
         let mins = elapsed_secs / 60;
-        format!("{mins} min{suffix(&mins)} ago")
+        format!("{mins} min{} ago", suffix(&mins))
     } else {
         let now_date = Date::new(&wasm_bindgen::JsValue::from_f64(now_ms as f64));
         let msg_date = Date::new(&wasm_bindgen::JsValue::from_f64(timestamp_ms as f64));
@@ -279,7 +287,7 @@ pub(super) fn format_message_timestamp(timestamp_ms: i64, now_ms: i64) -> String
             && now_date.get_date() == msg_date.get_date();
         if same_day {
             let hours = elapsed_secs / 3600;
-            format!("{hours} hr{suffix(&hours)} ago")
+            format!("{hours} hr{} ago", suffix(&hours))
         } else {
             format!(
                 "{}/{:02}/{:02} {:02}:{:02}:{:02}",
@@ -320,16 +328,16 @@ pub(super) fn format_relative_time(created_at_ms: i64, now_ms: i64) -> String {
     let elapsed_secs = elapsed_ms / 1000;
     if elapsed_secs < 60 {
         let s = elapsed_secs.max(0);
-        format!("{s} sec{suffix(&s)} ago")
+        format!("{s} sec{} ago", suffix(&s))
     } else if elapsed_secs < 3600 {
         let mins = elapsed_secs / 60;
-        format!("{mins} min{suffix(&mins)} ago")
+        format!("{mins} min{} ago", suffix(&mins))
     } else if elapsed_secs < 86400 {
         let hours = elapsed_secs / 3600;
-        format!("{hours} hr{suffix(&hours)} ago")
+        format!("{hours} hr{} ago", suffix(&hours))
     } else if elapsed_secs < 604800 {
         let days = elapsed_secs / 86400;
-        format!("{days} day{suffix(&days)} ago")
+        format!("{days} day{} ago", suffix(&days))
     } else {
         let date = Date::new(&wasm_bindgen::JsValue::from_f64(created_at_ms as f64));
         format!(
