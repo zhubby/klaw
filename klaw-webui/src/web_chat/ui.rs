@@ -1325,7 +1325,8 @@ fn render_message(
     message_index: usize,
     card_state_overrides: &HashMap<String, CardInteractionState>,
 ) -> Option<CardActionRequest> {
-    let time_label = format_message_timestamp(message.timestamp_ms);
+    let now_ms = current_timestamp_ms();
+    let time_label = format_message_timestamp(message.timestamp_ms, now_ms);
     match message.role {
         MessageRole::System => {
             ui.vertical_centered(|ui| {

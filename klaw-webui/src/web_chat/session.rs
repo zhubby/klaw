@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    ImCard, MessageRole, ProviderCatalog, ResolvedSessionRoute, WebArchiveAttachment,
-    WorkspaceSessionEntry, resolve_im_card, resolve_session_route_inputs,
+    resolve_im_card, resolve_session_route_inputs, ImCard, MessageRole, ProviderCatalog,
+    ResolvedSessionRoute, WebArchiveAttachment, WorkspaceSessionEntry,
 };
 use eframe::epaint::{Color32, FontFamily, FontId};
 use js_sys::Date;
@@ -262,9 +262,44 @@ pub(super) fn current_timestamp_ms() -> i64 {
     Date::now().round() as i64
 }
 
-pub(super) fn format_message_timestamp(timestamp_ms: i64) -> String {
-    let date = Date::new(&wasm_bindgen::JsValue::from_f64(timestamp_ms as f64));
-    format!("{:02}:{:02}", date.get_hours(), date.get_minutes())
+pub(super) fn format_message_timestamp(timestamp_ms: i64, now_ms: i64) -> String {
+    let elapsed_ms = (now_ms - timestamp_ms).max(0);
+    let elapsed_secs = elapsed_ms / 1000;
+    if elapsed_secs < 60 {
+        let s = elapsed_secs.max(0);
+        format!("{s} sec{suffix(&s)} ago")
+    } else if elapsed_secs < 3600 {
+        let mins = elapsed_secs / 60;
+        format!("{mins} min{suffix(&mins)} ago")
+    } else {
+        let now_date = Date::new(&wasm_bindgen::JsValue::from_f64(now_ms as f64));
+        let msg_date = Date::new(&wasm_bindgen::JsValue::from_f64(timestamp_ms as f64));
+        let same_day = now_date.get_full_year() == msg_date.get_full_year()
+            && now_date.get_month() == msg_date.get_month()
+            && now_date.get_date() == msg_date.get_date();
+        if same_day {
+            let hours = elapsed_secs / 3600;
+            format!("{hours} hr{suffix(&hours)} ago")
+        } else {
+            format!(
+                "{}/{:02}/{:02} {:02}:{:02}:{:02}",
+                msg_date.get_full_year(),
+                msg_date.get_month() + 1,
+                msg_date.get_date(),
+                msg_date.get_hours(),
+                msg_date.get_minutes(),
+                msg_date.get_seconds(),
+            )
+        }
+    }
+}
+
+fn suffix(n: &i64) -> &'static str {
+    if *n == 1 {
+        ""
+    } else {
+        "s"
+    }
 }
 
 pub(super) fn format_datetime(timestamp_ms: i64) -> String {
@@ -284,25 +319,34 @@ pub(super) fn format_relative_time(created_at_ms: i64, now_ms: i64) -> String {
     let elapsed_ms = (now_ms - created_at_ms).max(0);
     let elapsed_secs = elapsed_ms / 1000;
     if elapsed_secs < 60 {
-        "just now".to_string()
+        let s = elapsed_secs.max(0);
+        format!("{s} sec{suffix(&s)} ago")
     } else if elapsed_secs < 3600 {
         let mins = elapsed_secs / 60;
-        format!("{mins}m ago")
+        format!("{mins} min{suffix(&mins)} ago")
     } else if elapsed_secs < 86400 {
         let hours = elapsed_secs / 3600;
-        format!("{hours}h ago")
+        format!("{hours} hr{suffix(&hours)} ago")
     } else if elapsed_secs < 604800 {
         let days = elapsed_secs / 86400;
-        format!("{days}d ago")
+        format!("{days} day{suffix(&days)} ago")
     } else {
-        let weeks = elapsed_secs / 604800;
-        format!("{weeks}w ago")
+        let date = Date::new(&wasm_bindgen::JsValue::from_f64(created_at_ms as f64));
+        format!(
+            "{}/{:02}/{:02} {:02}:{:02}:{:02}",
+            date.get_full_year(),
+            date.get_month() + 1,
+            date.get_date(),
+            date.get_hours(),
+            date.get_minutes(),
+            date.get_seconds(),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ProviderCatalog, ProviderCatalogEntry, resolve_session_route_choice};
+    use super::{resolve_session_route_choice, ProviderCatalog, ProviderCatalogEntry};
 
     #[test]
     fn session_route_prefers_explicit_workspace_route() {
