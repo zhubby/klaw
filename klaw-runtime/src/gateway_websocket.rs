@@ -11,9 +11,9 @@ use klaw_gateway::{
     GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
     GatewayWorkspaceBootstrap, GatewayWorkspaceSession, OutboundEvent,
 };
-use klaw_heartbeat::HeartbeatManager;
-use klaw_session::{SessionListQuery, SessionManager};
-use klaw_storage::StorageError;
+use klaw_heartbeat::{HeartbeatManager, should_exclude_chat_record_from_context};
+use klaw_session::{SessionHistoryPage, SessionListQuery, SessionManager};
+use klaw_storage::{ChatRecord, StorageError};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::mpsc;
@@ -87,6 +87,57 @@ fn resolved_history_session_key(session: &klaw_storage::SessionIndex) -> &str {
 fn parse_chat_record_metadata(raw: Option<&str>) -> BTreeMap<String, Value> {
     raw.and_then(|value| serde_json::from_str::<BTreeMap<String, Value>>(value).ok())
         .unwrap_or_default()
+}
+
+fn history_record_is_visible(record: &ChatRecord) -> bool {
+    !should_exclude_chat_record_from_context(record)
+}
+
+fn history_message_from_record(record: ChatRecord) -> GatewaySessionHistoryMessage {
+    GatewaySessionHistoryMessage {
+        role: record.role,
+        content: record.content,
+        timestamp_ms: record.ts_ms,
+        metadata: parse_chat_record_metadata(record.metadata_json.as_deref()),
+        message_id: record.message_id,
+    }
+}
+
+fn prepend_visible_history_records(
+    visible_records: &mut Vec<ChatRecord>,
+    page_records: Vec<ChatRecord>,
+) {
+    let mut page_visible = page_records
+        .into_iter()
+        .filter(history_record_is_visible)
+        .collect::<Vec<_>>();
+    page_visible.append(visible_records);
+    *visible_records = page_visible;
+}
+
+fn finalize_visible_history_page(
+    mut visible_records: Vec<ChatRecord>,
+    limit: usize,
+    raw_has_more: bool,
+) -> GatewaySessionHistoryPage {
+    let mut has_more = raw_has_more;
+    if limit > 0 && visible_records.len() > limit {
+        let keep_from = visible_records.len() - limit;
+        visible_records = visible_records.split_off(keep_from);
+        has_more = true;
+    }
+    let messages = visible_records
+        .into_iter()
+        .map(history_message_from_record)
+        .collect::<Vec<_>>();
+    let oldest_loaded_message_id = messages
+        .first()
+        .and_then(|message| message.message_id.clone());
+    GatewaySessionHistoryPage {
+        messages,
+        has_more,
+        oldest_loaded_message_id,
+    }
 }
 
 fn build_websocket_media_references(
@@ -211,34 +262,47 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
             .get_session(session_key)
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
-        let page = manager
-            .read_chat_records_page(
-                resolved_history_session_key(&session),
-                before_message_id,
-                limit,
-            )
-            .await
-            .map_err(|err| match err {
-                klaw_session::SessionError::Storage(StorageError::InvalidHistoryCursor(_)) => {
-                    GatewayWebsocketHandlerError::invalid_request(err.to_string())
-                }
-                _ => GatewayWebsocketHandlerError::internal(err.to_string()),
-            })?;
-        Ok(GatewaySessionHistoryPage {
-            messages: page
-                .records
-                .into_iter()
-                .map(|record| GatewaySessionHistoryMessage {
-                    role: record.role,
-                    content: record.content,
-                    timestamp_ms: record.ts_ms,
-                    metadata: parse_chat_record_metadata(record.metadata_json.as_deref()),
-                    message_id: record.message_id,
-                })
-                .collect(),
-            has_more: page.has_more,
-            oldest_loaded_message_id: page.oldest_message_id,
-        })
+        let target_limit = limit.max(1);
+        let mut cursor = before_message_id.map(ToOwned::to_owned);
+        let mut visible_records = Vec::new();
+        let raw_has_more = loop {
+            let page = manager
+                .read_chat_records_page(
+                    resolved_history_session_key(&session),
+                    cursor.as_deref(),
+                    target_limit,
+                )
+                .await
+                .map_err(|err| match err {
+                    klaw_session::SessionError::Storage(StorageError::InvalidHistoryCursor(_)) => {
+                        GatewayWebsocketHandlerError::invalid_request(err.to_string())
+                    }
+                    _ => GatewayWebsocketHandlerError::internal(err.to_string()),
+                })?;
+
+            let SessionHistoryPage {
+                records,
+                has_more,
+                oldest_message_id,
+            } = page;
+
+            prepend_visible_history_records(&mut visible_records, records);
+
+            if visible_records.len() > target_limit || !has_more {
+                break has_more;
+            }
+
+            let Some(next_cursor) = oldest_message_id else {
+                break false;
+            };
+            cursor = Some(next_cursor);
+        };
+
+        Ok(finalize_visible_history_page(
+            visible_records,
+            target_limit,
+            raw_has_more,
+        ))
     }
 
     async fn submit(
@@ -493,11 +557,14 @@ fn build_web_workspace_bootstrap(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_web_workspace_bootstrap, resolved_history_session_key, stream_events_to_frames,
+        build_web_workspace_bootstrap, finalize_visible_history_page,
+        prepend_visible_history_records, resolved_history_session_key, stream_events_to_frames,
     };
     use klaw_channel::{ChannelResponse, ChannelStreamEvent};
     use klaw_gateway::OutboundEvent;
+    use klaw_session::ChatRecord;
     use klaw_storage::SessionIndex;
+    use serde_json::json;
     use std::collections::BTreeMap;
 
     #[test]
@@ -677,5 +744,77 @@ mod tests {
         };
 
         assert_eq!(resolved_history_session_key(&base), "websocket:base:child");
+    }
+
+    #[test]
+    fn finalize_visible_history_page_marks_has_more_on_visible_overflow() {
+        let page = finalize_visible_history_page(
+            vec![
+                ChatRecord::new("user", "older-visible", Some("msg-1".to_string())),
+                ChatRecord::new("assistant", "middle-visible", Some("msg-2".to_string())),
+                ChatRecord::new("assistant", "newest-visible", Some("msg-3".to_string())),
+            ],
+            2,
+            false,
+        );
+
+        let contents = page
+            .messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(contents, vec!["middle-visible", "newest-visible"]);
+        assert!(page.has_more);
+        assert_eq!(page.oldest_loaded_message_id.as_deref(), Some("msg-2"));
+    }
+
+    #[test]
+    fn finalize_visible_history_page_keeps_raw_has_more_when_not_full() {
+        let page = finalize_visible_history_page(
+            vec![ChatRecord::new(
+                "assistant",
+                "only-visible",
+                Some("msg-1".to_string()),
+            )],
+            3,
+            true,
+        );
+
+        assert_eq!(page.messages.len(), 1);
+        assert!(page.has_more);
+        assert_eq!(page.oldest_loaded_message_id.as_deref(), Some("msg-1"));
+    }
+
+    #[test]
+    fn prepend_visible_history_records_skips_heartbeat_operational_pages() {
+        let heartbeat_metadata = serde_json::to_string(&BTreeMap::from([
+            ("trigger.kind".to_string(), json!("heartbeat")),
+            (
+                "heartbeat.silent_ack_token".to_string(),
+                json!("HEARTBEAT_OK"),
+            ),
+        ]))
+        .expect("heartbeat metadata");
+        let mut visible_records = vec![ChatRecord::new(
+            "assistant",
+            "newest-visible",
+            Some("msg-3".to_string()),
+        )];
+
+        prepend_visible_history_records(
+            &mut visible_records,
+            vec![
+                ChatRecord::new("user", "heartbeat prompt", Some("msg-2".to_string()))
+                    .with_metadata_json(Some(heartbeat_metadata.clone())),
+                ChatRecord::new("assistant", "HEARTBEAT_OK", Some("msg-1".to_string()))
+                    .with_metadata_json(Some(heartbeat_metadata)),
+            ],
+        );
+
+        let contents = visible_records
+            .iter()
+            .map(|record| record.content.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(contents, vec!["newest-visible"]);
     }
 }
