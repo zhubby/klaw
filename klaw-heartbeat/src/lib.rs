@@ -461,6 +461,24 @@ pub fn should_suppress_output(content: &str, metadata: &BTreeMap<String, Value>)
     content.trim() == token
 }
 
+fn parse_chat_record_metadata(raw: Option<&str>) -> BTreeMap<String, Value> {
+    raw.and_then(|value| serde_json::from_str::<BTreeMap<String, Value>>(value).ok())
+        .unwrap_or_default()
+}
+
+pub fn should_exclude_chat_record_from_context(record: &ChatRecord) -> bool {
+    let metadata = parse_chat_record_metadata(record.metadata_json.as_deref());
+    if !is_heartbeat_metadata(&metadata) {
+        return false;
+    }
+
+    match record.role.as_str() {
+        "user" | "system" => true,
+        "assistant" => should_suppress_output(&record.content, &metadata),
+        _ => false,
+    }
+}
+
 fn normalize_input(input: &HeartbeatInput) -> Result<HeartbeatInput, HeartbeatError> {
     let session_key = require_trimmed(&input.session_key, "session_key")?;
     let channel = require_trimmed(&input.channel, "channel")?;
@@ -568,7 +586,11 @@ fn build_history_for_model(
     limit: usize,
     summary_json: Option<&str>,
 ) -> Vec<ChatRecord> {
-    let trimmed = trim_conversation_history(full_history, limit);
+    let filtered = full_history
+        .into_iter()
+        .filter(|record| !should_exclude_chat_record_from_context(record))
+        .collect::<Vec<_>>();
+    let trimmed = trim_conversation_history(filtered, limit);
     let Some(summary_json) = summary_json
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -752,6 +774,44 @@ mod tests {
 
         let normal = BTreeMap::new();
         assert!(!should_suppress_output("HEARTBEAT_OK", &normal));
+    }
+
+    #[test]
+    fn context_filter_drops_operational_heartbeat_records_only() {
+        let heartbeat_metadata = serde_json::to_string(&BTreeMap::from([
+            (TRIGGER_KIND_KEY.to_string(), json!(TRIGGER_KIND_HEARTBEAT)),
+            (
+                HEARTBEAT_SILENT_ACK_TOKEN_KEY.to_string(),
+                json!(DEFAULT_SILENT_ACK_TOKEN),
+            ),
+        ]))
+        .expect("heartbeat metadata");
+        let history = vec![
+            ChatRecord::new("user", "normal user", None),
+            ChatRecord::new(
+                "user",
+                "Review the session state. If no user-visible action is needed, reply with exactly HEARTBEAT_OK and nothing else.",
+                None,
+            )
+            .with_metadata_json(Some(heartbeat_metadata.clone())),
+            ChatRecord::new("assistant", "HEARTBEAT_OK", None)
+                .with_metadata_json(Some(heartbeat_metadata.clone())),
+            ChatRecord::new("assistant", "Please follow up on the pending approval.", None)
+                .with_metadata_json(Some(heartbeat_metadata)),
+        ];
+
+        let filtered = build_history_for_model(history, 10, None);
+        let contents = filtered
+            .into_iter()
+            .map(|record| record.content)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            contents,
+            vec![
+                "normal user".to_string(),
+                "Please follow up on the pending approval.".to_string(),
+            ]
+        );
     }
 
     #[test]

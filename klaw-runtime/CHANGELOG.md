@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-22
+
+### Fixed
+
+- normal turn 的会话历史组装现在会跳过 heartbeat operational records，避免静默 ack 或 heartbeat prompt 污染后续用户对话上下文并诱发模型解释 `HEARTBEAT_OK` 一类控制消息
+
 ## 2026-04-15
 
 ### Changed
