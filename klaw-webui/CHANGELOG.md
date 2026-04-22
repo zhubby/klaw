@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-22
+
+### Fixed
+
+- webui 历史分页现在会连同 heartbeat operational prompt 一起过滤，不再只隐藏 heartbeat silent-ack；真正需要展示给用户的 heartbeat assistant 输出仍会保留
+
 ## 2026-04-15
 
 ### Added

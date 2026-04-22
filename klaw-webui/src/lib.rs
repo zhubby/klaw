@@ -840,6 +840,23 @@ pub(crate) fn should_hide_heartbeat_silent_ack(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn should_hide_heartbeat_operational_message(
+    role: &str,
+    content: &str,
+    metadata: &BTreeMap<String, Value>,
+) -> bool {
+    let is_heartbeat = metadata
+        .get("trigger.kind")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == "heartbeat");
+    if !is_heartbeat {
+        return false;
+    }
+
+    matches!(role, "user" | "system") || should_hide_heartbeat_silent_ack(content, metadata)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn attachment_action_in_progress(selecting_file: bool, uploading_file: bool) -> bool {
     selecting_file || uploading_file
 }

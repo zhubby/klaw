@@ -33,7 +33,9 @@ use klaw_gateway::{
     GatewayWebsocketBroadcaster, META_WEBSOCKET_MODEL, META_WEBSOCKET_MODEL_PROVIDER,
     TailscaleHostInfo,
 };
-use klaw_heartbeat::{HeartbeatManager, should_suppress_output};
+use klaw_heartbeat::{
+    HeartbeatManager, should_exclude_chat_record_from_context, should_suppress_output,
+};
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
 use klaw_mcp::{McpConfigSnapshot, McpInitHandle, McpManager, McpSyncResult};
 use klaw_memory::{
@@ -2432,7 +2434,11 @@ fn build_history_for_model(
     limit: usize,
     summary: Option<&ConversationSummary>,
 ) -> Vec<ChatRecord> {
-    let mut trimmed = trim_conversation_history(full_history, limit);
+    let filtered = full_history
+        .into_iter()
+        .filter(|record| !should_exclude_chat_record_from_context(record))
+        .collect::<Vec<_>>();
+    let mut trimmed = trim_conversation_history(filtered, limit);
     let Some(summary) = summary else {
         return trimmed;
     };
@@ -5463,6 +5469,42 @@ A .docx file is a ZIP archive containing XML files.
                 .contains("Conversation Summary (JSON):")
         );
         assert_eq!(model_history[1].content, "c");
+    }
+
+    #[test]
+    fn build_history_for_model_filters_heartbeat_operational_records() {
+        let heartbeat_metadata = serde_json::to_string(&BTreeMap::from([
+            ("trigger.kind".to_string(), json!("heartbeat")),
+            (
+                "heartbeat.silent_ack_token".to_string(),
+                json!("HEARTBEAT_OK"),
+            ),
+        ]))
+        .expect("heartbeat metadata");
+        let full_history = vec![
+            ChatRecord::new("user", "normal user", None),
+            ChatRecord::new("user", "heartbeat prompt", None)
+                .with_metadata_json(Some(heartbeat_metadata.clone())),
+            ChatRecord::new("assistant", "HEARTBEAT_OK", None)
+                .with_metadata_json(Some(heartbeat_metadata.clone())),
+            ChatRecord::new("assistant", "Please check the pending follow-up.", None)
+                .with_metadata_json(Some(heartbeat_metadata)),
+            ChatRecord::new("assistant", "normal assistant", None),
+        ];
+
+        let model_history = build_history_for_model(full_history, 10, None);
+        let contents = model_history
+            .into_iter()
+            .map(|record| record.content)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            contents,
+            vec![
+                "normal user".to_string(),
+                "Please check the pending follow-up.".to_string(),
+                "normal assistant".to_string(),
+            ]
+        );
     }
 
     #[test]

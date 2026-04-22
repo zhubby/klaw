@@ -7,8 +7,8 @@ use web_sys::{CloseEvent, MessageEvent, WebSocket};
 use crate::{
     ConnectionState, MessageRole, ProviderCatalog, WebArchiveAttachment, WorkspaceSessionEntry,
     build_websocket_submit_params, classify_stream_message_action,
-    next_pending_attachments_after_submit, should_hide_heartbeat_silent_ack,
-    should_register_non_stream_fade,
+    next_pending_attachments_after_submit, should_hide_heartbeat_operational_message,
+    should_hide_heartbeat_silent_ack, should_register_non_stream_fade,
 };
 
 use super::{
@@ -817,7 +817,13 @@ fn prepend_history_page(history: &mut Vec<ChatMessage>, page_messages: Vec<Histo
         .collect::<BTreeSet<_>>();
     let mut prepended = page_messages
         .into_iter()
-        .filter(|message| !should_hide_heartbeat_silent_ack(&message.content, &message.metadata))
+        .filter(|message| {
+            !should_hide_heartbeat_operational_message(
+                &message.role,
+                &message.content,
+                &message.metadata,
+            )
+        })
         .filter(|message| {
             message
                 .message_id
@@ -885,8 +891,8 @@ mod tests {
         HistoryPageMessage, build_submit_params, history_cursor_can_advance,
         history_request_cursor, prepend_history_page,
     };
-    use crate::should_hide_heartbeat_silent_ack;
     use crate::{MessageRole, WebArchiveAttachment};
+    use crate::{should_hide_heartbeat_operational_message, should_hide_heartbeat_silent_ack};
     use std::collections::BTreeMap;
 
     #[test]
@@ -1054,6 +1060,33 @@ mod tests {
         assert!(!should_hide_heartbeat_silent_ack(
             "HEARTBEAT_OK",
             &BTreeMap::new()
+        ));
+    }
+
+    #[test]
+    fn prepend_history_page_drops_heartbeat_operational_prompts() {
+        let mut history = Vec::new();
+
+        prepend_history_page(
+            &mut history,
+            vec![HistoryPageMessage {
+                role: "user".to_string(),
+                content: "heartbeat prompt".to_string(),
+                timestamp_ms: 1,
+                metadata: BTreeMap::from([("trigger.kind".to_string(), json!("heartbeat"))]),
+                message_id: Some("msg-hb-user".to_string()),
+            }],
+        );
+
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn heartbeat_operational_message_filter_preserves_visible_assistant_output() {
+        assert!(!should_hide_heartbeat_operational_message(
+            "assistant",
+            "Please follow up with the user.",
+            &BTreeMap::from([("trigger.kind".to_string(), json!("heartbeat"))]),
         ));
     }
 }

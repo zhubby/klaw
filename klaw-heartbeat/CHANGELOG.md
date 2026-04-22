@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-22
+
+### Fixed
+- heartbeat 上下文组装现在会过滤带 heartbeat metadata 的 operational transcript 记录，静默 ack 与 heartbeat prompt 不再回流进后续模型上下文，同时保留真正需要用户看到的 heartbeat assistant 输出
+
 ## 2026-04-15
 
 ### Changed
