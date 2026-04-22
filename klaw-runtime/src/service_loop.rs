@@ -1,5 +1,9 @@
 use super::{RuntimeBundle, drain_runtime_queue};
-use klaw_channel::dingtalk::{DingtalkProxyConfig, send_session_webhook_markdown_via_proxy};
+use klaw_channel::ChannelResult;
+use klaw_channel::dingtalk::{
+    DingtalkProxyConfig, is_session_webhook_session_not_found_error,
+    send_proactive_markdown_via_proxy, send_session_webhook_markdown_via_proxy,
+};
 use klaw_channel::telegram::dispatch_background_outbound as dispatch_telegram_background_outbound;
 use klaw_config::{AppConfig, CronMissedRunPolicy};
 use klaw_core::{
@@ -9,11 +13,11 @@ use klaw_core::{
 use klaw_cron::{CronWorker, CronWorkerConfig, MissedRunPolicy};
 use klaw_gateway::{GatewayWebsocketServerFrame, OutboundEvent};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig, should_suppress_output};
-use klaw_session::{SessionManager, SqliteSessionManager};
 use klaw_storage::{ChatRecord, DefaultSessionStore, SessionStorage};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
+    io,
     sync::{Mutex, mpsc},
     thread,
     time::Duration,
@@ -79,6 +83,14 @@ impl ChannelAvailability {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackgroundDingtalkAccountConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    pub bot_title: String,
+    pub proxy: DingtalkProxyConfig,
+}
+
 #[derive(Debug, Clone)]
 pub struct BackgroundServiceConfig {
     pub cron_tick_interval: Duration,
@@ -87,8 +99,7 @@ pub struct BackgroundServiceConfig {
     pub cron_batch_limit: i64,
     pub cron_missed_run_policy: MissedRunPolicy,
     channel_availability: ChannelAvailability,
-    pub dingtalk_titles: BTreeMap<String, String>,
-    pub dingtalk_proxies: BTreeMap<String, DingtalkProxyConfig>,
+    pub dingtalk_accounts: BTreeMap<String, BackgroundDingtalkAccountConfig>,
     pub telegram_configs: BTreeMap<String, klaw_config::TelegramConfig>,
 }
 
@@ -104,22 +115,21 @@ impl BackgroundServiceConfig {
                 CronMissedRunPolicy::CatchUp => MissedRunPolicy::CatchUp,
             },
             channel_availability: ChannelAvailability::from_app_config(config),
-            dingtalk_titles: config
-                .channels
-                .dingtalk
-                .iter()
-                .map(|cfg| (cfg.id.clone(), cfg.bot_title.clone()))
-                .collect(),
-            dingtalk_proxies: config
+            dingtalk_accounts: config
                 .channels
                 .dingtalk
                 .iter()
                 .map(|cfg| {
                     (
                         cfg.id.clone(),
-                        DingtalkProxyConfig {
-                            enabled: cfg.proxy.enabled,
-                            url: cfg.proxy.url.clone(),
+                        BackgroundDingtalkAccountConfig {
+                            client_id: cfg.client_id.clone(),
+                            client_secret: cfg.client_secret.clone(),
+                            bot_title: cfg.bot_title.clone(),
+                            proxy: DingtalkProxyConfig {
+                                enabled: cfg.proxy.enabled,
+                                url: cfg.proxy.url.clone(),
+                            },
                         },
                     )
                 })
@@ -143,8 +153,7 @@ impl Default for BackgroundServiceConfig {
             cron_batch_limit: 64,
             cron_missed_run_policy: MissedRunPolicy::Skip,
             channel_availability: ChannelAvailability::default(),
-            dingtalk_titles: BTreeMap::new(),
-            dingtalk_proxies: BTreeMap::new(),
+            dingtalk_accounts: BTreeMap::new(),
             telegram_configs: BTreeMap::new(),
         }
     }
@@ -429,8 +438,23 @@ async fn dispatch_outbound_message(
 async fn dispatch_dingtalk_outbound_message(
     msg: &Envelope<OutboundMessage>,
     config: &BackgroundServiceConfig,
-    session_store: &DefaultSessionStore,
+    _session_store: &DefaultSessionStore,
 ) -> Result<(), String> {
+    let account_id = resolve_outbound_account_id(msg, "dingtalk").map(str::to_string);
+    let account = account_id
+        .as_deref()
+        .and_then(|account_id| config.dingtalk_accounts.get(account_id));
+    let bot_title = msg
+        .payload
+        .metadata
+        .get("channel.dingtalk.bot_title")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| account.map(|account| account.bot_title.clone()))
+        .unwrap_or_else(|| "Klaw".to_string());
+    let body = render_outbound_markdown(&msg.payload);
+
     let Some(session_webhook) = msg
         .payload
         .metadata
@@ -439,74 +463,109 @@ async fn dispatch_dingtalk_outbound_message(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return Ok(());
+        warn!(
+            account_id = account_id.as_deref().unwrap_or("unknown"),
+            chat_id = msg.payload.chat_id.as_str(),
+            "dingtalk outbound missing session webhook, falling back to proactive send"
+        );
+        return send_dingtalk_proactive_fallback(
+            msg,
+            account_id.as_deref(),
+            account,
+            &bot_title,
+            &body,
+        )
+        .await;
     };
 
-    let bot_title = msg
-        .payload
-        .metadata
-        .get("channel.dingtalk.bot_title")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-        .map(ToString::to_string)
-        .or_else(|| {
-            resolve_outbound_account_id(msg, "dingtalk")
-                .and_then(|account_id| config.dingtalk_titles.get(account_id).cloned())
-        })
-        .unwrap_or_else(|| "Klaw".to_string());
+    match send_dingtalk_session_markdown(
+        account.map(|account| &account.proxy),
+        session_webhook,
+        &bot_title,
+        &body,
+    )
+    .await
+    {
+        Ok(()) => return Ok(()),
+        Err(err) if !is_session_webhook_session_not_found_error(err.as_ref()) => {
+            return Err(err.to_string());
+        }
+        Err(err) => {
+            warn!(
+                account_id = account_id.as_deref().unwrap_or("unknown"),
+                chat_id = msg.payload.chat_id.as_str(),
+                error = %err,
+                "dingtalk outbound stale session webhook detected, falling back to proactive send"
+            );
+            send_dingtalk_proactive_fallback(msg, account_id.as_deref(), account, &bot_title, &body)
+                .await
+                .map_err(|fallback_err| format!("{err}; proactive_fallback={fallback_err}"))
+        }
+    }
+}
 
-    let proxy = resolve_outbound_account_id(msg, "dingtalk")
-        .and_then(|account_id| config.dingtalk_proxies.get(account_id))
-        .cloned()
-        .unwrap_or_default();
-
-    let body = render_outbound_markdown(&msg.payload);
-    let initial_result = timeout(
+async fn send_dingtalk_session_markdown(
+    proxy: Option<&DingtalkProxyConfig>,
+    session_webhook: &str,
+    bot_title: &str,
+    body: &str,
+) -> ChannelResult<()> {
+    let default_proxy = DingtalkProxyConfig::default();
+    let proxy = proxy.unwrap_or(&default_proxy);
+    timeout(
         OUTBOUND_DISPATCH_TIMEOUT,
-        send_session_webhook_markdown_via_proxy(&proxy, session_webhook, &bot_title, &body),
+        send_session_webhook_markdown_via_proxy(proxy, session_webhook, bot_title, body),
     )
     .await
     .map_err(|_| {
-        format!(
-            "dingtalk outbound delivery timed out after {}s",
-            OUTBOUND_DISPATCH_TIMEOUT.as_secs()
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "dingtalk outbound delivery timed out after {}s",
+                OUTBOUND_DISPATCH_TIMEOUT.as_secs()
+            ),
         )
     })?
-    .map_err(|err| err.to_string());
-    let err = match initial_result {
-        Ok(()) => return Ok(()),
-        Err(err) => err,
-    };
-    if !is_dingtalk_session_not_found_error(&err) {
-        return Err(err);
-    }
+}
 
-    let Some(refreshed) =
-        refresh_dingtalk_delivery_target(session_store, &msg.payload.metadata).await
-    else {
-        return Err(err);
+async fn send_dingtalk_proactive_fallback(
+    msg: &Envelope<OutboundMessage>,
+    account_id: Option<&str>,
+    account: Option<&BackgroundDingtalkAccountConfig>,
+    bot_title: &str,
+    body: &str,
+) -> Result<(), String> {
+    let Some(account) = account else {
+        let reason = match account_id {
+            Some(account_id) => format!("missing dingtalk account config for '{account_id}'"),
+            None => "missing dingtalk account config for proactive fallback".to_string(),
+        };
+        return Err(reason);
     };
-    if refreshed.session_webhook == session_webhook {
-        return Err(err);
-    }
-    let retry_title = refreshed.bot_title.unwrap_or(bot_title);
+    warn!(
+        account_id = account_id.unwrap_or("unknown"),
+        chat_id = msg.payload.chat_id.as_str(),
+        "dingtalk outbound using proactive fallback"
+    );
     timeout(
         OUTBOUND_DISPATCH_TIMEOUT,
-        send_session_webhook_markdown_via_proxy(
-            &proxy,
-            &refreshed.session_webhook,
-            &retry_title,
-            &body,
+        send_proactive_markdown_via_proxy(
+            &account.proxy,
+            &account.client_id,
+            &account.client_secret,
+            &msg.payload.chat_id,
+            bot_title,
+            body,
         ),
     )
     .await
     .map_err(|_| {
         format!(
-            "dingtalk outbound delivery timed out after {}s",
+            "dingtalk proactive fallback timed out after {}s",
             OUTBOUND_DISPATCH_TIMEOUT.as_secs()
         )
     })?
-    .map_err(|retry_err| format!("{err}; retry_after_refresh={retry_err}"))
+    .map_err(|err| err.to_string())
 }
 
 struct OutboundDeliveryTarget {
@@ -705,60 +764,6 @@ fn resolve_outbound_channel_session_key<'a>(
         })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RefreshedDingtalkDeliveryTarget {
-    session_webhook: String,
-    bot_title: Option<String>,
-}
-
-fn is_dingtalk_session_not_found_error(err: &str) -> bool {
-    err.contains("errcode=300001") && err.contains("session 不存在")
-}
-
-async fn refresh_dingtalk_delivery_target(
-    session_store: &DefaultSessionStore,
-    metadata: &BTreeMap<String, Value>,
-) -> Option<RefreshedDingtalkDeliveryTarget> {
-    let manager = SqliteSessionManager::from_store(session_store.clone());
-    let target_session_key = if let Some(base_session_key) = metadata
-        .get("channel.base_session_key")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let base = manager.get_session(base_session_key).await.ok()?;
-        base.active_session_key
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| base.session_key.clone())
-    } else {
-        metadata
-            .get("channel.delivery_session_key")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?
-            .to_string()
-    };
-    let session = manager.get_session(&target_session_key).await.ok()?;
-    let raw = session.delivery_metadata_json.as_deref()?;
-    let persisted = serde_json::from_str::<serde_json::Map<String, Value>>(raw).ok()?;
-    let session_webhook = persisted
-        .get("channel.dingtalk.session_webhook")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?
-        .to_string();
-    let bot_title = persisted
-        .get("channel.dingtalk.bot_title")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-    Some(RefreshedDingtalkDeliveryTarget {
-        session_webhook,
-        bot_title,
-    })
-}
-
 fn render_outbound_markdown(output: &OutboundMessage) -> String {
     match output
         .metadata
@@ -775,10 +780,10 @@ fn render_outbound_markdown(output: &OutboundMessage) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackgroundServiceConfig, ChannelAvailability, FilteringInboundTransport,
-        dispatch_outbound_message, is_dingtalk_session_not_found_error,
-        refresh_dingtalk_delivery_target, resolve_outbound_account_id,
+        BackgroundDingtalkAccountConfig, BackgroundServiceConfig, ChannelAvailability,
+        FilteringInboundTransport, dispatch_outbound_message, resolve_outbound_account_id,
     };
+    use klaw_channel::dingtalk::is_session_webhook_session_not_found_error;
     use klaw_config::{AppConfig, DingtalkConfig};
     use klaw_core::{
         Envelope, EnvelopeHeader, InMemoryTransport, InboundMessage, MessageTopic,
@@ -882,113 +887,57 @@ mod tests {
         assert_eq!(resolve_outbound_account_id(&msg, "telegram"), None);
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn refresh_dingtalk_delivery_target_uses_active_session_metadata() {
-        let store = create_store().await;
-        let manager = SqliteSessionManager::from_store(store.clone());
-        manager
-            .get_or_create_session_state(
-                "dingtalk:acc:chat-1",
-                "chat-1",
-                "dingtalk",
-                "provider",
-                "model",
-            )
-            .await
-            .expect("base session should exist");
-        manager
-            .get_or_create_session_state(
-                "dingtalk:acc:chat-1:child",
-                "chat-1",
-                "dingtalk",
-                "provider",
-                "model",
-            )
-            .await
-            .expect("child session should exist");
-        manager
-            .set_active_session(
-                "dingtalk:acc:chat-1",
-                "chat-1",
-                "dingtalk",
-                "dingtalk:acc:chat-1:child",
-            )
-            .await
-            .expect("active session should update");
-        manager
-            .set_delivery_metadata(
-                "dingtalk:acc:chat-1:child",
-                "chat-1",
-                "dingtalk",
-                Some(
-                    "{\"channel.dingtalk.session_webhook\":\"https://example/new\",\"channel.dingtalk.bot_title\":\"Klaw\"}",
-                ),
-            )
-            .await
-            .expect("delivery metadata should persist");
+    #[test]
+    fn background_service_config_collects_dingtalk_accounts() {
+        let config = BackgroundServiceConfig::from_app_config(&AppConfig {
+            channels: klaw_config::ChannelsConfig {
+                dingtalk: vec![DingtalkConfig {
+                    id: "acc-1".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: "secret-1".to_string(),
+                    bot_title: "Ops Bot".to_string(),
+                    proxy: klaw_config::DingtalkProxyConfig {
+                        enabled: true,
+                        url: "http://127.0.0.1:8080".to_string(),
+                    },
+                    ..DingtalkConfig::default()
+                }],
+                ..klaw_config::ChannelsConfig::default()
+            },
+            ..AppConfig::default()
+        });
 
-        let metadata = BTreeMap::from([
-            (
-                "channel.base_session_key".to_string(),
-                json!("dingtalk:acc:chat-1"),
-            ),
-            (
-                "channel.dingtalk.session_webhook".to_string(),
-                json!("https://example/stale"),
-            ),
-        ]);
-        let refreshed = refresh_dingtalk_delivery_target(&store, &metadata)
-            .await
-            .expect("refresh should succeed");
-
-        assert_eq!(refreshed.session_webhook, "https://example/new");
-        assert_eq!(refreshed.bot_title.as_deref(), Some("Klaw"));
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn refresh_dingtalk_delivery_target_falls_back_to_delivery_session_key() {
-        let store = create_store().await;
-        let manager = SqliteSessionManager::from_store(store.clone());
-        manager
-            .get_or_create_session_state(
-                "dingtalk:acc:chat-2:child",
-                "chat-2",
-                "dingtalk",
-                "provider",
-                "model",
-            )
-            .await
-            .expect("session should exist");
-        manager
-            .set_delivery_metadata(
-                "dingtalk:acc:chat-2:child",
-                "chat-2",
-                "dingtalk",
-                Some("{\"channel.dingtalk.session_webhook\":\"https://example/current\"}"),
-            )
-            .await
-            .expect("delivery metadata should persist");
-        let metadata = BTreeMap::from([(
-            "channel.delivery_session_key".to_string(),
-            json!("dingtalk:acc:chat-2:child"),
-        )]);
-
-        let refreshed = refresh_dingtalk_delivery_target(&store, &metadata)
-            .await
-            .expect("refresh should succeed");
-
-        assert_eq!(refreshed.session_webhook, "https://example/current");
-        assert_eq!(refreshed.bot_title, None);
+        assert_eq!(
+            config.dingtalk_accounts.get("acc-1"),
+            Some(&BackgroundDingtalkAccountConfig {
+                client_id: "client-1".to_string(),
+                client_secret: "secret-1".to_string(),
+                bot_title: "Ops Bot".to_string(),
+                proxy: klaw_channel::dingtalk::DingtalkProxyConfig {
+                    enabled: true,
+                    url: "http://127.0.0.1:8080".to_string(),
+                },
+            })
+        );
     }
 
     #[test]
     fn detects_dingtalk_session_not_found_error() {
-        assert!(is_dingtalk_session_not_found_error(
-            "dingtalk session webhook markdown send failed: errcode=300001 errmsg=session 不存在"
-        ));
-        assert!(!is_dingtalk_session_not_found_error(
-            "dingtalk session webhook markdown send failed: errcode=40035 errmsg=invalid"
-        ));
+        let not_found_err = klaw_channel::dingtalk::DingtalkApiError::SessionWebhookBusiness {
+            context: "markdown send".to_string(),
+            errcode: 300001,
+            errmsg: "session 不存在".to_string(),
+            body: json!({"errcode": 300001, "errmsg": "session 不存在"}),
+        };
+        let other_err = klaw_channel::dingtalk::DingtalkApiError::SessionWebhookBusiness {
+            context: "markdown send".to_string(),
+            errcode: 40035,
+            errmsg: "invalid".to_string(),
+            body: json!({"errcode": 40035, "errmsg": "invalid"}),
+        };
+
+        assert!(is_session_webhook_session_not_found_error(&not_found_err));
+        assert!(!is_session_webhook_session_not_found_error(&other_err));
     }
 
     #[test]

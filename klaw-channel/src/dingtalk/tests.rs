@@ -3,7 +3,11 @@ use super::{
         build_unsupported_file_attachment_markdown, infer_dingtalk_file_type,
         supported_dingtalk_file_type,
     },
-    client::DingtalkApiClient,
+    client::{
+        DingtalkApiClient, ProactiveChatTargetKind, build_proactive_markdown_payload,
+        proactive_chat_target_kind,
+    },
+    error::{DingtalkApiError, is_session_webhook_session_not_found_error},
     parsing::{
         ApprovalAction, CardCallbackEvent, EventDeduper, InboundEvent,
         build_approval_action_card_body, build_im_card_action_buttons,
@@ -508,6 +512,28 @@ fn session_webhook_success_rejects_non_zero_errcode_json() {
     .expect_err("non-zero errcode should fail");
     assert!(err.to_string().contains("errcode=310000"));
     assert!(err.to_string().contains("invalid session"));
+    let typed = err
+        .downcast_ref::<DingtalkApiError>()
+        .expect("error should downcast to DingtalkApiError");
+    assert!(matches!(
+        typed,
+        DingtalkApiError::SessionWebhookBusiness {
+            errcode: 310000,
+            ..
+        }
+    ));
+    assert!(!is_session_webhook_session_not_found_error(err.as_ref()));
+}
+
+#[test]
+fn session_webhook_not_found_is_detected_via_typed_error() {
+    let err = DingtalkApiClient::ensure_session_webhook_success(
+        r#"{"errcode":300001,"errmsg":"session 不存在"}"#,
+        "markdown send",
+    )
+    .expect_err("session not found should fail");
+
+    assert!(is_session_webhook_session_not_found_error(err.as_ref()));
 }
 
 #[test]
@@ -834,4 +860,45 @@ fn parse_card_callback_event_reads_reject_token_from_nested_payload() {
     assert_eq!(parsed.chat_id, "staff-2");
     assert_eq!(parsed.sender_id, "staff-2");
     assert!(parsed.session_webhook.is_none());
+}
+
+#[test]
+fn proactive_chat_target_kind_treats_cid_as_group() {
+    assert_eq!(
+        proactive_chat_target_kind("cid-group-1"),
+        ProactiveChatTargetKind::Group
+    );
+    assert_eq!(
+        proactive_chat_target_kind(" user-1 "),
+        ProactiveChatTargetKind::User
+    );
+}
+
+#[test]
+fn build_proactive_markdown_payload_targets_user_ids_for_dm() {
+    let payload = build_proactive_markdown_payload("robot_1", "user-1", "Title", "Hello");
+
+    assert_eq!(
+        payload.get("robotCode").and_then(serde_json::Value::as_str),
+        Some("robot_1")
+    );
+    assert_eq!(
+        payload.get("msgKey").and_then(serde_json::Value::as_str),
+        Some("sampleMarkdown")
+    );
+    assert_eq!(payload.get("openConversationId"), None);
+    assert_eq!(payload.get("userIds"), Some(&serde_json::json!(["user-1"])));
+}
+
+#[test]
+fn build_proactive_markdown_payload_targets_group_conversation() {
+    let payload = build_proactive_markdown_payload("robot_group", "cid-group-1", "Title", "Hello");
+
+    assert_eq!(
+        payload
+            .get("openConversationId")
+            .and_then(serde_json::Value::as_str),
+        Some("cid-group-1")
+    );
+    assert_eq!(payload.get("userIds"), None);
 }

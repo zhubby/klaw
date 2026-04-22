@@ -1,4 +1,4 @@
-use super::config::DingtalkProxyConfig;
+use super::{config::DingtalkProxyConfig, error::DingtalkApiError};
 use crate::ChannelResult;
 use serde_json::Value;
 use std::sync::OnceLock;
@@ -10,6 +10,8 @@ const DINGTALK_OAPI_BASE: &str = "https://oapi.dingtalk.com";
 const CONNECTION_OPEN_PATH: &str = "/v1.0/gateway/connections/open";
 const ACCESS_TOKEN_PATH: &str = "/v1.0/oauth2/accessToken";
 const MESSAGE_FILE_DOWNLOAD_PATH: &str = "/v1.0/robot/messageFiles/download";
+const GROUP_MESSAGE_SEND_PATH: &str = "/v1.0/robot/groupMessages/send";
+const OTO_MESSAGE_BATCH_SEND_PATH: &str = "/v1.0/robot/oToMessages/batchSend";
 const OAPI_MEDIA_UPLOAD_PATH: &str = "/media/upload";
 const OAPI_ASR_TRANSLATE_PATH: &str = "/topapi/asr/voice/translate";
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -25,6 +27,46 @@ pub(super) struct DingtalkApiClient {
 pub(super) struct StreamConnectionTicket {
     pub endpoint: String,
     pub ticket: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ProactiveChatTargetKind {
+    Group,
+    User,
+}
+
+pub(super) fn proactive_chat_target_kind(chat_id: &str) -> ProactiveChatTargetKind {
+    if chat_id.trim_start().starts_with("cid") {
+        ProactiveChatTargetKind::Group
+    } else {
+        ProactiveChatTargetKind::User
+    }
+}
+
+pub(super) fn build_proactive_markdown_payload(
+    robot_code: &str,
+    chat_id: &str,
+    title: &str,
+    text: &str,
+) -> Value {
+    let mut payload = serde_json::json!({
+        "robotCode": robot_code.trim(),
+        "msgKey": "sampleMarkdown",
+        "msgParam": serde_json::to_string(&serde_json::json!({
+            "title": title,
+            "text": text,
+        }))
+        .expect("markdown payload should serialize"),
+    });
+    match proactive_chat_target_kind(chat_id) {
+        ProactiveChatTargetKind::Group => {
+            payload["openConversationId"] = Value::String(chat_id.trim().to_string());
+        }
+        ProactiveChatTargetKind::User => {
+            payload["userIds"] = serde_json::json!([chat_id.trim()]);
+        }
+    }
+    payload
 }
 
 impl DingtalkApiClient {
@@ -340,9 +382,12 @@ impl DingtalkApiClient {
             .get("errmsg")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        Err(format!(
-            "dingtalk session webhook {context} failed: errcode={errcode} errmsg={errmsg} body={payload}"
-        )
+        Err(DingtalkApiError::SessionWebhookBusiness {
+            context: context.to_string(),
+            errcode,
+            errmsg: errmsg.to_string(),
+            body: payload,
+        }
         .into())
     }
 
@@ -472,6 +517,52 @@ impl DingtalkApiClient {
             .into());
         }
         Self::ensure_session_webhook_success(&body, "actionCard send")?;
+        Ok(())
+    }
+
+    pub(super) async fn send_proactive_markdown(
+        &self,
+        access_token: &str,
+        robot_code: &str,
+        chat_id: &str,
+        title: &str,
+        text: &str,
+    ) -> ChannelResult<()> {
+        let path = match proactive_chat_target_kind(chat_id) {
+            ProactiveChatTargetKind::Group => GROUP_MESSAGE_SEND_PATH,
+            ProactiveChatTargetKind::User => OTO_MESSAGE_BATCH_SEND_PATH,
+        };
+        let url = format!("{DINGTALK_OPEN_API_BASE}{path}");
+        let payload = build_proactive_markdown_payload(robot_code, chat_id, title, text);
+        let response = self
+            .http
+            .post(url)
+            .header("x-acs-dingtalk-access-token", access_token)
+            .json(&payload)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body: Value = response.json().await?;
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk proactive markdown send failed: HTTP {} body={}",
+                status, body
+            )
+            .into());
+        }
+        if let Some(errcode) = body.get("errcode").and_then(Value::as_i64)
+            && errcode != 0
+        {
+            let errmsg = body
+                .get("errmsg")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            return Err(format!(
+                "dingtalk proactive markdown send failed: errcode={errcode} errmsg={errmsg} body={body}"
+            )
+            .into());
+        }
         Ok(())
     }
 
