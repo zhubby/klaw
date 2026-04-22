@@ -3,9 +3,6 @@
 //! Refresh embedded assets from the workspace root: `make webui-wasm`
 
 #[cfg(any(test, target_arch = "wasm32"))]
-pub(crate) use klaw_ui_kit::ThemeMode;
-
-#[cfg(any(test, target_arch = "wasm32"))]
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::VecDeque;

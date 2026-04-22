@@ -267,10 +267,12 @@ pub(super) fn format_message_timestamp(timestamp_ms: i64, now_ms: i64) -> String
     let elapsed_secs = elapsed_ms / 1000;
     if elapsed_secs < 60 {
         let s = elapsed_secs.max(0);
-        format!("{s} sec{suffix(&s)} ago")
+        let suf = suffix(&s);
+        format!("{s} sec{suf} ago")
     } else if elapsed_secs < 3600 {
         let mins = elapsed_secs / 60;
-        format!("{mins} min{suffix(&mins)} ago")
+        let suf = suffix(&mins);
+        format!("{mins} min{suf} ago")
     } else {
         let now_date = Date::new(&wasm_bindgen::JsValue::from_f64(now_ms as f64));
         let msg_date = Date::new(&wasm_bindgen::JsValue::from_f64(timestamp_ms as f64));
@@ -279,7 +281,8 @@ pub(super) fn format_message_timestamp(timestamp_ms: i64, now_ms: i64) -> String
             && now_date.get_date() == msg_date.get_date();
         if same_day {
             let hours = elapsed_secs / 3600;
-            format!("{hours} hr{suffix(&hours)} ago")
+            let suf = suffix(&hours);
+            format!("{hours} hr{suf} ago")
         } else {
             format!(
                 "{}/{:02}/{:02} {:02}:{:02}:{:02}",
@@ -320,16 +323,20 @@ pub(super) fn format_relative_time(created_at_ms: i64, now_ms: i64) -> String {
     let elapsed_secs = elapsed_ms / 1000;
     if elapsed_secs < 60 {
         let s = elapsed_secs.max(0);
-        format!("{s} sec{suffix(&s)} ago")
+        let suf = suffix(&s);
+        format!("{s} sec{suf} ago")
     } else if elapsed_secs < 3600 {
         let mins = elapsed_secs / 60;
-        format!("{mins} min{suffix(&mins)} ago")
+        let suf = suffix(&mins);
+        format!("{mins} min{suf} ago")
     } else if elapsed_secs < 86400 {
         let hours = elapsed_secs / 3600;
-        format!("{hours} hr{suffix(&hours)} ago")
+        let suf = suffix(&hours);
+        format!("{hours} hr{suf} ago")
     } else if elapsed_secs < 604800 {
         let days = elapsed_secs / 86400;
-        format!("{days} day{suffix(&days)} ago")
+        let suf = suffix(&days);
+        format!("{days} day{suf} ago")
     } else {
         let date = Date::new(&wasm_bindgen::JsValue::from_f64(created_at_ms as f64));
         format!(

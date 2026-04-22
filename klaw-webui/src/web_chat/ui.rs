@@ -703,6 +703,7 @@ impl ChatApp {
 
                 let messages_height = (ui.available_height() - INPUT_PANEL_HEIGHT).max(140.0);
                 ui.allocate_ui(vec2(ui.available_width(), messages_height), |ui| {
+                    session.prune_finished_animations();
                     let messages = session.buffers.messages.borrow();
                     let scroll_output = ScrollArea::vertical()
                         .auto_shrink([false, false])
@@ -717,8 +718,6 @@ impl ChatApp {
                                 render_empty_state(ui, &self.connection_state.borrow());
                                 return;
                             }
-
-                            session.prune_finished_animations();
                             if *session.buffers.history_loading.borrow() {
                                 render_history_page_loading_state(ui);
                                 ui.add_space(8.0);
