@@ -8,7 +8,7 @@ mod parsing;
 mod tests;
 
 use self::attachments::deliver_dingtalk_attachments;
-use self::client::DingtalkApiClient;
+use self::client::{DingtalkApiClient, build_standard_robot_interactive_card_data};
 use self::config::resolve_local_attachment_policy;
 pub use self::config::{DingtalkChannelConfig, DingtalkProxyConfig};
 pub use self::error::{DingtalkApiError, is_session_webhook_session_not_found_error};
@@ -18,7 +18,8 @@ use self::parsing::{
     parse_inbound_event, parse_stream_data, resolve_channel_card, resolve_download_code_candidates,
 };
 use crate::{
-    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, LocalAttachmentPolicy,
+    Channel, ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
+    ChannelStreamWriter, LocalAttachmentPolicy,
     manager::{
         ChannelInstanceConfig, ChannelKind, ChannelSupervisorReporter, ManagedChannelDriver,
     },
@@ -38,6 +39,7 @@ use tokio::sync::watch;
 use tokio::time::{self, Duration, Instant};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{debug, info, trace, warn};
+use uuid::Uuid;
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -46,6 +48,7 @@ const WS_WATCHDOG_INTERVAL: Duration = Duration::from_secs(5);
 const WS_STALL_TIMEOUT: Duration = Duration::from_secs(35);
 const EVENT_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const EVENT_DEDUP_MAX_ENTRIES: usize = 20_000;
+const DINGTALK_STREAM_UPDATE_INTERVAL: Duration = Duration::from_millis(400);
 
 /// Returns `true` when shutdown was requested during the delay.
 async fn wait_reconnect_delay_or_shutdown(
@@ -102,6 +105,145 @@ pub struct DingtalkChannel {
     config: DingtalkChannelConfig,
     client: DingtalkApiClient,
     event_deduper: EventDeduper,
+}
+
+#[derive(Debug, Clone)]
+struct DingtalkStreamWriter {
+    client: DingtalkApiClient,
+    client_id: String,
+    client_secret: String,
+    robot_code: String,
+    chat_id: String,
+    title: String,
+    show_reasoning: bool,
+    card_biz_id: String,
+    last_rendered: Option<String>,
+    last_update_at: Option<Instant>,
+    card_sent: bool,
+    stream_failed: bool,
+    saw_special_card: bool,
+}
+
+impl DingtalkStreamWriter {
+    fn new(
+        client: DingtalkApiClient,
+        client_id: String,
+        client_secret: String,
+        robot_code: String,
+        chat_id: String,
+        title: String,
+        show_reasoning: bool,
+    ) -> Self {
+        Self {
+            client,
+            client_id,
+            client_secret,
+            robot_code,
+            chat_id,
+            title,
+            show_reasoning,
+            card_biz_id: Uuid::new_v4().to_string(),
+            last_rendered: None,
+            last_update_at: None,
+            card_sent: false,
+            stream_failed: false,
+            saw_special_card: false,
+        }
+    }
+
+    async fn finish(&mut self, output: &ChannelResponse) {
+        if resolve_channel_card(output).is_some() {
+            self.saw_special_card = true;
+            return;
+        }
+        let rendered =
+            render_agent_output(output, self.show_reasoning, OutputRenderStyle::Markdown);
+        if rendered.trim().is_empty() {
+            return;
+        }
+        let _ = self.flush_rendered(rendered, true).await;
+    }
+
+    async fn flush_rendered(&mut self, rendered: String, force: bool) -> ChannelResult<()> {
+        if rendered.trim().is_empty() {
+            return Ok(());
+        }
+        if self.stream_failed {
+            return Ok(());
+        }
+        if self.last_rendered.as_deref() == Some(rendered.as_str()) && !force {
+            return Ok(());
+        }
+        let should_flush = force
+            || !self.card_sent
+            || self
+                .last_update_at
+                .is_none_or(|instant| instant.elapsed() >= DINGTALK_STREAM_UPDATE_INTERVAL);
+        self.last_rendered = Some(rendered.clone());
+        if !should_flush {
+            return Ok(());
+        }
+
+        let card_data = build_standard_robot_interactive_card_data(&self.title, &rendered);
+        let access_token = self
+            .client
+            .fetch_access_token(&self.client_id, &self.client_secret)
+            .await?;
+
+        if self.card_sent {
+            self.client
+                .update_robot_interactive_card(&access_token, &self.card_biz_id, &card_data)
+                .await?;
+        } else {
+            self.client
+                .send_robot_interactive_card(
+                    &access_token,
+                    &self.robot_code,
+                    &self.chat_id,
+                    &self.card_biz_id,
+                    &card_data,
+                )
+                .await?;
+            self.card_sent = true;
+        }
+        self.last_update_at = Some(Instant::now());
+        Ok(())
+    }
+
+    async fn write_snapshot(&mut self, output: ChannelResponse) -> ChannelResult<()> {
+        if resolve_channel_card(&output).is_some() {
+            self.saw_special_card = true;
+            return Ok(());
+        }
+
+        let rendered =
+            render_agent_output(&output, self.show_reasoning, OutputRenderStyle::Markdown);
+        match self.flush_rendered(rendered, false).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                self.stream_failed = true;
+                warn!(
+                    chat_id = self.chat_id.as_str(),
+                    error = %err,
+                    "failed to stream dingtalk interactive card; will fallback to markdown"
+                );
+                Ok(())
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl ChannelStreamWriter for DingtalkStreamWriter {
+    async fn write(&mut self, event: ChannelStreamEvent) -> ChannelResult<()> {
+        match event {
+            ChannelStreamEvent::Snapshot(output) => self.write_snapshot(output).await,
+            ChannelStreamEvent::Clear => {
+                self.last_rendered = None;
+                Ok(())
+            }
+        }
+    }
 }
 
 impl DingtalkChannel {
@@ -445,6 +587,108 @@ impl Channel for DingtalkChannel {
 }
 
 impl DingtalkChannel {
+    async fn submit_request(
+        &self,
+        runtime: &dyn ChannelRuntime,
+        request: ChannelRequest,
+        inbound: &InboundEvent,
+    ) -> ChannelResult<(Option<ChannelResponse>, Option<DingtalkStreamWriter>)> {
+        if !self.config.stream_output {
+            return Ok((runtime.submit(request).await?, None));
+        }
+
+        let mut writer = DingtalkStreamWriter::new(
+            self.client.clone(),
+            self.config.client_id.clone(),
+            self.config.client_secret.clone(),
+            inbound.robot_code.clone(),
+            inbound.chat_id.clone(),
+            self.config.bot_title.clone(),
+            self.config.show_reasoning,
+        );
+        let output = runtime.submit_streaming(request, &mut writer).await?;
+        if let Some(ref output) = output {
+            writer.finish(output).await;
+        }
+        Ok((output, Some(writer)))
+    }
+
+    async fn send_output(
+        &self,
+        inbound: &InboundEvent,
+        output: &ChannelResponse,
+        stream_writer: Option<&DingtalkStreamWriter>,
+    ) {
+        if let Some(card) = resolve_channel_card(output) {
+            let body = build_im_card_action_card_body(&card);
+            let buttons = build_im_card_action_buttons(&card);
+            if let Err(err) = self
+                .client
+                .send_session_webhook_generic_action_card(
+                    &inbound.session_webhook,
+                    card.title_or("卡片消息"),
+                    &body,
+                    &buttons,
+                )
+                .await
+            {
+                warn!(
+                    chat_id = inbound.chat_id.as_str(),
+                    error = %err,
+                    "failed to send dingtalk action card; fallback to markdown"
+                );
+                let markdown = render_agent_output(
+                    output,
+                    self.config.show_reasoning,
+                    OutputRenderStyle::Markdown,
+                );
+                if let Err(err) = self
+                    .client
+                    .send_session_webhook_markdown(
+                        &inbound.session_webhook,
+                        &self.config.bot_title,
+                        &markdown,
+                    )
+                    .await
+                {
+                    warn!(
+                        chat_id = inbound.chat_id.as_str(),
+                        error = %err,
+                        "failed to send dingtalk reply"
+                    );
+                }
+            }
+            return;
+        }
+
+        let body = render_agent_output(
+            output,
+            self.config.show_reasoning,
+            OutputRenderStyle::Markdown,
+        );
+        let streamed_successfully = stream_writer.is_some_and(|writer| {
+            writer.card_sent && !writer.stream_failed && !writer.saw_special_card
+        });
+        if !streamed_successfully
+            && !body.trim().is_empty()
+            && let Err(err) = self
+                .client
+                .send_session_webhook_markdown(
+                    &inbound.session_webhook,
+                    &self.config.bot_title,
+                    &body,
+                )
+                .await
+        {
+            warn!(
+                chat_id = inbound.chat_id.as_str(),
+                error = %err,
+                "failed to send dingtalk reply"
+            );
+        }
+        self.send_attachments(&inbound.session_webhook, &inbound.chat_id, output);
+    }
+
     async fn handle_text_message(
         &mut self,
         runtime: &dyn ChannelRuntime,
@@ -636,91 +880,28 @@ impl DingtalkChannel {
             );
         }
 
-        let maybe_output = runtime
-            .submit(ChannelRequest {
-                channel: self.name().to_string(),
-                input: inbound.text.clone(),
-                session_key,
-                chat_id: inbound.chat_id.clone(),
-                media_references: inbound.media_references.clone(),
-                metadata: runtime_metadata(
-                    Some(&inbound.session_webhook),
-                    &self.config.bot_title,
-                    false,
-                ),
-            })
-            .await;
+        let (maybe_output, stream_writer) = self
+            .submit_request(
+                runtime,
+                ChannelRequest {
+                    channel: self.name().to_string(),
+                    input: inbound.text.clone(),
+                    session_key,
+                    chat_id: inbound.chat_id.clone(),
+                    media_references: inbound.media_references.clone(),
+                    metadata: runtime_metadata(
+                        Some(&inbound.session_webhook),
+                        &self.config.bot_title,
+                        false,
+                    ),
+                },
+                &inbound,
+            )
+            .await?;
 
-        match maybe_output {
-            Ok(Some(output)) => {
-                if let Some(card) = resolve_channel_card(&output) {
-                    let body = build_im_card_action_card_body(&card);
-                    let buttons = build_im_card_action_buttons(&card);
-                    if let Err(err) = self
-                        .client
-                        .send_session_webhook_generic_action_card(
-                            &inbound.session_webhook,
-                            card.title_or("卡片消息"),
-                            &body,
-                            &buttons,
-                        )
-                        .await
-                    {
-                        warn!(
-                            chat_id = inbound.chat_id.as_str(),
-                            error = %err,
-                            "failed to send dingtalk action card; fallback to markdown"
-                        );
-                        let markdown = render_agent_output(
-                            &output,
-                            self.config.show_reasoning,
-                            OutputRenderStyle::Markdown,
-                        );
-                        if let Err(err) = self
-                            .client
-                            .send_session_webhook_markdown(
-                                &inbound.session_webhook,
-                                &self.config.bot_title,
-                                &markdown,
-                            )
-                            .await
-                        {
-                            warn!(
-                                chat_id = inbound.chat_id.as_str(),
-                                error = %err,
-                                "failed to send dingtalk reply"
-                            );
-                        }
-                    }
-                } else {
-                    let body = render_agent_output(
-                        &output,
-                        self.config.show_reasoning,
-                        OutputRenderStyle::Markdown,
-                    );
-                    if !body.trim().is_empty()
-                        && let Err(err) = self
-                            .client
-                            .send_session_webhook_markdown(
-                                &inbound.session_webhook,
-                                &self.config.bot_title,
-                                &body,
-                            )
-                            .await
-                    {
-                        warn!(
-                            chat_id = inbound.chat_id.as_str(),
-                            error = %err,
-                            "failed to send dingtalk reply"
-                        );
-                    }
-                    self.send_attachments(&inbound.session_webhook, &inbound.chat_id, &output);
-                }
-            }
-            Ok(None) => {}
-            Err(err) => {
-                return Err(err);
-            }
+        if let Some(output) = maybe_output {
+            self.send_output(&inbound, &output, stream_writer.as_ref())
+                .await;
         }
 
         send_ack(ws, envelope, "").await

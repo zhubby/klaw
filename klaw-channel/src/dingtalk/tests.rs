@@ -1,11 +1,14 @@
 use super::{
+    DingtalkStreamWriter,
     attachments::{
         build_unsupported_file_attachment_markdown, infer_dingtalk_file_type,
         supported_dingtalk_file_type,
     },
     client::{
-        DingtalkApiClient, ProactiveChatTargetKind, build_proactive_markdown_payload,
-        proactive_chat_target_kind,
+        DingtalkApiClient, ProactiveChatTargetKind, RobotInteractiveCardTarget,
+        build_proactive_markdown_payload, build_send_robot_interactive_card_payload,
+        build_standard_robot_interactive_card_data, build_update_robot_interactive_card_payload,
+        interactive_card_target, proactive_chat_target_kind,
     },
     error::{DingtalkApiError, is_session_webhook_session_not_found_error},
     parsing::{
@@ -19,7 +22,7 @@ use super::{
     runtime_metadata,
 };
 use crate::{
-    ChannelResponse,
+    ChannelResponse, ChannelStreamEvent, ChannelStreamWriter,
     im_card::{ImCard, ImCardAction, ImCardActionKind, ImCardKind},
     render::{OutputRenderStyle, render_agent_output},
 };
@@ -901,4 +904,167 @@ fn build_proactive_markdown_payload_targets_group_conversation() {
         Some("cid-group-1")
     );
     assert_eq!(payload.get("userIds"), None);
+}
+
+#[test]
+fn interactive_card_target_uses_conversation_for_groups() {
+    let target = interactive_card_target("cid-group-1");
+    assert_eq!(
+        target,
+        RobotInteractiveCardTarget::Group {
+            open_conversation_id: "cid-group-1".to_string()
+        }
+    );
+}
+
+#[test]
+fn interactive_card_target_serializes_private_receiver() {
+    let target = interactive_card_target("staff-1");
+    assert_eq!(
+        target,
+        RobotInteractiveCardTarget::Private {
+            single_chat_receiver: "{\"userId\":\"staff-1\"}".to_string()
+        }
+    );
+}
+
+#[test]
+fn build_standard_robot_interactive_card_data_embeds_markdown_body() {
+    let card_data = build_standard_robot_interactive_card_data("Klaw", "**hello**");
+    let card: serde_json::Value = serde_json::from_str(&card_data).expect("card json");
+    assert_eq!(
+        card.pointer("/header/title/text")
+            .and_then(serde_json::Value::as_str),
+        Some("Klaw")
+    );
+    assert_eq!(
+        card.pointer("/contents/0/type")
+            .and_then(serde_json::Value::as_str),
+        Some("markdown")
+    );
+    assert_eq!(
+        card.pointer("/contents/0/text")
+            .and_then(serde_json::Value::as_str),
+        Some("**hello**")
+    );
+}
+
+#[test]
+fn build_send_robot_interactive_card_payload_targets_private_chat() {
+    let payload = build_send_robot_interactive_card_payload(
+        "robot-1",
+        &interactive_card_target("staff-1"),
+        "card-biz-1",
+        "{\"hello\":true}",
+    );
+    assert_eq!(
+        payload
+            .get("cardTemplateId")
+            .and_then(serde_json::Value::as_str),
+        Some("StandardCard")
+    );
+    assert_eq!(
+        payload.get("robotCode").and_then(serde_json::Value::as_str),
+        Some("robot-1")
+    );
+    assert_eq!(
+        payload
+            .get("singleChatReceiver")
+            .and_then(serde_json::Value::as_str),
+        Some("{\"userId\":\"staff-1\"}")
+    );
+    assert_eq!(payload.get("openConversationId"), None);
+}
+
+#[test]
+fn build_update_robot_interactive_card_payload_enables_keyed_update() {
+    let payload = build_update_robot_interactive_card_payload("card-biz-1", "{\"hello\":true}");
+    assert_eq!(
+        payload.get("cardBizId").and_then(serde_json::Value::as_str),
+        Some("card-biz-1")
+    );
+    assert_eq!(
+        payload
+            .pointer("/updateOptions/updateCardDataByKey")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dingtalk_stream_writer_marks_special_cards_without_network_calls() {
+    let mut writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "Klaw".to_string(),
+        false,
+    );
+    let output = ChannelResponse {
+        content: String::new(),
+        reasoning: None,
+        metadata: {
+            let mut metadata = BTreeMap::new();
+            metadata.insert(
+                "im.card".to_string(),
+                serde_json::json!({
+                    "kind": "approval",
+                    "title": "Approve",
+                    "body": "Need approval",
+                    "actions": [
+                        { "kind": "approve", "value": "approval-1" },
+                        { "kind": "reject", "value": "approval-1" }
+                    ]
+                }),
+            );
+            metadata
+        },
+        attachments: Vec::new(),
+    };
+
+    ChannelStreamWriter::write(&mut writer, ChannelStreamEvent::Snapshot(output))
+        .await
+        .expect("writer");
+
+    assert!(writer.saw_special_card);
+    assert!(!writer.card_sent);
+    assert!(!writer.stream_failed);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dingtalk_stream_writer_falls_back_after_stream_failure() {
+    let mut writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "Klaw".to_string(),
+        false,
+    );
+    let output = ChannelResponse {
+        content: "hello".to_string(),
+        reasoning: None,
+        metadata: BTreeMap::new(),
+        attachments: Vec::new(),
+    };
+
+    ChannelStreamWriter::write(&mut writer, ChannelStreamEvent::Snapshot(output))
+        .await
+        .expect("writer");
+
+    assert!(writer.stream_failed);
+    assert!(!writer.card_sent);
 }

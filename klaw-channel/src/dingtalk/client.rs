@@ -12,15 +12,20 @@ const ACCESS_TOKEN_PATH: &str = "/v1.0/oauth2/accessToken";
 const MESSAGE_FILE_DOWNLOAD_PATH: &str = "/v1.0/robot/messageFiles/download";
 const GROUP_MESSAGE_SEND_PATH: &str = "/v1.0/robot/groupMessages/send";
 const OTO_MESSAGE_BATCH_SEND_PATH: &str = "/v1.0/robot/oToMessages/batchSend";
+const ROBOT_INTERACTIVE_CARD_SEND_PATH: &str = "/v1.0/im/v1.0/robot/interactiveCards/send";
+const ROBOT_INTERACTIVE_CARD_UPDATE_PATH: &str = "/v1.0/im/robots/interactiveCards";
 const OAPI_MEDIA_UPLOAD_PATH: &str = "/media/upload";
 const OAPI_ASR_TRANSLATE_PATH: &str = "/topapi/asr/voice/translate";
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const STANDARD_CARD_TEMPLATE_ID: &str = "StandardCard";
 
 static RUSTLS_PROVIDER_INSTALLED: OnceLock<()> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub(super) struct DingtalkApiClient {
     http: reqwest::Client,
+    open_api_base: String,
+    oapi_base: String,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +74,88 @@ pub(super) fn build_proactive_markdown_payload(
     payload
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum RobotInteractiveCardTarget {
+    Group { open_conversation_id: String },
+    Private { single_chat_receiver: String },
+}
+
+pub(super) fn interactive_card_target(chat_id: &str) -> RobotInteractiveCardTarget {
+    if proactive_chat_target_kind(chat_id) == ProactiveChatTargetKind::Group {
+        return RobotInteractiveCardTarget::Group {
+            open_conversation_id: chat_id.trim().to_string(),
+        };
+    }
+
+    RobotInteractiveCardTarget::Private {
+        single_chat_receiver: serde_json::json!({ "userId": chat_id.trim() }).to_string(),
+    }
+}
+
+pub(super) fn build_standard_robot_interactive_card_data(title: &str, body: &str) -> String {
+    serde_json::json!({
+        "config": {
+            "autoLayout": true,
+            "enableForward": true,
+        },
+        "header": {
+            "title": {
+                "type": "text",
+                "text": title.trim(),
+            },
+        },
+        "contents": [
+            {
+                "type": "markdown",
+                "text": body,
+                "id": "klaw_stream_markdown",
+            }
+        ]
+    })
+    .to_string()
+}
+
+pub(super) fn build_send_robot_interactive_card_payload(
+    robot_code: &str,
+    target: &RobotInteractiveCardTarget,
+    card_biz_id: &str,
+    card_data: &str,
+) -> Value {
+    let mut payload = serde_json::json!({
+        "cardTemplateId": STANDARD_CARD_TEMPLATE_ID,
+        "cardBizId": card_biz_id.trim(),
+        "robotCode": robot_code.trim(),
+        "cardData": card_data,
+        "pullStrategy": false,
+    });
+    match target {
+        RobotInteractiveCardTarget::Group {
+            open_conversation_id,
+        } => {
+            payload["openConversationId"] = Value::String(open_conversation_id.clone());
+        }
+        RobotInteractiveCardTarget::Private {
+            single_chat_receiver,
+        } => {
+            payload["singleChatReceiver"] = Value::String(single_chat_receiver.clone());
+        }
+    }
+    payload
+}
+
+pub(super) fn build_update_robot_interactive_card_payload(
+    card_biz_id: &str,
+    card_data: &str,
+) -> Value {
+    serde_json::json!({
+        "cardBizId": card_biz_id.trim(),
+        "cardData": card_data,
+        "updateOptions": {
+            "updateCardDataByKey": true,
+        }
+    })
+}
+
 impl DingtalkApiClient {
     pub(super) fn new(proxy: &DingtalkProxyConfig) -> ChannelResult<Self> {
         let mut builder = reqwest::Client::builder()
@@ -82,7 +169,23 @@ impl DingtalkApiClient {
             builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
         }
         let http = builder.build()?;
-        Ok(Self { http })
+        Ok(Self {
+            http,
+            open_api_base: DINGTALK_OPEN_API_BASE.to_string(),
+            oapi_base: DINGTALK_OAPI_BASE.to_string(),
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_base_urls(
+        proxy: &DingtalkProxyConfig,
+        open_api_base: &str,
+        oapi_base: &str,
+    ) -> ChannelResult<Self> {
+        let mut client = Self::new(proxy)?;
+        client.open_api_base = open_api_base.trim_end_matches('/').to_string();
+        client.oapi_base = oapi_base.trim_end_matches('/').to_string();
+        Ok(client)
     }
 
     pub(super) fn ensure_rustls_crypto_provider() {
@@ -103,7 +206,7 @@ impl DingtalkApiClient {
         client_id: &str,
         client_secret: &str,
     ) -> ChannelResult<StreamConnectionTicket> {
-        let url = format!("{DINGTALK_OPEN_API_BASE}{CONNECTION_OPEN_PATH}");
+        let url = format!("{}{}", self.open_api_base, CONNECTION_OPEN_PATH);
         let response = self
             .http
             .post(url)
@@ -153,7 +256,7 @@ impl DingtalkApiClient {
         client_id: &str,
         client_secret: &str,
     ) -> ChannelResult<String> {
-        let url = format!("{DINGTALK_OPEN_API_BASE}{ACCESS_TOKEN_PATH}");
+        let url = format!("{}{}", self.open_api_base, ACCESS_TOKEN_PATH);
         let response = self
             .http
             .post(url)
@@ -191,7 +294,7 @@ impl DingtalkApiClient {
         robot_code: &str,
         download_code: &str,
     ) -> ChannelResult<Vec<u8>> {
-        let url = format!("{DINGTALK_OPEN_API_BASE}{MESSAGE_FILE_DOWNLOAD_PATH}");
+        let url = format!("{}{}", self.open_api_base, MESSAGE_FILE_DOWNLOAD_PATH);
         let response = self
             .http
             .post(url)
@@ -257,7 +360,9 @@ impl DingtalkApiClient {
             )
             .await?;
         let url = format!(
-            "{DINGTALK_OAPI_BASE}{OAPI_ASR_TRANSLATE_PATH}?access_token={}",
+            "{}{}?access_token={}",
+            self.oapi_base,
+            OAPI_ASR_TRANSLATE_PATH,
             urlencoding::encode(access_token)
         );
         let response = self
@@ -312,7 +417,9 @@ impl DingtalkApiClient {
             "calling dingtalk media upload"
         );
         let url = format!(
-            "{DINGTALK_OAPI_BASE}{OAPI_MEDIA_UPLOAD_PATH}?access_token={}&type={}",
+            "{}{}?access_token={}&type={}",
+            self.oapi_base,
+            OAPI_MEDIA_UPLOAD_PATH,
             urlencoding::encode(access_token),
             urlencoding::encode(media_type),
         );
@@ -532,7 +639,7 @@ impl DingtalkApiClient {
             ProactiveChatTargetKind::Group => GROUP_MESSAGE_SEND_PATH,
             ProactiveChatTargetKind::User => OTO_MESSAGE_BATCH_SEND_PATH,
         };
-        let url = format!("{DINGTALK_OPEN_API_BASE}{path}");
+        let url = format!("{}{}", self.open_api_base, path);
         let payload = build_proactive_markdown_payload(robot_code, chat_id, title, text);
         let response = self
             .http
@@ -560,6 +667,72 @@ impl DingtalkApiClient {
                 .unwrap_or("unknown");
             return Err(format!(
                 "dingtalk proactive markdown send failed: errcode={errcode} errmsg={errmsg} body={body}"
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    pub(super) async fn send_robot_interactive_card(
+        &self,
+        access_token: &str,
+        robot_code: &str,
+        chat_id: &str,
+        card_biz_id: &str,
+        card_data: &str,
+    ) -> ChannelResult<()> {
+        let url = format!("{}{}", self.open_api_base, ROBOT_INTERACTIVE_CARD_SEND_PATH);
+        let payload = build_send_robot_interactive_card_payload(
+            robot_code,
+            &interactive_card_target(chat_id),
+            card_biz_id,
+            card_data,
+        );
+        let response = self
+            .http
+            .post(url)
+            .header("x-acs-dingtalk-access-token", access_token)
+            .json(&payload)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body: Value = response.json().await?;
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk robot interactive card send failed: HTTP {} body={}",
+                status, body
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    pub(super) async fn update_robot_interactive_card(
+        &self,
+        access_token: &str,
+        card_biz_id: &str,
+        card_data: &str,
+    ) -> ChannelResult<()> {
+        let url = format!(
+            "{}{}",
+            self.open_api_base, ROBOT_INTERACTIVE_CARD_UPDATE_PATH
+        );
+        let payload = build_update_robot_interactive_card_payload(card_biz_id, card_data);
+        let response = self
+            .http
+            .put(url)
+            .header("x-acs-dingtalk-access-token", access_token)
+            .json(&payload)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body: Value = response.json().await?;
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk robot interactive card update failed: HTTP {} body={}",
+                status, body
             )
             .into());
         }

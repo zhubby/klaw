@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-22
+
+### Changed
+
+- `dingtalk` 在 `stream_output=true` 时，普通文本回复现在会改用“发送普通版互动卡片 + 更新卡片内容”的方式输出打字机流；审批 `ActionCard` 与附件发送保持原有路径，并在卡片流失败时回退到最终 Markdown 回复
+
 ## 2026-04-20
 
 ### Fixed
