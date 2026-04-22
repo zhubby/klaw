@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    resolve_im_card, resolve_session_route_inputs, ImCard, MessageRole, ProviderCatalog,
-    ResolvedSessionRoute, WebArchiveAttachment, WorkspaceSessionEntry,
+    ImCard, MessageRole, ProviderCatalog, ResolvedSessionRoute, WebArchiveAttachment,
+    WorkspaceSessionEntry, resolve_im_card, resolve_session_route_inputs,
 };
 use eframe::epaint::{Color32, FontFamily, FontId};
 use js_sys::Date;
@@ -298,11 +298,7 @@ pub(super) fn format_message_timestamp(timestamp_ms: i64, now_ms: i64) -> String
 }
 
 fn suffix(n: &i64) -> &'static str {
-    if *n == 1 {
-        ""
-    } else {
-        "s"
-    }
+    if *n == 1 { "" } else { "s" }
 }
 
 pub(super) fn format_datetime(timestamp_ms: i64) -> String {
@@ -353,7 +349,7 @@ pub(super) fn format_relative_time(created_at_ms: i64, now_ms: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_session_route_choice, ProviderCatalog, ProviderCatalogEntry};
+    use super::{ProviderCatalog, ProviderCatalogEntry, resolve_session_route_choice};
 
     #[test]
     fn session_route_prefers_explicit_workspace_route() {
