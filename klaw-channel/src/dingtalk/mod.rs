@@ -1,6 +1,7 @@
 mod attachments;
 mod client;
 mod config;
+mod error;
 mod parsing;
 
 #[cfg(test)]
@@ -10,6 +11,7 @@ use self::attachments::deliver_dingtalk_attachments;
 use self::client::DingtalkApiClient;
 use self::config::resolve_local_attachment_policy;
 pub use self::config::{DingtalkChannelConfig, DingtalkProxyConfig};
+pub use self::error::{DingtalkApiError, is_session_webhook_session_not_found_error};
 use self::parsing::{
     EventDeduper, InboundEvent, StreamEnvelope, build_im_card_action_buttons,
     build_im_card_action_card_body, is_sender_allowed, parse_card_callback_event,
@@ -392,6 +394,21 @@ pub async fn send_session_webhook_markdown_via_proxy(
     let client = DingtalkApiClient::new(proxy)?;
     client
         .send_session_webhook_markdown(session_webhook, title, text)
+        .await
+}
+
+pub async fn send_proactive_markdown_via_proxy(
+    proxy: &DingtalkProxyConfig,
+    client_id: &str,
+    client_secret: &str,
+    chat_id: &str,
+    title: &str,
+    text: &str,
+) -> ChannelResult<()> {
+    let client = DingtalkApiClient::new(proxy)?;
+    let access_token = client.fetch_access_token(client_id, client_secret).await?;
+    client
+        .send_proactive_markdown(&access_token, client_id, chat_id, title, text)
         .await
 }
 

@@ -17,6 +17,7 @@ time = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "io-std", "net", "signal", "time"] }
 tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
+thiserror = { workspace = true }
 urlencoding = { workspace = true }
 uuid = { workspace = true }
 klaw-core = { workspace = true }
