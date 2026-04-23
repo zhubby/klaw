@@ -1,10 +1,13 @@
 use super::{
+    DingtalkStreamWriter,
     attachments::{
         build_unsupported_file_attachment_markdown, infer_dingtalk_file_type,
         supported_dingtalk_file_type,
     },
     client::{
-        DingtalkApiClient, ProactiveChatTargetKind, build_proactive_markdown_payload,
+        DingtalkApiClient, ProactiveChatTargetKind, build_ai_card_card_data,
+        build_create_and_deliver_ai_card_payload, build_proactive_markdown_payload,
+        build_streaming_ai_card_payload, ensure_ai_card_delivery_success,
         proactive_chat_target_kind,
     },
     error::{DingtalkApiError, is_session_webhook_session_not_found_error},
@@ -19,7 +22,7 @@ use super::{
     runtime_metadata,
 };
 use crate::{
-    ChannelResponse,
+    ChannelResponse, ChannelStreamEvent, ChannelStreamWriter,
     im_card::{ImCard, ImCardAction, ImCardActionKind, ImCardKind},
     render::{OutputRenderStyle, render_agent_output},
 };
@@ -901,4 +904,255 @@ fn build_proactive_markdown_payload_targets_group_conversation() {
         Some("cid-group-1")
     );
     assert_eq!(payload.get("userIds"), None);
+}
+
+#[test]
+fn build_ai_card_card_data_uses_default_ai_template_keys() {
+    let payload = build_ai_card_card_data("content", "**hello**");
+    assert_eq!(
+        payload
+            .pointer("/cardParamMap/content")
+            .and_then(serde_json::Value::as_str),
+        Some("**hello**")
+    );
+}
+
+#[test]
+fn build_create_and_deliver_ai_card_payload_targets_private_chat() {
+    let payload = build_create_and_deliver_ai_card_payload(
+        "template-1.schema",
+        "robot-1",
+        "staff-1",
+        "track-1",
+        build_ai_card_card_data("content", "hello"),
+    );
+    assert_eq!(
+        payload
+            .get("cardTemplateId")
+            .and_then(serde_json::Value::as_str),
+        Some("template-1.schema")
+    );
+    assert_eq!(
+        payload
+            .pointer("/imRobotOpenDeliverModel/spaceType")
+            .and_then(serde_json::Value::as_str),
+        Some("IM_ROBOT")
+    );
+    assert_eq!(
+        payload
+            .pointer("/imRobotOpenDeliverModel/robotCode")
+            .and_then(serde_json::Value::as_str),
+        Some("robot-1")
+    );
+    assert_eq!(
+        payload.get("userId").and_then(serde_json::Value::as_str),
+        Some("staff-1")
+    );
+    assert_eq!(
+        payload
+            .get("openSpaceId")
+            .and_then(serde_json::Value::as_str),
+        Some("dtv1.card//IM_ROBOT.staff-1")
+    );
+    assert_eq!(
+        payload
+            .pointer("/imRobotOpenSpaceModel/supportForward")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+}
+
+#[test]
+fn build_create_and_deliver_ai_card_payload_targets_group_chat() {
+    let payload = build_create_and_deliver_ai_card_payload(
+        "template-1.schema",
+        "robot-1",
+        "cid-group-1",
+        "track-1",
+        build_ai_card_card_data("content", "hello"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/imGroupOpenDeliverModel/robotCode")
+            .and_then(serde_json::Value::as_str),
+        Some("robot-1")
+    );
+    assert_eq!(
+        payload
+            .get("openSpaceId")
+            .and_then(serde_json::Value::as_str),
+        Some("dtv1.card//IM_GROUP.cid-group-1")
+    );
+    assert!(payload.get("userId").is_none());
+    assert_eq!(
+        payload
+            .pointer("/imGroupOpenSpaceModel/supportForward")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+}
+
+#[test]
+fn build_streaming_ai_card_payload_marks_full_markdown_finalize() {
+    let payload =
+        build_streaming_ai_card_payload("track-1", "guid-1", "content", "**done**", true, false);
+    assert_eq!(
+        payload
+            .get("outTrackId")
+            .and_then(serde_json::Value::as_str),
+        Some("track-1")
+    );
+    assert_eq!(
+        payload.get("guid").and_then(serde_json::Value::as_str),
+        Some("guid-1")
+    );
+    assert_eq!(
+        payload.get("key").and_then(serde_json::Value::as_str),
+        Some("content")
+    );
+    assert_eq!(
+        payload.get("content").and_then(serde_json::Value::as_str),
+        Some("**done**")
+    );
+    assert_eq!(
+        payload.get("isFull").and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        payload
+            .get("isFinalize")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        payload.get("isError").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+}
+
+#[test]
+fn ai_card_delivery_success_rejects_failed_deliver_results() {
+    let body = serde_json::json!({
+        "success": true,
+        "result": {
+            "outTrackId": "track-1",
+            "deliverResults": [
+                {
+                    "spaceType": "IM_ROBOT",
+                    "spaceId": "staff-1",
+                    "success": false,
+                    "errorMsg": "target not reachable"
+                }
+            ]
+        }
+    });
+
+    let err = ensure_ai_card_delivery_success(&body, "createAndDeliver")
+        .expect_err("failed deliver result should be rejected");
+    let err_text = err.to_string();
+    assert!(err_text.contains("createAndDeliver"));
+    assert!(err_text.contains("IM_ROBOT"));
+    assert!(err_text.contains("staff-1"));
+    assert!(err_text.contains("target not reachable"));
+}
+
+#[test]
+fn ai_card_delivery_success_accepts_all_successful_deliver_results() {
+    let body = serde_json::json!({
+        "success": true,
+        "result": {
+            "outTrackId": "track-1",
+            "deliverResults": [
+                {
+                    "spaceType": "IM_GROUP",
+                    "spaceId": "cid-group-1",
+                    "success": true,
+                    "carrierId": "process-query-key"
+                }
+            ]
+        }
+    });
+
+    ensure_ai_card_delivery_success(&body, "createAndDeliver")
+        .expect("successful deliver results should pass");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dingtalk_stream_writer_marks_special_cards_without_network_calls() {
+    let mut writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
+        false,
+    );
+    let output = ChannelResponse {
+        content: String::new(),
+        reasoning: None,
+        metadata: {
+            let mut metadata = BTreeMap::new();
+            metadata.insert(
+                "im.card".to_string(),
+                serde_json::json!({
+                    "kind": "approval",
+                    "title": "Approve",
+                    "body": "Need approval",
+                    "actions": [
+                        { "kind": "approve", "value": "approval-1" },
+                        { "kind": "reject", "value": "approval-1" }
+                    ]
+                }),
+            );
+            metadata
+        },
+        attachments: Vec::new(),
+    };
+
+    ChannelStreamWriter::write(&mut writer, ChannelStreamEvent::Snapshot(output))
+        .await
+        .expect("writer");
+
+    assert!(writer.saw_special_card);
+    assert!(!writer.card_sent);
+    assert!(!writer.stream_failed);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dingtalk_stream_writer_falls_back_after_stream_failure() {
+    let mut writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
+        false,
+    );
+    let output = ChannelResponse {
+        content: "hello".to_string(),
+        reasoning: None,
+        metadata: BTreeMap::new(),
+        attachments: Vec::new(),
+    };
+
+    ChannelStreamWriter::write(&mut writer, ChannelStreamEvent::Snapshot(output))
+        .await
+        .expect("writer");
+
+    assert!(writer.stream_failed);
+    assert!(!writer.card_sent);
 }

@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::sync::OnceLock;
 use tokio::time::Duration;
 use tracing::debug;
+use uuid::Uuid;
 
 const DINGTALK_OPEN_API_BASE: &str = "https://api.dingtalk.com";
 const DINGTALK_OAPI_BASE: &str = "https://oapi.dingtalk.com";
@@ -12,6 +13,8 @@ const ACCESS_TOKEN_PATH: &str = "/v1.0/oauth2/accessToken";
 const MESSAGE_FILE_DOWNLOAD_PATH: &str = "/v1.0/robot/messageFiles/download";
 const GROUP_MESSAGE_SEND_PATH: &str = "/v1.0/robot/groupMessages/send";
 const OTO_MESSAGE_BATCH_SEND_PATH: &str = "/v1.0/robot/oToMessages/batchSend";
+const CARD_INSTANCE_CREATE_AND_DELIVER_PATH: &str = "/v1.0/card/instances/createAndDeliver";
+const CARD_STREAMING_PATH: &str = "/v1.0/card/streaming";
 const OAPI_MEDIA_UPLOAD_PATH: &str = "/media/upload";
 const OAPI_ASR_TRANSLATE_PATH: &str = "/topapi/asr/voice/translate";
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -21,6 +24,8 @@ static RUSTLS_PROVIDER_INSTALLED: OnceLock<()> = OnceLock::new();
 #[derive(Debug, Clone)]
 pub(super) struct DingtalkApiClient {
     http: reqwest::Client,
+    open_api_base: String,
+    oapi_base: String,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +74,160 @@ pub(super) fn build_proactive_markdown_payload(
     payload
 }
 
+pub(super) fn build_ai_card_card_data(content_key: &str, content: &str) -> Value {
+    serde_json::json!({
+        "cardParamMap": {
+            content_key.trim(): content,
+        }
+    })
+}
+
+pub(super) fn build_create_and_deliver_ai_card_payload(
+    template_id: &str,
+    robot_code: &str,
+    chat_id: &str,
+    out_track_id: &str,
+    card_data: Value,
+) -> Value {
+    let chat_id = chat_id.trim();
+    let open_space_id = match proactive_chat_target_kind(chat_id) {
+        ProactiveChatTargetKind::Group => format!("dtv1.card//IM_GROUP.{chat_id}"),
+        ProactiveChatTargetKind::User => format!("dtv1.card//IM_ROBOT.{chat_id}"),
+    };
+    let mut payload = serde_json::json!({
+        "cardTemplateId": template_id.trim(),
+        "outTrackId": out_track_id.trim(),
+        "cardData": card_data,
+        "openSpaceId": open_space_id,
+        "userIdType": 1,
+    });
+    match proactive_chat_target_kind(chat_id) {
+        ProactiveChatTargetKind::Group => {
+            payload["imGroupOpenDeliverModel"] = serde_json::json!({
+                "robotCode": robot_code.trim(),
+            });
+            payload["imGroupOpenSpaceModel"] = serde_json::json!({
+                "supportForward": false,
+            });
+        }
+        ProactiveChatTargetKind::User => {
+            payload["userId"] = Value::String(chat_id.to_string());
+            payload["imRobotOpenDeliverModel"] = serde_json::json!({
+                "robotCode": robot_code.trim(),
+                "spaceType": "IM_ROBOT",
+            });
+            payload["imRobotOpenSpaceModel"] = serde_json::json!({
+                "supportForward": false,
+            });
+        }
+    }
+    payload
+}
+
+pub(super) fn build_streaming_ai_card_payload(
+    out_track_id: &str,
+    guid: &str,
+    key: &str,
+    content: &str,
+    is_finalize: bool,
+    is_error: bool,
+) -> Value {
+    serde_json::json!({
+        "outTrackId": out_track_id.trim(),
+        "guid": guid.trim(),
+        "key": key.trim(),
+        "content": content,
+        "isFull": true,
+        "isFinalize": is_finalize,
+        "isError": is_error,
+    })
+}
+
+fn ai_card_delivery_result_summaries(body: &Value) -> Vec<String> {
+    body.pointer("/result/deliverResults")
+        .and_then(Value::as_array)
+        .map(|results| {
+            results
+                .iter()
+                .map(|result| {
+                    let space_type = result
+                        .get("spaceType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let space_id = result
+                        .get("spaceId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let success = result
+                        .get("success")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let carrier_id = result
+                        .get("carrierId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let error_msg = result.get("errorMsg").and_then(Value::as_str).unwrap_or("");
+                    let mut summary = format!("{space_type}:{space_id}:success={success}");
+                    if !carrier_id.trim().is_empty() {
+                        summary.push_str(&format!(":carrierId={carrier_id}"));
+                    }
+                    if !error_msg.trim().is_empty() {
+                        summary.push_str(&format!(":error={error_msg}"));
+                    }
+                    summary
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub(super) fn ensure_ai_card_delivery_success(body: &Value, context: &str) -> ChannelResult<()> {
+    let success = body.get("success").and_then(Value::as_bool).unwrap_or(true);
+    if !success {
+        return Err(format!("dingtalk ai card {context} failed: body={body}").into());
+    }
+
+    let failures = body
+        .pointer("/result/deliverResults")
+        .and_then(Value::as_array)
+        .map(|results| {
+            results
+                .iter()
+                .filter(|result| {
+                    !result
+                        .get("success")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                })
+                .map(|result| {
+                    let space_type = result
+                        .get("spaceType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let space_id = result
+                        .get("spaceId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let error_msg = result
+                        .get("errorMsg")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    format!("{space_type}:{space_id}:{error_msg}")
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if failures.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "dingtalk ai card {context} had failed deliver results: {}; body={body}",
+        failures.join(", ")
+    )
+    .into())
+}
+
 impl DingtalkApiClient {
     pub(super) fn new(proxy: &DingtalkProxyConfig) -> ChannelResult<Self> {
         let mut builder = reqwest::Client::builder()
@@ -82,7 +241,23 @@ impl DingtalkApiClient {
             builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
         }
         let http = builder.build()?;
-        Ok(Self { http })
+        Ok(Self {
+            http,
+            open_api_base: DINGTALK_OPEN_API_BASE.to_string(),
+            oapi_base: DINGTALK_OAPI_BASE.to_string(),
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_base_urls(
+        proxy: &DingtalkProxyConfig,
+        open_api_base: &str,
+        oapi_base: &str,
+    ) -> ChannelResult<Self> {
+        let mut client = Self::new(proxy)?;
+        client.open_api_base = open_api_base.trim_end_matches('/').to_string();
+        client.oapi_base = oapi_base.trim_end_matches('/').to_string();
+        Ok(client)
     }
 
     pub(super) fn ensure_rustls_crypto_provider() {
@@ -103,7 +278,7 @@ impl DingtalkApiClient {
         client_id: &str,
         client_secret: &str,
     ) -> ChannelResult<StreamConnectionTicket> {
-        let url = format!("{DINGTALK_OPEN_API_BASE}{CONNECTION_OPEN_PATH}");
+        let url = format!("{}{}", self.open_api_base, CONNECTION_OPEN_PATH);
         let response = self
             .http
             .post(url)
@@ -153,7 +328,7 @@ impl DingtalkApiClient {
         client_id: &str,
         client_secret: &str,
     ) -> ChannelResult<String> {
-        let url = format!("{DINGTALK_OPEN_API_BASE}{ACCESS_TOKEN_PATH}");
+        let url = format!("{}{}", self.open_api_base, ACCESS_TOKEN_PATH);
         let response = self
             .http
             .post(url)
@@ -191,7 +366,7 @@ impl DingtalkApiClient {
         robot_code: &str,
         download_code: &str,
     ) -> ChannelResult<Vec<u8>> {
-        let url = format!("{DINGTALK_OPEN_API_BASE}{MESSAGE_FILE_DOWNLOAD_PATH}");
+        let url = format!("{}{}", self.open_api_base, MESSAGE_FILE_DOWNLOAD_PATH);
         let response = self
             .http
             .post(url)
@@ -257,7 +432,9 @@ impl DingtalkApiClient {
             )
             .await?;
         let url = format!(
-            "{DINGTALK_OAPI_BASE}{OAPI_ASR_TRANSLATE_PATH}?access_token={}",
+            "{}{}?access_token={}",
+            self.oapi_base,
+            OAPI_ASR_TRANSLATE_PATH,
             urlencoding::encode(access_token)
         );
         let response = self
@@ -312,7 +489,9 @@ impl DingtalkApiClient {
             "calling dingtalk media upload"
         );
         let url = format!(
-            "{DINGTALK_OAPI_BASE}{OAPI_MEDIA_UPLOAD_PATH}?access_token={}&type={}",
+            "{}{}?access_token={}&type={}",
+            self.oapi_base,
+            OAPI_MEDIA_UPLOAD_PATH,
             urlencoding::encode(access_token),
             urlencoding::encode(media_type),
         );
@@ -532,7 +711,7 @@ impl DingtalkApiClient {
             ProactiveChatTargetKind::Group => GROUP_MESSAGE_SEND_PATH,
             ProactiveChatTargetKind::User => OTO_MESSAGE_BATCH_SEND_PATH,
         };
-        let url = format!("{DINGTALK_OPEN_API_BASE}{path}");
+        let url = format!("{}{}", self.open_api_base, path);
         let payload = build_proactive_markdown_payload(robot_code, chat_id, title, text);
         let response = self
             .http
@@ -564,6 +743,132 @@ impl DingtalkApiClient {
             .into());
         }
         Ok(())
+    }
+
+    pub(super) async fn create_and_deliver_ai_card(
+        &self,
+        access_token: &str,
+        template_id: &str,
+        robot_code: &str,
+        chat_id: &str,
+        out_track_id: &str,
+        card_data: Value,
+    ) -> ChannelResult<()> {
+        let url = format!(
+            "{}{}",
+            self.open_api_base, CARD_INSTANCE_CREATE_AND_DELIVER_PATH
+        );
+        let payload = build_create_and_deliver_ai_card_payload(
+            template_id,
+            robot_code,
+            chat_id,
+            out_track_id,
+            card_data,
+        );
+        let open_space_id = payload
+            .get("openSpaceId")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let im_robot_open_space_model = payload
+            .get("imRobotOpenSpaceModel")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let im_group_open_space_model = payload
+            .get("imGroupOpenSpaceModel")
+            .cloned()
+            .unwrap_or(Value::Null);
+        debug!(
+            out_track_id = out_track_id.trim(),
+            template_id = template_id.trim(),
+            robot_code = robot_code.trim(),
+            chat_id = chat_id.trim(),
+            open_space_id,
+            im_robot_open_space_model = %im_robot_open_space_model,
+            im_group_open_space_model = %im_group_open_space_model,
+            "calling dingtalk ai card createAndDeliver"
+        );
+        let response = self
+            .http
+            .post(url)
+            .header("x-acs-dingtalk-access-token", access_token)
+            .json(&payload)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body: Value = response.json().await?;
+        debug!(
+            out_track_id = out_track_id.trim(),
+            http_status = status.as_u16(),
+            deliver_results = ?ai_card_delivery_result_summaries(&body),
+            response_body = %body,
+            "received dingtalk ai card createAndDeliver response"
+        );
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk ai card createAndDeliver failed: HTTP {} body={}",
+                status, body
+            )
+            .into());
+        }
+        ensure_ai_card_delivery_success(&body, "createAndDeliver")
+    }
+
+    pub(super) async fn stream_ai_card(
+        &self,
+        access_token: &str,
+        out_track_id: &str,
+        key: &str,
+        content: &str,
+        is_finalize: bool,
+        is_error: bool,
+    ) -> ChannelResult<()> {
+        let url = format!("{}{}", self.open_api_base, CARD_STREAMING_PATH);
+        let guid = Uuid::new_v4().to_string();
+        let payload = build_streaming_ai_card_payload(
+            out_track_id,
+            &guid,
+            key,
+            content,
+            is_finalize,
+            is_error,
+        );
+        debug!(
+            out_track_id = out_track_id.trim(),
+            guid = guid.as_str(),
+            key = key.trim(),
+            content_chars = content.chars().count(),
+            is_finalize,
+            is_error,
+            "calling dingtalk ai card streaming update"
+        );
+        let response = self
+            .http
+            .put(url)
+            .header("x-acs-dingtalk-access-token", access_token)
+            .json(&payload)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body: Value = response.json().await?;
+        debug!(
+            out_track_id = out_track_id.trim(),
+            guid = guid.as_str(),
+            http_status = status.as_u16(),
+            is_finalize,
+            is_error,
+            response_body = %body,
+            "received dingtalk ai card streaming update response"
+        );
+        if !status.is_success() {
+            return Err(format!(
+                "dingtalk ai card streaming update failed: HTTP {} body={}",
+                status, body
+            )
+            .into());
+        }
+        ensure_ai_card_delivery_success(&body, "streaming update")
     }
 
     pub(super) fn build_ws_url(endpoint: &str, ticket: &str) -> String {
