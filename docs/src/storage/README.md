@@ -106,3 +106,4 @@ pub trait ArchiveService {
 - [Session 存储](./session.md)
 - [Cron 存储](./cron.md)
 - [Archive 存储](./archive.md)
+- [Memory 存储](./memory.md)

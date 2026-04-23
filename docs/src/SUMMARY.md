@@ -34,6 +34,7 @@
   - [Session 存储](./storage/session.md)
   - [Cron 存储](./storage/cron.md)
   - [Archive 存储](./storage/archive.md)
+  - [Memory 存储](./storage/memory.md)
 - [网关](./gateway/README.md)
   - [WebSocket](./gateway/websocket.md)
   - [Webhook](./gateway/webhook.md)

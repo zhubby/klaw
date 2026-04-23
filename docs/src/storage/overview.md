@@ -426,3 +426,4 @@ idx_memories_embedding  — libsql_vector_idx(embedding)
 - [Session 存储语义](./session.md) — 会话索引、路由状态、压缩、ChatRecord、写入流程
 - [Cron 存储语义](./cron.md) — 调度类型、CAS 防重、CronWorker、GUI 面板
 - [Archive 存储语义](./archive.md) — 归档索引、去重、文件识别、ArchiveTool/VoiceTool 集成
+- [Memory 存储语义](./memory.md) — 长期记忆 CRUD、混合检索、写入治理、prompt 渲染、统计聚合
