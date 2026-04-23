@@ -3,7 +3,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::request_gateway_status;
 use crate::time_format::format_timestamp_millis;
-use crate::widgets::markdown;
+use crate::widgets::{markdown, show_json_tree_with_id};
 use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
@@ -19,6 +19,7 @@ use klaw_session::{
     WebhookEventStatus,
 };
 use klaw_util::default_data_dir;
+use serde_json::Value;
 use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -55,6 +56,13 @@ struct WebhookSummaryState {
     summary: String,
 }
 
+#[derive(Clone)]
+struct RawJsonState {
+    title: String,
+    payload: Value,
+    metadata: Option<Value>,
+}
+
 impl WebhookListRow {
     fn id(&self) -> &str {
         match self {
@@ -67,6 +75,20 @@ impl WebhookListRow {
         match self {
             Self::Event(record) => record.received_at_ms,
             Self::Agent(record) => record.received_at_ms,
+        }
+    }
+
+    fn payload_json(&self) -> Option<&str> {
+        match self {
+            Self::Event(record) => record.payload_json.as_deref(),
+            Self::Agent(record) => record.payload_json.as_deref(),
+        }
+    }
+
+    fn metadata_json(&self) -> Option<&str> {
+        match self {
+            Self::Event(record) => record.metadata_json.as_deref(),
+            Self::Agent(record) => record.metadata_json.as_deref(),
         }
     }
 }
@@ -194,6 +216,7 @@ pub struct WebhookPanel {
     sort_order: WebhookEventSortOrder,
     selected_id: Option<String>,
     summary_popup: Option<WebhookSummaryState>,
+    raw_json_popup: Option<RawJsonState>,
     prompt_dir: Option<PathBuf>,
     create_prompt_open: bool,
     create_prompt: CreatePromptState,
@@ -235,6 +258,7 @@ impl Default for WebhookPanel {
             sort_order: WebhookEventSortOrder::ReceivedAtDesc,
             selected_id: None,
             summary_popup: None,
+            raw_json_popup: None,
             prompt_dir: None,
             create_prompt_open: false,
             create_prompt: CreatePromptState::default(),
@@ -682,6 +706,30 @@ impl WebhookPanel {
             Err(err) => notifications.error(format!("Failed to delete {}: {err}", path.display())),
         }
     }
+
+    fn render_raw_json_window(&mut self, ui: &mut egui::Ui) {
+        if let Some(raw_state) = &mut self.raw_json_popup {
+            let mut keep_open = true;
+            egui::Window::new(&raw_state.title)
+                .id(egui::Id::new(("webhook-raw-json-popup", &raw_state.title)))
+                .open(&mut keep_open)
+                .resizable(true)
+                .default_width(720.0)
+                .default_height(480.0)
+                .show(ui.ctx(), |ui| {
+                    ui.heading("Payload");
+                    show_json_tree_with_id(ui, &raw_state.payload, "webhook-raw-json-payload");
+                    if let Some(metadata) = &raw_state.metadata {
+                        ui.add_space(8.0);
+                        ui.heading("Metadata");
+                        show_json_tree_with_id(ui, metadata, "webhook-raw-json-metadata");
+                    }
+                });
+            if !keep_open {
+                self.raw_json_popup = None;
+            }
+        }
+    }
 }
 
 impl PanelRenderer for WebhookPanel {
@@ -839,6 +887,7 @@ impl PanelRenderer for WebhookPanel {
         ui.separator();
         let table_width = ui.available_width();
         let mut open_summary: Option<WebhookSummaryState> = None;
+        let mut open_raw_json: Option<RawJsonState> = None;
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .max_width(table_width)
@@ -954,12 +1003,49 @@ impl PanelRenderer for WebhookPanel {
                             if response.double_clicked() {
                                 open_summary = webhook_summary_state(item);
                             }
+
+                            response.context_menu(|ui| {
+                                let summary_state = webhook_summary_state(item);
+                                if ui
+                                    .add_enabled(
+                                        summary_state.is_some(),
+                                        egui::Button::new(format!("{} View Reply", regular::EYE)),
+                                    )
+                                    .clicked()
+                                {
+                                    open_summary = summary_state;
+                                    ui.close();
+                                }
+                                let raw_state = raw_json_state(item);
+                                if ui
+                                    .add_enabled(
+                                        raw_state.is_some(),
+                                        egui::Button::new(format!("{} Raw JSON", regular::CODE)),
+                                    )
+                                    .clicked()
+                                {
+                                    open_raw_json = raw_state;
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                    ui.ctx().output_mut(|o| {
+                                        o.commands.push(egui::OutputCommand::CopyText(
+                                            item.id().to_string(),
+                                        ));
+                                    });
+                                    ui.close();
+                                }
+                            });
                         });
                     });
             });
 
         if let Some(summary) = open_summary {
             self.summary_popup = Some(summary);
+        }
+        if let Some(raw_state) = open_raw_json {
+            self.raw_json_popup = Some(raw_state);
         }
         if let Some(summary_state) = &mut self.summary_popup {
             let mut open = true;
@@ -989,6 +1075,8 @@ impl PanelRenderer for WebhookPanel {
                 self.summary_popup = None;
             }
         }
+
+        self.render_raw_json_window(ui);
 
         if self.config_window_open {
             let mut open = self.config_window_open;
@@ -1513,6 +1601,20 @@ fn webhook_summary_state(item: &WebhookListRow) -> Option<WebhookSummaryState> {
                 summary: summary.clone(),
             }),
     }
+}
+
+fn raw_json_state(item: &WebhookListRow) -> Option<RawJsonState> {
+    let payload_str = item.payload_json()?;
+    let payload = serde_json::from_str(payload_str)
+        .unwrap_or_else(|_| Value::String(payload_str.to_string()));
+    let metadata = item
+        .metadata_json()
+        .and_then(|s| serde_json::from_str(s).ok());
+    Some(RawJsonState {
+        title: format!("Raw JSON: {}", item.id()),
+        payload,
+        metadata,
+    })
 }
 
 fn normalize_filter(raw: &str) -> Option<String> {
