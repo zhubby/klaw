@@ -37,6 +37,7 @@
 其中 `metadata` 支持的治理字段：
 
 - `kind`：`identity | preference | project_rule | workflow | fact | constraint`
+- `priority`：可选，`high | medium | low`，用于覆盖默认的 prompt 注入优先级
 - `topic`：可选，用于冲突替换
 - `supersedes`：可选，字符串或字符串数组
 
@@ -77,7 +78,9 @@
 
 - 仅渲染 `status=active` 的长期记忆
 - 跳过 `superseded`、`archived`、`rejected`
+- 跳过 `summary=true` 的归档摘要记录
 - 先按 `pinned` 排序
+- 再按显式 `priority` 排序（若未提供则根据 `kind` 推导默认值）
 - 再按 `kind` 优先级排序
 - 最后按更新时间排序
 - 做去重、单条裁剪和整体字符预算控制
@@ -101,6 +104,23 @@
 - 新：`kind=preference`，`topic=reply_language`，内容为“默认使用中文回复”
 
 则新记录会生效，旧记录会被标记为 `superseded`，不再进入 prompt。
+
+### 自动归档
+
+runtime 在后台 tick 期间会执行一个内建的长期记忆维护任务：
+
+- 以系统时区每天凌晨 `2:00` 为目标窗口
+- 扫描 `long_term` 中 `priority=low`、未 pinned、超过 `30` 天未更新的 active 记录
+- 将原记录标记为 `archived`
+- 为同一 `kind + topic` 分组生成或更新一条 `summary=true` 的摘要索引记录
+
+摘要记录写回同一个 `long_term` scope，并带有：
+
+- `source_ids`
+- `archived_at`
+- `summary_type = "archive_rollup"`
+
+它们默认不会进入 prompt，但会保留为可追溯的检索索引和 GUI 明细。
 
 ## Session 记忆方案
 

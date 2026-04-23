@@ -98,6 +98,17 @@ worker 处理到期任务时不会直接执行，而是先调用：
 
 该操作在数据库侧执行条件更新（`WHERE next_run_at_ms = expected...`），只有一个 worker 能成功 claim，避免同一触发时刻重复执行。
 
+## Memory 后台维护
+
+除持久化 `cron` 任务外，runtime 还挂载了一个内建的 memory 维护 worker：
+
+- 使用固定计划：系统时区每天凌晨 `2:00`
+- 不写入 `cron` / `cron_task` 表
+- 在后台 `on_cron_tick()` 中顺带执行
+- 负责长期记忆的低优先级归档与摘要索引生成
+
+这条路径适合纯内存维护类任务，因为它不需要构造 `InboundMessage` 进入完整 agent 回路；执行完成后 runtime 会刷新长期记忆 prompt 片段。
+
 ## 状态流转
 
 单次运行典型过程：

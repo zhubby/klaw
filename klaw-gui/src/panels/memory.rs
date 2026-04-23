@@ -6,7 +6,8 @@ use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, EmbeddingConfig};
 use klaw_memory::{
     LongTermMemoryKind, LongTermMemoryPromptOptions, LongTermMemoryStatus, MemoryError,
-    MemoryRecord, MemoryStats, SqliteMemoryStatsService, read_long_term_kind,
+    MemoryRecord, MemoryStats, SqliteMemoryStatsService, is_summary_record,
+    read_long_term_archived_at, read_long_term_kind, read_long_term_priority,
     read_long_term_status, read_long_term_topic, render_long_term_memory_section,
 };
 use klaw_storage::{ChatRecord, SessionStorage, open_default_store};
@@ -766,11 +767,15 @@ impl MemoryPanel {
         match selected_long_term_record(&filtered, self.selected_long_term_id.as_deref()) {
             Some(record) => {
                 ui.small(format!(
-                    "ID: {} | kind: {} | status: {} | topic: {} | updated: {}",
+                    "ID: {} | kind: {} | priority: {} | status: {} | topic: {} | archived_at: {} | updated: {}",
                     record.id,
                     kind_label(record),
+                    priority_label(record),
                     status_label(record),
                     read_long_term_topic(record).unwrap_or_else(|| "-".to_string()),
+                    read_long_term_archived_at(record)
+                        .map(format_timestamp_millis)
+                        .unwrap_or_else(|| "-".to_string()),
                     format_timestamp_millis(record.updated_at_ms)
                 ));
                 let governance = governance_summary(record);
@@ -1220,19 +1225,38 @@ fn status_label(record: &MemoryRecord) -> &'static str {
         .as_str()
 }
 
+fn priority_label(record: &MemoryRecord) -> &'static str {
+    read_long_term_priority(record)
+        .map(|priority| priority.as_str())
+        .unwrap_or("-")
+}
+
 fn governance_summary(record: &MemoryRecord) -> String {
     let supersedes = read_string_list_field(&record.metadata, "supersedes");
     let superseded_by = read_string_field(&record.metadata, "superseded_by");
-    match (supersedes.is_empty(), superseded_by) {
-        (false, Some(superseded_by)) => {
-            format!(
-                "supersedes: {}; superseded_by: {superseded_by}",
-                supersedes.join(", ")
-            )
-        }
-        (false, None) => format!("supersedes: {}", supersedes.join(", ")),
-        (true, Some(superseded_by)) => format!("superseded_by: {superseded_by}"),
-        (true, None) => "-".to_string(),
+    let source_ids = read_string_list_field(&record.metadata, "source_ids");
+    let archived_by_summary = read_string_field(&record.metadata, "archived_by_summary");
+    let archived_at = read_long_term_archived_at(record).map(format_timestamp_millis);
+    let mut parts = Vec::new();
+    if !supersedes.is_empty() {
+        parts.push(format!("supersedes: {}", supersedes.join(", ")));
+    }
+    if let Some(superseded_by) = superseded_by {
+        parts.push(format!("superseded_by: {superseded_by}"));
+    }
+    if is_summary_record(record) && !source_ids.is_empty() {
+        parts.push(format!("summary sources: {}", source_ids.join(", ")));
+    }
+    if let Some(archived_by_summary) = archived_by_summary {
+        parts.push(format!("archived_by_summary: {archived_by_summary}"));
+    }
+    if let Some(archived_at) = archived_at {
+        parts.push(format!("archived_at: {archived_at}"));
+    }
+    if parts.is_empty() {
+        "-".to_string()
+    } else {
+        parts.join("; ")
     }
 }
 
@@ -1621,6 +1645,30 @@ mod tests {
         let summary = governance_summary(&record);
         assert!(summary.contains("old-1"));
         assert!(summary.contains("new-2"));
+    }
+
+    #[test]
+    fn governance_summary_renders_summary_and_archive_metadata() {
+        let record = MemoryRecord {
+            id: "summary-1".to_string(),
+            scope: "long_term".to_string(),
+            content: "Archived summary".to_string(),
+            metadata: serde_json::json!({
+                "summary": true,
+                "source_ids": ["old-1", "old-2"],
+                "archived_at": 1,
+                "archived_by_summary": "summary-1",
+            }),
+            pinned: false,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+
+        let summary = governance_summary(&record);
+        assert!(summary.contains("summary sources"));
+        assert!(summary.contains("old-1"));
+        assert!(summary.contains("archived_by_summary"));
+        assert!(summary.contains("archived_at"));
     }
 
     #[test]

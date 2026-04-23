@@ -1,6 +1,6 @@
 use crate::{
     EmbeddingProvider, MemoryError, MemoryHit, MemoryRecord, MemorySearchQuery, MemoryService,
-    UpsertMemoryInput, build_embedding_provider_from_config,
+    UpsertMemoryInput, build_embedding_provider_from_config, is_inactive_long_term_record,
     util::{db_string, f32_vec_to_blob, now_ms, row_to_record, rrf_score},
 };
 use async_trait::async_trait;
@@ -327,6 +327,7 @@ impl MemoryService for SqliteMemoryService {
             })
             .collect();
 
+        hits.retain(|hit| !is_inactive_long_term_record(&hit.record));
         hits.sort_by(|a, b| {
             b.record
                 .pinned

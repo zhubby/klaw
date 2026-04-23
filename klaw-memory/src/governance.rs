@@ -53,6 +53,43 @@ impl LongTermMemoryKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LongTermMemoryPriority {
+    High,
+    Medium,
+    Low,
+}
+
+impl LongTermMemoryPriority {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "high" => Some(Self::High),
+            "medium" => Some(Self::Medium),
+            "low" => Some(Self::Low),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::High => 2,
+            Self::Medium => 1,
+            Self::Low => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LongTermMemoryStatus {
@@ -84,6 +121,19 @@ impl LongTermMemoryStatus {
     }
 }
 
+#[must_use]
+pub fn default_priority_for_kind(kind: LongTermMemoryKind) -> LongTermMemoryPriority {
+    match kind {
+        LongTermMemoryKind::Identity | LongTermMemoryKind::ProjectRule => {
+            LongTermMemoryPriority::High
+        }
+        LongTermMemoryKind::Preference
+        | LongTermMemoryKind::Workflow
+        | LongTermMemoryKind::Constraint => LongTermMemoryPriority::Medium,
+        LongTermMemoryKind::Fact => LongTermMemoryPriority::Low,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GovernedLongTermWrite {
     pub primary: UpsertMemoryInput,
@@ -95,6 +145,7 @@ pub struct GovernedLongTermWrite {
 
 fn is_active_long_term_with_kind(record: &MemoryRecord, kind: LongTermMemoryKind) -> bool {
     record.scope == "long_term"
+        && !is_summary_record(record)
         && read_status(record).unwrap_or(LongTermMemoryStatus::Active)
             == LongTermMemoryStatus::Active
         && read_kind(record).unwrap_or(LongTermMemoryKind::Fact) == kind
@@ -125,6 +176,7 @@ pub fn govern_long_term_write(
     let mut normalized_metadata = metadata.clone();
     let kind = normalize_kind(&normalized_metadata)?;
     normalize_incoming_status(&normalized_metadata)?;
+    let priority = normalize_priority(&normalized_metadata, kind)?;
     let topic = normalize_optional_string_field(&mut normalized_metadata, "topic");
     let mut supersedes = normalize_supersedes_field(&mut normalized_metadata)?;
     normalized_metadata.remove("superseded_by");
@@ -156,6 +208,7 @@ pub fn govern_long_term_write(
     let supersedes = dedupe_strings(supersedes);
 
     normalized_metadata.insert("kind".to_string(), json!(kind.as_str()));
+    normalized_metadata.insert("priority".to_string(), json!(priority.as_str()));
     normalized_metadata.insert(
         "status".to_string(),
         json!(LongTermMemoryStatus::Active.as_str()),
@@ -229,6 +282,47 @@ pub fn read_topic(record: &MemoryRecord) -> Option<String> {
         .map(ToString::to_string)
 }
 
+pub fn read_priority(record: &MemoryRecord) -> Option<LongTermMemoryPriority> {
+    record
+        .metadata
+        .get("priority")
+        .and_then(Value::as_str)
+        .and_then(LongTermMemoryPriority::parse)
+}
+
+pub fn read_archived_at(record: &MemoryRecord) -> Option<i64> {
+    record.metadata.get("archived_at").and_then(Value::as_i64)
+}
+
+#[must_use]
+pub fn is_summary_record(record: &MemoryRecord) -> bool {
+    record
+        .metadata
+        .get("summary")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+#[must_use]
+pub fn effective_priority(record: &MemoryRecord) -> LongTermMemoryPriority {
+    read_priority(record).unwrap_or_else(|| {
+        default_priority_for_kind(read_kind(record).unwrap_or(LongTermMemoryKind::Fact))
+    })
+}
+
+#[must_use]
+pub fn is_inactive_long_term_record(record: &MemoryRecord) -> bool {
+    record.scope == "long_term"
+        && matches!(
+            read_status(record),
+            Some(
+                LongTermMemoryStatus::Archived
+                    | LongTermMemoryStatus::Rejected
+                    | LongTermMemoryStatus::Superseded
+            )
+        )
+}
+
 pub fn normalize_content(content: &str) -> String {
     content.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -260,6 +354,20 @@ fn normalize_incoming_status(metadata: &Map<String, Value>) -> Result<(), Memory
         ));
     }
     Ok(())
+}
+
+fn normalize_priority(
+    metadata: &Map<String, Value>,
+    kind: LongTermMemoryKind,
+) -> Result<LongTermMemoryPriority, MemoryError> {
+    match metadata.get("priority").and_then(Value::as_str) {
+        Some(raw) => LongTermMemoryPriority::parse(raw).ok_or_else(|| {
+            MemoryError::InvalidQuery(format!(
+                "invalid memory metadata.priority `{raw}`; expected one of high/medium/low"
+            ))
+        }),
+        None => Ok(default_priority_for_kind(kind)),
+    }
 }
 
 fn normalize_supersedes_field(
@@ -456,5 +564,54 @@ mod tests {
         .expect_err("non-active status should be rejected");
 
         assert!(err.to_string().contains("system-managed"));
+    }
+
+    #[test]
+    fn govern_long_term_write_rejects_invalid_priority() {
+        let err = govern_long_term_write(
+            &[],
+            UpsertMemoryInput {
+                id: None,
+                scope: "long_term".to_string(),
+                content: "Keep my replies concise.".to_string(),
+                metadata: json!({"priority": "urgent"}),
+                pinned: false,
+            },
+        )
+        .expect_err("invalid priority should be rejected");
+
+        assert!(err.to_string().contains("invalid memory metadata.priority"));
+    }
+
+    #[test]
+    fn govern_long_term_write_ignores_archive_summary_records_when_detecting_conflicts() {
+        let existing = vec![record(
+            "summary-1",
+            "Archived summary for reply_language.",
+            json!({
+                "kind": "preference",
+                "topic": "reply_language",
+                "status": "active",
+                "summary": true,
+                "source_ids": ["old-1"],
+            }),
+            false,
+        )];
+
+        let plan = govern_long_term_write(
+            &existing,
+            UpsertMemoryInput {
+                id: Some("new-1".to_string()),
+                scope: "long_term".to_string(),
+                content: "Default language is Chinese.".to_string(),
+                metadata: json!({"kind": "preference", "topic": "reply_language"}),
+                pinned: false,
+            },
+        )
+        .expect("governance should ignore summaries");
+
+        assert!(plan.superseded_updates.is_empty());
+        assert_eq!(plan.primary.metadata["topic"], "reply_language");
+        assert_eq!(plan.primary.metadata["status"], "active");
     }
 }
