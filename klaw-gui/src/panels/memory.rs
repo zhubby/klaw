@@ -5,12 +5,13 @@ use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, EmbeddingConfig};
 use klaw_memory::{
-    LongTermMemoryKind, LongTermMemoryPromptOptions, LongTermMemoryStatus, MemoryError,
-    MemoryRecord, MemoryStats, SqliteMemoryStatsService, is_summary_record,
+    LongTermArchiveConfig, LongTermMemoryKind, LongTermMemoryPromptOptions, LongTermMemoryStatus,
+    MemoryError, MemoryRecord, MemoryStats, SqliteMemoryStatsService,
+    archive_stale_long_term_memories, is_summary_record,
     read_long_term_archived_at, read_long_term_kind, read_long_term_priority,
     read_long_term_status, read_long_term_topic, render_long_term_memory_section,
 };
-use klaw_storage::{ChatRecord, SessionStorage, open_default_store};
+use klaw_storage::{ChatRecord, SessionStorage, open_default_memory_db, open_default_store};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::future::Future;
@@ -199,6 +200,11 @@ struct PendingSessionSearch {
     receiver: Receiver<Result<SessionSearchOutput, String>>,
 }
 
+#[derive(Debug)]
+struct PendingArchiveRun {
+    receiver: Receiver<Result<String, String>>,
+}
+
 #[derive(Debug, Clone)]
 struct SessionSearchHit {
     session_key: String,
@@ -238,6 +244,8 @@ pub struct MemoryPanel {
     session_search_request: Option<PendingSessionSearch>,
     session_search_loading: bool,
     session_search_result: Option<SessionSearchOutput>,
+    archive_run_request: Option<PendingArchiveRun>,
+    archive_run_loading: bool,
 }
 
 impl Default for MemoryPanel {
@@ -262,6 +270,8 @@ impl Default for MemoryPanel {
             session_search_request: None,
             session_search_loading: false,
             session_search_result: None,
+            archive_run_request: None,
+            archive_run_loading: false,
         }
     }
 }
@@ -588,6 +598,48 @@ impl MemoryPanel {
             Err(TryRecvError::Disconnected) => {
                 self.session_search_loading = false;
                 notifications.error("Session search task disconnected unexpectedly");
+            }
+        }
+    }
+
+    fn begin_archive_run(&mut self, notifications: &mut NotificationCenter) {
+        if self.archive_run_request.is_some() {
+            return;
+        }
+        self.archive_run_loading = true;
+        let archive_config = LongTermArchiveConfig {
+            max_age_days: self.config.memory.archive.max_age_days,
+            summary_max_sources: self.config.memory.archive.summary_max_sources,
+        };
+        self.archive_run_request = Some(PendingArchiveRun {
+            receiver: spawn_archive_run_task(archive_config),
+        });
+        notifications.info("Running long-term memory archive...");
+    }
+
+    fn poll_archive_run_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.archive_run_request.take() else {
+            return;
+        };
+
+        match request.receiver.try_recv() {
+            Ok(result) => match result {
+                Ok(message) => {
+                    self.archive_run_loading = false;
+                    notifications.success(message);
+                    self.refresh(notifications);
+                }
+                Err(err) => {
+                    self.archive_run_loading = false;
+                    notifications.error(format!("Archive run failed: {err}"));
+                }
+            },
+            Err(TryRecvError::Empty) => {
+                self.archive_run_request = Some(request);
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.archive_run_loading = false;
+                notifications.error("Archive task disconnected unexpectedly");
             }
         }
     }
@@ -1012,7 +1064,11 @@ impl PanelRenderer for MemoryPanel {
         self.ensure_loaded(notifications);
         self.poll_load_request(notifications);
         self.poll_session_search_request(notifications);
-        if self.load_request.is_some() || self.session_search_request.is_some() {
+        self.poll_archive_run_request(notifications);
+        if self.load_request.is_some()
+            || self.session_search_request.is_some()
+            || self.archive_run_request.is_some()
+        {
             ui.ctx().request_repaint_after(POLL_INTERVAL);
         }
 
@@ -1024,12 +1080,22 @@ impl PanelRenderer for MemoryPanel {
             if ui.button("Config").clicked() {
                 self.open_config_form();
             }
+            if ui
+                .add_enabled(!self.archive_run_loading, egui::Button::new("Archive Now"))
+                .clicked()
+            {
+                self.begin_archive_run(notifications);
+            }
             if ui.button(format!("{} Info", regular::INFO)).clicked() {
                 self.stats_window_open = true;
             }
-            if self.loading {
+            if self.loading || self.archive_run_loading {
                 ui.add(egui::Spinner::new());
-                ui.small("Loading...");
+                ui.small(if self.archive_run_loading {
+                    "Archiving..."
+                } else {
+                    "Loading..."
+                });
             }
         });
         ui.separator();
@@ -1301,6 +1367,34 @@ where
                     op(service)
                         .await
                         .map_err(|err| format!("memory stats operation failed: {err}"))
+                })
+            });
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+fn spawn_archive_run_task(config: LongTermArchiveConfig) -> Receiver<Result<String, String>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to build runtime: {err}"))
+            .and_then(|runtime| {
+                runtime.block_on(async move {
+                    let memory_db = open_default_memory_db()
+                        .await
+                        .map_err(|err| format!("failed to open memory db: {err}"))?;
+                    let outcome = archive_stale_long_term_memories(std::sync::Arc::new(memory_db), config)
+                        .await
+                        .map_err(|err| format!("archive operation failed: {err}"))?;
+                    Ok(format!(
+                        "Archive complete: {} archived, {} summaries updated, {} skipped",
+                        outcome.archived_records,
+                        outcome.summary_records_upserted,
+                        outcome.skipped_records
+                    ))
                 })
             });
         let _ = tx.send(result);

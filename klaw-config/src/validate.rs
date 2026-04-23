@@ -4,6 +4,8 @@ use crate::{
 };
 use std::net::IpAddr;
 
+use std::str::FromStr;
+
 pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     if config.model_provider.trim().is_empty() {
         return Err(ConfigError::InvalidConfig(
@@ -118,6 +120,31 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
                 "memory.embedding.provider '{}' not found in model_providers",
                 config.memory.embedding.provider
             )));
+        }
+    }
+    if config.memory.archive.enabled {
+        let schedule = config.memory.archive.schedule.trim();
+        if schedule.is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "memory.archive.schedule cannot be empty when memory.archive.enabled=true"
+                    .to_string(),
+            ));
+        }
+        cron::Schedule::from_str(schedule).map_err(|err| {
+            ConfigError::InvalidConfig(format!(
+                "memory.archive.schedule '{}' is invalid: {}",
+                config.memory.archive.schedule, err
+            ))
+        })?;
+        if config.memory.archive.max_age_days <= 0 {
+            return Err(ConfigError::InvalidConfig(
+                "memory.archive.max_age_days must be greater than 0".to_string(),
+            ));
+        }
+        if config.memory.archive.summary_max_sources == 0 {
+            return Err(ConfigError::InvalidConfig(
+                "memory.archive.summary_max_sources must be greater than 0".to_string(),
+            ));
         }
     }
 

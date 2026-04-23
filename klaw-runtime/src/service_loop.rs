@@ -31,7 +31,6 @@ use tracing::{debug, warn};
 type StdioCronWorker = CronWorker<DefaultSessionStore, FilteringInboundTransport>;
 type StdioHeartbeatWorker = HeartbeatWorker<DefaultSessionStore, FilteringInboundTransport>;
 const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
-const MEMORY_ARCHIVE_SCHEDULE: &str = "0 0 2 * * *";
 const MEMORY_ARCHIVE_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Default)]
@@ -102,6 +101,10 @@ pub struct BackgroundServiceConfig {
     pub runtime_drain_batch: usize,
     pub cron_batch_limit: i64,
     pub cron_missed_run_policy: MissedRunPolicy,
+    pub memory_archive_enabled: bool,
+    pub memory_archive_schedule: String,
+    pub memory_archive_max_age_days: i64,
+    pub memory_archive_summary_max_sources: usize,
     channel_availability: ChannelAvailability,
     pub dingtalk_accounts: BTreeMap<String, BackgroundDingtalkAccountConfig>,
     pub telegram_configs: BTreeMap<String, klaw_config::TelegramConfig>,
@@ -118,6 +121,10 @@ impl BackgroundServiceConfig {
                 CronMissedRunPolicy::Skip => MissedRunPolicy::Skip,
                 CronMissedRunPolicy::CatchUp => MissedRunPolicy::CatchUp,
             },
+            memory_archive_enabled: config.memory.archive.enabled,
+            memory_archive_schedule: config.memory.archive.schedule.clone(),
+            memory_archive_max_age_days: config.memory.archive.max_age_days,
+            memory_archive_summary_max_sources: config.memory.archive.summary_max_sources,
             channel_availability: ChannelAvailability::from_app_config(config),
             dingtalk_accounts: config
                 .channels
@@ -156,6 +163,10 @@ impl Default for BackgroundServiceConfig {
             runtime_drain_batch: 8,
             cron_batch_limit: 64,
             cron_missed_run_policy: MissedRunPolicy::Skip,
+            memory_archive_enabled: true,
+            memory_archive_schedule: "0 0 2 * * *".to_string(),
+            memory_archive_max_age_days: 30,
+            memory_archive_summary_max_sources: 8,
             channel_availability: ChannelAvailability::default(),
             dingtalk_accounts: BTreeMap::new(),
             telegram_configs: BTreeMap::new(),
@@ -268,10 +279,14 @@ impl BackgroundServices {
         Self {
             cron_worker,
             heartbeat_worker,
-            memory_archive_worker: runtime
-                .memory_db
-                .clone()
-                .map(MemoryArchiveWorker::new),
+            memory_archive_worker: if config.memory_archive_enabled {
+                runtime
+                    .memory_db
+                    .clone()
+                    .and_then(|memory_db| MemoryArchiveWorker::new(memory_db, &config).ok())
+            } else {
+                None
+            },
             config,
             runtime_drain_error: Mutex::new(None),
             dispatched_outbound_count: Mutex::new(0),
@@ -384,15 +399,21 @@ struct MemoryArchiveWorker {
 }
 
 impl MemoryArchiveWorker {
-    fn new(memory_db: Arc<dyn MemoryDb>) -> Self {
-        Self {
+    fn new(memory_db: Arc<dyn MemoryDb>, config: &BackgroundServiceConfig) -> Result<Self, String> {
+        Ok(Self {
             memory_db,
-            schedule: ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, MEMORY_ARCHIVE_SCHEDULE)
-                .expect("memory archive schedule should be valid"),
+            schedule: ScheduleSpec::from_kind_expr(
+                CronScheduleKind::Cron,
+                &config.memory_archive_schedule,
+            )
+            .map_err(|err| err.to_string())?,
             timezone: system_timezone_name(),
             last_scheduled_run_ms: Mutex::new(None),
-            archive_config: LongTermArchiveConfig::default(),
-        }
+            archive_config: LongTermArchiveConfig {
+                max_age_days: config.memory_archive_max_age_days,
+                summary_max_sources: config.memory_archive_summary_max_sources,
+            },
+        })
     }
 
     async fn run_tick(&self) -> Result<bool, String> {
@@ -876,7 +897,7 @@ fn render_outbound_markdown(output: &OutboundMessage) -> String {
 mod tests {
     use super::{
         BackgroundDingtalkAccountConfig, BackgroundServiceConfig, ChannelAvailability,
-        FilteringInboundTransport, MEMORY_ARCHIVE_SCHEDULE, dispatch_outbound_message,
+        FilteringInboundTransport, dispatch_outbound_message,
         next_memory_archive_due_ms, resolve_outbound_account_id,
     };
     use klaw_channel::dingtalk::is_session_webhook_session_not_found_error;
@@ -986,7 +1007,7 @@ mod tests {
 
     #[test]
     fn memory_archive_due_ms_claims_today_run_after_starting_late() {
-        let schedule = ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, MEMORY_ARCHIVE_SCHEDULE)
+        let schedule = ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, "0 0 2 * * *")
             .expect("schedule should parse");
 
         let due = next_memory_archive_due_ms(
@@ -1002,7 +1023,7 @@ mod tests {
 
     #[test]
     fn memory_archive_due_ms_only_runs_once_per_day() {
-        let schedule = ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, MEMORY_ARCHIVE_SCHEDULE)
+        let schedule = ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, "0 0 2 * * *")
             .expect("schedule should parse");
 
         let first_due = next_memory_archive_due_ms(
@@ -1056,6 +1077,22 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[test]
+    fn background_service_config_collects_memory_archive_settings() {
+        let mut app_config = AppConfig::default();
+        app_config.memory.archive.enabled = true;
+        app_config.memory.archive.schedule = "0 15 3 * * *".to_string();
+        app_config.memory.archive.max_age_days = 45;
+        app_config.memory.archive.summary_max_sources = 16;
+
+        let config = BackgroundServiceConfig::from_app_config(&app_config);
+
+        assert!(config.memory_archive_enabled);
+        assert_eq!(config.memory_archive_schedule, "0 15 3 * * *");
+        assert_eq!(config.memory_archive_max_age_days, 45);
+        assert_eq!(config.memory_archive_summary_max_sources, 16);
     }
 
     #[test]

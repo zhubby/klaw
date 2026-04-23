@@ -899,6 +899,31 @@ fn default_codex_acp_agent() -> AcpAgentConfig {
 pub struct MemoryConfig {
     #[serde(default)]
     pub embedding: EmbeddingConfig,
+    #[serde(default)]
+    pub archive: MemoryArchiveConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryArchiveConfig {
+    #[serde(default = "default_memory_archive_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_memory_archive_schedule")]
+    pub schedule: String,
+    #[serde(default = "default_memory_archive_max_age_days")]
+    pub max_age_days: i64,
+    #[serde(default = "default_memory_archive_summary_max_sources")]
+    pub summary_max_sources: usize,
+}
+
+impl Default for MemoryArchiveConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_memory_archive_enabled(),
+            schedule: default_memory_archive_schedule(),
+            max_age_days: default_memory_archive_max_age_days(),
+            summary_max_sources: default_memory_archive_summary_max_sources(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -927,6 +952,22 @@ fn default_memory_embedding_provider() -> String {
 
 fn default_memory_embedding_model() -> String {
     "text-embedding-3-small".to_string()
+}
+
+fn default_memory_archive_enabled() -> bool {
+    true
+}
+
+fn default_memory_archive_schedule() -> String {
+    "0 0 2 * * *".to_string()
+}
+
+fn default_memory_archive_max_age_days() -> i64 {
+    30
+}
+
+fn default_memory_archive_summary_max_sources() -> usize {
+    8
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -485,6 +485,7 @@ fn embedding_provider_build_uses_memory_config() {
                 provider: "openai".to_string(),
                 model: "text-embedding-3-small".to_string(),
             },
+            archive: klaw_config::MemoryArchiveConfig::default(),
         },
         ..Default::default()
     };
