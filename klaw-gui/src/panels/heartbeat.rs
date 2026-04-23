@@ -667,6 +667,10 @@ impl PanelRenderer for HeartbeatPanel {
                                     };
                                 }
 
+                                if response.double_clicked() {
+                                    runs_heartbeat_id = Some(job.id.clone());
+                                }
+
                                 response.context_menu(|ui| {
                                     if ui.button(format!("{} Runs", regular::LIST)).clicked() {
                                         runs_heartbeat_id = Some(job.id.clone());
