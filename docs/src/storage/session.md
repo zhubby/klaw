@@ -30,22 +30,22 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `session_key` | TEXT PK | 会话唯一键（主键），格式 `channel:session_id` |
-| `chat_id` | TEXT | 对话 ID |
-| `channel` | TEXT | 来源通道（如 `terminal`、`websocket`、`webhook`） |
-| `title` | TEXT? | 会话标题（可选，通过 `set_session_title` 设置） |
-| `active_session_key` | TEXT? | 活跃子会话键（见路由状态章节） |
-| `model_provider` | TEXT? | 会话级模型提供商（可选） |
-| `model_provider_explicit` | INTEGER | `model_provider` 是否为用户显式选择（0/1） |
-| `model` | TEXT? | 会话级模型名称（可选） |
-| `model_explicit` | INTEGER | `model` 是否为用户显式选择（0/1） |
-| `delivery_metadata_json` | TEXT? | 投递元数据 JSON（可选） |
-| `created_at_ms` | INTEGER | 创建时间（毫秒 epoch） |
-| `updated_at_ms` | INTEGER | 最近更新时间（毫秒 epoch） |
-| `last_message_at_ms` | INTEGER | 最近消息时间（毫秒 epoch） |
-| `turn_count` | INTEGER | 已完成轮次 |
-| `jsonl_path` | TEXT | 对应 JSONL 文件路径（相对或绝对） |
+| `chat_id` | TEXT NOT NULL | 对话 ID |
+| `channel` | TEXT NOT NULL | 来源通道（如 `terminal`、`websocket`、`webhook`） |
+| `title` | TEXT | 会话标题（可选，通过 `set_session_title` 设置） |
+| `active_session_key` | TEXT | 活跃子会话键（见路由状态章节） |
+| `model_provider` | TEXT | 会话级模型提供商（可选） |
+| `model_provider_explicit` | INTEGER NOT NULL DEFAULT 0 | `model_provider` 是否为用户显式选择 |
+| `model` | TEXT | 会话级模型名称（可选） |
+| `model_explicit` | INTEGER NOT NULL DEFAULT 0 | `model` 是否为用户显式选择 |
+| `delivery_metadata_json` | TEXT | 投递元数据 JSON（可选） |
+| `created_at_ms` | INTEGER NOT NULL | 创建时间（毫秒 epoch） |
+| `updated_at_ms` | INTEGER NOT NULL | 最近更新时间（毫秒 epoch） |
+| `last_message_at_ms` | INTEGER NOT NULL | 最近消息时间（毫秒 epoch） |
+| `turn_count` | INTEGER NOT NULL DEFAULT 0 | 已完成轮次 |
+| `jsonl_path` | TEXT NOT NULL | 对应 JSONL 文件路径（相对或绝对） |
 | `compression_last_len` | INTEGER | 压缩状态：上次压缩时的历史长度 |
-| `compression_summary_json` | TEXT? | 压缩状态：摘要 JSON（可选） |
+| `compression_summary_json` | TEXT | 压缩状态：摘要 JSON（可选） |
 
 索引表中与压缩状态相关的两个列（`compression_last_len`、`compression_summary_json`）通过 `SessionCompressionState` 结构体读写，不直接暴露在 `SessionIndex` 中。
 
@@ -327,10 +327,10 @@ session 记忆的 **source of truth** 仍然是 chat JSONL 文件，长期记忆
 
 `SessionStorage` 有两个后端实现，功能对等：
 
-| 后端 | 特性 | 说明 |
-|------|------|------|
-| `SqlxSessionStore`（`sqlx` feature） | 标准 SQLite | 通过 sqlx 异步驱动访问 `klaw.db`，适合本地单进程 |
-| `TursoSessionStore`（`turso` feature） | libSQL / Turso | 支持向量搜索和远程 Turso 连接，适合需要 embedding 的场景 |
+| 后端 | feature | 特性 | 说明 |
+|------|---------|------|------|
+| `SqlxSessionStore` | `sqlx` | 标准 SQLite | 通过 sqlx 异步驱动访问 `klaw.db`，适合本地单进程 |
+| `TursoSessionStore` | `turso` | libSQL / Turso | 支持向量搜索和远程 Turso 连接，适合需要 embedding 的场景 |
 
 两者共享 `jsonl` 模块的 JSONL 读写逻辑，索引操作通过各自的 SQL 驱动执行。
 
