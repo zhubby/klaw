@@ -616,6 +616,10 @@ impl PanelRenderer for CronPanel {
                                     };
                                 }
 
+                                if response.double_clicked() {
+                                    runs_cron_id = Some(job.id.clone());
+                                }
+
                                 response.context_menu(|ui| {
                                     if ui.button(format!("{} Runs", regular::LIST)).clicked() {
                                         runs_cron_id = Some(job.id.clone());
