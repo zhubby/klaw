@@ -4,7 +4,12 @@
 
 ### Changed
 
-- `dingtalk` 在 `stream_output=true` 时，普通文本回复现在会改用“发送普通版互动卡片 + 更新卡片内容”的方式输出打字机流；审批 `ActionCard` 与附件发送保持原有路径，并在卡片流失败时回退到最终 Markdown 回复
+- `dingtalk` 在 `stream_output=true` 且配置 `stream_template_id` 时，普通文本回复现在会改用 AI 卡片模板实例流：通过 `/v1.0/card/instances/createAndDeliver` 创建并投递卡片，再通过 `/v1.0/card/instances` 按快照更新配置的内容字段（默认 `content`）；审批 `ActionCard` 与附件发送保持原有路径，并在 AI 卡片流失败时回退到最终 Markdown 回复
+
+### Fixed
+
+- `dingtalk` AI 卡片流现在会校验 `createAndDeliver` / `update` 返回里的 `result.deliverResults` 明细，不再把“接口返回成功但具体场域投递失败”误判成已送达；同时补充了卡片创建、更新与流式快照刷新的调试日志，便于排查模板/权限/投递目标问题
+- `dingtalk` AI 卡片文本流刷新改为调用钉钉 `/v1.0/card/streaming` 接口，并在最终一帧显式传递 `isFinalize=true`；修复回复内容已经更新但卡片客户端状态始终停留在“处理中”的问题
 
 ## 2026-04-20
 

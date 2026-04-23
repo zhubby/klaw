@@ -22,7 +22,7 @@
 - `ChannelResponse` 现可携带结构化 `attachments`；channel 会按 `archive_id` 或受策略约束的本地绝对路径读取文件，并按渠道能力发送图片/文件出站消息
 - `dingtalk` 入站媒体下载现在优先使用消息体里的 `downloadCode`，仅在缺失或失败时再回退 `pictureDownloadCode`，减少图片附件在钉钉下载接口上返回 `unknownError` 的概率
 - `telegram` 可在 `stream_output=true` 时通过 `sendMessage + editMessageText` 渐进刷新同一条回复；不支持编辑的 channel 则退回完整回复
-- `dingtalk` 现在会在 `stream_output=true` 且输出为普通文本时，改走“发送普通版互动卡片 + 全量更新卡片内容”的打字机流；审批 `ActionCard` 和附件发送保持现有路径
+- `dingtalk` 现在会在 `stream_output=true` 且配置了 `stream_template_id` 时，把普通文本回复改走 AI 卡片模板实例流：先创建并投递卡片实例，再按快照更新配置的内容字段（默认 `content`）；审批 `ActionCard` 和附件发送保持现有路径
 - `telegram` HTTP 客户端默认沿用环境代理设置；若配置 `channels.telegram[].proxy`，则显式覆盖为该代理地址
 - `telegram` 现在可注入共享 `VoiceService`；当收到 `voice` / `audio` 入站媒体时，会在下载与 archive 入库后尝试 STT，并将 transcript 作为真正的 runtime 输入
 

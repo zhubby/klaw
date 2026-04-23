@@ -665,6 +665,8 @@ client_id = "ding-client"
 client_secret = "ding-secret"
 bot_title = "Ops Bot"
 show_reasoning = true
+stream_output = true
+stream_template_id = "template-1.schema"
 allowlist = ["u123", "u456"]
 "#;
 
@@ -676,6 +678,9 @@ allowlist = ["u123", "u456"]
     assert_eq!(account.client_id, "ding-client");
     assert_eq!(account.bot_title, "Ops Bot");
     assert!(account.show_reasoning);
+    assert!(account.stream_output);
+    assert_eq!(account.stream_template_id, "template-1.schema");
+    assert_eq!(account.stream_content_key, "content");
     assert_eq!(
         account.allowlist,
         vec!["u123".to_string(), "u456".to_string()]
@@ -834,6 +839,8 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             bot_title: "Ops".to_string(),
             show_reasoning: false,
             stream_output: false,
+            stream_template_id: String::new(),
+            stream_content_key: "content".to_string(),
             allowlist: vec![],
             proxy: DingtalkProxyConfig::default(),
         },
@@ -845,6 +852,8 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             bot_title: "Ops2".to_string(),
             show_reasoning: false,
             stream_output: false,
+            stream_template_id: String::new(),
+            stream_content_key: "content".to_string(),
             allowlist: vec![],
             proxy: DingtalkProxyConfig::default(),
         },
@@ -865,6 +874,8 @@ fn validate_fails_when_enabled_dingtalk_channel_missing_secret() {
         bot_title: "Ops".to_string(),
         show_reasoning: false,
         stream_output: false,
+        stream_template_id: String::new(),
+        stream_content_key: "content".to_string(),
         allowlist: vec![],
         proxy: DingtalkProxyConfig::default(),
     }];
@@ -884,6 +895,8 @@ fn validate_fails_when_enabled_dingtalk_proxy_missing_url() {
         bot_title: "Ops".to_string(),
         show_reasoning: false,
         stream_output: false,
+        stream_template_id: String::new(),
+        stream_content_key: "content".to_string(),
         allowlist: vec![],
         proxy: DingtalkProxyConfig {
             enabled: true,
@@ -893,6 +906,27 @@ fn validate_fails_when_enabled_dingtalk_proxy_missing_url() {
 
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("channels.dingtalk.proxy.url"));
+}
+
+#[test]
+fn validate_fails_when_streaming_dingtalk_channel_missing_template_id() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.dingtalk = vec![DingtalkConfig {
+        id: "ops".to_string(),
+        enabled: true,
+        client_id: "client-a".to_string(),
+        client_secret: "secret-a".to_string(),
+        bot_title: "Ops".to_string(),
+        show_reasoning: false,
+        stream_output: true,
+        stream_template_id: String::new(),
+        stream_content_key: "content".to_string(),
+        allowlist: vec![],
+        proxy: DingtalkProxyConfig::default(),
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("channels.dingtalk.stream_template_id"));
 }
 
 #[test]
@@ -906,6 +940,8 @@ fn validate_fails_when_enabled_dingtalk_proxy_has_invalid_scheme() {
         bot_title: "Ops".to_string(),
         show_reasoning: false,
         stream_output: false,
+        stream_template_id: String::new(),
+        stream_content_key: "content".to_string(),
         allowlist: vec![],
         proxy: DingtalkProxyConfig {
             enabled: true,
@@ -928,6 +964,8 @@ fn validate_fails_when_dingtalk_local_attachment_allowlist_is_relative() {
         bot_title: "Ops".to_string(),
         show_reasoning: false,
         stream_output: false,
+        stream_template_id: String::new(),
+        stream_content_key: "content".to_string(),
         allowlist: vec![],
         proxy: DingtalkProxyConfig::default(),
     }];

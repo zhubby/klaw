@@ -65,7 +65,7 @@
   - save, cancel, reset-to-original, or reset-to-default in the editor footer
   - expose row context actions for preview, edit, guarded reset-to-default, and delete
 - Provider panel features:
-  - provider/channel editors already preserve the new streaming config fields in the config model, though the current GUI still leaves them at their default `false` values
+  - provider/channel editors preserve streaming config fields, and the channel editor now exposes dingtalk `stream_output` plus conditional `stream_template_id` and `stream_content_key` inputs for AI card template streaming
   - read providers from `config.toml` (`model_provider` + `model_providers`)
   - render providers in a scrollable table that supports both horizontal and vertical overflow
   - show `Config default` and `Runtime active` provider summaries separately so runtime overrides do not masquerade as config changes

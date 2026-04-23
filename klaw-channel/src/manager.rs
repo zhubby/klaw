@@ -860,6 +860,8 @@ mod tests {
             bot_title: format!("{id}-bot"),
             show_reasoning: false,
             stream_output: false,
+            stream_template_id: String::new(),
+            stream_content_key: "content".to_string(),
             allowlist: Vec::new(),
             proxy: Default::default(),
         })

@@ -29,6 +29,8 @@ struct DingtalkForm {
     bot_title: String,
     show_reasoning: bool,
     stream_output: bool,
+    stream_template_id: String,
+    stream_content_key: String,
     allowlist_input: ArrayEditor,
     proxy_enabled: bool,
     proxy_url: String,
@@ -46,6 +48,8 @@ impl DingtalkForm {
             bot_title: default.bot_title,
             show_reasoning: default.show_reasoning,
             stream_output: default.stream_output,
+            stream_template_id: default.stream_template_id,
+            stream_content_key: default.stream_content_key,
             allowlist_input: ArrayEditor::new("Allowlist"),
             proxy_enabled: default.proxy.enabled,
             proxy_url: default.proxy.url,
@@ -62,6 +66,8 @@ impl DingtalkForm {
             bot_title: account.bot_title.clone(),
             show_reasoning: account.show_reasoning,
             stream_output: account.stream_output,
+            stream_template_id: account.stream_template_id.clone(),
+            stream_content_key: account.stream_content_key.clone(),
             allowlist_input: ArrayEditor::from_vec("Allowlist", &account.allowlist),
             proxy_enabled: account.proxy.enabled,
             proxy_url: account.proxy.url.clone(),
@@ -89,6 +95,8 @@ impl DingtalkForm {
             bot_title: self.bot_title.trim().to_string(),
             show_reasoning: self.show_reasoning,
             stream_output: self.stream_output,
+            stream_template_id: self.stream_template_id.trim().to_string(),
+            stream_content_key: self.stream_content_key.trim().to_string(),
             allowlist: self.allowlist_input.to_vec(),
             proxy: DingtalkProxyConfig {
                 enabled: self.proxy_enabled,
@@ -899,6 +907,16 @@ impl ChannelPanel {
                                 ui.checkbox(&mut form.stream_output, "");
                                 ui.end_row();
 
+                                if form.stream_output {
+                                    ui.label("Stream Template ID");
+                                    ui.text_edit_singleline(&mut form.stream_template_id);
+                                    ui.end_row();
+
+                                    ui.label("Stream Content Key");
+                                    ui.text_edit_singleline(&mut form.stream_content_key);
+                                    ui.end_row();
+                                }
+
                                 ui.label("Proxy Enabled");
                                 ui.checkbox(&mut form.proxy_enabled, "");
                                 ui.end_row();
@@ -1436,10 +1454,17 @@ mod tests {
         form.client_id = "cid".to_string();
         form.client_secret = "secret".to_string();
         form.stream_output = true;
+        form.stream_template_id = "template-1.schema".to_string();
+        form.stream_content_key = "content".to_string();
 
         let updated = ChannelPanel::apply_dingtalk_form(config, &form).expect("should apply");
 
         assert!(updated.channels.dingtalk[0].stream_output);
+        assert_eq!(
+            updated.channels.dingtalk[0].stream_template_id,
+            "template-1.schema"
+        );
+        assert_eq!(updated.channels.dingtalk[0].stream_content_key, "content");
     }
 
     #[test]

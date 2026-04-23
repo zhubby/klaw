@@ -5,10 +5,10 @@ use super::{
         supported_dingtalk_file_type,
     },
     client::{
-        DingtalkApiClient, ProactiveChatTargetKind, RobotInteractiveCardTarget,
-        build_proactive_markdown_payload, build_send_robot_interactive_card_payload,
-        build_standard_robot_interactive_card_data, build_update_robot_interactive_card_payload,
-        interactive_card_target, proactive_chat_target_kind,
+        DingtalkApiClient, ProactiveChatTargetKind, build_ai_card_card_data,
+        build_create_and_deliver_ai_card_payload, build_proactive_markdown_payload,
+        build_streaming_ai_card_payload, ensure_ai_card_delivery_success,
+        proactive_chat_target_kind,
     },
     error::{DingtalkApiError, is_session_webhook_session_not_found_error},
     parsing::{
@@ -907,88 +907,174 @@ fn build_proactive_markdown_payload_targets_group_conversation() {
 }
 
 #[test]
-fn interactive_card_target_uses_conversation_for_groups() {
-    let target = interactive_card_target("cid-group-1");
+fn build_ai_card_card_data_uses_default_ai_template_keys() {
+    let payload = build_ai_card_card_data("content", "**hello**");
     assert_eq!(
-        target,
-        RobotInteractiveCardTarget::Group {
-            open_conversation_id: "cid-group-1".to_string()
-        }
-    );
-}
-
-#[test]
-fn interactive_card_target_serializes_private_receiver() {
-    let target = interactive_card_target("staff-1");
-    assert_eq!(
-        target,
-        RobotInteractiveCardTarget::Private {
-            single_chat_receiver: "{\"userId\":\"staff-1\"}".to_string()
-        }
-    );
-}
-
-#[test]
-fn build_standard_robot_interactive_card_data_embeds_markdown_body() {
-    let card_data = build_standard_robot_interactive_card_data("Klaw", "**hello**");
-    let card: serde_json::Value = serde_json::from_str(&card_data).expect("card json");
-    assert_eq!(
-        card.pointer("/header/title/text")
-            .and_then(serde_json::Value::as_str),
-        Some("Klaw")
-    );
-    assert_eq!(
-        card.pointer("/contents/0/type")
-            .and_then(serde_json::Value::as_str),
-        Some("markdown")
-    );
-    assert_eq!(
-        card.pointer("/contents/0/text")
+        payload
+            .pointer("/cardParamMap/content")
             .and_then(serde_json::Value::as_str),
         Some("**hello**")
     );
 }
 
 #[test]
-fn build_send_robot_interactive_card_payload_targets_private_chat() {
-    let payload = build_send_robot_interactive_card_payload(
+fn build_create_and_deliver_ai_card_payload_targets_private_chat() {
+    let payload = build_create_and_deliver_ai_card_payload(
+        "template-1.schema",
         "robot-1",
-        &interactive_card_target("staff-1"),
-        "card-biz-1",
-        "{\"hello\":true}",
+        "staff-1",
+        "track-1",
+        build_ai_card_card_data("content", "hello"),
     );
     assert_eq!(
         payload
             .get("cardTemplateId")
             .and_then(serde_json::Value::as_str),
-        Some("StandardCard")
+        Some("template-1.schema")
     );
     assert_eq!(
-        payload.get("robotCode").and_then(serde_json::Value::as_str),
+        payload
+            .pointer("/imRobotOpenDeliverModel/spaceType")
+            .and_then(serde_json::Value::as_str),
+        Some("IM_ROBOT")
+    );
+    assert_eq!(
+        payload
+            .pointer("/imRobotOpenDeliverModel/robotCode")
+            .and_then(serde_json::Value::as_str),
+        Some("robot-1")
+    );
+    assert_eq!(
+        payload.get("userId").and_then(serde_json::Value::as_str),
+        Some("staff-1")
+    );
+    assert_eq!(
+        payload
+            .get("openSpaceId")
+            .and_then(serde_json::Value::as_str),
+        Some("dtv1.card//IM_ROBOT.staff-1")
+    );
+    assert_eq!(
+        payload
+            .pointer("/imRobotOpenSpaceModel/supportForward")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+}
+
+#[test]
+fn build_create_and_deliver_ai_card_payload_targets_group_chat() {
+    let payload = build_create_and_deliver_ai_card_payload(
+        "template-1.schema",
+        "robot-1",
+        "cid-group-1",
+        "track-1",
+        build_ai_card_card_data("content", "hello"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/imGroupOpenDeliverModel/robotCode")
+            .and_then(serde_json::Value::as_str),
         Some("robot-1")
     );
     assert_eq!(
         payload
-            .get("singleChatReceiver")
+            .get("openSpaceId")
             .and_then(serde_json::Value::as_str),
-        Some("{\"userId\":\"staff-1\"}")
+        Some("dtv1.card//IM_GROUP.cid-group-1")
     );
-    assert_eq!(payload.get("openConversationId"), None);
+    assert!(payload.get("userId").is_none());
+    assert_eq!(
+        payload
+            .pointer("/imGroupOpenSpaceModel/supportForward")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
 }
 
 #[test]
-fn build_update_robot_interactive_card_payload_enables_keyed_update() {
-    let payload = build_update_robot_interactive_card_payload("card-biz-1", "{\"hello\":true}");
+fn build_streaming_ai_card_payload_marks_full_markdown_finalize() {
+    let payload =
+        build_streaming_ai_card_payload("track-1", "guid-1", "content", "**done**", true, false);
     assert_eq!(
-        payload.get("cardBizId").and_then(serde_json::Value::as_str),
-        Some("card-biz-1")
+        payload
+            .get("outTrackId")
+            .and_then(serde_json::Value::as_str),
+        Some("track-1")
+    );
+    assert_eq!(
+        payload.get("guid").and_then(serde_json::Value::as_str),
+        Some("guid-1")
+    );
+    assert_eq!(
+        payload.get("key").and_then(serde_json::Value::as_str),
+        Some("content")
+    );
+    assert_eq!(
+        payload.get("content").and_then(serde_json::Value::as_str),
+        Some("**done**")
+    );
+    assert_eq!(
+        payload.get("isFull").and_then(serde_json::Value::as_bool),
+        Some(true)
     );
     assert_eq!(
         payload
-            .pointer("/updateOptions/updateCardDataByKey")
+            .get("isFinalize")
             .and_then(serde_json::Value::as_bool),
         Some(true)
     );
+    assert_eq!(
+        payload.get("isError").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+}
+
+#[test]
+fn ai_card_delivery_success_rejects_failed_deliver_results() {
+    let body = serde_json::json!({
+        "success": true,
+        "result": {
+            "outTrackId": "track-1",
+            "deliverResults": [
+                {
+                    "spaceType": "IM_ROBOT",
+                    "spaceId": "staff-1",
+                    "success": false,
+                    "errorMsg": "target not reachable"
+                }
+            ]
+        }
+    });
+
+    let err = ensure_ai_card_delivery_success(&body, "createAndDeliver")
+        .expect_err("failed deliver result should be rejected");
+    let err_text = err.to_string();
+    assert!(err_text.contains("createAndDeliver"));
+    assert!(err_text.contains("IM_ROBOT"));
+    assert!(err_text.contains("staff-1"));
+    assert!(err_text.contains("target not reachable"));
+}
+
+#[test]
+fn ai_card_delivery_success_accepts_all_successful_deliver_results() {
+    let body = serde_json::json!({
+        "success": true,
+        "result": {
+            "outTrackId": "track-1",
+            "deliverResults": [
+                {
+                    "spaceType": "IM_GROUP",
+                    "spaceId": "cid-group-1",
+                    "success": true,
+                    "carrierId": "process-query-key"
+                }
+            ]
+        }
+    });
+
+    ensure_ai_card_delivery_success(&body, "createAndDeliver")
+        .expect("successful deliver results should pass");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1004,7 +1090,8 @@ async fn dingtalk_stream_writer_marks_special_cards_without_network_calls() {
         "client-secret".to_string(),
         "robot-1".to_string(),
         "staff-1".to_string(),
-        "Klaw".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
         false,
     );
     let output = ChannelResponse {
@@ -1051,7 +1138,8 @@ async fn dingtalk_stream_writer_falls_back_after_stream_failure() {
         "client-secret".to_string(),
         "robot-1".to_string(),
         "staff-1".to_string(),
-        "Klaw".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
         false,
     );
     let output = ChannelResponse {

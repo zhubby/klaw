@@ -382,6 +382,12 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
         require_non_empty(&account.client_id, "channels.dingtalk.client_id")?;
         require_non_empty(&account.client_secret, "channels.dingtalk.client_secret")?;
         require_non_empty(&account.bot_title, "channels.dingtalk.bot_title")?;
+        if account.stream_output {
+            require_non_empty(
+                &account.stream_template_id,
+                "channels.dingtalk.stream_template_id",
+            )?;
+        }
         if account.proxy.enabled {
             require_non_empty(&account.proxy.url, "channels.dingtalk.proxy.url")?;
             let parsed = url::Url::parse(account.proxy.url.trim()).map_err(|err| {

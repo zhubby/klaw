@@ -350,6 +350,10 @@ pub struct DingtalkConfig {
     #[serde(default)]
     pub stream_output: bool,
     #[serde(default)]
+    pub stream_template_id: String,
+    #[serde(default = "default_dingtalk_stream_content_key")]
+    pub stream_content_key: String,
+    #[serde(default)]
     pub allowlist: Vec<String>,
     #[serde(default)]
     pub proxy: DingtalkProxyConfig,
@@ -365,6 +369,8 @@ impl Default for DingtalkConfig {
             bot_title: default_dingtalk_bot_title(),
             show_reasoning: false,
             stream_output: false,
+            stream_template_id: String::new(),
+            stream_content_key: default_dingtalk_stream_content_key(),
             allowlist: Vec::new(),
             proxy: DingtalkProxyConfig::default(),
         }
@@ -388,6 +394,10 @@ fn default_websocket_stream_output() -> bool {
 
 fn default_dingtalk_bot_title() -> String {
     "Klaw".to_string()
+}
+
+fn default_dingtalk_stream_content_key() -> String {
+    "content".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
