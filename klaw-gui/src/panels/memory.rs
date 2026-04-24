@@ -1,13 +1,14 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::format_timestamp_millis;
+use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, EmbeddingConfig};
 use klaw_memory::{
     LongTermArchiveConfig, LongTermMemoryKind, LongTermMemoryPromptOptions, LongTermMemoryStatus,
-    MemoryError, MemoryRecord, MemoryStats, SqliteMemoryStatsService,
-    archive_stale_long_term_memories, is_summary_record,
+    MemoryError, MemoryRecord, MemoryService, MemoryStats, SqliteMemoryService,
+    SqliteMemoryStatsService, archive_stale_long_term_memories, is_summary_record,
     read_long_term_archived_at, read_long_term_kind, read_long_term_priority,
     read_long_term_status, read_long_term_topic, render_long_term_memory_section,
 };
@@ -23,7 +24,7 @@ use time::{Duration, OffsetDateTime};
 use tokio::runtime::Builder;
 
 const POLL_INTERVAL: StdDuration = StdDuration::from_millis(150);
-const LONG_TERM_TABLE_HEIGHT: f32 = 320.0;
+
 const SESSION_RESULTS_HEIGHT: f32 = 280.0;
 const DIAGNOSTICS_SCOPES_HEIGHT: f32 = 220.0;
 
@@ -205,6 +206,10 @@ struct PendingArchiveRun {
     receiver: Receiver<Result<String, String>>,
 }
 
+struct PendingDelete {
+    receiver: Receiver<Result<bool, String>>,
+}
+
 #[derive(Debug, Clone)]
 struct SessionSearchHit {
     session_key: String,
@@ -240,6 +245,10 @@ pub struct MemoryPanel {
     kind_filter: KindFilter,
     topic_filter: String,
     selected_long_term_id: Option<String>,
+    detail_record_id: Option<String>,
+    delete_confirm_id: Option<String>,
+    delete_request: Option<PendingDelete>,
+    delete_loading: bool,
     session_form: SessionSearchForm,
     session_search_request: Option<PendingSessionSearch>,
     session_search_loading: bool,
@@ -266,6 +275,10 @@ impl Default for MemoryPanel {
             kind_filter: KindFilter::All,
             topic_filter: String::new(),
             selected_long_term_id: None,
+            detail_record_id: None,
+            delete_confirm_id: None,
+            delete_request: None,
+            delete_loading: false,
             session_form: SessionSearchForm::default(),
             session_search_request: None,
             session_search_loading: false,
@@ -617,6 +630,208 @@ impl MemoryPanel {
         notifications.info("Running long-term memory archive...");
     }
 
+    fn begin_delete(&mut self, id: &str, notifications: &mut NotificationCenter) {
+        if self.delete_request.is_some() {
+            notifications.warning("A delete operation is already in progress");
+            return;
+        }
+        self.delete_loading = true;
+        let id = id.to_string();
+        self.delete_request = Some(PendingDelete {
+            receiver: spawn_delete_task(id, self.config.clone()),
+        });
+    }
+
+    fn poll_delete_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.delete_request.take() else {
+            return;
+        };
+        match request.receiver.try_recv() {
+            Ok(result) => {
+                self.delete_loading = false;
+                self.delete_confirm_id = None;
+                match result {
+                    Ok(deleted) => {
+                        if deleted {
+                            notifications.success("Memory record deleted");
+                        } else {
+                            notifications.warning("Record not found or already deleted");
+                        }
+                        self.refresh(notifications);
+                    }
+                    Err(err) => notifications.error(format!("Failed to delete record: {err}")),
+                }
+            }
+            Err(TryRecvError::Empty) => {
+                self.delete_request = Some(request);
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.delete_loading = false;
+                notifications.error("Delete operation closed unexpectedly");
+            }
+        }
+    }
+
+    fn render_detail_window(&mut self, ctx: &egui::Context, overview: &MemoryOverview) {
+        let Some(record_id) = self.detail_record_id.clone() else {
+            return;
+        };
+        let mut close = false;
+
+        let filtered = filter_long_term_records(
+            &overview.long_term_records,
+            self.status_filter,
+            self.kind_filter,
+            &self.topic_filter,
+        );
+        let record = selected_long_term_record(&filtered, Some(record_id.as_str()));
+
+        egui::Window::new(format!(
+            "Memory Detail — {}",
+            &record_id[..8.min(record_id.len())]
+        ))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false)
+        .resizable(false)
+        .fixed_size([560.0, 480.0])
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    match record {
+                        Some(rec) => {
+                            egui::Grid::new("memory-detail-grid")
+                                .num_columns(2)
+                                .spacing([12.0, 6.0])
+                                .show(ui, |ui| {
+                                    ui.strong("ID");
+                                    ui.monospace(&rec.id);
+                                    ui.end_row();
+
+                                    ui.strong("Kind");
+                                    ui.monospace(kind_label(rec));
+                                    ui.end_row();
+
+                                    ui.strong("Status");
+                                    ui.monospace(status_label(rec));
+                                    ui.end_row();
+
+                                    ui.strong("Priority");
+                                    ui.monospace(priority_label(rec));
+                                    ui.end_row();
+
+                                    ui.strong("Topic");
+                                    ui.label(
+                                        read_long_term_topic(rec)
+                                            .unwrap_or_else(|| "-".to_string()),
+                                    );
+                                    ui.end_row();
+
+                                    ui.strong("Pinned");
+                                    ui.monospace(if rec.pinned { "yes" } else { "no" });
+                                    ui.end_row();
+
+                                    ui.strong("Created");
+                                    ui.monospace(format_timestamp_millis(rec.created_at_ms));
+                                    ui.end_row();
+
+                                    ui.strong("Updated");
+                                    ui.monospace(format_timestamp_millis(rec.updated_at_ms));
+                                    ui.end_row();
+
+                                    ui.strong("Archived at");
+                                    ui.monospace(
+                                        read_long_term_archived_at(rec)
+                                            .map(format_timestamp_millis)
+                                            .unwrap_or_else(|| "-".to_string()),
+                                    );
+                                    ui.end_row();
+                                });
+
+                            let governance = governance_summary(rec);
+                            if governance != "-" {
+                                ui.add_space(4.0);
+                                ui.small(
+                                    RichText::new(format!("Governance: {governance}")).strong(),
+                                );
+                            }
+
+                            ui.add_space(8.0);
+                            ui.strong("Content");
+                            ui.add_space(4.0);
+                            let mut content = rec.content.clone();
+                            ui.add(
+                                egui::TextEdit::multiline(&mut content)
+                                    .desired_width(f32::INFINITY)
+                                    .desired_rows(12)
+                                    .interactive(false),
+                            );
+                        }
+                        None => {
+                            ui.label("Record not found or does not match the current filters.");
+                        }
+                    }
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Close").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+        });
+
+        if close {
+            self.detail_record_id = None;
+        }
+    }
+
+    fn render_delete_confirm_window(&mut self, ctx: &egui::Context) {
+        let Some(record_id) = self.delete_confirm_id.clone() else {
+            return;
+        };
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        egui::Window::new("Delete Memory Record")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.set_min_width(320.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Are you sure you want to delete memory record '{}'?",
+                        &record_id[..8.min(record_id.len())]
+                    ))
+                    .strong(),
+                );
+                ui.add_space(4.0);
+                ui.small("This permanently removes the record from the memory database.");
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(egui::Button::new(
+                            RichText::new(format!("{} Delete", regular::TRASH)).color(Color32::RED),
+                        ))
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            self.delete_confirm_id = Some(record_id);
+            // begin_delete will be called from render after we have notifications
+        } else if cancelled {
+            self.delete_confirm_id = None;
+        }
+    }
+
     fn poll_archive_run_request(&mut self, notifications: &mut NotificationCenter) {
         let Some(request) = self.archive_run_request.take() else {
             return;
@@ -688,7 +903,12 @@ impl MemoryPanel {
         });
     }
 
-    fn render_long_term_tab(&mut self, ui: &mut egui::Ui, overview: &MemoryOverview) {
+    fn render_long_term_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+        overview: &MemoryOverview,
+    ) {
         ui.horizontal_wrapped(|ui| {
             egui::ComboBox::from_id_salt("memory-status-filter")
                 .selected_text(self.status_filter.label())
@@ -744,26 +964,39 @@ impl MemoryPanel {
         }
         ui.label(format!("Records: {}", filtered.len()));
 
+        // Collect context menu / double-click actions to apply after the table closure.
+        let mut detail_id = None;
+        let mut delete_id = None;
+
         egui::ScrollArea::vertical()
-            .max_height(LONG_TERM_TABLE_HEIGHT)
+            .max_height(ui.available_height() - 4.0)
             .show(ui, |ui| {
                 let row_height = ui.spacing().interact_size.y;
                 TableBuilder::new(ui)
                     .striped(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .sense(egui::Sense::click())
-                    .column(Column::auto().at_least(90.0))
-                    .column(Column::auto().at_least(110.0))
-                    .column(Column::auto().at_least(120.0))
-                    .column(Column::auto().at_least(60.0))
-                    .column(Column::remainder().at_least(180.0))
-                    .column(Column::auto().at_least(170.0))
+                    .column(Column::auto().at_least(70.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::auto().at_least(70.0))
+                    .column(Column::auto().at_least(70.0))
+                    .column(Column::auto().at_least(100.0))
+                    .column(Column::auto().at_least(50.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::remainder().at_least(200.0))
+                    .column(Column::auto().at_least(130.0))
                     .header(row_height, |mut header| {
+                        header.col(|ui| {
+                            ui.strong("ID");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Kind");
+                        });
                         header.col(|ui| {
                             ui.strong("Status");
                         });
                         header.col(|ui| {
-                            ui.strong("Kind");
+                            ui.strong("Priority");
                         });
                         header.col(|ui| {
                             ui.strong("Topic");
@@ -772,7 +1005,10 @@ impl MemoryPanel {
                             ui.strong("Pin");
                         });
                         header.col(|ui| {
-                            ui.strong("Governance");
+                            ui.strong("Summary");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Content");
                         });
                         header.col(|ui| {
                             ui.strong("Updated");
@@ -784,11 +1020,19 @@ impl MemoryPanel {
                             let is_selected =
                                 self.selected_long_term_id.as_deref() == Some(record.id.as_str());
                             row.set_selected(is_selected);
+
+                            let record_id_short = &record.id[..8.min(record.id.len())];
+                            row.col(|ui| {
+                                ui.monospace(record_id_short);
+                            });
+                            row.col(|ui| {
+                                ui.monospace(kind_label(record));
+                            });
                             row.col(|ui| {
                                 ui.monospace(status_label(record));
                             });
                             row.col(|ui| {
-                                ui.monospace(kind_label(record));
+                                ui.monospace(priority_label(record));
                             });
                             row.col(|ui| {
                                 ui.label(
@@ -799,7 +1043,18 @@ impl MemoryPanel {
                                 ui.monospace(if record.pinned { "yes" } else { "no" });
                             });
                             row.col(|ui| {
-                                ui.small(governance_summary(record));
+                                let label = summary_label(record);
+                                if label == "summary" {
+                                    ui.colored_label(Color32::from_rgb(0x22, 0xC5, 0x5E), label);
+                                } else if label == "source" {
+                                    ui.colored_label(Color32::from_rgb(0xF5, 0x9E, 0x0B), label);
+                                } else {
+                                    ui.monospace(label);
+                                }
+                            });
+                            row.col(|ui| {
+                                let preview = content_preview(record.content.as_str(), 60);
+                                ui.small(preview);
                             });
                             row.col(|ui| {
                                 ui.monospace(format_timestamp_millis(record.updated_at_ms));
@@ -809,43 +1064,49 @@ impl MemoryPanel {
                             if response.clicked() {
                                 self.selected_long_term_id = Some(record.id.clone());
                             }
+                            if response.double_clicked() {
+                                detail_id = Some(record.id.clone());
+                            }
+
+                            let id_for_menu = record.id.clone();
+                            response.context_menu(|ui| {
+                                if ui
+                                    .button(format!("{} Detail", regular::FILE_TEXT))
+                                    .clicked()
+                                {
+                                    detail_id = Some(id_for_menu.clone());
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui
+                                    .add(egui::Button::new(
+                                        RichText::new(format!("{} Delete", regular::TRASH))
+                                            .color(Color32::RED),
+                                    ))
+                                    .clicked()
+                                {
+                                    delete_id = Some(id_for_menu.clone());
+                                    ui.close();
+                                }
+                            });
                         });
                     });
             });
 
-        ui.add_space(10.0);
-        ui.separator();
-        ui.strong("Content");
-        match selected_long_term_record(&filtered, self.selected_long_term_id.as_deref()) {
-            Some(record) => {
-                ui.small(format!(
-                    "ID: {} | kind: {} | priority: {} | status: {} | topic: {} | archived_at: {} | updated: {}",
-                    record.id,
-                    kind_label(record),
-                    priority_label(record),
-                    status_label(record),
-                    read_long_term_topic(record).unwrap_or_else(|| "-".to_string()),
-                    read_long_term_archived_at(record)
-                        .map(format_timestamp_millis)
-                        .unwrap_or_else(|| "-".to_string()),
-                    format_timestamp_millis(record.updated_at_ms)
-                ));
-                let governance = governance_summary(record);
-                if governance != "-" {
-                    ui.small(format!("Governance: {governance}"));
-                }
-                ui.add_space(6.0);
-                let mut content = record.content.clone();
-                ui.add(
-                    egui::TextEdit::multiline(&mut content)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(10)
-                        .interactive(false),
-                );
-            }
-            None => {
-                ui.label("No long-term memory matches the current filters.");
-            }
+        if let Some(id) = detail_id {
+            self.selected_long_term_id = Some(id.clone());
+            self.detail_record_id = Some(id);
+        }
+        if let Some(id) = delete_id {
+            self.delete_confirm_id = Some(id);
+        }
+
+        // If user confirmed delete in the confirm dialog, trigger the delete operation here
+        // where we have access to notifications.
+        if self.delete_confirm_id.is_some() && self.delete_request.is_none() && !self.delete_loading
+        {
+            let id = self.delete_confirm_id.clone().unwrap_or_default();
+            self.begin_delete(&id, notifications);
         }
     }
 
@@ -1065,9 +1326,11 @@ impl PanelRenderer for MemoryPanel {
         self.poll_load_request(notifications);
         self.poll_session_search_request(notifications);
         self.poll_archive_run_request(notifications);
+        self.poll_delete_request(notifications);
         if self.load_request.is_some()
             || self.session_search_request.is_some()
             || self.archive_run_request.is_some()
+            || self.delete_request.is_some()
         {
             ui.ctx().request_repaint_after(POLL_INTERVAL);
         }
@@ -1089,10 +1352,12 @@ impl PanelRenderer for MemoryPanel {
             if ui.button(format!("{} Info", regular::INFO)).clicked() {
                 self.stats_window_open = true;
             }
-            if self.loading || self.archive_run_loading {
+            if self.loading || self.archive_run_loading || self.delete_loading {
                 ui.add(egui::Spinner::new());
                 ui.small(if self.archive_run_loading {
                     "Archiving..."
+                } else if self.delete_loading {
+                    "Deleting..."
                 } else {
                     "Loading..."
                 });
@@ -1112,7 +1377,7 @@ impl PanelRenderer for MemoryPanel {
         ui.separator();
 
         match self.tab {
-            MemoryTab::LongTerm => self.render_long_term_tab(ui, &overview),
+            MemoryTab::LongTerm => self.render_long_term_tab(ui, notifications, &overview),
             MemoryTab::SessionSearch => {
                 self.render_session_search_tab(ui, notifications, &overview)
             }
@@ -1122,6 +1387,12 @@ impl PanelRenderer for MemoryPanel {
         self.render_form_window(ui, notifications);
         if self.stats_window_open {
             self.render_stats_window(ui.ctx(), &overview);
+        }
+        if self.detail_record_id.is_some() {
+            self.render_detail_window(ui.ctx(), &overview);
+        }
+        if self.delete_confirm_id.is_some() {
+            self.render_delete_confirm_window(ui.ctx());
         }
     }
 }
@@ -1270,6 +1541,38 @@ fn count_records_with_status(
         .count()
 }
 
+fn content_preview(content: &str, max_chars: usize) -> String {
+    let trimmed = content.lines().next().unwrap_or_default().trim();
+    if trimmed.chars().count() > max_chars {
+        trimmed.chars().take(max_chars).collect::<String>() + "…"
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn spawn_delete_task(id: String, config: AppConfig) -> Receiver<Result<bool, String>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to build runtime: {err}"))
+            .and_then(|runtime| {
+                runtime.block_on(async move {
+                    let service = SqliteMemoryService::open_default(&config)
+                        .await
+                        .map_err(|err| format!("failed to open memory service: {err}"))?;
+                    service
+                        .delete(&id)
+                        .await
+                        .map_err(|err| format!("delete operation failed: {err}"))
+                })
+            });
+        let _ = tx.send(result);
+    });
+    rx
+}
+
 fn summary_chip(ui: &mut egui::Ui, label: &str, value: String) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.vertical(|ui| {
@@ -1295,6 +1598,16 @@ fn priority_label(record: &MemoryRecord) -> &'static str {
     read_long_term_priority(record)
         .map(|priority| priority.as_str())
         .unwrap_or("-")
+}
+
+fn summary_label(record: &MemoryRecord) -> &'static str {
+    if is_summary_record(record) {
+        "summary"
+    } else if read_string_field(&record.metadata, "archived_by_summary").is_some() {
+        "source"
+    } else {
+        "-"
+    }
 }
 
 fn governance_summary(record: &MemoryRecord) -> String {
@@ -1386,9 +1699,10 @@ fn spawn_archive_run_task(config: LongTermArchiveConfig) -> Receiver<Result<Stri
                     let memory_db = open_default_memory_db()
                         .await
                         .map_err(|err| format!("failed to open memory db: {err}"))?;
-                    let outcome = archive_stale_long_term_memories(std::sync::Arc::new(memory_db), config)
-                        .await
-                        .map_err(|err| format!("archive operation failed: {err}"))?;
+                    let outcome =
+                        archive_stale_long_term_memories(std::sync::Arc::new(memory_db), config)
+                            .await
+                            .map_err(|err| format!("archive operation failed: {err}"))?;
                     Ok(format!(
                         "Archive complete: {} archived, {} summaries updated, {} skipped",
                         outcome.archived_records,
@@ -1799,5 +2113,95 @@ mod tests {
         let options = aggregate_session_key_options(&sessions);
 
         assert_eq!(options, vec!["base-1", "active-1", "base-2"]);
+    }
+
+    #[test]
+    fn content_preview_truncates_ascii_at_max_chars() {
+        let long_text = "This is a fairly long ASCII sentence that exceeds the limit.";
+        let preview = content_preview(long_text, 20);
+        assert_eq!(preview, "This is a fairly lon…");
+        assert!(preview.chars().count() == 21); // 20 chars + ellipsis
+    }
+
+    #[test]
+    fn content_preview_truncates_cjk_without_panicking_on_multibyte_boundary() {
+        // The bug: byte-index slicing inside a 3-byte Chinese char caused panic.
+        // "王" is bytes 58..61 in the original crash string; max_len=60 sliced at byte 60.
+        let cjk_text = "朱霸天陛下吹得舒舒服服，擅长拍马溜须，彩虹屁王者在此";
+        let preview = content_preview(cjk_text, 8);
+        // Should truncate at a char boundary, not crash.
+        assert!(preview.ends_with('…'));
+        assert!(preview.chars().count() == 9); // 8 chars + ellipsis
+        assert_eq!(preview, "朱霸天陛下吹得舒…");
+    }
+
+    #[test]
+    fn content_preview_returns_full_text_when_shorter_than_limit() {
+        let short_text = "Hello";
+        let preview = content_preview(short_text, 60);
+        assert_eq!(preview, "Hello");
+        assert!(!preview.contains('…'));
+    }
+
+    #[test]
+    fn content_preview_uses_first_line_only() {
+        let multiline = "first line\nsecond line\nthird line";
+        let preview = content_preview(multiline, 60);
+        assert_eq!(preview, "first line");
+    }
+
+    #[test]
+    fn summary_label_identifies_summary_record() {
+        let record = MemoryRecord {
+            id: "summary-1".to_string(),
+            scope: "long_term".to_string(),
+            content: "Consolidated summary".to_string(),
+            metadata: serde_json::json!({
+                "summary": true,
+                "source_ids": ["old-1", "old-2"],
+            }),
+            pinned: false,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+
+        assert_eq!(summary_label(&record), "summary");
+    }
+
+    #[test]
+    fn summary_label_identifies_source_record_archived_by_summary() {
+        let record = MemoryRecord {
+            id: "old-1".to_string(),
+            scope: "long_term".to_string(),
+            content: "Original fact".to_string(),
+            metadata: serde_json::json!({
+                "kind": "fact",
+                "status": "archived",
+                "archived_by_summary": "summary-1",
+            }),
+            pinned: false,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+
+        assert_eq!(summary_label(&record), "source");
+    }
+
+    #[test]
+    fn summary_label_returns_dash_for_normal_record() {
+        let record = MemoryRecord {
+            id: "1".to_string(),
+            scope: "long_term".to_string(),
+            content: "Just a regular fact".to_string(),
+            metadata: serde_json::json!({
+                "kind": "fact",
+                "status": "active",
+            }),
+            pinned: false,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+
+        assert_eq!(summary_label(&record), "-");
     }
 }
