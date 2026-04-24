@@ -569,6 +569,7 @@ fn infer_dingtalk_file_type_defaults_to_bin() {
 
 #[test]
 fn supported_dingtalk_file_type_accepts_documented_extensions() {
+    // Documents
     assert_eq!(
         supported_dingtalk_file_type("report.pdf", None),
         Some("pdf")
@@ -582,34 +583,72 @@ fn supported_dingtalk_file_type_accepts_documented_extensions() {
         Some("docx")
     );
     assert_eq!(
+        supported_dingtalk_file_type("report.xls", None),
+        Some("xls")
+    );
+    assert_eq!(
         supported_dingtalk_file_type("report.xlsx", None),
         Some("xlsx")
     );
     assert_eq!(
-        supported_dingtalk_file_type("report.zip", None),
-        Some("zip")
+        supported_dingtalk_file_type("slides.ppt", None),
+        Some("ppt")
     );
     assert_eq!(
-        supported_dingtalk_file_type("report.rar", None),
-        Some("rar")
+        supported_dingtalk_file_type("slides.pptx", None),
+        Some("pptx")
+    );
+    // WPS Office
+    assert_eq!(supported_dingtalk_file_type("memo.wps", None), Some("wps"));
+    assert_eq!(supported_dingtalk_file_type("sheet.et", None), Some("et"));
+    assert_eq!(supported_dingtalk_file_type("show.dps", None), Some("dps"));
+    // Text / data
+    assert_eq!(
+        supported_dingtalk_file_type("notes.txt", Some("text/plain")),
+        Some("txt")
+    );
+    assert_eq!(
+        supported_dingtalk_file_type("data.csv", Some("text/csv")),
+        Some("csv")
+    );
+    // Archives
+    assert_eq!(supported_dingtalk_file_type("pack.zip", None), Some("zip"));
+    assert_eq!(supported_dingtalk_file_type("pack.rar", None), Some("rar"));
+    assert_eq!(supported_dingtalk_file_type("pack.7z", None), Some("7z"));
+    assert_eq!(supported_dingtalk_file_type("pack.tar", None), Some("tar"));
+    // Audio / video (as file messages)
+    assert_eq!(
+        supported_dingtalk_file_type("clip.mp3", Some("audio/mpeg")),
+        Some("mp3")
+    );
+    assert_eq!(
+        supported_dingtalk_file_type("clip.mp4", Some("video/mp4")),
+        Some("mp4")
     );
 }
 
 #[test]
 fn supported_dingtalk_file_type_rejects_other_extensions() {
-    assert_eq!(supported_dingtalk_file_type("slides.pptx", None), None);
+    assert_eq!(supported_dingtalk_file_type("setup.exe", None), None);
     assert_eq!(
-        supported_dingtalk_file_type("notes.txt", Some("text/plain")),
+        supported_dingtalk_file_type("script.py", Some("text/x-python")),
+        None
+    );
+    assert_eq!(
+        supported_dingtalk_file_type("photo.svg", Some("image/svg+xml")),
         None
     );
 }
 
 #[test]
 fn unsupported_file_attachment_markdown_mentions_supported_types() {
-    let markdown = build_unsupported_file_attachment_markdown("slides.pptx", Some("附件如下"));
+    let markdown = build_unsupported_file_attachment_markdown("photo.svg", Some("附件如下"));
     assert!(markdown.contains("附件如下"));
-    assert!(markdown.contains("pdf/doc/docx/xlsx/zip/rar"));
-    assert!(markdown.contains("slides.pptx"));
+    assert!(
+        markdown
+            .contains("pdf/doc/docx/xls/xlsx/ppt/pptx/wps/et/dps/txt/csv/zip/rar/7z/tar/mp3/mp4")
+    );
+    assert!(markdown.contains("photo.svg"));
 }
 
 #[test]

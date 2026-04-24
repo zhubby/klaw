@@ -246,12 +246,29 @@ pub(super) fn supported_dingtalk_file_type(
     mime_type: Option<&str>,
 ) -> Option<&'static str> {
     match infer_dingtalk_file_type(filename, mime_type).as_str() {
+        // Documents
         "pdf" => Some("pdf"),
         "doc" => Some("doc"),
         "docx" => Some("docx"),
+        "xls" => Some("xls"),
         "xlsx" => Some("xlsx"),
+        "ppt" => Some("ppt"),
+        "pptx" => Some("pptx"),
+        // WPS Office
+        "wps" => Some("wps"),
+        "et" => Some("et"),
+        "dps" => Some("dps"),
+        // Text / data
+        "txt" => Some("txt"),
+        "csv" => Some("csv"),
+        // Archives
         "zip" => Some("zip"),
         "rar" => Some("rar"),
+        "7z" => Some("7z"),
+        "tar" => Some("tar"),
+        // Audio / video (as file messages)
+        "mp3" => Some("mp3"),
+        "mp4" => Some("mp4"),
         _ => None,
     }
 }
@@ -265,7 +282,7 @@ pub(super) fn build_unsupported_file_attachment_markdown(
         lines.push(caption.to_string());
     }
     lines.push(format!(
-        "钉钉当前仅支持发送 `pdf/doc/docx/xlsx/zip/rar` 文件，`{}` 无法作为原生文件消息发送。",
+        "钉钉当前仅支持发送 `pdf/doc/docx/xls/xlsx/ppt/pptx/wps/et/dps/txt/csv/zip/rar/7z/tar/mp3/mp4` 文件，`{}` 无法作为原生文件消息发送。",
         filename.trim()
     ));
     lines.join("\n\n")
