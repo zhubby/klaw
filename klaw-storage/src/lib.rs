@@ -7,7 +7,10 @@ mod traits;
 mod types;
 mod util;
 
-pub mod backend;
+#[cfg(feature = "sqlx")]
+pub mod sqlx;
+#[cfg(feature = "turso")]
+pub mod turso;
 
 pub use backup::{
     BackupItem, BackupPlan, BackupProgress, BackupProgressStage, BackupResult, BackupService,
@@ -41,17 +44,17 @@ compile_error!("features `turso` and `sqlx` are mutually exclusive; enable only 
 compile_error!("enable one backend feature: `turso` or `sqlx`");
 
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
-pub type DefaultSessionStore = backend::turso::TursoSessionStore;
+pub type DefaultSessionStore = turso::TursoSessionStore;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
-pub type DefaultSessionStore = backend::sqlx::SqlxSessionStore;
+pub type DefaultSessionStore = sqlx::SqlxSessionStore;
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
-pub type DefaultMemoryDb = backend::turso::TursoMemoryDb;
+pub type DefaultMemoryDb = turso::TursoMemoryDb;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
-pub type DefaultMemoryDb = backend::sqlx::SqlxMemoryDb;
+pub type DefaultMemoryDb = sqlx::SqlxMemoryDb;
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
-pub type DefaultArchiveDb = backend::turso::TursoArchiveDb;
+pub type DefaultArchiveDb = turso::TursoArchiveDb;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
-pub type DefaultArchiveDb = backend::sqlx::SqlxArchiveDb;
+pub type DefaultArchiveDb = sqlx::SqlxArchiveDb;
 
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
 pub async fn open_default_store() -> Result<DefaultSessionStore, StorageError> {
@@ -856,20 +859,20 @@ mod tests {
 
         #[cfg(feature = "turso")]
         {
-            let _db1 = backend::turso::TursoMemoryDb::open(paths.clone())
+            let _db1 = turso::TursoMemoryDb::open(paths.clone())
                 .await
                 .expect("memory db should open");
-            let _db2 = backend::turso::TursoMemoryDb::open(paths)
+            let _db2 = turso::TursoMemoryDb::open(paths)
                 .await
                 .expect("memory db should reopen");
         }
 
         #[cfg(feature = "sqlx")]
         {
-            let _db1 = backend::sqlx::SqlxMemoryDb::open(paths.clone())
+            let _db1 = sqlx::SqlxMemoryDb::open(paths.clone())
                 .await
                 .expect("memory db should open");
-            let _db2 = backend::sqlx::SqlxMemoryDb::open(paths)
+            let _db2 = sqlx::SqlxMemoryDb::open(paths)
                 .await
                 .expect("memory db should reopen");
         }
@@ -884,20 +887,20 @@ mod tests {
 
         #[cfg(feature = "turso")]
         {
-            let _db1 = backend::turso::TursoArchiveDb::open(paths.clone())
+            let _db1 = turso::TursoArchiveDb::open(paths.clone())
                 .await
                 .expect("archive db should open");
-            let _db2 = backend::turso::TursoArchiveDb::open(paths)
+            let _db2 = turso::TursoArchiveDb::open(paths)
                 .await
                 .expect("archive db should reopen");
         }
 
         #[cfg(feature = "sqlx")]
         {
-            let _db1 = backend::sqlx::SqlxArchiveDb::open(paths.clone())
+            let _db1 = sqlx::SqlxArchiveDb::open(paths.clone())
                 .await
                 .expect("archive db should open");
-            let _db2 = backend::sqlx::SqlxArchiveDb::open(paths)
+            let _db2 = sqlx::SqlxArchiveDb::open(paths)
                 .await
                 .expect("archive db should reopen");
         }
