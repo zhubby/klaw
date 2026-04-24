@@ -140,6 +140,7 @@ static LOG_BRIDGE: OnceLock<Mutex<Option<Arc<GuiLogBridge>>>> = OnceLock::new();
 const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 const RUNTIME_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_MCP_RESTART_TIMEOUT: Duration = Duration::from_secs(90);
+const RUNTIME_MEMORY_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(120);
 const LOG_BRIDGE_MAX_CHUNKS: usize = 8_192;
 
 fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
@@ -410,7 +411,7 @@ pub fn request_run_memory_archive_now() -> Result<String, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "memory archive")?
+    recv_response(response_rx, RUNTIME_MEMORY_ARCHIVE_TIMEOUT, "memory archive")?
 }
 
 pub fn begin_run_memory_archive_now_request() -> RuntimeRequestHandle<String> {

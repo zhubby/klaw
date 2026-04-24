@@ -33,6 +33,7 @@ type StdioCronWorker = CronWorker<DefaultSessionStore, FilteringInboundTransport
 type StdioHeartbeatWorker = HeartbeatWorker<DefaultSessionStore, FilteringInboundTransport>;
 const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MEMORY_ARCHIVE_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
+const MEMORY_ARCHIVE_SUMMARY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChannelAvailability {
@@ -498,9 +499,9 @@ impl SummaryGenerator for LlmSummaryGenerator {
                 tool_call_id: None,
             },
         ];
-        let response = self
-            .provider
-            .chat(
+        let response = tokio::time::timeout(
+            MEMORY_ARCHIVE_SUMMARY_TIMEOUT,
+            self.provider.chat(
                 messages,
                 Vec::new(),
                 Some(&self.model),
@@ -521,13 +522,24 @@ impl SummaryGenerator for LlmSummaryGenerator {
                     user: None,
                     service_tier: None,
                 },
+            ),
+        )
+        .await
+        .map_err(|_| {
+            klaw_memory::MemoryError::CapabilityUnavailable(
+                format!(
+                    "LLM summary call timed out after {}s for kind={} topic={}",
+                    MEMORY_ARCHIVE_SUMMARY_TIMEOUT.as_secs(),
+                    group.kind.as_str(),
+                    group.topic.as_deref().unwrap_or("none"),
+                ),
             )
-            .await
-            .map_err(|err| {
-                klaw_memory::MemoryError::CapabilityUnavailable(format!(
-                    "LLM summary call failed: {err}"
-                ))
-            })?;
+        })?
+        .map_err(|err| {
+            klaw_memory::MemoryError::CapabilityUnavailable(format!(
+                "LLM summary call failed: {err}"
+            ))
+        })?;
         let content = response.content.trim().to_string();
         debug!(
             kind = group.kind.as_str(),
