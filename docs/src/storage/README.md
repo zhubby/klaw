@@ -19,10 +19,20 @@ klaw-storage/src/
 ├── paths.rs        # 路径管理（~/.klaw）
 ├── jsonl.rs        # 聊天记录 JSONL 追加写
 ├── util.rs         # 工具函数
-└── backend/
-    ├── mod.rs      # 按 feature 导出后端
-    ├── turso.rs    # libSQL 后端
-    └── sqlx.rs     # SQLx 后端
+├── sqlx/           # SQLx 后端模块
+│   ├── mod.rs      # SQLx 模块导出
+│   ├── core.rs     # 连接、建表、基础数据库实现
+│   ├── session.rs  # SessionStorage 实现
+│   ├── cron.rs     # CronStorage 实现
+│   ├── heartbeat.rs # HeartbeatStorage 实现
+│   └── rows.rs     # SQLx 行类型与转换
+└── turso/          # Turso/libSQL 后端模块
+    ├── mod.rs      # Turso 模块导出
+    ├── core.rs     # 连接、建表、基础数据库实现
+    ├── session.rs  # SessionStorage 实现
+    ├── cron.rs     # CronStorage 实现
+    ├── heartbeat.rs # HeartbeatStorage 实现
+    └── mapping.rs  # Turso 行和值转换
 ```
 
 ## Feature 策略

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-04-24
+
+### Changed
+- reorganized the storage backends into `src/sqlx/` and `src/turso/` module directories so session, cron, heartbeat, and backend-specific mapping code no longer accumulate in two monolithic files
+
+### Fixed
+- sqlx cron lookups now return an explicit not-found storage error when a target cron id does not exist, so missing-id mutation tests pass with the expected domain message
+
 ## 2026-04-14
 
 ### Changed

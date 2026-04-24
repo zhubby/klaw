@@ -33,6 +33,7 @@
 ## Notes
 
 - `DefaultSessionStore` persists session, cron, and heartbeat data
+- backend implementations now live under `src/turso/` and `src/sqlx/`, each split by storage responsibility instead of one large backend file
 - the default Turso-backed session store serializes access through one shared connection to avoid driver-level concurrent-use failures
 - `tmp/` is the dedicated temporary data directory under the Klaw data root
 - session records support Base Session -> Active Session routing

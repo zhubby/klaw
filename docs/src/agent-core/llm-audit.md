@@ -21,7 +21,7 @@ LLM Audit Trail 提供完整的 LLM 请求/响应审计跟踪能力：
 |------|------|------|
 | 数据模型 | `klaw-storage/src/types.rs` | LlmAuditRecord、LlmAuditQuery |
 | 存储接口 | `klaw-storage/src/traits.rs` | SessionStorage 审计方法 |
-| 表结构 | `klaw-storage/src/backend/turso.rs` | llm_audit 表 |
+| 表结构 | `klaw-storage/src/turso/core.rs` | llm_audit 表 |
 | Payload 生成 | `klaw-llm/src/lib.rs` | LlmAuditPayload |
 | Provider 实现 | `klaw-llm/src/providers/openai_compatible.rs` | OpenAI Provider |
 | GUI 面板 | `klaw-gui/src/panels/llm.rs` | LlmPanel |
