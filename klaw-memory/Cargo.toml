@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
+futures-util = { workspace = true }
 klaw-config = { workspace = true }
 klaw-storage = { workspace = true }
 reqwest = { workspace = true }
