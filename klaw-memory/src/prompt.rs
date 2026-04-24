@@ -1,7 +1,6 @@
 use crate::{
-    LongTermMemoryKind, MemoryRecord, effective_long_term_priority,
-    is_inactive_long_term_record, is_summary_record, normalize_long_term_content,
-    read_long_term_kind,
+    LongTermMemoryKind, MemoryRecord, effective_long_term_priority, is_inactive_long_term_record,
+    normalize_long_term_content, read_long_term_kind,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -51,7 +50,7 @@ pub fn render_long_term_memory_section(
     let mut used_chars = 0usize;
 
     for record in &ordered_records {
-        if is_inactive_long_term_record(record) || is_summary_record(record) {
+        if is_inactive_long_term_record(record) {
             continue;
         }
         let content = normalize_long_term_content(&record.content);
@@ -234,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn render_long_term_memory_section_skips_summary_records() {
+    fn render_long_term_memory_section_includes_summary_records() {
         let rendered = render_long_term_memory_section(
             &[
                 record(
@@ -260,7 +259,11 @@ mod tests {
         )
         .expect("section should render");
 
-        assert!(!rendered.contains("Archived summary"));
-        assert!(rendered.contains("Default language is Chinese."));
+        let lines = rendered.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        // Summary record sorts first: same effective priority (Medium for preference),
+        // but higher updated_at_ms (10 > 9).
+        assert!(lines[0].contains("Archived summary for reply_language."));
+        assert!(lines[1].contains("Default language is Chinese."));
     }
 }

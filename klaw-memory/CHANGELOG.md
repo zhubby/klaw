@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-12
+
+### Changed
+
+- 摘要记录（`summary=true`）不再从 system prompt 渲染中被硬排除，改为与普通 active 记录一起参与排序和预算竞争；预算机制（`max_items`、`max_chars`）自然调控摘要的可见性，避免归档后信息从 LLM 视角彻底消失
+- 摘要内容格式从内部日志风格 `"Archived N low-priority memories for {label}: ... | ..."` 改为更自然的 `"Past notes on {label} ({total} entries): ...; ..."`, 不再暴露 "archived" / "low-priority" 等内部分类术语，对 LLM 上下文更友好；分隔符从 `|` 改为 `;`
+
 ## 2026-04-23
 
 ### Added

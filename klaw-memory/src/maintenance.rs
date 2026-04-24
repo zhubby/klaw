@@ -1,9 +1,8 @@
 use crate::{
     LongTermMemoryKind, LongTermMemoryPriority, MemoryError, MemoryRecord, MemoryService,
-    SqliteMemoryService,
-    SqliteMemoryStatsService, UpsertMemoryInput, effective_long_term_priority,
-    is_inactive_long_term_record, is_summary_record, normalize_long_term_content, read_long_term_kind,
-    read_long_term_topic,
+    SqliteMemoryService, SqliteMemoryStatsService, UpsertMemoryInput, effective_long_term_priority,
+    is_inactive_long_term_record, is_summary_record, normalize_long_term_content,
+    read_long_term_kind, read_long_term_topic,
 };
 use klaw_storage::MemoryDb;
 use serde_json::{Map, Value, json};
@@ -113,7 +112,8 @@ pub async fn archive_stale_long_term_memories(
             .cloned()
             .collect::<Vec<_>>();
 
-        let summary_metadata = build_summary_metadata(&group, &source_ids, now, existing_summary.as_ref());
+        let summary_metadata =
+            build_summary_metadata(&group, &source_ids, now, existing_summary.as_ref());
         let summary_content =
             build_summary_content(&group, &source_records, config.summary_max_sources);
 
@@ -167,7 +167,10 @@ fn group_key(record: &MemoryRecord) -> ArchiveGroupKey {
     }
 }
 
-fn merged_source_ids(existing_summary: Option<&MemoryRecord>, candidates: &[MemoryRecord]) -> Vec<String> {
+fn merged_source_ids(
+    existing_summary: Option<&MemoryRecord>,
+    candidates: &[MemoryRecord],
+) -> Vec<String> {
     let mut seen = BTreeSet::new();
     existing_summary
         .into_iter()
@@ -199,7 +202,10 @@ fn build_summary_metadata(
         .and_then(|record| record.metadata.as_object().cloned())
         .unwrap_or_default();
     metadata.insert("kind".to_string(), json!(group.kind.as_str()));
-    metadata.insert("priority".to_string(), json!(LongTermMemoryPriority::Low.as_str()));
+    metadata.insert(
+        "priority".to_string(),
+        json!(LongTermMemoryPriority::Low.as_str()),
+    );
     metadata.insert("status".to_string(), json!("active"));
     metadata.insert("summary".to_string(), json!(true));
     metadata.insert("source_ids".to_string(), json!(source_ids));
@@ -232,22 +238,23 @@ fn build_summary_content(
     snippets.dedup();
 
     let total = snippets.len();
-    let preview = snippets
-        .into_iter()
-        .take(max_sources)
-        .collect::<Vec<_>>();
+    let preview = snippets.into_iter().take(max_sources).collect::<Vec<_>>();
     let more = total.saturating_sub(preview.len());
     let mut content = format!(
-        "Archived {total} low-priority memories for {label}: {}",
-        preview.join(" | ")
+        "Past notes on {label} ({total} entries): {}",
+        preview.join("; ")
     );
     if more > 0 {
-        content.push_str(&format!(" | +{more} more"));
+        content.push_str(&format!("; +{more} more"));
     }
     content
 }
 
-fn archive_metadata(record: &MemoryRecord, archived_at_ms: i64, summary_id: &str) -> Map<String, Value> {
+fn archive_metadata(
+    record: &MemoryRecord,
+    archived_at_ms: i64,
+    summary_id: &str,
+) -> Map<String, Value> {
     let mut metadata = record.metadata.as_object().cloned().unwrap_or_default();
     metadata.insert("status".to_string(), json!("archived"));
     metadata.insert("archived_at".to_string(), json!(archived_at_ms));
