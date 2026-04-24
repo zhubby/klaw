@@ -223,6 +223,7 @@ impl KlawGuiApp {
     }
 
     fn poll_pending_actions(&mut self) {
+        puffin::profile_scope!("poll_pending_runtime_actions");
         let Some(pending) = self.pending_provider_override.as_mut() else {
             return;
         };

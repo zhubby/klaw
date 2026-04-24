@@ -151,6 +151,7 @@ struct RegistryToolExecutor<'a> {
 #[async_trait]
 impl ToolExecutor for RegistryToolExecutor<'_> {
     fn definitions(&self) -> Vec<ToolDefinition> {
+        puffin::profile_function!();
         self.tools
             .list()
             .into_iter()
@@ -814,13 +815,22 @@ impl AgentLoop {
         state = self.transition(state, StateTransitionEvent::ValidationPassed);
         state = self.transition(state, StateTransitionEvent::ContextPrepared);
 
-        let conversation_history = extract_conversation_history(&msg.payload.metadata);
-        let user_media = extract_user_media(&msg.payload);
-        let current_attachments = current_attachment_contexts(&msg.payload.media_references);
-        let user_content = augment_user_content_with_attachment_context(
-            &msg.payload.content,
-            &current_attachments,
-        );
+        let (conversation_history, user_media, current_attachments, user_content) = {
+            puffin::profile_scope!("prepare_execution_input");
+            let conversation_history = extract_conversation_history(&msg.payload.metadata);
+            let user_media = extract_user_media(&msg.payload);
+            let current_attachments = current_attachment_contexts(&msg.payload.media_references);
+            let user_content = augment_user_content_with_attachment_context(
+                &msg.payload.content,
+                &current_attachments,
+            );
+            (
+                conversation_history,
+                user_media,
+                current_attachments,
+                user_content,
+            )
+        };
         if !msg.payload.media_references.is_empty() {
             info!(
                 message_id = %msg.header.message_id,
@@ -905,29 +915,33 @@ impl AgentLoop {
 
         match result {
             Ok(output) => {
-                let request_audits = output
-                    .request_audits
-                    .into_iter()
-                    .map(|record| klaw_agent::AgentRequestAudit {
-                        request_seq: record.request_seq,
-                        payload: normalize_audit_payload_provider(
-                            record.payload,
-                            &resolved_provider_id,
-                        ),
-                    })
-                    .collect::<Vec<_>>();
-                let request_count = request_audits.len().max(output.request_usages.len());
-                let tool_iterations = request_audits
-                    .iter()
-                    .filter(|record| {
-                        record
-                            .payload
-                            .response_body
-                            .as_ref()
-                            .and_then(extract_tool_call_count)
-                            .is_some_and(|count| count > 0)
-                    })
-                    .count();
+                let (request_audits, request_count, tool_iterations) = {
+                    puffin::profile_scope!("normalize_execution_output");
+                    let request_audits = output
+                        .request_audits
+                        .into_iter()
+                        .map(|record| klaw_agent::AgentRequestAudit {
+                            request_seq: record.request_seq,
+                            payload: normalize_audit_payload_provider(
+                                record.payload,
+                                &resolved_provider_id,
+                            ),
+                        })
+                        .collect::<Vec<_>>();
+                    let request_count = request_audits.len().max(output.request_usages.len());
+                    let tool_iterations = request_audits
+                        .iter()
+                        .filter(|record| {
+                            record
+                                .payload
+                                .response_body
+                                .as_ref()
+                                .and_then(extract_tool_call_count)
+                                .is_some_and(|count| count > 0)
+                        })
+                        .count();
+                    (request_audits, request_count, tool_iterations)
+                };
                 record_model_requests(
                     self.telemetry.as_ref(),
                     session_key,

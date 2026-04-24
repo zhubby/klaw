@@ -5,12 +5,14 @@ use std::sync::Arc;
 pub type MarkdownCache = CommonMarkCache;
 
 pub fn text_layouter(ui: &Ui, text: &dyn TextBuffer, wrap_width: f32) -> Arc<Galley> {
+    puffin::profile_function!();
     let mut job = highlight_job(text.as_str());
     job.wrap.max_width = wrap_width;
     ui.fonts_mut(|fonts| fonts.layout_job(job))
 }
 
 pub fn render(ui: &mut Ui, cache: &mut MarkdownCache, markdown: &str) {
+    puffin::profile_function!();
     ui.style_mut().url_in_tooltip = true;
     CommonMarkViewer::new().show(ui, cache, markdown);
 }

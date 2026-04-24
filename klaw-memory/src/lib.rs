@@ -13,8 +13,8 @@ pub use governance::{
     GovernedLongTermWrite, LongTermMemoryKind, LongTermMemoryPriority, LongTermMemoryStatus,
     default_priority_for_kind, effective_priority as effective_long_term_priority,
     govern_long_term_write, is_inactive_long_term_record, is_summary_record,
-    normalize_content as normalize_long_term_content, read_kind as read_long_term_kind,
-    read_archived_at as read_long_term_archived_at,
+    normalize_content as normalize_long_term_content,
+    read_archived_at as read_long_term_archived_at, read_kind as read_long_term_kind,
     read_priority as read_long_term_priority, read_status as read_long_term_status,
     read_topic as read_long_term_topic,
 };

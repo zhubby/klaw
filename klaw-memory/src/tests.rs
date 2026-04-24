@@ -1,9 +1,8 @@
 use crate::{
     EmbeddingProvider, LongTermArchiveConfig, MemorySearchQuery, MemoryService,
-    SqliteMemoryService, SqliteMemoryStatsService, UpsertMemoryInput,
-    archive_stale_long_term_memories, build_embedding_provider_from_config,
+    SqliteMemoryService, SqliteMemoryStatsService, SummaryGenerator, TemplateSummaryGenerator,
+    UpsertMemoryInput, archive_stale_long_term_memories, build_embedding_provider_from_config,
     util::{now_ms, rrf_score},
-    TemplateSummaryGenerator, SummaryGenerator,
 };
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
@@ -236,7 +235,10 @@ async fn archive_stale_long_term_memories_archives_low_priority_records_and_crea
         .iter()
         .filter(|record| {
             matches!(
-                record.metadata.get("status").and_then(serde_json::Value::as_str),
+                record
+                    .metadata
+                    .get("status")
+                    .and_then(serde_json::Value::as_str),
                 Some("archived")
             )
         })
@@ -262,7 +264,10 @@ async fn archive_stale_long_term_memories_archives_low_priority_records_and_crea
     assert_eq!(summary.metadata["status"], "active");
     assert_eq!(summary.metadata["priority"], "low");
     assert_eq!(summary.metadata["topic"], "work_city");
-    assert_eq!(summary.metadata["source_ids"], serde_json::json!(["old-1", "old-2"]));
+    assert_eq!(
+        summary.metadata["source_ids"],
+        serde_json::json!(["old-1", "old-2"])
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
