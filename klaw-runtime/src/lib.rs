@@ -233,7 +233,9 @@ impl ChannelRuntime for SharedChannelRuntime {
     }
 
     async fn on_cron_tick(&self) {
-        self.background.on_cron_tick().await;
+        if self.background.on_cron_tick().await {
+            refresh_runtime_system_prompt(self.runtime.as_ref()).await;
+        }
     }
 
     async fn on_runtime_tick(&self) {

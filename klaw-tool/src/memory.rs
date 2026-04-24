@@ -338,7 +338,7 @@ impl Tool for MemoryTool {
                         },
                         "metadata": {
                             "type": "object",
-                            "description": "Optional structured metadata for this memory. Supported governance fields: `kind` (`identity|preference|project_rule|workflow|fact|constraint`), optional `topic` for conflict replacement, and optional `supersedes` (string or string array). `status` is system-managed and only `active` is accepted on new writes.",
+                            "description": "Optional structured metadata for this memory. Supported governance fields: `kind` (`identity|preference|project_rule|workflow|fact|constraint`), optional `priority` (`high|medium|low`) to override prompt injection order, optional `topic` for conflict replacement, and optional `supersedes` (string or string array). `status` is system-managed and only `active` is accepted on new writes.",
                             "additionalProperties": true
                         },
                         "pinned": {

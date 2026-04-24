@@ -1,12 +1,13 @@
 # Memory 存储
 
-`klaw-memory` 提供长期记忆的 CRUD、混合检索（FTS + vector）、写入治理、prompt 渲染和统计聚合，是 Klaw 记忆系统的核心模块。
+`klaw-memory` 提供长期记忆的 CRUD、混合检索（FTS + vector）、写入治理、自动归档、prompt 渲染和统计聚合，是 Klaw 记忆系统的核心模块。
 
 ## 设计目标
 
 - **事实替换而非日志累积**：长期记忆的写入目标是维护一组稳定、可追溯的事实，而不是简单堆叠每轮对话日志
 - **混合检索最优排序**：同时利用 BM25 全文检索和向量语义检索，通过 RRF 融合取得稳定排名
 - **治理驱动的写入**：长期记忆的 add 操作经过规范化、重复检测和冲突替换后才入库
+- **生命周期归档**：低优先级长期记忆在后台按主题归档，并生成摘要索引保持可追溯性
 - **受控的 prompt 注入**：长期记忆以受预算控制的章节形式注入 system prompt，避免 prompt 膨胀
 - **后端可替换**：同一套 `MemoryService` trait 支持 turso（libSQL）和 sqlx 后端
 
@@ -19,6 +20,7 @@ klaw-memory/src/
 ├── service.rs      # SqliteMemoryService 实现
 ├── provider.rs     # OpenAiEmbeddingProvider、配置工厂
 ├── governance.rs   # 长期记忆写入治理规则
+├── maintenance.rs  # 长期记忆归档与摘要索引
 ├── prompt.rs       # 长期记忆 prompt 渲染
 ├── stats.rs        # SqliteMemoryStatsService、统计聚合
 ├── error.rs        # MemoryError 错误枚举
@@ -39,7 +41,7 @@ klaw-memory/src/
 | `id` | TEXT PK | 记录 ID（UUID v4 或用户指定） |
 | `scope` | TEXT NOT NULL | 作用域（`long_term`、`session:xxx` 等） |
 | `content` | TEXT NOT NULL | 记忆内容 |
-| `metadata_json` | TEXT NOT NULL | 结构化元数据 JSON（`kind`、`status`、`topic`、`supersedes` 等） |
+| `metadata_json` | TEXT NOT NULL | 结构化元数据 JSON（`kind`、`priority`、`status`、`topic`、`supersedes`、`summary`、`source_ids`、`archived_at` 等） |
 | `pinned` | INTEGER NOT NULL DEFAULT 0 | 是否置顶 |
 | `embedding` | BLOB | 向量嵌入（`f32` 数组的小端字节序 blob） |
 | `created_at_ms` | INTEGER NOT NULL | 创建时间（毫秒 epoch） |
@@ -131,7 +133,7 @@ pub trait MemoryService: Send + Sync {
 设计考量：
 
 - `upsert` 使用 `INSERT ... ON CONFLICT DO UPDATE` 实现，新记录自动生成 ID，已有记录按 ID 更新
-- `search` 内部执行 FTS + vector 双通道检索，RRF 融合后再按 `pinned > fused_score > updated_at_ms` 排序
+- `search` 内部执行 FTS + vector 双通道检索，RRF 融合后再按 `pinned > fused_score > updated_at_ms` 排序；`long_term` scope 下会跳过 `archived/rejected/superseded`
 - `delete` 同步清理主表和 FTS 表中的记录
 - `pin` 更新 `pinned` 标记并刷新 `updated_at_ms`
 
@@ -189,6 +191,8 @@ pub async fn new(
 - FTS 行采用"删除旧 + 插入新"策略而非 `INSERT OR REPLACE`，避免 FTS5 内部状态残留
 - embedding 在写入时即时计算，后续检索无需重复调用 API
 - `ON CONFLICT DO UPDATE` 确保同一 ID 的记录只保留一份，metadata 和 embedding 均随内容更新
+- `long_term` 写入治理会规范化 `priority`；若未显式提供，则根据 `kind` 生成默认优先级
+- 自动归档会把低优先级旧记录转为 `archived`，并把 `source_ids` 汇总进 `summary=true` 的摘要记录
 
 ### Search 流程
 
@@ -217,7 +221,20 @@ pub async fn new(
   其中 `RRF_K = 60.0`（经验常数）
 - 双通道命中的记录获得更高分数，单通道命中的记录分数较低
 - 排序优先级：`pinned DESC > fused_score DESC > updated_at_ms DESC`
+- 对 `long_term` scope，`archived/rejected/superseded` 记录会在融合后统一过滤，避免旧事实继续参与候选
 - 最终裁剪到 `limit` 条记录返回
+
+### 自动归档与摘要
+
+`archive_stale_long_term_memories` 负责长期记忆的生命周期整理：
+
+1. 读取 `long_term` 全量记录
+2. 挑出 `priority=low`、active、未 pinned、超过 30 天未更新的旧记录
+3. 按 `kind + topic` 分组
+4. 将原记录更新为 `status=archived`，写入 `archived_at` 与 `archived_by_summary`
+5. 生成或更新 `summary=true` 的摘要索引记录，并维护 `source_ids`
+
+摘要记录保持 `status=active` 以便检索与展示，但 `render_long_term_memory_section` 会主动跳过它们，因此不会污染 runtime 的 `## Memory` 段。
 
 设计考量：
 
@@ -491,6 +508,8 @@ runtime（`klaw-cli/src/runtime/mod.rs`）在每轮构建上下文时：
 3. 拼入 system prompt 的 `Memory` 章节
 
 长期记忆不通过工具检索给模型，而是由 runtime 在每轮开始前自动注入。这避免了模型需要主动搜索长期记忆的不确定性，也确保所有长期记忆在 prompt 中受预算控制。
+
+另外，runtime 背景服务会在 cron tick 期间按系统时区每天凌晨 `2:00` 运行一次长期记忆归档；当归档结果有变更时，会刷新 runtime system prompt，确保后续轮次使用最新的长期记忆视图。
 
 ### 统计面板
 

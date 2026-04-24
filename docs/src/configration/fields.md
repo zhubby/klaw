@@ -1871,6 +1871,58 @@ provider = "openai"
 model = "text-embedding-3-small"
 ```
 
+### `memory.archive.enabled`
+
+**类型**: `boolean`
+**默认值**: `true`
+**必填**: 否
+
+是否启用长期记忆自动归档与摘要。
+
+```toml
+[memory.archive]
+enabled = true
+```
+
+### `memory.archive.schedule`
+
+**类型**: `string`
+**默认值**: `"0 0 2 * * *"`
+**必填**: 条件必填
+
+自动归档的 cron 表达式，按系统时区解释。默认表示每天凌晨 `2:00`。
+
+```toml
+[memory.archive]
+schedule = "0 0 2 * * *"
+```
+
+### `memory.archive.max_age_days`
+
+**类型**: `integer`
+**默认值**: `30`
+**必填**: 否
+
+超过多少天未更新的低优先级长期记忆会进入归档候选集。
+
+```toml
+[memory.archive]
+max_age_days = 30
+```
+
+### `memory.archive.summary_max_sources`
+
+**类型**: `integer`
+**默认值**: `8`
+**必填**: 否
+
+单条归档摘要最多内联多少条来源内容片段。
+
+```toml
+[memory.archive]
+summary_max_sources = 8
+```
+
 ---
 
 ## 语音配置

@@ -33,6 +33,10 @@ fn parse_default_template_succeeds() {
     assert!(!parsed.memory.embedding.enabled);
     assert_eq!(parsed.memory.embedding.provider, "openai");
     assert_eq!(parsed.memory.embedding.model, "text-embedding-3-small");
+    assert!(parsed.memory.archive.enabled);
+    assert_eq!(parsed.memory.archive.schedule, "0 0 2 * * *");
+    assert_eq!(parsed.memory.archive.max_age_days, 30);
+    assert_eq!(parsed.memory.archive.summary_max_sources, 8);
     assert_eq!(
         parsed.tools.shell.blocked_patterns,
         default_shell_blocked_patterns()
@@ -1488,6 +1492,38 @@ fn validate_allows_missing_embedding_provider_when_disabled() {
     cfg.memory.embedding.provider = String::new();
     cfg.memory.embedding.model = String::new();
     validate(&cfg).expect("should be valid when embedding disabled");
+}
+
+#[test]
+fn validate_fails_when_memory_archive_schedule_missing() {
+    let mut cfg = AppConfig::default();
+    cfg.memory.archive.schedule = String::new();
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("memory.archive.schedule"));
+}
+
+#[test]
+fn validate_fails_when_memory_archive_schedule_invalid() {
+    let mut cfg = AppConfig::default();
+    cfg.memory.archive.schedule = "not-a-cron".to_string();
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("memory.archive.schedule"));
+}
+
+#[test]
+fn validate_fails_when_memory_archive_max_age_days_is_zero() {
+    let mut cfg = AppConfig::default();
+    cfg.memory.archive.max_age_days = 0;
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("memory.archive.max_age_days"));
+}
+
+#[test]
+fn validate_fails_when_memory_archive_summary_max_sources_is_zero() {
+    let mut cfg = AppConfig::default();
+    cfg.memory.archive.summary_max_sources = 0;
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("memory.archive.summary_max_sources"));
 }
 
 #[test]

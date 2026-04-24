@@ -4196,6 +4196,7 @@ dependencies = [
 name = "klaw-config"
 version = "0.14.1"
 dependencies = [
+ "cron",
  "humantime",
  "klaw-util",
  "serde",

@@ -1,6 +1,7 @@
 use crate::{
-    LongTermMemoryKind, LongTermMemoryStatus, MemoryRecord, normalize_long_term_content,
-    read_long_term_kind, read_long_term_status,
+    LongTermMemoryKind, MemoryRecord, effective_long_term_priority,
+    is_inactive_long_term_record, is_summary_record, normalize_long_term_content,
+    read_long_term_kind,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -34,8 +35,10 @@ pub fn render_long_term_memory_section(
                 .unwrap_or(LongTermMemoryKind::Fact)
                 .priority()
         };
+        let prompt_pri = |record: &MemoryRecord| effective_long_term_priority(record).rank();
         b.pinned
             .cmp(&a.pinned)
+            .then_with(|| prompt_pri(b).cmp(&prompt_pri(a)))
             .then_with(|| kind_pri(b).cmp(&kind_pri(a)))
             .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
             .then_with(|| a.id.cmp(&b.id))
@@ -48,7 +51,7 @@ pub fn render_long_term_memory_section(
     let mut used_chars = 0usize;
 
     for record in &ordered_records {
-        if is_inactive(record) {
+        if is_inactive_long_term_record(record) || is_summary_record(record) {
             continue;
         }
         let content = normalize_long_term_content(&record.content);
@@ -82,17 +85,6 @@ pub fn render_long_term_memory_section(
     }
 
     (!lines.is_empty()).then(|| lines.join("\n"))
-}
-
-fn is_inactive(record: &MemoryRecord) -> bool {
-    matches!(
-        read_long_term_status(record),
-        Some(
-            LongTermMemoryStatus::Archived
-                | LongTermMemoryStatus::Rejected
-                | LongTermMemoryStatus::Superseded
-        )
-    )
 }
 
 fn kind_label(metadata: &Value) -> Option<String> {
@@ -211,5 +203,64 @@ mod tests {
         assert!(!rendered.contains("Outdated memory"));
         assert!(rendered.contains("A very long memory item"));
         assert!(rendered.contains("..."));
+    }
+
+    #[test]
+    fn render_long_term_memory_section_prioritizes_explicit_priority_over_kind() {
+        let rendered = render_long_term_memory_section(
+            &[
+                record(
+                    "1",
+                    "Use concise replies.",
+                    json!({"kind": "project_rule", "priority": "low"}),
+                    false,
+                    10,
+                ),
+                record(
+                    "2",
+                    "I live in Shanghai.",
+                    json!({"kind": "fact", "priority": "high"}),
+                    false,
+                    9,
+                ),
+            ],
+            &LongTermMemoryPromptOptions::default(),
+        )
+        .expect("section should render");
+
+        let lines = rendered.lines().collect::<Vec<_>>();
+        assert_eq!(lines[0], "- [fact] I live in Shanghai.");
+        assert_eq!(lines[1], "- [project_rule] Use concise replies.");
+    }
+
+    #[test]
+    fn render_long_term_memory_section_skips_summary_records() {
+        let rendered = render_long_term_memory_section(
+            &[
+                record(
+                    "1",
+                    "Archived summary for reply_language.",
+                    json!({
+                        "kind": "preference",
+                        "status": "active",
+                        "summary": true,
+                    }),
+                    false,
+                    10,
+                ),
+                record(
+                    "2",
+                    "Default language is Chinese.",
+                    json!({"kind": "preference", "status": "active"}),
+                    false,
+                    9,
+                ),
+            ],
+            &LongTermMemoryPromptOptions::default(),
+        )
+        .expect("section should render");
+
+        assert!(!rendered.contains("Archived summary"));
+        assert!(rendered.contains("Default language is Chinese."));
     }
 }

@@ -10,15 +10,17 @@ use klaw_core::{
     DeliveryMode, Envelope, InMemoryTransport, InboundMessage, MessageTransport, OutboundMessage,
     Subscription, TransportAckHandle, TransportError,
 };
-use klaw_cron::{CronWorker, CronWorkerConfig, MissedRunPolicy};
+use klaw_cron::{CronScheduleKind, CronWorker, CronWorkerConfig, MissedRunPolicy, ScheduleSpec};
 use klaw_gateway::{GatewayWebsocketServerFrame, OutboundEvent};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig, should_suppress_output};
-use klaw_storage::{ChatRecord, DefaultSessionStore, SessionStorage};
+use klaw_memory::{LongTermArchiveConfig, archive_stale_long_term_memories};
+use klaw_storage::{ChatRecord, DefaultSessionStore, MemoryDb, SessionStorage};
+use klaw_util::system_timezone_name;
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
     io,
-    sync::{Mutex, mpsc},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::Duration,
     time::SystemTime,
@@ -29,6 +31,7 @@ use tracing::{debug, warn};
 type StdioCronWorker = CronWorker<DefaultSessionStore, FilteringInboundTransport>;
 type StdioHeartbeatWorker = HeartbeatWorker<DefaultSessionStore, FilteringInboundTransport>;
 const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
+const MEMORY_ARCHIVE_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChannelAvailability {
@@ -98,6 +101,10 @@ pub struct BackgroundServiceConfig {
     pub runtime_drain_batch: usize,
     pub cron_batch_limit: i64,
     pub cron_missed_run_policy: MissedRunPolicy,
+    pub memory_archive_enabled: bool,
+    pub memory_archive_schedule: String,
+    pub memory_archive_max_age_days: i64,
+    pub memory_archive_summary_max_sources: usize,
     channel_availability: ChannelAvailability,
     pub dingtalk_accounts: BTreeMap<String, BackgroundDingtalkAccountConfig>,
     pub telegram_configs: BTreeMap<String, klaw_config::TelegramConfig>,
@@ -114,6 +121,10 @@ impl BackgroundServiceConfig {
                 CronMissedRunPolicy::Skip => MissedRunPolicy::Skip,
                 CronMissedRunPolicy::CatchUp => MissedRunPolicy::CatchUp,
             },
+            memory_archive_enabled: config.memory.archive.enabled,
+            memory_archive_schedule: config.memory.archive.schedule.clone(),
+            memory_archive_max_age_days: config.memory.archive.max_age_days,
+            memory_archive_summary_max_sources: config.memory.archive.summary_max_sources,
             channel_availability: ChannelAvailability::from_app_config(config),
             dingtalk_accounts: config
                 .channels
@@ -152,6 +163,10 @@ impl Default for BackgroundServiceConfig {
             runtime_drain_batch: 8,
             cron_batch_limit: 64,
             cron_missed_run_policy: MissedRunPolicy::Skip,
+            memory_archive_enabled: true,
+            memory_archive_schedule: "0 0 2 * * *".to_string(),
+            memory_archive_max_age_days: 30,
+            memory_archive_summary_max_sources: 8,
             channel_availability: ChannelAvailability::default(),
             dingtalk_accounts: BTreeMap::new(),
             telegram_configs: BTreeMap::new(),
@@ -226,6 +241,7 @@ impl MessageTransport<InboundMessage> for FilteringInboundTransport {
 pub struct BackgroundServices {
     cron_worker: StdioCronWorker,
     heartbeat_worker: StdioHeartbeatWorker,
+    memory_archive_worker: Option<MemoryArchiveWorker>,
     config: BackgroundServiceConfig,
     runtime_drain_error: Mutex<Option<String>>,
     dispatched_outbound_count: Mutex<usize>,
@@ -263,6 +279,14 @@ impl BackgroundServices {
         Self {
             cron_worker,
             heartbeat_worker,
+            memory_archive_worker: if config.memory_archive_enabled {
+                runtime
+                    .memory_db
+                    .clone()
+                    .and_then(|memory_db| MemoryArchiveWorker::new(memory_db, &config).ok())
+            } else {
+                None
+            },
             config,
             runtime_drain_error: Mutex::new(None),
             dispatched_outbound_count: Mutex::new(0),
@@ -278,13 +302,25 @@ impl BackgroundServices {
         self.config.runtime_tick_interval
     }
 
-    pub async fn on_cron_tick(&self) {
+    pub async fn on_cron_tick(&self) -> bool {
+        let mut memory_changed = false;
         if let Err(err) = self.cron_worker.run_tick().await {
             warn!(error = %err, "cron tick failed");
         }
         if let Err(err) = self.heartbeat_worker.run_tick().await {
             warn!(error = %err, "heartbeat tick failed");
         }
+        if let Some(worker) = &self.memory_archive_worker {
+            match worker.run_tick().await {
+                Ok(changed) => {
+                    memory_changed = changed;
+                }
+                Err(err) => {
+                    warn!(error = %err, "memory archive tick failed");
+                }
+            }
+        }
+        memory_changed
     }
 
     pub async fn run_cron_now(&self, cron_id: &str) -> Result<String, String> {
@@ -352,6 +388,86 @@ impl BackgroundServices {
         *guard = messages.len();
         Ok(())
     }
+}
+
+struct MemoryArchiveWorker {
+    memory_db: Arc<dyn MemoryDb>,
+    schedule: ScheduleSpec,
+    timezone: String,
+    last_scheduled_run_ms: Mutex<Option<i64>>,
+    archive_config: LongTermArchiveConfig,
+}
+
+impl MemoryArchiveWorker {
+    fn new(memory_db: Arc<dyn MemoryDb>, config: &BackgroundServiceConfig) -> Result<Self, String> {
+        Ok(Self {
+            memory_db,
+            schedule: ScheduleSpec::from_kind_expr(
+                CronScheduleKind::Cron,
+                &config.memory_archive_schedule,
+            )
+            .map_err(|err| err.to_string())?,
+            timezone: system_timezone_name(),
+            last_scheduled_run_ms: Mutex::new(None),
+            archive_config: LongTermArchiveConfig {
+                max_age_days: config.memory_archive_max_age_days,
+                summary_max_sources: config.memory_archive_summary_max_sources,
+            },
+        })
+    }
+
+    async fn run_tick(&self) -> Result<bool, String> {
+        let now_ms = current_time_ms();
+        let scheduled_run_ms = {
+            let mut last_scheduled = self
+                .last_scheduled_run_ms
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(next_due) = next_memory_archive_due_ms(
+                &self.schedule,
+                &self.timezone,
+                *last_scheduled,
+                now_ms,
+            )
+            .map_err(|err| err.to_string())?
+            else {
+                return Ok(false);
+            };
+            *last_scheduled = Some(next_due);
+            next_due
+        };
+
+        let outcome = archive_stale_long_term_memories(self.memory_db.clone(), self.archive_config)
+            .await
+            .map_err(|err| err.to_string())?;
+        debug!(
+            scheduled_run_ms,
+            archived_records = outcome.archived_records,
+            summary_records_upserted = outcome.summary_records_upserted,
+            skipped_records = outcome.skipped_records,
+            "memory archive tick completed"
+        );
+        Ok(outcome.archived_records > 0 || outcome.summary_records_upserted > 0)
+    }
+}
+
+fn next_memory_archive_due_ms(
+    schedule: &ScheduleSpec,
+    timezone: &str,
+    last_scheduled_run_ms: Option<i64>,
+    now_ms: i64,
+) -> Result<Option<i64>, klaw_cron::CronError> {
+    let anchor_ms =
+        last_scheduled_run_ms.unwrap_or_else(|| now_ms.saturating_sub(MEMORY_ARCHIVE_LOOKBACK_MS));
+    let next_due_ms = schedule.next_run_after_ms_in_timezone(anchor_ms, timezone)?;
+    Ok((now_ms >= next_due_ms).then_some(next_due_ms))
+}
+
+fn current_time_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 fn spawn_outbound_dispatcher(
@@ -781,7 +897,8 @@ fn render_outbound_markdown(output: &OutboundMessage) -> String {
 mod tests {
     use super::{
         BackgroundDingtalkAccountConfig, BackgroundServiceConfig, ChannelAvailability,
-        FilteringInboundTransport, dispatch_outbound_message, resolve_outbound_account_id,
+        FilteringInboundTransport, dispatch_outbound_message,
+        next_memory_archive_due_ms, resolve_outbound_account_id,
     };
     use klaw_channel::dingtalk::is_session_webhook_session_not_found_error;
     use klaw_config::{AppConfig, DingtalkConfig};
@@ -789,6 +906,7 @@ mod tests {
         Envelope, EnvelopeHeader, InMemoryTransport, InboundMessage, MessageTopic,
         MessageTransport, OutboundMessage,
     };
+    use klaw_cron::{CronScheduleKind, ScheduleSpec};
     use klaw_gateway::GatewayWebsocketBroadcaster;
     use klaw_session::{SessionManager, SqliteSessionManager};
     use klaw_storage::{DefaultSessionStore, StoragePaths};
@@ -888,6 +1006,46 @@ mod tests {
     }
 
     #[test]
+    fn memory_archive_due_ms_claims_today_run_after_starting_late() {
+        let schedule = ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, "0 0 2 * * *")
+            .expect("schedule should parse");
+
+        let due = next_memory_archive_due_ms(
+            &schedule,
+            "Asia/Shanghai",
+            None,
+            68_400_000,
+        )
+        .expect("due calculation should succeed");
+
+        assert_eq!(due, Some(64_800_000));
+    }
+
+    #[test]
+    fn memory_archive_due_ms_only_runs_once_per_day() {
+        let schedule = ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, "0 0 2 * * *")
+            .expect("schedule should parse");
+
+        let first_due = next_memory_archive_due_ms(
+            &schedule,
+            "Asia/Shanghai",
+            None,
+            68_400_000,
+        )
+        .expect("first due calculation should succeed");
+        assert_eq!(first_due, Some(64_800_000));
+
+        let second_due = next_memory_archive_due_ms(
+            &schedule,
+            "Asia/Shanghai",
+            first_due,
+            72_000_000,
+        )
+        .expect("second due calculation should succeed");
+        assert_eq!(second_due, None);
+    }
+
+    #[test]
     fn background_service_config_collects_dingtalk_accounts() {
         let config = BackgroundServiceConfig::from_app_config(&AppConfig {
             channels: klaw_config::ChannelsConfig {
@@ -919,6 +1077,22 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[test]
+    fn background_service_config_collects_memory_archive_settings() {
+        let mut app_config = AppConfig::default();
+        app_config.memory.archive.enabled = true;
+        app_config.memory.archive.schedule = "0 15 3 * * *".to_string();
+        app_config.memory.archive.max_age_days = 45;
+        app_config.memory.archive.summary_max_sources = 16;
+
+        let config = BackgroundServiceConfig::from_app_config(&app_config);
+
+        assert!(config.memory_archive_enabled);
+        assert_eq!(config.memory_archive_schedule, "0 15 3 * * *");
+        assert_eq!(config.memory_archive_max_age_days, 45);
+        assert_eq!(config.memory_archive_summary_max_sources, 16);
     }
 
     #[test]

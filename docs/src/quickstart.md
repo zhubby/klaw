@@ -148,8 +148,14 @@ search_limit = 8
 use_vector = true
 
 [memory.embedding]
+enabled = true
 provider = "openai"
 model = "text-embedding-3-small"
+
+[memory.archive]
+schedule = "0 0 2 * * *"
+max_age_days = 30
+summary_max_sources = 8
 ```
 
 ### 配置 Skills

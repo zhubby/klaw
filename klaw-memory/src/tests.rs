@@ -1,6 +1,7 @@
 use crate::{
-    EmbeddingProvider, MemorySearchQuery, MemoryService, SqliteMemoryService,
-    SqliteMemoryStatsService, UpsertMemoryInput, build_embedding_provider_from_config,
+    EmbeddingProvider, LongTermArchiveConfig, MemorySearchQuery, MemoryService,
+    SqliteMemoryService, SqliteMemoryStatsService, UpsertMemoryInput,
+    archive_stale_long_term_memories, build_embedding_provider_from_config,
     util::{now_ms, rrf_score},
 };
 use async_trait::async_trait;
@@ -99,6 +100,239 @@ async fn fts_search_returns_hits_without_vector() {
 
     assert!(!hits.is_empty());
     assert!(hits[0].record.content.contains("E_CONNRESET"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn search_skips_inactive_long_term_records() {
+    let db = create_db().await;
+    let service = SqliteMemoryService::new(db, Some(Arc::new(MockEmbeddingProvider)))
+        .await
+        .expect("service should init");
+
+    let _ = service
+        .upsert(UpsertMemoryInput {
+            id: Some("m-active".to_string()),
+            scope: "long_term".to_string(),
+            content: "Default reply language is Chinese.".to_string(),
+            metadata: serde_json::json!({
+                "kind": "preference",
+                "status": "active",
+            }),
+            pinned: false,
+        })
+        .await
+        .expect("active upsert should work");
+
+    let _ = service
+        .upsert(UpsertMemoryInput {
+            id: Some("m-archived".to_string()),
+            scope: "long_term".to_string(),
+            content: "Default reply language is Chinese (old).".to_string(),
+            metadata: serde_json::json!({
+                "kind": "preference",
+                "status": "archived",
+            }),
+            pinned: false,
+        })
+        .await
+        .expect("archived upsert should work");
+
+    let hits = service
+        .search(MemorySearchQuery {
+            scope: Some("long_term".to_string()),
+            text: "reply language".to_string(),
+            use_vector: false,
+            limit: 10,
+            ..MemorySearchQuery::default()
+        })
+        .await
+        .expect("search should work");
+
+    let ids = hits
+        .iter()
+        .map(|hit| hit.record.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["m-active"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn archive_stale_long_term_memories_archives_low_priority_records_and_creates_summary() {
+    let db = create_db().await;
+    let service = SqliteMemoryService::new(db.clone(), Some(Arc::new(MockEmbeddingProvider)))
+        .await
+        .expect("service should init");
+    let now = now_ms();
+    let forty_days_ms = 40_i64 * 24 * 60 * 60 * 1000;
+
+    let _ = service
+        .upsert(UpsertMemoryInput {
+            id: Some("old-1".to_string()),
+            scope: "long_term".to_string(),
+            content: "Worked from Beijing office.".to_string(),
+            metadata: serde_json::json!({
+                "kind": "fact",
+                "priority": "low",
+                "topic": "work_city",
+                "status": "active",
+            }),
+            pinned: false,
+        })
+        .await
+        .expect("first record should upsert");
+    let _ = service
+        .upsert(UpsertMemoryInput {
+            id: Some("old-2".to_string()),
+            scope: "long_term".to_string(),
+            content: "Moved to Shenzhen for work.".to_string(),
+            metadata: serde_json::json!({
+                "kind": "fact",
+                "priority": "low",
+                "topic": "work_city",
+                "status": "active",
+            }),
+            pinned: false,
+        })
+        .await
+        .expect("second record should upsert");
+
+    for id in ["old-1", "old-2"] {
+        let _ = db
+            .execute(
+                "UPDATE memories SET updated_at_ms = ?1, created_at_ms = ?1 WHERE id = ?2",
+                &[
+                    klaw_storage::DbValue::Integer(now - forty_days_ms),
+                    klaw_storage::DbValue::Text(id.to_string()),
+                ],
+            )
+            .await
+            .expect("timestamps should update");
+    }
+
+    let outcome = archive_stale_long_term_memories(
+        db.clone(),
+        LongTermArchiveConfig {
+            max_age_days: 30,
+            summary_max_sources: 8,
+        },
+    )
+    .await
+    .expect("archive should succeed");
+
+    assert_eq!(outcome.archived_records, 2);
+    assert_eq!(outcome.summary_records_upserted, 1);
+
+    let records = SqliteMemoryStatsService::new(db)
+        .list_scope_records("long_term")
+        .await
+        .expect("records should load");
+
+    let archived = records
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.metadata.get("status").and_then(serde_json::Value::as_str),
+                Some("archived")
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(archived.len(), 2);
+    assert!(archived.iter().all(|record| {
+        record
+            .metadata
+            .get("archived_at")
+            .and_then(serde_json::Value::as_i64)
+            .is_some()
+    }));
+    let summary = records
+        .iter()
+        .find(|record| {
+            record
+                .metadata
+                .get("summary")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        })
+        .expect("summary record should exist");
+    assert_eq!(summary.metadata["status"], "active");
+    assert_eq!(summary.metadata["priority"], "low");
+    assert_eq!(summary.metadata["topic"], "work_city");
+    assert_eq!(summary.metadata["source_ids"], serde_json::json!(["old-1", "old-2"]));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn archive_stale_long_term_memories_reuses_existing_summary_for_same_topic() {
+    let db = create_db().await;
+    let service = SqliteMemoryService::new(db.clone(), Some(Arc::new(MockEmbeddingProvider)))
+        .await
+        .expect("service should init");
+    let now = now_ms();
+    let forty_days_ms = 40_i64 * 24 * 60 * 60 * 1000;
+
+    let _ = service
+        .upsert(UpsertMemoryInput {
+            id: Some("summary-1".to_string()),
+            scope: "long_term".to_string(),
+            content: "Archived summary for work_city.".to_string(),
+            metadata: serde_json::json!({
+                "kind": "fact",
+                "priority": "low",
+                "topic": "work_city",
+                "status": "active",
+                "summary": true,
+                "source_ids": ["old-1"],
+            }),
+            pinned: false,
+        })
+        .await
+        .expect("summary should upsert");
+    let _ = service
+        .upsert(UpsertMemoryInput {
+            id: Some("old-2".to_string()),
+            scope: "long_term".to_string(),
+            content: "Moved to Shenzhen for work.".to_string(),
+            metadata: serde_json::json!({
+                "kind": "fact",
+                "priority": "low",
+                "topic": "work_city",
+                "status": "active",
+            }),
+            pinned: false,
+        })
+        .await
+        .expect("record should upsert");
+    let _ = db
+        .execute(
+            "UPDATE memories SET updated_at_ms = ?1, created_at_ms = ?1 WHERE id = ?2",
+            &[
+                klaw_storage::DbValue::Integer(now - forty_days_ms),
+                klaw_storage::DbValue::Text("old-2".to_string()),
+            ],
+        )
+        .await
+        .expect("timestamps should update");
+
+    let outcome = archive_stale_long_term_memories(
+        db.clone(),
+        LongTermArchiveConfig {
+            max_age_days: 30,
+            summary_max_sources: 8,
+        },
+    )
+    .await
+    .expect("archive should succeed");
+
+    assert_eq!(outcome.archived_records, 1);
+    assert_eq!(outcome.summary_records_upserted, 1);
+
+    let summary = service
+        .get("summary-1")
+        .await
+        .expect("summary lookup should work")
+        .expect("summary should exist");
+    assert_eq!(
+        summary.metadata["source_ids"],
+        serde_json::json!(["old-1", "old-2"])
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -251,6 +485,7 @@ fn embedding_provider_build_uses_memory_config() {
                 provider: "openai".to_string(),
                 model: "text-embedding-3-small".to_string(),
             },
+            archive: klaw_config::MemoryArchiveConfig::default(),
         },
         ..Default::default()
     };
