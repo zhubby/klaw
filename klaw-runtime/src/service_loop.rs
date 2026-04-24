@@ -347,6 +347,13 @@ impl BackgroundServices {
             .map_err(|err| err.to_string())
     }
 
+    pub async fn run_memory_archive_now(&self) -> Result<String, String> {
+        match &self.memory_archive_worker {
+            Some(worker) => worker.run_now().await,
+            None => Err("memory archive worker is not enabled".to_string()),
+        }
+    }
+
     pub async fn on_runtime_tick(&self, runtime: &RuntimeBundle) {
         if let Err(err) = drain_runtime_queue(runtime, self.config.runtime_drain_batch).await {
             let message = err.to_string();
@@ -468,6 +475,13 @@ impl SummaryGenerator for LlmSummaryGenerator {
         max_sources: usize,
     ) -> Result<String, klaw_memory::MemoryError> {
         let user_prompt = memory_summary_user_prompt(group, source_records, max_sources);
+        debug!(
+            kind = group.kind.as_str(),
+            topic = group.topic.as_deref().unwrap_or("none"),
+            model = %self.model,
+            source_count = source_records.len(),
+            "calling LLM for memory archive summary"
+        );
         let messages = vec![
             LlmMessage {
                 role: "system".to_string(),
@@ -515,6 +529,12 @@ impl SummaryGenerator for LlmSummaryGenerator {
                 ))
             })?;
         let content = response.content.trim().to_string();
+        debug!(
+            kind = group.kind.as_str(),
+            topic = group.topic.as_deref().unwrap_or("none"),
+            summary_len = content.len(),
+            "LLM memory archive summary received"
+        );
         if content.is_empty() {
             return Err(klaw_memory::MemoryError::CapabilityUnavailable(
                 "LLM summary returned empty content".to_string(),
@@ -594,6 +614,29 @@ impl MemoryArchiveWorker {
             "memory archive tick completed"
         );
         Ok(outcome.archived_records > 0 || outcome.summary_records_upserted > 0)
+    }
+
+    /// Force-run archive now, bypassing the schedule check.
+    async fn run_now(&self) -> Result<String, String> {
+        let outcome = archive_stale_long_term_memories(
+            self.memory_db.clone(),
+            self.archive_config,
+            self.summary_generator.clone(),
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+        debug!(
+            archived_records = outcome.archived_records,
+            summary_records_upserted = outcome.summary_records_upserted,
+            skipped_records = outcome.skipped_records,
+            "memory archive run-now completed"
+        );
+        Ok(format!(
+            "{} archived, {} summaries updated, {} skipped",
+            outcome.archived_records,
+            outcome.summary_records_upserted,
+            outcome.skipped_records
+        ))
     }
 }
 

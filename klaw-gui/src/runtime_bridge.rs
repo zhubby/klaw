@@ -106,6 +106,9 @@ pub enum RuntimeCommand {
         heartbeat_id: String,
         response: mpsc::Sender<Result<String, String>>,
     },
+    RunMemoryArchiveNow {
+        response: mpsc::Sender<Result<String, String>>,
+    },
     GetEnvCheck {
         response: mpsc::Sender<EnvironmentCheckReport>,
     },
@@ -391,6 +394,27 @@ pub fn request_run_cron_now(cron_id: &str) -> Result<String, String> {
 
 pub fn begin_run_cron_now_request(cron_id: String) -> RuntimeRequestHandle<String> {
     spawn_request(move || request_run_cron_now(&cron_id))
+}
+
+pub fn request_run_memory_archive_now() -> Result<String, String> {
+    let (response_tx, response_rx) = mpsc::channel();
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+
+    sender
+        .send(RuntimeCommand::RunMemoryArchiveNow {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "memory archive")?
+}
+
+pub fn begin_run_memory_archive_now_request() -> RuntimeRequestHandle<String> {
+    spawn_request(move || request_run_memory_archive_now())
 }
 
 pub fn request_run_heartbeat_now(heartbeat_id: &str) -> Result<String, String> {

@@ -6,23 +6,23 @@ use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, EmbeddingConfig};
 use klaw_memory::{
-    LongTermArchiveConfig, LongTermMemoryKind, LongTermMemoryPromptOptions, LongTermMemoryStatus,
+    LongTermMemoryKind, LongTermMemoryPromptOptions, LongTermMemoryStatus,
     MemoryError, MemoryRecord, MemoryService, MemoryStats, SqliteMemoryService,
-    SqliteMemoryStatsService, SummaryGenerator, TemplateSummaryGenerator,
-    archive_stale_long_term_memories, is_summary_record,
+    SqliteMemoryStatsService, is_summary_record,
     read_long_term_archived_at, read_long_term_kind, read_long_term_priority,
     read_long_term_status, read_long_term_topic, render_long_term_memory_section,
 };
-use klaw_storage::{ChatRecord, SessionStorage, open_default_memory_db, open_default_store};
+use crate::runtime_bridge::{begin_run_memory_archive_now_request, RuntimeRequestHandle};
+use klaw_storage::{ChatRecord, SessionStorage, open_default_store};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use tokio::runtime::Builder;
 use std::thread;
 use std::time::Duration as StdDuration;
 use time::{Duration, OffsetDateTime};
-use tokio::runtime::Builder;
 
 const POLL_INTERVAL: StdDuration = StdDuration::from_millis(150);
 
@@ -204,7 +204,7 @@ struct PendingSessionSearch {
 
 #[derive(Debug)]
 struct PendingArchiveRun {
-    receiver: Receiver<Result<String, String>>,
+    handle: RuntimeRequestHandle<String>,
 }
 
 struct PendingDelete {
@@ -621,12 +621,8 @@ impl MemoryPanel {
             return;
         }
         self.archive_run_loading = true;
-        let archive_config = LongTermArchiveConfig {
-            max_age_days: self.config.memory.archive.max_age_days,
-            summary_max_sources: self.config.memory.archive.summary_max_sources,
-        };
         self.archive_run_request = Some(PendingArchiveRun {
-            receiver: spawn_archive_run_task(archive_config),
+            handle: spawn_archive_run_task(),
         });
         notifications.info("Running long-term memory archive...");
     }
@@ -834,28 +830,22 @@ impl MemoryPanel {
     }
 
     fn poll_archive_run_request(&mut self, notifications: &mut NotificationCenter) {
-        let Some(request) = self.archive_run_request.take() else {
+        let Some(mut request) = self.archive_run_request.take() else {
             return;
         };
 
-        match request.receiver.try_recv() {
-            Ok(result) => match result {
-                Ok(message) => {
-                    self.archive_run_loading = false;
-                    notifications.success(message);
-                    self.refresh(notifications);
-                }
-                Err(err) => {
-                    self.archive_run_loading = false;
-                    notifications.error(format!("Archive run failed: {err}"));
-                }
-            },
-            Err(TryRecvError::Empty) => {
-                self.archive_run_request = Some(request);
-            }
-            Err(TryRecvError::Disconnected) => {
+        match request.handle.try_take_result() {
+            Some(Ok(message)) => {
                 self.archive_run_loading = false;
-                notifications.error("Archive task disconnected unexpectedly");
+                notifications.success(message);
+                self.refresh(notifications);
+            }
+            Some(Err(err)) => {
+                self.archive_run_loading = false;
+                notifications.error(format!("Archive run failed: {err}"));
+            }
+            None => {
+                self.archive_run_request = Some(request);
             }
         }
     }
@@ -1688,34 +1678,8 @@ where
     rx
 }
 
-fn spawn_archive_run_task(config: LongTermArchiveConfig) -> Receiver<Result<String, String>> {
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let result = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|err| format!("failed to build runtime: {err}"))
-            .and_then(|runtime| {
-                runtime.block_on(async move {
-                    let memory_db = open_default_memory_db()
-                        .await
-                        .map_err(|err| format!("failed to open memory db: {err}"))?;
-                    let summary_generator: std::sync::Arc<dyn SummaryGenerator> = std::sync::Arc::new(TemplateSummaryGenerator);
-                    let outcome =
-                        archive_stale_long_term_memories(std::sync::Arc::new(memory_db), config, summary_generator)
-                            .await
-                            .map_err(|err| format!("archive operation failed: {err}"))?;
-                    Ok(format!(
-                        "Archive complete: {} archived, {} summaries updated, {} skipped",
-                        outcome.archived_records,
-                        outcome.summary_records_upserted,
-                        outcome.skipped_records
-                    ))
-                })
-            });
-        let _ = tx.send(result);
-    });
-    rx
+fn spawn_archive_run_task() -> RuntimeRequestHandle<String> {
+    begin_run_memory_archive_now_request()
 }
 
 fn spawn_session_search_task(
