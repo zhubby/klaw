@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use tracing::warn;
 use uuid::Uuid;
+use futures_util::future::join_all;
 
 use crate::util::now_ms;
 
@@ -102,7 +103,7 @@ pub async fn archive_stale_long_term_memories(
     }
 
     let stats = SqliteMemoryStatsService::new(db.clone());
-    let service = SqliteMemoryService::new(db, None).await?;
+    let service = Arc::new(SqliteMemoryService::new(db, None).await?);
     let records = stats.list_scope_records("long_term").await?;
     let now = now_ms();
     let cutoff_ms = now.saturating_sub(config.max_age_days.saturating_mul(24 * 60 * 60 * 1000));
@@ -137,7 +138,15 @@ pub async fn archive_stale_long_term_memories(
         }
     }
 
-    for (group, mut candidates) in candidate_groups {
+    // Process each group in parallel: each group independently generates a
+    // summary and writes to DB, so there are no data dependencies between groups.
+    let group_futures = candidate_groups.into_iter().map(|(group, mut candidates)| {
+        let service = service.clone();
+        let summary_generator = summary_generator.clone();
+        let max_sources = config.summary_max_sources;
+        let existing_summary = summaries_by_group.get(&group).cloned();
+        let source_records_by_id = &source_records_by_id;
+
         candidates.sort_by(|a, b| {
             a.updated_at_ms
                 .cmp(&b.updated_at_ms)
@@ -145,7 +154,6 @@ pub async fn archive_stale_long_term_memories(
                 .then_with(|| a.id.cmp(&b.id))
         });
 
-        let existing_summary = summaries_by_group.get(&group).cloned();
         let summary_id = existing_summary
             .as_ref()
             .map(|record| record.id.clone())
@@ -160,38 +168,51 @@ pub async fn archive_stale_long_term_memories(
 
         let summary_metadata =
             build_summary_metadata(&group, &source_ids, now, existing_summary.as_ref());
-        let summary_content = summary_generator
-            .generate_summary(&group, &source_records, config.summary_max_sources)
-            .await
-            .unwrap_or_else(|err| {
-                warn!(error = %err, "summary generator failed, falling back to template");
-                build_summary_content(&group, &source_records, config.summary_max_sources)
-            });
 
-        service
-            .upsert(UpsertMemoryInput {
-                id: Some(summary_id.clone()),
-                scope: "long_term".to_string(),
-                content: summary_content,
-                metadata: Value::Object(summary_metadata),
-                pinned: false,
-            })
-            .await?;
-        outcome.summary_records_upserted += 1;
+        async move {
+            let summary_content = summary_generator
+                .generate_summary(&group, &source_records, max_sources)
+                .await
+                .unwrap_or_else(|err| {
+                    warn!(error = %err, "summary generator failed, falling back to template");
+                    build_summary_content(&group, &source_records, max_sources)
+                });
 
-        for record in candidates {
-            let metadata = archive_metadata(&record, now, &summary_id);
             service
                 .upsert(UpsertMemoryInput {
-                    id: Some(record.id.clone()),
-                    scope: record.scope.clone(),
-                    content: record.content.clone(),
-                    metadata: Value::Object(metadata),
-                    pinned: record.pinned,
+                    id: Some(summary_id.clone()),
+                    scope: "long_term".to_string(),
+                    content: summary_content,
+                    metadata: Value::Object(summary_metadata),
+                    pinned: false,
                 })
                 .await?;
-            outcome.archived_records += 1;
+
+            let mut archived_count = 0;
+            for record in candidates {
+                let metadata = archive_metadata(&record, now, &summary_id);
+                service
+                    .upsert(UpsertMemoryInput {
+                        id: Some(record.id.clone()),
+                        scope: record.scope.clone(),
+                        content: record.content.clone(),
+                        metadata: Value::Object(metadata),
+                        pinned: record.pinned,
+                    })
+                    .await?;
+                archived_count += 1;
+            }
+
+            Ok::<(usize, usize), MemoryError>((1, archived_count))
         }
+    });
+
+    // Collect results from all parallel group tasks.
+    let group_results = join_all(group_futures).await;
+    for result in group_results {
+        let (summary_count, archived_count) = result?;
+        outcome.summary_records_upserted += summary_count;
+        outcome.archived_records += archived_count;
     }
 
     Ok(outcome)

@@ -33,7 +33,7 @@ type StdioCronWorker = CronWorker<DefaultSessionStore, FilteringInboundTransport
 type StdioHeartbeatWorker = HeartbeatWorker<DefaultSessionStore, FilteringInboundTransport>;
 const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MEMORY_ARCHIVE_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
-const MEMORY_ARCHIVE_SUMMARY_TIMEOUT: Duration = Duration::from_secs(30);
+const MEMORY_ARCHIVE_SUMMARY_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChannelAvailability {
