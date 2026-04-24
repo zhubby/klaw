@@ -1,28 +1,27 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::runtime_bridge::{RuntimeRequestHandle, begin_run_memory_archive_now_request};
 use crate::time_format::format_timestamp_millis;
 use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, EmbeddingConfig};
 use klaw_memory::{
-    LongTermMemoryKind, LongTermMemoryPromptOptions, LongTermMemoryStatus,
-    MemoryError, MemoryRecord, MemoryService, MemoryStats, SqliteMemoryService,
-    SqliteMemoryStatsService, is_summary_record,
-    read_long_term_archived_at, read_long_term_kind, read_long_term_priority,
+    LongTermMemoryKind, LongTermMemoryPromptOptions, LongTermMemoryStatus, MemoryError,
+    MemoryRecord, MemoryService, MemoryStats, SqliteMemoryService, SqliteMemoryStatsService,
+    is_summary_record, read_long_term_archived_at, read_long_term_kind, read_long_term_priority,
     read_long_term_status, read_long_term_topic, render_long_term_memory_section,
 };
-use crate::runtime_bridge::{begin_run_memory_archive_now_request, RuntimeRequestHandle};
 use klaw_storage::{ChatRecord, SessionStorage, open_default_store};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use tokio::runtime::Builder;
 use std::thread;
 use std::time::Duration as StdDuration;
 use time::{Duration, OffsetDateTime};
+use tokio::runtime::Builder;
 
 const POLL_INTERVAL: StdDuration = StdDuration::from_millis(150);
 
@@ -621,9 +620,8 @@ impl MemoryPanel {
             return;
         }
         self.archive_run_loading = true;
-        let timeout = std::time::Duration::from_secs(
-            self.config.memory.archive.command_timeout_secs.max(30),
-        );
+        let timeout =
+            std::time::Duration::from_secs(self.config.memory.archive.command_timeout_secs.max(30));
         self.archive_run_request = Some(PendingArchiveRun {
             handle: spawn_archive_run_task(timeout),
         });

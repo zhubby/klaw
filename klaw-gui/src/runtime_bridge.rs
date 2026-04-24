@@ -155,7 +155,11 @@ fn recv_response<T>(
     timeout: Duration,
     operation: &str,
 ) -> Result<T, String> {
-    receiver.recv_timeout(timeout).map_err(|err| match err {
+    {
+        puffin::profile_scope!("runtime_recv_wait");
+        receiver.recv_timeout(timeout)
+    }
+    .map_err(|err| match err {
         mpsc::RecvTimeoutError::Timeout => {
             format!("timed out waiting for {operation} response")
         }
@@ -205,6 +209,7 @@ pub fn clear_log_receiver() {
 }
 
 pub fn drain_log_chunks(max_batch: usize) -> Vec<String> {
+    puffin::profile_function!();
     if max_batch == 0 {
         return Vec::new();
     }
@@ -282,7 +287,11 @@ where
 {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(operation());
+        let result = {
+            puffin::profile_scope!("runtime_spawn_request");
+            operation()
+        };
+        let _ = tx.send(result);
     });
     RuntimeRequestHandle { receiver: Some(rx) }
 }

@@ -13,8 +13,8 @@ use klaw_core::{
 use klaw_cron::{CronScheduleKind, CronWorker, CronWorkerConfig, MissedRunPolicy, ScheduleSpec};
 use klaw_gateway::{GatewayWebsocketServerFrame, OutboundEvent};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig, should_suppress_output};
-use klaw_memory::{LongTermArchiveConfig, SummaryGenerator, archive_stale_long_term_memories};
 use klaw_llm::{ChatOptions, LlmMessage, LlmProvider};
+use klaw_memory::{LongTermArchiveConfig, SummaryGenerator, archive_stale_long_term_memories};
 use klaw_storage::{ChatRecord, DefaultSessionStore, MemoryDb, SessionStorage};
 use klaw_util::system_timezone_name;
 use serde_json::Value;
@@ -33,7 +33,6 @@ type StdioCronWorker = CronWorker<DefaultSessionStore, FilteringInboundTransport
 type StdioHeartbeatWorker = HeartbeatWorker<DefaultSessionStore, FilteringInboundTransport>;
 const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MEMORY_ARCHIVE_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
-
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChannelAvailability {
@@ -289,18 +288,15 @@ impl BackgroundServices {
             heartbeat_worker,
             memory_archive_worker: if config.memory_archive_enabled {
                 let provider_runtime = runtime.runtime.provider_runtime_snapshot();
-                runtime
-                    .memory_db
-                    .clone()
-                    .and_then(|memory_db| {
-                        MemoryArchiveWorker::new(
-                            memory_db,
-                            &config,
-                            provider_runtime.default_provider,
-                            provider_runtime.default_model,
-                        )
-                        .ok()
-                    })
+                runtime.memory_db.clone().and_then(|memory_db| {
+                    MemoryArchiveWorker::new(
+                        memory_db,
+                        &config,
+                        provider_runtime.default_provider,
+                        provider_runtime.default_model,
+                    )
+                    .ok()
+                })
             } else {
                 None
             },
@@ -533,14 +529,12 @@ impl SummaryGenerator for LlmSummaryGenerator {
         )
         .await
         .map_err(|_| {
-            klaw_memory::MemoryError::CapabilityUnavailable(
-                format!(
-                    "LLM summary call timed out after {}s for kind={} topic={}",
-                    self.summary_timeout.as_secs(),
-                    group.kind.as_str(),
-                    group.topic.as_deref().unwrap_or("none"),
-                ),
-            )
+            klaw_memory::MemoryError::CapabilityUnavailable(format!(
+                "LLM summary call timed out after {}s for kind={} topic={}",
+                self.summary_timeout.as_secs(),
+                group.kind.as_str(),
+                group.topic.as_deref().unwrap_or("none"),
+            ))
         })?
         .map_err(|err| {
             klaw_memory::MemoryError::CapabilityUnavailable(format!(
@@ -610,13 +604,9 @@ impl MemoryArchiveWorker {
                 .last_scheduled_run_ms
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let Some(next_due) = next_memory_archive_due_ms(
-                &self.schedule,
-                &self.timezone,
-                *last_scheduled,
-                now_ms,
-            )
-            .map_err(|err| err.to_string())?
+            let Some(next_due) =
+                next_memory_archive_due_ms(&self.schedule, &self.timezone, *last_scheduled, now_ms)
+                    .map_err(|err| err.to_string())?
             else {
                 return Ok(false);
             };
@@ -624,9 +614,13 @@ impl MemoryArchiveWorker {
             next_due
         };
 
-        let outcome = archive_stale_long_term_memories(self.memory_db.clone(), self.archive_config, self.summary_generator.clone())
-            .await
-            .map_err(|err| err.to_string())?;
+        let outcome = archive_stale_long_term_memories(
+            self.memory_db.clone(),
+            self.archive_config,
+            self.summary_generator.clone(),
+        )
+        .await
+        .map_err(|err| err.to_string())?;
         debug!(
             scheduled_run_ms,
             archived_records = outcome.archived_records,
@@ -654,9 +648,7 @@ impl MemoryArchiveWorker {
         );
         Ok(format!(
             "{} archived, {} summaries updated, {} skipped",
-            outcome.archived_records,
-            outcome.summary_records_upserted,
-            outcome.skipped_records
+            outcome.archived_records, outcome.summary_records_upserted, outcome.skipped_records
         ))
     }
 }
@@ -1107,8 +1099,8 @@ fn render_outbound_markdown(output: &OutboundMessage) -> String {
 mod tests {
     use super::{
         BackgroundDingtalkAccountConfig, BackgroundServiceConfig, ChannelAvailability,
-        FilteringInboundTransport, dispatch_outbound_message,
-        next_memory_archive_due_ms, resolve_outbound_account_id,
+        FilteringInboundTransport, dispatch_outbound_message, next_memory_archive_due_ms,
+        resolve_outbound_account_id,
     };
     use klaw_channel::dingtalk::is_session_webhook_session_not_found_error;
     use klaw_config::{AppConfig, DingtalkConfig};
@@ -1220,13 +1212,8 @@ mod tests {
         let schedule = ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, "0 0 2 * * *")
             .expect("schedule should parse");
 
-        let due = next_memory_archive_due_ms(
-            &schedule,
-            "Asia/Shanghai",
-            None,
-            68_400_000,
-        )
-        .expect("due calculation should succeed");
+        let due = next_memory_archive_due_ms(&schedule, "Asia/Shanghai", None, 68_400_000)
+            .expect("due calculation should succeed");
 
         assert_eq!(due, Some(64_800_000));
     }
@@ -1236,22 +1223,13 @@ mod tests {
         let schedule = ScheduleSpec::from_kind_expr(CronScheduleKind::Cron, "0 0 2 * * *")
             .expect("schedule should parse");
 
-        let first_due = next_memory_archive_due_ms(
-            &schedule,
-            "Asia/Shanghai",
-            None,
-            68_400_000,
-        )
-        .expect("first due calculation should succeed");
+        let first_due = next_memory_archive_due_ms(&schedule, "Asia/Shanghai", None, 68_400_000)
+            .expect("first due calculation should succeed");
         assert_eq!(first_due, Some(64_800_000));
 
-        let second_due = next_memory_archive_due_ms(
-            &schedule,
-            "Asia/Shanghai",
-            first_due,
-            72_000_000,
-        )
-        .expect("second due calculation should succeed");
+        let second_due =
+            next_memory_archive_due_ms(&schedule, "Asia/Shanghai", first_due, 72_000_000)
+                .expect("second due calculation should succeed");
         assert_eq!(second_due, None);
     }
 

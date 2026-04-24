@@ -189,6 +189,7 @@ impl ChatBox {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<ChatAction> {
+        puffin::profile_function!();
         if !self.open {
             return None;
         }
@@ -235,6 +236,7 @@ impl ChatBox {
     }
 
     fn render_messages(&mut self, ui: &mut egui::Ui, pending_action: &mut Option<ChatAction>) {
+        puffin::profile_scope!("chat_box_messages");
         self.prune_finished_animations();
         let scroll_id = egui::Id::new((&self.title, "chat_messages"));
 

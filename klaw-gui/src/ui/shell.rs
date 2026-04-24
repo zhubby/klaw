@@ -478,7 +478,11 @@ enum SyncSupervisorMessage {
 
 impl SyncSupervisor {
     fn tick(&mut self, notifications: &mut NotificationCenter) {
-        self.poll_task_result(notifications);
+        puffin::profile_function!();
+        {
+            puffin::profile_scope!("sync_supervisor_poll_result");
+            self.poll_task_result(notifications);
+        }
 
         if self
             .last_poll_at
@@ -526,6 +530,7 @@ impl SyncSupervisor {
     }
 
     fn spawn_task(&mut self, kind: SyncRuntimeTaskKind, settings: AppSettings) {
+        puffin::profile_function!();
         let label = match kind {
             SyncRuntimeTaskKind::StartupCheck => "Checking remote manifests",
             SyncRuntimeTaskKind::AutoBackup => "Automatic manifest sync",
@@ -540,14 +545,17 @@ impl SyncSupervisor {
         let (tx, rx) = mpsc::channel();
         self.task_rx = Some(rx);
         thread::spawn(move || {
-            let result = match kind {
-                SyncRuntimeTaskKind::StartupCheck => run_startup_check_task(&settings),
-                SyncRuntimeTaskKind::AutoBackup => run_auto_backup_task(&settings),
-                SyncRuntimeTaskKind::ManualBackup
-                | SyncRuntimeTaskKind::RetentionCleanup
-                | SyncRuntimeTaskKind::RefreshRemoteSnapshots
-                | SyncRuntimeTaskKind::RestoreSnapshot => {
-                    Err("unsupported sync supervisor task".to_string())
+            let result = {
+                puffin::profile_scope!("sync_supervisor_worker");
+                match kind {
+                    SyncRuntimeTaskKind::StartupCheck => run_startup_check_task(&settings),
+                    SyncRuntimeTaskKind::AutoBackup => run_auto_backup_task(&settings),
+                    SyncRuntimeTaskKind::ManualBackup
+                    | SyncRuntimeTaskKind::RetentionCleanup
+                    | SyncRuntimeTaskKind::RefreshRemoteSnapshots
+                    | SyncRuntimeTaskKind::RestoreSnapshot => {
+                        Err("unsupported sync supervisor task".to_string())
+                    }
                 }
             };
             let message =
@@ -557,6 +565,7 @@ impl SyncSupervisor {
     }
 
     fn poll_task_result(&mut self, notifications: &mut NotificationCenter) {
+        puffin::profile_function!();
         let Some(rx) = self.task_rx.as_ref() else {
             return;
         };
@@ -673,6 +682,7 @@ fn build_backup_plan(settings: &AppSettings) -> BackupPlan {
 }
 
 fn run_startup_check_task(settings: &AppSettings) -> Result<SyncSupervisorMessage, String> {
+    puffin::profile_function!();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -698,6 +708,7 @@ fn run_startup_check_task(settings: &AppSettings) -> Result<SyncSupervisorMessag
 }
 
 fn run_auto_backup_task(settings: &AppSettings) -> Result<SyncSupervisorMessage, String> {
+    puffin::profile_function!();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
