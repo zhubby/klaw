@@ -3,6 +3,7 @@ use crate::{
     SqliteMemoryService, SqliteMemoryStatsService, UpsertMemoryInput,
     archive_stale_long_term_memories, build_embedding_provider_from_config,
     util::{now_ms, rrf_score},
+    TemplateSummaryGenerator, SummaryGenerator,
 };
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
@@ -43,6 +44,10 @@ async fn create_db() -> Arc<dyn MemoryDb> {
     let root = std::env::temp_dir().join(format!("klaw-memory-test-{suffix}-{}", now_ms()));
     let paths = StoragePaths::from_root(root);
     Arc::new(DefaultMemoryDb::open(paths).await.expect("open memory db"))
+}
+
+fn template_generator() -> Arc<dyn SummaryGenerator> {
+    Arc::new(TemplateSummaryGenerator)
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -214,6 +219,7 @@ async fn archive_stale_long_term_memories_archives_low_priority_records_and_crea
             max_age_days: 30,
             summary_max_sources: 8,
         },
+        template_generator(),
     )
     .await
     .expect("archive should succeed");
@@ -317,6 +323,7 @@ async fn archive_stale_long_term_memories_reuses_existing_summary_for_same_topic
             max_age_days: 30,
             summary_max_sources: 8,
         },
+        template_generator(),
     )
     .await
     .expect("archive should succeed");
@@ -333,6 +340,92 @@ async fn archive_stale_long_term_memories_reuses_existing_summary_for_same_topic
         summary.metadata["source_ids"],
         serde_json::json!(["old-1", "old-2"])
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn archive_falls_back_to_template_when_summary_generator_fails() {
+    struct FailingSummaryGenerator;
+
+    #[async_trait]
+    impl SummaryGenerator for FailingSummaryGenerator {
+        async fn generate_summary(
+            &self,
+            _group: &crate::ArchiveGroupKey,
+            _source_records: &[crate::MemoryRecord],
+            _max_sources: usize,
+        ) -> Result<String, crate::MemoryError> {
+            Err(crate::MemoryError::CapabilityUnavailable(
+                "LLM provider unavailable".to_string(),
+            ))
+        }
+    }
+
+    let db = create_db().await;
+    let service = SqliteMemoryService::new(db.clone(), Some(Arc::new(MockEmbeddingProvider)))
+        .await
+        .expect("service should init");
+    let now = now_ms();
+    let forty_days_ms = 40_i64 * 24 * 60 * 60 * 1000;
+
+    let _ = service
+        .upsert(UpsertMemoryInput {
+            id: Some("old-fail-1".to_string()),
+            scope: "long_term".to_string(),
+            content: "Used vim for editing.".to_string(),
+            metadata: serde_json::json!({
+                "kind": "preference",
+                "priority": "low",
+                "topic": "editor",
+                "status": "active",
+            }),
+            pinned: false,
+        })
+        .await
+        .expect("record should upsert");
+
+    let _ = db
+        .execute(
+            "UPDATE memories SET updated_at_ms = ?1, created_at_ms = ?1 WHERE id = ?2",
+            &[
+                klaw_storage::DbValue::Integer(now - forty_days_ms),
+                klaw_storage::DbValue::Text("old-fail-1".to_string()),
+            ],
+        )
+        .await
+        .expect("timestamps should update");
+
+    let outcome = archive_stale_long_term_memories(
+        db.clone(),
+        LongTermArchiveConfig {
+            max_age_days: 30,
+            summary_max_sources: 8,
+        },
+        Arc::new(FailingSummaryGenerator),
+    )
+    .await
+    .expect("archive should succeed even with failing generator");
+
+    assert_eq!(outcome.archived_records, 1);
+    assert_eq!(outcome.summary_records_upserted, 1);
+
+    let records = SqliteMemoryStatsService::new(db)
+        .list_scope_records("long_term")
+        .await
+        .expect("records should load");
+
+    let summary = records
+        .iter()
+        .find(|record| {
+            record
+                .metadata
+                .get("summary")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        })
+        .expect("summary record should exist from template fallback");
+
+    // The summary content should be the template-based fallback, not an LLM output.
+    assert!(summary.content.contains("Past notes on"));
 }
 
 #[tokio::test(flavor = "current_thread")]
