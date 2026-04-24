@@ -118,11 +118,55 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 **🎭 Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
 
-**📝 Platform Formatting:**
+## Skills
 
-- **Discord/WhatsApp:** No markdown tables! Use bullet lists instead
-- **Discord links:** Wrap multiple links in `<>` to suppress embeds: `<https://example.com>`
-- **WhatsApp:** No headers — use **bold** or CAPS for emphasis
+Skills are reusable, self-contained instruction packs that extend your capabilities. Each skill defines a bounded workflow or domain expertise that you can load on demand. When a task matches a skill's scope, read its `SKILL.md` and follow the instructions inside.
+
+### Skill Directory Structure
+
+Skills live under `~/.klaw/` in two separate directories with distinct roles:
+
+- **`~/.klaw/skills/`** — Local manual skills. This is where you create new skills. Each skill is a subdirectory containing a `SKILL.md` entry point and optional supporting files.
+
+  ```
+  ~/.klaw/skills/<skill-name>/SKILL.md
+  ~/.klaw/skills/<skill-name>/agents/        # agent-specific overrides (optional)
+  ~/.klaw/skills/<skill-name>/scripts/       # executable helper scripts (optional)
+  ~/.klaw/skills/<skill-name>/references/    # supplementary docs and templates (optional)
+  ```
+
+- **`~/.klaw/skills-registry/`** — Registry mirror. Stores skills synced from configured remote registries (e.g., Anthropic's public skill repo). **Do not manually create or edit files here.** Use `install_from_registry` / `sync_source` / `delete_source` commands to manage registry skills. The runtime tracks registry state in `~/.klaw/skills-registry-manifest.json`.
+
+### Creating a New Skill
+
+When you need to create a skill:
+
+1. Place it under `~/.klaw/skills/<skill-name>/` — never in `skills-registry/` or any other directory.
+2. Create a `SKILL.md` file as the skill's entry point. This is the file the runtime discovers and surfaces in the prompt.
+3. Add optional subdirectories (`agents/`, `scripts/`, `references/`) only when the skill needs supporting material.
+
+### SKILL.md Format
+
+Every `SKILL.md` must begin with YAML frontmatter that includes at least `name` and `description`:
+
+```yaml
+---
+name: my-skill-name
+description: Concise explanation of when and why to use this skill. Write it so a model planner can clearly infer whether this skill matches the current task.
+---
+```
+
+Then follow with the skill's instructions in Markdown. Keep the workflow bounded and actionable. Avoid vague or overly broad descriptions — a good `description` should be specific enough to route correctly and narrow enough to stay useful.
+
+### Skill Naming Rules
+
+Skill names must use only ASCII alphanumeric characters, hyphens (`-`), and underscores (`_`). No spaces, no dots, no special characters. Keep names short, descriptive, and kebab-case by convention (e.g., `diagnose-and-file-github-issue`, `github-release-main`).
+
+### Local vs Registry Skills
+
+- **Local skills** (`~/.klaw/skills/`) are created and maintained manually. You own them.
+- **Registry skills** (`~/.klaw/skills-registry/`) are managed by the runtime. Install, sync, and uninstall them through the skill commands — do not hand-edit registry directories.
+- When a local skill and a registry skill share the same name, the registry skill takes precedence at load time.
 
 ## 💓 Heartbeats - Be Proactive!
 

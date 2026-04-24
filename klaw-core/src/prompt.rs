@@ -7,35 +7,40 @@ use klaw_util::{default_data_dir, workspace_dir};
 use thiserror::Error;
 use tokio::fs;
 
-const SKILLS_LAZY_LOAD_INSTRUCTIONS: &str = "When a task may require a skill, consult the available skills list first.\nBefore using a skill, read the SKILL.md file at the listed path.\nOnly load skill files when needed.";
+const SKILLS_LAZY_LOAD_INSTRUCTIONS: &str = r#"When a task may require a skill, consult the available skills list first.
+Before using a skill, read the SKILL.md file at the listed path.
+Only load skill files when needed."#;
 const INLINED_WORKSPACE_PROMPT_DOC_FILES: [&str; 4] =
     ["AGENTS.md", "SOUL.md", "IDENTITY.md", "TOOLS.md"];
 const ON_DEMAND_WORKSPACE_PROMPT_DOC_FILES: [&str; 2] = ["USER.md", "BOOTSTRAP.md"];
-const RUNTIME_PROMPT_RULES: &str = "Treat the inlined workspace docs below as baseline instructions. Lazy-load only the remaining workspace docs and skills when they are relevant to the current user request.";
-const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = concat!(
-    "General:\n",
-    "- Do not re-read `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, or `TOOLS.md` just to recover instructions already inlined into this system prompt.\n",
-    "- When additional workspace context is needed, read only the remaining on-demand docs from disk before acting.\n",
-    "\n",
-    "Truthfulness:\n",
-    "- Never claim to have read, checked, searched, run, verified, confirmed, sent, or changed something unless that action actually happened through a tool result in this turn or the evidence was explicitly provided by the user in the conversation.\n",
-    "- Do not present intended actions, assumptions, remembered context, or likely outcomes as completed work.\n",
-    "- If something has not been verified yet, say that it is unverified and describe the next tool you would use to verify it.\n",
-    "\n",
-    "Memory:\n",
-    "- When a task requires remembering or recalling prior context, use the memory tool. Do not rely on ad-hoc markdown memory files.\n",
-    "\n",
-    "Archives:\n",
-    "- Files under archives/ are read-only source material. Never edit, move, or delete them in place.\n",
-    "- If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.\n",
-    "\n",
-    "Channel Attachments:\n",
-    "- When the user wants a file or image sent back into chat, use the `channel_attachment` tool instead of only describing the file in plain text.\n",
-    "- Use `archive_id` when you already have a valid archived file id.\n",
-    "- Use `path` only for an absolute local file path that is inside the workspace or a configured channel allowlist.\n",
-    "- Prefer `kind=image` for screenshots or images that should render inline, and `kind=file` for generic documents or downloads.\n",
-    "- Never pass a list index like `1` as `archive_id`, and never use a relative path.\n",
-);
+const RUNTIME_PROMPT_RULES: &str = r#"Treat the inlined workspace docs below as baseline instructions. Lazy-load only the remaining workspace docs and skills when they are relevant to the current user request."#;
+const RUNTIME_PROMPT_EXTRA_INSTRUCTIONS: &str = r#"General:
+- Do not re-read `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, or `TOOLS.md` just to recover instructions already inlined into this system prompt.
+- When additional workspace context is needed, read only the remaining on-demand docs from disk before acting.
+
+Truthfulness:
+- Never claim to have read, checked, searched, run, verified, confirmed, sent, or changed something unless that action actually happened through a tool result in this turn or the evidence was explicitly provided by the user in the conversation.
+- Do not present intended actions, assumptions, remembered context, or likely outcomes as completed work.
+- If something has not been verified yet, say that it is unverified and describe the next tool you would use to verify it.
+
+Memory:
+- When a task requires remembering or recalling prior context, use the memory tool. Do not rely on ad-hoc markdown memory files.
+
+Archives:
+- Files under archives/ are read-only source material. Never edit, move, or delete them in place.
+- If you need to transform or modify an archived file, use the archive tool to copy it into workspace first, then operate on the copied file.
+
+Channel Attachments:
+- When the user wants a file or image sent back into chat, use the `channel_attachment` tool instead of only describing the file in plain text.
+- Use `archive_id` when you already have a valid archived file id.
+- Use `path` only for an absolute local file path that is inside the workspace or a configured channel allowlist.
+- Prefer `kind=image` for screenshots or images that should render inline, and `kind=file` for generic documents or downloads.
+- Never pass a list index like `1` as `archive_id`, and never use a relative path.
+
+Ask Question:
+- When you can enumerate clear options for a user decision or preference, prefer the `ask_question` tool over open-ended text — it presents a single-select card so the user picks directly instead of typing.
+- Do not use `ask_question` for open-ended questions needing free-form text. If you recommend an option, place it first and append `(Recommended)` to its label.
+"#;
 
 const PROMPT_TEMPLATE_FILES: [(&str, &str); 6] = [
     ("AGENTS.md", include_str!("../templates/prompt/AGENTS.md")),
