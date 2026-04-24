@@ -12,7 +12,7 @@ use crate::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// OpenAI wire API 类型。
+/// OpenAI wire API type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenAiWireApi {
     ChatCompletions,
@@ -38,26 +38,26 @@ impl OpenAiWireApi {
     }
 }
 
-/// OpenAI Compatible 配置。
+/// OpenAI-compatible configuration.
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatibleConfig {
-    /// 兼容网关基础地址（例如 `https://api.openai.com/v1`）。
+    /// Compatible gateway base URL (e.g., `https://api.openai.com/v1`).
     pub base_url: String,
-    /// API 密钥。
+    /// API key.
     pub api_key: String,
-    /// 默认模型名。
+    /// Default model name.
     pub default_model: String,
-    /// 可选的本地 tokenizer.json 路径。
+    /// Optional local tokenizer.json path.
     pub tokenizer_path: Option<String>,
-    /// 是否启用系统代理。false 时强制直连（no_proxy）。
+    /// Whether to enable system proxy. When `false`, forces direct connection (no_proxy).
     pub proxy: bool,
-    /// 底层 wire API。
+    /// Underlying wire API.
     pub wire_api: OpenAiWireApi,
-    /// 是否启用 provider 原生 stream API。
+    /// Whether to enable the provider's native stream API.
     pub stream: bool,
 }
 
-/// OpenAI Compatible Provider 实现。
+/// OpenAI-compatible provider implementation.
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatibleProvider {
     client: Client,
@@ -65,7 +65,7 @@ pub struct OpenAiCompatibleProvider {
 }
 
 impl OpenAiCompatibleProvider {
-    /// 创建 provider 实例。
+    /// Create a new provider instance.
     pub fn new(config: OpenAiCompatibleConfig) -> Self {
         Self {
             client: build_http_client(config.proxy),

@@ -9,22 +9,22 @@ use crate::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Anthropic 配置。
+/// Anthropic configuration.
 #[derive(Debug, Clone)]
 pub struct AnthropicConfig {
-    /// Anthropic API 基础地址（例如 `https://api.anthropic.com/v1`）。
+    /// Anthropic API base URL (e.g., `https://api.anthropic.com/v1`).
     pub base_url: String,
-    /// API 密钥。
+    /// API key.
     pub api_key: String,
-    /// 默认模型名。
+    /// Default model name.
     pub default_model: String,
-    /// 可选的本地 tokenizer.json 路径。
+    /// Optional local tokenizer.json path.
     pub tokenizer_path: Option<String>,
-    /// Anthropic API 版本头。
+    /// Anthropic API version header.
     pub api_version: String,
 }
 
-/// Anthropic Provider 实现。
+/// Anthropic provider implementation.
 #[derive(Debug, Clone)]
 pub struct AnthropicProvider {
     client: Client,
@@ -32,7 +32,7 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    /// 创建 provider 实例。
+    /// Create a new provider instance.
     pub fn new(config: AnthropicConfig) -> Self {
         Self {
             client: Client::new(),

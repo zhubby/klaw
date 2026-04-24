@@ -12,20 +12,20 @@ pub use providers::{
     openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleProvider, OpenAiWireApi},
 };
 
-/// LLM 对话消息。
+/// LLM chat message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmMessage {
-    /// 消息角色（system/user/assistant/tool）。
+    /// Message role (system/user/assistant/tool).
     pub role: String,
-    /// 消息文本内容。
+    /// Message text content.
     pub content: String,
-    /// 用户消息携带的媒体 URL（例如 https://... 或 data: URL）。
+    /// Media URLs carried by user messages (e.g., https://... or data: URL).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<LlmMedia>,
-    /// assistant 角色发起的工具调用（可选）。
+    /// Tool calls initiated by the assistant role (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
-    /// tool 角色消息对应的工具调用 id（可选）。
+    /// Tool call ID corresponding to the tool role message (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
 }
@@ -37,94 +37,94 @@ pub struct LlmMedia {
     pub url: String,
 }
 
-/// 暴露给模型的工具定义。
+/// Tool definition exposed to the model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
-    /// 工具名称。
+    /// Tool name.
     pub name: String,
-    /// 工具描述。
+    /// Tool description.
     pub description: String,
-    /// JSON Schema 参数定义。
+    /// JSON Schema parameter definition.
     pub parameters: serde_json::Value,
 }
 
-/// 聊天调用参数。
+/// Chat invocation parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatOptions {
-    /// 采样温度。
+    /// Sampling temperature.
     pub temperature: f32,
-    /// 最大生成 token（可选）。
+    /// Maximum generated tokens (optional).
     pub max_tokens: Option<u32>,
-    /// Responses API 输出 token 上限（可选，优先于 max_tokens）。
+    /// Responses API output token limit (optional, takes precedence over max_tokens).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
-    /// Responses API 复用上轮 response id（可选）。
+    /// Responses API reuse previous response ID (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_response_id: Option<String>,
-    /// Responses API 指令字段（可选）。
+    /// Responses API instructions field (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
-    /// Responses API 元数据（可选）。
+    /// Responses API metadata (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
-    /// Responses API include 参数（可选）。
+    /// Responses API include parameter (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include: Option<Vec<String>>,
-    /// Responses API 是否持久化结果（可选）。
+    /// Responses API whether to persist results (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
-    /// Responses API 是否并行 tool calls（可选）。
+    /// Responses API whether to allow parallel tool calls (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
-    /// Responses API tool_choice 参数（可选）。
+    /// Responses API tool_choice parameter (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
-    /// Responses API text 参数（可选）。
+    /// Responses API text parameter (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<serde_json::Value>,
-    /// Responses API reasoning 参数（可选）。
+    /// Responses API reasoning parameter (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<serde_json::Value>,
-    /// Responses API truncation 参数（可选）。
+    /// Responses API truncation parameter (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncation: Option<String>,
-    /// OpenAI user 字段（可选）。
+    /// OpenAI user field (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
-    /// OpenAI service_tier 字段（可选）。
+    /// OpenAI service_tier field (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
 }
 
-/// 模型请求工具调用的描述。
+/// Description of a tool call requested by the model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
-    /// 工具调用 id（可选）。
+    /// Tool call ID (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// 工具名。
+    /// Tool name.
     pub name: String,
-    /// 工具参数。
+    /// Tool arguments.
     pub arguments: serde_json::Value,
 }
 
-/// 模型响应对象。
+/// Model response object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmResponse {
-    /// 文本回复。
+    /// Text response.
     pub content: String,
-    /// 可选的推理内容（部分模型提供）。
+    /// Optional reasoning content (provided by some models).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
-    /// 模型要求执行的工具调用列表。
+    /// Tool calls requested by the model for execution.
     pub tool_calls: Vec<ToolCall>,
-    /// provider 返回的 token 用量（可选）。
+    /// Token usage returned by the provider (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<LlmUsage>,
-    /// token 用量来源（可选）。
+    /// Token usage source (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_source: Option<LlmUsageSource>,
-    /// provider 边界采集的请求/响应审计信息（可选）。
+    /// Request/response audit information captured at the provider boundary (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audit: Option<LlmAuditPayload>,
 }
@@ -206,7 +206,7 @@ impl LlmUsageSource {
     }
 }
 
-/// LLM 层错误。
+/// LLM layer error.
 #[derive(Debug, Error)]
 pub enum LlmError {
     #[error("provider unavailable: {message}")]
@@ -297,23 +297,23 @@ impl LlmError {
     }
 }
 
-/// LLM Provider 统一抽象。
+/// Unified LLM provider abstraction.
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
-    /// Provider 名称。
+    /// Provider name.
     fn name(&self) -> &str;
-    /// 默认模型名。
+    /// Default model name.
     fn default_model(&self) -> &str;
-    /// provider 使用的底层 wire API。
+    /// Underlying wire API used by the provider.
     fn wire_api(&self) -> Option<&str> {
         None
     }
-    /// 可选的本地 tokenizer 文件路径。
+    /// Optional local tokenizer file path.
     fn tokenizer_path(&self) -> Option<&str> {
         None
     }
 
-    /// 单轮聊天调用接口。
+    /// Single-turn chat invocation interface.
     async fn chat(
         &self,
         messages: Vec<LlmMessage>,
@@ -347,7 +347,7 @@ pub trait LlmProvider: Send + Sync {
     }
 }
 
-/// 本地回显 Provider，主要用于联调。
+/// Local echo provider, primarily used for integration testing.
 #[derive(Debug, Default)]
 pub struct EchoProvider;
 
