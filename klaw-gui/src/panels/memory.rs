@@ -621,8 +621,11 @@ impl MemoryPanel {
             return;
         }
         self.archive_run_loading = true;
+        let timeout = std::time::Duration::from_secs(
+            self.config.memory.archive.command_timeout_secs.max(30),
+        );
         self.archive_run_request = Some(PendingArchiveRun {
-            handle: spawn_archive_run_task(),
+            handle: spawn_archive_run_task(timeout),
         });
         notifications.info("Running long-term memory archive...");
     }
@@ -1678,8 +1681,8 @@ where
     rx
 }
 
-fn spawn_archive_run_task() -> RuntimeRequestHandle<String> {
-    begin_run_memory_archive_now_request()
+fn spawn_archive_run_task(timeout: std::time::Duration) -> RuntimeRequestHandle<String> {
+    begin_run_memory_archive_now_request(timeout)
 }
 
 fn spawn_session_search_task(

@@ -913,6 +913,10 @@ pub struct MemoryArchiveConfig {
     pub max_age_days: i64,
     #[serde(default = "default_memory_archive_summary_max_sources")]
     pub summary_max_sources: usize,
+    #[serde(default = "default_memory_archive_summary_timeout_secs")]
+    pub summary_timeout_secs: u64,
+    #[serde(default = "default_memory_archive_command_timeout_secs")]
+    pub command_timeout_secs: u64,
 }
 
 impl Default for MemoryArchiveConfig {
@@ -922,6 +926,8 @@ impl Default for MemoryArchiveConfig {
             schedule: default_memory_archive_schedule(),
             max_age_days: default_memory_archive_max_age_days(),
             summary_max_sources: default_memory_archive_summary_max_sources(),
+            summary_timeout_secs: default_memory_archive_summary_timeout_secs(),
+            command_timeout_secs: default_memory_archive_command_timeout_secs(),
         }
     }
 }
@@ -968,6 +974,14 @@ fn default_memory_archive_max_age_days() -> i64 {
 
 fn default_memory_archive_summary_max_sources() -> usize {
     8
+}
+
+fn default_memory_archive_summary_timeout_secs() -> u64 {
+    60
+}
+
+fn default_memory_archive_command_timeout_secs() -> u64 {
+    120
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

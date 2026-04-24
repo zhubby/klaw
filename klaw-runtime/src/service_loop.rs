@@ -33,7 +33,7 @@ type StdioCronWorker = CronWorker<DefaultSessionStore, FilteringInboundTransport
 type StdioHeartbeatWorker = HeartbeatWorker<DefaultSessionStore, FilteringInboundTransport>;
 const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MEMORY_ARCHIVE_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
-const MEMORY_ARCHIVE_SUMMARY_TIMEOUT: Duration = Duration::from_secs(60);
+
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChannelAvailability {
@@ -107,6 +107,8 @@ pub struct BackgroundServiceConfig {
     pub memory_archive_schedule: String,
     pub memory_archive_max_age_days: i64,
     pub memory_archive_summary_max_sources: usize,
+    pub memory_archive_summary_timeout_secs: u64,
+    pub memory_archive_command_timeout_secs: u64,
     channel_availability: ChannelAvailability,
     pub dingtalk_accounts: BTreeMap<String, BackgroundDingtalkAccountConfig>,
     pub telegram_configs: BTreeMap<String, klaw_config::TelegramConfig>,
@@ -127,6 +129,8 @@ impl BackgroundServiceConfig {
             memory_archive_schedule: config.memory.archive.schedule.clone(),
             memory_archive_max_age_days: config.memory.archive.max_age_days,
             memory_archive_summary_max_sources: config.memory.archive.summary_max_sources,
+            memory_archive_summary_timeout_secs: config.memory.archive.summary_timeout_secs,
+            memory_archive_command_timeout_secs: config.memory.archive.command_timeout_secs,
             channel_availability: ChannelAvailability::from_app_config(config),
             dingtalk_accounts: config
                 .channels
@@ -169,6 +173,8 @@ impl Default for BackgroundServiceConfig {
             memory_archive_schedule: "0 0 2 * * *".to_string(),
             memory_archive_max_age_days: 30,
             memory_archive_summary_max_sources: 8,
+            memory_archive_summary_timeout_secs: 60,
+            memory_archive_command_timeout_secs: 120,
             channel_availability: ChannelAvailability::default(),
             dingtalk_accounts: BTreeMap::new(),
             telegram_configs: BTreeMap::new(),
@@ -432,6 +438,7 @@ struct LlmSummaryGenerator {
     provider: Arc<dyn LlmProvider>,
     model: String,
     max_output_tokens: u32,
+    summary_timeout: Duration,
 }
 
 fn memory_summary_user_prompt(
@@ -500,7 +507,7 @@ impl SummaryGenerator for LlmSummaryGenerator {
             },
         ];
         let response = tokio::time::timeout(
-            MEMORY_ARCHIVE_SUMMARY_TIMEOUT,
+            self.summary_timeout,
             self.provider.chat(
                 messages,
                 Vec::new(),
@@ -529,7 +536,7 @@ impl SummaryGenerator for LlmSummaryGenerator {
             klaw_memory::MemoryError::CapabilityUnavailable(
                 format!(
                     "LLM summary call timed out after {}s for kind={} topic={}",
-                    MEMORY_ARCHIVE_SUMMARY_TIMEOUT.as_secs(),
+                    self.summary_timeout.as_secs(),
                     group.kind.as_str(),
                     group.topic.as_deref().unwrap_or("none"),
                 ),
@@ -572,10 +579,12 @@ impl MemoryArchiveWorker {
         default_provider: Arc<dyn LlmProvider>,
         default_model: String,
     ) -> Result<Self, String> {
+        let summary_timeout = Duration::from_secs(config.memory_archive_summary_timeout_secs);
         let summary_generator: Arc<dyn SummaryGenerator> = Arc::new(LlmSummaryGenerator {
             provider: default_provider,
             model: default_model,
             max_output_tokens: 120,
+            summary_timeout,
         });
         Ok(Self {
             memory_db,
