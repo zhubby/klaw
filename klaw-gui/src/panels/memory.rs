@@ -8,7 +8,8 @@ use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, Embedding
 use klaw_memory::{
     LongTermArchiveConfig, LongTermMemoryKind, LongTermMemoryPromptOptions, LongTermMemoryStatus,
     MemoryError, MemoryRecord, MemoryService, MemoryStats, SqliteMemoryService,
-    SqliteMemoryStatsService, archive_stale_long_term_memories, is_summary_record,
+    SqliteMemoryStatsService, SummaryGenerator, TemplateSummaryGenerator,
+    archive_stale_long_term_memories, is_summary_record,
     read_long_term_archived_at, read_long_term_kind, read_long_term_priority,
     read_long_term_status, read_long_term_topic, render_long_term_memory_section,
 };
@@ -1699,8 +1700,9 @@ fn spawn_archive_run_task(config: LongTermArchiveConfig) -> Receiver<Result<Stri
                     let memory_db = open_default_memory_db()
                         .await
                         .map_err(|err| format!("failed to open memory db: {err}"))?;
+                    let summary_generator: std::sync::Arc<dyn SummaryGenerator> = std::sync::Arc::new(TemplateSummaryGenerator);
                     let outcome =
-                        archive_stale_long_term_memories(std::sync::Arc::new(memory_db), config)
+                        archive_stale_long_term_memories(std::sync::Arc::new(memory_db), config, summary_generator)
                             .await
                             .map_err(|err| format!("archive operation failed: {err}"))?;
                     Ok(format!(
