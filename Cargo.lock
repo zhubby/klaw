@@ -4381,6 +4381,7 @@ name = "klaw-memory"
 version = "0.14.2"
 dependencies = [
  "async-trait",
+ "futures-util",
  "klaw-config",
  "klaw-storage",
  "reqwest",
@@ -4388,6 +4389,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

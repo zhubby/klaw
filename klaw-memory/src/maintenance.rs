@@ -4,13 +4,55 @@ use crate::{
     is_inactive_long_term_record, is_summary_record, normalize_long_term_content,
     read_long_term_kind, read_long_term_topic,
 };
+use async_trait::async_trait;
 use klaw_storage::MemoryDb;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use tracing::warn;
 use uuid::Uuid;
+use futures_util::future::join_all;
 
 use crate::util::now_ms;
+
+/// Strategy for generating summary content when archiving stale long-term memories.
+///
+/// The default [`TemplateSummaryGenerator`] concatenates source snippets into a
+/// structured template string. Consumers that want richer, LLM-generated summaries
+/// should provide their own implementation (e.g. one that calls an LLM provider).
+#[async_trait]
+pub trait SummaryGenerator: Send + Sync {
+    /// Generate a summary string for a group of archived records.
+    ///
+    /// - `group` identifies the kind + topic of the records being summarized.
+    /// - `source_records` are the original records that will be archived.
+    /// - `max_sources` limits how many source entries to include.
+    async fn generate_summary(
+        &self,
+        group: &ArchiveGroupKey,
+        source_records: &[MemoryRecord],
+        max_sources: usize,
+    ) -> Result<String, MemoryError>;
+}
+
+/// Fallback summary generator that uses the original template-based concatenation.
+///
+/// This does not call any LLM; it produces a deterministic string like:
+///
+/// > Past notes on preference (3 entries): Default language is Chinese; Use concise replies; +2 more
+pub struct TemplateSummaryGenerator;
+
+#[async_trait]
+impl SummaryGenerator for TemplateSummaryGenerator {
+    async fn generate_summary(
+        &self,
+        group: &ArchiveGroupKey,
+        source_records: &[MemoryRecord],
+        max_sources: usize,
+    ) -> Result<String, MemoryError> {
+        Ok(build_summary_content(group, source_records, max_sources))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LongTermArchiveConfig {
@@ -34,15 +76,29 @@ pub struct LongTermArchiveOutcome {
     pub skipped_records: usize,
 }
 
+/// Key used to group records for archival summary generation.
+///
+/// Records sharing the same `kind` and `topic` are grouped together
+/// and summarized as a single roll-up entry.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct ArchiveGroupKey {
-    kind: LongTermMemoryKind,
-    topic: Option<String>,
+pub struct ArchiveGroupKey {
+    pub kind: LongTermMemoryKind,
+    pub topic: Option<String>,
+}
+
+/// Intermediate result from Phase 1 (parallel summary generation).
+/// Holds all data needed for Phase 2 (sequential DB writes).
+struct GroupArchivePlan {
+    summary_id: String,
+    summary_content: String,
+    summary_metadata: Map<String, Value>,
+    candidates: Vec<MemoryRecord>,
 }
 
 pub async fn archive_stale_long_term_memories(
     db: Arc<dyn MemoryDb>,
     config: LongTermArchiveConfig,
+    summary_generator: Arc<dyn SummaryGenerator>,
 ) -> Result<LongTermArchiveOutcome, MemoryError> {
     if config.max_age_days <= 0 {
         return Err(MemoryError::InvalidQuery(
@@ -91,7 +147,14 @@ pub async fn archive_stale_long_term_memories(
         }
     }
 
-    for (group, mut candidates) in candidate_groups {
+    // Phase 1: Generate all summary content in parallel (no DB writes).
+    // Each group's LLM call is independent, so we run them concurrently
+    // to reduce total wall-clock time from N×single_call to max(single_calls).
+    let group_futures = candidate_groups.into_iter().map(|(group, mut candidates)| {
+        let summary_generator = summary_generator.clone();
+        let max_sources = config.summary_max_sources;
+        let existing_summary = summaries_by_group.get(&group).cloned();
+
         candidates.sort_by(|a, b| {
             a.updated_at_ms
                 .cmp(&b.updated_at_ms)
@@ -99,7 +162,6 @@ pub async fn archive_stale_long_term_memories(
                 .then_with(|| a.id.cmp(&b.id))
         });
 
-        let existing_summary = summaries_by_group.get(&group).cloned();
         let summary_id = existing_summary
             .as_ref()
             .map(|record| record.id.clone())
@@ -114,22 +176,45 @@ pub async fn archive_stale_long_term_memories(
 
         let summary_metadata =
             build_summary_metadata(&group, &source_ids, now, existing_summary.as_ref());
-        let summary_content =
-            build_summary_content(&group, &source_records, config.summary_max_sources);
 
+        async move {
+            let summary_content = summary_generator
+                .generate_summary(&group, &source_records, max_sources)
+                .await
+                .unwrap_or_else(|err| {
+                    warn!(error = %err, "summary generator failed, falling back to template");
+                    build_summary_content(&group, &source_records, max_sources)
+                });
+
+            Ok::<GroupArchivePlan, MemoryError>(GroupArchivePlan {
+                summary_id,
+                summary_content,
+                summary_metadata,
+                candidates,
+            })
+        }
+    });
+
+    let group_plans = join_all(group_futures).await;
+
+    // Phase 2: Write all results to DB sequentially.
+    // DB writes are fast local operations; serializing them avoids
+    // SQLite write contention and keeps the transaction order predictable.
+    for plan_result in group_plans {
+        let plan = plan_result?;
         service
             .upsert(UpsertMemoryInput {
-                id: Some(summary_id.clone()),
+                id: Some(plan.summary_id.clone()),
                 scope: "long_term".to_string(),
-                content: summary_content,
-                metadata: Value::Object(summary_metadata),
+                content: plan.summary_content,
+                metadata: Value::Object(plan.summary_metadata),
                 pinned: false,
             })
             .await?;
         outcome.summary_records_upserted += 1;
 
-        for record in candidates {
-            let metadata = archive_metadata(&record, now, &summary_id);
+        for record in plan.candidates {
+            let metadata = archive_metadata(&record, now, &plan.summary_id);
             service
                 .upsert(UpsertMemoryInput {
                     id: Some(record.id.clone()),

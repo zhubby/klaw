@@ -13,7 +13,8 @@ use klaw_core::{
 use klaw_cron::{CronScheduleKind, CronWorker, CronWorkerConfig, MissedRunPolicy, ScheduleSpec};
 use klaw_gateway::{GatewayWebsocketServerFrame, OutboundEvent};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig, should_suppress_output};
-use klaw_memory::{LongTermArchiveConfig, archive_stale_long_term_memories};
+use klaw_memory::{LongTermArchiveConfig, SummaryGenerator, archive_stale_long_term_memories};
+use klaw_llm::{ChatOptions, LlmMessage, LlmProvider};
 use klaw_storage::{ChatRecord, DefaultSessionStore, MemoryDb, SessionStorage};
 use klaw_util::system_timezone_name;
 use serde_json::Value;
@@ -32,6 +33,7 @@ type StdioCronWorker = CronWorker<DefaultSessionStore, FilteringInboundTransport
 type StdioHeartbeatWorker = HeartbeatWorker<DefaultSessionStore, FilteringInboundTransport>;
 const OUTBOUND_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MEMORY_ARCHIVE_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
+
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChannelAvailability {
@@ -105,6 +107,8 @@ pub struct BackgroundServiceConfig {
     pub memory_archive_schedule: String,
     pub memory_archive_max_age_days: i64,
     pub memory_archive_summary_max_sources: usize,
+    pub memory_archive_summary_timeout_secs: u64,
+    pub memory_archive_command_timeout_secs: u64,
     channel_availability: ChannelAvailability,
     pub dingtalk_accounts: BTreeMap<String, BackgroundDingtalkAccountConfig>,
     pub telegram_configs: BTreeMap<String, klaw_config::TelegramConfig>,
@@ -125,6 +129,8 @@ impl BackgroundServiceConfig {
             memory_archive_schedule: config.memory.archive.schedule.clone(),
             memory_archive_max_age_days: config.memory.archive.max_age_days,
             memory_archive_summary_max_sources: config.memory.archive.summary_max_sources,
+            memory_archive_summary_timeout_secs: config.memory.archive.summary_timeout_secs,
+            memory_archive_command_timeout_secs: config.memory.archive.command_timeout_secs,
             channel_availability: ChannelAvailability::from_app_config(config),
             dingtalk_accounts: config
                 .channels
@@ -167,6 +173,8 @@ impl Default for BackgroundServiceConfig {
             memory_archive_schedule: "0 0 2 * * *".to_string(),
             memory_archive_max_age_days: 30,
             memory_archive_summary_max_sources: 8,
+            memory_archive_summary_timeout_secs: 60,
+            memory_archive_command_timeout_secs: 120,
             channel_availability: ChannelAvailability::default(),
             dingtalk_accounts: BTreeMap::new(),
             telegram_configs: BTreeMap::new(),
@@ -280,10 +288,19 @@ impl BackgroundServices {
             cron_worker,
             heartbeat_worker,
             memory_archive_worker: if config.memory_archive_enabled {
+                let provider_runtime = runtime.runtime.provider_runtime_snapshot();
                 runtime
                     .memory_db
                     .clone()
-                    .and_then(|memory_db| MemoryArchiveWorker::new(memory_db, &config).ok())
+                    .and_then(|memory_db| {
+                        MemoryArchiveWorker::new(
+                            memory_db,
+                            &config,
+                            provider_runtime.default_provider,
+                            provider_runtime.default_model,
+                        )
+                        .ok()
+                    })
             } else {
                 None
             },
@@ -335,6 +352,13 @@ impl BackgroundServices {
             .run_job_now(heartbeat_id)
             .await
             .map_err(|err| err.to_string())
+    }
+
+    pub async fn run_memory_archive_now(&self) -> Result<String, String> {
+        match &self.memory_archive_worker {
+            Some(worker) => worker.run_now().await,
+            None => Err("memory archive worker is not enabled".to_string()),
+        }
     }
 
     pub async fn on_runtime_tick(&self, runtime: &RuntimeBundle) {
@@ -390,16 +414,178 @@ impl BackgroundServices {
     }
 }
 
+// ---------------------------------------------------------------------------
+// LLM-backed summary generator
+// ---------------------------------------------------------------------------
+
+/// System prompt for the LLM summary call.
+const MEMORY_SUMMARY_SYSTEM_PROMPT: &str = "You are a memory archivist. Your task is to condense a list of past notes about a specific topic into a single concise summary sentence or short paragraph.
+
+Rules:
+- Preserve all distinct factual claims; do not drop information.
+- Merge overlapping or redundant statements into one.
+- Keep the summary under 80 words.
+- Use neutral, factual language.
+- Do not add information that was not in the source notes.
+- Output only the summary text, without preamble or labels.";
+
+/// LLM-backed summary generator for memory archiving.
+///
+/// Uses a low-cost, fast model call to produce a concise natural-language summary
+/// of archived memory records. Falls back gracefully on provider errors (handled
+/// by the `archive_stale_long_term_memories` caller).
+struct LlmSummaryGenerator {
+    provider: Arc<dyn LlmProvider>,
+    model: String,
+    max_output_tokens: u32,
+    summary_timeout: Duration,
+}
+
+fn memory_summary_user_prompt(
+    group: &klaw_memory::ArchiveGroupKey,
+    source_records: &[klaw_memory::MemoryRecord],
+    max_sources: usize,
+) -> String {
+    let label = group
+        .topic
+        .as_deref()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| group.kind.as_str().to_string());
+    let snippets: Vec<String> = source_records
+        .iter()
+        .take(max_sources)
+        .map(|record| klaw_memory::normalize_long_term_content(&record.content))
+        .filter(|content| !content.is_empty())
+        .collect();
+    let total = snippets.len();
+    let items = snippets
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("{i}. {s}", i = i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "Summarize the following {total} past notes about {label}:
+
+{items}",
+        total = total,
+        label = label,
+        items = items,
+    )
+}
+
+#[async_trait::async_trait]
+impl SummaryGenerator for LlmSummaryGenerator {
+    async fn generate_summary(
+        &self,
+        group: &klaw_memory::ArchiveGroupKey,
+        source_records: &[klaw_memory::MemoryRecord],
+        max_sources: usize,
+    ) -> Result<String, klaw_memory::MemoryError> {
+        let user_prompt = memory_summary_user_prompt(group, source_records, max_sources);
+        debug!(
+            kind = group.kind.as_str(),
+            topic = group.topic.as_deref().unwrap_or("none"),
+            model = %self.model,
+            source_count = source_records.len(),
+            "calling LLM for memory archive summary"
+        );
+        let messages = vec![
+            LlmMessage {
+                role: "system".to_string(),
+                content: MEMORY_SUMMARY_SYSTEM_PROMPT.to_string(),
+                media: Vec::new(),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            LlmMessage {
+                role: "user".to_string(),
+                content: user_prompt,
+                media: Vec::new(),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        ];
+        let response = tokio::time::timeout(
+            self.summary_timeout,
+            self.provider.chat(
+                messages,
+                Vec::new(),
+                Some(&self.model),
+                ChatOptions {
+                    temperature: 0.2,
+                    max_tokens: Some(self.max_output_tokens),
+                    max_output_tokens: None,
+                    previous_response_id: None,
+                    instructions: None,
+                    metadata: None,
+                    include: None,
+                    store: None,
+                    parallel_tool_calls: None,
+                    tool_choice: None,
+                    text: None,
+                    reasoning: None,
+                    truncation: None,
+                    user: None,
+                    service_tier: None,
+                },
+            ),
+        )
+        .await
+        .map_err(|_| {
+            klaw_memory::MemoryError::CapabilityUnavailable(
+                format!(
+                    "LLM summary call timed out after {}s for kind={} topic={}",
+                    self.summary_timeout.as_secs(),
+                    group.kind.as_str(),
+                    group.topic.as_deref().unwrap_or("none"),
+                ),
+            )
+        })?
+        .map_err(|err| {
+            klaw_memory::MemoryError::CapabilityUnavailable(format!(
+                "LLM summary call failed: {err}"
+            ))
+        })?;
+        let content = response.content.trim().to_string();
+        debug!(
+            kind = group.kind.as_str(),
+            topic = group.topic.as_deref().unwrap_or("none"),
+            summary_len = content.len(),
+            "LLM memory archive summary received"
+        );
+        if content.is_empty() {
+            return Err(klaw_memory::MemoryError::CapabilityUnavailable(
+                "LLM summary returned empty content".to_string(),
+            ));
+        }
+        Ok(content)
+    }
+}
+
 struct MemoryArchiveWorker {
     memory_db: Arc<dyn MemoryDb>,
     schedule: ScheduleSpec,
     timezone: String,
     last_scheduled_run_ms: Mutex<Option<i64>>,
     archive_config: LongTermArchiveConfig,
+    summary_generator: Arc<dyn SummaryGenerator>,
 }
 
 impl MemoryArchiveWorker {
-    fn new(memory_db: Arc<dyn MemoryDb>, config: &BackgroundServiceConfig) -> Result<Self, String> {
+    fn new(
+        memory_db: Arc<dyn MemoryDb>,
+        config: &BackgroundServiceConfig,
+        default_provider: Arc<dyn LlmProvider>,
+        default_model: String,
+    ) -> Result<Self, String> {
+        let summary_timeout = Duration::from_secs(config.memory_archive_summary_timeout_secs);
+        let summary_generator: Arc<dyn SummaryGenerator> = Arc::new(LlmSummaryGenerator {
+            provider: default_provider,
+            model: default_model,
+            max_output_tokens: 120,
+            summary_timeout,
+        });
         Ok(Self {
             memory_db,
             schedule: ScheduleSpec::from_kind_expr(
@@ -413,6 +599,7 @@ impl MemoryArchiveWorker {
                 max_age_days: config.memory_archive_max_age_days,
                 summary_max_sources: config.memory_archive_summary_max_sources,
             },
+            summary_generator,
         })
     }
 
@@ -437,7 +624,7 @@ impl MemoryArchiveWorker {
             next_due
         };
 
-        let outcome = archive_stale_long_term_memories(self.memory_db.clone(), self.archive_config)
+        let outcome = archive_stale_long_term_memories(self.memory_db.clone(), self.archive_config, self.summary_generator.clone())
             .await
             .map_err(|err| err.to_string())?;
         debug!(
@@ -448,6 +635,29 @@ impl MemoryArchiveWorker {
             "memory archive tick completed"
         );
         Ok(outcome.archived_records > 0 || outcome.summary_records_upserted > 0)
+    }
+
+    /// Force-run archive now, bypassing the schedule check.
+    async fn run_now(&self) -> Result<String, String> {
+        let outcome = archive_stale_long_term_memories(
+            self.memory_db.clone(),
+            self.archive_config,
+            self.summary_generator.clone(),
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+        debug!(
+            archived_records = outcome.archived_records,
+            summary_records_upserted = outcome.summary_records_upserted,
+            skipped_records = outcome.skipped_records,
+            "memory archive run-now completed"
+        );
+        Ok(format!(
+            "{} archived, {} summaries updated, {} skipped",
+            outcome.archived_records,
+            outcome.summary_records_upserted,
+            outcome.skipped_records
+        ))
     }
 }
 

@@ -19,7 +19,8 @@ pub use governance::{
     read_topic as read_long_term_topic,
 };
 pub use maintenance::{
-    LongTermArchiveConfig, LongTermArchiveOutcome, archive_stale_long_term_memories,
+    ArchiveGroupKey, LongTermArchiveConfig, LongTermArchiveOutcome, SummaryGenerator,
+    TemplateSummaryGenerator, archive_stale_long_term_memories,
 };
 pub use prompt::{LongTermMemoryPromptOptions, render_long_term_memory_section};
 pub use provider::{OpenAiEmbeddingProvider, build_embedding_provider_from_config};

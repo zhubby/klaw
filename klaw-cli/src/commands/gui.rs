@@ -562,6 +562,17 @@ impl GuiCommand {
                                                     let _ = response.send(result);
                                                 });
                                             }
+                                            Some(klaw_gui::RuntimeCommand::RunMemoryArchiveNow { response }) => {
+                                                let runtime = Arc::clone(&runtime);
+                                                let background = Arc::clone(&background);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = background.run_memory_archive_now().await;
+                                                    if result.is_ok() {
+                                                        background.on_runtime_tick(runtime.as_ref()).await;
+                                                    }
+                                                    let _ = response.send(result);
+                                                });
+                                            }
                                             Some(klaw_gui::RuntimeCommand::GetEnvCheck { response }) => {
                                                 let env_check = runtime.env_check.clone();
                                                 let _ = response.send(env_check);

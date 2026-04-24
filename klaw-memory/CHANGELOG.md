@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 2026-04-24
+
+### Added
+
+- `SummaryGenerator` async trait: pluggable strategy for generating archive summary content
+- `TemplateSummaryGenerator`: default implementation that preserves the existing template-based concatenation as fallback
+- `ArchiveGroupKey` is now public, enabling external crates to implement custom `SummaryGenerator` implementations
+- `archive_stale_long_term_memories` accepts `Arc<dyn SummaryGenerator>` parameter; LLM call failures automatically fall back to template concatenation with a warn log
+
+### Changed
+
+- `archive_stale_long_term_memories` signature now requires `summary_generator: Arc<dyn SummaryGenerator>` parameter; all callers (runtime, GUI, tests) must pass the appropriate implementation
+- `klaw-memory` no longer directly owns summary content generation logic; the strategy is injected by the caller
+
+
+
 ## 2026-05-12
 
 ### Changed
