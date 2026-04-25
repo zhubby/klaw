@@ -2,6 +2,9 @@
 
 ## 2026-04-25
 
+### Fixed
+- `knowledge` tool registration no longer reindexes the configured vault; indexing remains an explicit knowledge sync/startup responsibility outside the tool registry gate
+
 ### Changed
 - `knowledge` tool startup now reuses the shared configured Obsidian provider builder used by GUI/runtime knowledge flows
 

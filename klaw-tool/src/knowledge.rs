@@ -35,9 +35,6 @@ impl KnowledgeTool {
         let provider = open_configured_obsidian_provider(config, false)
             .await
             .map_err(map_knowledge_error)?;
-        if config.knowledge.obsidian.index_on_startup {
-            provider.reindex().await.map_err(map_knowledge_error)?;
-        }
         Ok(Self {
             provider: Arc::new(provider),
             runtime: KnowledgeToolRuntimeConfig::from_tool_config(&config.tools.knowledge),
@@ -255,14 +252,51 @@ fn map_knowledge_error(err: klaw_knowledge::KnowledgeError) -> ToolError {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use async_trait::async_trait;
     use klaw_knowledge::{KnowledgeError, KnowledgeSourceInfo};
     use serde_json::json;
 
     use super::*;
 
+    static HOME_ENV_LOCK: Mutex<Option<OsString>> = Mutex::new(None);
+    static NEXT_TEST_ID: AtomicUsize = AtomicUsize::new(0);
+
     #[derive(Clone)]
     struct MockProvider;
+
+    struct HomeEnvGuard {
+        original: Option<OsString>,
+    }
+
+    impl HomeEnvGuard {
+        fn set(home: &std::path::Path) -> Self {
+            let original = std::env::var_os("HOME");
+            // SAFETY: This test holds HOME_ENV_LOCK for the full guard lifetime, so
+            // this crate's HOME-dependent test setup is serialized and restored.
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+            Self { original }
+        }
+    }
+
+    impl Drop for HomeEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: HOME_ENV_LOCK is still held when this guard is dropped, so
+            // restoring the process environment is serialized with matching tests.
+            unsafe {
+                if let Some(original) = &self.original {
+                    std::env::set_var("HOME", original);
+                } else {
+                    std::env::remove_var("HOME");
+                }
+            }
+        }
+    }
 
     #[async_trait]
     impl KnowledgeProvider for MockProvider {
@@ -325,6 +359,44 @@ mod tests {
             session_key: "s1".to_string(),
             metadata: Default::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn open_default_does_not_reindex_vault() {
+        let _home_lock = HOME_ENV_LOCK
+            .lock()
+            .expect("HOME env lock should not poison");
+        let test_id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "klaw-tool-knowledge-open-default-{}-{test_id}",
+            std::process::id()
+        ));
+        let home = root.join("home");
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).expect("vault dir should be created");
+        std::fs::write(
+            vault.join("note.md"),
+            "# Note\n\nknowledge startup content\n",
+        )
+        .expect("vault note should be written");
+        let _home_guard = HomeEnvGuard::set(&home);
+
+        let mut config = AppConfig::default();
+        config.knowledge.enabled = true;
+        config.knowledge.obsidian.vault_path = Some(vault.display().to_string());
+        config.knowledge.obsidian.index_on_startup = true;
+        config.tools.knowledge.enabled = true;
+
+        let tool = KnowledgeTool::open_default(&config)
+            .await
+            .expect("knowledge tool should open");
+        let sources = tool
+            .provider
+            .list_sources()
+            .await
+            .expect("sources should load");
+
+        assert_eq!(sources.first().map(|source| source.entry_count), Some(0));
     }
 
     #[tokio::test]
