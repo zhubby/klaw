@@ -390,7 +390,7 @@ idx_memories_embedding  — libsql_vector_idx(embedding)
 | `HeartbeatStorage` | `klaw-storage` | `SqlxSessionStore` / `TursoSessionStore` | `klaw.db` |
 | `ArchiveService` | `klaw-archive` | `SqliteArchiveService` | `archive.db` |
 | `MemoryService` | `klaw-memory` | `SqliteMemoryService` | `memory.db` |
-| `MemoryDb` | `klaw-storage` | `DefaultMemoryDb` | `memory.db` |
+| `DatabaseExecutor` | `klaw-storage` | `DefaultMemoryDb` / `DefaultKnowledgeDb` / `DefaultArchiveDb` | `memory.db` / `knowledge.db` / `archive.db` |
 
 `SessionStorage` 是最大的 trait，涵盖会话索引、聊天记录、LLM 用量/审计、Tool 审计、Webhook 事件/Agent、审批和待答问题——这些辅助数据表都存储在同一个 `klaw.db` 中，与 `sessions` 表共享连接池。
 

@@ -4,4 +4,4 @@ mod heartbeat;
 mod mapping;
 mod session;
 
-pub use core::{TursoArchiveDb, TursoMemoryDb, TursoSessionStore};
+pub use core::{TursoArchiveDb, TursoDatabaseExecutor, TursoSessionStore};

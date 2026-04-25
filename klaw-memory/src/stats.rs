@@ -2,7 +2,7 @@ use crate::{
     MemoryError, MemoryRecord,
     util::{now_ms, row_to_record},
 };
-use klaw_storage::{DbValue, MemoryDb, open_default_memory_db};
+use klaw_storage::{DatabaseExecutor, DbValue, open_default_memory_db};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Default)]
@@ -29,7 +29,7 @@ pub struct MemoryStats {
 }
 
 pub struct SqliteMemoryStatsService {
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
 }
 
 impl SqliteMemoryStatsService {
@@ -38,7 +38,7 @@ impl SqliteMemoryStatsService {
         Ok(Self { db: Arc::new(db) })
     }
 
-    pub fn new(db: Arc<dyn MemoryDb>) -> Self {
+    pub fn new(db: Arc<dyn DatabaseExecutor>) -> Self {
         Self { db }
     }
 

@@ -14,3 +14,8 @@
 ### Changed
 
 - Local llama.cpp model resolution now honors each installed model manifest's default GGUF file
+- Knowledge storage access now depends on the shared `DatabaseExecutor` abstraction instead of the misleading `MemoryDb` name
+
+### Fixed
+
+- Obsidian temporal search no longer panics when queries contain non-ASCII text

@@ -6,7 +6,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures_util::future::join_all;
-use klaw_storage::MemoryDb;
+use klaw_storage::DatabaseExecutor;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -96,7 +96,7 @@ struct GroupArchivePlan {
 }
 
 pub async fn archive_stale_long_term_memories(
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     config: LongTermArchiveConfig,
     summary_generator: Arc<dyn SummaryGenerator>,
 ) -> Result<LongTermArchiveOutcome, MemoryError> {

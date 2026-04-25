@@ -6,7 +6,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use klaw_config::{AppConfig, ModelProviderConfig};
-use klaw_storage::{DefaultMemoryDb, MemoryDb, StoragePaths};
+use klaw_storage::{DatabaseExecutor, DefaultMemoryDb, StoragePaths};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -38,7 +38,7 @@ impl EmbeddingProvider for MockEmbeddingProvider {
     }
 }
 
-async fn create_db() -> Arc<dyn MemoryDb> {
+async fn create_db() -> Arc<dyn DatabaseExecutor> {
     let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("klaw-memory-test-{suffix}-{}", now_ms()));
     let paths = StoragePaths::from_root(root);

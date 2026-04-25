@@ -5,7 +5,7 @@ use std::{
 };
 
 use ignore::WalkBuilder;
-use klaw_storage::{DbRow, DbValue, MemoryDb};
+use klaw_storage::{DatabaseExecutor, DbRow, DbValue};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -25,7 +25,7 @@ pub struct IndexedNote {
     pub markdown: ParsedMarkdown,
 }
 
-pub async fn init_schema(db: &Arc<dyn MemoryDb>) -> Result<(), KnowledgeError> {
+pub async fn init_schema(db: &Arc<dyn DatabaseExecutor>) -> Result<(), KnowledgeError> {
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS knowledge_entries (
             id TEXT PRIMARY KEY,
@@ -90,7 +90,7 @@ pub async fn init_schema(db: &Arc<dyn MemoryDb>) -> Result<(), KnowledgeError> {
 }
 
 pub async fn index_vault(
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     vault_root: &Path,
     exclude_folders: &[String],
     max_excerpt_length: usize,
@@ -108,7 +108,7 @@ pub async fn index_vault(
 }
 
 pub async fn index_vault_with_progress<F>(
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     vault_root: &Path,
     exclude_folders: &[String],
     max_excerpt_length: usize,
@@ -137,14 +137,14 @@ where
 }
 
 pub async fn embed_missing_chunks(
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     embedder: &dyn EmbeddingModel,
 ) -> Result<usize, KnowledgeError> {
     embed_missing_chunks_with_progress(db, embedder, |_| {}).await
 }
 
 pub async fn embed_missing_chunks_with_progress<F>(
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     embedder: &dyn EmbeddingModel,
     mut progress: F,
 ) -> Result<usize, KnowledgeError>
@@ -201,7 +201,7 @@ where
 }
 
 pub async fn index_note_path(
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     vault_root: &Path,
     absolute_path: &Path,
     max_excerpt_length: usize,
@@ -336,7 +336,7 @@ fn relative_display_path(
 }
 
 async fn is_entry_up_to_date(
-    db: &Arc<dyn MemoryDb>,
+    db: &Arc<dyn DatabaseExecutor>,
     uri: &str,
     updated_at_ms: i64,
 ) -> Result<bool, KnowledgeError> {
@@ -350,7 +350,7 @@ async fn is_entry_up_to_date(
     Ok(rows.first().and_then(|row| integer_at(row, 0)) == Some(updated_at_ms))
 }
 
-async fn delete_entry(db: Arc<dyn MemoryDb>, entry_id: &str) -> Result<(), KnowledgeError> {
+async fn delete_entry(db: Arc<dyn DatabaseExecutor>, entry_id: &str) -> Result<(), KnowledgeError> {
     db.execute(
         "DELETE FROM knowledge_fts WHERE entry_id = ?1",
         &[DbValue::Text(entry_id.to_string())],
@@ -379,7 +379,7 @@ async fn delete_entry(db: Arc<dyn MemoryDb>, entry_id: &str) -> Result<(), Knowl
 }
 
 async fn insert_chunk(
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     entry_id: &str,
     title: &str,
     aliases: &[String],
@@ -506,7 +506,7 @@ mod tests {
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    async fn open_test_db(name: &str) -> Arc<dyn MemoryDb> {
+    async fn open_test_db(name: &str) -> Arc<dyn DatabaseExecutor> {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let base = std::env::temp_dir().join(format!("klaw-knowledge-{name}-{suffix}"));
         let paths = StoragePaths::from_root(base);

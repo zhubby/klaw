@@ -6,7 +6,7 @@
 
 - manage the `~/.klaw` data directory layout
 - provide session, pending-question, cron, and heartbeat persistence stores
-- expose generic SQLite access used by higher-level modules such as memory and archive services
+- expose the `DatabaseExecutor` SQL execution interface used by higher-level modules such as memory, knowledge, and archive services
 - persist session routing/model state used by IM command routing (`active_session_key`, `model_provider`, `model`)
 - support SQL-backed session listing with optional `channel` filtering, `updated_at` ordering, and distinct channel option queries
 - persist structured `tool_audit` and `llm_audit` records for runtime/GUI diagnostics
@@ -42,8 +42,7 @@
 - `tool_audit` records capture per-call arguments, full tool result/error payloads, signals, timing, and optional execution metadata such as tool call ids or sub-agent lineage
 - `pending_questions` persist asynchronous IM question cards so runtime commands like `/card_answer <question_id> <option_id>` can resume the original session after the user clicks later
 - heartbeat records keep session-bound autonomous wakeups separate from isolated cron jobs, including a per-job recent-message window for bounded inherited context
-- `DefaultMemoryDb` provides a generic SQL interface for `klaw-memory`
-- `DefaultArchiveDb` provides a generic SQL interface for `klaw-archive`
+- `DefaultMemoryDb`, `DefaultKnowledgeDb`, and `DefaultArchiveDb` open domain-specific database files behind the shared `DatabaseExecutor` interface
 - `BackupService` stages managed SQLite/filesystem state into versioned manifests plus content-addressed blobs, uploads only missing blobs, and restores historical manifests after checksum verification
 - `BackupService` keeps `latest.json` as the current-manifest ref while preserving `manifests/<id>.json` history for restore and GC
 - `BackupService` now exposes a lightweight latest-manifest lookup for GUI startup checks so clients can detect remote updates without listing full manifest history

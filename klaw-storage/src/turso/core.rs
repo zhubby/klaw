@@ -1,6 +1,6 @@
 use crate::{
     StorageError, StoragePaths,
-    memory_db::{DbRow, DbValue, MemoryDb},
+    database_executor::{DatabaseExecutor, DbRow, DbValue},
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ pub struct TursoSessionStore {
 }
 
 #[derive(Debug, Clone)]
-pub struct TursoMemoryDb {
+pub struct TursoDatabaseExecutor {
     _db: Database,
     conn: Connection,
 }
@@ -458,7 +458,7 @@ impl TursoSessionStore {
     }
 }
 
-impl TursoMemoryDb {
+impl TursoDatabaseExecutor {
     pub async fn open(paths: StoragePaths) -> Result<Self, StorageError> {
         paths.ensure_dirs().await?;
         let db = Builder::new_local(&paths.memory_db_path.to_string_lossy())
@@ -515,7 +515,7 @@ async fn apply_sqlite_connection_pragmas(conn: &Connection) -> Result<(), Storag
 }
 
 #[async_trait]
-impl MemoryDb for TursoSessionStore {
+impl DatabaseExecutor for TursoSessionStore {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
         let conn = self.connection().await?;
         conn.execute_batch(sql).await.map_err(StorageError::backend)
@@ -552,7 +552,7 @@ impl MemoryDb for TursoSessionStore {
 }
 
 #[async_trait]
-impl MemoryDb for TursoMemoryDb {
+impl DatabaseExecutor for TursoDatabaseExecutor {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
         self.conn
             .execute_batch(sql)
@@ -591,7 +591,7 @@ impl MemoryDb for TursoMemoryDb {
 }
 
 #[async_trait]
-impl MemoryDb for TursoArchiveDb {
+impl DatabaseExecutor for TursoArchiveDb {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
         self.conn
             .execute_batch(sql)

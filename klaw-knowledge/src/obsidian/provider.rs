@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use klaw_model::QueryIntent;
-use klaw_storage::{DbRow, DbValue, MemoryDb};
+use klaw_storage::{DatabaseExecutor, DbRow, DbValue};
 use serde_json::{Value, json};
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct ObsidianKnowledgeProvider {
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     vault_root: PathBuf,
     exclude_folders: Vec<String>,
     max_excerpt_length: usize,
@@ -31,7 +31,7 @@ pub struct ObsidianKnowledgeProvider {
 
 impl ObsidianKnowledgeProvider {
     pub async fn open(
-        db: Arc<dyn MemoryDb>,
+        db: Arc<dyn DatabaseExecutor>,
         vault_root: PathBuf,
         exclude_folders: Vec<String>,
         max_excerpt_length: usize,
@@ -588,14 +588,13 @@ fn temporal_pattern(query: &str) -> Option<String> {
     if query.contains("recent") || query.contains("latest") || query.contains("today") {
         return Some("%".to_string());
     }
-    let bytes = query.as_bytes();
-    for start in 0..bytes.len() {
+    for (start, _) in query.char_indices() {
         for len in [10usize, 7usize] {
-            if start + len <= bytes.len() {
-                let candidate = &query[start..start + len];
-                if is_date_like(candidate) {
-                    return Some(format!("{candidate}%"));
-                }
+            let Some(candidate) = query.get(start..start + len) else {
+                continue;
+            };
+            if is_date_like(candidate) {
+                return Some(format!("{candidate}%"));
             }
         }
     }
@@ -677,7 +676,7 @@ fn merge_seed_hits(primary: &[RankedHit], secondary: &[RankedHit]) -> Vec<Ranked
     dedup_ranked_hits_from_vec(merged)
 }
 
-async fn detect_virtual_fts(db: &Arc<dyn MemoryDb>) -> Result<bool, KnowledgeError> {
+async fn detect_virtual_fts(db: &Arc<dyn DatabaseExecutor>) -> Result<bool, KnowledgeError> {
     let rows = db
         .query(
             "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = 'knowledge_fts' LIMIT 1",
@@ -900,6 +899,11 @@ mod tests {
             .expect("search should succeed");
         assert!(!hits.is_empty());
         assert!(hits.iter().any(|hit| hit.title == "Auth"));
+    }
+
+    #[test]
+    fn temporal_pattern_ignores_non_ascii_queries() {
+        assert_eq!(temporal_pattern("激活码"), None);
     }
 
     #[tokio::test]

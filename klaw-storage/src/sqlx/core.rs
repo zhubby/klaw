@@ -1,6 +1,6 @@
 use crate::{
     StorageError, StoragePaths,
-    memory_db::{DbRow, DbValue, MemoryDb},
+    database_executor::{DatabaseExecutor, DbRow, DbValue},
 };
 use async_trait::async_trait;
 use sqlx::{
@@ -16,7 +16,7 @@ pub struct SqlxSessionStore {
 }
 
 #[derive(Debug, Clone)]
-pub struct SqlxMemoryDb {
+pub struct SqlxDatabaseExecutor {
     pub(crate) pool: SqlitePool,
 }
 
@@ -642,7 +642,7 @@ impl SqlxSessionStore {
     }
 }
 
-impl SqlxMemoryDb {
+impl SqlxDatabaseExecutor {
     pub async fn open(paths: StoragePaths) -> Result<Self, StorageError> {
         paths.ensure_dirs().await?;
         let connect_options = SqliteConnectOptions::new()
@@ -698,7 +698,7 @@ impl SqlxArchiveDb {
 }
 
 #[async_trait]
-impl MemoryDb for SqlxSessionStore {
+impl DatabaseExecutor for SqlxSessionStore {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
         sqlx::raw_sql(sql)
             .execute(&self.pool)
@@ -741,7 +741,7 @@ impl MemoryDb for SqlxSessionStore {
 }
 
 #[async_trait]
-impl MemoryDb for SqlxMemoryDb {
+impl DatabaseExecutor for SqlxDatabaseExecutor {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
         sqlx::raw_sql(sql)
             .execute(&self.pool)
@@ -784,7 +784,7 @@ impl MemoryDb for SqlxMemoryDb {
 }
 
 #[async_trait]
-impl MemoryDb for SqlxArchiveDb {
+impl DatabaseExecutor for SqlxArchiveDb {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
         sqlx::raw_sql(sql)
             .execute(&self.pool)

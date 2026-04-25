@@ -22,7 +22,7 @@ impl DbRow {
 }
 
 #[async_trait]
-pub trait MemoryDb: Send + Sync {
+pub trait DatabaseExecutor: Send + Sync {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError>;
     async fn execute(&self, sql: &str, params: &[DbValue]) -> Result<u64, StorageError>;
     async fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, StorageError>;

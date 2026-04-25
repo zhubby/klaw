@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-25
+
+### Changed
+
+- Memory services now accept the shared `DatabaseExecutor` storage abstraction instead of the former `MemoryDb` trait name
+
 ## 2026-04-24
 
 ### Added

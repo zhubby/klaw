@@ -160,7 +160,7 @@ pub trait EmbeddingProvider: Send + Sync {
 
 `SqliteMemoryService` 是 `MemoryService` 的默认实现，构造流程：
 
-1. 打开 `memory.db`（通过 `open_default_memory_db` 或传入 `Arc<dyn MemoryDb>`）
+1. 打开 `memory.db`（通过 `open_default_memory_db` 或传入 `Arc<dyn DatabaseExecutor>`）
 2. 根据 `memory.embedding.enabled` 判断是否构建 embedding provider
 3. 执行 `init_schema()`：创建 `memories` 主表
 4. 尝试启用 FTS5（`try_enable_fts`）：创建 `memories_fts` 虚拟表
@@ -169,7 +169,7 @@ pub trait EmbeddingProvider: Send + Sync {
 ```rust
 pub async fn open_default(config: &AppConfig) -> Result<Self, MemoryError>
 pub async fn new(
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 ) -> Result<Self, MemoryError>
 ```
@@ -425,7 +425,7 @@ pub struct LongTermMemoryPromptOptions {
 
 ```rust
 pub struct SqliteMemoryStatsService {
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
 }
 ```
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-25
+
+### Changed
+- renamed the generic SQL execution abstraction from `MemoryDb` to `DatabaseExecutor`, moved it to `database_executor.rs`, and renamed backend executor types to avoid implying the interface is memory-specific
+
 ## 2026-04-24
 
 ### Changed

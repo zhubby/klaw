@@ -1,7 +1,7 @@
 mod backup;
+mod database_executor;
 mod error;
 mod jsonl;
-mod memory_db;
 mod paths;
 mod traits;
 mod types;
@@ -18,8 +18,8 @@ pub use backup::{
     SnapshotListItem, SnapshotMode, SnapshotPrepareResult, SnapshotRestoreResult, SnapshotSchedule,
     SnapshotStore, SyncManifest,
 };
+pub use database_executor::{DatabaseExecutor, DbRow, DbValue};
 pub use error::StorageError;
-pub use memory_db::{DbRow, DbValue, MemoryDb};
 pub use paths::StoragePaths;
 pub use traits::{ChatRecordPage, CronStorage, HeartbeatStorage, SessionStorage};
 pub use types::{
@@ -48,13 +48,13 @@ pub type DefaultSessionStore = turso::TursoSessionStore;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
 pub type DefaultSessionStore = sqlx::SqlxSessionStore;
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
-pub type DefaultMemoryDb = turso::TursoMemoryDb;
+pub type DefaultMemoryDb = turso::TursoDatabaseExecutor;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
-pub type DefaultMemoryDb = sqlx::SqlxMemoryDb;
+pub type DefaultMemoryDb = sqlx::SqlxDatabaseExecutor;
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
-pub type DefaultKnowledgeDb = turso::TursoMemoryDb;
+pub type DefaultKnowledgeDb = turso::TursoDatabaseExecutor;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
-pub type DefaultKnowledgeDb = sqlx::SqlxMemoryDb;
+pub type DefaultKnowledgeDb = sqlx::SqlxDatabaseExecutor;
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
 pub type DefaultArchiveDb = turso::TursoArchiveDb;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
@@ -877,20 +877,20 @@ mod tests {
 
         #[cfg(feature = "turso")]
         {
-            let _db1 = turso::TursoMemoryDb::open(paths.clone())
+            let _db1 = turso::TursoDatabaseExecutor::open(paths.clone())
                 .await
                 .expect("memory db should open");
-            let _db2 = turso::TursoMemoryDb::open(paths)
+            let _db2 = turso::TursoDatabaseExecutor::open(paths)
                 .await
                 .expect("memory db should reopen");
         }
 
         #[cfg(feature = "sqlx")]
         {
-            let _db1 = sqlx::SqlxMemoryDb::open(paths.clone())
+            let _db1 = sqlx::SqlxDatabaseExecutor::open(paths.clone())
                 .await
                 .expect("memory db should open");
-            let _db2 = sqlx::SqlxMemoryDb::open(paths)
+            let _db2 = sqlx::SqlxDatabaseExecutor::open(paths)
                 .await
                 .expect("memory db should reopen");
         }

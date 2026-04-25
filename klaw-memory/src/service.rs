@@ -5,7 +5,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use klaw_config::AppConfig;
-use klaw_storage::{DbRow, DbValue, MemoryDb, StorageError, open_default_memory_db};
+use klaw_storage::{DatabaseExecutor, DbRow, DbValue, StorageError, open_default_memory_db};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -13,7 +13,7 @@ use std::{
 use uuid::Uuid;
 
 pub struct SqliteMemoryService {
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     fts_enabled: bool,
     vector_enabled: bool,
@@ -31,7 +31,7 @@ impl SqliteMemoryService {
     }
 
     pub async fn new(
-        db: Arc<dyn MemoryDb>,
+        db: Arc<dyn DatabaseExecutor>,
         embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     ) -> Result<Self, MemoryError> {
         let mut service = Self {

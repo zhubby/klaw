@@ -15,7 +15,7 @@ use klaw_gateway::{GatewayWebsocketServerFrame, OutboundEvent};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig, should_suppress_output};
 use klaw_llm::{ChatOptions, LlmMessage, LlmProvider};
 use klaw_memory::{LongTermArchiveConfig, SummaryGenerator, archive_stale_long_term_memories};
-use klaw_storage::{ChatRecord, DefaultSessionStore, MemoryDb, SessionStorage};
+use klaw_storage::{ChatRecord, DatabaseExecutor, DefaultSessionStore, SessionStorage};
 use klaw_util::system_timezone_name;
 use serde_json::Value;
 use std::{
@@ -558,7 +558,7 @@ impl SummaryGenerator for LlmSummaryGenerator {
 }
 
 struct MemoryArchiveWorker {
-    memory_db: Arc<dyn MemoryDb>,
+    memory_db: Arc<dyn DatabaseExecutor>,
     schedule: ScheduleSpec,
     timezone: String,
     last_scheduled_run_ms: Mutex<Option<i64>>,
@@ -568,7 +568,7 @@ struct MemoryArchiveWorker {
 
 impl MemoryArchiveWorker {
     fn new(
-        memory_db: Arc<dyn MemoryDb>,
+        memory_db: Arc<dyn DatabaseExecutor>,
         config: &BackgroundServiceConfig,
         default_provider: Arc<dyn LlmProvider>,
         default_model: String,

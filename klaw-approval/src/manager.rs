@@ -1,7 +1,7 @@
 use crate::ApprovalError;
 use async_trait::async_trait;
 use klaw_storage::{
-    ApprovalRecord, ApprovalStatus, DbRow, DbValue, DefaultSessionStore, MemoryDb,
+    ApprovalRecord, ApprovalStatus, DatabaseExecutor, DbRow, DbValue, DefaultSessionStore,
     NewApprovalRecord, SessionStorage, open_default_store,
 };
 use sha2::{Digest, Sha256};

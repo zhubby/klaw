@@ -55,7 +55,9 @@ use klaw_session::{
 use klaw_skill::{
     InstalledSkill, RegistrySource, SkillSourceKind, SkillsManager, open_default_skills_manager,
 };
-use klaw_storage::{DefaultSessionStore, MemoryDb, open_default_memory_db, open_default_store};
+use klaw_storage::{
+    DatabaseExecutor, DefaultSessionStore, open_default_memory_db, open_default_store,
+};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, ArchiveTool, AskQuestionTool, ChannelAttachmentTool,
     CronManagerTool, FileReadTool, GeoTool, HeartbeatManagerTool, KnowledgeTool, LocalSearchTool,
@@ -108,7 +110,7 @@ pub struct RuntimeBundle {
     pub runtime: AgentLoop,
     pub base_system_prompt: Arc<RwLock<Option<String>>>,
     pub archive_service: Option<Arc<dyn ArchiveService>>,
-    pub memory_db: Option<Arc<dyn MemoryDb>>,
+    pub memory_db: Option<Arc<dyn DatabaseExecutor>>,
     pub runtime_provider_override: Arc<RwLock<Option<String>>>,
     pub disable_session_commands_for: BTreeSet<String>,
     pub inbound_transport: InMemoryTransport<InboundMessage>,
@@ -1391,7 +1393,7 @@ async fn register_configured_tools(
     config: &AppConfig,
     session_store: DefaultSessionStore,
     archive_service: Option<Arc<dyn ArchiveService>>,
-    memory_db: Option<Arc<dyn MemoryDb>>,
+    memory_db: Option<Arc<dyn DatabaseExecutor>>,
     knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
     sub_agent_audit_sink: Option<Arc<dyn SubAgentAuditSink>>,
 ) -> Result<(), Box<dyn Error>> {
@@ -1864,7 +1866,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         None
     };
     let memory_db = if config.tools.memory.enabled() {
-        Some(Arc::new(open_default_memory_db().await?) as Arc<dyn MemoryDb>)
+        Some(Arc::new(open_default_memory_db().await?) as Arc<dyn DatabaseExecutor>)
     } else {
         None
     };
@@ -2190,7 +2192,7 @@ fn cli_long_term_memory_prompt_options() -> LongTermMemoryPromptOptions {
 }
 
 async fn render_long_term_memory_prompt(
-    memory_db: Arc<dyn MemoryDb>,
+    memory_db: Arc<dyn DatabaseExecutor>,
 ) -> Result<Option<String>, Box<dyn Error>> {
     let stats = SqliteMemoryStatsService::new(memory_db);
     let records = stats.list_scope_records("long_term").await?;

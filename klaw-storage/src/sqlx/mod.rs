@@ -4,4 +4,4 @@ mod heartbeat;
 mod rows;
 mod session;
 
-pub use core::{SqlxArchiveDb, SqlxMemoryDb, SqlxSessionStore};
+pub use core::{SqlxArchiveDb, SqlxDatabaseExecutor, SqlxSessionStore};

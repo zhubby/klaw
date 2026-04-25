@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-25
+
+### Changed
+
+- Cron storage wiring now imports the shared `DatabaseExecutor` abstraction instead of the former `MemoryDb` trait name
+
 ## 2026-04-14
 
 ### Changed

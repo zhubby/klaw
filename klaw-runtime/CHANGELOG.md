@@ -6,6 +6,10 @@
 
 - Runtime-owned Knowledge service with loading/ready/error state, provider reuse, sync progress forwarding, and reload support for GUI config changes
 
+### Changed
+
+- Runtime memory database wiring now uses the renamed `DatabaseExecutor` storage abstraction
+
 ## 2026-04-22
 
 ### Fixed

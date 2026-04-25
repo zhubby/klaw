@@ -9,7 +9,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use klaw_storage::{
-    DbRow, DbValue, DefaultArchiveDb, MemoryDb, StoragePaths, open_default_archive_db,
+    DatabaseExecutor, DbRow, DbValue, DefaultArchiveDb, StoragePaths, open_default_archive_db,
 };
 use std::{path::Path, sync::Arc};
 use time::OffsetDateTime;
@@ -17,7 +17,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 pub struct SqliteArchiveService {
-    db: Arc<dyn MemoryDb>,
+    db: Arc<dyn DatabaseExecutor>,
     paths: StoragePaths,
 }
 
@@ -28,7 +28,10 @@ impl SqliteArchiveService {
         Self::new(Arc::new(db), paths).await
     }
 
-    pub async fn new(db: Arc<dyn MemoryDb>, paths: StoragePaths) -> Result<Self, ArchiveError> {
+    pub async fn new(
+        db: Arc<dyn DatabaseExecutor>,
+        paths: StoragePaths,
+    ) -> Result<Self, ArchiveError> {
         let service = Self { db, paths };
         service.init_schema().await?;
         Ok(service)
