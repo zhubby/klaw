@@ -25,6 +25,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub memory: MemoryConfig,
     #[serde(default)]
+    pub knowledge: KnowledgeConfig,
+    #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]
     pub acp: AcpConfig,
@@ -58,6 +60,7 @@ impl Default for AppConfig {
             gateway: GatewayConfig::default(),
             channels: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
+            knowledge: KnowledgeConfig::default(),
             mcp: McpConfig::default(),
             acp: AcpConfig::default(),
             tools: ToolsConfig::default(),
@@ -904,6 +907,101 @@ pub struct MemoryConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeConfig {
+    #[serde(default = "default_knowledge_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_knowledge_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub obsidian: ObsidianKnowledgeConfig,
+    #[serde(default)]
+    pub retrieval: KnowledgeRetrievalConfig,
+    #[serde(default)]
+    pub models: KnowledgeModelsConfig,
+}
+
+impl Default for KnowledgeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_knowledge_enabled(),
+            provider: default_knowledge_provider(),
+            obsidian: ObsidianKnowledgeConfig::default(),
+            retrieval: KnowledgeRetrievalConfig::default(),
+            models: KnowledgeModelsConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObsidianKnowledgeConfig {
+    #[serde(default)]
+    pub vault_path: Option<String>,
+    #[serde(default = "default_obsidian_knowledge_index_on_startup")]
+    pub index_on_startup: bool,
+    #[serde(default = "default_obsidian_knowledge_max_excerpt_length")]
+    pub max_excerpt_length: usize,
+    #[serde(default = "default_obsidian_knowledge_exclude_folders")]
+    pub exclude_folders: Vec<String>,
+}
+
+impl Default for ObsidianKnowledgeConfig {
+    fn default() -> Self {
+        Self {
+            vault_path: None,
+            index_on_startup: default_obsidian_knowledge_index_on_startup(),
+            max_excerpt_length: default_obsidian_knowledge_max_excerpt_length(),
+            exclude_folders: default_obsidian_knowledge_exclude_folders(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeRetrievalConfig {
+    #[serde(default = "default_knowledge_top_k")]
+    pub top_k: usize,
+    #[serde(default = "default_knowledge_rerank_candidates")]
+    pub rerank_candidates: usize,
+    #[serde(default = "default_knowledge_graph_hops")]
+    pub graph_hops: usize,
+    #[serde(default = "default_knowledge_temporal_decay")]
+    pub temporal_decay: f32,
+}
+
+impl Default for KnowledgeRetrievalConfig {
+    fn default() -> Self {
+        Self {
+            top_k: default_knowledge_top_k(),
+            rerank_candidates: default_knowledge_rerank_candidates(),
+            graph_hops: default_knowledge_graph_hops(),
+            temporal_decay: default_knowledge_temporal_decay(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeModelsConfig {
+    #[serde(default = "default_knowledge_embedding_provider")]
+    pub embedding_provider: String,
+    #[serde(default)]
+    pub embedding_model_path: Option<String>,
+    #[serde(default)]
+    pub orchestrator_model_path: Option<String>,
+    #[serde(default)]
+    pub reranker_model_path: Option<String>,
+}
+
+impl Default for KnowledgeModelsConfig {
+    fn default() -> Self {
+        Self {
+            embedding_provider: default_knowledge_embedding_provider(),
+            embedding_model_path: None,
+            orchestrator_model_path: None,
+            reranker_model_path: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryArchiveConfig {
     #[serde(default = "default_memory_archive_enabled")]
     pub enabled: bool,
@@ -984,6 +1082,50 @@ fn default_memory_archive_command_timeout_secs() -> u64 {
     120
 }
 
+fn default_knowledge_enabled() -> bool {
+    false
+}
+
+fn default_knowledge_provider() -> String {
+    "obsidian".to_string()
+}
+
+fn default_obsidian_knowledge_index_on_startup() -> bool {
+    true
+}
+
+fn default_obsidian_knowledge_max_excerpt_length() -> usize {
+    400
+}
+
+fn default_obsidian_knowledge_exclude_folders() -> Vec<String> {
+    vec![
+        ".obsidian".to_string(),
+        "node_modules".to_string(),
+        "templates".to_string(),
+    ]
+}
+
+fn default_knowledge_top_k() -> usize {
+    5
+}
+
+fn default_knowledge_rerank_candidates() -> usize {
+    20
+}
+
+fn default_knowledge_graph_hops() -> usize {
+    1
+}
+
+fn default_knowledge_temporal_decay() -> f32 {
+    0.85
+}
+
+fn default_knowledge_embedding_provider() -> String {
+    "llama_cpp".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelProviderConfig {
     #[serde(default)]
@@ -1053,6 +1195,8 @@ pub struct ToolsConfig {
     pub skills_manager: SkillsManagerToolConfig,
     #[serde(default)]
     pub memory: MemoryToolConfig,
+    #[serde(default)]
+    pub knowledge: KnowledgeToolConfig,
     #[serde(default)]
     pub web_fetch: WebFetchConfig,
     #[serde(default)]
@@ -1523,6 +1667,51 @@ fn default_memory_tool_vector_limit() -> usize {
 }
 
 fn default_memory_tool_use_vector() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeToolConfig {
+    #[serde(default = "default_knowledge_tool_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_knowledge_tool_search_limit")]
+    pub search_limit: usize,
+    #[serde(default = "default_knowledge_tool_context_limit")]
+    pub context_limit: usize,
+    #[serde(default = "default_knowledge_tool_include_explain")]
+    pub include_explain: bool,
+}
+
+impl Default for KnowledgeToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_knowledge_tool_enabled(),
+            search_limit: default_knowledge_tool_search_limit(),
+            context_limit: default_knowledge_tool_context_limit(),
+            include_explain: default_knowledge_tool_include_explain(),
+        }
+    }
+}
+
+impl ToolEnabled for KnowledgeToolConfig {
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+fn default_knowledge_tool_enabled() -> bool {
+    false
+}
+
+fn default_knowledge_tool_search_limit() -> usize {
+    5
+}
+
+fn default_knowledge_tool_context_limit() -> usize {
+    3
+}
+
+fn default_knowledge_tool_include_explain() -> bool {
     true
 }
 

@@ -18,6 +18,7 @@ klaw-approval = { workspace = true }
 klaw-archive = { workspace = true }
 klaw-voice = { workspace = true }
 klaw-memory = { workspace = true }
+klaw-knowledge = { workspace = true }
 klaw-storage = { workspace = true }
 klaw-skill = { workspace = true }
 klaw-util = { workspace = true }

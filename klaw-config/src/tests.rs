@@ -84,6 +84,17 @@ fn parse_default_template_succeeds() {
     assert_eq!(parsed.tools.memory.fts_limit, 20);
     assert_eq!(parsed.tools.memory.vector_limit, 20);
     assert!(parsed.tools.memory.use_vector);
+    assert!(!parsed.tools.knowledge.enabled);
+    assert_eq!(parsed.tools.knowledge.search_limit, 5);
+    assert_eq!(parsed.tools.knowledge.context_limit, 3);
+    assert!(parsed.tools.knowledge.include_explain);
+    assert!(!parsed.knowledge.enabled);
+    assert_eq!(parsed.knowledge.provider, "obsidian");
+    assert!(parsed.knowledge.obsidian.index_on_startup);
+    assert_eq!(parsed.knowledge.obsidian.max_excerpt_length, 400);
+    assert_eq!(parsed.knowledge.retrieval.top_k, 5);
+    assert_eq!(parsed.knowledge.retrieval.rerank_candidates, 20);
+    assert_eq!(parsed.knowledge.retrieval.graph_hops, 1);
     assert!(parsed.tools.web_fetch.enabled);
     assert_eq!(parsed.tools.web_fetch.max_chars, 50_000);
     assert_eq!(parsed.tools.web_fetch.timeout_seconds, 15);
@@ -1438,6 +1449,59 @@ fn validate_allows_invalid_memory_tool_limits_when_disabled() {
     cfg.tools.memory.fts_limit = 0;
     cfg.tools.memory.vector_limit = 0;
     validate(&cfg).expect("should be valid when memory tool is disabled");
+}
+
+#[test]
+fn validate_fails_when_knowledge_limits_are_zero() {
+    let mut cfg = AppConfig::default();
+    cfg.knowledge.enabled = true;
+    cfg.knowledge.obsidian.vault_path = Some("/tmp/vault".to_string());
+    cfg.tools.knowledge.enabled = true;
+    cfg.tools.knowledge.search_limit = 0;
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("tools.knowledge.search_limit"));
+
+    let mut cfg2 = AppConfig::default();
+    cfg2.knowledge.enabled = true;
+    cfg2.knowledge.obsidian.vault_path = Some("/tmp/vault".to_string());
+    cfg2.tools.knowledge.enabled = true;
+    cfg2.tools.knowledge.context_limit = 0;
+    let err2 = validate(&cfg2).expect_err("should fail");
+    assert!(format!("{err2}").contains("tools.knowledge.context_limit"));
+
+    let mut cfg3 = AppConfig::default();
+    cfg3.knowledge.enabled = true;
+    cfg3.knowledge.obsidian.vault_path = Some("/tmp/vault".to_string());
+    cfg3.knowledge.retrieval.top_k = 0;
+    let err3 = validate(&cfg3).expect_err("should fail");
+    assert!(format!("{err3}").contains("knowledge.retrieval.top_k"));
+
+    let mut cfg4 = AppConfig::default();
+    cfg4.knowledge.enabled = true;
+    cfg4.knowledge.obsidian.vault_path = Some("/tmp/vault".to_string());
+    cfg4.knowledge.retrieval.rerank_candidates = 0;
+    let err4 = validate(&cfg4).expect_err("should fail");
+    assert!(format!("{err4}").contains("knowledge.retrieval.rerank_candidates"));
+}
+
+#[test]
+fn validate_allows_invalid_knowledge_limits_when_disabled() {
+    let mut cfg = AppConfig::default();
+    cfg.tools.knowledge.enabled = false;
+    cfg.knowledge.enabled = false;
+    cfg.tools.knowledge.search_limit = 0;
+    cfg.tools.knowledge.context_limit = 0;
+    cfg.knowledge.retrieval.top_k = 0;
+    cfg.knowledge.retrieval.rerank_candidates = 0;
+    validate(&cfg).expect("should be valid when knowledge is disabled");
+}
+
+#[test]
+fn validate_fails_when_knowledge_enabled_without_vault_path() {
+    let mut cfg = AppConfig::default();
+    cfg.knowledge.enabled = true;
+    let err = validate(&cfg).expect_err("missing vault path should fail");
+    assert!(format!("{err}").contains("knowledge.obsidian.vault_path"));
 }
 
 #[test]

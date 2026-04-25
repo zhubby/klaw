@@ -56,10 +56,10 @@ use klaw_skill::{
 use klaw_storage::{DefaultSessionStore, MemoryDb, open_default_memory_db, open_default_store};
 use klaw_tool::{
     ApplyPatchTool, ApprovalTool, ArchiveTool, AskQuestionTool, ChannelAttachmentTool,
-    CronManagerTool, FileReadTool, GeoTool, HeartbeatManagerTool, LocalSearchTool, MemoryTool,
-    ShellTool, SkillsManagerTool, SkillsRegistryTool, SqliteAskQuestionManager, SubAgentAuditSink,
-    SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool, WebFetchTool,
-    WebSearchTool,
+    CronManagerTool, FileReadTool, GeoTool, HeartbeatManagerTool, KnowledgeTool, LocalSearchTool,
+    MemoryTool, ShellTool, SkillsManagerTool, SkillsRegistryTool, SqliteAskQuestionManager,
+    SubAgentAuditSink, SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool,
+    WebFetchTool, WebSearchTool,
 };
 use klaw_util::EnvironmentCheckReport;
 use serde_json::{Value, json};
@@ -1482,6 +1482,9 @@ async fn register_configured_tools(
             session_store.clone(),
             config,
         ));
+    }
+    if config.tools.knowledge.enabled() {
+        tools.register(KnowledgeTool::open_default(config).await?);
     }
     if config.tools.web_fetch.enabled() {
         tools.register(WebFetchTool::new(config));

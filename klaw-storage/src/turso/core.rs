@@ -470,6 +470,18 @@ impl TursoMemoryDb {
         apply_sqlite_connection_pragmas(&conn).await?;
         Ok(Self { _db: db, conn })
     }
+
+    pub async fn open_knowledge(paths: StoragePaths) -> Result<Self, StorageError> {
+        paths.ensure_dirs().await?;
+        let db = Builder::new_local(&paths.knowledge_db_path.to_string_lossy())
+            .build()
+            .await
+            .map_err(StorageError::backend)?;
+        let conn = db.connect().map_err(StorageError::backend)?;
+        apply_sqlite_journal_mode(&conn).await?;
+        apply_sqlite_connection_pragmas(&conn).await?;
+        Ok(Self { _db: db, conn })
+    }
 }
 
 impl TursoArchiveDb {

@@ -7,6 +7,7 @@ pub mod cron_manager;
 pub mod file_read;
 pub mod geo;
 pub mod heartbeat_manager;
+pub mod knowledge;
 pub mod local_search;
 pub mod memory;
 pub mod shell;
@@ -33,6 +34,7 @@ pub use cron_manager::CronManagerTool;
 pub use file_read::{FileReadTool, LocalFsReadOperations, ReadOperations};
 pub use geo::GeoTool;
 pub use heartbeat_manager::HeartbeatManagerTool;
+pub use knowledge::KnowledgeTool;
 pub use local_search::LocalSearchTool;
 pub use memory::MemoryTool;
 pub use shell::ShellTool;
@@ -61,6 +63,8 @@ pub enum ToolCategory {
     Hardware,
     /// Memory read/write operations (workspace memory, long-term memory).
     Memory,
+    /// External knowledge retrieval from read-only knowledge bases.
+    Knowledge,
     /// Messaging operations (send messages via channels).
     Messaging,
     /// Destructive or high-risk operations (cron delete, etc.).

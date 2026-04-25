@@ -1,0 +1,132 @@
+# Knowledge Tool 设计与实现
+
+本文档记录 `knowledge` 工具的当前语义、配置入口，以及它与 `memory` / `local_search` / `file_read` 的边界。
+
+## 当前定位
+
+`knowledge` 是一个只读的外部知识检索工具。
+
+它面向：
+
+- Obsidian vault 等用户已有知识源
+- 项目文档、研究笔记、个人知识库
+- 基于 chunk / link / context bundle 的检索增强
+
+它不承担：
+
+- 长期记忆写入或事实治理
+- session 记忆召回
+- 任意文件系统遍历或源码 grep
+
+## 与其他工具的边界
+
+### `knowledge` vs `memory`
+
+- `memory.add` 写入 agent 自身长期记忆
+- `memory.search` 检索 session 记忆视图
+- `knowledge` 只读取外部知识源，不写 `memory.db`
+- `knowledge` 不进入 runtime 的长期记忆 prompt 注入链路
+
+### `knowledge` vs `local_search`
+
+- `local_search` 面向工作区源码/文本的广义本地搜索
+- `knowledge` 面向结构化知识源，支持 note / chunk / link / context 语义
+
+### `knowledge` vs `file_read`
+
+- `file_read` 读取已知路径
+- `knowledge` 从未知位置的知识库中先检索、再返回候选内容
+
+## 当前动作
+
+`knowledge` 当前暴露四个动作：
+
+- `list_sources`
+- `search`
+- `get`
+- `context`
+
+### `list_sources`
+
+返回当前已连接的知识源列表、provider 名称和 entry 数量。
+
+### `search`
+
+输入自然语言查询，返回命中的知识条目摘要。
+
+支持参数：
+
+- `query`
+- `tags`
+- `limit`
+- `source`
+- `mode`
+
+### `get`
+
+按 `id` 或 `uri` 获取完整条目内容。
+
+### `context`
+
+先执行检索，再组装 token/字符预算内的 `ContextBundle`，供 agent 直接消费。
+
+支持参数：
+
+- `query`
+- `limit`
+- `budget_chars`
+
+## 配置
+
+`knowledge` 默认关闭；只有显式配置 knowledge source 后才建议启用。
+
+```toml
+[knowledge]
+enabled = true
+provider = "obsidian"
+
+[knowledge.obsidian]
+vault_path = "/Users/me/Knowledge"
+index_on_startup = true
+max_excerpt_length = 400
+exclude_folders = [".obsidian", "node_modules", "templates"]
+
+[knowledge.retrieval]
+top_k = 5
+rerank_candidates = 20
+graph_hops = 1
+temporal_decay = 0.85
+
+[tools.knowledge]
+enabled = true
+search_limit = 5
+context_limit = 3
+include_explain = true
+```
+
+关键约束：
+
+- `knowledge.enabled=true` 时必须配置 `knowledge.obsidian.vault_path`
+- `tools.knowledge.enabled=true` 需要 `knowledge.enabled=true`
+
+## Runtime 接入路径
+
+- 配置结构：`klaw-config`
+- 数据库存储：`knowledge.db`（由 `klaw-storage` 路径层统一管理）
+- 知识实现：`klaw-knowledge`
+- 工具实现：`klaw-tool/src/knowledge.rs`
+- runtime 注册：`klaw-runtime` 的 `register_configured_tools`
+
+## 当前实现摘要
+
+当前 V1 已落地：
+
+- `klaw-knowledge` 独立 crate
+- Obsidian frontmatter / wikilink / inline tag 解析
+- heading-aware markdown chunking
+- `knowledge_entries` / `knowledge_chunks` / `knowledge_links` / `knowledge_fts` 索引表
+- FTS5 可用时走 `MATCH`，不可用时自动回退为普通表 + token scoring
+- graph / temporal lane 与 RRF fusion
+- `ContextBundle` 组装
+
+本期仍保持为内部 runtime/tool 能力，不暴露 HTTP/REST 或外部 MCP 服务。

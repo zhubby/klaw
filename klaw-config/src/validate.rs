@@ -122,6 +122,46 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             )));
         }
     }
+    if config.knowledge.enabled {
+        if config.knowledge.provider.trim().is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "knowledge.provider cannot be empty when knowledge.enabled=true".to_string(),
+            ));
+        }
+        if config.knowledge.provider != "obsidian" {
+            return Err(ConfigError::InvalidConfig(format!(
+                "knowledge.provider '{}' is not supported, expected: obsidian",
+                config.knowledge.provider
+            )));
+        }
+        if config
+            .knowledge
+            .obsidian
+            .vault_path
+            .as_deref()
+            .is_none_or(|path| path.trim().is_empty())
+        {
+            return Err(ConfigError::InvalidConfig(
+                "knowledge.obsidian.vault_path cannot be empty when knowledge.enabled=true"
+                    .to_string(),
+            ));
+        }
+        if config.knowledge.retrieval.top_k == 0 {
+            return Err(ConfigError::InvalidConfig(
+                "knowledge.retrieval.top_k must be greater than 0".to_string(),
+            ));
+        }
+        if config.knowledge.retrieval.rerank_candidates == 0 {
+            return Err(ConfigError::InvalidConfig(
+                "knowledge.retrieval.rerank_candidates must be greater than 0".to_string(),
+            ));
+        }
+        if config.knowledge.obsidian.max_excerpt_length == 0 {
+            return Err(ConfigError::InvalidConfig(
+                "knowledge.obsidian.max_excerpt_length must be greater than 0".to_string(),
+            ));
+        }
+    }
     if config.memory.archive.enabled {
         let schedule = config.memory.archive.schedule.trim();
         if schedule.is_empty() {
@@ -342,6 +382,21 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     if config.tools.memory.enabled && config.tools.memory.vector_limit == 0 {
         return Err(ConfigError::InvalidConfig(
             "tools.memory.vector_limit must be greater than 0".to_string(),
+        ));
+    }
+    if config.tools.knowledge.enabled && !config.knowledge.enabled {
+        return Err(ConfigError::InvalidConfig(
+            "tools.knowledge.enabled requires knowledge.enabled=true".to_string(),
+        ));
+    }
+    if config.tools.knowledge.enabled && config.tools.knowledge.search_limit == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "tools.knowledge.search_limit must be greater than 0".to_string(),
+        ));
+    }
+    if config.tools.knowledge.enabled && config.tools.knowledge.context_limit == 0 {
+        return Err(ConfigError::InvalidConfig(
+            "tools.knowledge.context_limit must be greater than 0".to_string(),
         ));
     }
     if config.tools.shell.enabled && config.tools.shell.max_timeout_ms == 0 {

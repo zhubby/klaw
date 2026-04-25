@@ -6,6 +6,7 @@ pub const SETTINGS_FILE_NAME: &str = "settings.json";
 pub const GUI_STATE_FILE_NAME: &str = "gui_state.json";
 pub const DB_FILE_NAME: &str = "klaw.db";
 pub const MEMORY_DB_FILE_NAME: &str = "memory.db";
+pub const KNOWLEDGE_DB_FILE_NAME: &str = "knowledge.db";
 pub const ARCHIVE_DB_FILE_NAME: &str = "archive.db";
 pub const OBSERVABILITY_DB_FILE_NAME: &str = "observability.db";
 pub const TMP_DIR_NAME: &str = "tmp";
@@ -76,6 +77,10 @@ pub fn memory_db_path(root_dir: impl AsRef<Path>) -> PathBuf {
     root_dir.as_ref().join(MEMORY_DB_FILE_NAME)
 }
 
+pub fn knowledge_db_path(root_dir: impl AsRef<Path>) -> PathBuf {
+    root_dir.as_ref().join(KNOWLEDGE_DB_FILE_NAME)
+}
+
 pub fn archive_db_path(root_dir: impl AsRef<Path>) -> PathBuf {
     root_dir.as_ref().join(ARCHIVE_DB_FILE_NAME)
 }
@@ -117,6 +122,10 @@ mod tests {
         assert_eq!(
             observability_db_path(root),
             PathBuf::from("/tmp/demo/observability.db")
+        );
+        assert_eq!(
+            knowledge_db_path(root),
+            PathBuf::from("/tmp/demo/knowledge.db")
         );
     }
 }

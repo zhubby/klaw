@@ -659,6 +659,23 @@ impl SqlxMemoryDb {
             .map_err(StorageError::backend)?;
         Ok(db)
     }
+
+    pub async fn open_knowledge(paths: StoragePaths) -> Result<Self, StorageError> {
+        paths.ensure_dirs().await?;
+        let connect_options = SqliteConnectOptions::new()
+            .filename(&paths.knowledge_db_path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(connect_options)
+            .await
+            .map_err(StorageError::backend)?;
+        let db = Self { pool };
+        db.execute_batch("PRAGMA journal_mode = WAL;")
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(db)
+    }
 }
 
 impl SqlxArchiveDb {

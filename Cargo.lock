@@ -4347,6 +4347,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "klaw-knowledge"
+version = "0.14.3"
+dependencies = [
+ "async-trait",
+ "ignore",
+ "klaw-storage",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "klaw-llm"
 version = "0.14.3"
 dependencies = [
@@ -4520,6 +4535,7 @@ dependencies = [
  "klaw-approval",
  "klaw-archive",
  "klaw-config",
+ "klaw-knowledge",
  "klaw-llm",
  "klaw-memory",
  "klaw-skill",

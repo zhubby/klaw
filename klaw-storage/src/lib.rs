@@ -52,6 +52,10 @@ pub type DefaultMemoryDb = turso::TursoMemoryDb;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
 pub type DefaultMemoryDb = sqlx::SqlxMemoryDb;
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
+pub type DefaultKnowledgeDb = turso::TursoMemoryDb;
+#[cfg(all(feature = "sqlx", not(feature = "turso")))]
+pub type DefaultKnowledgeDb = sqlx::SqlxMemoryDb;
+#[cfg(all(feature = "turso", not(feature = "sqlx")))]
 pub type DefaultArchiveDb = turso::TursoArchiveDb;
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
 pub type DefaultArchiveDb = sqlx::SqlxArchiveDb;
@@ -74,10 +78,22 @@ pub async fn open_default_memory_db() -> Result<DefaultMemoryDb, StorageError> {
     DefaultMemoryDb::open(paths).await
 }
 
+#[cfg(all(feature = "turso", not(feature = "sqlx")))]
+pub async fn open_default_knowledge_db() -> Result<DefaultKnowledgeDb, StorageError> {
+    let paths = StoragePaths::from_home_dir()?;
+    DefaultKnowledgeDb::open_knowledge(paths).await
+}
+
 #[cfg(all(feature = "sqlx", not(feature = "turso")))]
 pub async fn open_default_memory_db() -> Result<DefaultMemoryDb, StorageError> {
     let paths = StoragePaths::from_home_dir()?;
     DefaultMemoryDb::open(paths).await
+}
+
+#[cfg(all(feature = "sqlx", not(feature = "turso")))]
+pub async fn open_default_knowledge_db() -> Result<DefaultKnowledgeDb, StorageError> {
+    let paths = StoragePaths::from_home_dir()?;
+    DefaultKnowledgeDb::open_knowledge(paths).await
 }
 
 #[cfg(all(feature = "turso", not(feature = "sqlx")))]
@@ -845,6 +861,7 @@ mod tests {
         let base = std::env::temp_dir().join(format!("klaw-storage-paths-{suffix}"));
         let paths = StoragePaths::from_root(base.clone());
         assert_eq!(paths.memory_db_path, base.join("memory.db"));
+        assert_eq!(paths.knowledge_db_path, base.join("knowledge.db"));
         assert_eq!(paths.archive_db_path, base.join("archive.db"));
         assert_eq!(paths.tmp_dir, base.join("tmp"));
         assert_eq!(paths.archives_dir, base.join("archives"));

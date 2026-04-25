@@ -15,6 +15,7 @@ members = [
     "klaw-mcp",
     "klaw-skill",
     "klaw-memory",
+    "klaw-knowledge",
     "klaw-cron",
     "klaw-session",
     "klaw-storage",
@@ -43,6 +44,7 @@ default-members = [
     "klaw-mcp",
     "klaw-skill",
     "klaw-memory",
+    "klaw-knowledge",
     "klaw-cron",
     "klaw-session",
     "klaw-storage",
@@ -171,6 +173,7 @@ klaw-config = { path = "klaw-config" }
 klaw-agent = { path = "klaw-agent" }
 klaw-storage = { path = "klaw-storage" }
 klaw-memory = { path = "klaw-memory" }
+klaw-knowledge = { path = "klaw-knowledge" }
 klaw-cron = { path = "klaw-cron" }
 klaw-session = { path = "klaw-session" }
 klaw-skill = { path = "klaw-skill" }
