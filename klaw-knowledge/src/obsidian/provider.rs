@@ -92,7 +92,10 @@ impl ObsidianKnowledgeProvider {
                      WHERE knowledge_fts MATCH ?1
                      ORDER BY bm25(knowledge_fts) ASC
                      LIMIT ?2",
-                    &[DbValue::Text(query.to_string()), DbValue::Integer(limit as i64)],
+                    &[
+                        DbValue::Text(query.to_string()),
+                        DbValue::Integer(limit as i64),
+                    ],
                 )
                 .await
                 .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
@@ -126,7 +129,10 @@ impl ObsidianKnowledgeProvider {
                 let title = text_at(&row, 1).unwrap_or_default();
                 let excerpt = text_at(&row, 2).unwrap_or_default();
                 let haystack = format!("{title} {excerpt}").to_ascii_lowercase();
-                let matches = tokens.iter().filter(|token| haystack.contains(token.as_str())).count();
+                let matches = tokens
+                    .iter()
+                    .filter(|token| haystack.contains(token.as_str()))
+                    .count();
                 (matches > 0).then(|| RankedHit {
                     id: text_at(&row, 0).unwrap_or_default(),
                     title,
@@ -278,9 +284,13 @@ impl KnowledgeProvider for ObsidianKnowledgeProvider {
         let limit = query.limit.max(1);
         let orchestration = self.orchestration_plan(&query.text).await?;
         let expanded_queries = orchestration.expansions;
-        let semantic = self.expanded_semantic_lane(&expanded_queries, limit * 4).await?;
+        let semantic = self
+            .expanded_semantic_lane(&expanded_queries, limit * 4)
+            .await?;
         let fts = self.expanded_fts_lane(&expanded_queries, limit * 3).await?;
-        let graph = self.graph_lane(&merge_seed_hits(&semantic, &fts), limit).await?;
+        let graph = self
+            .graph_lane(&merge_seed_hits(&semantic, &fts), limit)
+            .await?;
         let temporal = self.temporal_lane(&query.text, limit).await?;
         let weights = lane_weights_for_intent(orchestration.intent);
         let pass1 = weighted_reciprocal_rank_fuse(
@@ -316,11 +326,7 @@ impl KnowledgeProvider for ObsidianKnowledgeProvider {
             .filter_map(|row| {
                 Some((
                     text_at(&row, 0)?,
-                    (
-                        text_at(&row, 1)?,
-                        text_at(&row, 2)?,
-                        text_at(&row, 3)?,
-                    ),
+                    (text_at(&row, 1)?, text_at(&row, 2)?, text_at(&row, 3)?),
                 ))
             })
             .collect::<BTreeMap<_, _>>();
@@ -391,7 +397,10 @@ impl KnowledgeProvider for ObsidianKnowledgeProvider {
 }
 
 impl ObsidianKnowledgeProvider {
-    async fn orchestration_plan(&self, query: &str) -> Result<KnowledgeOrchestration, KnowledgeError> {
+    async fn orchestration_plan(
+        &self,
+        query: &str,
+    ) -> Result<KnowledgeOrchestration, KnowledgeError> {
         let Some(orchestrator) = self.orchestrator.as_ref() else {
             return Ok(KnowledgeOrchestration {
                 intent: QueryIntent::Exploratory,
@@ -745,7 +754,8 @@ mod tests {
 
     async fn test_provider_with_startup_index(index_on_startup: bool) -> ObsidianKnowledgeProvider {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let vault_root = std::env::temp_dir().join(format!("klaw-knowledge-provider-vault-{suffix}"));
+        let vault_root =
+            std::env::temp_dir().join(format!("klaw-knowledge-provider-vault-{suffix}"));
         std::fs::create_dir_all(&vault_root).expect("vault");
         std::fs::write(
             vault_root.join("auth.md"),
@@ -843,13 +853,15 @@ mod tests {
                 .as_slice(),
             ["how auth works"]
         );
-        assert!(hits.iter().any(|hit| hit.excerpt.to_ascii_lowercase().contains("cookie")));
+        assert!(
+            hits.iter()
+                .any(|hit| hit.excerpt.to_ascii_lowercase().contains("cookie"))
+        );
     }
 
     #[tokio::test]
     async fn search_uses_semantic_lane_when_embeddings_exist() {
-        let provider =
-            test_provider_with_models(Some(Arc::new(MockEmbeddingModel)), None).await;
+        let provider = test_provider_with_models(Some(Arc::new(MockEmbeddingModel)), None).await;
         let hits = provider
             .search(KnowledgeSearchQuery {
                 text: "browser state".to_string(),
@@ -885,13 +897,11 @@ mod tests {
             .await
             .expect("search should succeed");
 
-        assert!(
-            hits.iter().any(|hit| {
-                hit.metadata
-                    .get("lanes")
-                    .and_then(Value::as_array)
-                    .is_some_and(|lanes| lanes.iter().any(|lane| lane == "rerank"))
-            })
-        );
+        assert!(hits.iter().any(|hit| {
+            hit.metadata
+                .get("lanes")
+                .and_then(Value::as_array)
+                .is_some_and(|lanes| lanes.iter().any(|lane| lane == "rerank"))
+        }));
     }
 }

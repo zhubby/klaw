@@ -13,6 +13,7 @@
 - 保持 channel 外部配置为分类型数组（当前 `channels.dingtalk` / `channels.telegram`），供运行时映射为统一的 channel 实例快照。
 - `tools.channel_attachment.local_attachments` 支持本地出站附件策略：默认仅允许 workspace 内文件，允许额外配置绝对路径 allowlist，并限制单文件最大字节数。
 - 支持 `storage.root_dir` 配置项，用于覆盖默认 `~/.klaw` 数据目录根路径。
+- 支持 `models.huggingface.endpoint` 配置 Hugging Face 主站或镜像站，并通过 `models.huggingface.token` 保存下载所需 token。
 - 支持独立的 `tools.skills_registry` 与 `tools.skills_manager` 开关配置。
 - 支持 `tools.ask_question.enabled` 配置项，用于控制 IM 卡片式单选提问工具是否注册。
 - 支持 `observability.local_store` 配置项,用于控制本地分析存储是否启用、保留时长与刷新间隔。

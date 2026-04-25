@@ -5,9 +5,11 @@
 ## 当前能力
 
 - 查看已安装模型
-- 从 Hugging Face 显式下载指定 repo/revision/file
-- 将模型绑定为默认 `embedding` / `reranker` / `chat`
-- 删除未被当前配置引用的模型
+- 从 Hugging Face 下载指定 repo/revision 的完整仓库快照
+- 在下载弹窗中查看每个文件的进度并取消未完成下载
+- 在可选中表格中查看模型名称、大小和创建日期
+- 通过右键菜单升级模型到当前 revision 的最新快照；若远端 revision SHA 与本地 manifest 一致，会提示已是最新并跳过下载
+- 通过右键菜单删除未被当前配置引用的模型，删除前会弹窗确认
 - 打开本地模型目录
 
 ## 存储位置
@@ -23,7 +25,7 @@
 ```text
 models/
   manifests/
-  blobs/
+  snapshots/
   cache/downloads/
 ```
 
@@ -37,7 +39,7 @@ default_reranker_model_id = "Qwen__Qwen3-Reranker-0.6B-GGUF--main"
 
 [models.huggingface]
 endpoint = "https://huggingface.co"
-auth_token_env = "HF_TOKEN"
+token = "hf_..."
 
 [models.llama_cpp]
 command = "llama-cli"

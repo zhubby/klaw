@@ -51,7 +51,10 @@ pub fn smart_chunk(content: &str, target_tokens: usize, overlap_pct: usize) -> V
             format!("{current}\n{line}")
         };
         let is_break_line = line.starts_with('#') || line.trim().is_empty();
-        if !inside_code_fence && candidate.len() > target_chars && is_break_line && !current.is_empty()
+        if !inside_code_fence
+            && candidate.len() > target_chars
+            && is_break_line
+            && !current.is_empty()
         {
             chunks.push(make_chunk(current.trim()));
             current = take_overlap(&current, overlap_chars);
@@ -111,7 +114,8 @@ mod tests {
 
     #[test]
     fn keeps_small_markdown_as_single_chunk() {
-        let parsed = chunk_markdown("---\ntags: [rust]\naliases: [async]\n---\n# Title\nShort body");
+        let parsed =
+            chunk_markdown("---\ntags: [rust]\naliases: [async]\n---\n# Title\nShort body");
         assert_eq!(parsed.tags, vec!["rust".to_string()]);
         assert_eq!(parsed.aliases, vec!["async".to_string()]);
         assert_eq!(parsed.chunks.len(), 1);
@@ -122,10 +126,7 @@ mod tests {
     fn splits_large_markdown_on_headings() {
         let mut content = String::from("# Intro\n");
         for idx in 0..40 {
-            content.push_str(&format!(
-                "\n## Section {idx}\n{}\n",
-                "content ".repeat(40)
-            ));
+            content.push_str(&format!("\n## Section {idx}\n{}\n", "content ".repeat(40)));
         }
         let chunks = smart_chunk(&content, 64, 10);
         assert!(chunks.len() > 1);

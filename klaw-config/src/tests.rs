@@ -98,7 +98,7 @@ fn parse_default_template_succeeds() {
     assert!(!parsed.models.enabled);
     assert!(parsed.models.root_dir.is_none());
     assert_eq!(parsed.models.huggingface.endpoint, "https://huggingface.co");
-    assert!(parsed.models.huggingface.auth_token_env.as_deref() == Some("HF_TOKEN"));
+    assert!(parsed.models.huggingface.token.is_none());
     assert_eq!(parsed.models.llama_cpp.command, "llama-cli");
     assert!(parsed.models.default_embedding_model_id.is_none());
     assert!(parsed.models.default_reranker_model_id.is_none());

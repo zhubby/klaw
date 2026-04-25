@@ -15,13 +15,12 @@ pub use llama_cpp::{
     LlamaCppRsBackend, ModelChatRequest, ModelChatResponse, ModelEmbeddingRequest,
     ModelEmbeddingResponse, ModelLlamaRuntime, ModelOrchestrateRequest, ModelOrchestrateResponse,
     ModelRerankRequest, ModelRerankResponse, OrchestratorRuntime, PromptFormat, QueryIntent,
-    RerankRuntime,
-    default_backend_kind,
+    RerankRuntime, default_backend_kind,
 };
 pub use manifest::{load_manifest, save_manifest};
 pub use service::ModelService;
 pub use storage::{ModelStorage, ModelStoragePaths};
 pub use types::{
-    InstalledModelFile, InstalledModelManifest, ModelCapability, ModelFileFormat, ModelInstallRequest,
-    ModelInstallResult, ModelSummary, ModelUsageBinding,
+    InstalledModelFile, InstalledModelManifest, ModelCapability, ModelFileFormat,
+    ModelInstallRequest, ModelInstallResult, ModelSummary, ModelUsageBinding,
 };

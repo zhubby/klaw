@@ -42,6 +42,8 @@ pub struct InstalledModelManifest {
     pub source: String,
     pub repo_id: String,
     pub revision: String,
+    #[serde(default)]
+    pub resolved_revision: Option<String>,
     pub files: Vec<InstalledModelFile>,
     pub capabilities: Vec<ModelCapability>,
     pub quantization: Option<String>,
@@ -64,8 +66,6 @@ pub struct ModelSummary {
 pub struct ModelInstallRequest {
     pub repo_id: String,
     pub revision: String,
-    pub files: Vec<String>,
-    pub capabilities: Vec<ModelCapability>,
     pub quantization: Option<String>,
 }
 
@@ -73,4 +73,5 @@ pub struct ModelInstallRequest {
 pub struct ModelInstallResult {
     pub manifest: InstalledModelManifest,
     pub downloaded_files: usize,
+    pub up_to_date: bool,
 }

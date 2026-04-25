@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2026-04-25
+
+### Changed
+
+- Local Models 安装流程改为弹窗输入 Hugging Face repo/revision，并在下载弹窗中展示多文件进度与取消按钮
+- Local Models 列表改为可选中资产表格，移除模型能力标签和默认用途按钮，并通过右键菜单提供升级与删除动作
+- Local Models 升级现在会在远端 revision SHA 与本地 manifest 一致时提示已是最新并跳过下载
+
 ## 2026-04-15
 
 ### Changed

@@ -4336,6 +4336,7 @@ dependencies = [
  "sysinfo",
  "time",
  "tokio",
+ "tokio-util",
  "toml",
  "tracing",
  "tray-icon",

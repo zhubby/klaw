@@ -5,14 +5,15 @@ use klaw_util::{default_data_dir, models_dir};
 use time::OffsetDateTime;
 
 use crate::{
-    InstalledModelManifest, ModelError, ModelSummary, ModelUsageBinding, load_manifest, save_manifest,
+    InstalledModelManifest, ModelError, ModelSummary, ModelUsageBinding, load_manifest,
+    save_manifest,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelStoragePaths {
     pub root_dir: PathBuf,
     pub manifests_dir: PathBuf,
-    pub blobs_dir: PathBuf,
+    pub snapshots_dir: PathBuf,
     pub cache_dir: PathBuf,
     pub downloads_dir: PathBuf,
 }
@@ -21,7 +22,7 @@ impl ModelStoragePaths {
     pub fn from_root(root_dir: PathBuf) -> Self {
         Self {
             manifests_dir: root_dir.join("manifests"),
-            blobs_dir: root_dir.join("blobs"),
+            snapshots_dir: root_dir.join("snapshots"),
             cache_dir: root_dir.join("cache"),
             downloads_dir: root_dir.join("cache").join("downloads"),
             root_dir,
@@ -29,21 +30,22 @@ impl ModelStoragePaths {
     }
 
     pub fn from_config(config: &AppConfig) -> Result<Self, ModelError> {
-        let root_dir = if let Some(root_dir) = config.models.root_dir.as_ref() {
-            PathBuf::from(root_dir)
-        } else if let Some(storage_root) = config.storage.root_dir.as_ref() {
-            models_dir(storage_root)
-        } else {
-            models_dir(default_data_dir().ok_or_else(|| {
-                ModelError::Config("home directory is unavailable".to_string())
-            })?)
-        };
+        let root_dir =
+            if let Some(root_dir) = config.models.root_dir.as_ref() {
+                PathBuf::from(root_dir)
+            } else if let Some(storage_root) = config.storage.root_dir.as_ref() {
+                models_dir(storage_root)
+            } else {
+                models_dir(default_data_dir().ok_or_else(|| {
+                    ModelError::Config("home directory is unavailable".to_string())
+                })?)
+            };
         Ok(Self::from_root(root_dir))
     }
 
     pub fn ensure_dirs(&self) -> Result<(), ModelError> {
         std::fs::create_dir_all(&self.manifests_dir)?;
-        std::fs::create_dir_all(&self.blobs_dir)?;
+        std::fs::create_dir_all(&self.snapshots_dir)?;
         std::fs::create_dir_all(&self.downloads_dir)?;
         Ok(())
     }
@@ -166,9 +168,7 @@ fn now_rfc3339() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        InstalledModelFile, ModelCapability, ModelFileFormat, ModelUsageBinding,
-    };
+    use crate::{InstalledModelFile, ModelCapability, ModelFileFormat, ModelUsageBinding};
 
     fn sample_manifest(model_id: &str) -> InstalledModelManifest {
         InstalledModelManifest {
@@ -176,8 +176,9 @@ mod tests {
             source: "huggingface".to_string(),
             repo_id: "Qwen/Qwen3-Embedding-0.6B-GGUF".to_string(),
             revision: "main".to_string(),
+            resolved_revision: Some("abc123".to_string()),
             files: vec![InstalledModelFile {
-                relative_path: format!("blobs/{model_id}/main/model.gguf"),
+                relative_path: format!("snapshots/{model_id}/model.gguf"),
                 size_bytes: 32,
                 sha256: None,
                 format: ModelFileFormat::Gguf,
@@ -192,7 +193,8 @@ mod tests {
 
     #[test]
     fn lists_saved_manifests_as_model_summaries() {
-        let root = std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
         let storage = ModelStorage::new(ModelStoragePaths::from_root(root.clone()));
         storage.paths.ensure_dirs().expect("dirs");
         storage
@@ -206,11 +208,15 @@ mod tests {
 
     #[test]
     fn rejects_removal_when_model_is_bound() {
-        let root = std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
         let storage = ModelStorage::new(ModelStoragePaths::from_root(root.clone()));
         storage.paths.ensure_dirs().expect("dirs");
         let manifest = sample_manifest("qwen-main");
-        let file_path = storage.paths.root_dir.join(&manifest.files[0].relative_path);
+        let file_path = storage
+            .paths
+            .root_dir
+            .join(&manifest.files[0].relative_path);
         if let Some(parent) = file_path.parent() {
             std::fs::create_dir_all(parent).expect("blob dir");
         }

@@ -1,17 +1,21 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use egui::RichText;
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigSnapshot, ConfigStore};
 use klaw_model::{
-    DownloadProgress, ModelCapability, ModelInstallRequest, ModelInstallResult, ModelService,
-    ModelSummary, ModelUsageBinding,
+    DownloadProgress, ModelInstallRequest, ModelInstallResult, ModelService, ModelSummary,
+    ModelUsageBinding,
 };
 use klaw_util::{default_data_dir, models_dir};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use tokio::runtime::Builder;
+use tokio_util::sync::CancellationToken;
 
 enum ModelTaskMessage {
     Refreshed(Result<Vec<ModelSummary>, String>),
@@ -24,11 +28,7 @@ enum ModelTaskMessage {
 struct InstallForm {
     repo_id: String,
     revision: String,
-    files_text: String,
     quantization: String,
-    embedding: bool,
-    rerank: bool,
-    chat: bool,
 }
 
 impl Default for InstallForm {
@@ -36,11 +36,7 @@ impl Default for InstallForm {
         Self {
             repo_id: String::new(),
             revision: "main".to_string(),
-            files_text: String::new(),
             quantization: String::new(),
-            embedding: true,
-            rerank: false,
-            chat: false,
         }
     }
 }
@@ -55,35 +51,9 @@ impl InstallForm {
         if revision.is_empty() {
             return Err("revision cannot be empty".to_string());
         }
-        let files = self
-            .files_text
-            .lines()
-            .flat_map(|line| line.split(','))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        if files.is_empty() {
-            return Err("at least one file is required".to_string());
-        }
-        let mut capabilities = Vec::new();
-        if self.embedding {
-            capabilities.push(ModelCapability::Embedding);
-        }
-        if self.rerank {
-            capabilities.push(ModelCapability::Rerank);
-        }
-        if self.chat {
-            capabilities.push(ModelCapability::Chat);
-        }
-        if capabilities.is_empty() {
-            return Err("select at least one capability".to_string());
-        }
         Ok(ModelInstallRequest {
             repo_id: repo_id.to_string(),
             revision: revision.to_string(),
-            files,
-            capabilities,
             quantization: (!self.quantization.trim().is_empty())
                 .then(|| self.quantization.trim().to_string()),
         })
@@ -97,8 +67,12 @@ pub struct LocalModelsPanel {
     installed: Vec<ModelSummary>,
     task_rx: Option<Receiver<ModelTaskMessage>>,
     install_form: InstallForm,
+    install_window_open: bool,
+    install_cancel: Option<CancellationToken>,
+    selected_model: Option<String>,
     delete_confirm: Option<String>,
     progress: Option<DownloadProgress>,
+    progress_by_file: BTreeMap<String, DownloadProgress>,
 }
 
 impl PanelRenderer for LocalModelsPanel {
@@ -118,6 +92,9 @@ impl PanelRenderer for LocalModelsPanel {
             if ui.button("Refresh").clicked() {
                 self.begin_refresh();
             }
+            if ui.button("Install Model").clicked() {
+                self.install_window_open = true;
+            }
             if ui.button("Open Models Directory").clicked() {
                 if let Err(err) = open_path_in_os(&self.models_dir_path()) {
                     notifications.error(format!("Failed to open models directory: {err}"));
@@ -125,44 +102,10 @@ impl PanelRenderer for LocalModelsPanel {
             }
         });
 
-        if let Some(progress) = &self.progress {
-            let label = if let Some(total_bytes) = progress.total_bytes {
-                format!(
-                    "Downloading {}: {} / {} bytes",
-                    progress.file_name, progress.downloaded_bytes, total_bytes
-                )
-            } else {
-                format!(
-                    "Downloading {}: {} bytes",
-                    progress.file_name, progress.downloaded_bytes
-                )
-            };
-            ui.label(label);
-        }
-
-        ui.separator();
-        ui.collapsing("Install Model", |ui| {
-            ui.label("Enter a Hugging Face repo, revision, and one or more files.");
-            ui.text_edit_singleline(&mut self.install_form.repo_id);
-            ui.text_edit_singleline(&mut self.install_form.revision);
-            ui.label("Files (one per line or comma-separated)");
-            ui.text_edit_multiline(&mut self.install_form.files_text);
-            ui.text_edit_singleline(&mut self.install_form.quantization);
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.install_form.embedding, "Embedding");
-                ui.checkbox(&mut self.install_form.rerank, "Rerank");
-                ui.checkbox(&mut self.install_form.chat, "Chat");
-            });
-            if ui.button("Install").clicked() {
-                match self.install_form.to_request() {
-                    Ok(request) => self.begin_install(request),
-                    Err(err) => notifications.error(err),
-                }
-            }
-        });
-
         ui.separator();
         self.render_installed_models(ui, notifications);
+        self.render_install_window(ui, notifications);
+        self.render_install_progress_window(ui, notifications);
         self.render_delete_confirm(ui, notifications);
     }
 }
@@ -211,10 +154,16 @@ impl LocalModelsPanel {
     }
 
     fn begin_install(&mut self, request: ModelInstallRequest) {
+        if self.install_cancel.is_some() {
+            return;
+        }
         let config = self.config.clone();
         let (tx, rx) = mpsc::channel();
+        let cancellation = CancellationToken::new();
         self.task_rx = Some(rx);
         self.progress = None;
+        self.progress_by_file.clear();
+        self.install_cancel = Some(cancellation.clone());
         thread::spawn(move || {
             let runtime = Builder::new_current_thread()
                 .enable_all()
@@ -224,7 +173,7 @@ impl LocalModelsPanel {
             let result = runtime.block_on(async move {
                 let service = ModelService::open_default(&config).map_err(|err| err.to_string())?;
                 service
-                    .install_model(request, move |progress| {
+                    .install_model(request, cancellation, move |progress| {
                         let _ = tx_progress.send(ModelTaskMessage::Progress(progress));
                     })
                     .await
@@ -232,6 +181,22 @@ impl LocalModelsPanel {
             });
             let _ = tx.send(ModelTaskMessage::Installed(result));
         });
+    }
+
+    fn begin_upgrade(&mut self, summary: &ModelSummary, notifications: &mut NotificationCenter) {
+        if self.install_cancel.is_some() {
+            notifications.error("Another model download is already running");
+            return;
+        }
+        self.begin_install(ModelInstallRequest {
+            repo_id: summary.repo_id.clone(),
+            revision: summary.revision.clone(),
+            quantization: None,
+        });
+        notifications.info(format!(
+            "Upgrading model '{}' from latest '{}'",
+            summary.model_id, summary.revision
+        ));
     }
 
     fn begin_remove(&mut self, model_id: String) {
@@ -264,18 +229,32 @@ impl LocalModelsPanel {
                     }
                 }
                 ModelTaskMessage::Progress(progress) => {
+                    self.progress_by_file
+                        .insert(progress.file_name.clone(), progress.clone());
                     self.progress = Some(progress);
                 }
                 ModelTaskMessage::Installed(result) => {
                     clear_receiver = true;
                     self.progress = None;
+                    self.progress_by_file.clear();
+                    self.install_cancel = None;
                     match result {
                         Ok(installed) => {
-                            notifications.success(format!(
-                                "Installed model '{}'",
-                                installed.manifest.model_id
-                            ));
+                            if installed.up_to_date {
+                                notifications.info(format!(
+                                    "Model '{}' is already up to date",
+                                    installed.manifest.model_id
+                                ));
+                            } else {
+                                notifications.success(format!(
+                                    "Installed model '{}'",
+                                    installed.manifest.model_id
+                                ));
+                            }
                             refresh_after = true;
+                        }
+                        Err(err) if err == "operation cancelled" => {
+                            notifications.info("Model install cancelled");
                         }
                         Err(err) => notifications.error(format!("Install failed: {err}")),
                     }
@@ -300,6 +279,123 @@ impl LocalModelsPanel {
         }
     }
 
+    fn render_install_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        if !self.install_window_open {
+            return;
+        }
+        let mut open = self.install_window_open;
+        let mut install_clicked = false;
+        let mut cancel_clicked = false;
+        egui::Window::new("Install Model")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                ui.label("Download a complete Hugging Face repository snapshot.");
+                ui.label("Repository");
+                ui.text_edit_singleline(&mut self.install_form.repo_id);
+                ui.label("Branch / revision");
+                ui.text_edit_singleline(&mut self.install_form.revision);
+                ui.label("Quantization");
+                ui.text_edit_singleline(&mut self.install_form.quantization);
+                ui.horizontal(|ui| {
+                    cancel_clicked = ui.button("Cancel").clicked();
+                    install_clicked = ui.button("Download").clicked();
+                });
+            });
+        if cancel_clicked {
+            open = false;
+        }
+        if install_clicked {
+            match self.install_form.to_request() {
+                Ok(request) => {
+                    open = false;
+                    self.begin_install(request);
+                    notifications.info("Starting model download");
+                }
+                Err(err) => notifications.error(err),
+            }
+        }
+        self.install_window_open = open;
+    }
+
+    fn render_install_progress_window(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+    ) {
+        if self.install_cancel.is_none() && self.progress_by_file.is_empty() {
+            return;
+        }
+        let current_label = self.progress.as_ref().map(|progress| {
+            format!(
+                "File {} / {}: {}",
+                progress.file_index, progress.total_files, progress.file_name
+            )
+        });
+        egui::Window::new("Downloading Model")
+            .collapsible(false)
+            .resizable(true)
+            .show(ui.ctx(), |ui| {
+                if let Some(label) = current_label.as_ref() {
+                    ui.label(label);
+                } else {
+                    ui.label("Preparing repository file list...");
+                }
+                if let Some(overall) = self.overall_progress() {
+                    ui.add(egui::ProgressBar::new(overall).text("Overall progress"));
+                }
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for progress in self.progress_by_file.values() {
+                            ui.label(&progress.file_name);
+                            let text = if let Some(total_bytes) = progress.total_bytes {
+                                format!("{} / {} bytes", progress.downloaded_bytes, total_bytes)
+                            } else {
+                                format!("{} bytes", progress.downloaded_bytes)
+                            };
+                            let value = progress
+                                .total_bytes
+                                .filter(|total| *total > 0)
+                                .map(|total| progress.downloaded_bytes as f32 / total as f32)
+                                .unwrap_or(0.0);
+                            ui.add(egui::ProgressBar::new(value.clamp(0.0, 1.0)).text(text));
+                        }
+                    });
+                if ui.button("Cancel Download").clicked() {
+                    if let Some(token) = self.install_cancel.as_ref() {
+                        token.cancel();
+                        notifications.info("Cancelling model download");
+                    }
+                }
+            });
+    }
+
+    fn overall_progress(&self) -> Option<f32> {
+        let current = self.progress.as_ref()?;
+        if current.total_files == 0 {
+            return None;
+        }
+        let completed = self
+            .progress_by_file
+            .values()
+            .filter(|progress| {
+                progress
+                    .total_bytes
+                    .is_some_and(|total| total > 0 && progress.downloaded_bytes >= total)
+            })
+            .count() as f32;
+        let current_fraction = current
+            .total_bytes
+            .filter(|total| *total > 0)
+            .map(|total| current.downloaded_bytes as f32 / total as f32)
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        Some(((completed + current_fraction) / current.total_files as f32).clamp(0.0, 1.0))
+    }
+
     fn render_installed_models(
         &mut self,
         ui: &mut egui::Ui,
@@ -310,116 +406,110 @@ impl LocalModelsPanel {
             ui.label("No local models installed yet.");
             return;
         }
+        let mut delete_model_id = None;
+        let mut upgrade_summary = None;
         TableBuilder::new(ui)
             .striped(true)
+            .resizable(true)
             .column(Column::remainder())
             .column(Column::auto())
-            .column(Column::auto())
-            .column(Column::auto())
-            .column(Column::auto())
+            .column(Column::remainder())
+            .header(22.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("Name");
+                });
+                header.col(|ui| {
+                    ui.strong("Size");
+                });
+                header.col(|ui| {
+                    ui.strong("Created");
+                });
+            })
             .body(|mut body| {
                 for summary in self.installed.clone() {
+                    let is_selected = self.selected_model.as_deref() == Some(&summary.model_id);
                     body.row(28.0, |mut row| {
+                        row.set_selected(is_selected);
                         row.col(|ui| {
-                            ui.monospace(format!(
-                                "{} ({})",
-                                summary.model_id, summary.repo_id
-                            ));
+                            ui.monospace(format!("{} ({})", summary.repo_id, summary.revision));
                         });
                         row.col(|ui| {
-                            if ui.button("Use as Embedding").clicked() {
-                                self.set_default_binding(
-                                    notifications,
-                                    |config| {
-                                        config.models.default_embedding_model_id =
-                                            Some(summary.model_id.clone());
-                                    },
-                                    "Default embedding model updated",
-                                );
+                            ui.label(format_bytes(summary.size_bytes));
+                        });
+                        row.col(|ui| {
+                            ui.label(&summary.installed_at);
+                        });
+
+                        let response = row.response();
+                        if response.clicked() {
+                            self.selected_model = if is_selected {
+                                None
+                            } else {
+                                Some(summary.model_id.clone())
+                            };
+                        }
+                        let summary_for_menu = summary.clone();
+                        response.context_menu(|ui| {
+                            if ui
+                                .button(format!("{} Upgrade", regular::ARROW_CLOCKWISE))
+                                .clicked()
+                            {
+                                upgrade_summary = Some(summary_for_menu.clone());
+                                ui.close();
                             }
-                        });
-                        row.col(|ui| {
-                            if ui.button("Use as Reranker").clicked() {
-                                self.set_default_binding(
-                                    notifications,
-                                    |config| {
-                                        config.models.default_reranker_model_id =
-                                            Some(summary.model_id.clone());
-                                    },
-                                    "Default reranker model updated",
-                                );
-                            }
-                        });
-                        row.col(|ui| {
-                            if ui.button("Use as Chat").clicked() {
-                                self.set_default_binding(
-                                    notifications,
-                                    |config| {
-                                        config.models.default_chat_model_id =
-                                            Some(summary.model_id.clone());
-                                    },
-                                    "Default chat model updated",
-                                );
-                            }
-                        });
-                        row.col(|ui| {
-                            if ui.button("Remove").clicked() {
-                                self.delete_confirm = Some(summary.model_id.clone());
+                            ui.separator();
+                            if ui
+                                .add(egui::Button::new(
+                                    RichText::new(format!("{} Delete", regular::TRASH))
+                                        .color(ui.visuals().warn_fg_color),
+                                ))
+                                .clicked()
+                            {
+                                delete_model_id = Some(summary_for_menu.model_id.clone());
+                                ui.close();
                             }
                         });
                     });
                 }
             });
+        if let Some(model_id) = delete_model_id {
+            self.delete_confirm = Some(model_id);
+        }
+        if let Some(summary) = upgrade_summary {
+            self.begin_upgrade(&summary, notifications);
+        }
     }
 
-    fn render_delete_confirm(
-        &mut self,
-        ui: &mut egui::Ui,
-        notifications: &mut NotificationCenter,
-    ) {
+    fn render_delete_confirm(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         let Some(model_id) = self.delete_confirm.clone() else {
             return;
         };
-        egui::Window::new("Remove Local Model")
+        egui::Window::new("Delete Local Model")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                ui.label(format!("Remove model '{model_id}'?"));
+                ui.label(RichText::new(format!("Delete model '{model_id}'?")).strong());
+                ui.add_space(8.0);
+                ui.label("This removes the local snapshot files and manifest. Models currently bound in config cannot be deleted.");
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() {
                         self.delete_confirm = None;
                     }
-                    if ui.button("Remove").clicked() {
+                    if ui
+                        .add(egui::Button::new(
+                            RichText::new(format!("{} Delete", regular::TRASH))
+                                .color(ui.visuals().warn_fg_color),
+                        ))
+                        .clicked()
+                    {
                         self.delete_confirm = None;
                         self.begin_remove(model_id.clone());
                         notifications.info(format!("Removing model '{model_id}'"));
                     }
                 });
             });
-    }
-
-    fn set_default_binding<F>(
-        &mut self,
-        notifications: &mut NotificationCenter,
-        mutate: F,
-        success_message: &str,
-    ) where
-        F: FnOnce(&mut AppConfig),
-    {
-        let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
-            return;
-        };
-        match store.update_config(|config| {
-            mutate(config);
-            Ok(())
-        }) {
-            Ok((snapshot, ())) => {
-                self.apply_snapshot(snapshot);
-                notifications.success(success_message);
-            }
-            Err(err) => notifications.error(format!("Failed to update config: {err}")),
-        }
     }
 }
 
@@ -446,6 +536,20 @@ fn active_bindings_for_model(config: &AppConfig, model_id: &str) -> Vec<ModelUsa
     bindings
 }
 
+fn format_bytes(value: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    if value < 1024 {
+        return format!("{value} B");
+    }
+    let mut size = value as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    format!("{size:.1} {}", UNITS[unit])
+}
+
 fn open_path_in_os(path: &std::path::Path) -> Result<(), std::io::Error> {
     #[cfg(target_os = "macos")]
     {
@@ -469,24 +573,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn install_form_parses_multiline_files_and_capabilities() {
+    fn install_form_builds_repo_revision_request() {
         let form = InstallForm {
             repo_id: "Qwen/Qwen3-Embedding-0.6B-GGUF".to_string(),
             revision: "main".to_string(),
-            files_text: "model.gguf\nREADME.md".to_string(),
             quantization: "Q4_K_M".to_string(),
-            embedding: true,
-            rerank: false,
-            chat: true,
         };
 
         let request = form.to_request().expect("request should parse");
-        assert_eq!(request.files, vec!["model.gguf", "README.md"]);
-        assert_eq!(
-            request.capabilities,
-            vec![ModelCapability::Embedding, ModelCapability::Chat]
-        );
+        assert_eq!(request.repo_id, "Qwen/Qwen3-Embedding-0.6B-GGUF");
+        assert_eq!(request.revision, "main");
         assert_eq!(request.quantization.as_deref(), Some("Q4_K_M"));
+    }
+
+    #[test]
+    fn format_bytes_uses_readable_units() {
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(2 * 1024 * 1024), "2.0 MB");
     }
 
     #[test]

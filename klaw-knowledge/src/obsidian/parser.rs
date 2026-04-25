@@ -81,7 +81,13 @@ fn parse_list_field(frontmatter: Option<&str>, key: &str) -> Vec<String> {
         for next in lines.iter().skip(idx + 1) {
             let next = next.trim();
             if let Some(value) = next.strip_prefix("- ") {
-                values.push(value.trim().trim_matches('"').trim_matches('\'').to_string());
+                values.push(
+                    value
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .to_string(),
+                );
             } else if next.is_empty() {
                 continue;
             } else {
@@ -118,7 +124,10 @@ fn parse_inline_tags(body: &str) -> Vec<String> {
     let regex = Regex::new(r"(?P<tag>#[A-Za-z0-9_\-/]+)").expect("valid regex");
     regex
         .captures_iter(body)
-        .filter_map(|caps| caps.name("tag").map(|m| m.as_str().trim_start_matches('#').to_string()))
+        .filter_map(|caps| {
+            caps.name("tag")
+                .map(|m| m.as_str().trim_start_matches('#').to_string())
+        })
         .collect()
 }
 
@@ -163,6 +172,9 @@ date: 2026-04-24\n\
             note.wikilinks,
             vec!["Other Note".to_string(), "Topic/Sub".to_string()]
         );
-        assert_eq!(note.inline_tags, vec!["rust".to_string(), "async".to_string()]);
+        assert_eq!(
+            note.inline_tags,
+            vec!["rust".to_string(), "async".to_string()]
+        );
     }
 }

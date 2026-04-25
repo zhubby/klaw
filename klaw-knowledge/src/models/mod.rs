@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use klaw_config::AppConfig;
 use klaw_model::{
     EmbeddingRuntime as LocalEmbeddingRuntime, LlamaCppRsBackend, ModelEmbeddingRequest,
-    ModelLlamaRuntime, ModelOrchestrateRequest, ModelRerankRequest, ModelService, QueryIntent,
-    OrchestratorRuntime as LocalOrchestratorRuntime, RerankRuntime as LocalRerankRuntime,
+    ModelLlamaRuntime, ModelOrchestrateRequest, ModelRerankRequest, ModelService,
+    OrchestratorRuntime as LocalOrchestratorRuntime, QueryIntent,
+    RerankRuntime as LocalRerankRuntime,
 };
 
 use crate::KnowledgeError;
@@ -46,11 +47,7 @@ pub fn resolve_model_bindings(config: &AppConfig) -> KnowledgeModelBindings {
             .embedding_model_id
             .clone()
             .or_else(|| config.models.default_embedding_model_id.clone()),
-        orchestrator_model_id: config
-            .knowledge
-            .models
-            .orchestrator_model_id
-            .clone(),
+        orchestrator_model_id: config.knowledge.models.orchestrator_model_id.clone(),
         reranker_model_id: config
             .knowledge
             .models
@@ -100,16 +97,13 @@ pub fn build_local_embedding_model(
     let Some(model_id) = bindings.embedding_model_id else {
         return Ok(None);
     };
-    let service =
-        ModelService::open_default(config).map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    let service = ModelService::open_default(config)
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
     let runtime = ModelLlamaRuntime::new(
         service.storage().clone(),
         LlamaCppRsBackend::new(config.models.llama_cpp.default_ctx_size),
     );
-    Ok(Some(ModelBackedEmbedding::new(
-        model_id,
-        Arc::new(runtime),
-    )))
+    Ok(Some(ModelBackedEmbedding::new(model_id, Arc::new(runtime))))
 }
 
 pub fn build_local_reranker(
@@ -119,16 +113,13 @@ pub fn build_local_reranker(
     let Some(model_id) = bindings.reranker_model_id else {
         return Ok(None);
     };
-    let service =
-        ModelService::open_default(config).map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    let service = ModelService::open_default(config)
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
     let runtime = ModelLlamaRuntime::new(
         service.storage().clone(),
         LlamaCppRsBackend::new(config.models.llama_cpp.default_ctx_size),
     );
-    Ok(Some(ModelBackedReranker::new(
-        model_id,
-        Arc::new(runtime),
-    )))
+    Ok(Some(ModelBackedReranker::new(model_id, Arc::new(runtime))))
 }
 
 pub fn build_local_orchestrator(
@@ -138,8 +129,8 @@ pub fn build_local_orchestrator(
     let Some(model_id) = bindings.orchestrator_model_id else {
         return Ok(None);
     };
-    let service =
-        ModelService::open_default(config).map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    let service = ModelService::open_default(config)
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
     let runtime = ModelLlamaRuntime::new(
         service.storage().clone(),
         LlamaCppRsBackend::new(config.models.llama_cpp.default_ctx_size),
@@ -222,7 +213,10 @@ mod tests {
         config.knowledge.models.orchestrator_model_id = Some("knowledge-orchestrator".to_string());
 
         let bindings = resolve_model_bindings(&config);
-        assert_eq!(bindings.embedding_model_id.as_deref(), Some("knowledge-embed"));
+        assert_eq!(
+            bindings.embedding_model_id.as_deref(),
+            Some("knowledge-embed")
+        );
         assert_eq!(bindings.reranker_model_id.as_deref(), Some("global-rerank"));
         assert_eq!(
             bindings.orchestrator_model_id.as_deref(),

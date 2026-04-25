@@ -104,6 +104,7 @@ mod tests {
             vec![
                 "ACP",
                 "LLM",
+                "Local Models",
                 "MCP",
                 "Model Provider",
                 "Skills Manager",

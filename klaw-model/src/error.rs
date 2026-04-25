@@ -16,6 +16,8 @@ pub enum ModelError {
     NotFound(String),
     #[error("model '{0}' is currently in use")]
     InUse(String),
+    #[error("operation cancelled")]
+    Cancelled,
     #[error("unsupported operation: {0}")]
     Unsupported(String),
 }

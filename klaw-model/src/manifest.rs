@@ -30,8 +30,9 @@ mod tests {
             source: "huggingface".to_string(),
             repo_id: "Qwen/Qwen".to_string(),
             revision: "main".to_string(),
+            resolved_revision: Some("abc123".to_string()),
             files: vec![InstalledModelFile {
-                relative_path: "blobs/Qwen/main/model.gguf".to_string(),
+                relative_path: "snapshots/qwen-main/model.gguf".to_string(),
                 size_bytes: 12,
                 sha256: Some("abc".to_string()),
                 format: ModelFileFormat::Gguf,

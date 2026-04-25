@@ -3,9 +3,9 @@ use std::{path::PathBuf, sync::Arc};
 use async_trait::async_trait;
 use klaw_config::{AppConfig, KnowledgeToolConfig};
 use klaw_knowledge::{
-    KnowledgeEntry, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery,
-    assemble_context_bundle, build_local_embedding_model, build_local_orchestrator,
-    build_local_reranker, obsidian::provider::ObsidianKnowledgeProvider,
+    KnowledgeEntry, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery, assemble_context_bundle,
+    build_local_embedding_model, build_local_orchestrator, build_local_reranker,
+    obsidian::provider::ObsidianKnowledgeProvider,
 };
 use klaw_storage::open_default_knowledge_db;
 use serde_json::{Value, json};
@@ -75,11 +75,12 @@ impl KnowledgeTool {
         } else {
             provider
         };
-        let provider = if let Some(reranker) = build_local_reranker(config).map_err(map_knowledge_error)? {
-            provider.with_reranker(Arc::new(reranker))
-        } else {
-            provider
-        };
+        let provider =
+            if let Some(reranker) = build_local_reranker(config).map_err(map_knowledge_error)? {
+                provider.with_reranker(Arc::new(reranker))
+            } else {
+                provider
+            };
         let provider = if let Some(orchestrator) =
             build_local_orchestrator(config).map_err(map_knowledge_error)?
         {
@@ -308,7 +309,7 @@ fn map_knowledge_error(err: klaw_knowledge::KnowledgeError) -> ToolError {
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use klaw_knowledge::{KnowledgeSourceInfo, KnowledgeError};
+    use klaw_knowledge::{KnowledgeError, KnowledgeSourceInfo};
     use serde_json::json;
 
     use super::*;
@@ -392,7 +393,10 @@ mod tests {
     #[tokio::test]
     async fn context_action_returns_bundle() {
         let output = tool()
-            .execute(json!({"action":"context","query":"auth","budget_chars":120}), &ctx())
+            .execute(
+                json!({"action":"context","query":"auth","budget_chars":120}),
+                &ctx(),
+            )
             .await
             .expect("context should succeed");
         assert!(output.content_for_model.contains("\"bundle\""));

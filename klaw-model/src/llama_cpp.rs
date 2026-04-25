@@ -126,7 +126,10 @@ impl PromptFormat {
 
 #[async_trait]
 pub trait EmbeddingRuntime: Send + Sync {
-    async fn embed(&self, request: ModelEmbeddingRequest) -> Result<ModelEmbeddingResponse, ModelError>;
+    async fn embed(
+        &self,
+        request: ModelEmbeddingRequest,
+    ) -> Result<ModelEmbeddingResponse, ModelError>;
 }
 
 #[async_trait]
@@ -212,7 +215,12 @@ impl LlamaCppRsBackend {
 
         let model_params = LlamaModelParams::default();
         let model = LlamaModel::load_from_file(shared_llama_backend()?, model_path, &model_params)
-            .map_err(|err| ModelError::Runtime(format!("loading GGUF model {}: {err}", model_path.display())))?;
+            .map_err(|err| {
+                ModelError::Runtime(format!(
+                    "loading GGUF model {}: {err}",
+                    model_path.display()
+                ))
+            })?;
         let model = Arc::new(model);
 
         let mut cache = self
@@ -231,7 +239,10 @@ impl LlamaCppRsBackend {
         request: ModelEmbeddingRequest,
     ) -> Result<ModelEmbeddingResponse, ModelError> {
         let model = self.load_model(&model_path)?;
-        let file_name = model_path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+        let file_name = model_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
         let prompt_format = PromptFormat::detect(file_name);
         let formatted = prompt_format.format_query(&request.text);
         let tokens = model
@@ -255,9 +266,9 @@ impl LlamaCppRsBackend {
             .map_err(|err| ModelError::Runtime(format!("creating embedding context: {err}")))?;
 
         let mut batch = LlamaBatch::new(tokens.len() + 16, 1);
-        batch
-            .add_sequence(&tokens, 0, true)
-            .map_err(|err| ModelError::Runtime(format!("adding sequence to embedding batch: {err}")))?;
+        batch.add_sequence(&tokens, 0, true).map_err(|err| {
+            ModelError::Runtime(format!("adding sequence to embedding batch: {err}"))
+        })?;
 
         ctx.encode(&mut batch)
             .map_err(|err| ModelError::Runtime(format!("embedding encode failed: {err}")))?;
@@ -286,9 +297,9 @@ impl LlamaCppRsBackend {
         let mut scores = Vec::with_capacity(request.candidates.len());
         for candidate in &request.candidates {
             let input = format_reranker_input(&request.query, candidate);
-            let tokens = model
-                .str_to_token(&input, AddBos::Always)
-                .map_err(|err| ModelError::Runtime(format!("reranker tokenization failed: {err}")))?;
+            let tokens = model.str_to_token(&input, AddBos::Always).map_err(|err| {
+                ModelError::Runtime(format!("reranker tokenization failed: {err}"))
+            })?;
             if tokens.is_empty() {
                 scores.push(0.0);
                 continue;
@@ -305,20 +316,20 @@ impl LlamaCppRsBackend {
                 let is_last = index == tokens.len() - 1;
                 batch
                     .add(*token, index as i32, &[0], is_last)
-                    .map_err(|err| ModelError::Runtime(format!("adding token to reranker batch: {err}")))?;
+                    .map_err(|err| {
+                        ModelError::Runtime(format!("adding token to reranker batch: {err}"))
+                    })?;
             }
 
             ctx.decode(&mut batch)
                 .map_err(|err| ModelError::Runtime(format!("reranker decode failed: {err}")))?;
             let logits = ctx.get_logits_ith(batch.n_tokens() - 1);
-            let yes_logit = logits
-                .get(yes_token_id as usize)
-                .copied()
-                .ok_or_else(|| ModelError::Runtime("Yes token logit index out of bounds".to_string()))?;
-            let no_logit = logits
-                .get(no_token_id as usize)
-                .copied()
-                .ok_or_else(|| ModelError::Runtime("No token logit index out of bounds".to_string()))?;
+            let yes_logit = logits.get(yes_token_id as usize).copied().ok_or_else(|| {
+                ModelError::Runtime("Yes token logit index out of bounds".to_string())
+            })?;
+            let no_logit = logits.get(no_token_id as usize).copied().ok_or_else(|| {
+                ModelError::Runtime("No token logit index out of bounds".to_string())
+            })?;
             scores.push(softmax_binary_probability(yes_logit, no_logit));
         }
 
@@ -356,7 +367,9 @@ impl LlamaCppRsBackend {
             let is_last = index == tokens.len() - 1;
             batch
                 .add(*token, index as i32, &[0], is_last)
-                .map_err(|err| ModelError::Runtime(format!("adding prompt token to chat batch: {err}")))?;
+                .map_err(|err| {
+                    ModelError::Runtime(format!("adding prompt token to chat batch: {err}"))
+                })?;
         }
 
         ctx.decode(&mut batch)
@@ -382,7 +395,9 @@ impl LlamaCppRsBackend {
             batch.clear();
             batch
                 .add(new_token, (prompt_len + step) as i32, &[0], true)
-                .map_err(|err| ModelError::Runtime(format!("adding generated token to batch: {err}")))?;
+                .map_err(|err| {
+                    ModelError::Runtime(format!("adding generated token to batch: {err}"))
+                })?;
             ctx.decode(&mut batch)
                 .map_err(|err| ModelError::Runtime(format!("generation decode failed: {err}")))?;
         }
@@ -602,8 +617,9 @@ fn parse_orchestrator_response(
     text: &str,
     original_query: &str,
 ) -> Result<ModelOrchestrateResponse, ModelError> {
-    let json = extract_json_object(text)
-        .ok_or_else(|| ModelError::Runtime("no JSON object found in orchestrator output".to_string()))?;
+    let json = extract_json_object(text).ok_or_else(|| {
+        ModelError::Runtime("no JSON object found in orchestrator output".to_string())
+    })?;
     let parsed: serde_json::Value = serde_json::from_str(json)
         .map_err(|err| ModelError::Runtime(format!("parsing orchestrator JSON failed: {err}")))?;
     let intent = parse_query_intent(parsed.get("intent").and_then(serde_json::Value::as_str));
@@ -625,7 +641,10 @@ fn parse_orchestrator_response(
             "orchestrator response did not include expansions".to_string(),
         ));
     }
-    if expansions.first().is_none_or(|value| value != original_query) {
+    if expansions
+        .first()
+        .is_none_or(|value| value != original_query)
+    {
         expansions.insert(0, original_query.to_string());
     }
     expansions.dedup();
@@ -663,7 +682,8 @@ fn heuristic_orchestrator_expansions(query: &str) -> Vec<String> {
     let words = trimmed.split_whitespace().collect::<Vec<_>>();
     if words.len() > 2 {
         expansions.extend(
-            words.into_iter()
+            words
+                .into_iter()
                 .filter(|word| word.len() > 2)
                 .filter(|word| !stopwords.contains(&word.to_ascii_lowercase().as_str()))
                 .map(str::to_string),
@@ -681,7 +701,12 @@ fn heuristic_orchestrator_response(query: &str) -> ModelOrchestrateResponse {
 }
 
 fn parse_query_intent(value: Option<&str>) -> QueryIntent {
-    match value.unwrap_or("exploratory").trim().to_ascii_lowercase().as_str() {
+    match value
+        .unwrap_or("exploratory")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "exact" => QueryIntent::Exact,
         "conceptual" => QueryIntent::Conceptual,
         "relationship" => QueryIntent::Relationship,
@@ -737,7 +762,10 @@ impl<B> EmbeddingRuntime for ModelLlamaRuntime<B>
 where
     B: LlamaCppBackend,
 {
-    async fn embed(&self, request: ModelEmbeddingRequest) -> Result<ModelEmbeddingResponse, ModelError> {
+    async fn embed(
+        &self,
+        request: ModelEmbeddingRequest,
+    ) -> Result<ModelEmbeddingResponse, ModelError> {
         let model_path = self.gguf_path_for_model(&request.model_id)?;
         self.backend.run_embedding(model_path, request).await
     }
@@ -787,8 +815,10 @@ where
             )
             .await
         {
-            Ok(response) => Ok(parse_orchestrator_response(&response.content, &request.query)
-                .unwrap_or_else(|_| heuristic_orchestrator_response(&request.query))),
+            Ok(response) => Ok(
+                parse_orchestrator_response(&response.content, &request.query)
+                    .unwrap_or_else(|_| heuristic_orchestrator_response(&request.query)),
+            ),
             Err(_) => Ok(heuristic_orchestrator_response(&request.query)),
         }
     }
@@ -804,7 +834,8 @@ mod tests {
 
     #[test]
     fn resolves_first_gguf_path_from_manifest() {
-        let root = std::env::temp_dir().join(format!("klaw-model-runtime-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-runtime-{}", uuid::Uuid::new_v4()));
         let storage = ModelStorage::new(ModelStoragePaths::from_root(root.clone()));
         storage.paths().ensure_dirs().expect("dirs");
         storage
@@ -813,8 +844,9 @@ mod tests {
                 source: "huggingface".to_string(),
                 repo_id: "Qwen/Qwen".to_string(),
                 revision: "main".to_string(),
+                resolved_revision: Some("abc123".to_string()),
                 files: vec![InstalledModelFile {
-                    relative_path: "blobs/Qwen/Qwen/main/model.gguf".to_string(),
+                    relative_path: "snapshots/qwen-main/model.gguf".to_string(),
                     size_bytes: 10,
                     sha256: None,
                     format: ModelFileFormat::Gguf,
@@ -826,11 +858,12 @@ mod tests {
                 last_used_at: None,
             })
             .expect("manifest");
-        let runtime = ModelLlamaRuntime::new(storage, LlamaCppCommandBackend::new("llama-cli", 4096));
+        let runtime =
+            ModelLlamaRuntime::new(storage, LlamaCppCommandBackend::new("llama-cli", 4096));
         let path = runtime
             .gguf_path_for_model("qwen-main")
             .expect("gguf path should resolve");
-        assert!(path.ends_with("blobs/Qwen/Qwen/main/model.gguf"));
+        assert!(path.ends_with("snapshots/qwen-main/model.gguf"));
     }
 
     #[test]
@@ -866,8 +899,7 @@ mod tests {
 
     #[test]
     fn parses_orchestrator_json_expansions_from_embedded_text() {
-        let response =
-            "thinking...\n{\"intent\":\"conceptual\",\"expansions\":[\"auth design\",\"authentication architecture\"]}\n";
+        let response = "thinking...\n{\"intent\":\"conceptual\",\"expansions\":[\"auth design\",\"authentication architecture\"]}\n";
         let parsed = parse_orchestrator_response(response, "auth design")
             .expect("orchestrator response should parse");
         assert_eq!(parsed.intent, QueryIntent::Conceptual);
@@ -880,7 +912,10 @@ mod tests {
     #[test]
     fn heuristic_orchestrator_fallback_keeps_original_query_first() {
         let expansions = heuristic_orchestrator_expansions("how does auth token rotation work");
-        assert_eq!(expansions.first().map(String::as_str), Some("how does auth token rotation work"));
+        assert_eq!(
+            expansions.first().map(String::as_str),
+            Some("how does auth token rotation work")
+        );
         assert!(expansions.len() > 1);
     }
 
@@ -890,11 +925,17 @@ mod tests {
         let parsed = parse_orchestrator_response(response, "auth design")
             .expect("parser should add original query");
         assert_eq!(parsed.intent, QueryIntent::Exact);
-        assert_eq!(parsed.expansions.first().map(String::as_str), Some("auth design"));
+        assert_eq!(
+            parsed.expansions.first().map(String::as_str),
+            Some("auth design")
+        );
     }
 
     #[test]
     fn heuristic_intent_detects_temporal_queries() {
-        assert_eq!(heuristic_query_intent("what changed last week"), QueryIntent::Temporal);
+        assert_eq!(
+            heuristic_query_intent("what changed last week"),
+            QueryIntent::Temporal
+        );
     }
 }

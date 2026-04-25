@@ -1045,8 +1045,8 @@ pub struct HuggingFaceModelsConfig {
     pub endpoint: String,
     #[serde(default)]
     pub cache_dir: Option<String>,
-    #[serde(default = "default_models_huggingface_auth_token_env")]
-    pub auth_token_env: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 impl Default for HuggingFaceModelsConfig {
@@ -1054,7 +1054,7 @@ impl Default for HuggingFaceModelsConfig {
         Self {
             endpoint: default_models_huggingface_endpoint(),
             cache_dir: None,
-            auth_token_env: default_models_huggingface_auth_token_env(),
+            token: None,
         }
     }
 }
@@ -1210,10 +1210,6 @@ fn default_models_enabled() -> bool {
 
 fn default_models_huggingface_endpoint() -> String {
     "https://huggingface.co".to_string()
-}
-
-fn default_models_huggingface_auth_token_env() -> Option<String> {
-    Some("HF_TOKEN".to_string())
 }
 
 fn default_models_llama_cpp_command() -> String {

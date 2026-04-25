@@ -31,6 +31,7 @@
   - configuration
   - terminal (embedded `egui_term` PTY view with start/restart/stop controls, default workspace working directory, and tab-close cleanup)
   - model provider (config-bound list + add/edit window)
+  - local models (Hugging Face repo snapshot install dialog, per-file progress dialog, cancellation, selectable asset table with upgrade/delete context actions)
   - channel (config-bound list + add/edit window)
   - voice (config-bound voice settings + split STT/TTS test workspace)
   - cron (db-bound list + add/edit window)

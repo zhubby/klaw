@@ -9,7 +9,8 @@ but it is no longer the default.
 ## Responsibilities
 
 - Manage model storage under `~/.klaw/models`
-- Download explicit Hugging Face artifacts into the local model store
+- Download complete Hugging Face repository snapshots into the local model store
+- Track the resolved Hugging Face revision SHA so unchanged upgrades can be skipped
 - Persist installed model manifests and scan installed models
 - Prevent deleting models that are still bound by config
 - Expose local embedding, rerank, chat, and orchestrator runtime traits
@@ -18,7 +19,7 @@ but it is no longer the default.
 
 - `catalog.rs`: Hugging Face model identifiers and normalization
 - `storage.rs`: model directory layout, manifest scanning, deletion
-- `download.rs`: Hugging Face artifact download with progress callbacks
+- `download.rs`: Hugging Face repository listing and file download with progress callbacks
 - `manifest.rs`: JSON manifest persistence helpers
 - `llama_cpp.rs`: local runtime traits, Rust binding backend, and command fallback
 - `service.rs`: high-level facade for GUI and knowledge consumers

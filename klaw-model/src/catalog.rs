@@ -7,7 +7,10 @@ pub struct HuggingFaceModelRef {
 }
 
 impl HuggingFaceModelRef {
-    pub fn new(repo_id: impl Into<String>, revision: impl Into<String>) -> Result<Self, ModelError> {
+    pub fn new(
+        repo_id: impl Into<String>,
+        revision: impl Into<String>,
+    ) -> Result<Self, ModelError> {
         let repo_id = repo_id.into().trim().to_string();
         if repo_id.is_empty() || !repo_id.contains('/') {
             return Err(ModelError::Config(

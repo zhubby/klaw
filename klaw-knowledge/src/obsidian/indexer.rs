@@ -185,7 +185,10 @@ pub async fn index_note_path(
     for wikilink in &parsed.wikilinks {
         db.execute(
             "INSERT INTO knowledge_links (source_entry_id, target_title) VALUES (?1, ?2)",
-            &[DbValue::Text(entry_id.clone()), DbValue::Text(wikilink.clone())],
+            &[
+                DbValue::Text(entry_id.clone()),
+                DbValue::Text(wikilink.clone()),
+            ],
         )
         .await
         .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
@@ -365,7 +368,9 @@ fn file_mtime_ms(path: &Path) -> Result<i64, KnowledgeError> {
 fn is_excluded(path: &Path, exclude_folders: &[String]) -> bool {
     path.components().any(|component| {
         let name = component.as_os_str().to_string_lossy();
-        exclude_folders.iter().any(|exclude| exclude.trim_matches('/') == name)
+        exclude_folders
+            .iter()
+            .any(|exclude| exclude.trim_matches('/') == name)
     })
 }
 
