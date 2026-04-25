@@ -9,8 +9,8 @@ use egui_extras::{Column, DatePickerButton, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, ApplyPatchConfig, ChannelAttachmentToolConfig, ConfigError, ConfigSnapshot,
-    ConfigStore, LocalAttachmentConfig, MemoryToolConfig, ShellConfig, SubAgentConfig,
-    WebFetchConfig, WebSearchConfig,
+    ConfigStore, KnowledgeToolConfig, LocalAttachmentConfig, MemoryToolConfig, ShellConfig,
+    SubAgentConfig, WebFetchConfig, WebSearchConfig,
 };
 use klaw_llm::ToolDefinition;
 use klaw_session::{
@@ -70,6 +70,7 @@ enum ToolForm {
     Toggle(ToggleToolKind, ToggleForm),
     ChannelAttachment(ChannelAttachmentForm),
     Memory(MemoryForm),
+    Knowledge(KnowledgeForm),
     WebFetch(WebFetchForm),
     WebSearch(WebSearchForm),
     SubAgent(SubAgentForm),
@@ -129,6 +130,14 @@ struct MemoryForm {
     fts_limit: String,
     vector_limit: String,
     use_vector: bool,
+}
+
+#[derive(Debug, Clone)]
+struct KnowledgeForm {
+    enabled: bool,
+    search_limit: String,
+    context_limit: String,
+    include_explain: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -363,6 +372,37 @@ impl MemoryForm {
     }
 }
 
+impl KnowledgeForm {
+    fn from_config(config: &KnowledgeToolConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            search_limit: config.search_limit.to_string(),
+            context_limit: config.context_limit.to_string(),
+            include_explain: config.include_explain,
+        }
+    }
+
+    fn to_config(&self) -> Result<KnowledgeToolConfig, String> {
+        let search_limit = self
+            .search_limit
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| "search_limit must be a positive integer".to_string())?;
+        let context_limit = self
+            .context_limit
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| "context_limit must be a positive integer".to_string())?;
+
+        Ok(KnowledgeToolConfig {
+            enabled: self.enabled,
+            search_limit,
+            context_limit,
+            include_explain: self.include_explain,
+        })
+    }
+}
+
 impl WebFetchForm {
     fn from_config(config: &WebFetchConfig) -> Self {
         Self {
@@ -502,6 +542,7 @@ impl ToolForm {
             ToolForm::Toggle(kind, _) => kind.title(),
             ToolForm::ChannelAttachment(_) => "Edit Tool: channel_attachment",
             ToolForm::Memory(_) => "Edit Tool: memory",
+            ToolForm::Knowledge(_) => "Edit Tool: knowledge",
             ToolForm::WebFetch(_) => "Edit Tool: web_fetch",
             ToolForm::WebSearch(_) => "Edit Tool: web_search",
             ToolForm::SubAgent(_) => "Edit Tool: sub_agent",
@@ -686,6 +727,7 @@ impl ToolPanel {
             ToolDescriptor::new("skills_registry", self.config.tools.skills_registry.enabled),
             ToolDescriptor::new("skills_manager", self.config.tools.skills_manager.enabled),
             ToolDescriptor::new("memory", self.config.tools.memory.enabled),
+            ToolDescriptor::new("knowledge", self.config.tools.knowledge.enabled),
             ToolDescriptor::new("web_fetch", self.config.tools.web_fetch.enabled),
             ToolDescriptor::new("web_search", self.config.tools.web_search.enabled),
             ToolDescriptor::new("sub_agent", self.config.tools.sub_agent.enabled),
@@ -729,6 +771,7 @@ impl ToolPanel {
             "shell" => self.open_shell(),
             "channel_attachment" => self.open_channel_attachment(),
             "memory" => self.open_memory(),
+            "knowledge" => self.open_knowledge(),
             "web_fetch" => self.open_web_fetch(),
             "web_search" => self.open_web_search(),
             "sub_agent" => self.open_sub_agent(),
@@ -764,6 +807,12 @@ impl ToolPanel {
     fn open_memory(&mut self) {
         self.form = Some(ToolForm::Memory(MemoryForm::from_config(
             &self.config.tools.memory,
+        )));
+    }
+
+    fn open_knowledge(&mut self) {
+        self.form = Some(ToolForm::Knowledge(KnowledgeForm::from_config(
+            &self.config.tools.knowledge,
         )));
     }
 
@@ -812,6 +861,10 @@ impl ToolPanel {
                 }
                 ToolForm::Memory(form) => {
                     config.tools.memory = form.to_config()?;
+                    Ok(())
+                }
+                ToolForm::Knowledge(form) => {
+                    config.tools.knowledge = form.to_config()?;
                     Ok(())
                 }
                 ToolForm::WebFetch(form) => {
@@ -954,6 +1007,28 @@ impl ToolPanel {
 
                                 ui.label("use_vector");
                                 ui.checkbox(&mut form.use_vector, "");
+                                ui.end_row();
+                            });
+                    }
+                    ToolForm::Knowledge(form) => {
+                        egui::Grid::new("tool-knowledge-grid")
+                            .num_columns(2)
+                            .spacing([12.0, 8.0])
+                            .show(ui, |ui| {
+                                ui.label("enabled");
+                                ui.checkbox(&mut form.enabled, "");
+                                ui.end_row();
+
+                                ui.label("search_limit");
+                                ui.text_edit_singleline(&mut form.search_limit);
+                                ui.end_row();
+
+                                ui.label("context_limit");
+                                ui.text_edit_singleline(&mut form.context_limit);
+                                ui.end_row();
+
+                                ui.label("include_explain");
+                                ui.checkbox(&mut form.include_explain, "");
                                 ui.end_row();
                             });
                     }
@@ -2250,6 +2325,39 @@ mod tests {
         assert_eq!(definition.name, "terminal_multiplexer");
         assert_eq!(panel.tool_display_name(&tool), "terminal_multiplexer");
         assert_eq!(panel.tool_description(&tool), "tmux metadata");
+    }
+
+    #[test]
+    fn tools_include_knowledge_descriptor() {
+        let mut panel = ToolPanel::default();
+        panel.config.tools.knowledge.enabled = true;
+
+        let tool = panel
+            .tool_by_config_key("knowledge")
+            .expect("knowledge descriptor should exist");
+
+        assert_eq!(tool.runtime_name, "knowledge");
+        assert!(tool.enabled);
+    }
+
+    #[test]
+    fn open_editor_routes_knowledge_to_knowledge_form() {
+        let mut panel = ToolPanel::default();
+        panel.config.tools.knowledge.enabled = true;
+        panel.config.tools.knowledge.search_limit = 11;
+        panel.config.tools.knowledge.context_limit = 4;
+        panel.config.tools.knowledge.include_explain = false;
+
+        panel.open_editor("knowledge");
+
+        let Some(ToolForm::Knowledge(form)) = panel.form else {
+            panic!("expected knowledge form");
+        };
+
+        assert!(form.enabled);
+        assert_eq!(form.search_limit, "11");
+        assert_eq!(form.context_limit, "4");
+        assert!(!form.include_explain);
     }
 
     #[test]

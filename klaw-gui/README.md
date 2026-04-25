@@ -44,7 +44,7 @@
   - memory
   - knowledge (configured source status, search, `[knowledge]` config editing, and incremental index/vector sync)
   - archive (db-bound query + detail view)
-  - tool (remaining-height sortable table with right-click `Edit` / `Inspect` / `Logs`, runtime schema parameter summary, inspect popup sourced from live tool definitions, and per-tool audit history/detail viewer)
+  - tool (remaining-height sortable table including `knowledge`, right-click `Edit` / `Inspect` / `Logs`, runtime schema parameter summary, inspect popup sourced from live tool definitions, and per-tool audit history/detail viewer)
   - analyze dashboard
   - system (tmp directory usage and cleanup)
   - setting (general/network plus versioned manifest sync, retention, and restore)
