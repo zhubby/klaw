@@ -73,7 +73,7 @@
     - [网关](./ui/gui/gateway.md)
     - [Heartbeat](./ui/gui/heartbeat.md)
     - [LLM](./ui/gui/llm.md)
-    - [Local Models](./ui/gui/local-models.md)
+    - [Model](./ui/gui/local-models.md)
     - [Logs](./ui/gui/logs.md)
     - [MCP](./ui/gui/mcp.md)
     - [Memory](./ui/gui/memory.md)

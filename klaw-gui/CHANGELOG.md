@@ -7,7 +7,8 @@
 - Local Models 安装流程改为弹窗输入 Hugging Face repo/revision，并在下载弹窗中展示多文件进度与取消按钮
 - Local Models 列表改为可选中资产表格，移除模型能力标签和默认用途按钮，并通过右键菜单提供升级与删除动作
 - Local Models 升级现在会在远端 revision SHA 与本地 manifest 一致时提示已是最新并跳过下载
-- Local Models 安装表单移除了仅作为元数据保存的 Quantization 字段，并修复模型表格单元格选中和右键菜单触发
+- Local Models 安装表单移除了仅作为元数据保存的 Quantization 字段，并让模型表格按 GUI 现有整行交互模式处理选中和右键菜单
+- `Local Models` 面板显示名改为 `Model`，下载弹窗中的进度条高度调整为默认交互高度的一半
 
 ## 2026-04-15
 

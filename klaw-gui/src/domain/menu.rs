@@ -138,7 +138,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Approval => "Approval",
             WorkbenchMenu::Configuration => "Configuration",
             WorkbenchMenu::Provider => "Model Provider",
-            WorkbenchMenu::LocalModels => "Local Models",
+            WorkbenchMenu::LocalModels => "Model",
             WorkbenchMenu::Llm => "LLM",
             WorkbenchMenu::Channel => "Channel",
             WorkbenchMenu::Voice => "Voice",
@@ -300,7 +300,7 @@ mod tests {
     fn local_models_menu_is_registered() {
         assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::LocalModels));
         assert_eq!(WorkbenchMenu::LocalModels.id_key(), "local-models");
-        assert_eq!(WorkbenchMenu::LocalModels.title(), "Local Models");
+        assert_eq!(WorkbenchMenu::LocalModels.title(), "Model");
         assert_eq!(
             WorkbenchMenu::LocalModels.group(),
             WorkbenchMenuGroup::AiAndCapability

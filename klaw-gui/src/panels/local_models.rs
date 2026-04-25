@@ -332,13 +332,18 @@ impl LocalModelsPanel {
             .collapsible(false)
             .resizable(true)
             .show(ui.ctx(), |ui| {
+                let progress_height = ui.spacing().interact_size.y * 0.5;
                 if let Some(label) = current_label.as_ref() {
                     ui.label(label);
                 } else {
                     ui.label("Preparing repository file list...");
                 }
                 if let Some(overall) = self.overall_progress() {
-                    ui.add(egui::ProgressBar::new(overall).text("Overall progress"));
+                    ui.add(
+                        egui::ProgressBar::new(overall)
+                            .text("Overall progress")
+                            .desired_height(progress_height),
+                    );
                 }
                 ui.separator();
                 egui::ScrollArea::vertical()
@@ -356,7 +361,11 @@ impl LocalModelsPanel {
                                 .filter(|total| *total > 0)
                                 .map(|total| progress.downloaded_bytes as f32 / total as f32)
                                 .unwrap_or(0.0);
-                            ui.add(egui::ProgressBar::new(value.clamp(0.0, 1.0)).text(text));
+                            ui.add(
+                                egui::ProgressBar::new(value.clamp(0.0, 1.0))
+                                    .text(text)
+                                    .desired_height(progress_height),
+                            );
                         }
                     });
                 if ui.button("Cancel Download").clicked() {
@@ -403,9 +412,12 @@ impl LocalModelsPanel {
         }
         let mut delete_model_id = None;
         let mut upgrade_summary = None;
+        let installed = self.installed.clone();
+        let row_height = ui.spacing().interact_size.y;
         TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
+            .sense(egui::Sense::click())
             .column(Column::remainder())
             .column(Column::auto())
             .column(Column::remainder())
@@ -420,60 +432,39 @@ impl LocalModelsPanel {
                     ui.strong("Created");
                 });
             })
-            .body(|mut body| {
-                for summary in self.installed.clone() {
+            .body(|body| {
+                body.rows(row_height, installed.len(), |mut row| {
+                    let summary = &installed[row.index()];
                     let is_selected = self.selected_model.as_deref() == Some(&summary.model_id);
-                    body.row(28.0, |mut row| {
-                        row.set_selected(is_selected);
-                        let mut row_clicked = false;
-                        row.col(|ui| {
-                            let response = ui.selectable_label(
-                                is_selected,
-                                RichText::new(format!(
-                                    "{} ({})",
-                                    summary.repo_id, summary.revision
-                                ))
+                    row.set_selected(is_selected);
+                    row.col(|ui| {
+                        ui.label(
+                            RichText::new(format!("{} ({})", summary.repo_id, summary.revision))
                                 .monospace(),
-                            );
-                            row_clicked |= response.clicked();
-                            model_row_context_menu(
-                                response,
-                                &summary,
-                                &mut upgrade_summary,
-                                &mut delete_model_id,
-                            );
-                        });
-                        row.col(|ui| {
-                            let response =
-                                ui.selectable_label(is_selected, format_bytes(summary.size_bytes));
-                            row_clicked |= response.clicked();
-                            model_row_context_menu(
-                                response,
-                                &summary,
-                                &mut upgrade_summary,
-                                &mut delete_model_id,
-                            );
-                        });
-                        row.col(|ui| {
-                            let response = ui.selectable_label(is_selected, &summary.installed_at);
-                            row_clicked |= response.clicked();
-                            model_row_context_menu(
-                                response,
-                                &summary,
-                                &mut upgrade_summary,
-                                &mut delete_model_id,
-                            );
-                        });
-
-                        if row_clicked {
-                            self.selected_model = if is_selected {
-                                None
-                            } else {
-                                Some(summary.model_id.clone())
-                            };
-                        }
+                        );
                     });
-                }
+                    row.col(|ui| {
+                        ui.label(format_bytes(summary.size_bytes));
+                    });
+                    row.col(|ui| {
+                        ui.label(&summary.installed_at);
+                    });
+
+                    let response = row.response();
+                    if response.clicked() {
+                        self.selected_model = if is_selected {
+                            None
+                        } else {
+                            Some(summary.model_id.clone())
+                        };
+                    }
+                    model_row_context_menu(
+                        response,
+                        summary,
+                        &mut upgrade_summary,
+                        &mut delete_model_id,
+                    );
+                });
             });
         if let Some(model_id) = delete_model_id {
             self.delete_confirm = Some(model_id);
