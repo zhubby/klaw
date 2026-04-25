@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use klaw_config::AppConfig;
@@ -5,14 +6,14 @@ use klaw_util::{default_data_dir, models_dir};
 use time::OffsetDateTime;
 
 use crate::{
-    InstalledModelManifest, ModelError, ModelSummary, ModelUsageBinding, load_manifest,
-    save_manifest,
+    InstalledModelManifest, InstalledModelsManifest, ModelError, ModelSummary, ModelUsageBinding,
+    load_manifest, load_manifest_index, save_manifest_index,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelStoragePaths {
     pub root_dir: PathBuf,
-    pub manifests_dir: PathBuf,
+    pub manifest_path: PathBuf,
     pub snapshots_dir: PathBuf,
     pub cache_dir: PathBuf,
     pub downloads_dir: PathBuf,
@@ -21,7 +22,7 @@ pub struct ModelStoragePaths {
 impl ModelStoragePaths {
     pub fn from_root(root_dir: PathBuf) -> Self {
         Self {
-            manifests_dir: root_dir.join("manifests"),
+            manifest_path: root_dir.join("manifest.json"),
             snapshots_dir: root_dir.join("snapshots"),
             cache_dir: root_dir.join("cache"),
             downloads_dir: root_dir.join("cache").join("downloads"),
@@ -44,14 +45,10 @@ impl ModelStoragePaths {
     }
 
     pub fn ensure_dirs(&self) -> Result<(), ModelError> {
-        std::fs::create_dir_all(&self.manifests_dir)?;
+        std::fs::create_dir_all(&self.root_dir)?;
         std::fs::create_dir_all(&self.snapshots_dir)?;
         std::fs::create_dir_all(&self.downloads_dir)?;
         Ok(())
-    }
-
-    pub fn manifest_path(&self, model_id: &str) -> PathBuf {
-        self.manifests_dir.join(format!("{model_id}.json"))
     }
 }
 
@@ -76,38 +73,34 @@ impl ModelStorage {
     }
 
     pub fn save_manifest(&self, manifest: &InstalledModelManifest) -> Result<(), ModelError> {
-        save_manifest(&self.paths.manifest_path(&manifest.model_id), manifest)
+        let mut manifests = self.load_all_manifests()?;
+        manifests.retain(|existing| existing.model_id != manifest.model_id);
+        manifests.push(manifest.clone());
+        self.save_all_manifests(manifests)
     }
 
     pub fn list_installed(&self) -> Result<Vec<ModelSummary>, ModelError> {
-        self.paths.ensure_dirs()?;
-        let mut summaries = Vec::new();
-        let entries = std::fs::read_dir(&self.paths.manifests_dir)?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
-            }
-            let manifest = load_manifest(&path)?;
-            summaries.push(ModelSummary {
+        let mut summaries = self
+            .load_all_manifests()?
+            .into_iter()
+            .map(|manifest| ModelSummary {
                 model_id: manifest.model_id.clone(),
                 repo_id: manifest.repo_id.clone(),
                 revision: manifest.revision.clone(),
                 capabilities: manifest.capabilities.clone(),
                 size_bytes: manifest.size_bytes,
                 installed_at: manifest.installed_at.clone(),
-            });
-        }
+            })
+            .collect::<Vec<_>>();
         summaries.sort_by(|a, b| a.model_id.cmp(&b.model_id));
         Ok(summaries)
     }
 
     pub fn load_manifest(&self, model_id: &str) -> Result<InstalledModelManifest, ModelError> {
-        let path = self.paths.manifest_path(model_id);
-        if !path.exists() {
-            return Err(ModelError::NotFound(model_id.to_string()));
-        }
-        load_manifest(&path)
+        self.load_all_manifests()?
+            .into_iter()
+            .find(|manifest| manifest.model_id == model_id)
+            .ok_or_else(|| ModelError::NotFound(model_id.to_string()))
     }
 
     pub fn mark_used(&self, model_id: &str) -> Result<(), ModelError> {
@@ -132,12 +125,60 @@ impl ModelStorage {
             }
             prune_empty_parents(&path, &self.paths.root_dir);
         }
-        let manifest_path = self.paths.manifest_path(model_id);
-        if manifest_path.exists() {
-            std::fs::remove_file(&manifest_path)?;
-        }
+        let mut manifests = self.load_all_manifests()?;
+        manifests.retain(|manifest| manifest.model_id != model_id);
+        self.save_all_manifests(manifests)?;
         Ok(())
     }
+
+    fn load_all_manifests(&self) -> Result<Vec<InstalledModelManifest>, ModelError> {
+        self.paths.ensure_dirs()?;
+        let mut manifests = BTreeMap::new();
+        let mut should_persist = false;
+
+        if self.paths.manifest_path.exists() {
+            for manifest in load_manifest_index(&self.paths.manifest_path)?.models {
+                manifests.insert(manifest.model_id.clone(), manifest);
+            }
+        }
+
+        let legacy_dir = legacy_manifests_dir(&self.paths.root_dir);
+        if legacy_dir.exists() {
+            let entries = std::fs::read_dir(&legacy_dir)?;
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                    continue;
+                }
+                let manifest = load_manifest(&path)?;
+                if !manifests.contains_key(&manifest.model_id) {
+                    manifests.insert(manifest.model_id.clone(), manifest);
+                    should_persist = true;
+                }
+            }
+        }
+
+        let manifests = manifests.into_values().collect::<Vec<_>>();
+        if should_persist || !self.paths.manifest_path.exists() {
+            self.save_all_manifests(manifests.clone())?;
+        }
+        Ok(manifests)
+    }
+
+    fn save_all_manifests(
+        &self,
+        mut manifests: Vec<InstalledModelManifest>,
+    ) -> Result<(), ModelError> {
+        manifests.sort_by(|a, b| a.model_id.cmp(&b.model_id));
+        save_manifest_index(
+            &self.paths.manifest_path,
+            &InstalledModelsManifest { models: manifests },
+        )
+    }
+}
+
+fn legacy_manifests_dir(root_dir: &Path) -> PathBuf {
+    root_dir.join("manifests")
 }
 
 fn prune_empty_parents(path: &Path, stop_at: &Path) {
@@ -204,6 +245,31 @@ mod tests {
         let summaries = storage.list_installed().expect("list installed");
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].model_id, "qwen-main");
+        assert!(storage.paths.manifest_path.exists());
+        assert!(!legacy_manifests_dir(&root).exists());
+    }
+
+    #[test]
+    fn migrates_legacy_per_model_manifests_into_root_manifest() {
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
+        let storage = ModelStorage::new(ModelStoragePaths::from_root(root.clone()));
+        let legacy_dir = legacy_manifests_dir(&root);
+        std::fs::create_dir_all(&legacy_dir).expect("legacy dir");
+        crate::save_manifest(
+            &legacy_dir.join("qwen-main.json"),
+            &sample_manifest("qwen-main"),
+        )
+        .expect("legacy manifest");
+
+        let summaries = storage.list_installed().expect("list installed");
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].model_id, "qwen-main");
+        assert!(storage.paths.manifest_path.exists());
+        let migrated = crate::load_manifest_index(&storage.paths.manifest_path)
+            .expect("root manifest should load");
+        assert_eq!(migrated.models.len(), 1);
     }
 
     #[test]
@@ -227,5 +293,33 @@ mod tests {
             .remove_model("qwen-main", &[ModelUsageBinding::Embedding])
             .expect_err("bound model should fail");
         assert!(matches!(err, ModelError::InUse(_)));
+    }
+
+    #[test]
+    fn removes_model_from_root_manifest() {
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
+        let storage = ModelStorage::new(ModelStoragePaths::from_root(root.clone()));
+        storage.paths.ensure_dirs().expect("dirs");
+        let manifest = sample_manifest("qwen-main");
+        let file_path = storage
+            .paths
+            .root_dir
+            .join(&manifest.files[0].relative_path);
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent).expect("snapshot dir");
+        }
+        std::fs::write(&file_path, "gguf").expect("snapshot");
+        storage.save_manifest(&manifest).expect("save manifest");
+
+        storage
+            .remove_model("qwen-main", &[])
+            .expect("model should be removed");
+
+        assert!(!file_path.exists());
+        assert!(storage.list_installed().expect("list").is_empty());
+        let root_manifest = crate::load_manifest_index(&storage.paths.manifest_path)
+            .expect("root manifest should load");
+        assert!(root_manifest.models.is_empty());
     }
 }

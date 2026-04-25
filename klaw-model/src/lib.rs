@@ -17,7 +17,9 @@ pub use llama_cpp::{
     ModelRerankRequest, ModelRerankResponse, OrchestratorRuntime, PromptFormat, QueryIntent,
     RerankRuntime, default_backend_kind,
 };
-pub use manifest::{load_manifest, save_manifest};
+pub use manifest::{
+    InstalledModelsManifest, load_manifest, load_manifest_index, save_manifest, save_manifest_index,
+};
 pub use service::ModelService;
 pub use storage::{ModelStorage, ModelStoragePaths};
 pub use types::{

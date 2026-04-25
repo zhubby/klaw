@@ -24,10 +24,15 @@
 
 ```text
 models/
-  manifests/
+  manifest.json
   snapshots/
   cache/downloads/
 ```
+
+`manifest.json` 是本地模型索引，记录所有已安装模型及其 snapshot 文件列表。
+`snapshots/` 保存可用模型文件，`cache/downloads/` 仅保存下载中的 `.part`
+临时文件。旧版 `manifests/*.json` 会在读取时合并进根目录
+`manifest.json`；`blobs/` 已不再使用。
 
 ## 配置
 

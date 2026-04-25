@@ -19,3 +19,4 @@
 - Updated knowledge-side local model construction to use the Rust binding backend by default
 - Added local orchestrator generation and query-expansion parsing modeled after `engraph`
 - Local model downloads now store files under `snapshots/{model_id}` and support cooperative cancellation with per-file progress
+- Installed models are now tracked in a root `manifest.json` index; legacy `manifests/*.json` files are merged on read and `blobs/` is no longer used

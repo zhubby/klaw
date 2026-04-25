@@ -11,7 +11,7 @@ but it is no longer the default.
 - Manage model storage under `~/.klaw/models`
 - Download complete Hugging Face repository snapshots into the local model store
 - Track the resolved Hugging Face revision SHA so unchanged upgrades can be skipped
-- Persist installed model manifests and scan installed models
+- Persist installed models in a root `manifest.json` index and scan installed models
 - Prevent deleting models that are still bound by config
 - Expose local embedding, rerank, chat, and orchestrator runtime traits
 
@@ -23,6 +23,20 @@ but it is no longer the default.
 - `manifest.rs`: JSON manifest persistence helpers
 - `llama_cpp.rs`: local runtime traits, Rust binding backend, and command fallback
 - `service.rs`: high-level facade for GUI and knowledge consumers
+
+## Model Store Layout
+
+```text
+models/
+  manifest.json
+  snapshots/
+  cache/downloads/
+```
+
+`manifest.json` is the single installed-model index. `snapshots/` contains usable
+model files, while `cache/downloads/` is only for in-progress `.part` downloads.
+Legacy `manifests/*.json` files are merged into `manifest.json` on read; `blobs/`
+is no longer used.
 
 ## Runtime Backend
 
