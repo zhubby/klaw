@@ -7,9 +7,9 @@ use serde_json::{Value, json};
 
 use crate::{
     KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery,
-    KnowledgeSourceInfo,
+    KnowledgeSourceInfo, KnowledgeStatus,
     models::{EmbeddingModel, KnowledgeOrchestration, OrchestratorModel, RerankModel},
-    obsidian::indexer::{index_vault, init_schema},
+    obsidian::indexer::{embed_missing_chunks, index_vault, init_schema},
     retrieval::fusion::{RankedHit, weighted_reciprocal_rank_fuse},
 };
 
@@ -78,6 +78,29 @@ impl ObsidianKnowledgeProvider {
             self.embedder.as_deref(),
         )
         .await
+    }
+
+    pub async fn embed_missing_chunks(&self) -> Result<usize, KnowledgeError> {
+        let Some(embedder) = self.embedder.as_deref() else {
+            return Ok(0);
+        };
+        embed_missing_chunks(self.db.clone(), embedder).await
+    }
+
+    pub async fn status(&self, enabled: bool) -> Result<KnowledgeStatus, KnowledgeError> {
+        let entry_count = self.count_rows("knowledge_entries").await?;
+        let chunk_count = self.count_rows("knowledge_chunks").await?;
+        let embedded_chunk_count = self.count_embedded_chunks().await?;
+        Ok(KnowledgeStatus {
+            enabled,
+            provider: "obsidian".to_string(),
+            source_name: self.source_name.clone(),
+            vault_path: Some(self.vault_root.to_string_lossy().to_string()),
+            entry_count,
+            chunk_count,
+            embedded_chunk_count,
+            missing_embedding_count: chunk_count.saturating_sub(embedded_chunk_count),
+        })
     }
 
     async fn fts_lane(&self, query: &str, limit: usize) -> Result<Vec<RankedHit>, KnowledgeError> {
@@ -256,12 +279,37 @@ impl ObsidianKnowledgeProvider {
     }
 
     async fn entry_count(&self) -> Result<usize, KnowledgeError> {
+        self.count_rows("knowledge_entries").await
+    }
+
+    async fn count_rows(&self, table: &str) -> Result<usize, KnowledgeError> {
+        let sql = match table {
+            "knowledge_entries" => "SELECT COUNT(*) FROM knowledge_entries",
+            "knowledge_chunks" => "SELECT COUNT(*) FROM knowledge_chunks",
+            _ => {
+                return Err(KnowledgeError::Provider(format!(
+                    "unsupported knowledge table `{table}`"
+                )));
+            }
+        };
         let rows = self
             .db
-            .query("SELECT COUNT(*) FROM knowledge_entries", &[])
+            .query(sql, &[])
             .await
             .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
-        Ok(integer_at(&rows[0], 0).unwrap_or(0) as usize)
+        Ok(rows.first().and_then(|row| integer_at(row, 0)).unwrap_or(0) as usize)
+    }
+
+    async fn count_embedded_chunks(&self) -> Result<usize, KnowledgeError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT COUNT(*) FROM knowledge_chunks WHERE embedding IS NOT NULL",
+                &[],
+            )
+            .await
+            .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+        Ok(rows.first().and_then(|row| integer_at(row, 0)).unwrap_or(0) as usize)
     }
 }
 

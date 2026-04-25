@@ -2,6 +2,10 @@
 
 ## 2026-04-25
 
+### Added
+
+- `DATA & HISTORY` now includes a `Knowledge` panel for configured knowledge status, search, config editing, and incremental index/vector sync
+
 ### Changed
 
 - Local Models 安装流程改为弹窗输入 Hugging Face repo/revision，并在下载弹窗中展示多文件进度与取消按钮

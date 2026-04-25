@@ -4,6 +4,7 @@ use klaw_acp::{
 use klaw_channel::{ChannelInstanceKey, ChannelInstanceStatus, ChannelSyncResult};
 use klaw_config::TailscaleMode;
 use klaw_gateway::TailscaleHostInfo;
+use klaw_knowledge::{KnowledgeEntry, KnowledgeHit, KnowledgeStatus, KnowledgeSyncResult};
 use klaw_llm::ToolDefinition;
 use klaw_mcp::{McpRuntimeSnapshot, McpServerKey, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
@@ -108,6 +109,21 @@ pub enum RuntimeCommand {
     },
     RunMemoryArchiveNow {
         response: mpsc::Sender<Result<String, String>>,
+    },
+    GetKnowledgeStatus {
+        response: mpsc::Sender<Result<KnowledgeStatus, String>>,
+    },
+    SearchKnowledge {
+        query: String,
+        limit: usize,
+        response: mpsc::Sender<Result<Vec<KnowledgeHit>, String>>,
+    },
+    GetKnowledgeEntry {
+        id: String,
+        response: mpsc::Sender<Result<Option<KnowledgeEntry>, String>>,
+    },
+    SyncKnowledgeIndex {
+        response: mpsc::Sender<Result<KnowledgeSyncResult, String>>,
     },
     GetEnvCheck {
         response: mpsc::Sender<EnvironmentCheckReport>,
@@ -424,6 +440,96 @@ pub fn request_run_memory_archive_now(timeout: Duration) -> Result<String, Strin
 
 pub fn begin_run_memory_archive_now_request(timeout: Duration) -> RuntimeRequestHandle<String> {
     spawn_request(move || request_run_memory_archive_now(timeout))
+}
+
+pub fn request_knowledge_status() -> Result<KnowledgeStatus, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::GetKnowledgeStatus {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "knowledge status")?
+}
+
+pub fn begin_knowledge_status_request() -> RuntimeRequestHandle<KnowledgeStatus> {
+    spawn_request(request_knowledge_status)
+}
+
+pub fn request_search_knowledge(query: String, limit: usize) -> Result<Vec<KnowledgeHit>, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::SearchKnowledge {
+            query,
+            limit,
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "knowledge search")?
+}
+
+pub fn begin_search_knowledge_request(
+    query: String,
+    limit: usize,
+) -> RuntimeRequestHandle<Vec<KnowledgeHit>> {
+    spawn_request(move || request_search_knowledge(query, limit))
+}
+
+pub fn request_knowledge_entry(id: String) -> Result<Option<KnowledgeEntry>, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::GetKnowledgeEntry {
+            id,
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "knowledge entry")?
+}
+
+pub fn begin_knowledge_entry_request(id: String) -> RuntimeRequestHandle<Option<KnowledgeEntry>> {
+    spawn_request(move || request_knowledge_entry(id))
+}
+
+pub fn request_sync_knowledge_index() -> Result<KnowledgeSyncResult, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::SyncKnowledgeIndex {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(
+        response_rx,
+        Duration::from_secs(300),
+        "knowledge index sync",
+    )?
+}
+
+pub fn begin_sync_knowledge_index_request() -> RuntimeRequestHandle<KnowledgeSyncResult> {
+    spawn_request(request_sync_knowledge_index)
 }
 
 pub fn request_run_heartbeat_now(heartbeat_id: &str) -> Result<String, String> {

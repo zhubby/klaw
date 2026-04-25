@@ -20,6 +20,7 @@ klaw-archive = { workspace = true }
 klaw-voice = { workspace = true }
 klaw-heartbeat = { workspace = true }
 klaw-config = { workspace = true }
+klaw-knowledge = { workspace = true }
 klaw-session = { workspace = true }
 klaw-storage = { workspace = true }
 klaw-cron = { workspace = true }

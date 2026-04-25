@@ -42,6 +42,7 @@
   - skill (installed skill management with list/detail/remove/sync actions)
   - skills registry (config-bound list + add/edit window)
   - memory
+  - knowledge (configured source status, search, `[knowledge]` config editing, and incremental index/vector sync)
   - archive (db-bound query + detail view)
   - tool (remaining-height sortable table with right-click `Edit` / `Inspect` / `Logs`, runtime schema parameter summary, inspect popup sourced from live tool definitions, and per-tool audit history/detail viewer)
   - analyze dashboard

@@ -105,6 +105,51 @@ pub async fn index_vault(
     Ok(indexed)
 }
 
+pub async fn embed_missing_chunks(
+    db: Arc<dyn MemoryDb>,
+    embedder: &dyn EmbeddingModel,
+) -> Result<usize, KnowledgeError> {
+    let rows = db
+        .query(
+            "SELECT c.id, c.heading, c.content, e.title
+             FROM knowledge_chunks c
+             JOIN knowledge_entries e ON e.id = c.entry_id
+             WHERE c.embedding IS NULL",
+            &[],
+        )
+        .await
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+
+    let mut embedded = 0usize;
+    for row in rows {
+        let Some(chunk_id) = text_at(&row, 0) else {
+            continue;
+        };
+        let heading = text_at(&row, 1);
+        let Some(content) = text_at(&row, 2) else {
+            continue;
+        };
+        let title = text_at(&row, 3).unwrap_or_else(|| "untitled".to_string());
+        let mut text = String::new();
+        text.push_str(heading.as_deref().unwrap_or(title.as_str()));
+        text.push_str("\n\n");
+        text.push_str(&content);
+        let vector = embedder.embed(&text).await?;
+        db.execute(
+            "UPDATE knowledge_chunks SET embedding = ?1 WHERE id = ?2",
+            &[
+                DbValue::Blob(serialize_embedding(&vector)),
+                DbValue::Text(chunk_id),
+            ],
+        )
+        .await
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+        embedded += 1;
+    }
+
+    Ok(embedded)
+}
+
 pub async fn index_note_path(
     db: Arc<dyn MemoryDb>,
     vault_root: &Path,
@@ -377,6 +422,13 @@ fn is_excluded(path: &Path, exclude_folders: &[String]) -> bool {
 fn integer_at(row: &DbRow, index: usize) -> Option<i64> {
     match row.get(index)? {
         DbValue::Integer(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn text_at(row: &DbRow, index: usize) -> Option<String> {
+    match row.get(index)? {
+        DbValue::Text(value) => Some(value.clone()),
         _ => None,
     }
 }

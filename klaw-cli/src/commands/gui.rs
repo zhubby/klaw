@@ -2,6 +2,10 @@ use clap::Args;
 use klaw_acp::AcpConfigSnapshot;
 use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
+use klaw_knowledge::{
+    KnowledgeProvider, KnowledgeSearchQuery, configured_knowledge_status,
+    open_configured_obsidian_provider, sync_configured_knowledge,
+};
 use klaw_llm::ToolDefinition;
 use klaw_mcp::McpConfigSnapshot;
 use klaw_runtime::gateway_manager::GatewayManager;
@@ -570,6 +574,78 @@ impl GuiCommand {
                                                     if result.is_ok() {
                                                         background.on_runtime_tick(runtime.as_ref()).await;
                                                     }
+                                                    let _ = response.send(result);
+                                                });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::GetKnowledgeStatus { response }) => {
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            configured_knowledge_status(&snapshot.config)
+                                                                .await
+                                                                .map_err(|err| err.to_string())
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::SearchKnowledge { query, limit, response }) => {
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            match open_configured_obsidian_provider(&snapshot.config, false).await {
+                                                                Ok(provider) => {
+                                                                    provider
+                                                                        .search(KnowledgeSearchQuery {
+                                                                            text: query,
+                                                                            tags: None,
+                                                                            source: None,
+                                                                            limit,
+                                                                            mode: None,
+                                                                        })
+                                                                        .await
+                                                                        .map_err(|err| err.to_string())
+                                                                }
+                                                                Err(err) => Err(err.to_string()),
+                                                            }
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::GetKnowledgeEntry { id, response }) => {
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            match open_configured_obsidian_provider(&snapshot.config, false).await {
+                                                                Ok(provider) => provider
+                                                                    .get(&id)
+                                                                    .await
+                                                                    .map_err(|err| err.to_string()),
+                                                                Err(err) => Err(err.to_string()),
+                                                            }
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
+                                                    let _ = response.send(result);
+                                                });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::SyncKnowledgeIndex { response }) => {
+                                                tokio::task::spawn_local(async move {
+                                                    let result = match ConfigStore::open(None) {
+                                                        Ok(store) => {
+                                                            let snapshot = store.snapshot();
+                                                            sync_configured_knowledge(&snapshot.config)
+                                                                .await
+                                                                .map_err(|err| err.to_string())
+                                                        }
+                                                        Err(err) => Err(err.to_string()),
+                                                    };
                                                     let _ = response.send(result);
                                                 });
                                             }

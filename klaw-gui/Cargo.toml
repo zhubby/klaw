@@ -25,6 +25,7 @@ klaw-acp = { workspace = true }
 klaw-cron = { workspace = true }
 klaw-gateway = { workspace = true }
 klaw-heartbeat = { workspace = true }
+klaw-knowledge = { workspace = true }
 klaw-mcp = { workspace = true }
 klaw-memory = { workspace = true }
 klaw-model = { workspace = true }

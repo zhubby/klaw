@@ -13,4 +13,6 @@
 - Provider-based knowledge retrieval via `KnowledgeProvider`
 - Obsidian markdown parsing, chunking, and indexing helpers
 - Structured search result types (`KnowledgeHit`, `KnowledgeEntry`, `ContextBundle`)
+- Config-driven Obsidian provider construction for runtime and GUI callers
+- Status and incremental sync result types for indexed entries, chunks, and embeddings
 - Retrieval building blocks for hybrid search lanes and RRF fusion

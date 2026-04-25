@@ -57,6 +57,7 @@ pub enum WorkbenchMenu {
     #[serde(alias = "SkillManage")]
     SkillsManager,
     Memory,
+    Knowledge,
     Archive,
     Tool,
     Monitor,
@@ -66,7 +67,7 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 27] = [
+    pub const ALL: [WorkbenchMenu; 28] = [
         WorkbenchMenu::Profile,
         WorkbenchMenu::System,
         WorkbenchMenu::Setting,
@@ -88,6 +89,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Skill,
         WorkbenchMenu::SkillsManager,
         WorkbenchMenu::Memory,
+        WorkbenchMenu::Knowledge,
         WorkbenchMenu::Archive,
         WorkbenchMenu::Tool,
         WorkbenchMenu::Monitor,
@@ -119,6 +121,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Skill => "skill-registry",
             WorkbenchMenu::SkillsManager => "skills-manager",
             WorkbenchMenu::Memory => "memory",
+            WorkbenchMenu::Knowledge => "knowledge",
             WorkbenchMenu::Archive => "archive",
             WorkbenchMenu::Tool => "tool",
             WorkbenchMenu::Monitor => "monitor",
@@ -151,6 +154,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Skill => "Skills Registry",
             WorkbenchMenu::SkillsManager => "Skills Manager",
             WorkbenchMenu::Memory => "Memory",
+            WorkbenchMenu::Knowledge => "Knowledge",
             WorkbenchMenu::Archive => "Archive",
             WorkbenchMenu::Tool => "Tool",
             WorkbenchMenu::Monitor => "Monitor",
@@ -183,6 +187,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Skill => regular::PUZZLE_PIECE,
             WorkbenchMenu::SkillsManager => regular::PUZZLE_PIECE,
             WorkbenchMenu::Memory => regular::MEMORY,
+            WorkbenchMenu::Knowledge => regular::BOOK_OPEN,
             WorkbenchMenu::Archive => regular::ARCHIVE,
             WorkbenchMenu::Tool => regular::TOOLBOX,
             WorkbenchMenu::Monitor => regular::CHART_LINE,
@@ -219,7 +224,9 @@ impl WorkbenchMenu {
             | WorkbenchMenu::Cron
             | WorkbenchMenu::Heartbeat
             | WorkbenchMenu::Session => WorkbenchMenuGroup::AutomationAndOperations,
-            WorkbenchMenu::Memory | WorkbenchMenu::Archive => WorkbenchMenuGroup::DataAndHistory,
+            WorkbenchMenu::Memory | WorkbenchMenu::Knowledge | WorkbenchMenu::Archive => {
+                WorkbenchMenuGroup::DataAndHistory
+            }
             WorkbenchMenu::Monitor
             | WorkbenchMenu::Logs
             | WorkbenchMenu::AnalyzeDashboard
@@ -304,6 +311,17 @@ mod tests {
         assert_eq!(
             WorkbenchMenu::LocalModels.group(),
             WorkbenchMenuGroup::AiAndCapability
+        );
+    }
+
+    #[test]
+    fn knowledge_menu_is_registered() {
+        assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Knowledge));
+        assert_eq!(WorkbenchMenu::Knowledge.id_key(), "knowledge");
+        assert_eq!(WorkbenchMenu::Knowledge.title(), "Knowledge");
+        assert_eq!(
+            WorkbenchMenu::Knowledge.group(),
+            WorkbenchMenuGroup::DataAndHistory
         );
     }
 

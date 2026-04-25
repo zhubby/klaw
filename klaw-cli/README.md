@@ -71,6 +71,7 @@
 - `klaw gui` 现在会在技能安装、卸载和 registry sync 后向 GUI runtime 发送技能 prompt 热重载命令，使后续请求可立即看到最新 skills
 - `klaw gui` / `klaw gateway` 通过共享 `ChannelManager` 管理运行中的 channel 实例；GUI 保存 channel 配置后会立即发送通用 `SyncChannels` 事件，由 runtime 按最新快照执行 keep/start/stop/restart
 - `klaw gui` 的 gateway 状态查询现在会先从磁盘最新配置同步 `configured_enabled` / `auth_configured` / `tailscale_mode` 元数据，并重新探测本机 Tailscale host 状态，避免面板状态停留在旧快照；同时运行时新增按当前配置单独启动 gateway 的命令通道
+- `klaw gui` now exposes runtime commands for the Knowledge panel to query status, search configured knowledge, inspect entries, and run incremental index/vector sync
 - runtime 现在会在构建 channel driver factory 时按配置装配共享 `VoiceService`，供 Telegram 等 channel 在入站媒体阶段直接调用 STT
 - `klaw gui` 的 MCP 面板现在通过只读运行时快照读取 server 状态和缓存的 `tools/list` 响应，避免状态轮询误触发完整 MCP 同步
 - runtime system prompt 采用“skills shortlist + workspace docs list + lazy-load instructions”模式，不再注入 `SKILL.md` 全文

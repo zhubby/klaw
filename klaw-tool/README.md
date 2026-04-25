@@ -5,7 +5,7 @@
 ## Responsibilities
 
 - define tool interfaces through the shared `Tool` trait
-- implement local tools such as `apply_patch`, `shell`, `approval`, `ask_question`, `archive`, `channel_attachment`, `voice`, `memory`, `web_fetch`, `web_search`, `cron_manager`, `heartbeat_manager`, `skills_registry`, and `skills_manager`
+- implement local tools such as `apply_patch`, `shell`, `approval`, `ask_question`, `archive`, `channel_attachment`, `voice`, `memory`, `knowledge`, `web_fetch`, `web_search`, `cron_manager`, `heartbeat_manager`, `skills_registry`, and `skills_manager`
 - keep tool metadata LLM-friendly so planners can infer when and how to call each tool
 
 ## Architecture
@@ -22,6 +22,7 @@
 - tools can emit structured signals on both success and failure paths; current runtime consumers include `approval_required`, `stop`, and `channel_attachment`
 - `shell` approval-required signals now include `command_preview` so channel-specific approval cards can render the pending command directly from outbound metadata
 - the `channel_attachment` tool is gated by `tools.channel_attachment.enabled`, and its local path policy comes from `tools.channel_attachment.local_attachments`
+- the `knowledge` tool uses the shared configured Obsidian provider builder from `klaw-knowledge`, keeping tool startup aligned with GUI/runtime knowledge operations
 - the `shell` tool now supports two rule lists: `blocked_patterns` reject immediately, while `unsafe_patterns` require approval; commands that match neither execute directly
 - the `cron_manager` tool accepts planner-friendly schedule inputs such as 5-field cron (`0 8 * * *`), `every 24h`, and daily time shorthand (`8:00`), then normalizes them before persistence
 - the `cron_manager` tool also accepts either a JSON object or a JSON string for payloads, and tolerates common boolean strings like `"true"` / `"false"` for `enabled`

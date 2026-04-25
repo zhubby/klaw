@@ -37,6 +37,25 @@ pub struct KnowledgeSourceInfo {
     pub entry_count: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnowledgeStatus {
+    pub enabled: bool,
+    pub provider: String,
+    pub source_name: String,
+    pub vault_path: Option<String>,
+    pub entry_count: usize,
+    pub chunk_count: usize,
+    pub embedded_chunk_count: usize,
+    pub missing_embedding_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnowledgeSyncResult {
+    pub indexed_notes: usize,
+    pub embedded_chunks: usize,
+    pub status: KnowledgeStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KnowledgeSearchQuery {
     pub text: String,

@@ -7,6 +7,7 @@ mod configuration;
 mod cron;
 mod gateway;
 mod heartbeat;
+mod knowledge;
 mod llm;
 mod local_models;
 mod logs;
@@ -65,6 +66,7 @@ pub struct PanelRegistry {
     skills_registry: skills_registry::SkillsRegistryPanel,
     skills_manager: skills_manager::SkillsManagerPanel,
     memory: memory::MemoryPanel,
+    knowledge: knowledge::KnowledgePanel,
     archive: archive::ArchivePanel,
     tool: tool::ToolPanel,
     webhook: webhook::WebhookPanel,
@@ -173,6 +175,10 @@ impl PanelRegistry {
                 puffin::profile_scope!("panel_memory");
                 self.memory.render(ui, ctx, notifications)
             }
+            WorkbenchMenu::Knowledge => {
+                puffin::profile_scope!("panel_knowledge");
+                self.knowledge.render(ui, ctx, notifications)
+            }
             WorkbenchMenu::Archive => {
                 puffin::profile_scope!("panel_archive");
                 self.archive.render(ui, ctx, notifications)
@@ -223,6 +229,7 @@ impl PanelRegistry {
             WorkbenchMenu::Skill => self.skills_registry.on_tab_closed(),
             WorkbenchMenu::SkillsManager => self.skills_manager.on_tab_closed(),
             WorkbenchMenu::Memory => self.memory.on_tab_closed(),
+            WorkbenchMenu::Knowledge => self.knowledge.on_tab_closed(),
             WorkbenchMenu::Archive => self.archive.on_tab_closed(),
             WorkbenchMenu::Tool => self.tool.on_tab_closed(),
             WorkbenchMenu::Monitor => self.monitor.on_tab_closed(),

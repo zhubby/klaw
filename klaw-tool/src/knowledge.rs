@@ -1,13 +1,11 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use klaw_config::{AppConfig, KnowledgeToolConfig};
 use klaw_knowledge::{
     KnowledgeEntry, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery, assemble_context_bundle,
-    build_local_embedding_model, build_local_orchestrator, build_local_reranker,
-    obsidian::provider::ObsidianKnowledgeProvider,
+    open_configured_obsidian_provider,
 };
-use klaw_storage::open_default_knowledge_db;
 use serde_json::{Value, json};
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
@@ -34,60 +32,9 @@ pub struct KnowledgeTool {
 
 impl KnowledgeTool {
     pub async fn open_default(config: &AppConfig) -> Result<Self, ToolError> {
-        let provider_name = config.knowledge.provider.trim();
-        if provider_name != "obsidian" {
-            return Err(ToolError::InvalidArgs(format!(
-                "unsupported knowledge provider '{provider_name}'"
-            )));
-        }
-        let vault_path = config
-            .knowledge
-            .obsidian
-            .vault_path
-            .as_ref()
-            .map(|path| PathBuf::from(path.trim()))
-            .filter(|path| !path.as_os_str().is_empty())
-            .ok_or_else(|| {
-                ToolError::InvalidArgs(
-                    "knowledge.obsidian.vault_path must be configured for the knowledge tool"
-                        .to_string(),
-                )
-            })?;
-        let db = Arc::new(
-            open_default_knowledge_db()
-                .await
-                .map_err(|err| ToolError::ExecutionFailed(err.to_string()))?,
-        );
-        let provider = ObsidianKnowledgeProvider::open(
-            db,
-            vault_path,
-            config.knowledge.obsidian.exclude_folders.clone(),
-            config.knowledge.obsidian.max_excerpt_length,
-            false,
-            "Obsidian Vault",
-        )
-        .await
-        .map_err(map_knowledge_error)?;
-        let provider = if let Some(embedder) =
-            build_local_embedding_model(config).map_err(map_knowledge_error)?
-        {
-            provider.with_embedding_model(Arc::new(embedder))
-        } else {
-            provider
-        };
-        let provider =
-            if let Some(reranker) = build_local_reranker(config).map_err(map_knowledge_error)? {
-                provider.with_reranker(Arc::new(reranker))
-            } else {
-                provider
-            };
-        let provider = if let Some(orchestrator) =
-            build_local_orchestrator(config).map_err(map_knowledge_error)?
-        {
-            provider.with_orchestrator(Arc::new(orchestrator))
-        } else {
-            provider
-        };
+        let provider = open_configured_obsidian_provider(config, false)
+            .await
+            .map_err(map_knowledge_error)?;
         if config.knowledge.obsidian.index_on_startup {
             provider.reindex().await.map_err(map_knowledge_error)?;
         }

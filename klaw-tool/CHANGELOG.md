@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-25
+
+### Changed
+- `knowledge` tool startup now reuses the shared configured Obsidian provider builder used by GUI/runtime knowledge flows
+
 ## 2026-04-20
 
 ### Changed

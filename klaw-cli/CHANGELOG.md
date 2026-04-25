@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-25
+
+### Added
+
+- GUI runtime command handling for knowledge status, search, entry inspection, and incremental index/vector sync
+
 ## 2026-04-08
 
 ### Changed
