@@ -4,7 +4,10 @@ use klaw_acp::{
 use klaw_channel::{ChannelInstanceKey, ChannelInstanceStatus, ChannelSyncResult};
 use klaw_config::TailscaleMode;
 use klaw_gateway::TailscaleHostInfo;
-use klaw_knowledge::{KnowledgeEntry, KnowledgeHit, KnowledgeStatus, KnowledgeSyncResult};
+use klaw_knowledge::{
+    KnowledgeEntry, KnowledgeHit, KnowledgeRuntimeSnapshot, KnowledgeSyncProgress,
+    KnowledgeSyncResult,
+};
 use klaw_llm::ToolDefinition;
 use klaw_mcp::{McpRuntimeSnapshot, McpServerKey, McpSyncResult};
 use klaw_util::EnvironmentCheckReport;
@@ -111,7 +114,10 @@ pub enum RuntimeCommand {
         response: mpsc::Sender<Result<String, String>>,
     },
     GetKnowledgeStatus {
-        response: mpsc::Sender<Result<KnowledgeStatus, String>>,
+        response: mpsc::Sender<Result<KnowledgeRuntimeSnapshot, String>>,
+    },
+    ReloadKnowledge {
+        response: mpsc::Sender<Result<KnowledgeRuntimeSnapshot, String>>,
     },
     SearchKnowledge {
         query: String,
@@ -123,6 +129,7 @@ pub enum RuntimeCommand {
         response: mpsc::Sender<Result<Option<KnowledgeEntry>, String>>,
     },
     SyncKnowledgeIndex {
+        progress: mpsc::Sender<KnowledgeSyncProgress>,
         response: mpsc::Sender<Result<KnowledgeSyncResult, String>>,
     },
     GetEnvCheck {
@@ -275,6 +282,17 @@ pub struct RuntimeRequestHandle<T> {
     receiver: Option<mpsc::Receiver<Result<T, String>>>,
 }
 
+#[derive(Debug)]
+pub enum KnowledgeSyncTaskMessage {
+    Progress(KnowledgeSyncProgress),
+    Completed(Result<KnowledgeSyncResult, String>),
+}
+
+#[derive(Debug)]
+pub struct KnowledgeSyncRequestHandle {
+    receiver: Option<mpsc::Receiver<KnowledgeSyncTaskMessage>>,
+}
+
 impl<T> RuntimeRequestHandle<T> {
     pub fn try_take_result(&mut self) -> Option<Result<T, String>> {
         let receiver = self.receiver.as_ref()?;
@@ -286,6 +304,30 @@ impl<T> RuntimeRequestHandle<T> {
             Err(mpsc::TryRecvError::Disconnected) => {
                 let _ = self.receiver.take();
                 Some(Err("runtime request worker closed unexpectedly".to_string()))
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+        }
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.receiver.is_some()
+    }
+}
+
+impl KnowledgeSyncRequestHandle {
+    pub fn try_take_message(&mut self) -> Option<KnowledgeSyncTaskMessage> {
+        let receiver = self.receiver.as_ref()?;
+        match receiver.try_recv() {
+            Ok(KnowledgeSyncTaskMessage::Completed(result)) => {
+                let _ = self.receiver.take();
+                Some(KnowledgeSyncTaskMessage::Completed(result))
+            }
+            Ok(message) => Some(message),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let _ = self.receiver.take();
+                Some(KnowledgeSyncTaskMessage::Completed(Err(
+                    "runtime request worker closed unexpectedly".to_string(),
+                )))
             }
             Err(mpsc::TryRecvError::Empty) => None,
         }
@@ -442,7 +484,7 @@ pub fn begin_run_memory_archive_now_request(timeout: Duration) -> RuntimeRequest
     spawn_request(move || request_run_memory_archive_now(timeout))
 }
 
-pub fn request_knowledge_status() -> Result<KnowledgeStatus, String> {
+pub fn request_knowledge_status() -> Result<KnowledgeRuntimeSnapshot, String> {
     let sender = sender_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -458,8 +500,28 @@ pub fn request_knowledge_status() -> Result<KnowledgeStatus, String> {
     recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "knowledge status")?
 }
 
-pub fn begin_knowledge_status_request() -> RuntimeRequestHandle<KnowledgeStatus> {
+pub fn begin_knowledge_status_request() -> RuntimeRequestHandle<KnowledgeRuntimeSnapshot> {
     spawn_request(request_knowledge_status)
+}
+
+pub fn request_reload_knowledge() -> Result<KnowledgeRuntimeSnapshot, String> {
+    let sender = sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(RuntimeCommand::ReloadKnowledge {
+            response: response_tx,
+        })
+        .map_err(|_| "failed to send runtime command".to_string())?;
+
+    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "knowledge reload")?
+}
+
+pub fn begin_reload_knowledge_request() -> RuntimeRequestHandle<KnowledgeRuntimeSnapshot> {
+    spawn_request(request_reload_knowledge)
 }
 
 pub fn request_search_knowledge(query: String, limit: usize) -> Result<Vec<KnowledgeHit>, String> {
@@ -509,27 +571,64 @@ pub fn begin_knowledge_entry_request(id: String) -> RuntimeRequestHandle<Option<
 }
 
 pub fn request_sync_knowledge_index() -> Result<KnowledgeSyncResult, String> {
+    request_sync_knowledge_index_with_progress(|_| {})
+}
+
+pub fn request_sync_knowledge_index_with_progress<F>(
+    progress: F,
+) -> Result<KnowledgeSyncResult, String>
+where
+    F: FnMut(KnowledgeSyncProgress),
+{
     let sender = sender_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone()
         .ok_or_else(|| "runtime command channel is not available".to_string())?;
     let (response_tx, response_rx) = mpsc::channel();
+    let (progress_tx, progress_rx) = mpsc::channel();
     sender
         .send(RuntimeCommand::SyncKnowledgeIndex {
+            progress: progress_tx,
             response: response_tx,
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    recv_response(
-        response_rx,
-        Duration::from_secs(300),
-        "knowledge index sync",
-    )?
+    let mut progress = progress;
+    let started = std::time::Instant::now();
+    let timeout = Duration::from_secs(300);
+    loop {
+        while let Ok(update) = progress_rx.try_recv() {
+            progress(update);
+        }
+        match response_rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(result) => {
+                while let Ok(update) = progress_rx.try_recv() {
+                    progress(update);
+                }
+                return result;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) if started.elapsed() < timeout => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return Err("timed out waiting for knowledge index sync response".to_string());
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("runtime command response channel closed".to_string());
+            }
+        }
+    }
 }
 
-pub fn begin_sync_knowledge_index_request() -> RuntimeRequestHandle<KnowledgeSyncResult> {
-    spawn_request(request_sync_knowledge_index)
+pub fn begin_sync_knowledge_index_request() -> KnowledgeSyncRequestHandle {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let tx_progress = tx.clone();
+        let result = request_sync_knowledge_index_with_progress(move |progress| {
+            let _ = tx_progress.send(KnowledgeSyncTaskMessage::Progress(progress));
+        });
+        let _ = tx.send(KnowledgeSyncTaskMessage::Completed(result));
+    });
+    KnowledgeSyncRequestHandle { receiver: Some(rx) }
 }
 
 pub fn request_run_heartbeat_now(heartbeat_id: &str) -> Result<String, String> {

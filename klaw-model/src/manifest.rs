@@ -54,6 +54,7 @@ mod tests {
             repo_id: "Qwen/Qwen".to_string(),
             revision: "main".to_string(),
             resolved_revision: Some("abc123".to_string()),
+            default_gguf_model_file: Some("snapshots/qwen-main/model.gguf".to_string()),
             files: vec![InstalledModelFile {
                 relative_path: "snapshots/qwen-main/model.gguf".to_string(),
                 size_bytes: 12,
@@ -70,6 +71,10 @@ mod tests {
         save_manifest(&path, &manifest).expect("manifest should save");
         let loaded = load_manifest(&path).expect("manifest should load");
         assert_eq!(loaded, manifest);
+        assert_eq!(
+            loaded.default_gguf_model_file.as_deref(),
+            Some("snapshots/qwen-main/model.gguf")
+        );
     }
 
     #[test]
@@ -86,6 +91,7 @@ mod tests {
                 repo_id: "Qwen/Qwen".to_string(),
                 revision: "main".to_string(),
                 resolved_revision: Some("abc123".to_string()),
+                default_gguf_model_file: Some("snapshots/qwen-main/model.gguf".to_string()),
                 files: vec![InstalledModelFile {
                     relative_path: "snapshots/qwen-main/model.gguf".to_string(),
                     size_bytes: 12,

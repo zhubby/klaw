@@ -9,7 +9,9 @@ use klaw_storage::{DbRow, DbValue, MemoryDb};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{KnowledgeError, models::EmbeddingModel};
+use crate::{
+    KnowledgeError, KnowledgeSyncProgress, KnowledgeSyncProgressStage, models::EmbeddingModel,
+};
 
 use super::{
     chunker::{Chunk, ParsedMarkdown, chunk_markdown},
@@ -94,13 +96,42 @@ pub async fn index_vault(
     max_excerpt_length: usize,
     embedder: Option<&dyn EmbeddingModel>,
 ) -> Result<usize, KnowledgeError> {
+    index_vault_with_progress(
+        db,
+        vault_root,
+        exclude_folders,
+        max_excerpt_length,
+        embedder,
+        |_| {},
+    )
+    .await
+}
+
+pub async fn index_vault_with_progress<F>(
+    db: Arc<dyn MemoryDb>,
+    vault_root: &Path,
+    exclude_folders: &[String],
+    max_excerpt_length: usize,
+    embedder: Option<&dyn EmbeddingModel>,
+    mut progress: F,
+) -> Result<usize, KnowledgeError>
+where
+    F: FnMut(KnowledgeSyncProgress),
+{
     init_schema(&db).await?;
     let files = collect_markdown_files(vault_root, exclude_folders)?;
+    let total = files.len();
     let mut indexed = 0usize;
-    for path in files {
+    for (index, path) in files.into_iter().enumerate() {
         indexed += usize::from(
             index_note_path(db.clone(), vault_root, &path, max_excerpt_length, embedder).await?,
         );
+        progress(KnowledgeSyncProgress {
+            stage: KnowledgeSyncProgressStage::IndexingNotes,
+            completed: index + 1,
+            total: Some(total),
+            current_item: Some(relative_display_path(vault_root, &path)?),
+        });
     }
     Ok(indexed)
 }
@@ -109,9 +140,20 @@ pub async fn embed_missing_chunks(
     db: Arc<dyn MemoryDb>,
     embedder: &dyn EmbeddingModel,
 ) -> Result<usize, KnowledgeError> {
+    embed_missing_chunks_with_progress(db, embedder, |_| {}).await
+}
+
+pub async fn embed_missing_chunks_with_progress<F>(
+    db: Arc<dyn MemoryDb>,
+    embedder: &dyn EmbeddingModel,
+    mut progress: F,
+) -> Result<usize, KnowledgeError>
+where
+    F: FnMut(KnowledgeSyncProgress),
+{
     let rows = db
         .query(
-            "SELECT c.id, c.heading, c.content, e.title
+            "SELECT c.id, c.heading, c.content, e.title, e.uri
              FROM knowledge_chunks c
              JOIN knowledge_entries e ON e.id = c.entry_id
              WHERE c.embedding IS NULL",
@@ -120,6 +162,7 @@ pub async fn embed_missing_chunks(
         .await
         .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
 
+    let total = rows.len();
     let mut embedded = 0usize;
     for row in rows {
         let Some(chunk_id) = text_at(&row, 0) else {
@@ -130,6 +173,7 @@ pub async fn embed_missing_chunks(
             continue;
         };
         let title = text_at(&row, 3).unwrap_or_else(|| "untitled".to_string());
+        let current_item = text_at(&row, 4).or_else(|| Some(chunk_id.clone()));
         let mut text = String::new();
         text.push_str(heading.as_deref().unwrap_or(title.as_str()));
         text.push_str("\n\n");
@@ -145,6 +189,12 @@ pub async fn embed_missing_chunks(
         .await
         .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
         embedded += 1;
+        progress(KnowledgeSyncProgress {
+            stage: KnowledgeSyncProgressStage::EmbeddingChunks,
+            completed: embedded,
+            total: Some(total),
+            current_item,
+        });
     }
 
     Ok(embedded)
@@ -272,6 +322,17 @@ pub fn collect_markdown_files(
         files.push(path.to_path_buf());
     }
     Ok(files)
+}
+
+fn relative_display_path(
+    vault_root: &Path,
+    absolute_path: &Path,
+) -> Result<String, KnowledgeError> {
+    Ok(absolute_path
+        .strip_prefix(vault_root)
+        .map_err(|err| KnowledgeError::Provider(format!("strip prefix failed: {err}")))?
+        .to_string_lossy()
+        .replace('\\', "/"))
 }
 
 async fn is_entry_up_to_date(
@@ -439,6 +500,8 @@ mod tests {
 
     use klaw_storage::{DefaultKnowledgeDb, StoragePaths};
 
+    use crate::KnowledgeSyncProgressStage;
+
     use super::*;
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -477,5 +540,34 @@ mod tests {
             .await
             .expect("query entries");
         assert_eq!(integer_at(&rows[0], 0), Some(1));
+    }
+
+    #[tokio::test]
+    async fn index_vault_reports_file_progress() {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let vault = std::env::temp_dir().join(format!("klaw-knowledge-progress-vault-{suffix}"));
+        std::fs::create_dir_all(&vault).expect("vault dir");
+        std::fs::write(vault.join("auth.md"), "# Auth").expect("write auth");
+        std::fs::write(vault.join("runtime.md"), "# Runtime").expect("write runtime");
+
+        let db = open_test_db("progress").await;
+        let mut progress_events = Vec::new();
+        let indexed = index_vault_with_progress(db, &vault, &[], 400, None, |progress| {
+            progress_events.push(progress);
+        })
+        .await
+        .expect("index should succeed");
+
+        assert_eq!(indexed, 2);
+        assert_eq!(progress_events.len(), 2);
+        assert!(progress_events.iter().all(|progress| {
+            progress.stage == KnowledgeSyncProgressStage::IndexingNotes
+                && progress.total == Some(2)
+                && progress.completed > 0
+                && progress
+                    .current_item
+                    .as_deref()
+                    .is_some_and(|item| item.ends_with(".md"))
+        }));
     }
 }

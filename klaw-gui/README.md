@@ -31,7 +31,7 @@
   - configuration
   - terminal (embedded `egui_term` PTY view with start/restart/stop controls, default workspace working directory, and tab-close cleanup)
   - model provider (config-bound list + add/edit window)
-  - local models (Hugging Face repo snapshot install dialog, per-file progress dialog, cancellation, selectable asset table with upgrade/delete context actions)
+  - local models (Hugging Face repo snapshot install dialog, per-file progress dialog, cancellation, selectable asset table with upgrade/delete context actions, and per-model GGUF default file selection)
   - channel (config-bound list + add/edit window)
   - voice (config-bound voice settings + split STT/TTS test workspace)
   - cron (db-bound list + add/edit window)
@@ -42,7 +42,7 @@
   - skill (installed skill management with list/detail/remove/sync actions)
   - skills registry (config-bound list + add/edit window)
   - memory
-  - knowledge (configured source status, search, `[knowledge]` config editing, and incremental index/vector sync)
+  - knowledge (runtime readiness, configured source status, search, `[knowledge]` config editing with runtime reload, incremental index/vector sync, and a progress dialog with current file/chunk feedback)
   - archive (db-bound query + detail view)
   - tool (remaining-height sortable table including `knowledge`, right-click `Edit` / `Inspect` / `Logs`, runtime schema parameter summary, inspect popup sourced from live tool definitions, and per-tool audit history/detail viewer)
   - analyze dashboard

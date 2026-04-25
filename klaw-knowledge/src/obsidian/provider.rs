@@ -7,9 +7,12 @@ use serde_json::{Value, json};
 
 use crate::{
     KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery,
-    KnowledgeSourceInfo, KnowledgeStatus,
+    KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress,
     models::{EmbeddingModel, KnowledgeOrchestration, OrchestratorModel, RerankModel},
-    obsidian::indexer::{embed_missing_chunks, index_vault, init_schema},
+    obsidian::indexer::{
+        embed_missing_chunks, embed_missing_chunks_with_progress, index_vault,
+        index_vault_with_progress, init_schema,
+    },
     retrieval::fusion::{RankedHit, weighted_reciprocal_rank_fuse},
 };
 
@@ -80,11 +83,39 @@ impl ObsidianKnowledgeProvider {
         .await
     }
 
+    pub async fn reindex_with_progress<F>(&self, progress: F) -> Result<usize, KnowledgeError>
+    where
+        F: FnMut(KnowledgeSyncProgress),
+    {
+        index_vault_with_progress(
+            self.db.clone(),
+            &self.vault_root,
+            &self.exclude_folders,
+            self.max_excerpt_length,
+            self.embedder.as_deref(),
+            progress,
+        )
+        .await
+    }
+
     pub async fn embed_missing_chunks(&self) -> Result<usize, KnowledgeError> {
         let Some(embedder) = self.embedder.as_deref() else {
             return Ok(0);
         };
         embed_missing_chunks(self.db.clone(), embedder).await
+    }
+
+    pub async fn embed_missing_chunks_with_progress<F>(
+        &self,
+        progress: F,
+    ) -> Result<usize, KnowledgeError>
+    where
+        F: FnMut(KnowledgeSyncProgress),
+    {
+        let Some(embedder) = self.embedder.as_deref() else {
+            return Ok(0);
+        };
+        embed_missing_chunks_with_progress(self.db.clone(), embedder, progress).await
     }
 
     pub async fn status(&self, enabled: bool) -> Result<KnowledgeStatus, KnowledgeError> {

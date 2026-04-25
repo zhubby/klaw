@@ -2,6 +2,7 @@ pub mod env_check;
 pub mod gateway_manager;
 mod gateway_websocket;
 mod im_commands;
+pub mod knowledge_runtime;
 pub mod service_loop;
 pub mod webhook;
 
@@ -36,6 +37,7 @@ use klaw_gateway::{
 use klaw_heartbeat::{
     HeartbeatManager, should_exclude_chat_record_from_context, should_suppress_output,
 };
+use klaw_knowledge::KnowledgeProvider;
 use klaw_llm::{ChatOptions, LlmError, LlmMessage, LlmProvider, LlmResponse, ToolDefinition};
 use klaw_mcp::{McpConfigSnapshot, McpInitHandle, McpManager, McpSyncResult};
 use klaw_memory::{
@@ -75,6 +77,8 @@ use tokio::sync::mpsc;
 use tokio::{sync::Mutex, time::timeout};
 use tracing::{info, trace, warn};
 use uuid::Uuid;
+
+use crate::knowledge_runtime::KnowledgeRuntimeService;
 
 const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const TOOL_AUDIT_QUEUE_CAPACITY: usize = 1024;
@@ -125,6 +129,7 @@ pub struct RuntimeBundle {
     pub tool_audit_tx: std::sync::mpsc::SyncSender<NewToolAuditRecord>,
     pub env_check: EnvironmentCheckReport,
     pub websocket_broadcaster: Arc<GatewayWebsocketBroadcaster>,
+    pub knowledge_runtime: Arc<KnowledgeRuntimeService>,
 }
 
 pub struct SharedChannelRuntime {
@@ -1387,6 +1392,7 @@ async fn register_configured_tools(
     session_store: DefaultSessionStore,
     archive_service: Option<Arc<dyn ArchiveService>>,
     memory_db: Option<Arc<dyn MemoryDb>>,
+    knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
     sub_agent_audit_sink: Option<Arc<dyn SubAgentAuditSink>>,
 ) -> Result<(), Box<dyn Error>> {
     if config.tools.archive.enabled() {
@@ -1484,7 +1490,13 @@ async fn register_configured_tools(
         ));
     }
     if config.tools.knowledge.enabled() {
-        tools.register(KnowledgeTool::open_default(config).await?);
+        let provider = knowledge_provider
+            .clone()
+            .ok_or_else(|| io::Error::other("knowledge runtime unavailable"))?;
+        tools.register(KnowledgeTool::with_provider(
+            provider,
+            &config.tools.knowledge,
+        ));
     }
     if config.tools.web_fetch.enabled() {
         tools.register(WebFetchTool::new(config));
@@ -1556,6 +1568,7 @@ pub async fn sync_runtime_tools(
         runtime.session_store.clone(),
         runtime.archive_service.clone(),
         runtime.memory_db.clone(),
+        Some(Arc::clone(&runtime.knowledge_runtime) as Arc<dyn KnowledgeProvider>),
         Some(sub_agent_audit_sink),
     )
     .await?;
@@ -1857,6 +1870,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     };
     let llm_audit_tx = spawn_llm_audit_writer(session_store.clone());
     let tool_audit_tx = spawn_tool_audit_writer(session_store.clone());
+    let knowledge_runtime = KnowledgeRuntimeService::start_configured(config);
     let mut tools = ToolRegistry::default();
     let sub_agent_audit_sink: Arc<dyn SubAgentAuditSink> = Arc::new(RuntimeSubAgentAuditSink::new(
         session_store.clone(),
@@ -1869,6 +1883,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         session_store.clone(),
         archive_service.clone(),
         memory_db.clone(),
+        Some(Arc::clone(&knowledge_runtime) as Arc<dyn KnowledgeProvider>),
         Some(sub_agent_audit_sink),
     )
     .await?;
@@ -2004,6 +2019,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         tool_audit_tx,
         env_check,
         websocket_broadcaster,
+        knowledge_runtime,
     })
 }
 
@@ -4364,6 +4380,9 @@ mod tests {
                 checked_at: OffsetDateTime::UNIX_EPOCH,
             },
             websocket_broadcaster: Arc::new(GatewayWebsocketBroadcaster::new()),
+            knowledge_runtime: crate::knowledge_runtime::KnowledgeRuntimeService::start_configured(
+                &AppConfig::default(),
+            ),
         }
     }
 

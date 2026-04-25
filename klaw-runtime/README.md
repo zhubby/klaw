@@ -9,6 +9,7 @@
 - wire runtime submission helpers for one-shot and streaming flows
 - host runtime-only IM command handling and session routing policy
 - integrate background services, webhook processing, and gateway lifecycle glue
+- own the shared Knowledge service so GUI search, Knowledge tool calls, and index/vector sync reuse one provider/model runtime instead of reopening it per request
 
 ## Notes
 

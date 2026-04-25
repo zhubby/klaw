@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-25
+
+### Added
+
+- Runtime-owned Knowledge service with loading/ready/error state, provider reuse, sync progress forwarding, and reload support for GUI config changes
+
 ## 2026-04-22
 
 ### Fixed

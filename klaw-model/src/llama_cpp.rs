@@ -9,14 +9,17 @@ use std::{
 use async_trait::async_trait;
 use encoding_rs::UTF_8;
 use llama_cpp_2::{
-    context::params::LlamaContextParams,
+    LogOptions,
+    context::params::{LlamaContextParams, LlamaPoolingType},
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
     model::params::LlamaModelParams,
     model::{AddBos, LlamaModel},
     sampling::LlamaSampler,
+    send_logs_to_tracing,
 };
 use tokio::process::Command;
+use tracing::{debug, error};
 
 use crate::{ModelError, ModelStorage};
 
@@ -110,7 +113,7 @@ impl PromptFormat {
         match self {
             Self::EmbeddingGemma => format!("<bos>search_query: {query}"),
             Self::QwenEmbedding => {
-                format!("Instruct: Retrieve relevant passages\nQuery: {query}")
+                format!("Instruct: Retrieve relevant passages\nQuery: {query}<|endoftext|>")
             }
             Self::Raw => query.to_string(),
         }
@@ -214,13 +217,20 @@ impl LlamaCppRsBackend {
         }
 
         let model_params = LlamaModelParams::default();
+        debug!(
+            path = %model_path.display(),
+            n_gpu_layers = model_params.n_gpu_layers(),
+            "loading GGUF model with llama.cpp"
+        );
         let model = LlamaModel::load_from_file(shared_llama_backend()?, model_path, &model_params)
             .map_err(|err| {
+                error!(path = %model_path.display(), error = %err, "llama.cpp failed to load GGUF model");
                 ModelError::Runtime(format!(
                     "loading GGUF model {}: {err}",
                     model_path.display()
                 ))
             })?;
+        debug!(path = %model_path.display(), "loaded GGUF model with llama.cpp");
         let model = Arc::new(model);
 
         let mut cache = self
@@ -245,6 +255,14 @@ impl LlamaCppRsBackend {
             .unwrap_or_default();
         let prompt_format = PromptFormat::detect(file_name);
         let formatted = prompt_format.format_query(&request.text);
+        debug!(
+            model_id = %request.model_id,
+            path = %model_path.display(),
+            prompt_format = ?prompt_format,
+            input_chars = request.text.chars().count(),
+            formatted_chars = formatted.chars().count(),
+            "tokenizing embedding input"
+        );
         let tokens = model
             .str_to_token(&formatted, AddBos::Never)
             .map_err(|err| ModelError::Runtime(format!("tokenization failed: {err}")))?;
@@ -255,28 +273,45 @@ impl LlamaCppRsBackend {
         }
 
         let n_tokens = tokens.len() as u32;
-        let n_ctx = ctx_size(self.default_ctx_size, n_tokens.saturating_add(16));
-        let ctx_params = LlamaContextParams::default()
-            .with_embeddings(true)
-            .with_n_ctx(n_ctx)
-            .with_n_ubatch(n_tokens.max(512))
-            .with_n_batch(n_tokens.max(512));
+        let ctx_params = embedding_context_params(n_tokens, &prompt_format);
+        debug!(
+            model_id = %request.model_id,
+            token_count = n_tokens,
+            default_ctx_size = self.default_ctx_size,
+            n_ctx = ctx_params.n_ctx().map(NonZeroU32::get).unwrap_or_default(),
+            pooling = ?ctx_params.pooling_type(),
+            "creating embedding context"
+        );
         let mut ctx = model
             .new_context(shared_llama_backend()?, ctx_params)
             .map_err(|err| ModelError::Runtime(format!("creating embedding context: {err}")))?;
+        debug!(model_id = %request.model_id, "created embedding context");
 
         let mut batch = LlamaBatch::new(tokens.len() + 16, 1);
+        debug!(
+            model_id = %request.model_id,
+            token_count = tokens.len(),
+            "adding tokens to embedding batch"
+        );
         batch.add_sequence(&tokens, 0, true).map_err(|err| {
             ModelError::Runtime(format!("adding sequence to embedding batch: {err}"))
         })?;
 
+        debug!(model_id = %request.model_id, "encoding embedding batch");
         ctx.encode(&mut batch)
             .map_err(|err| ModelError::Runtime(format!("embedding encode failed: {err}")))?;
+        debug!(model_id = %request.model_id, "encoded embedding batch");
 
+        debug!(model_id = %request.model_id, "reading embedding vector");
         let embeddings = ctx
             .embeddings_seq_ith(0)
             .map_err(|err| ModelError::Runtime(format!("getting embeddings: {err}")))?;
         let vector = l2_normalize(embeddings.to_vec());
+        debug!(
+            model_id = %request.model_id,
+            dimensions = vector.len(),
+            "embedding vector ready"
+        );
         Ok(ModelEmbeddingResponse { vector })
     }
 
@@ -536,6 +571,24 @@ impl<B> ModelLlamaRuntime<B> {
 
     fn gguf_path_for_model(&self, model_id: &str) -> Result<PathBuf, ModelError> {
         let manifest = self.storage.load_manifest(model_id)?;
+        if let Some(file) = manifest
+            .default_gguf_model_file
+            .as_ref()
+            .and_then(|default_file| {
+                manifest.files.iter().find(|file| {
+                    file.relative_path == *default_file
+                        && file.format == crate::ModelFileFormat::Gguf
+                        && file.relative_path.ends_with(".gguf")
+                })
+            })
+        {
+            return Ok(self.storage.paths().root_dir.join(&file.relative_path));
+        }
+        if let Some(default_file) = manifest.default_gguf_model_file.as_ref() {
+            return Err(ModelError::Manifest(format!(
+                "default GGUF model file '{default_file}' is not a GGUF file in model '{model_id}'"
+            )));
+        }
         let file = manifest
             .files
             .into_iter()
@@ -547,9 +600,9 @@ impl<B> ModelLlamaRuntime<B> {
 
 fn shared_llama_backend() -> Result<&'static LlamaBackend, ModelError> {
     let backend = LLAMA_BACKEND.get_or_init(|| {
-        let mut backend =
+        send_logs_to_tracing(llama_log_options());
+        let backend =
             LlamaBackend::init().map_err(|err| format!("initializing llama backend: {err}"))?;
-        backend.void_logs();
         Ok(backend)
     });
     backend
@@ -557,8 +610,27 @@ fn shared_llama_backend() -> Result<&'static LlamaBackend, ModelError> {
         .map_err(|err| ModelError::Runtime(err.clone()))
 }
 
+fn llama_log_options() -> LogOptions {
+    LogOptions::default().with_logs_enabled(false)
+}
+
 fn ctx_size(default_ctx_size: u32, minimum: u32) -> Option<NonZeroU32> {
     NonZeroU32::new(default_ctx_size.max(minimum).max(1))
+}
+
+fn embedding_context_params(n_tokens: u32, prompt_format: &PromptFormat) -> LlamaContextParams {
+    let n_ctx = n_tokens.max(64).saturating_add(16);
+    let params = LlamaContextParams::default()
+        .with_embeddings(true)
+        .with_n_ctx(NonZeroU32::new(n_ctx))
+        .with_n_ubatch(n_tokens.max(512))
+        .with_n_batch(n_tokens.max(512));
+    match prompt_format {
+        PromptFormat::QwenEmbedding => params
+            .with_pooling_type(LlamaPoolingType::Last)
+            .with_flash_attention_policy(llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_DISABLED),
+        PromptFormat::EmbeddingGemma | PromptFormat::Raw => params,
+    }
 }
 
 fn l2_normalize(values: Vec<f32>) -> Vec<f32> {
@@ -845,6 +917,7 @@ mod tests {
                 repo_id: "Qwen/Qwen".to_string(),
                 revision: "main".to_string(),
                 resolved_revision: Some("abc123".to_string()),
+                default_gguf_model_file: None,
                 files: vec![InstalledModelFile {
                     relative_path: "snapshots/qwen-main/model.gguf".to_string(),
                     size_bytes: 10,
@@ -867,8 +940,96 @@ mod tests {
     }
 
     #[test]
+    fn resolves_manifest_default_gguf_path_before_file_order() {
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-runtime-{}", uuid::Uuid::new_v4()));
+        let storage = ModelStorage::new(ModelStoragePaths::from_root(root.clone()));
+        storage.paths().ensure_dirs().expect("dirs");
+        storage
+            .save_manifest(&InstalledModelManifest {
+                model_id: "qwen-main".to_string(),
+                source: "huggingface".to_string(),
+                repo_id: "Qwen/Qwen".to_string(),
+                revision: "main".to_string(),
+                resolved_revision: Some("abc123".to_string()),
+                default_gguf_model_file: Some("snapshots/qwen-main/preferred.gguf".to_string()),
+                files: vec![
+                    InstalledModelFile {
+                        relative_path: "snapshots/qwen-main/first.gguf".to_string(),
+                        size_bytes: 10,
+                        sha256: None,
+                        format: ModelFileFormat::Gguf,
+                    },
+                    InstalledModelFile {
+                        relative_path: "snapshots/qwen-main/preferred.gguf".to_string(),
+                        size_bytes: 10,
+                        sha256: None,
+                        format: ModelFileFormat::Gguf,
+                    },
+                ],
+                capabilities: vec![ModelCapability::Chat],
+                quantization: None,
+                size_bytes: 20,
+                installed_at: "2026-04-25T00:00:00Z".to_string(),
+                last_used_at: None,
+            })
+            .expect("manifest");
+
+        let runtime =
+            ModelLlamaRuntime::new(storage, LlamaCppCommandBackend::new("llama-cli", 4096));
+        let path = runtime
+            .gguf_path_for_model("qwen-main")
+            .expect("gguf path should resolve");
+        assert!(path.ends_with("snapshots/qwen-main/preferred.gguf"));
+    }
+
+    #[test]
+    fn rejects_manifest_default_gguf_path_outside_file_list() {
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-runtime-{}", uuid::Uuid::new_v4()));
+        let storage = ModelStorage::new(ModelStoragePaths::from_root(root.clone()));
+        storage.paths().ensure_dirs().expect("dirs");
+        storage
+            .save_manifest(&InstalledModelManifest {
+                model_id: "qwen-main".to_string(),
+                source: "huggingface".to_string(),
+                repo_id: "Qwen/Qwen".to_string(),
+                revision: "main".to_string(),
+                resolved_revision: Some("abc123".to_string()),
+                default_gguf_model_file: Some("external/preferred.gguf".to_string()),
+                files: vec![InstalledModelFile {
+                    relative_path: "snapshots/qwen-main/model.gguf".to_string(),
+                    size_bytes: 10,
+                    sha256: None,
+                    format: ModelFileFormat::Gguf,
+                }],
+                capabilities: vec![ModelCapability::Chat],
+                quantization: None,
+                size_bytes: 10,
+                installed_at: "2026-04-25T00:00:00Z".to_string(),
+                last_used_at: None,
+            })
+            .expect("manifest");
+
+        let runtime =
+            ModelLlamaRuntime::new(storage, LlamaCppCommandBackend::new("llama-cli", 4096));
+        let err = runtime
+            .gguf_path_for_model("qwen-main")
+            .expect_err("invalid default gguf should fail");
+
+        assert!(matches!(err, ModelError::Manifest(_)));
+    }
+
+    #[test]
     fn default_backend_kind_prefers_rust_binding() {
         assert_eq!(default_backend_kind(), LlamaBackendKind::RustBinding);
+    }
+
+    #[test]
+    fn llama_log_options_disable_native_logs() {
+        let rendered = format!("{:?}", llama_log_options());
+
+        assert!(rendered.contains("disabled: true"));
     }
 
     #[test]
@@ -877,8 +1038,32 @@ mod tests {
         assert_eq!(format, PromptFormat::QwenEmbedding);
         assert_eq!(
             format.format_query("how does auth work"),
-            "Instruct: Retrieve relevant passages\nQuery: how does auth work"
+            "Instruct: Retrieve relevant passages\nQuery: how does auth work<|endoftext|>"
         );
+    }
+
+    #[test]
+    fn qwen_embedding_context_uses_last_pooling() {
+        let params = embedding_context_params(16, &PromptFormat::QwenEmbedding);
+        assert_eq!(params.pooling_type(), LlamaPoolingType::Last);
+    }
+
+    #[test]
+    fn qwen_embedding_context_disables_flash_attention() {
+        let params = embedding_context_params(16, &PromptFormat::QwenEmbedding);
+        assert_eq!(
+            params.flash_attention_policy(),
+            llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_DISABLED
+        );
+    }
+
+    #[test]
+    fn embedding_context_sizes_to_current_batch() {
+        let params = embedding_context_params(589, &PromptFormat::EmbeddingGemma);
+        assert_eq!(params.n_ctx(), NonZeroU32::new(605));
+
+        let short = embedding_context_params(8, &PromptFormat::EmbeddingGemma);
+        assert_eq!(short.n_ctx(), NonZeroU32::new(80));
     }
 
     #[test]

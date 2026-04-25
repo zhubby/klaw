@@ -25,6 +25,7 @@ klaw-gateway = { workspace = true }
 klaw-channel = { workspace = true }
 klaw-observability = { workspace = true }
 klaw-memory = { workspace = true }
+klaw-knowledge = { workspace = true }
 klaw-util = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

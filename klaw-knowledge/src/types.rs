@@ -56,6 +56,37 @@ pub struct KnowledgeSyncResult {
     pub status: KnowledgeStatus,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum KnowledgeSyncProgressStage {
+    IndexingNotes,
+    EmbeddingChunks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnowledgeSyncProgress {
+    pub stage: KnowledgeSyncProgressStage,
+    pub completed: usize,
+    pub total: Option<usize>,
+    pub current_item: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum KnowledgeRuntimeState {
+    Disabled,
+    Unconfigured,
+    Loading,
+    Ready,
+    Syncing,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnowledgeRuntimeSnapshot {
+    pub state: KnowledgeRuntimeState,
+    pub status: Option<KnowledgeStatus>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KnowledgeSearchQuery {
     pub text: String,

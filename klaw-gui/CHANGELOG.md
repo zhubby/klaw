@@ -5,6 +5,8 @@
 ### Added
 
 - `DATA & HISTORY` now includes a `Knowledge` panel for configured knowledge status, search, config editing, and incremental index/vector sync
+- Knowledge sync now opens a centered progress dialog showing the current phase, processed count, total count when known, and current note/chunk name
+- Knowledge now displays runtime readiness and reloads the runtime-owned Knowledge service after config saves
 
 ### Fixed
 
@@ -17,6 +19,7 @@
 - Local Models 升级现在会在远端 revision SHA 与本地 manifest 一致时提示已是最新并跳过下载
 - Local Models 安装表单移除了仅作为元数据保存的 Quantization 字段，并让模型表格按 GUI 现有整行交互模式处理选中和右键菜单
 - `Local Models` 面板显示名改为 `Model`，下载弹窗中的进度条高度调整为默认交互高度的一半
+- Local Models 面板现在支持为选中模型设置或清除 manifest 内的默认 GGUF 文件
 
 ## 2026-04-15
 

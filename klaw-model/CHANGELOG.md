@@ -20,3 +20,5 @@
 - Added local orchestrator generation and query-expansion parsing modeled after `engraph`
 - Local model downloads now store files under `snapshots/{model_id}` and support cooperative cancellation with per-file progress
 - Installed models are now tracked in a root `manifest.json` index; legacy `manifests/*.json` files are merged on read and `blobs/` is no longer used
+- `ModelLlamaRuntime` can now prefer each model manifest's `default_gguf_model_file` instead of the first GGUF listed in the manifest
+- Native llama.cpp logs are suppressed by default so GUI knowledge indexing/search does not flood the app log stream

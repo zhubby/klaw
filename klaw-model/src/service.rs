@@ -45,6 +45,15 @@ impl ModelService {
         self.storage.remove_model(model_id, active_bindings)
     }
 
+    pub fn set_default_gguf_model_file(
+        &self,
+        model_id: &str,
+        relative_path: Option<String>,
+    ) -> Result<InstalledModelManifest, ModelError> {
+        self.storage
+            .set_default_gguf_model_file(model_id, relative_path)
+    }
+
     pub async fn install_model<F>(
         &self,
         request: ModelInstallRequest,
@@ -119,6 +128,7 @@ impl ModelService {
             repo_id: request.repo_id,
             revision: request.revision,
             resolved_revision,
+            default_gguf_model_file: None,
             files,
             capabilities: Vec::new(),
             quantization: request.quantization,
@@ -195,6 +205,7 @@ mod tests {
                 repo_id: "Qwen/Qwen3".to_string(),
                 revision: "main".to_string(),
                 resolved_revision: Some("abcdef".to_string()),
+                default_gguf_model_file: None,
                 files: vec![InstalledModelFile {
                     relative_path: "snapshots/qwen-main/model.gguf".to_string(),
                     size_bytes: 10,

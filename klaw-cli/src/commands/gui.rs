@@ -2,10 +2,7 @@ use clap::Args;
 use klaw_acp::AcpConfigSnapshot;
 use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
-use klaw_knowledge::{
-    KnowledgeProvider, KnowledgeSearchQuery, configured_knowledge_status,
-    open_configured_obsidian_provider, sync_configured_knowledge,
-};
+use klaw_knowledge::{KnowledgeProvider, KnowledgeSearchQuery};
 use klaw_llm::ToolDefinition;
 use klaw_mcp::McpConfigSnapshot;
 use klaw_runtime::gateway_manager::GatewayManager;
@@ -578,11 +575,24 @@ impl GuiCommand {
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetKnowledgeStatus { response }) => {
+                                                let knowledge_runtime = Arc::clone(&runtime.knowledge_runtime);
+                                                tokio::task::spawn_local(async move {
+                                                    let result = knowledge_runtime
+                                                        .status()
+                                                        .await
+                                                        .map_err(|err| err.to_string());
+                                                    let _ = response.send(result);
+                                                });
+                                            }
+                                            Some(klaw_gui::RuntimeCommand::ReloadKnowledge { response }) => {
+                                                let knowledge_runtime = Arc::clone(&runtime.knowledge_runtime);
                                                 tokio::task::spawn_local(async move {
                                                     let result = match ConfigStore::open(None) {
                                                         Ok(store) => {
                                                             let snapshot = store.snapshot();
-                                                            configured_knowledge_status(&snapshot.config)
+                                                            knowledge_runtime.reload(snapshot.config).await;
+                                                            knowledge_runtime
+                                                                .status()
                                                                 .await
                                                                 .map_err(|err| err.to_string())
                                                         }
@@ -592,60 +602,45 @@ impl GuiCommand {
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::SearchKnowledge { query, limit, response }) => {
+                                                let knowledge_runtime = Arc::clone(&runtime.knowledge_runtime);
                                                 tokio::task::spawn_local(async move {
-                                                    let result = match ConfigStore::open(None) {
-                                                        Ok(store) => {
-                                                            let snapshot = store.snapshot();
-                                                            match open_configured_obsidian_provider(&snapshot.config, false).await {
-                                                                Ok(provider) => {
-                                                                    provider
-                                                                        .search(KnowledgeSearchQuery {
-                                                                            text: query,
-                                                                            tags: None,
-                                                                            source: None,
-                                                                            limit,
-                                                                            mode: None,
-                                                                        })
-                                                                        .await
-                                                                        .map_err(|err| err.to_string())
-                                                                }
-                                                                Err(err) => Err(err.to_string()),
-                                                            }
-                                                        }
-                                                        Err(err) => Err(err.to_string()),
-                                                    };
+                                                    let result = knowledge_runtime
+                                                        .search(KnowledgeSearchQuery {
+                                                            text: query,
+                                                            tags: None,
+                                                            source: None,
+                                                            limit,
+                                                            mode: None,
+                                                        })
+                                                        .await
+                                                        .map_err(|err| err.to_string());
                                                     let _ = response.send(result);
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetKnowledgeEntry { id, response }) => {
+                                                let knowledge_runtime = Arc::clone(&runtime.knowledge_runtime);
                                                 tokio::task::spawn_local(async move {
-                                                    let result = match ConfigStore::open(None) {
-                                                        Ok(store) => {
-                                                            let snapshot = store.snapshot();
-                                                            match open_configured_obsidian_provider(&snapshot.config, false).await {
-                                                                Ok(provider) => provider
-                                                                    .get(&id)
-                                                                    .await
-                                                                    .map_err(|err| err.to_string()),
-                                                                Err(err) => Err(err.to_string()),
-                                                            }
-                                                        }
-                                                        Err(err) => Err(err.to_string()),
-                                                    };
+                                                    let result = knowledge_runtime
+                                                        .get(&id)
+                                                        .await
+                                                        .map_err(|err| err.to_string());
                                                     let _ = response.send(result);
                                                 });
                                             }
-                                            Some(klaw_gui::RuntimeCommand::SyncKnowledgeIndex { response }) => {
+                                            Some(klaw_gui::RuntimeCommand::SyncKnowledgeIndex { progress, response }) => {
+                                                let knowledge_runtime = Arc::clone(&runtime.knowledge_runtime);
                                                 tokio::task::spawn_local(async move {
-                                                    let result = match ConfigStore::open(None) {
-                                                        Ok(store) => {
-                                                            let snapshot = store.snapshot();
-                                                            sync_configured_knowledge(&snapshot.config)
-                                                                .await
-                                                                .map_err(|err| err.to_string())
+                                                    let (progress_tx, mut progress_rx) =
+                                                        tokio::sync::mpsc::unbounded_channel();
+                                                    tokio::task::spawn_local(async move {
+                                                        while let Some(update) = progress_rx.recv().await {
+                                                            let _ = progress.send(update);
                                                         }
-                                                        Err(err) => Err(err.to_string()),
-                                                    };
+                                                    });
+                                                    let result = knowledge_runtime
+                                                        .sync(progress_tx)
+                                                        .await
+                                                        .map_err(|err| err.to_string());
                                                     let _ = response.send(result);
                                                 });
                                             }

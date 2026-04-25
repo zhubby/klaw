@@ -162,6 +162,7 @@ cpal = "0.16"
 hound = "3.5"
 rodio = "0.20"
 llama-cpp-2 = "0.1.145"
+llama-cpp-sys-2 = "0.1.145"
 encoding_rs = "0.8.35"
 
 klaw-acp = { path = "klaw-acp" }

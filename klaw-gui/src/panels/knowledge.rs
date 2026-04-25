@@ -1,7 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::{
-    RuntimeRequestHandle, begin_knowledge_entry_request, begin_knowledge_status_request,
+    KnowledgeSyncRequestHandle, KnowledgeSyncTaskMessage, RuntimeRequestHandle,
+    begin_knowledge_entry_request, begin_knowledge_status_request, begin_reload_knowledge_request,
     begin_search_knowledge_request, begin_sync_knowledge_index_request,
 };
 use egui::{Color32, RichText};
@@ -11,7 +12,10 @@ use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, KnowledgeConfig, KnowledgeModelsConfig,
     KnowledgeRetrievalConfig, ObsidianKnowledgeConfig,
 };
-use klaw_knowledge::{KnowledgeEntry, KnowledgeHit, KnowledgeStatus, KnowledgeSyncResult};
+use klaw_knowledge::{
+    KnowledgeEntry, KnowledgeHit, KnowledgeRuntimeSnapshot, KnowledgeRuntimeState,
+    KnowledgeSyncProgress, KnowledgeSyncProgressStage,
+};
 use klaw_model::{ModelCapability, ModelService, ModelSummary};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -113,9 +117,10 @@ pub struct KnowledgePanel {
     config_path: Option<PathBuf>,
     config: AppConfig,
     form: Option<KnowledgeConfigForm>,
-    status: Option<KnowledgeStatus>,
-    status_request: Option<RuntimeRequestHandle<KnowledgeStatus>>,
-    sync_request: Option<RuntimeRequestHandle<KnowledgeSyncResult>>,
+    status: Option<KnowledgeRuntimeSnapshot>,
+    status_request: Option<RuntimeRequestHandle<KnowledgeRuntimeSnapshot>>,
+    sync_request: Option<KnowledgeSyncRequestHandle>,
+    sync_progress: Option<KnowledgeSyncProgress>,
     search_query: String,
     search_limit: String,
     search_request: Option<RuntimeRequestHandle<Vec<KnowledgeHit>>>,
@@ -137,6 +142,7 @@ impl Default for KnowledgePanel {
             status: None,
             status_request: None,
             sync_request: None,
+            sync_progress: None,
             search_query: String::new(),
             search_limit: "5".to_string(),
             search_request: None,
@@ -204,6 +210,7 @@ impl KnowledgePanel {
             return;
         }
         self.sync_request = Some(begin_sync_knowledge_index_request());
+        self.sync_progress = None;
         notifications.info("Syncing knowledge index and vectors...");
     }
 
@@ -238,22 +245,49 @@ impl KnowledgePanel {
     fn poll_requests(&mut self, notifications: &mut NotificationCenter) {
         if let Some(mut request) = self.status_request.take() {
             match request.try_take_result() {
-                Some(Ok(status)) => self.status = Some(status),
+                Some(Ok(status)) => {
+                    let keep_polling = matches!(
+                        status.state,
+                        KnowledgeRuntimeState::Loading | KnowledgeRuntimeState::Syncing
+                    );
+                    self.status = Some(status);
+                    if keep_polling {
+                        self.refresh_status();
+                    }
+                }
                 Some(Err(err)) => notifications.error(format!("Knowledge status failed: {err}")),
                 None => self.status_request = Some(request),
             }
         }
         if let Some(mut request) = self.sync_request.take() {
-            match request.try_take_result() {
-                Some(Ok(result)) => {
-                    self.status = Some(result.status);
-                    notifications.success(format!(
-                        "Knowledge sync complete: {} notes indexed, {} chunks embedded",
-                        result.indexed_notes, result.embedded_chunks
-                    ));
+            let mut completed = false;
+            while let Some(message) = request.try_take_message() {
+                match message {
+                    KnowledgeSyncTaskMessage::Progress(progress) => {
+                        self.sync_progress = Some(progress);
+                    }
+                    KnowledgeSyncTaskMessage::Completed(Ok(result)) => {
+                        self.status = Some(KnowledgeRuntimeSnapshot {
+                            state: KnowledgeRuntimeState::Ready,
+                            status: Some(result.status),
+                            error: None,
+                        });
+                        self.sync_progress = None;
+                        completed = true;
+                        notifications.success(format!(
+                            "Knowledge sync complete: {} notes indexed, {} chunks embedded",
+                            result.indexed_notes, result.embedded_chunks
+                        ));
+                    }
+                    KnowledgeSyncTaskMessage::Completed(Err(err)) => {
+                        self.sync_progress = None;
+                        completed = true;
+                        notifications.error(format!("Knowledge sync failed: {err}"));
+                    }
                 }
-                Some(Err(err)) => notifications.error(format!("Knowledge sync failed: {err}")),
-                None => self.sync_request = Some(request),
+            }
+            if !completed && request.is_pending() {
+                self.sync_request = Some(request);
             }
         }
         if let Some(mut request) = self.search_request.take() {
@@ -316,7 +350,7 @@ impl KnowledgePanel {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
                 self.form = None;
-                self.refresh_status();
+                self.status_request = Some(begin_reload_knowledge_request());
                 self.refresh_model_options();
                 notifications.success("Knowledge config saved");
             }
@@ -325,8 +359,16 @@ impl KnowledgePanel {
     }
 
     fn render_status(&self, ui: &mut egui::Ui) {
-        let status = self.status.as_ref();
+        let snapshot = self.status.as_ref();
+        let status = snapshot.and_then(|snapshot| snapshot.status.as_ref());
         ui.horizontal_wrapped(|ui| {
+            status_chip(
+                ui,
+                "Runtime",
+                snapshot
+                    .map(|snapshot| runtime_state_label(snapshot.state).to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+            );
             status_chip(
                 ui,
                 "State",
@@ -370,6 +412,9 @@ impl KnowledgePanel {
                     .unwrap_or_else(|| "-".to_string()),
             );
         });
+        if let Some(error) = snapshot.and_then(|snapshot| snapshot.error.as_deref()) {
+            ui.colored_label(Color32::from_rgb(220, 80, 80), error);
+        }
         ui.add_space(4.0);
         let vault = status
             .and_then(|status| status.vault_path.as_deref())
@@ -379,6 +424,8 @@ impl KnowledgePanel {
     }
 
     fn render_search(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let search_enabled =
+            self.search_request.is_none() && self.knowledge_runtime_accepts_search();
         ui.horizontal(|ui| {
             ui.label("Query");
             let response = ui.add(
@@ -391,19 +438,31 @@ impl KnowledgePanel {
             let enter =
                 response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
             if ui
-                .add_enabled(self.search_request.is_none(), egui::Button::new("Search"))
+                .add_enabled(search_enabled, egui::Button::new("Search"))
                 .clicked()
-                || enter
+                || (enter && search_enabled)
             {
                 self.begin_search(notifications);
             }
         });
+        if !self.knowledge_runtime_accepts_search() {
+            ui.small("Knowledge runtime is not ready yet.");
+        }
         ui.add_space(8.0);
 
         ui.columns(2, |columns| {
             self.render_hits(&mut columns[0]);
             self.render_entry(&mut columns[1]);
         });
+    }
+
+    fn knowledge_runtime_accepts_search(&self) -> bool {
+        self.status.as_ref().is_some_and(|snapshot| {
+            matches!(
+                snapshot.state,
+                KnowledgeRuntimeState::Ready | KnowledgeRuntimeState::Syncing
+            )
+        })
     }
 
     fn render_hits(&mut self, ui: &mut egui::Ui) {
@@ -483,6 +542,50 @@ impl KnowledgePanel {
                 .desired_rows(18)
                 .interactive(false),
         );
+    }
+
+    fn render_sync_progress_window(&self, ui: &mut egui::Ui) {
+        if self.sync_request.is_none() {
+            return;
+        }
+        egui::Window::new("Syncing Knowledge Index")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(460.0)
+            .show(ui.ctx(), |ui| {
+                let progress_height = ui.spacing().interact_size.y * 0.5;
+                let Some(progress) = self.sync_progress.as_ref() else {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new());
+                        ui.label("Preparing knowledge sync...");
+                    });
+                    return;
+                };
+                ui.strong(sync_stage_label(progress.stage));
+                if let Some(current_item) = progress.current_item.as_deref() {
+                    ui.label(format!("Current: {current_item}"));
+                }
+                let text = match progress.total {
+                    Some(total) if total > 0 => {
+                        format!("{} / {}", progress.completed.min(total), total)
+                    }
+                    _ => format!("{} processed", progress.completed),
+                };
+                if let Some(total) = progress.total.filter(|total| *total > 0) {
+                    let fraction = progress.completed as f32 / total as f32;
+                    ui.add(
+                        egui::ProgressBar::new(fraction.clamp(0.0, 1.0))
+                            .text(text)
+                            .desired_height(progress_height),
+                    );
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new());
+                        ui.label(text);
+                    });
+                }
+            });
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
@@ -662,6 +765,7 @@ impl PanelRenderer for KnowledgePanel {
         self.render_status(ui);
         ui.separator();
         self.render_search(ui, notifications);
+        self.render_sync_progress_window(ui);
         self.render_form_window(ui, notifications);
     }
 }
@@ -708,6 +812,24 @@ fn status_chip(ui: &mut egui::Ui, label: &str, value: String) {
                 ui.monospace(value);
             });
         });
+}
+
+fn sync_stage_label(stage: KnowledgeSyncProgressStage) -> &'static str {
+    match stage {
+        KnowledgeSyncProgressStage::IndexingNotes => "Indexing notes",
+        KnowledgeSyncProgressStage::EmbeddingChunks => "Embedding chunks",
+    }
+}
+
+fn runtime_state_label(state: KnowledgeRuntimeState) -> &'static str {
+    match state {
+        KnowledgeRuntimeState::Disabled => "disabled",
+        KnowledgeRuntimeState::Unconfigured => "unconfigured",
+        KnowledgeRuntimeState::Loading => "loading",
+        KnowledgeRuntimeState::Ready => "ready",
+        KnowledgeRuntimeState::Syncing => "syncing",
+        KnowledgeRuntimeState::Error => "error",
+    }
 }
 
 fn provider_combo(ui: &mut egui::Ui, provider: &mut String) {
@@ -874,6 +996,7 @@ mod tests {
             model_id: "a".to_string(),
             repo_id: "repo/a".to_string(),
             revision: "main".to_string(),
+            default_gguf_model_file: None,
             capabilities: vec![ModelCapability::Embedding],
             size_bytes: 1,
             installed_at: "2026-04-25T00:00:00Z".to_string(),
@@ -882,6 +1005,7 @@ mod tests {
             model_id: "b".to_string(),
             repo_id: "repo/b".to_string(),
             revision: "main".to_string(),
+            default_gguf_model_file: None,
             capabilities: vec![],
             size_bytes: 1,
             installed_at: "2026-04-25T00:00:00Z".to_string(),
@@ -890,6 +1014,7 @@ mod tests {
             model_id: "c".to_string(),
             repo_id: "repo/c".to_string(),
             revision: "main".to_string(),
+            default_gguf_model_file: None,
             capabilities: vec![ModelCapability::Rerank],
             size_bytes: 1,
             installed_at: "2026-04-25T00:00:00Z".to_string(),

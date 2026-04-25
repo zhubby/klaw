@@ -44,6 +44,8 @@ pub struct InstalledModelManifest {
     pub revision: String,
     #[serde(default)]
     pub resolved_revision: Option<String>,
+    #[serde(default)]
+    pub default_gguf_model_file: Option<String>,
     pub files: Vec<InstalledModelFile>,
     pub capabilities: Vec<ModelCapability>,
     pub quantization: Option<String>,
@@ -57,6 +59,7 @@ pub struct ModelSummary {
     pub model_id: String,
     pub repo_id: String,
     pub revision: String,
+    pub default_gguf_model_file: Option<String>,
     pub capabilities: Vec<ModelCapability>,
     pub size_bytes: u64,
     pub installed_at: String,

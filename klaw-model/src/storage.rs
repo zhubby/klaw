@@ -87,6 +87,7 @@ impl ModelStorage {
                 model_id: manifest.model_id.clone(),
                 repo_id: manifest.repo_id.clone(),
                 revision: manifest.revision.clone(),
+                default_gguf_model_file: manifest.default_gguf_model_file.clone(),
                 capabilities: manifest.capabilities.clone(),
                 size_bytes: manifest.size_bytes,
                 installed_at: manifest.installed_at.clone(),
@@ -107,6 +108,34 @@ impl ModelStorage {
         let mut manifest = self.load_manifest(model_id)?;
         manifest.last_used_at = Some(now_rfc3339());
         self.save_manifest(&manifest)
+    }
+
+    pub fn set_default_gguf_model_file(
+        &self,
+        model_id: &str,
+        relative_path: Option<String>,
+    ) -> Result<InstalledModelManifest, ModelError> {
+        let mut manifest = self.load_manifest(model_id)?;
+        if let Some(path) = relative_path.as_deref() {
+            if path.trim().is_empty() {
+                return Err(ModelError::Manifest(
+                    "default GGUF model file cannot be empty".to_string(),
+                ));
+            }
+            let matches_manifest_gguf = manifest.files.iter().any(|file| {
+                file.relative_path == path
+                    && file.format == crate::ModelFileFormat::Gguf
+                    && file.relative_path.ends_with(".gguf")
+            });
+            if !matches_manifest_gguf {
+                return Err(ModelError::Manifest(format!(
+                    "default GGUF model file '{path}' is not a GGUF file in model '{model_id}'"
+                )));
+            }
+        }
+        manifest.default_gguf_model_file = relative_path;
+        self.save_manifest(&manifest)?;
+        Ok(manifest)
     }
 
     pub fn remove_model(
@@ -218,6 +247,7 @@ mod tests {
             repo_id: "Qwen/Qwen3-Embedding-0.6B-GGUF".to_string(),
             revision: "main".to_string(),
             resolved_revision: Some("abc123".to_string()),
+            default_gguf_model_file: None,
             files: vec![InstalledModelFile {
                 relative_path: format!("snapshots/{model_id}/model.gguf"),
                 size_bytes: 32,
@@ -245,8 +275,108 @@ mod tests {
         let summaries = storage.list_installed().expect("list installed");
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].model_id, "qwen-main");
+        assert!(summaries[0].default_gguf_model_file.is_none());
         assert!(storage.paths.manifest_path.exists());
         assert!(!legacy_manifests_dir(&root).exists());
+    }
+
+    #[test]
+    fn sets_default_gguf_model_file_in_manifest() {
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
+        let storage = ModelStorage::new(ModelStoragePaths::from_root(root));
+        storage.paths.ensure_dirs().expect("dirs");
+        let mut manifest = sample_manifest("qwen-main");
+        manifest.files.push(InstalledModelFile {
+            relative_path: "snapshots/qwen-main/preferred.gguf".to_string(),
+            size_bytes: 64,
+            sha256: None,
+            format: ModelFileFormat::Gguf,
+        });
+        storage.save_manifest(&manifest).expect("save manifest");
+
+        let updated = storage
+            .set_default_gguf_model_file(
+                "qwen-main",
+                Some("snapshots/qwen-main/preferred.gguf".to_string()),
+            )
+            .expect("default gguf should update");
+
+        assert_eq!(
+            updated.default_gguf_model_file.as_deref(),
+            Some("snapshots/qwen-main/preferred.gguf")
+        );
+        let persisted = storage.load_manifest("qwen-main").expect("load manifest");
+        assert_eq!(
+            persisted.default_gguf_model_file,
+            updated.default_gguf_model_file
+        );
+    }
+
+    #[test]
+    fn rejects_default_gguf_model_file_not_in_manifest() {
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
+        let storage = ModelStorage::new(ModelStoragePaths::from_root(root));
+        storage.paths.ensure_dirs().expect("dirs");
+        storage
+            .save_manifest(&sample_manifest("qwen-main"))
+            .expect("save manifest");
+
+        let err = storage
+            .set_default_gguf_model_file("qwen-main", Some("external/preferred.gguf".to_string()))
+            .expect_err("unknown gguf should fail");
+
+        assert!(matches!(err, ModelError::Manifest(_)));
+    }
+
+    #[test]
+    fn clears_default_gguf_model_file_in_manifest() {
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
+        let storage = ModelStorage::new(ModelStoragePaths::from_root(root));
+        storage.paths.ensure_dirs().expect("dirs");
+        let mut manifest = sample_manifest("qwen-main");
+        manifest.default_gguf_model_file = Some("snapshots/qwen-main/model.gguf".to_string());
+        storage.save_manifest(&manifest).expect("save manifest");
+
+        let updated = storage
+            .set_default_gguf_model_file("qwen-main", None)
+            .expect("default gguf should clear");
+
+        assert!(updated.default_gguf_model_file.is_none());
+        assert!(
+            storage
+                .load_manifest("qwen-main")
+                .expect("load manifest")
+                .default_gguf_model_file
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_default_gguf_model_file_with_non_gguf_format() {
+        let root =
+            std::env::temp_dir().join(format!("klaw-model-storage-{}", uuid::Uuid::new_v4()));
+        let storage = ModelStorage::new(ModelStoragePaths::from_root(root));
+        storage.paths.ensure_dirs().expect("dirs");
+        let mut manifest = sample_manifest("qwen-main");
+        manifest.files.push(InstalledModelFile {
+            relative_path: "snapshots/qwen-main/tokenizer.json".to_string(),
+            size_bytes: 64,
+            sha256: None,
+            format: ModelFileFormat::TokenizerJson,
+        });
+        storage.save_manifest(&manifest).expect("save manifest");
+
+        let err = storage
+            .set_default_gguf_model_file(
+                "qwen-main",
+                Some("snapshots/qwen-main/tokenizer.json".to_string()),
+            )
+            .expect_err("non-gguf default should fail");
+
+        assert!(matches!(err, ModelError::Manifest(_)));
     }
 
     #[test]

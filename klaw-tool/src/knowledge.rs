@@ -35,10 +35,20 @@ impl KnowledgeTool {
         let provider = open_configured_obsidian_provider(config, false)
             .await
             .map_err(map_knowledge_error)?;
-        Ok(Self {
-            provider: Arc::new(provider),
-            runtime: KnowledgeToolRuntimeConfig::from_tool_config(&config.tools.knowledge),
-        })
+        Ok(Self::with_provider(
+            Arc::new(provider),
+            &config.tools.knowledge,
+        ))
+    }
+
+    pub fn with_provider(
+        provider: Arc<dyn KnowledgeProvider>,
+        config: &KnowledgeToolConfig,
+    ) -> Self {
+        Self {
+            provider,
+            runtime: KnowledgeToolRuntimeConfig::from_tool_config(config),
+        }
     }
 
     #[cfg(test)]

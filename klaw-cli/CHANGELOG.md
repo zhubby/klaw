@@ -5,6 +5,8 @@
 ### Added
 
 - GUI runtime command handling for knowledge status, search, entry inspection, and incremental index/vector sync
+- GUI runtime knowledge sync now forwards indexing/embedding progress events to the desktop Knowledge panel
+- GUI runtime Knowledge commands now route through the shared runtime-owned Knowledge service, including config reloads
 
 ## 2026-04-08
 

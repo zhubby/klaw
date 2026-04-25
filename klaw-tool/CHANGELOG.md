@@ -7,6 +7,7 @@
 
 ### Changed
 - `knowledge` tool startup now reuses the shared configured Obsidian provider builder used by GUI/runtime knowledge flows
+- `knowledge` tool registration can now receive the runtime-owned Knowledge provider so tool calls share the same loaded service as GUI search and sync
 
 ## 2026-04-20
 

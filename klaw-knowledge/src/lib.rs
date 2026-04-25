@@ -17,8 +17,9 @@ pub use models::{build_local_embedding_model, build_local_orchestrator, build_lo
 pub use obsidian::provider::ObsidianKnowledgeProvider;
 pub use provider_router::KnowledgeProviderRouter;
 pub use types::{
-    KnowledgeEntry, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery, KnowledgeSourceInfo,
-    KnowledgeStatus, KnowledgeSyncResult,
+    KnowledgeEntry, KnowledgeHit, KnowledgeProvider, KnowledgeRuntimeSnapshot,
+    KnowledgeRuntimeState, KnowledgeSearchQuery, KnowledgeSourceInfo, KnowledgeStatus,
+    KnowledgeSyncProgress, KnowledgeSyncProgressStage, KnowledgeSyncResult,
 };
 
 pub async fn open_configured_obsidian_provider(
@@ -117,9 +118,22 @@ pub async fn configured_knowledge_status(
 pub async fn sync_configured_knowledge(
     config: &AppConfig,
 ) -> Result<KnowledgeSyncResult, KnowledgeError> {
+    sync_configured_knowledge_with_progress(config, |_| {}).await
+}
+
+pub async fn sync_configured_knowledge_with_progress<F>(
+    config: &AppConfig,
+    progress: F,
+) -> Result<KnowledgeSyncResult, KnowledgeError>
+where
+    F: FnMut(KnowledgeSyncProgress),
+{
     let provider = open_configured_obsidian_provider(config, false).await?;
-    let indexed_notes = provider.reindex().await?;
-    let embedded_chunks = provider.embed_missing_chunks().await?;
+    let mut progress = progress;
+    let indexed_notes = provider.reindex_with_progress(&mut progress).await?;
+    let embedded_chunks = provider
+        .embed_missing_chunks_with_progress(&mut progress)
+        .await?;
     let status = provider.status(config.knowledge.enabled).await?;
     Ok(KnowledgeSyncResult {
         indexed_notes,
