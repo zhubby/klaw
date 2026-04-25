@@ -194,6 +194,11 @@ impl KnowledgePanel {
         });
     }
 
+    fn open_config_form(&mut self) {
+        self.form = Some(KnowledgeConfigForm::from_config(&self.config.knowledge));
+        self.refresh_model_options();
+    }
+
     fn begin_sync(&mut self, notifications: &mut NotificationCenter) {
         if self.sync_request.is_some() {
             return;
@@ -483,6 +488,7 @@ impl KnowledgePanel {
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         let mut save_clicked = false;
         let mut cancel_clicked = false;
+        let mut refresh_models_clicked = false;
         let model_options = self.model_options.clone();
         let Some(form) = self.form.as_mut() else {
             return;
@@ -505,7 +511,7 @@ impl KnowledgePanel {
                         ui.end_row();
 
                         ui.label("Provider");
-                        ui.text_edit_singleline(&mut form.provider);
+                        provider_combo(ui, &mut form.provider);
                         ui.end_row();
 
                         ui.label("Vault path");
@@ -570,12 +576,22 @@ impl KnowledgePanel {
                         );
                         ui.end_row();
                     });
-                if self.model_options_request.is_some() {
-                    ui.horizontal(|ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            self.model_options_request.is_none(),
+                            egui::Button::new("Refresh models"),
+                        )
+                        .clicked()
+                    {
+                        refresh_models_clicked = true;
+                    }
+                    if self.model_options_request.is_some() {
                         ui.add(egui::Spinner::new());
                         ui.small("Loading installed models...");
-                    });
-                } else if model_options.is_empty() {
+                    }
+                });
+                if self.model_options_request.is_none() && model_options.is_empty() {
                     ui.small("No installed local models were found.");
                 }
                 ui.separator();
@@ -594,6 +610,9 @@ impl KnowledgePanel {
         }
         if cancel_clicked {
             self.form = None;
+        }
+        if refresh_models_clicked {
+            self.refresh_model_options();
         }
     }
 }
@@ -632,7 +651,7 @@ impl PanelRenderer for KnowledgePanel {
                 self.begin_sync(notifications);
             }
             if ui.button(format!("{} Config", regular::GEAR)).clicked() {
-                self.form = Some(KnowledgeConfigForm::from_config(&self.config.knowledge));
+                self.open_config_form();
             }
             if self.has_pending_request() {
                 ui.add(egui::Spinner::new());
@@ -688,6 +707,31 @@ fn status_chip(ui: &mut egui::Ui, label: &str, value: String) {
                 ui.small(RichText::new(label).color(Color32::GRAY));
                 ui.monospace(value);
             });
+        });
+}
+
+fn provider_combo(ui: &mut egui::Ui, provider: &mut String) {
+    let selected_text = if provider.trim().is_empty() {
+        "obsidian".to_string()
+    } else {
+        provider.clone()
+    };
+    egui::ComboBox::from_id_salt("knowledge-config-provider")
+        .selected_text(selected_text)
+        .width(360.0)
+        .show_ui(ui, |ui| {
+            if ui
+                .selectable_label(provider.trim() == "obsidian", "obsidian")
+                .clicked()
+            {
+                *provider = "obsidian".to_string();
+                ui.close();
+            }
+            let current = provider.trim();
+            if !current.is_empty() && current != "obsidian" {
+                ui.separator();
+                ui.label(format!("{current} (unsupported)"));
+            }
         });
 }
 
@@ -860,5 +904,21 @@ mod tests {
             1
         );
         assert_eq!(model_capability_rank(&other, ModelCapability::Embedding), 2);
+    }
+
+    #[test]
+    fn opening_config_form_refreshes_model_options() {
+        let mut panel = KnowledgePanel::default();
+        panel.config.models.root_dir = Some(
+            std::env::temp_dir()
+                .join(format!("klaw-knowledge-models-{}", uuid::Uuid::new_v4()))
+                .display()
+                .to_string(),
+        );
+
+        panel.open_config_form();
+
+        assert!(panel.form.is_some());
+        assert!(panel.model_options_request.is_some());
     }
 }
