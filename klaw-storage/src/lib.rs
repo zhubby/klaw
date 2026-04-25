@@ -863,6 +863,7 @@ mod tests {
         assert_eq!(paths.memory_db_path, base.join("memory.db"));
         assert_eq!(paths.knowledge_db_path, base.join("knowledge.db"));
         assert_eq!(paths.archive_db_path, base.join("archive.db"));
+        assert_eq!(paths.models_dir, base.join("models"));
         assert_eq!(paths.tmp_dir, base.join("tmp"));
         assert_eq!(paths.archives_dir, base.join("archives"));
     }

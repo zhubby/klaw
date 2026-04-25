@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use klaw_config::{AppConfig, KnowledgeToolConfig};
 use klaw_knowledge::{
     KnowledgeEntry, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery,
-    assemble_context_bundle, obsidian::provider::ObsidianKnowledgeProvider,
+    assemble_context_bundle, build_local_embedding_model, build_local_orchestrator,
+    build_local_reranker, obsidian::provider::ObsidianKnowledgeProvider,
 };
 use klaw_storage::open_default_knowledge_db;
 use serde_json::{Value, json};
@@ -62,11 +63,33 @@ impl KnowledgeTool {
             vault_path,
             config.knowledge.obsidian.exclude_folders.clone(),
             config.knowledge.obsidian.max_excerpt_length,
-            config.knowledge.obsidian.index_on_startup,
+            false,
             "Obsidian Vault",
         )
         .await
         .map_err(map_knowledge_error)?;
+        let provider = if let Some(embedder) =
+            build_local_embedding_model(config).map_err(map_knowledge_error)?
+        {
+            provider.with_embedding_model(Arc::new(embedder))
+        } else {
+            provider
+        };
+        let provider = if let Some(reranker) = build_local_reranker(config).map_err(map_knowledge_error)? {
+            provider.with_reranker(Arc::new(reranker))
+        } else {
+            provider
+        };
+        let provider = if let Some(orchestrator) =
+            build_local_orchestrator(config).map_err(map_knowledge_error)?
+        {
+            provider.with_orchestrator(Arc::new(orchestrator))
+        } else {
+            provider
+        };
+        if config.knowledge.obsidian.index_on_startup {
+            provider.reindex().await.map_err(map_knowledge_error)?;
+        }
         Ok(Self {
             provider: Arc::new(provider),
             runtime: KnowledgeToolRuntimeConfig::from_tool_config(&config.tools.knowledge),

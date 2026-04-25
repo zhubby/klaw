@@ -1,7 +1,8 @@
 use crate::StorageError;
 use klaw_util::{
     archive_db_path, archives_dir, db_path, default_data_dir, knowledge_db_path, logs_dir,
-    memory_db_path, sessions_dir, skills_dir, skills_registry_dir, tmp_dir, workspace_dir,
+    memory_db_path, models_dir, sessions_dir, skills_dir, skills_registry_dir, tmp_dir,
+    workspace_dir,
 };
 use std::path::PathBuf;
 use tokio::fs;
@@ -14,6 +15,7 @@ pub struct StoragePaths {
     pub knowledge_db_path: PathBuf,
     pub archive_db_path: PathBuf,
     pub tmp_dir: PathBuf,
+    pub models_dir: PathBuf,
     pub workspace_dir: PathBuf,
     pub sessions_dir: PathBuf,
     pub archives_dir: PathBuf,
@@ -35,6 +37,7 @@ impl StoragePaths {
             knowledge_db_path: knowledge_db_path(&root_dir),
             archive_db_path: archive_db_path(&root_dir),
             tmp_dir: tmp_dir(&root_dir),
+            models_dir: models_dir(&root_dir),
             workspace_dir: workspace_dir(&root_dir),
             sessions_dir: sessions_dir(&root_dir),
             archives_dir: archives_dir(&root_dir),
@@ -53,6 +56,9 @@ impl StoragePaths {
             .await
             .map_err(StorageError::CreateTmpDir)?;
         fs::create_dir_all(&self.workspace_dir)
+            .await
+            .map_err(StorageError::CreateDataDir)?;
+        fs::create_dir_all(&self.models_dir)
             .await
             .map_err(StorageError::CreateDataDir)?;
         fs::create_dir_all(&self.sessions_dir)

@@ -9,6 +9,7 @@ mod gateway;
 mod heartbeat;
 mod llm;
 mod logs;
+mod local_models;
 mod mcp;
 mod memory;
 mod monitor;
@@ -70,6 +71,7 @@ pub struct PanelRegistry {
     monitor: monitor::MonitorPanel,
     logs: logs::LogsPanel,
     llm: llm::LlmPanel,
+    local_models: local_models::LocalModelsPanel,
     analyze_dashboard: analyze_dashboard::AnalyzeDashboardPanel,
     observability: observability::ObservabilityPanel,
 }
@@ -122,6 +124,10 @@ impl PanelRegistry {
             WorkbenchMenu::Provider => {
                 puffin::profile_scope!("panel_provider");
                 self.provider.render(ui, ctx, notifications)
+            }
+            WorkbenchMenu::LocalModels => {
+                puffin::profile_scope!("panel_local_models");
+                self.local_models.render(ui, ctx, notifications)
             }
             WorkbenchMenu::Llm => {
                 puffin::profile_scope!("panel_llm");
@@ -204,6 +210,7 @@ impl PanelRegistry {
             WorkbenchMenu::Approval => self.approval.on_tab_closed(),
             WorkbenchMenu::Configuration => self.configuration.on_tab_closed(),
             WorkbenchMenu::Provider => self.provider.on_tab_closed(),
+            WorkbenchMenu::LocalModels => self.local_models.on_tab_closed(),
             WorkbenchMenu::Llm => self.llm.on_tab_closed(),
             WorkbenchMenu::Channel => self.channel.on_tab_closed(),
             WorkbenchMenu::Voice => self.voice.on_tab_closed(),

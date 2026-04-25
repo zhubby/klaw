@@ -27,6 +27,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub knowledge: KnowledgeConfig,
     #[serde(default)]
+    pub models: ModelsConfig,
+    #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]
     pub acp: AcpConfig,
@@ -61,6 +63,7 @@ impl Default for AppConfig {
             channels: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
             knowledge: KnowledgeConfig::default(),
+            models: ModelsConfig::default(),
             mcp: McpConfig::default(),
             acp: AcpConfig::default(),
             tools: ToolsConfig::default(),
@@ -983,20 +986,95 @@ pub struct KnowledgeModelsConfig {
     #[serde(default = "default_knowledge_embedding_provider")]
     pub embedding_provider: String,
     #[serde(default)]
-    pub embedding_model_path: Option<String>,
+    #[serde(alias = "embedding_model_path")]
+    pub embedding_model_id: Option<String>,
     #[serde(default)]
-    pub orchestrator_model_path: Option<String>,
+    #[serde(alias = "orchestrator_model_path")]
+    pub orchestrator_model_id: Option<String>,
     #[serde(default)]
-    pub reranker_model_path: Option<String>,
+    #[serde(alias = "reranker_model_path")]
+    pub reranker_model_id: Option<String>,
 }
 
 impl Default for KnowledgeModelsConfig {
     fn default() -> Self {
         Self {
             embedding_provider: default_knowledge_embedding_provider(),
-            embedding_model_path: None,
-            orchestrator_model_path: None,
-            reranker_model_path: None,
+            embedding_model_id: None,
+            orchestrator_model_id: None,
+            reranker_model_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelsConfig {
+    #[serde(default = "default_models_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub root_dir: Option<String>,
+    #[serde(default)]
+    pub huggingface: HuggingFaceModelsConfig,
+    #[serde(default)]
+    pub llama_cpp: LlamaCppConfig,
+    #[serde(default)]
+    pub default_embedding_model_id: Option<String>,
+    #[serde(default)]
+    pub default_reranker_model_id: Option<String>,
+    #[serde(default)]
+    pub default_chat_model_id: Option<String>,
+}
+
+impl Default for ModelsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_models_enabled(),
+            root_dir: None,
+            huggingface: HuggingFaceModelsConfig::default(),
+            llama_cpp: LlamaCppConfig::default(),
+            default_embedding_model_id: None,
+            default_reranker_model_id: None,
+            default_chat_model_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HuggingFaceModelsConfig {
+    #[serde(default = "default_models_huggingface_endpoint")]
+    pub endpoint: String,
+    #[serde(default)]
+    pub cache_dir: Option<String>,
+    #[serde(default = "default_models_huggingface_auth_token_env")]
+    pub auth_token_env: Option<String>,
+}
+
+impl Default for HuggingFaceModelsConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: default_models_huggingface_endpoint(),
+            cache_dir: None,
+            auth_token_env: default_models_huggingface_auth_token_env(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlamaCppConfig {
+    #[serde(default = "default_models_llama_cpp_command")]
+    pub command: String,
+    #[serde(default)]
+    pub library_path: Option<String>,
+    #[serde(default = "default_models_llama_cpp_default_ctx_size")]
+    pub default_ctx_size: u32,
+}
+
+impl Default for LlamaCppConfig {
+    fn default() -> Self {
+        Self {
+            command: default_models_llama_cpp_command(),
+            library_path: None,
+            default_ctx_size: default_models_llama_cpp_default_ctx_size(),
         }
     }
 }
@@ -1124,6 +1202,26 @@ fn default_knowledge_temporal_decay() -> f32 {
 
 fn default_knowledge_embedding_provider() -> String {
     "llama_cpp".to_string()
+}
+
+fn default_models_enabled() -> bool {
+    false
+}
+
+fn default_models_huggingface_endpoint() -> String {
+    "https://huggingface.co".to_string()
+}
+
+fn default_models_huggingface_auth_token_env() -> Option<String> {
+    Some("HF_TOKEN".to_string())
+}
+
+fn default_models_llama_cpp_command() -> String {
+    "llama-cli".to_string()
+}
+
+fn default_models_llama_cpp_default_ctx_size() -> u32 {
+    4096
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
