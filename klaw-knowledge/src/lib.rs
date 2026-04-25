@@ -8,6 +8,7 @@ pub mod types;
 
 pub use context::{ContextBundle, ContextSection, assemble_context_bundle};
 pub use error::KnowledgeError;
+pub use models::{build_local_embedding_model, build_local_orchestrator, build_local_reranker};
 pub use obsidian::provider::ObsidianKnowledgeProvider;
 pub use provider_router::KnowledgeProviderRouter;
 pub use types::{

@@ -97,6 +97,18 @@ rerank_candidates = 20
 graph_hops = 1
 temporal_decay = 0.85
 
+[knowledge.models]
+embedding_model_id = "Qwen__Qwen3-Embedding-0.6B-GGUF--main"
+reranker_model_id = "Qwen__Qwen3-Reranker-0.6B-GGUF--main"
+
+[models]
+enabled = true
+default_embedding_model_id = "Qwen__Qwen3-Embedding-0.6B-GGUF--main"
+default_reranker_model_id = "Qwen__Qwen3-Reranker-0.6B-GGUF--main"
+
+[models.llama_cpp]
+command = "llama-cli"
+
 [tools.knowledge]
 enabled = true
 search_limit = 5
@@ -108,11 +120,17 @@ include_explain = true
 
 - `knowledge.enabled=true` 时必须配置 `knowledge.obsidian.vault_path`
 - `tools.knowledge.enabled=true` 需要 `knowledge.enabled=true`
+- `knowledge.models.*_model_id` 优先于 `models.default_*_model_id`
+- `knowledge` 通过 `klaw-model` 暴露的本地 runtime trait 消费本地模型，不再直接持有裸文件路径
+- 若配置了 `knowledge.models.orchestrator_model_id`，搜索前会先通过本地 orchestrator 产出 query expansion 与 intent，再驱动 lane 权重
+- 若配置了 `knowledge.models.embedding_model_id`，索引时会为 chunk 写入本地 embedding，查询时启用 semantic lane
+- 若配置了 `knowledge.models.reranker_model_id`，会在 RRF 初筛后执行本地 rerank 二阶段重排
 
 ## Runtime 接入路径
 
 - 配置结构：`klaw-config`
 - 数据库存储：`knowledge.db`（由 `klaw-storage` 路径层统一管理）
+- 本地模型资产：`klaw-model`
 - 知识实现：`klaw-knowledge`
 - 工具实现：`klaw-tool/src/knowledge.rs`
 - runtime 注册：`klaw-runtime` 的 `register_configured_tools`
@@ -126,7 +144,8 @@ include_explain = true
 - heading-aware markdown chunking
 - `knowledge_entries` / `knowledge_chunks` / `knowledge_links` / `knowledge_fts` 索引表
 - FTS5 可用时走 `MATCH`，不可用时自动回退为普通表 + token scoring
-- graph / temporal lane 与 RRF fusion
+- semantic / FTS / graph / temporal / rerank 五路检索与 weighted RRF fusion
+- 可选本地 orchestrator query expansion + intent classification（由 `klaw-model` 驱动，参考 `engraph`）
 - `ContextBundle` 组装
 
 本期仍保持为内部 runtime/tool 能力，不暴露 HTTP/REST 或外部 MCP 服务。

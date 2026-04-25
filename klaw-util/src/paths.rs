@@ -18,6 +18,7 @@ pub const SKILLS_DIR_NAME: &str = "skills";
 pub const SKILLS_REGISTRY_DIR_NAME: &str = "skills-registry";
 pub const SKILLS_REGISTRY_MANIFEST_FILE_NAME: &str = "skills-registry-manifest.json";
 pub const TOKENIZERS_DIR_NAME: &str = "tokenizers";
+pub const MODELS_DIR_NAME: &str = "models";
 
 pub fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -55,6 +56,10 @@ pub fn default_workspace_dir() -> Option<PathBuf> {
 
 pub fn tokenizer_dir(root_dir: impl AsRef<Path>) -> PathBuf {
     root_dir.as_ref().join(TOKENIZERS_DIR_NAME)
+}
+
+pub fn models_dir(root_dir: impl AsRef<Path>) -> PathBuf {
+    root_dir.as_ref().join(MODELS_DIR_NAME)
 }
 
 pub fn skills_dir(root_dir: impl AsRef<Path>) -> PathBuf {
@@ -127,5 +132,6 @@ mod tests {
             knowledge_db_path(root),
             PathBuf::from("/tmp/demo/knowledge.db")
         );
+        assert_eq!(models_dir(root), PathBuf::from("/tmp/demo/models"));
     }
 }

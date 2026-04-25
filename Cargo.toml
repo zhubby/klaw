@@ -16,6 +16,7 @@ members = [
     "klaw-skill",
     "klaw-memory",
     "klaw-knowledge",
+    "klaw-model",
     "klaw-cron",
     "klaw-session",
     "klaw-storage",
@@ -45,6 +46,7 @@ default-members = [
     "klaw-skill",
     "klaw-memory",
     "klaw-knowledge",
+    "klaw-model",
     "klaw-cron",
     "klaw-session",
     "klaw-storage",
@@ -159,6 +161,8 @@ puffin_egui = { git = "https://github.com/zhubby/puffin", branch = "dev-egui-0.3
 cpal = "0.16"
 hound = "3.5"
 rodio = "0.20"
+llama-cpp-2 = "0.1.145"
+encoding_rs = "0.8.35"
 
 klaw-acp = { path = "klaw-acp" }
 klaw-core = { path = "klaw-core" }
@@ -174,6 +178,7 @@ klaw-agent = { path = "klaw-agent" }
 klaw-storage = { path = "klaw-storage" }
 klaw-memory = { path = "klaw-memory" }
 klaw-knowledge = { path = "klaw-knowledge" }
+klaw-model = { path = "klaw-model" }
 klaw-cron = { path = "klaw-cron" }
 klaw-session = { path = "klaw-session" }
 klaw-skill = { path = "klaw-skill" }

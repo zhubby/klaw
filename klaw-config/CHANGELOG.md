@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-25
+
+### Changed
+
+- `models.huggingface` 现在使用明文 `token` 配置替代 `auth_token_env`，`endpoint` 继续用于 Hugging Face 主站或镜像站域名
+
 ## 2026-04-10
 
 ### Added

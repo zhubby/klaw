@@ -105,6 +105,7 @@ mod tests {
                 "ACP",
                 "LLM",
                 "MCP",
+                "Model",
                 "Model Provider",
                 "Skills Manager",
                 "Skills Registry",

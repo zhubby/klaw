@@ -95,6 +95,17 @@ fn parse_default_template_succeeds() {
     assert_eq!(parsed.knowledge.retrieval.top_k, 5);
     assert_eq!(parsed.knowledge.retrieval.rerank_candidates, 20);
     assert_eq!(parsed.knowledge.retrieval.graph_hops, 1);
+    assert!(!parsed.models.enabled);
+    assert!(parsed.models.root_dir.is_none());
+    assert_eq!(parsed.models.huggingface.endpoint, "https://huggingface.co");
+    assert!(parsed.models.huggingface.token.is_none());
+    assert_eq!(parsed.models.llama_cpp.command, "llama-cli");
+    assert!(parsed.models.default_embedding_model_id.is_none());
+    assert!(parsed.models.default_reranker_model_id.is_none());
+    assert!(parsed.models.default_chat_model_id.is_none());
+    assert!(parsed.knowledge.models.embedding_model_id.is_none());
+    assert!(parsed.knowledge.models.orchestrator_model_id.is_none());
+    assert!(parsed.knowledge.models.reranker_model_id.is_none());
     assert!(parsed.tools.web_fetch.enabled);
     assert_eq!(parsed.tools.web_fetch.max_chars, 50_000);
     assert_eq!(parsed.tools.web_fetch.timeout_seconds, 15);
@@ -1502,6 +1513,21 @@ fn validate_fails_when_knowledge_enabled_without_vault_path() {
     cfg.knowledge.enabled = true;
     let err = validate(&cfg).expect_err("missing vault path should fail");
     assert!(format!("{err}").contains("knowledge.obsidian.vault_path"));
+}
+
+#[test]
+fn validate_fails_when_models_enabled_with_empty_paths() {
+    let mut cfg = AppConfig::default();
+    cfg.models.enabled = true;
+    cfg.models.root_dir = Some("   ".to_string());
+    let err = validate(&cfg).expect_err("empty root dir should fail");
+    assert!(format!("{err}").contains("models.root_dir"));
+
+    let mut cfg2 = AppConfig::default();
+    cfg2.models.enabled = true;
+    cfg2.models.llama_cpp.command = String::new();
+    let err2 = validate(&cfg2).expect_err("empty llama command should fail");
+    assert!(format!("{err2}").contains("models.llama_cpp.command"));
 }
 
 #[test]

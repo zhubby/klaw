@@ -27,6 +27,7 @@ klaw-gateway = { workspace = true }
 klaw-heartbeat = { workspace = true }
 klaw-mcp = { workspace = true }
 klaw-memory = { workspace = true }
+klaw-model = { workspace = true }
 klaw-observability = { workspace = true }
 klaw-runtime = { workspace = true }
 klaw-session = { workspace = true }
@@ -40,6 +41,7 @@ serde_json = { workspace = true }
 reqwest = { workspace = true }
 semver = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 toml = { workspace = true }
 sysinfo = { workspace = true }
 puffin = { workspace = true }

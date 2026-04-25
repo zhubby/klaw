@@ -162,6 +162,91 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             ));
         }
     }
+    if config
+        .knowledge
+        .models
+        .embedding_model_id
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "knowledge.models.embedding_model_id cannot be empty when configured".to_string(),
+        ));
+    }
+    if config
+        .knowledge
+        .models
+        .orchestrator_model_id
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "knowledge.models.orchestrator_model_id cannot be empty when configured".to_string(),
+        ));
+    }
+    if config
+        .knowledge
+        .models
+        .reranker_model_id
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "knowledge.models.reranker_model_id cannot be empty when configured".to_string(),
+        ));
+    }
+    if config.models.enabled {
+        if config
+            .models
+            .root_dir
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(ConfigError::InvalidConfig(
+                "models.root_dir cannot be empty when configured".to_string(),
+            ));
+        }
+        if config.models.huggingface.endpoint.trim().is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "models.huggingface.endpoint cannot be empty when models.enabled=true".to_string(),
+            ));
+        }
+        if config.models.llama_cpp.command.trim().is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "models.llama_cpp.command cannot be empty when models.enabled=true".to_string(),
+            ));
+        }
+    }
+    if config
+        .models
+        .default_embedding_model_id
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "models.default_embedding_model_id cannot be empty when configured".to_string(),
+        ));
+    }
+    if config
+        .models
+        .default_reranker_model_id
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "models.default_reranker_model_id cannot be empty when configured".to_string(),
+        ));
+    }
+    if config
+        .models
+        .default_chat_model_id
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(ConfigError::InvalidConfig(
+            "models.default_chat_model_id cannot be empty when configured".to_string(),
+        ));
+    }
     if config.memory.archive.enabled {
         let schedule = config.memory.archive.schedule.trim();
         if schedule.is_empty() {

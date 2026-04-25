@@ -43,6 +43,7 @@ pub enum WorkbenchMenu {
     Approval,
     Configuration,
     Provider,
+    LocalModels,
     Llm,
     Channel,
     Voice,
@@ -65,7 +66,7 @@ pub enum WorkbenchMenu {
 }
 
 impl WorkbenchMenu {
-    pub const ALL: [WorkbenchMenu; 26] = [
+    pub const ALL: [WorkbenchMenu; 27] = [
         WorkbenchMenu::Profile,
         WorkbenchMenu::System,
         WorkbenchMenu::Setting,
@@ -74,6 +75,7 @@ impl WorkbenchMenu {
         WorkbenchMenu::Approval,
         WorkbenchMenu::Configuration,
         WorkbenchMenu::Provider,
+        WorkbenchMenu::LocalModels,
         WorkbenchMenu::Llm,
         WorkbenchMenu::Channel,
         WorkbenchMenu::Voice,
@@ -104,6 +106,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Approval => "approval",
             WorkbenchMenu::Configuration => "configuration",
             WorkbenchMenu::Provider => "provider",
+            WorkbenchMenu::LocalModels => "local-models",
             WorkbenchMenu::Llm => "llm",
             WorkbenchMenu::Channel => "channel",
             WorkbenchMenu::Voice => "voice",
@@ -135,6 +138,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Approval => "Approval",
             WorkbenchMenu::Configuration => "Configuration",
             WorkbenchMenu::Provider => "Model Provider",
+            WorkbenchMenu::LocalModels => "Model",
             WorkbenchMenu::Llm => "LLM",
             WorkbenchMenu::Channel => "Channel",
             WorkbenchMenu::Voice => "Voice",
@@ -166,6 +170,7 @@ impl WorkbenchMenu {
             WorkbenchMenu::Approval => regular::SEAL_CHECK,
             WorkbenchMenu::Configuration => regular::TOOLBOX,
             WorkbenchMenu::Provider => regular::BRAIN,
+            WorkbenchMenu::LocalModels => regular::PACKAGE,
             WorkbenchMenu::Llm => regular::CHATS_CIRCLE,
             WorkbenchMenu::Channel => regular::USERS,
             WorkbenchMenu::Voice => regular::MICROPHONE,
@@ -199,6 +204,7 @@ impl WorkbenchMenu {
             | WorkbenchMenu::Terminal
             | WorkbenchMenu::Configuration => WorkbenchMenuGroup::Workspace,
             WorkbenchMenu::Provider
+            | WorkbenchMenu::LocalModels
             | WorkbenchMenu::Llm
             | WorkbenchMenu::Mcp
             | WorkbenchMenu::Acp
@@ -287,6 +293,17 @@ mod tests {
         assert_eq!(
             WorkbenchMenu::Terminal.group(),
             WorkbenchMenuGroup::Workspace
+        );
+    }
+
+    #[test]
+    fn local_models_menu_is_registered() {
+        assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::LocalModels));
+        assert_eq!(WorkbenchMenu::LocalModels.id_key(), "local-models");
+        assert_eq!(WorkbenchMenu::LocalModels.title(), "Model");
+        assert_eq!(
+            WorkbenchMenu::LocalModels.group(),
+            WorkbenchMenuGroup::AiAndCapability
         );
     }
 

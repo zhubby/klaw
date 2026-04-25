@@ -20,11 +20,27 @@ pub struct FusedHit {
 }
 
 pub fn reciprocal_rank_fuse(lanes: &[(&str, &[RankedHit])], k: usize) -> Vec<FusedHit> {
+    weighted_reciprocal_rank_fuse(
+        &lanes
+            .iter()
+            .map(|(name, hits)| (*name, *hits, 1.0))
+            .collect::<Vec<_>>(),
+        k,
+    )
+}
+
+pub fn weighted_reciprocal_rank_fuse(
+    lanes: &[(&str, &[RankedHit], f64)],
+    k: usize,
+) -> Vec<FusedHit> {
     let mut by_id: HashMap<String, FusedHit> = HashMap::new();
 
-    for (lane_name, hits) in lanes {
+    for (lane_name, hits, weight) in lanes {
+        if *weight <= 0.0 {
+            continue;
+        }
         for (idx, hit) in hits.iter().enumerate() {
-            let lane_score = 1.0 / (k as f64 + idx as f64 + 1.0);
+            let lane_score = *weight / (k as f64 + idx as f64 + 1.0);
             let fused = by_id.entry(hit.id.clone()).or_insert_with(|| FusedHit {
                 id: hit.id.clone(),
                 title: hit.title.clone(),
@@ -77,5 +93,14 @@ mod tests {
         let fused = reciprocal_rank_fuse(&[("semantic", &semantic)], 60);
         assert_eq!(fused.len(), 1);
         assert_eq!(fused[0].lanes, vec!["semantic".to_string()]);
+    }
+
+    #[test]
+    fn weighted_fusion_respects_lane_weight() {
+        let semantic = vec![hit("auth", 0.9)];
+        let fts = vec![hit("cookie", 0.9)];
+        let fused =
+            weighted_reciprocal_rank_fuse(&[("semantic", &semantic, 2.0), ("fts", &fts, 1.0)], 60);
+        assert_eq!(fused[0].id, "auth");
     }
 }

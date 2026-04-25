@@ -9,7 +9,7 @@ use klaw_storage::{DbRow, DbValue, MemoryDb};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::KnowledgeError;
+use crate::{KnowledgeError, models::EmbeddingModel};
 
 use super::{
     chunker::{Chunk, ParsedMarkdown, chunk_markdown},
@@ -92,13 +92,14 @@ pub async fn index_vault(
     vault_root: &Path,
     exclude_folders: &[String],
     max_excerpt_length: usize,
+    embedder: Option<&dyn EmbeddingModel>,
 ) -> Result<usize, KnowledgeError> {
     init_schema(&db).await?;
     let files = collect_markdown_files(vault_root, exclude_folders)?;
     let mut indexed = 0usize;
     for path in files {
         indexed += usize::from(
-            index_note_path(db.clone(), vault_root, &path, max_excerpt_length).await?,
+            index_note_path(db.clone(), vault_root, &path, max_excerpt_length, embedder).await?,
         );
     }
     Ok(indexed)
@@ -109,6 +110,7 @@ pub async fn index_note_path(
     vault_root: &Path,
     absolute_path: &Path,
     max_excerpt_length: usize,
+    embedder: Option<&dyn EmbeddingModel>,
 ) -> Result<bool, KnowledgeError> {
     let content = std::fs::read_to_string(absolute_path)
         .map_err(|err| KnowledgeError::Provider(format!("read note failed: {err}")))?;
@@ -176,13 +178,17 @@ pub async fn index_note_path(
             index,
             chunk,
             max_excerpt_length,
+            embedder,
         )
         .await?;
     }
     for wikilink in &parsed.wikilinks {
         db.execute(
             "INSERT INTO knowledge_links (source_entry_id, target_title) VALUES (?1, ?2)",
-            &[DbValue::Text(entry_id.clone()), DbValue::Text(wikilink.clone())],
+            &[
+                DbValue::Text(entry_id.clone()),
+                DbValue::Text(wikilink.clone()),
+            ],
         )
         .await
         .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
@@ -275,9 +281,25 @@ async fn insert_chunk(
     index: usize,
     chunk: &Chunk,
     max_excerpt_length: usize,
+    embedder: Option<&dyn EmbeddingModel>,
 ) -> Result<(), KnowledgeError> {
     let chunk_id = format!("{entry_id}#{index}");
     let snippet = trim_chars(&chunk.snippet, max_excerpt_length);
+    let embedding = match embedder {
+        Some(embedder) => {
+            let mut text = String::new();
+            if let Some(heading) = &chunk.heading {
+                text.push_str(heading);
+                text.push_str("\n\n");
+            } else {
+                text.push_str(title);
+                text.push_str("\n\n");
+            }
+            text.push_str(&chunk.text);
+            Some(embedder.embed(&text).await?)
+        }
+        None => None,
+    };
     db.execute(
         "INSERT INTO knowledge_chunks (id, entry_id, heading, content, snippet, embedding)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -291,7 +313,9 @@ async fn insert_chunk(
                 .unwrap_or(DbValue::Null),
             DbValue::Text(chunk.text.clone()),
             DbValue::Text(snippet.clone()),
-            DbValue::Null,
+            embedding
+                .map(|vector| DbValue::Blob(serialize_embedding(&vector)))
+                .unwrap_or(DbValue::Null),
         ],
     )
     .await
@@ -317,6 +341,13 @@ fn trim_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars.max(1)).collect()
 }
 
+fn serialize_embedding(vector: &[f32]) -> Vec<u8> {
+    vector
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>()
+}
+
 fn default_title_from_path(path: &Path) -> String {
     path.file_stem()
         .and_then(|stem| stem.to_str())
@@ -337,7 +368,9 @@ fn file_mtime_ms(path: &Path) -> Result<i64, KnowledgeError> {
 fn is_excluded(path: &Path, exclude_folders: &[String]) -> bool {
     path.components().any(|component| {
         let name = component.as_os_str().to_string_lossy();
-        exclude_folders.iter().any(|exclude| exclude.trim_matches('/') == name)
+        exclude_folders
+            .iter()
+            .any(|exclude| exclude.trim_matches('/') == name)
     })
 }
 
@@ -382,7 +415,7 @@ mod tests {
         std::fs::write(vault.join(".obsidian/ignored.md"), "# Ignored").expect("write ignored");
 
         let db = open_test_db("index").await;
-        let indexed = index_vault(db.clone(), &vault, &[String::from(".obsidian")], 400)
+        let indexed = index_vault(db.clone(), &vault, &[String::from(".obsidian")], 400, None)
             .await
             .expect("index should succeed");
         assert_eq!(indexed, 1);
