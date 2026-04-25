@@ -28,7 +28,6 @@ enum ModelTaskMessage {
 struct InstallForm {
     repo_id: String,
     revision: String,
-    quantization: String,
 }
 
 impl Default for InstallForm {
@@ -36,7 +35,6 @@ impl Default for InstallForm {
         Self {
             repo_id: String::new(),
             revision: "main".to_string(),
-            quantization: String::new(),
         }
     }
 }
@@ -54,8 +52,7 @@ impl InstallForm {
         Ok(ModelInstallRequest {
             repo_id: repo_id.to_string(),
             revision: revision.to_string(),
-            quantization: (!self.quantization.trim().is_empty())
-                .then(|| self.quantization.trim().to_string()),
+            quantization: None,
         })
     }
 }
@@ -296,8 +293,6 @@ impl LocalModelsPanel {
                 ui.text_edit_singleline(&mut self.install_form.repo_id);
                 ui.label("Branch / revision");
                 ui.text_edit_singleline(&mut self.install_form.revision);
-                ui.label("Quantization");
-                ui.text_edit_singleline(&mut self.install_form.quantization);
                 ui.horizontal(|ui| {
                     cancel_clicked = ui.button("Cancel").clicked();
                     install_clicked = ui.button("Download").clicked();
@@ -430,45 +425,53 @@ impl LocalModelsPanel {
                     let is_selected = self.selected_model.as_deref() == Some(&summary.model_id);
                     body.row(28.0, |mut row| {
                         row.set_selected(is_selected);
+                        let mut row_clicked = false;
                         row.col(|ui| {
-                            ui.monospace(format!("{} ({})", summary.repo_id, summary.revision));
+                            let response = ui.selectable_label(
+                                is_selected,
+                                RichText::new(format!(
+                                    "{} ({})",
+                                    summary.repo_id, summary.revision
+                                ))
+                                .monospace(),
+                            );
+                            row_clicked |= response.clicked();
+                            model_row_context_menu(
+                                response,
+                                &summary,
+                                &mut upgrade_summary,
+                                &mut delete_model_id,
+                            );
                         });
                         row.col(|ui| {
-                            ui.label(format_bytes(summary.size_bytes));
+                            let response =
+                                ui.selectable_label(is_selected, format_bytes(summary.size_bytes));
+                            row_clicked |= response.clicked();
+                            model_row_context_menu(
+                                response,
+                                &summary,
+                                &mut upgrade_summary,
+                                &mut delete_model_id,
+                            );
                         });
                         row.col(|ui| {
-                            ui.label(&summary.installed_at);
+                            let response = ui.selectable_label(is_selected, &summary.installed_at);
+                            row_clicked |= response.clicked();
+                            model_row_context_menu(
+                                response,
+                                &summary,
+                                &mut upgrade_summary,
+                                &mut delete_model_id,
+                            );
                         });
 
-                        let response = row.response();
-                        if response.clicked() {
+                        if row_clicked {
                             self.selected_model = if is_selected {
                                 None
                             } else {
                                 Some(summary.model_id.clone())
                             };
                         }
-                        let summary_for_menu = summary.clone();
-                        response.context_menu(|ui| {
-                            if ui
-                                .button(format!("{} Upgrade", regular::ARROW_CLOCKWISE))
-                                .clicked()
-                            {
-                                upgrade_summary = Some(summary_for_menu.clone());
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui
-                                .add(egui::Button::new(
-                                    RichText::new(format!("{} Delete", regular::TRASH))
-                                        .color(ui.visuals().warn_fg_color),
-                                ))
-                                .clicked()
-                            {
-                                delete_model_id = Some(summary_for_menu.model_id.clone());
-                                ui.close();
-                            }
-                        });
                     });
                 }
             });
@@ -550,6 +553,34 @@ fn format_bytes(value: u64) -> String {
     format!("{size:.1} {}", UNITS[unit])
 }
 
+fn model_row_context_menu(
+    response: egui::Response,
+    summary: &ModelSummary,
+    upgrade_summary: &mut Option<ModelSummary>,
+    delete_model_id: &mut Option<String>,
+) {
+    response.context_menu(|ui| {
+        if ui
+            .button(format!("{} Upgrade", regular::ARROW_CLOCKWISE))
+            .clicked()
+        {
+            *upgrade_summary = Some(summary.clone());
+            ui.close();
+        }
+        ui.separator();
+        if ui
+            .add(egui::Button::new(
+                RichText::new(format!("{} Delete", regular::TRASH))
+                    .color(ui.visuals().warn_fg_color),
+            ))
+            .clicked()
+        {
+            *delete_model_id = Some(summary.model_id.clone());
+            ui.close();
+        }
+    });
+}
+
 fn open_path_in_os(path: &std::path::Path) -> Result<(), std::io::Error> {
     #[cfg(target_os = "macos")]
     {
@@ -577,13 +608,12 @@ mod tests {
         let form = InstallForm {
             repo_id: "Qwen/Qwen3-Embedding-0.6B-GGUF".to_string(),
             revision: "main".to_string(),
-            quantization: "Q4_K_M".to_string(),
         };
 
         let request = form.to_request().expect("request should parse");
         assert_eq!(request.repo_id, "Qwen/Qwen3-Embedding-0.6B-GGUF");
         assert_eq!(request.revision, "main");
-        assert_eq!(request.quantization.as_deref(), Some("Q4_K_M"));
+        assert!(request.quantization.is_none());
     }
 
     #[test]
