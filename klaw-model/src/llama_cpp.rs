@@ -3,7 +3,7 @@ use std::{
     num::NonZeroU32,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 use async_trait::async_trait;
@@ -23,7 +23,7 @@ use tracing::{debug, error};
 
 use crate::{ModelError, ModelStorage};
 
-static LLAMA_BACKEND: OnceLock<Result<LlamaBackend, String>> = OnceLock::new();
+static LLAMA_BACKEND: OnceLock<Mutex<Weak<LlamaBackend>>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelEmbeddingRequest {
@@ -177,6 +177,8 @@ pub trait LlamaCppBackend: Send + Sync {
 pub struct LlamaCppRsBackend {
     default_ctx_size: u32,
     model_cache: Arc<Mutex<HashMap<PathBuf, Arc<LlamaModel>>>>,
+    // Keep this after `model_cache` so cached models drop before the backend owner.
+    llama_backend: Arc<OnceLock<Result<Arc<LlamaBackend>, String>>>,
 }
 
 impl std::fmt::Debug for LlamaCppRsBackend {
@@ -192,6 +194,7 @@ impl Clone for LlamaCppRsBackend {
         Self {
             default_ctx_size: self.default_ctx_size,
             model_cache: Arc::clone(&self.model_cache),
+            llama_backend: Arc::clone(&self.llama_backend),
         }
     }
 }
@@ -201,7 +204,16 @@ impl LlamaCppRsBackend {
         Self {
             default_ctx_size: default_ctx_size.max(1),
             model_cache: Arc::new(Mutex::new(HashMap::new())),
+            llama_backend: Arc::new(OnceLock::new()),
         }
+    }
+
+    fn llama_backend(&self) -> Result<Arc<LlamaBackend>, ModelError> {
+        self.llama_backend
+            .get_or_init(shared_llama_backend)
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(|err| ModelError::Runtime(err.clone()))
     }
 
     fn load_model(&self, model_path: &Path) -> Result<Arc<LlamaModel>, ModelError> {
@@ -222,7 +234,8 @@ impl LlamaCppRsBackend {
             n_gpu_layers = model_params.n_gpu_layers(),
             "loading GGUF model with llama.cpp"
         );
-        let model = LlamaModel::load_from_file(shared_llama_backend()?, model_path, &model_params)
+        let llama_backend = self.llama_backend()?;
+        let model = LlamaModel::load_from_file(&llama_backend, model_path, &model_params)
             .map_err(|err| {
                 error!(path = %model_path.display(), error = %err, "llama.cpp failed to load GGUF model");
                 ModelError::Runtime(format!(
@@ -282,8 +295,9 @@ impl LlamaCppRsBackend {
             pooling = ?ctx_params.pooling_type(),
             "creating embedding context"
         );
+        let llama_backend = self.llama_backend()?;
         let mut ctx = model
-            .new_context(shared_llama_backend()?, ctx_params)
+            .new_context(&llama_backend, ctx_params)
             .map_err(|err| ModelError::Runtime(format!("creating embedding context: {err}")))?;
         debug!(model_id = %request.model_id, "created embedding context");
 
@@ -342,8 +356,9 @@ impl LlamaCppRsBackend {
 
             let n_ctx = ctx_size(self.default_ctx_size, tokens.len() as u32 + 16);
             let ctx_params = LlamaContextParams::default().with_n_ctx(n_ctx);
+            let llama_backend = self.llama_backend()?;
             let mut ctx = model
-                .new_context(shared_llama_backend()?, ctx_params)
+                .new_context(&llama_backend, ctx_params)
                 .map_err(|err| ModelError::Runtime(format!("creating reranker context: {err}")))?;
 
             let mut batch = LlamaBatch::new(tokens.len() + 16, 1);
@@ -393,8 +408,9 @@ impl LlamaCppRsBackend {
             tokens.len() as u32 + MAX_TOKENS as u32 + 16,
         );
         let ctx_params = LlamaContextParams::default().with_n_ctx(n_ctx);
+        let llama_backend = self.llama_backend()?;
         let mut ctx = model
-            .new_context(shared_llama_backend()?, ctx_params)
+            .new_context(&llama_backend, ctx_params)
             .map_err(|err| ModelError::Runtime(format!("creating chat context: {err}")))?;
 
         let mut batch = LlamaBatch::new(tokens.len() + MAX_TOKENS + 16, 1);
@@ -598,16 +614,20 @@ impl<B> ModelLlamaRuntime<B> {
     }
 }
 
-fn shared_llama_backend() -> Result<&'static LlamaBackend, ModelError> {
-    let backend = LLAMA_BACKEND.get_or_init(|| {
-        send_logs_to_tracing(llama_log_options());
-        let backend =
-            LlamaBackend::init().map_err(|err| format!("initializing llama backend: {err}"))?;
-        Ok(backend)
-    });
-    backend
-        .as_ref()
-        .map_err(|err| ModelError::Runtime(err.clone()))
+fn shared_llama_backend() -> Result<Arc<LlamaBackend>, String> {
+    let registry = LLAMA_BACKEND.get_or_init(|| Mutex::new(Weak::new()));
+    let mut backend = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(handle) = backend.upgrade() {
+        return Ok(handle);
+    }
+
+    send_logs_to_tracing(llama_log_options());
+    let handle =
+        Arc::new(LlamaBackend::init().map_err(|err| format!("initializing llama backend: {err}"))?);
+    *backend = Arc::downgrade(&handle);
+    Ok(handle)
 }
 
 fn llama_log_options() -> LogOptions {
@@ -1023,6 +1043,14 @@ mod tests {
     #[test]
     fn default_backend_kind_prefers_rust_binding() {
         assert_eq!(default_backend_kind(), LlamaBackendKind::RustBinding);
+    }
+
+    #[test]
+    fn cloned_rust_backend_shares_lazy_backend_owner() {
+        let backend = LlamaCppRsBackend::new(4096);
+        let cloned = backend.clone();
+
+        assert!(Arc::ptr_eq(&backend.llama_backend, &cloned.llama_backend));
     }
 
     #[test]

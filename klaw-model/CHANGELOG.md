@@ -22,3 +22,4 @@
 - Installed models are now tracked in a root `manifest.json` index; legacy `manifests/*.json` files are merged on read and `blobs/` is no longer used
 - `ModelLlamaRuntime` can now prefer each model manifest's `default_gguf_model_file` instead of the first GGUF listed in the manifest
 - Native llama.cpp logs are suppressed by default so GUI knowledge indexing/search does not flood the app log stream
+- The Rust binding backend now keeps `llama.cpp` ownership tied to active runtime instances instead of a permanent strong global, allowing Metal resources to release before process exit

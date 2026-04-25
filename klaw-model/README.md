@@ -42,7 +42,7 @@ is no longer used.
 
 `klaw-model` now defaults to a Rust binding backend:
 
-- Global shared `llama.cpp` backend initialized once per process
+- Shared `llama.cpp` backend ownership per active Rust binding runtime, with weak global reuse to avoid leaking Metal resources until process exit
 - GGUF model loading via `llama-cpp-2`
 - Per-model default GGUF selection via `models/manifest.json` `default_gguf_model_file`
 - Per-request `LlamaContext` creation for embedding, rerank, chat, and orchestrator generation
