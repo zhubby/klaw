@@ -34,8 +34,8 @@
 
 下一阶段演进：
 
-1. 增加文件 watcher，监听 vault 内 `.md` 新增、修改、删除
-2. 将全量 `index_on_startup` 与后台增量 watcher 解耦
+1. 持续完善 `auto_index` 文件 watcher，监听 vault 内 `.md` 新增、修改、删除
+2. 将首次全量同步保持为 GUI 手动操作，后台 watcher 只处理已有索引的补偿和后续变化
 3. 记录 tombstone / delete 事件，及时清理已删除 note 的索引残留
 
 ## Hybrid Retrieval

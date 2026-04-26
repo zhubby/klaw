@@ -1,4 +1,9 @@
-use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use klaw_model::QueryIntent;
@@ -10,9 +15,10 @@ use crate::{
     KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress,
     models::{EmbeddingModel, KnowledgeOrchestration, OrchestratorModel, RerankModel},
     obsidian::indexer::{
-        embed_missing_chunks, embed_missing_chunks_with_progress, index_vault,
-        index_vault_with_progress, init_schema,
+        embed_missing_chunks, embed_missing_chunks_with_progress, has_indexed_entries,
+        index_note_path, index_vault, index_vault_with_progress, init_schema, remove_note_path,
     },
+    obsidian::watcher::{AutoIndexWatcher, start_auto_index_watcher},
     retrieval::fusion::{RankedHit, weighted_reciprocal_rank_fuse},
 };
 
@@ -35,7 +41,6 @@ impl ObsidianKnowledgeProvider {
         vault_root: PathBuf,
         exclude_folders: Vec<String>,
         max_excerpt_length: usize,
-        index_on_startup: bool,
         source_name: impl Into<String>,
     ) -> Result<Self, KnowledgeError> {
         init_schema(&db).await?;
@@ -51,9 +56,6 @@ impl ObsidianKnowledgeProvider {
             reranker: None,
             orchestrator: None,
         };
-        if index_on_startup {
-            provider.reindex().await?;
-        }
         Ok(provider)
     }
 
@@ -81,6 +83,44 @@ impl ObsidianKnowledgeProvider {
             self.embedder.as_deref(),
         )
         .await
+    }
+
+    pub fn vault_root(&self) -> &Path {
+        &self.vault_root
+    }
+
+    pub fn exclude_folders(&self) -> &[String] {
+        &self.exclude_folders
+    }
+
+    pub async fn index_path(&self, absolute_path: &Path) -> Result<bool, KnowledgeError> {
+        index_note_path(
+            self.db.clone(),
+            &self.vault_root,
+            absolute_path,
+            self.max_excerpt_length,
+            self.embedder.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn remove_path(&self, relative_path: &str) -> Result<(), KnowledgeError> {
+        remove_note_path(self.db.clone(), relative_path).await
+    }
+
+    pub async fn has_indexed_entries(&self) -> Result<bool, KnowledgeError> {
+        has_indexed_entries(self.db.clone()).await
+    }
+
+    pub async fn reconcile_existing_index(&self) -> Result<usize, KnowledgeError> {
+        if !self.has_indexed_entries().await? {
+            return Ok(0);
+        }
+        self.reindex().await
+    }
+
+    pub fn start_auto_index_watcher(&self) -> Result<AutoIndexWatcher, KnowledgeError> {
+        start_auto_index_watcher(self.clone())
     }
 
     pub async fn reindex_with_progress<F>(&self, progress: F) -> Result<usize, KnowledgeError>
@@ -830,7 +870,7 @@ mod tests {
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    async fn test_provider_with_startup_index(index_on_startup: bool) -> ObsidianKnowledgeProvider {
+    async fn test_provider_unindexed() -> ObsidianKnowledgeProvider {
         let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let vault_root =
             std::env::temp_dir().join(format!("klaw-knowledge-provider-vault-{suffix}"));
@@ -857,7 +897,6 @@ mod tests {
             vault_root,
             vec![".obsidian".to_string()],
             400,
-            index_on_startup,
             "Test Vault",
         )
         .await
@@ -865,14 +904,16 @@ mod tests {
     }
 
     async fn test_provider() -> ObsidianKnowledgeProvider {
-        test_provider_with_startup_index(true).await
+        let provider = test_provider_unindexed().await;
+        provider.reindex().await.expect("test vault should index");
+        provider
     }
 
     async fn test_provider_with_models(
         embedder: Option<Arc<dyn EmbeddingModel>>,
         reranker: Option<Arc<dyn RerankModel>>,
     ) -> ObsidianKnowledgeProvider {
-        let provider = test_provider_with_startup_index(false).await;
+        let provider = test_provider_unindexed().await;
         let provider = if let Some(embedder) = embedder {
             provider.with_embedding_model(embedder)
         } else {

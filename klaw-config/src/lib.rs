@@ -939,8 +939,8 @@ impl Default for KnowledgeConfig {
 pub struct ObsidianKnowledgeConfig {
     #[serde(default)]
     pub vault_path: Option<String>,
-    #[serde(default = "default_obsidian_knowledge_index_on_startup")]
-    pub index_on_startup: bool,
+    #[serde(default)]
+    pub auto_index: bool,
     #[serde(default = "default_obsidian_knowledge_max_excerpt_length")]
     pub max_excerpt_length: usize,
     #[serde(default = "default_obsidian_knowledge_exclude_folders")]
@@ -951,7 +951,7 @@ impl Default for ObsidianKnowledgeConfig {
     fn default() -> Self {
         Self {
             vault_path: None,
-            index_on_startup: default_obsidian_knowledge_index_on_startup(),
+            auto_index: false,
             max_excerpt_length: default_obsidian_knowledge_max_excerpt_length(),
             exclude_folders: default_obsidian_knowledge_exclude_folders(),
         }
@@ -1166,10 +1166,6 @@ fn default_knowledge_enabled() -> bool {
 
 fn default_knowledge_provider() -> String {
     "obsidian".to_string()
-}
-
-fn default_obsidian_knowledge_index_on_startup() -> bool {
-    true
 }
 
 fn default_obsidian_knowledge_max_excerpt_length() -> usize {

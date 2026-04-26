@@ -17,5 +17,6 @@
 - Local llama.cpp knowledge model construction that honors per-model manifest GGUF defaults
 - Status and incremental sync result types for indexed entries, chunks, and embeddings
 - Sync progress events for indexing and embedding phases, including processed counts and current file/chunk labels
+- Auto-index watcher support for updating an already indexed Obsidian vault after Markdown file changes
 - Runtime snapshot/state types for host-owned Knowledge service readiness reporting
 - Retrieval building blocks for hybrid search lanes and RRF fusion

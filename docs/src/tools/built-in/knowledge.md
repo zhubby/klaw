@@ -78,7 +78,9 @@
 
 ## 配置
 
-`knowledge` 默认关闭；只有显式配置 knowledge source 后才建议启用。
+`knowledge` 默认关闭；只有显式配置 knowledge source 后才建议启用。`auto_index`
+开启后会在首次手动同步完成后监听 vault 中的 Markdown 变化并自动更新索引；
+空库首次建索引仍需在 GUI 中手动执行 `Sync Index & Vectors`。
 
 ```toml
 [knowledge]
@@ -87,7 +89,7 @@ provider = "obsidian"
 
 [knowledge.obsidian]
 vault_path = "/Users/me/Knowledge"
-index_on_startup = true
+auto_index = true
 max_excerpt_length = 400
 exclude_folders = [".obsidian", "node_modules", "templates"]
 

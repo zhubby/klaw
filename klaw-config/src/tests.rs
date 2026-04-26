@@ -90,7 +90,9 @@ fn parse_default_template_succeeds() {
     assert!(parsed.tools.knowledge.include_explain);
     assert!(!parsed.knowledge.enabled);
     assert_eq!(parsed.knowledge.provider, "obsidian");
-    assert!(parsed.knowledge.obsidian.index_on_startup);
+    assert!(!parsed.knowledge.obsidian.auto_index);
+    assert!(template.contains("auto_index = false"));
+    assert!(!template.contains("index_on_startup"));
     assert_eq!(parsed.knowledge.obsidian.max_excerpt_length, 400);
     assert_eq!(parsed.knowledge.retrieval.top_k, 5);
     assert_eq!(parsed.knowledge.retrieval.rerank_candidates, 20);

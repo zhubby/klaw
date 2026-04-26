@@ -13,6 +13,9 @@ time = { workspace = true, features = ["parsing"] }
 regex = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 ignore = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
+tracing = { workspace = true }
 klaw-storage = { workspace = true }
 klaw-config = { workspace = true }
 klaw-model = { workspace = true }

@@ -17,14 +17,13 @@ pub use models::{build_local_embedding_model, build_local_orchestrator, build_lo
 pub use obsidian::provider::ObsidianKnowledgeProvider;
 pub use provider_router::KnowledgeProviderRouter;
 pub use types::{
-    KnowledgeEntry, KnowledgeHit, KnowledgeProvider, KnowledgeRuntimeSnapshot,
-    KnowledgeRuntimeState, KnowledgeSearchQuery, KnowledgeSourceInfo, KnowledgeStatus,
-    KnowledgeSyncProgress, KnowledgeSyncProgressStage, KnowledgeSyncResult,
+    KnowledgeAutoIndexHandle, KnowledgeEntry, KnowledgeHit, KnowledgeProvider,
+    KnowledgeRuntimeSnapshot, KnowledgeRuntimeState, KnowledgeSearchQuery, KnowledgeSourceInfo,
+    KnowledgeStatus, KnowledgeSyncProgress, KnowledgeSyncProgressStage, KnowledgeSyncResult,
 };
 
 pub async fn open_configured_obsidian_provider(
     config: &AppConfig,
-    index_on_open: bool,
 ) -> Result<ObsidianKnowledgeProvider, KnowledgeError> {
     let provider_name = config.knowledge.provider.trim();
     if provider_name != "obsidian" {
@@ -43,7 +42,6 @@ pub async fn open_configured_obsidian_provider(
         vault_path,
         config.knowledge.obsidian.exclude_folders.clone(),
         config.knowledge.obsidian.max_excerpt_length,
-        index_on_open,
         "Obsidian Vault",
     )
     .await?;
@@ -111,7 +109,7 @@ pub async fn configured_knowledge_status(
             missing_embedding_count: 0,
         });
     }
-    let provider = open_configured_obsidian_provider(config, false).await?;
+    let provider = open_configured_obsidian_provider(config).await?;
     provider.status(config.knowledge.enabled).await
 }
 
@@ -128,7 +126,7 @@ pub async fn sync_configured_knowledge_with_progress<F>(
 where
     F: FnMut(KnowledgeSyncProgress),
 {
-    let provider = open_configured_obsidian_provider(config, false).await?;
+    let provider = open_configured_obsidian_provider(config).await?;
     let mut progress = progress;
     let indexed_notes = provider.reindex_with_progress(&mut progress).await?;
     let embedded_chunks = provider

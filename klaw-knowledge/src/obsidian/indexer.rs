@@ -120,6 +120,7 @@ where
 {
     init_schema(&db).await?;
     let files = collect_markdown_files(vault_root, exclude_folders)?;
+    remove_missing_entries(db.clone(), vault_root, &files).await?;
     let total = files.len();
     let mut indexed = 0usize;
     for (index, path) in files.into_iter().enumerate() {
@@ -207,6 +208,7 @@ pub async fn index_note_path(
     max_excerpt_length: usize,
     embedder: Option<&dyn EmbeddingModel>,
 ) -> Result<bool, KnowledgeError> {
+    init_schema(&db).await?;
     let content = std::fs::read_to_string(absolute_path)
         .map_err(|err| KnowledgeError::Provider(format!("read note failed: {err}")))?;
     let relative_path = absolute_path
@@ -292,6 +294,27 @@ pub async fn index_note_path(
     Ok(true)
 }
 
+pub async fn remove_note_path(
+    db: Arc<dyn DatabaseExecutor>,
+    relative_path: &str,
+) -> Result<(), KnowledgeError> {
+    delete_entry(db, relative_path).await
+}
+
+pub async fn has_indexed_entries(db: Arc<dyn DatabaseExecutor>) -> Result<bool, KnowledgeError> {
+    let rows = db
+        .query("SELECT COUNT(*) FROM knowledge_entries", &[])
+        .await
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    Ok(integer_at(
+        rows.first()
+            .ok_or_else(|| KnowledgeError::Provider("entry count query returned no rows".into()))?,
+        0,
+    )
+    .unwrap_or_default()
+        > 0)
+}
+
 pub fn collect_markdown_files(
     vault_root: &Path,
     exclude_folders: &[String],
@@ -348,6 +371,30 @@ async fn is_entry_up_to_date(
         .await
         .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
     Ok(rows.first().and_then(|row| integer_at(row, 0)) == Some(updated_at_ms))
+}
+
+async fn remove_missing_entries(
+    db: Arc<dyn DatabaseExecutor>,
+    vault_root: &Path,
+    files: &[PathBuf],
+) -> Result<(), KnowledgeError> {
+    let existing_files = files
+        .iter()
+        .filter_map(|path| relative_display_path(vault_root, path).ok())
+        .collect::<std::collections::BTreeSet<_>>();
+    let rows = db
+        .query("SELECT id FROM knowledge_entries", &[])
+        .await
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    for row in rows {
+        let Some(entry_id) = text_at(&row, 0) else {
+            continue;
+        };
+        if !existing_files.contains(&entry_id) {
+            delete_entry(db.clone(), &entry_id).await?;
+        }
+    }
+    Ok(())
 }
 
 async fn delete_entry(db: Arc<dyn DatabaseExecutor>, entry_id: &str) -> Result<(), KnowledgeError> {
@@ -569,5 +616,38 @@ mod tests {
                     .as_deref()
                     .is_some_and(|item| item.ends_with(".md"))
         }));
+    }
+
+    #[tokio::test]
+    async fn remove_note_path_clears_entry_chunks_fts_and_links() {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let vault = std::env::temp_dir().join(format!("klaw-knowledge-remove-vault-{suffix}"));
+        std::fs::create_dir_all(&vault).expect("vault dir");
+        let auth_path = vault.join("auth.md");
+        std::fs::write(&auth_path, "# Auth\nSee [[Cookies]]").expect("write auth");
+
+        let db = open_test_db("remove").await;
+        index_note_path(db.clone(), &vault, &auth_path, 400, None)
+            .await
+            .expect("index should succeed");
+
+        assert!(has_indexed_entries(db.clone()).await.expect("has entries"));
+        remove_note_path(db.clone(), "auth.md")
+            .await
+            .expect("remove should succeed");
+
+        for table in [
+            "knowledge_entries",
+            "knowledge_chunks",
+            "knowledge_fts",
+            "knowledge_links",
+        ] {
+            let rows = db
+                .query(&format!("SELECT COUNT(*) FROM {table}"), &[])
+                .await
+                .expect("count should load");
+            assert_eq!(integer_at(&rows[0], 0), Some(0), "{table} should be empty");
+        }
+        assert!(!has_indexed_entries(db).await.expect("has entries"));
     }
 }

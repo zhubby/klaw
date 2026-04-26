@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-26
+
+### Added
+
+- Knowledge runtime 现在会在 `knowledge.obsidian.auto_index=true` 时启动 vault watcher，并在 reload/shutdown 时停止旧 watcher
+
 ## 2026-04-25
 
 ### Added

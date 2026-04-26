@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-04-26
+
+### Added
+
+- 新增 Obsidian vault auto-index watcher，支持监听 Markdown 新增、修改、删除、移动并更新 knowledge 索引
+- 新增单文件索引、删除和已有索引增量补偿接口，供 runtime 自动索引复用
+
+### Changed
+
+- Obsidian provider 打开时不再支持启动即全量索引，首次同步保持为显式调用
+
 ## 2026-04-25
 
 ### Added

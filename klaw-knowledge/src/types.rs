@@ -121,3 +121,8 @@ pub trait KnowledgeProvider: Send + Sync {
 
     async fn list_sources(&self) -> Result<Vec<KnowledgeSourceInfo>, KnowledgeError>;
 }
+
+#[async_trait]
+pub trait KnowledgeAutoIndexHandle: Send + Sync {
+    async fn stop(self: Box<Self>);
+}

@@ -32,7 +32,7 @@ pub struct KnowledgeTool {
 
 impl KnowledgeTool {
     pub async fn open_default(config: &AppConfig) -> Result<Self, ToolError> {
-        let provider = open_configured_obsidian_provider(config, false)
+        let provider = open_configured_obsidian_provider(config)
             .await
             .map_err(map_knowledge_error)?;
         Ok(Self::with_provider(
@@ -394,7 +394,7 @@ mod tests {
         let mut config = AppConfig::default();
         config.knowledge.enabled = true;
         config.knowledge.obsidian.vault_path = Some(vault.display().to_string());
-        config.knowledge.obsidian.index_on_startup = true;
+        config.knowledge.obsidian.auto_index = true;
         config.tools.knowledge.enabled = true;
 
         let tool = KnowledgeTool::open_default(&config)

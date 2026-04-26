@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-26
+
+### Changed
+
+- Knowledge 配置窗口将 `Index on startup` 替换为 `Auto-index vault changes`，并提示首次索引仍需手动同步
+
 ## 2026-04-25
 
 ### Added

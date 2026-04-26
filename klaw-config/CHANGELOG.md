@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-26
+
+### Changed
+
+- `knowledge.obsidian.index_on_startup` 已替换为默认关闭的 `knowledge.obsidian.auto_index`，用于控制 vault 变化监听而不是启动时全量索引
+
 ## 2026-04-25
 
 ### Changed

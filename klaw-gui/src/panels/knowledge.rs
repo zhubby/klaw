@@ -29,7 +29,7 @@ struct KnowledgeConfigForm {
     enabled: bool,
     provider: String,
     vault_path: String,
-    index_on_startup: bool,
+    auto_index: bool,
     max_excerpt_length: String,
     exclude_folders: String,
     top_k: String,
@@ -47,7 +47,7 @@ impl KnowledgeConfigForm {
             enabled: config.enabled,
             provider: config.provider.clone(),
             vault_path: config.obsidian.vault_path.clone().unwrap_or_default(),
-            index_on_startup: config.obsidian.index_on_startup,
+            auto_index: config.obsidian.auto_index,
             max_excerpt_length: config.obsidian.max_excerpt_length.to_string(),
             exclude_folders: config.obsidian.exclude_folders.join(", "),
             top_k: config.retrieval.top_k.to_string(),
@@ -92,7 +92,7 @@ impl KnowledgeConfigForm {
             provider: provider.to_string(),
             obsidian: ObsidianKnowledgeConfig {
                 vault_path: (!vault_path.is_empty()).then(|| vault_path.to_string()),
-                index_on_startup: self.index_on_startup,
+                auto_index: self.auto_index,
                 max_excerpt_length,
                 exclude_folders: split_csv(&self.exclude_folders),
             },
@@ -621,8 +621,13 @@ impl KnowledgePanel {
                         ui.text_edit_singleline(&mut form.vault_path);
                         ui.end_row();
 
-                        ui.label("Index on startup");
-                        ui.checkbox(&mut form.index_on_startup, "");
+                        ui.label("Auto-index vault changes");
+                        ui.vertical(|ui| {
+                            ui.checkbox(&mut form.auto_index, "");
+                            ui.small(
+                                "Watches changes after setup; run Sync once for the first index.",
+                            );
+                        });
                         ui.end_row();
 
                         ui.label("Max excerpt length");
@@ -964,7 +969,7 @@ mod tests {
             enabled: true,
             provider: "obsidian".to_string(),
             vault_path: "/tmp/vault".to_string(),
-            index_on_startup: false,
+            auto_index: true,
             max_excerpt_length: "500".to_string(),
             exclude_folders: ".obsidian, templates".to_string(),
             top_k: "7".to_string(),
@@ -988,6 +993,7 @@ mod tests {
             config.knowledge.obsidian.exclude_folders,
             vec![".obsidian".to_string(), "templates".to_string()]
         );
+        assert!(config.knowledge.obsidian.auto_index);
     }
 
     #[test]

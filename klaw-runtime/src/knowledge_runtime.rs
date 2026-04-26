@@ -6,9 +6,9 @@ use std::sync::{
 use async_trait::async_trait;
 use klaw_config::AppConfig;
 use klaw_knowledge::{
-    KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider, KnowledgeRuntimeSnapshot,
-    KnowledgeRuntimeState, KnowledgeSearchQuery, KnowledgeSourceInfo, KnowledgeStatus,
-    KnowledgeSyncProgress, KnowledgeSyncResult, ObsidianKnowledgeProvider,
+    KnowledgeAutoIndexHandle, KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider,
+    KnowledgeRuntimeSnapshot, KnowledgeRuntimeState, KnowledgeSearchQuery, KnowledgeSourceInfo,
+    KnowledgeStatus, KnowledgeSyncProgress, KnowledgeSyncResult, ObsidianKnowledgeProvider,
     open_configured_obsidian_provider,
 };
 use tokio::sync::{Mutex, Notify, mpsc};
@@ -22,6 +22,12 @@ pub trait KnowledgeRuntimeProvider: KnowledgeProvider {
         enabled: bool,
         progress: mpsc::UnboundedSender<KnowledgeSyncProgress>,
     ) -> Result<KnowledgeSyncResult, KnowledgeError>;
+
+    async fn start_auto_index(
+        &self,
+    ) -> Result<Option<Box<dyn KnowledgeAutoIndexHandle>>, KnowledgeError> {
+        Ok(None)
+    }
 }
 
 #[async_trait]
@@ -41,7 +47,7 @@ impl KnowledgeProviderLoader for ConfiguredKnowledgeProviderLoader {
         &self,
         config: AppConfig,
     ) -> Result<Arc<dyn KnowledgeRuntimeProvider>, KnowledgeError> {
-        let provider = open_configured_obsidian_provider(&config, false).await?;
+        let provider = open_configured_obsidian_provider(&config).await?;
         Ok(Arc::new(provider))
     }
 }
@@ -74,12 +80,19 @@ impl KnowledgeRuntimeProvider for ObsidianKnowledgeProvider {
             status,
         })
     }
+
+    async fn start_auto_index(
+        &self,
+    ) -> Result<Option<Box<dyn KnowledgeAutoIndexHandle>>, KnowledgeError> {
+        Ok(Some(Box::new(self.start_auto_index_watcher()?)))
+    }
 }
 
 pub struct KnowledgeRuntimeService {
     config: Mutex<AppConfig>,
     loader: Arc<dyn KnowledgeProviderLoader>,
     provider: Mutex<Option<Arc<dyn KnowledgeRuntimeProvider>>>,
+    auto_index: Mutex<Option<Box<dyn KnowledgeAutoIndexHandle>>>,
     snapshot: Mutex<KnowledgeRuntimeSnapshot>,
     notify: Notify,
     shutting_down: AtomicBool,
@@ -92,6 +105,7 @@ impl KnowledgeRuntimeService {
             config: Mutex::new(config),
             loader,
             provider: Mutex::new(None),
+            auto_index: Mutex::new(None),
             snapshot: Mutex::new(initial.clone()),
             notify: Notify::new(),
             shutting_down: AtomicBool::new(false),
@@ -115,6 +129,7 @@ impl KnowledgeRuntimeService {
 
     pub async fn reload(self: &Arc<Self>, config: AppConfig) {
         self.shutting_down.store(false, Ordering::Relaxed);
+        self.stop_auto_index().await;
         let initial = initial_snapshot(&config);
         *self.config.lock().await = config;
         *self.provider.lock().await = None;
@@ -129,6 +144,7 @@ impl KnowledgeRuntimeService {
 
     pub async fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::Relaxed);
+        self.stop_auto_index().await;
         *self.provider.lock().await = None;
         self.set_snapshot(KnowledgeRuntimeSnapshot {
             state: KnowledgeRuntimeState::Disabled,
@@ -236,7 +252,24 @@ impl KnowledgeRuntimeService {
                         if self.shutting_down.load(Ordering::Relaxed) {
                             return;
                         }
+                        let auto_index = if config.knowledge.obsidian.auto_index {
+                            match provider.start_auto_index().await {
+                                Ok(handle) => handle,
+                                Err(err) => {
+                                    self.set_snapshot(KnowledgeRuntimeSnapshot {
+                                        state: KnowledgeRuntimeState::Error,
+                                        status: None,
+                                        error: Some(err.to_string()),
+                                    })
+                                    .await;
+                                    return;
+                                }
+                            }
+                        } else {
+                            None
+                        };
                         *self.provider.lock().await = Some(provider);
+                        *self.auto_index.lock().await = auto_index;
                         self.set_snapshot(KnowledgeRuntimeSnapshot {
                             state: KnowledgeRuntimeState::Ready,
                             status: Some(status),
@@ -275,6 +308,12 @@ impl KnowledgeRuntimeService {
     async fn set_snapshot(&self, snapshot: KnowledgeRuntimeSnapshot) {
         *self.snapshot.lock().await = snapshot;
         self.notify.notify_waiters();
+    }
+
+    async fn stop_auto_index(&self) {
+        if let Some(handle) = self.auto_index.lock().await.take() {
+            handle.stop().await;
+        }
     }
 }
 
@@ -339,9 +378,9 @@ mod tests {
     use async_trait::async_trait;
     use klaw_config::AppConfig;
     use klaw_knowledge::{
-        KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider, KnowledgeRuntimeState,
-        KnowledgeSearchQuery, KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress,
-        KnowledgeSyncResult,
+        KnowledgeAutoIndexHandle, KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider,
+        KnowledgeRuntimeState, KnowledgeSearchQuery, KnowledgeSourceInfo, KnowledgeStatus,
+        KnowledgeSyncProgress, KnowledgeSyncResult,
     };
     use tokio::sync::mpsc;
 
@@ -350,6 +389,8 @@ mod tests {
     #[derive(Default)]
     struct CountingLoader {
         loads: AtomicUsize,
+        auto_index_starts: Arc<AtomicUsize>,
+        auto_index_stops: Arc<AtomicUsize>,
     }
 
     #[async_trait]
@@ -359,7 +400,11 @@ mod tests {
             _config: AppConfig,
         ) -> Result<Arc<dyn KnowledgeRuntimeProvider>, KnowledgeError> {
             self.loads.fetch_add(1, Ordering::Relaxed);
-            Ok(Arc::new(FakeRuntimeProvider::default()))
+            Ok(Arc::new(FakeRuntimeProvider {
+                auto_index_starts: Arc::clone(&self.auto_index_starts),
+                auto_index_stops: Arc::clone(&self.auto_index_stops),
+                ..Default::default()
+            }))
         }
     }
 
@@ -367,6 +412,19 @@ mod tests {
     struct FakeRuntimeProvider {
         searches: AtomicUsize,
         syncs: AtomicUsize,
+        auto_index_starts: Arc<AtomicUsize>,
+        auto_index_stops: Arc<AtomicUsize>,
+    }
+
+    struct FakeAutoIndexHandle {
+        stops: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl KnowledgeAutoIndexHandle for FakeAutoIndexHandle {
+        async fn stop(self: Box<Self>) {
+            self.stops.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     #[async_trait]
@@ -419,6 +477,15 @@ mod tests {
                 embedded_chunks: 0,
                 status: self.status(enabled).await?,
             })
+        }
+
+        async fn start_auto_index(
+            &self,
+        ) -> Result<Option<Box<dyn KnowledgeAutoIndexHandle>>, KnowledgeError> {
+            self.auto_index_starts.fetch_add(1, Ordering::Relaxed);
+            Ok(Some(Box::new(FakeAutoIndexHandle {
+                stops: Arc::clone(&self.auto_index_stops),
+            })))
         }
     }
 
@@ -495,5 +562,50 @@ mod tests {
             KnowledgeRuntimeState::Disabled
         );
         assert!(service.provider.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn auto_index_disabled_does_not_start_watcher() {
+        let loader = Arc::new(CountingLoader::default());
+        let mut config = AppConfig::default();
+        config.knowledge.enabled = true;
+        config.knowledge.obsidian.vault_path = Some("/tmp/fake".to_string());
+        config.knowledge.obsidian.auto_index = false;
+        let service = KnowledgeRuntimeService::start(config, loader.clone());
+
+        service
+            .wait_until_ready()
+            .await
+            .expect("service should load");
+
+        assert_eq!(loader.auto_index_starts.load(Ordering::Relaxed), 0);
+        assert!(service.auto_index.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn auto_index_reload_stops_previous_watcher_and_starts_new_one() {
+        let loader = Arc::new(CountingLoader::default());
+        let mut config = AppConfig::default();
+        config.knowledge.enabled = true;
+        config.knowledge.obsidian.vault_path = Some("/tmp/fake".to_string());
+        config.knowledge.obsidian.auto_index = true;
+        let service = KnowledgeRuntimeService::start(config.clone(), loader.clone());
+
+        service
+            .wait_until_ready()
+            .await
+            .expect("service should load");
+        assert_eq!(loader.auto_index_starts.load(Ordering::Relaxed), 1);
+        assert_eq!(loader.auto_index_stops.load(Ordering::Relaxed), 0);
+
+        service.reload(config).await;
+        service
+            .wait_until_ready()
+            .await
+            .expect("service should reload");
+
+        assert_eq!(loader.auto_index_starts.load(Ordering::Relaxed), 2);
+        assert_eq!(loader.auto_index_stops.load(Ordering::Relaxed), 1);
+        assert!(service.auto_index.lock().await.is_some());
     }
 }
