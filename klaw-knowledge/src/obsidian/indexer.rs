@@ -15,6 +15,9 @@ use crate::{
 
 use super::{
     chunker::{Chunk, ParsedMarkdown, chunk_markdown},
+    links::{
+        DiscoveredLink, LinkMatchType, NameEntry, NoteLinkTarget, build_name_index, discover_links,
+    },
     parser::{ParsedNote, parse_note},
 };
 
@@ -54,7 +57,11 @@ pub async fn init_schema(db: &Arc<dyn DatabaseExecutor>) -> Result<(), Knowledge
         );
         CREATE TABLE IF NOT EXISTS knowledge_links (
             source_entry_id TEXT NOT NULL,
-            target_title TEXT NOT NULL
+            target_title TEXT NOT NULL,
+            target_entry_id TEXT,
+            matched_text TEXT,
+            match_type TEXT,
+            confidence_bp INTEGER
         );
         CREATE TABLE IF NOT EXISTS knowledge_metadata (
             key TEXT PRIMARY KEY,
@@ -91,9 +98,29 @@ pub async fn init_schema(db: &Arc<dyn DatabaseExecutor>) -> Result<(), Knowledge
             )
             .await
             .map_err(|fallback_err| KnowledgeError::Provider(fallback_err.to_string()))?;
+            ensure_link_columns(db).await?;
             return Ok(());
         }
         return Err(KnowledgeError::Provider(message));
+    }
+    ensure_link_columns(db).await?;
+    Ok(())
+}
+
+async fn ensure_link_columns(db: &Arc<dyn DatabaseExecutor>) -> Result<(), KnowledgeError> {
+    for (name, definition) in [
+        ("target_entry_id", "target_entry_id TEXT"),
+        ("matched_text", "matched_text TEXT"),
+        ("match_type", "match_type TEXT"),
+        ("confidence_bp", "confidence_bp INTEGER"),
+    ] {
+        if !table_has_column(db, "knowledge_links", name).await? {
+            db.execute_batch(&format!(
+                "ALTER TABLE knowledge_links ADD COLUMN {definition}"
+            ))
+            .await
+            .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+        }
     }
     Ok(())
 }
@@ -219,6 +246,20 @@ async fn embedding_column_type(
         .and_then(|row| text_at(row, 2)))
 }
 
+async fn table_has_column(
+    db: &Arc<dyn DatabaseExecutor>,
+    table: &str,
+    column: &str,
+) -> Result<bool, KnowledgeError> {
+    let rows = db
+        .query(&format!("PRAGMA table_info({table})"), &[])
+        .await
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    Ok(rows
+        .iter()
+        .any(|row| text_at(row, 1).as_deref() == Some(column)))
+}
+
 async fn set_metadata_value(
     db: &Arc<dyn DatabaseExecutor>,
     key: &str,
@@ -288,12 +329,21 @@ where
 {
     init_schema(&db).await?;
     let files = collect_markdown_files(vault_root, exclude_folders)?;
+    let name_index = build_vault_name_index(vault_root, &files)?;
     remove_missing_entries(db.clone(), vault_root, &files).await?;
     let total = files.len();
     let mut indexed = 0usize;
     for (index, path) in files.into_iter().enumerate() {
         indexed += usize::from(
-            index_note_path(db.clone(), vault_root, &path, max_excerpt_length, embedder).await?,
+            index_note_path_with_links(
+                db.clone(),
+                vault_root,
+                &path,
+                max_excerpt_length,
+                embedder,
+                &name_index,
+            )
+            .await?,
         );
         progress(KnowledgeSyncProgress {
             stage: KnowledgeSyncProgressStage::IndexingNotes,
@@ -377,6 +427,27 @@ pub async fn index_note_path(
     max_excerpt_length: usize,
     embedder: Option<&dyn EmbeddingModel>,
 ) -> Result<bool, KnowledgeError> {
+    let files = collect_markdown_files(vault_root, &[])?;
+    let name_index = build_vault_name_index(vault_root, &files)?;
+    index_note_path_with_links(
+        db,
+        vault_root,
+        absolute_path,
+        max_excerpt_length,
+        embedder,
+        &name_index,
+    )
+    .await
+}
+
+async fn index_note_path_with_links(
+    db: Arc<dyn DatabaseExecutor>,
+    vault_root: &Path,
+    absolute_path: &Path,
+    max_excerpt_length: usize,
+    embedder: Option<&dyn EmbeddingModel>,
+    name_index: &[NameEntry],
+) -> Result<bool, KnowledgeError> {
     init_schema(&db).await?;
     let content = std::fs::read_to_string(absolute_path)
         .map_err(|err| KnowledgeError::Provider(format!("read note failed: {err}")))?;
@@ -448,19 +519,171 @@ pub async fn index_note_path(
         )
         .await?;
     }
-    for wikilink in &parsed.wikilinks {
-        db.execute(
-            "INSERT INTO knowledge_links (source_entry_id, target_title) VALUES (?1, ?2)",
-            &[
-                DbValue::Text(entry_id.clone()),
-                DbValue::Text(wikilink.clone()),
-            ],
-        )
-        .await
-        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    for link in links_for_note(&content, &parsed, &entry_id, name_index) {
+        insert_link(db.clone(), &entry_id, &link).await?;
     }
 
     Ok(true)
+}
+
+fn build_vault_name_index(
+    vault_root: &Path,
+    files: &[PathBuf],
+) -> Result<Vec<NameEntry>, KnowledgeError> {
+    let targets = files
+        .iter()
+        .map(|path| {
+            let content = std::fs::read_to_string(path)
+                .map_err(|err| KnowledgeError::Provider(format!("read note failed: {err}")))?;
+            let parsed = parse_note(&content);
+            let relative_path = path
+                .strip_prefix(vault_root)
+                .map_err(|err| KnowledgeError::Provider(format!("strip prefix failed: {err}")))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let title = parsed
+                .title
+                .clone()
+                .unwrap_or_else(|| default_title_from_path(path));
+            Ok(NoteLinkTarget {
+                path: relative_path,
+                title,
+                aliases: parsed.aliases,
+            })
+        })
+        .collect::<Result<Vec<_>, KnowledgeError>>()?;
+    Ok(build_name_index(targets))
+}
+
+fn links_for_note(
+    content: &str,
+    parsed: &ParsedNote,
+    entry_id: &str,
+    name_index: &[NameEntry],
+) -> Vec<IndexedLink> {
+    let mut links = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for wikilink in &parsed.wikilinks {
+        let (target_entry_id, target_title) = resolve_wikilink_target(wikilink, name_index)
+            .map(|entry| (Some(entry.path.clone()), entry.title.clone()))
+            .unwrap_or_else(|| (None, wikilink.clone()));
+        push_indexed_link(
+            &mut links,
+            &mut seen,
+            IndexedLink {
+                target_entry_id,
+                target_title,
+                matched_text: Some(wikilink.clone()),
+                match_type: "wikilink",
+                confidence_bp: None,
+            },
+            entry_id,
+        );
+    }
+
+    for discovered in discover_links(content, name_index, Some("People")) {
+        push_discovered_link(&mut links, &mut seen, discovered, entry_id);
+    }
+
+    links
+}
+
+fn push_discovered_link(
+    links: &mut Vec<IndexedLink>,
+    seen: &mut std::collections::HashSet<(Option<String>, String, String, &'static str)>,
+    discovered: DiscoveredLink,
+    entry_id: &str,
+) {
+    push_indexed_link(
+        links,
+        seen,
+        IndexedLink {
+            target_entry_id: Some(discovered.target_path),
+            target_title: discovered.target_title,
+            matched_text: Some(discovered.matched_text),
+            match_type: discovered.match_type.as_str(),
+            confidence_bp: discovered.match_type.confidence_bp().map(i64::from),
+        },
+        entry_id,
+    );
+}
+
+fn push_indexed_link(
+    links: &mut Vec<IndexedLink>,
+    seen: &mut std::collections::HashSet<(Option<String>, String, String, &'static str)>,
+    link: IndexedLink,
+    entry_id: &str,
+) {
+    if link.target_entry_id.as_deref() == Some(entry_id) {
+        return;
+    }
+    let key = (
+        link.target_entry_id.clone(),
+        link.target_title.clone(),
+        link.matched_text.clone().unwrap_or_default(),
+        link.match_type,
+    );
+    if seen.insert(key) {
+        links.push(link);
+    }
+}
+
+fn resolve_wikilink_target<'a>(
+    wikilink: &str,
+    name_index: &'a [NameEntry],
+) -> Option<&'a NameEntry> {
+    let normalized = wikilink.trim().trim_end_matches(".md").to_ascii_lowercase();
+    name_index.iter().find(|entry| {
+        matches!(
+            entry.match_type,
+            LinkMatchType::ExactName | LinkMatchType::Alias
+        ) && (entry.name_lower == normalized
+            || entry
+                .path
+                .trim_end_matches(".md")
+                .eq_ignore_ascii_case(wikilink))
+    })
+}
+
+async fn insert_link(
+    db: Arc<dyn DatabaseExecutor>,
+    source_entry_id: &str,
+    link: &IndexedLink,
+) -> Result<(), KnowledgeError> {
+    db.execute(
+        "INSERT INTO knowledge_links (
+            source_entry_id, target_title, target_entry_id, matched_text, match_type, confidence_bp
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        &[
+            DbValue::Text(source_entry_id.to_string()),
+            DbValue::Text(link.target_title.clone()),
+            link.target_entry_id
+                .clone()
+                .map(DbValue::Text)
+                .unwrap_or(DbValue::Null),
+            link.matched_text
+                .clone()
+                .map(DbValue::Text)
+                .unwrap_or(DbValue::Null),
+            DbValue::Text(link.match_type.to_string()),
+            link.confidence_bp
+                .map(DbValue::Integer)
+                .unwrap_or(DbValue::Null),
+        ],
+    )
+    .await
+    .map(|_| ())
+    .map_err(|err| KnowledgeError::Provider(err.to_string()))
+}
+
+#[derive(Debug, Clone)]
+struct IndexedLink {
+    target_entry_id: Option<String>,
+    target_title: String,
+    matched_text: Option<String>,
+    match_type: &'static str,
+    confidence_bp: Option<i64>,
 }
 
 pub async fn remove_note_path(
@@ -826,6 +1049,55 @@ mod tests {
             .await
             .expect("query entries");
         assert_eq!(integer_at(&rows[0], 0), Some(1));
+    }
+
+    #[tokio::test]
+    async fn indexes_discovered_links_with_resolved_targets() {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let vault = std::env::temp_dir().join(format!("klaw-knowledge-links-vault-{suffix}"));
+        std::fs::create_dir_all(&vault).expect("vault dir");
+        std::fs::write(
+            vault.join("auth.md"),
+            "# Auth\nCookies and RRF keep browser state.",
+        )
+        .expect("write auth");
+        std::fs::write(vault.join("Cookies.md"), "# Cookies\nCookie storage.").expect("cookies");
+        std::fs::write(
+            vault.join("Reciprocal Rank Fusion.md"),
+            "---\naliases: [RRF]\n---\n# Reciprocal Rank Fusion\nSearch fusion.",
+        )
+        .expect("rrf");
+
+        let db = open_test_db("discovered-links").await;
+        index_vault(db.clone(), &vault, &[], 400, None)
+            .await
+            .expect("index should succeed");
+
+        let rows = db
+            .query(
+                "SELECT target_entry_id, matched_text, match_type
+                 FROM knowledge_links
+                 WHERE source_entry_id = 'auth.md'
+                 ORDER BY matched_text",
+                &[],
+            )
+            .await
+            .expect("query links");
+        let links: Vec<(String, String, String)> = rows
+            .iter()
+            .filter_map(|row| Some((text_at(row, 0)?, text_at(row, 1)?, text_at(row, 2)?)))
+            .collect();
+
+        assert!(links.contains(&(
+            "Cookies.md".to_string(),
+            "Cookies".to_string(),
+            "exact_name".to_string()
+        )));
+        assert!(links.contains(&(
+            "Reciprocal Rank Fusion.md".to_string(),
+            "RRF".to_string(),
+            "alias".to_string()
+        )));
     }
 
     #[tokio::test]

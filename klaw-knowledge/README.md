@@ -11,7 +11,8 @@
 ## Capabilities
 
 - Provider-based knowledge retrieval via `KnowledgeProvider`
-- Obsidian markdown parsing, chunking, and indexing helpers
+- Obsidian markdown parsing, scored semantic chunking, and indexing helpers
+- Obsidian link discovery for explicit wikilinks plus exact name, alias, fuzzy Levenshtein, and unique first-name matches without rewriting vault files
 - Structured search result types (`KnowledgeHit`, `KnowledgeEntry`, `ContextBundle`)
 - Config-driven Obsidian provider construction for runtime and GUI callers
 - Local llama.cpp knowledge model construction that honors per-model manifest GGUF defaults

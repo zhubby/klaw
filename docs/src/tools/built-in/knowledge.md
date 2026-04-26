@@ -143,7 +143,8 @@ include_explain = true
 
 - `klaw-knowledge` 独立 crate
 - Obsidian frontmatter / wikilink / inline tag 解析
-- heading-aware markdown chunking
+- `engraph` 风格的 markdown 智能分块：标题按层级 100-50 分、代码围栏 80 分、主题分隔符 60 分、空行 20 分，并保护代码块不被切开
+- 链接发现会在已有 wikilinks 之外识别精确名称、alias、Levenshtein 0.92 模糊匹配和 People 首名唯一匹配；自动应用仅写入 `knowledge_links` 图边，不改写用户 Markdown 文件
 - `knowledge_entries` / `knowledge_chunks` / `knowledge_links` / `knowledge_fts` 索引表
 - FTS5 可用时走 `MATCH`，不可用时自动回退为普通表 + token scoring
 - 默认 Turso/libSQL 后端会在写入 embedding 时把 chunk 向量列初始化为原生 `F32_BLOB`，并尝试创建 `libsql_vector_idx`

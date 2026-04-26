@@ -263,10 +263,16 @@ impl ObsidianKnowledgeProvider {
             let outgoing = self
                 .db
                 .query(
-                    "SELECT target.id, target.title, substr(target.content, 1, 400)
+                    "SELECT DISTINCT target.id, target.title, substr(target.content, 1, 400)
                      FROM knowledge_links link
-                     JOIN knowledge_entries target ON lower(target.title) = lower(link.target_title)
-                     WHERE link.source_entry_id = ?1
+                     JOIN knowledge_entries target ON (
+                        target.id = link.target_entry_id
+                        OR (
+                            link.target_entry_id IS NULL
+                            AND lower(target.title) = lower(link.target_title)
+                        )
+                     )
+                     WHERE link.source_entry_id = ?1 AND target.id != link.source_entry_id
                      LIMIT ?2",
                     &[
                         DbValue::Text(seed.id.clone()),
@@ -1181,6 +1187,52 @@ mod tests {
             .expect("search should succeed");
         assert!(!hits.is_empty());
         assert!(hits.iter().any(|hit| hit.title == "Auth"));
+    }
+
+    #[tokio::test]
+    async fn graph_lane_uses_discovered_plain_text_links() {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let vault_root =
+            std::env::temp_dir().join(format!("klaw-knowledge-provider-links-vault-{suffix}"));
+        std::fs::create_dir_all(&vault_root).expect("vault");
+        std::fs::write(
+            vault_root.join("auth.md"),
+            "# Auth\nCookies keep browser state.",
+        )
+        .expect("auth note");
+        std::fs::write(
+            vault_root.join("Cookies.md"),
+            "# Cookies\nCookie storage details.",
+        )
+        .expect("cookies note");
+
+        let db_root =
+            std::env::temp_dir().join(format!("klaw-knowledge-provider-links-db-{suffix}"));
+        let db = Arc::new(
+            DefaultKnowledgeDb::open_knowledge(StoragePaths::from_root(db_root))
+                .await
+                .expect("db"),
+        );
+        let provider =
+            ObsidianKnowledgeProvider::open(db, vault_root, Vec::new(), 400, "Test Vault")
+                .await
+                .expect("provider should open");
+        provider.reindex().await.expect("test vault should index");
+
+        let hits = provider
+            .graph_lane(
+                &[RankedHit {
+                    id: "auth.md".to_string(),
+                    title: "Auth".to_string(),
+                    excerpt: String::new(),
+                    score: 1.0,
+                }],
+                5,
+            )
+            .await
+            .expect("graph lane should load");
+
+        assert!(hits.iter().any(|hit| hit.id == "Cookies.md"));
     }
 
     #[test]
