@@ -18,6 +18,11 @@ use super::{
     parser::{ParsedNote, parse_note},
 };
 
+pub(crate) const KNOWLEDGE_VECTOR_INDEX_NAME: &str = "idx_knowledge_chunks_embedding";
+const KNOWLEDGE_METADATA_TABLE: &str = "knowledge_metadata";
+const EMBEDDING_DIMENSIONS_KEY: &str = "knowledge_embedding_dimensions";
+const VECTOR_INDEX_ENABLED_KEY: &str = "knowledge_vector_index_enabled";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IndexedNote {
     pub path: String,
@@ -50,6 +55,10 @@ pub async fn init_schema(db: &Arc<dyn DatabaseExecutor>) -> Result<(), Knowledge
         CREATE TABLE IF NOT EXISTS knowledge_links (
             source_entry_id TEXT NOT NULL,
             target_title TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS knowledge_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );",
     )
     .await
@@ -87,6 +96,165 @@ pub async fn init_schema(db: &Arc<dyn DatabaseExecutor>) -> Result<(), Knowledge
         return Err(KnowledgeError::Provider(message));
     }
     Ok(())
+}
+
+pub(crate) async fn ensure_vector_index(
+    db: &Arc<dyn DatabaseExecutor>,
+    dimensions: usize,
+) -> Result<bool, KnowledgeError> {
+    if dimensions == 0 {
+        return Err(KnowledgeError::Provider(
+            "knowledge embedding vectors cannot be empty".to_string(),
+        ));
+    }
+
+    init_schema(db).await?;
+    if let Some(existing_dimensions) = embedding_dimensions(db).await?
+        && existing_dimensions != dimensions
+    {
+        return Err(KnowledgeError::Provider(format!(
+            "knowledge embedding dimension changed from {existing_dimensions} to {dimensions}; delete knowledge.db and re-sync"
+        )));
+    }
+
+    ensure_vector_column(db, dimensions).await?;
+    set_metadata_value(db, EMBEDDING_DIMENSIONS_KEY, &dimensions.to_string()).await?;
+
+    let create_index = format!(
+        "CREATE INDEX IF NOT EXISTS {KNOWLEDGE_VECTOR_INDEX_NAME}
+         ON knowledge_chunks(libsql_vector_idx(embedding))"
+    );
+    match db.execute_batch(&create_index).await {
+        Ok(()) => {
+            set_metadata_value(db, VECTOR_INDEX_ENABLED_KEY, "true").await?;
+            Ok(true)
+        }
+        Err(err) if is_vector_capability_error(&err.to_string()) => {
+            set_metadata_value(db, VECTOR_INDEX_ENABLED_KEY, "false").await?;
+            Ok(false)
+        }
+        Err(err) => Err(KnowledgeError::Provider(err.to_string())),
+    }
+}
+
+pub(crate) async fn has_vector_index(
+    db: &Arc<dyn DatabaseExecutor>,
+) -> Result<bool, KnowledgeError> {
+    let rows = db
+        .query(
+            "SELECT COUNT(*)
+             FROM sqlite_master
+             WHERE type = 'index' AND name = ?1",
+            &[DbValue::Text(KNOWLEDGE_VECTOR_INDEX_NAME.to_string())],
+        )
+        .await
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    Ok(rows.first().and_then(|row| integer_at(row, 0)).unwrap_or(0) > 0)
+}
+
+async fn ensure_vector_column(
+    db: &Arc<dyn DatabaseExecutor>,
+    dimensions: usize,
+) -> Result<(), KnowledgeError> {
+    let expected_type = vector_column_type(dimensions);
+    if embedding_column_type(db)
+        .await?
+        .is_some_and(|column_type| is_vector_column_type(&column_type, dimensions))
+    {
+        return Ok(());
+    }
+
+    let rebuild = format!(
+        "DROP INDEX IF EXISTS {KNOWLEDGE_VECTOR_INDEX_NAME};
+         DROP TABLE IF EXISTS knowledge_chunks_vector_new;
+         CREATE TABLE knowledge_chunks_vector_new (
+            id TEXT PRIMARY KEY,
+            entry_id TEXT NOT NULL,
+            heading TEXT,
+            content TEXT NOT NULL,
+            snippet TEXT NOT NULL,
+            embedding {expected_type}
+         );
+         INSERT INTO knowledge_chunks_vector_new (id, entry_id, heading, content, snippet, embedding)
+         SELECT id, entry_id, heading, content, snippet, embedding
+         FROM knowledge_chunks;
+         DROP TABLE knowledge_chunks;
+         ALTER TABLE knowledge_chunks_vector_new RENAME TO knowledge_chunks;"
+    );
+    db.execute_batch(&rebuild)
+        .await
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))
+}
+
+async fn embedding_dimensions(
+    db: &Arc<dyn DatabaseExecutor>,
+) -> Result<Option<usize>, KnowledgeError> {
+    let rows = db
+        .query(
+            &format!("SELECT value FROM {KNOWLEDGE_METADATA_TABLE} WHERE key = ?1 LIMIT 1"),
+            &[DbValue::Text(EMBEDDING_DIMENSIONS_KEY.to_string())],
+        )
+        .await
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    rows.first()
+        .and_then(|row| text_at(row, 0))
+        .map(|value| {
+            value.parse::<usize>().map_err(|err| {
+                KnowledgeError::Provider(format!("invalid embedding dimension metadata: {err}"))
+            })
+        })
+        .transpose()
+}
+
+async fn embedding_column_type(
+    db: &Arc<dyn DatabaseExecutor>,
+) -> Result<Option<String>, KnowledgeError> {
+    let rows = db
+        .query("PRAGMA table_info(knowledge_chunks)", &[])
+        .await
+        .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+    Ok(rows
+        .iter()
+        .find(|row| text_at(row, 1).as_deref() == Some("embedding"))
+        .and_then(|row| text_at(row, 2)))
+}
+
+async fn set_metadata_value(
+    db: &Arc<dyn DatabaseExecutor>,
+    key: &str,
+    value: &str,
+) -> Result<(), KnowledgeError> {
+    db.execute(
+        &format!(
+            "INSERT INTO {KNOWLEDGE_METADATA_TABLE} (key, value)
+             VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        ),
+        &[
+            DbValue::Text(key.to_string()),
+            DbValue::Text(value.to_string()),
+        ],
+    )
+    .await
+    .map(|_| ())
+    .map_err(|err| KnowledgeError::Provider(err.to_string()))
+}
+
+fn vector_column_type(dimensions: usize) -> String {
+    format!("F32_BLOB({dimensions})")
+}
+
+fn is_vector_column_type(column_type: &str, dimensions: usize) -> bool {
+    let normalized = column_type.to_ascii_uppercase();
+    normalized == "F32_BLOB" || normalized == vector_column_type(dimensions)
+}
+
+fn is_vector_capability_error(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("no such function")
+        || normalized.contains("no such module")
+        || normalized.contains("unknown function")
+        || normalized.contains("invalid expression in create index")
 }
 
 pub async fn index_vault(
@@ -180,6 +348,7 @@ where
         text.push_str("\n\n");
         text.push_str(&content);
         let vector = embedder.embed(&text).await?;
+        ensure_vector_index(&db, vector.len()).await?;
         db.execute(
             "UPDATE knowledge_chunks SET embedding = ?1 WHERE id = ?2",
             &[
@@ -449,7 +618,9 @@ async fn insert_chunk(
                 text.push_str("\n\n");
             }
             text.push_str(&chunk.text);
-            Some(embedder.embed(&text).await?)
+            let vector = embedder.embed(&text).await?;
+            ensure_vector_index(&db, vector.len()).await?;
+            Some(vector)
         }
         None => None,
     };
@@ -494,7 +665,7 @@ fn trim_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars.max(1)).collect()
 }
 
-fn serialize_embedding(vector: &[f32]) -> Vec<u8> {
+pub(crate) fn serialize_embedding(vector: &[f32]) -> Vec<u8> {
     vector
         .iter()
         .flat_map(|value| value.to_le_bytes())
@@ -545,9 +716,10 @@ fn text_at(row: &DbRow, index: usize) -> Option<String> {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use async_trait::async_trait;
     use klaw_storage::{DefaultKnowledgeDb, StoragePaths};
 
-    use crate::KnowledgeSyncProgressStage;
+    use crate::{KnowledgeSyncProgressStage, models::EmbeddingModel};
 
     use super::*;
 
@@ -562,6 +734,73 @@ mod tests {
                 .await
                 .expect("knowledge db should open"),
         )
+    }
+
+    #[derive(Default)]
+    struct MockEmbeddingModel;
+
+    #[async_trait]
+    impl EmbeddingModel for MockEmbeddingModel {
+        async fn embed(&self, text: &str) -> Result<Vec<f32>, KnowledgeError> {
+            Ok(vec![text.len() as f32, 1.0, 0.5])
+        }
+    }
+
+    #[tokio::test]
+    async fn embedding_indexing_initializes_native_turso_vector_schema() {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let vault = std::env::temp_dir().join(format!("klaw-knowledge-vector-vault-{suffix}"));
+        std::fs::create_dir_all(&vault).expect("vault dir");
+        std::fs::write(
+            vault.join("cookies.md"),
+            "# Cookies\nCookie storage details.",
+        )
+        .expect("write note");
+
+        let db = open_test_db("vector-schema").await;
+        index_vault(db.clone(), &vault, &[], 400, Some(&MockEmbeddingModel))
+            .await
+            .expect("index with embeddings should succeed");
+
+        let column_rows = db
+            .query("PRAGMA table_info(knowledge_chunks)", &[])
+            .await
+            .expect("table info should load");
+        let embedding_type = column_rows
+            .iter()
+            .find(|row| text_at(row, 1).as_deref() == Some("embedding"))
+            .and_then(|row| text_at(row, 2))
+            .expect("embedding column should exist");
+        assert_eq!(embedding_type, "F32_BLOB");
+
+        let metadata_rows = db
+            .query(
+                "SELECT value FROM knowledge_metadata WHERE key = 'knowledge_embedding_dimensions'",
+                &[],
+            )
+            .await
+            .expect("metadata query should load");
+        assert_eq!(text_at(&metadata_rows[0], 0).as_deref(), Some("3"));
+
+        let index_rows = db
+            .query(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_knowledge_chunks_embedding'",
+                &[],
+            )
+            .await
+            .expect("index query should load");
+        let vector_enabled_rows = db
+            .query(
+                "SELECT value FROM knowledge_metadata WHERE key = 'knowledge_vector_index_enabled'",
+                &[],
+            )
+            .await
+            .expect("vector metadata should load");
+        let vector_index_enabled = text_at(&vector_enabled_rows[0], 0).as_deref() == Some("true");
+        assert_eq!(
+            integer_at(&index_rows[0], 0),
+            Some(i64::from(vector_index_enabled))
+        );
     }
 
     #[tokio::test]

@@ -20,3 +20,4 @@
 - Auto-index watcher support for updating an already indexed Obsidian vault after Markdown file changes
 - Runtime snapshot/state types for host-owned Knowledge service readiness reporting
 - Retrieval building blocks for hybrid search lanes and RRF fusion
+- Turso/libSQL native vector storage for embedded chunks, with `vector_top_k` when a vector index is available and SQL distance ranking before any in-process fallback

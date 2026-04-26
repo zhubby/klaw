@@ -6,10 +6,13 @@
 
 - 新增 Obsidian vault auto-index watcher，支持监听 Markdown 新增、修改、删除、移动并更新 knowledge 索引
 - 新增单文件索引、删除和已有索引增量补偿接口，供 runtime 自动索引复用
+- 新增 Turso/libSQL 原生向量列与向量索引初始化，knowledge chunk embeddings 会按模型维度重建为 `F32_BLOB`
+- 新增 semantic lane 的数据库内向量查询路径，优先使用 `vector_top_k`，索引不可用时使用 SQL 距离排序后再回退到 Rust 余弦计算
 
 ### Changed
 
 - Obsidian provider 打开时不再支持启动即全量索引，首次同步保持为显式调用
+- Search 结果 metadata 补全改为只按 fused hit ids 批量读取，避免每次搜索全表读取 `knowledge_entries`
 
 ## 2026-04-25
 

@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use async_trait::async_trait;
@@ -15,8 +15,9 @@ use crate::{
     KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress,
     models::{EmbeddingModel, KnowledgeOrchestration, OrchestratorModel, RerankModel},
     obsidian::indexer::{
-        embed_missing_chunks, embed_missing_chunks_with_progress, has_indexed_entries,
-        index_note_path, index_vault, index_vault_with_progress, init_schema, remove_note_path,
+        KNOWLEDGE_VECTOR_INDEX_NAME, embed_missing_chunks, embed_missing_chunks_with_progress,
+        ensure_vector_index, has_indexed_entries, has_vector_index, index_note_path, index_vault,
+        index_vault_with_progress, init_schema, remove_note_path, serialize_embedding,
     },
     obsidian::watcher::{AutoIndexWatcher, start_auto_index_watcher},
     retrieval::fusion::{RankedHit, weighted_reciprocal_rank_fuse},
@@ -30,6 +31,7 @@ pub struct ObsidianKnowledgeProvider {
     max_excerpt_length: usize,
     source_name: String,
     fts_virtual: bool,
+    vector_index_enabled: Arc<Mutex<bool>>,
     embedder: Option<Arc<dyn EmbeddingModel>>,
     reranker: Option<Arc<dyn RerankModel>>,
     orchestrator: Option<Arc<dyn OrchestratorModel>>,
@@ -45,6 +47,7 @@ impl ObsidianKnowledgeProvider {
     ) -> Result<Self, KnowledgeError> {
         init_schema(&db).await?;
         let fts_virtual = detect_virtual_fts(&db).await?;
+        let vector_index_enabled = has_vector_index(&db).await?;
         let provider = Self {
             db,
             vault_root,
@@ -52,6 +55,7 @@ impl ObsidianKnowledgeProvider {
             max_excerpt_length,
             source_name: source_name.into(),
             fts_virtual,
+            vector_index_enabled: Arc::new(Mutex::new(vector_index_enabled)),
             embedder: None,
             reranker: None,
             orchestrator: None,
@@ -75,14 +79,16 @@ impl ObsidianKnowledgeProvider {
     }
 
     pub async fn reindex(&self) -> Result<usize, KnowledgeError> {
-        index_vault(
+        let indexed = index_vault(
             self.db.clone(),
             &self.vault_root,
             &self.exclude_folders,
             self.max_excerpt_length,
             self.embedder.as_deref(),
         )
-        .await
+        .await?;
+        self.refresh_vector_index_enabled().await?;
+        Ok(indexed)
     }
 
     pub fn vault_root(&self) -> &Path {
@@ -94,14 +100,16 @@ impl ObsidianKnowledgeProvider {
     }
 
     pub async fn index_path(&self, absolute_path: &Path) -> Result<bool, KnowledgeError> {
-        index_note_path(
+        let indexed = index_note_path(
             self.db.clone(),
             &self.vault_root,
             absolute_path,
             self.max_excerpt_length,
             self.embedder.as_deref(),
         )
-        .await
+        .await?;
+        self.refresh_vector_index_enabled().await?;
+        Ok(indexed)
     }
 
     pub async fn remove_path(&self, relative_path: &str) -> Result<(), KnowledgeError> {
@@ -127,7 +135,7 @@ impl ObsidianKnowledgeProvider {
     where
         F: FnMut(KnowledgeSyncProgress),
     {
-        index_vault_with_progress(
+        let indexed = index_vault_with_progress(
             self.db.clone(),
             &self.vault_root,
             &self.exclude_folders,
@@ -135,14 +143,18 @@ impl ObsidianKnowledgeProvider {
             self.embedder.as_deref(),
             progress,
         )
-        .await
+        .await?;
+        self.refresh_vector_index_enabled().await?;
+        Ok(indexed)
     }
 
     pub async fn embed_missing_chunks(&self) -> Result<usize, KnowledgeError> {
         let Some(embedder) = self.embedder.as_deref() else {
             return Ok(0);
         };
-        embed_missing_chunks(self.db.clone(), embedder).await
+        let embedded = embed_missing_chunks(self.db.clone(), embedder).await?;
+        self.refresh_vector_index_enabled().await?;
+        Ok(embedded)
     }
 
     pub async fn embed_missing_chunks_with_progress<F>(
@@ -155,7 +167,10 @@ impl ObsidianKnowledgeProvider {
         let Some(embedder) = self.embedder.as_deref() else {
             return Ok(0);
         };
-        embed_missing_chunks_with_progress(self.db.clone(), embedder, progress).await
+        let embedded =
+            embed_missing_chunks_with_progress(self.db.clone(), embedder, progress).await?;
+        self.refresh_vector_index_enabled().await?;
+        Ok(embedded)
     }
 
     pub async fn status(&self, enabled: bool) -> Result<KnowledgeStatus, KnowledgeError> {
@@ -312,6 +327,97 @@ impl ObsidianKnowledgeProvider {
         if query_vector.is_empty() {
             return Ok(Vec::new());
         }
+        if !self.is_vector_index_enabled() {
+            let enabled = ensure_vector_index(&self.db, query_vector.len()).await?;
+            self.set_vector_index_enabled(enabled);
+        }
+        if self.is_vector_index_enabled() {
+            match self.semantic_lane_vector_top_k(&query_vector, limit).await {
+                Ok(hits) => return Ok(hits),
+                Err(err) if is_vector_query_capability_error(&err.to_string()) => {
+                    self.set_vector_index_enabled(false);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        match self.semantic_lane_sql_distance(&query_vector, limit).await {
+            Ok(hits) => return Ok(hits),
+            Err(err) if is_vector_query_capability_error(&err.to_string()) => {}
+            Err(err) => return Err(err),
+        }
+        self.semantic_lane_fallback(&query_vector, limit).await
+    }
+
+    async fn semantic_lane_vector_top_k(
+        &self,
+        query_vector: &[f32],
+        limit: usize,
+    ) -> Result<Vec<RankedHit>, KnowledgeError> {
+        let rows = self
+            .db
+            .query(
+                &format!(
+                    "SELECT e.id, e.title, c.snippet, v.distance
+                     FROM vector_top_k('{KNOWLEDGE_VECTOR_INDEX_NAME}', ?1, ?2) v
+                     JOIN knowledge_chunks c ON c.rowid = v.id
+                     JOIN knowledge_entries e ON e.id = c.entry_id
+                     ORDER BY v.distance ASC"
+                ),
+                &[
+                    DbValue::Blob(serialize_embedding(query_vector)),
+                    DbValue::Integer(limit as i64),
+                ],
+            )
+            .await
+            .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+        Ok(dedup_ranked_hits(rows, |row| {
+            let distance = real_at(row, 3).unwrap_or(1.0);
+            RankedHit {
+                id: text_at(row, 0).unwrap_or_default(),
+                title: text_at(row, 1).unwrap_or_default(),
+                excerpt: text_at(row, 2).unwrap_or_default(),
+                score: 1.0 - distance,
+            }
+        }))
+    }
+
+    async fn semantic_lane_sql_distance(
+        &self,
+        query_vector: &[f32],
+        limit: usize,
+    ) -> Result<Vec<RankedHit>, KnowledgeError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT e.id, e.title, c.snippet, vector_distance_cos(c.embedding, ?1) AS distance
+                 FROM knowledge_chunks c
+                 JOIN knowledge_entries e ON e.id = c.entry_id
+                 WHERE c.embedding IS NOT NULL
+                 ORDER BY distance ASC
+                 LIMIT ?2",
+                &[
+                    DbValue::Blob(serialize_embedding(query_vector)),
+                    DbValue::Integer(limit as i64),
+                ],
+            )
+            .await
+            .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+        Ok(dedup_ranked_hits(rows, |row| {
+            let distance = real_at(row, 3).unwrap_or(1.0);
+            RankedHit {
+                id: text_at(row, 0).unwrap_or_default(),
+                title: text_at(row, 1).unwrap_or_default(),
+                excerpt: text_at(row, 2).unwrap_or_default(),
+                score: 1.0 - distance,
+            }
+        }))
+    }
+
+    async fn semantic_lane_fallback(
+        &self,
+        query_vector: &[f32],
+        limit: usize,
+    ) -> Result<Vec<RankedHit>, KnowledgeError> {
         let rows = self
             .db
             .query(
@@ -433,26 +539,15 @@ impl KnowledgeProvider for ObsidianKnowledgeProvider {
             60,
         );
 
-        let entry_map = self
-            .db
-            .query(
-                "SELECT id, uri, tags_json, metadata_json FROM knowledge_entries",
-                &[],
-            )
-            .await
-            .map_err(|err| KnowledgeError::Provider(err.to_string()))?
-            .into_iter()
-            .filter_map(|row| {
-                Some((
-                    text_at(&row, 0)?,
-                    (text_at(&row, 1)?, text_at(&row, 2)?, text_at(&row, 3)?),
-                ))
-            })
-            .collect::<BTreeMap<_, _>>();
+        let fused_hits = fused.into_iter().take(limit).collect::<Vec<_>>();
+        let entry_ids = fused_hits
+            .iter()
+            .map(|hit| hit.id.clone())
+            .collect::<Vec<_>>();
+        let entry_map = self.load_entry_metadata(&entry_ids).await?;
 
-        Ok(fused
+        Ok(fused_hits
             .into_iter()
-            .take(limit)
             .map(|hit| {
                 let (uri, tags_json, metadata_json) = entry_map
                     .get(&hit.id)
@@ -516,6 +611,70 @@ impl KnowledgeProvider for ObsidianKnowledgeProvider {
 }
 
 impl ObsidianKnowledgeProvider {
+    async fn load_entry_metadata(
+        &self,
+        ids: &[String],
+    ) -> Result<BTreeMap<String, (String, String, String)>, KnowledgeError> {
+        let mut unique_ids = Vec::new();
+        for id in ids {
+            if !unique_ids.contains(id) {
+                unique_ids.push(id.clone());
+            }
+        }
+        if unique_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+
+        let placeholders = (1..=unique_ids.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT id, uri, tags_json, metadata_json
+             FROM knowledge_entries
+             WHERE id IN ({placeholders})"
+        );
+        let params = unique_ids
+            .into_iter()
+            .map(DbValue::Text)
+            .collect::<Vec<_>>();
+        let rows = self
+            .db
+            .query(&sql, &params)
+            .await
+            .map_err(|err| KnowledgeError::Provider(err.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                Some((
+                    text_at(&row, 0)?,
+                    (text_at(&row, 1)?, text_at(&row, 2)?, text_at(&row, 3)?),
+                ))
+            })
+            .collect())
+    }
+
+    async fn refresh_vector_index_enabled(&self) -> Result<(), KnowledgeError> {
+        let enabled = has_vector_index(&self.db).await?;
+        self.set_vector_index_enabled(enabled);
+        Ok(())
+    }
+
+    fn is_vector_index_enabled(&self) -> bool {
+        *self
+            .vector_index_enabled
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn set_vector_index_enabled(&self, enabled: bool) {
+        *self
+            .vector_index_enabled
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = enabled;
+    }
+
     async fn orchestration_plan(
         &self,
         query: &str,
@@ -600,6 +759,14 @@ impl ObsidianKnowledgeProvider {
         });
         Ok(reranked)
     }
+}
+
+fn is_vector_query_capability_error(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("vector_top_k")
+        || normalized.contains("libsql_vector_idx")
+        || normalized.contains("no such function")
+        || normalized.contains("no such module")
 }
 
 fn dedup_ranked_hits<F>(rows: Vec<DbRow>, map: F) -> Vec<RankedHit>
@@ -797,7 +964,7 @@ mod tests {
         atomic::{AtomicU64, Ordering},
     };
 
-    use klaw_storage::{DefaultKnowledgeDb, StoragePaths};
+    use klaw_storage::{DefaultKnowledgeDb, StorageError, StoragePaths};
 
     use super::*;
 
@@ -838,6 +1005,80 @@ mod tests {
                 score(&["cookie", "browser", "state"]),
                 score(&["session", "storage", "persist"]),
             ])
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDb {
+        sql: Arc<Mutex<Vec<String>>>,
+        fail_vector_index: bool,
+        fail_vector_distance: bool,
+    }
+
+    #[async_trait]
+    impl DatabaseExecutor for RecordingDb {
+        async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
+            self.sql
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(sql.to_string());
+            if self.fail_vector_index && sql.contains("libsql_vector_idx") {
+                return Err(StorageError::backend("no such function: libsql_vector_idx"));
+            }
+            Ok(())
+        }
+
+        async fn execute(&self, sql: &str, _params: &[DbValue]) -> Result<u64, StorageError> {
+            self.sql
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(sql.to_string());
+            Ok(1)
+        }
+
+        async fn query(&self, sql: &str, _params: &[DbValue]) -> Result<Vec<DbRow>, StorageError> {
+            self.sql
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(sql.to_string());
+            if self.fail_vector_distance
+                && (sql.contains("vector_top_k") || sql.contains("vector_distance_cos"))
+            {
+                return Err(StorageError::backend(
+                    "no such function: vector_distance_cos",
+                ));
+            }
+            if sql.contains("vector_top_k") {
+                return Ok(vec![DbRow {
+                    values: vec![
+                        DbValue::Text("Cookies.md".to_string()),
+                        DbValue::Text("Cookies".to_string()),
+                        DbValue::Text("Cookie storage details.".to_string()),
+                        DbValue::Real(0.2),
+                    ],
+                }]);
+            }
+            if sql.contains("vector_distance_cos") {
+                return Ok(vec![DbRow {
+                    values: vec![
+                        DbValue::Text("Cookies.md".to_string()),
+                        DbValue::Text("Cookies".to_string()),
+                        DbValue::Text("Cookie storage details.".to_string()),
+                        DbValue::Real(0.2),
+                    ],
+                }]);
+            }
+            if sql.contains("c.embedding") {
+                return Ok(vec![DbRow {
+                    values: vec![
+                        DbValue::Text("Cookies.md".to_string()),
+                        DbValue::Text("Cookies".to_string()),
+                        DbValue::Text("Cookie storage details.".to_string()),
+                        DbValue::Blob(serialize_embedding(&[0.0, 2.0, 0.0])),
+                    ],
+                }]);
+            }
+            Ok(Vec::new())
         }
     }
 
@@ -1003,6 +1244,139 @@ mod tests {
                 .and_then(Value::as_array)
                 .is_some_and(|lanes| lanes.iter().any(|lane| lane == "semantic"))
         );
+    }
+
+    #[tokio::test]
+    async fn semantic_lane_uses_vector_top_k_when_vector_index_is_enabled() {
+        let db = Arc::new(RecordingDb::default());
+        let sql = Arc::clone(&db.sql);
+        let provider = ObsidianKnowledgeProvider {
+            db,
+            vault_root: PathBuf::new(),
+            exclude_folders: Vec::new(),
+            max_excerpt_length: 400,
+            source_name: "Test Vault".to_string(),
+            fts_virtual: false,
+            vector_index_enabled: Arc::new(Mutex::new(true)),
+            embedder: Some(Arc::new(MockEmbeddingModel)),
+            reranker: None,
+            orchestrator: None,
+        };
+
+        let hits = provider
+            .semantic_lane("browser state", 5)
+            .await
+            .expect("semantic lane should query vector index");
+
+        assert_eq!(hits[0].title, "Cookies");
+        let sql = sql.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(sql.iter().any(|query| query.contains("vector_top_k")));
+        assert!(!sql.iter().any(|query| query.contains("c.embedding")));
+    }
+
+    #[tokio::test]
+    async fn semantic_lane_uses_sql_vector_distance_before_rust_fallback() {
+        let db = Arc::new(RecordingDb {
+            fail_vector_index: true,
+            ..RecordingDb::default()
+        });
+        let sql = Arc::clone(&db.sql);
+        let provider = ObsidianKnowledgeProvider {
+            db,
+            vault_root: PathBuf::new(),
+            exclude_folders: Vec::new(),
+            max_excerpt_length: 400,
+            source_name: "Test Vault".to_string(),
+            fts_virtual: false,
+            vector_index_enabled: Arc::new(Mutex::new(false)),
+            embedder: Some(Arc::new(MockEmbeddingModel)),
+            reranker: None,
+            orchestrator: None,
+        };
+
+        let hits = provider
+            .semantic_lane("browser state", 5)
+            .await
+            .expect("semantic lane should use SQL vector distance");
+
+        assert_eq!(hits[0].title, "Cookies");
+        let sql = sql.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(
+            sql.iter()
+                .any(|query| query.contains("vector_distance_cos"))
+        );
+        assert!(
+            !sql.iter()
+                .any(|query| query.contains("SELECT e.id, e.title, c.snippet, c.embedding"))
+        );
+    }
+
+    #[tokio::test]
+    async fn semantic_lane_uses_rust_cosine_only_when_vector_sql_is_unavailable() {
+        let db = Arc::new(RecordingDb {
+            fail_vector_index: true,
+            fail_vector_distance: true,
+            ..RecordingDb::default()
+        });
+        let sql = Arc::clone(&db.sql);
+        let provider = ObsidianKnowledgeProvider {
+            db,
+            vault_root: PathBuf::new(),
+            exclude_folders: Vec::new(),
+            max_excerpt_length: 400,
+            source_name: "Test Vault".to_string(),
+            fts_virtual: false,
+            vector_index_enabled: Arc::new(Mutex::new(false)),
+            embedder: Some(Arc::new(MockEmbeddingModel)),
+            reranker: None,
+            orchestrator: None,
+        };
+
+        let hits = provider
+            .semantic_lane("browser state", 5)
+            .await
+            .expect("semantic lane should fall back to Rust cosine");
+
+        assert_eq!(hits[0].title, "Cookies");
+        let sql = sql.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(
+            sql.iter()
+                .any(|query| query.contains("vector_distance_cos"))
+        );
+        assert!(
+            sql.iter()
+                .any(|query| query.contains("SELECT e.id, e.title, c.snippet, c.embedding"))
+        );
+    }
+
+    #[tokio::test]
+    async fn entry_metadata_loading_filters_to_fused_hit_ids() {
+        let db = Arc::new(RecordingDb::default());
+        let sql = Arc::clone(&db.sql);
+        let provider = ObsidianKnowledgeProvider {
+            db,
+            vault_root: PathBuf::new(),
+            exclude_folders: Vec::new(),
+            max_excerpt_length: 400,
+            source_name: "Test Vault".to_string(),
+            fts_virtual: false,
+            vector_index_enabled: Arc::new(Mutex::new(false)),
+            embedder: None,
+            reranker: None,
+            orchestrator: None,
+        };
+
+        let _ = provider
+            .load_entry_metadata(&["Cookies.md".to_string()])
+            .await
+            .expect("metadata should load");
+
+        let sql = sql.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let metadata_query = sql
+            .iter()
+            .find(|query| query.contains("tags_json"))
+            .expect("metadata query should run");
+        assert!(metadata_query.contains("WHERE id IN"));
     }
 
     #[tokio::test]

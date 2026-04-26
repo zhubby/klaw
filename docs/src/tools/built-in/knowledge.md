@@ -146,6 +146,8 @@ include_explain = true
 - heading-aware markdown chunking
 - `knowledge_entries` / `knowledge_chunks` / `knowledge_links` / `knowledge_fts` 索引表
 - FTS5 可用时走 `MATCH`，不可用时自动回退为普通表 + token scoring
+- 默认 Turso/libSQL 后端会在写入 embedding 时把 chunk 向量列初始化为原生 `F32_BLOB`，并尝试创建 `libsql_vector_idx`
+- semantic lane 优先使用 `vector_top_k` 查询 Turso 向量索引；当当前本地后端不支持 ANN 索引时，退到数据库内 `vector_distance_cos ... ORDER BY ... LIMIT`，最后才使用 Rust 余弦 fallback
 - semantic / FTS / graph / temporal / rerank 五路检索与 weighted RRF fusion
 - 可选本地 orchestrator query expansion + intent classification（由 `klaw-model` 驱动，参考 `engraph`）
 - `ContextBundle` 组装
