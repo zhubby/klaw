@@ -9,6 +9,7 @@
 ### Changed
 
 - Runtime memory database wiring now uses the renamed `DatabaseExecutor` storage abstraction
+- Runtime shutdown now clears the shared Knowledge provider before process exit so local model resources can release during normal shutdown
 
 ## 2026-04-22
 

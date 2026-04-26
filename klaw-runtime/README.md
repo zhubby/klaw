@@ -10,6 +10,7 @@
 - host runtime-only IM command handling and session routing policy
 - integrate background services, webhook processing, and gateway lifecycle glue
 - own the shared Knowledge service so GUI search, Knowledge tool calls, and index/vector sync reuse one provider/model runtime instead of reopening it per request
+- clear the shared Knowledge service during runtime shutdown so local model resources are released before process exit
 
 ## Notes
 

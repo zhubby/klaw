@@ -2133,6 +2133,9 @@ pub async fn shutdown_runtime_bundle(runtime: &RuntimeBundle) -> Result<(), Box<
         }
     }
 
+    info!("shutting down knowledge runtime");
+    runtime.knowledge_runtime.shutdown().await;
+
     if let Some(handle) = &runtime.observability {
         info!("shutting down observability");
         handle.shutdown().await;

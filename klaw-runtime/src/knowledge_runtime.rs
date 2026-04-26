@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use async_trait::async_trait;
 use klaw_config::AppConfig;
@@ -79,6 +82,7 @@ pub struct KnowledgeRuntimeService {
     provider: Mutex<Option<Arc<dyn KnowledgeRuntimeProvider>>>,
     snapshot: Mutex<KnowledgeRuntimeSnapshot>,
     notify: Notify,
+    shutting_down: AtomicBool,
 }
 
 impl KnowledgeRuntimeService {
@@ -90,6 +94,7 @@ impl KnowledgeRuntimeService {
             provider: Mutex::new(None),
             snapshot: Mutex::new(initial.clone()),
             notify: Notify::new(),
+            shutting_down: AtomicBool::new(false),
         });
         if initial.state == KnowledgeRuntimeState::Loading {
             let service_ref = Arc::clone(&service);
@@ -109,6 +114,7 @@ impl KnowledgeRuntimeService {
     }
 
     pub async fn reload(self: &Arc<Self>, config: AppConfig) {
+        self.shutting_down.store(false, Ordering::Relaxed);
         let initial = initial_snapshot(&config);
         *self.config.lock().await = config;
         *self.provider.lock().await = None;
@@ -119,6 +125,17 @@ impl KnowledgeRuntimeService {
                 service_ref.load_provider().await;
             });
         }
+    }
+
+    pub async fn shutdown(&self) {
+        self.shutting_down.store(true, Ordering::Relaxed);
+        *self.provider.lock().await = None;
+        self.set_snapshot(KnowledgeRuntimeSnapshot {
+            state: KnowledgeRuntimeState::Disabled,
+            status: None,
+            error: None,
+        })
+        .await;
     }
 
     pub async fn wait_until_ready(&self) -> Result<(), KnowledgeError> {
@@ -204,12 +221,21 @@ impl KnowledgeRuntimeService {
     }
 
     async fn load_provider(&self) {
+        if self.shutting_down.load(Ordering::Relaxed) {
+            return;
+        }
         let config = self.config.lock().await.clone();
         match self.loader.load(config.clone()).await {
             Ok(provider) => {
+                if self.shutting_down.load(Ordering::Relaxed) {
+                    return;
+                }
                 let status = provider.status(config.knowledge.enabled).await;
                 match status {
                     Ok(status) => {
+                        if self.shutting_down.load(Ordering::Relaxed) {
+                            return;
+                        }
                         *self.provider.lock().await = Some(provider);
                         self.set_snapshot(KnowledgeRuntimeSnapshot {
                             state: KnowledgeRuntimeState::Ready,
@@ -448,5 +474,26 @@ mod tests {
 
         assert_eq!(service.snapshot().await.state, KnowledgeRuntimeState::Ready);
         assert_eq!(loader.loads.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn shutdown_releases_ready_provider() {
+        let loader = Arc::new(CountingLoader::default());
+        let mut config = AppConfig::default();
+        config.knowledge.enabled = true;
+        config.knowledge.obsidian.vault_path = Some("/tmp/fake".to_string());
+        let service = KnowledgeRuntimeService::start(config, loader.clone());
+
+        service
+            .wait_until_ready()
+            .await
+            .expect("service should load");
+        service.shutdown().await;
+
+        assert_eq!(
+            service.snapshot().await.state,
+            KnowledgeRuntimeState::Disabled
+        );
+        assert!(service.provider.lock().await.is_none());
     }
 }
