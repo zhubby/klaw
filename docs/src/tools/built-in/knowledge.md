@@ -4,7 +4,7 @@
 
 ## 当前定位
 
-`knowledge` 是一个只读的外部知识检索工具。
+`knowledge` 是一个面向外部知识库的检索工具，当前也支持受限写回到 Obsidian vault。
 
 它面向：
 
@@ -24,7 +24,7 @@
 
 - `memory.add` 写入 agent 自身长期记忆
 - `memory.search` 检索 session 记忆视图
-- `knowledge` 只读取外部知识源，不写 `memory.db`
+- `knowledge` 可显式写回用户知识库，但不写 `memory.db`
 - `knowledge` 不进入 runtime 的长期记忆 prompt 注入链路
 
 ### `knowledge` vs `local_search`
@@ -39,12 +39,13 @@
 
 ## 当前动作
 
-`knowledge` 当前暴露四个动作：
+`knowledge` 当前暴露五个动作：
 
 - `list_sources`
 - `search`
 - `get`
 - `context`
+- `create_note`
 
 ### `list_sources`
 
@@ -75,6 +76,23 @@
 - `query`
 - `limit`
 - `budget_chars`
+
+### `create_note`
+
+按 vault 内相对路径创建一篇新的 Markdown 笔记，并在写入后立即做单文件增量索引。
+
+支持参数：
+
+- `path`
+- `content`
+- `source`
+
+首期约束：
+
+- 仅支持 Obsidian provider
+- `path` 必须是 vault 内相对路径，且以 `.md` 结尾
+- 不允许绝对路径或 `..`
+- 若目标笔记已存在，调用失败，不覆盖、不追加
 
 ## 配置
 
@@ -152,5 +170,6 @@ include_explain = true
 - semantic / FTS / graph / temporal / rerank 五路检索与 weighted RRF fusion
 - 可选本地 orchestrator query expansion + intent classification（由 `klaw-model` 驱动）
 - `ContextBundle` 组装
+- `create_note` 受限写回：原子创建 Markdown 笔记并立即索引，供后续 `search/get/context` 消费
 
 本期仍保持为内部 runtime/tool 能力，不暴露 HTTP/REST 或外部 MCP 服务。
