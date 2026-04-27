@@ -554,6 +554,20 @@ fn validate_channels(channels: &ChannelsConfig) -> Result<(), ConfigError> {
                 &account.stream_template_id,
                 "channels.dingtalk.stream_template_id",
             )?;
+            require_non_empty(
+                &account.stream_content_key,
+                "channels.dingtalk.stream_content_key",
+            )?;
+            require_non_empty(
+                &account.stream_reasoning_key,
+                "channels.dingtalk.stream_reasoning_key",
+            )?;
+            if account.stream_content_key.trim() == account.stream_reasoning_key.trim() {
+                return Err(ConfigError::InvalidConfig(
+                    "channels.dingtalk.stream_content_key and stream_reasoning_key must differ"
+                        .to_string(),
+                ));
+            }
         }
         if account.proxy.enabled {
             require_non_empty(&account.proxy.url, "channels.dingtalk.proxy.url")?;

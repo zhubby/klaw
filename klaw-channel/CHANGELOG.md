@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026-04-27
+
+### Changed
+
+- `dingtalk` AI 卡片流式输出在开启 `show_reasoning` 时会把正文与 reasoning 拆分到独立模板变量，并对 reasoning 变量执行全量刷新，避免正文重复拼接 reasoning 块
+
+### Fixed
+
+- `dingtalk` AI 卡片流式输出不再对初始空正文或空 reasoning 调用 streaming update，避免触发钉钉接口的空 `content` 错误；清空已有 reasoning 时改用非空占位内容刷新模板变量
+- `dingtalk` AI 卡片流式输出在单次更新内容超过钉钉 streaming 接口限制时会提前停止流式卡片并回退最终 Markdown 回复，避免接口返回 `unknownError`
+- `dingtalk` AI 卡片创建 payload 恢复为只初始化正文变量，reasoning 变量仅通过后续 streaming update 写入，避免额外初始变量影响既有 `content` 流式通道
+- `dingtalk` AI 卡片流式更新现在会在发送前补齐未闭合的 Markdown fenced code block，避免中间帧 Markdown 语法不完整时钉钉服务端转换失败
+- `dingtalk` AI 卡片收尾时若同时刷新正文与 reasoning，现在只让最后一个 streaming key 携带 `isFinalize=true`，避免先 finalize 正文导致后续 reasoning 流仍未收尾时卡片状态异常
+
 ## 2026-04-22
 
 ### Changed

@@ -862,6 +862,7 @@ mod tests {
             stream_output: false,
             stream_template_id: String::new(),
             stream_content_key: "content".to_string(),
+            stream_reasoning_key: "reasoning".to_string(),
             allowlist: Vec::new(),
             proxy: Default::default(),
         })

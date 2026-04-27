@@ -49,6 +49,7 @@ const WS_STALL_TIMEOUT: Duration = Duration::from_secs(35);
 const EVENT_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const EVENT_DEDUP_MAX_ENTRIES: usize = 20_000;
 const DINGTALK_STREAM_UPDATE_INTERVAL: Duration = Duration::from_millis(400);
+const DINGTALK_STREAM_MAX_CONTENT_BYTES: usize = 1024;
 
 /// Returns `true` when shutdown was requested during the delay.
 async fn wait_reconnect_delay_or_shutdown(
@@ -116,13 +117,21 @@ struct DingtalkStreamWriter {
     chat_id: String,
     template_id: String,
     content_key: String,
+    reasoning_key: String,
     show_reasoning: bool,
     out_track_id: String,
-    last_rendered: Option<String>,
+    last_content: Option<String>,
+    last_reasoning: Option<String>,
     last_update_at: Option<Instant>,
     card_sent: bool,
     stream_failed: bool,
     saw_special_card: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DingtalkStreamSnapshotParts {
+    content: String,
+    reasoning: String,
 }
 
 impl DingtalkStreamWriter {
@@ -134,6 +143,7 @@ impl DingtalkStreamWriter {
         chat_id: String,
         template_id: String,
         content_key: String,
+        reasoning_key: String,
         show_reasoning: bool,
     ) -> Self {
         Self {
@@ -144,9 +154,11 @@ impl DingtalkStreamWriter {
             chat_id,
             template_id,
             content_key,
+            reasoning_key,
             show_reasoning,
             out_track_id: Uuid::new_v4().to_string(),
-            last_rendered: None,
+            last_content: None,
+            last_reasoning: None,
             last_update_at: None,
             card_sent: false,
             stream_failed: false,
@@ -156,6 +168,94 @@ impl DingtalkStreamWriter {
 
     fn enabled(&self) -> bool {
         !self.template_id.trim().is_empty()
+    }
+
+    fn stream_reasoning_enabled(&self) -> bool {
+        self.show_reasoning
+            && !self.reasoning_key.trim().is_empty()
+            && self.reasoning_key.trim() != self.content_key.trim()
+    }
+
+    fn stream_snapshot_parts(&self, output: &ChannelResponse) -> DingtalkStreamSnapshotParts {
+        let content = render_agent_output(output, false, OutputRenderStyle::Markdown);
+        let reasoning = self
+            .show_reasoning
+            .then(|| {
+                output
+                    .reasoning
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            })
+            .unwrap_or_default();
+        DingtalkStreamSnapshotParts { content, reasoning }
+    }
+
+    fn should_stream_reasoning_update(
+        &self,
+        parts: &DingtalkStreamSnapshotParts,
+        force: bool,
+        finalize: bool,
+    ) -> bool {
+        if !self.stream_reasoning_enabled() {
+            return false;
+        }
+        if parts.reasoning.is_empty() && self.last_reasoning.is_none() {
+            return false;
+        }
+        self.last_reasoning.as_deref() != Some(parts.reasoning.as_str()) || force || finalize
+    }
+
+    fn should_stream_content_update(
+        &self,
+        parts: &DingtalkStreamSnapshotParts,
+        force: bool,
+        finalize: bool,
+    ) -> bool {
+        if parts.content.is_empty() && self.last_content.is_none() {
+            return false;
+        }
+        self.last_content.as_deref() != Some(parts.content.as_str()) || force || finalize
+    }
+
+    fn stream_api_content(content: &str) -> String {
+        if content.is_empty() {
+            return " ".to_string();
+        }
+        let fence_count = content
+            .lines()
+            .filter(|line| line.trim_start().starts_with("```"))
+            .count();
+        if fence_count % 2 == 1 {
+            format!("{content}\n```")
+        } else {
+            content.to_string()
+        }
+    }
+
+    fn validate_stream_api_content(key: &str, content: &str) -> Result<(), String> {
+        let content_bytes = content.as_bytes().len();
+        if content_bytes > DINGTALK_STREAM_MAX_CONTENT_BYTES {
+            return Err(format!(
+                "streaming content for key '{}' exceeds dingtalk streaming limit: {} > {} bytes",
+                key.trim(),
+                content_bytes,
+                DINGTALK_STREAM_MAX_CONTENT_BYTES
+            ));
+        }
+        Ok(())
+    }
+
+    fn content_finalize_flag(will_stream_reasoning: bool, finalize: bool) -> bool {
+        finalize && !will_stream_reasoning
+    }
+
+    fn build_initial_card_data(&self) -> serde_json::Value {
+        // Preserve the pre-reasoning AI card creation shape. DingTalk accepts
+        // subsequent streaming updates by key; adding extra initial stream keys
+        // can make the primary content stream fail with an opaque 500.
+        build_ai_card_card_data(&self.content_key, "")
     }
 
     async fn begin(&mut self) {
@@ -185,7 +285,7 @@ impl DingtalkStreamWriter {
                 return;
             }
         };
-        let card_data = build_ai_card_card_data(&self.content_key, "");
+        let card_data = self.build_initial_card_data();
         if let Err(err) = self
             .client
             .create_and_deliver_ai_card(
@@ -220,34 +320,33 @@ impl DingtalkStreamWriter {
             self.saw_special_card = true;
             return;
         }
-        let rendered =
-            render_agent_output(output, self.show_reasoning, OutputRenderStyle::Markdown);
-        if rendered.trim().is_empty() {
-            if let Some(rendered) = self
-                .last_rendered
-                .clone()
-                .filter(|value| !value.trim().is_empty())
-            {
-                let _ = self.flush_rendered(rendered, true, true).await;
-            }
-            return;
-        }
-        let _ = self.flush_rendered(rendered, true, true).await;
+        let parts = self.stream_snapshot_parts(output);
+        let _ = self.flush_stream_parts(parts, true, true).await;
     }
 
-    async fn flush_rendered(
+    async fn flush_stream_parts(
         &mut self,
-        rendered: String,
+        parts: DingtalkStreamSnapshotParts,
         force: bool,
         finalize: bool,
     ) -> ChannelResult<()> {
-        if !self.enabled() || rendered.trim().is_empty() {
+        if !self.enabled() {
             return Ok(());
         }
         if self.stream_failed {
             return Ok(());
         }
-        if self.last_rendered.as_deref() == Some(rendered.as_str()) && !force && !finalize {
+        let stream_reasoning = self.stream_reasoning_enabled();
+        let should_stream_content = self.should_stream_content_update(&parts, force, finalize);
+        let should_stream_reasoning = self.should_stream_reasoning_update(&parts, force, finalize);
+        if parts.content.trim().is_empty()
+            && (!stream_reasoning || parts.reasoning.trim().is_empty())
+            && self.last_content.is_none()
+            && self.last_reasoning.is_none()
+        {
+            return Ok(());
+        }
+        if !should_stream_content && !should_stream_reasoning {
             return Ok(());
         }
         let should_flush = finalize
@@ -256,7 +355,12 @@ impl DingtalkStreamWriter {
             || self
                 .last_update_at
                 .is_none_or(|instant| instant.elapsed() >= DINGTALK_STREAM_UPDATE_INTERVAL);
-        self.last_rendered = Some(rendered.clone());
+        if should_stream_content || !parts.content.is_empty() {
+            self.last_content = Some(parts.content.clone());
+        }
+        if should_stream_reasoning || !parts.reasoning.is_empty() {
+            self.last_reasoning = Some(parts.reasoning.clone());
+        }
         if !should_flush {
             return Ok(());
         }
@@ -273,23 +377,57 @@ impl DingtalkStreamWriter {
             out_track_id = self.out_track_id.as_str(),
             force,
             finalize,
-            content_chars = rendered.chars().count(),
+            content_chars = parts.content.chars().count(),
+            reasoning_chars = parts.reasoning.chars().count(),
             "updating dingtalk ai card stream snapshot"
         );
         let access_token = self
             .client
             .fetch_access_token(&self.client_id, &self.client_secret)
             .await?;
-        self.client
-            .stream_ai_card(
-                &access_token,
-                &self.out_track_id,
-                &self.content_key,
-                &rendered,
-                finalize,
-                false,
-            )
-            .await?;
+        if should_stream_content {
+            let content = Self::stream_api_content(&parts.content);
+            Self::validate_stream_api_content(&self.content_key, &content)?;
+            let content_finalize = Self::content_finalize_flag(should_stream_reasoning, finalize);
+            self.client
+                .stream_ai_card(
+                    &access_token,
+                    &self.out_track_id,
+                    &self.content_key,
+                    &content,
+                    content_finalize,
+                    false,
+                )
+                .await
+                .map_err(|err| {
+                    format!(
+                        "dingtalk ai card streaming update failed for key '{}' ({} bytes): {err}",
+                        self.content_key.trim(),
+                        content.as_bytes().len()
+                    )
+                })?;
+        }
+        if should_stream_reasoning {
+            let reasoning = Self::stream_api_content(&parts.reasoning);
+            Self::validate_stream_api_content(&self.reasoning_key, &reasoning)?;
+            self.client
+                .stream_ai_card(
+                    &access_token,
+                    &self.out_track_id,
+                    &self.reasoning_key,
+                    &reasoning,
+                    finalize,
+                    false,
+                )
+                .await
+                .map_err(|err| {
+                    format!(
+                        "dingtalk ai card streaming update failed for key '{}' ({} bytes): {err}",
+                        self.reasoning_key.trim(),
+                        reasoning.as_bytes().len()
+                    )
+                })?;
+        }
         self.last_update_at = Some(Instant::now());
         Ok(())
     }
@@ -300,9 +438,8 @@ impl DingtalkStreamWriter {
             return Ok(());
         }
 
-        let rendered =
-            render_agent_output(&output, self.show_reasoning, OutputRenderStyle::Markdown);
-        match self.flush_rendered(rendered, false, false).await {
+        let parts = self.stream_snapshot_parts(&output);
+        match self.flush_stream_parts(parts, false, false).await {
             Ok(()) => Ok(()),
             Err(err) => {
                 self.stream_failed = true;
@@ -323,7 +460,8 @@ impl ChannelStreamWriter for DingtalkStreamWriter {
         match event {
             ChannelStreamEvent::Snapshot(output) => self.write_snapshot(output).await,
             ChannelStreamEvent::Clear => {
-                self.last_rendered = None;
+                self.last_content = None;
+                self.last_reasoning = None;
                 Ok(())
             }
         }
@@ -344,6 +482,7 @@ impl DingtalkChannel {
             stream_output: config.stream_output,
             stream_template_id: config.stream_template_id,
             stream_content_key: config.stream_content_key,
+            stream_reasoning_key: config.stream_reasoning_key,
             allowlist: config.allowlist,
             local_attachments,
             proxy: DingtalkProxyConfig {
@@ -661,6 +800,7 @@ impl Channel for DingtalkChannel {
             stream_output: self.config.stream_output,
             stream_template_id: self.config.stream_template_id.clone(),
             stream_content_key: self.config.stream_content_key.clone(),
+            stream_reasoning_key: self.config.stream_reasoning_key.clone(),
             allowlist: self.config.allowlist.clone(),
             proxy: klaw_config::DingtalkProxyConfig {
                 enabled: self.config.proxy.enabled,
@@ -696,6 +836,7 @@ impl DingtalkChannel {
             inbound.chat_id.clone(),
             self.config.stream_template_id.clone(),
             self.config.stream_content_key.clone(),
+            self.config.stream_reasoning_key.clone(),
             self.config.show_reasoning,
         );
         debug!(
@@ -703,6 +844,7 @@ impl DingtalkChannel {
             session_webhook = inbound.session_webhook.as_str(),
             template_id = self.config.stream_template_id.as_str(),
             content_key = self.config.stream_content_key.as_str(),
+            reasoning_key = self.config.stream_reasoning_key.as_str(),
             "submitting dingtalk request with ai card streaming enabled"
         );
         writer.begin().await;

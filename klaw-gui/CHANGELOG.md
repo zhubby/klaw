@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-04-27
+
+### Added
+
+- DingTalk channel 编辑表单新增 `Stream Reasoning Key` 输入项，用于配置 AI 卡片模板中承载 reasoning 的变量名
+
 ## 2026-04-26
 
 ### Changed

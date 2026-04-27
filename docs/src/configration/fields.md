@@ -363,6 +363,10 @@ client_id = "your-app-key"
 client_secret = "your-app-secret"
 bot_title = "Klaw"
 show_reasoning = false
+stream_output = false
+stream_template_id = ""
+stream_content_key = "content"
+stream_reasoning_key = "reasoning"
 allowlist = ["USER123", "*"]
 ```
 
@@ -440,6 +444,56 @@ channels.dingtalk.bot_title = "我的助手"
 
 ```toml
 channels.dingtalk.show_reasoning = true
+```
+
+当 `stream_output=true` 且钉钉 AI 卡片模板包含独立 reasoning 变量时，开启该项会把模型流式返回的 reasoning 写入 `stream_reasoning_key` 指定的模板变量；正文变量不会再重复拼接 reasoning 块。
+
+#### `channels.dingtalk[].stream_output`
+
+**类型**: `boolean`
+**默认值**: `false`
+**必填**: 否
+
+是否允许 DingTalk 渠道使用 AI 卡片模板流式刷新回复。
+
+```toml
+channels.dingtalk.stream_output = true
+```
+
+#### `channels.dingtalk[].stream_template_id`
+
+**类型**: `string`
+**默认值**: `""`
+**必填**: `stream_output=true` 时必填
+
+钉钉 AI 卡片模板 ID。
+
+```toml
+channels.dingtalk.stream_template_id = "template-1.schema"
+```
+
+#### `channels.dingtalk[].stream_content_key`
+
+**类型**: `string`
+**默认值**: `"content"`
+**必填**: `stream_output=true` 时必填
+
+钉钉 AI 卡片模板中承载正文内容的变量名。
+
+```toml
+channels.dingtalk.stream_content_key = "content"
+```
+
+#### `channels.dingtalk[].stream_reasoning_key`
+
+**类型**: `string`
+**默认值**: `"reasoning"`
+**必填**: `stream_output=true` 时必填
+
+钉钉 AI 卡片模板中承载 reasoning 内容的变量名。该变量会用全量覆盖方式刷新，适合每轮 reasoning 不同的展示块；不能与 `stream_content_key` 相同。
+
+```toml
+channels.dingtalk.stream_reasoning_key = "reasoning"
 ```
 
 #### `channels.dingtalk[].allowlist`

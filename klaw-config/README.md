@@ -31,6 +31,7 @@
 - `channels.telegram[].stream_output` / `channels.dingtalk[].stream_output`：是否允许 channel 侧尝试增量输出。
 - `channels.dingtalk[].stream_template_id`：当 `stream_output=true` 时必填，用于指定钉钉 AI 卡片模板 ID。
 - `channels.dingtalk[].stream_content_key`：钉钉 AI 卡片模板里承载正文的参数名，默认 `content`。
+- `channels.dingtalk[].stream_reasoning_key`：钉钉 AI 卡片模板里承载 reasoning 的参数名，默认 `reasoning`。
 - `voice.enabled`：是否启用 voice runtime 能力；只有它与 `tools.voice.enabled` 同时为 `true` 时，模型侧 `voice` tool 才会注册。
 - `voice.stt_provider`：当前 STT provider，支持 `deepgram` / `assemblyai`。
 - `voice.tts_provider`：当前 TTS provider，当前支持 `elevenlabs`。

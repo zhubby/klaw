@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-04-27
+
+### Added
+
+- `channels.dingtalk[].stream_reasoning_key` 配置项，默认 `reasoning`，用于指定钉钉 AI 卡片模板中承载 reasoning 的变量名
+
+### Changed
+
+- DingTalk 流式配置校验现在要求正文变量名与 reasoning 变量名非空且不能相同，避免 AI 卡片模板变量互相覆盖
+
 ## 2026-04-26
 
 ### Changed

@@ -75,10 +75,18 @@ pub(super) fn build_proactive_markdown_payload(
 }
 
 pub(super) fn build_ai_card_card_data(content_key: &str, content: &str) -> Value {
+    build_ai_card_card_data_from_pairs([(content_key, content)])
+}
+
+pub(super) fn build_ai_card_card_data_from_pairs<'a>(
+    pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Value {
+    let card_param_map = pairs
+        .into_iter()
+        .map(|(key, content)| (key.trim().to_string(), Value::String(content.to_string())))
+        .collect::<serde_json::Map<_, _>>();
     serde_json::json!({
-        "cardParamMap": {
-            content_key.trim(): content,
-        }
+        "cardParamMap": card_param_map
     })
 }
 
