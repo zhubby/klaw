@@ -1,11 +1,15 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
+use handlebars::Handlebars;
 use klaw_util::{default_data_dir, workspace_dir};
+use serde_json::{Map, Value};
 use thiserror::Error;
 use tokio::fs;
+use tracing::warn;
 
 const SKILLS_LAZY_LOAD_INSTRUCTIONS: &str = r#"When a task may require a skill, consult the available skills list first.
 Before using a skill, read the SKILL.md file at the listed path.
@@ -66,6 +70,132 @@ const AUTO_CREATE_PROMPT_TEMPLATE_FILES: [(&str, &str); 5] = [
     ("TOOLS.md", include_str!("../templates/prompt/TOOLS.md")),
     ("USER.md", include_str!("../templates/prompt/USER.md")),
 ];
+
+// ---------------------------------------------------------------------------
+// Prompt Extension trait & built-in extensions
+// ---------------------------------------------------------------------------
+
+/// A prompt extension that conditionally includes template sections based on
+/// runtime environment conditions.
+///
+/// Template files use Handlebars `{{#if}}` blocks to denote extension sections:
+///
+/// ```handlebars
+/// {{#if rtk}}
+/// ## Extension Agent: rtk Command Proxy
+/// ...content...
+/// {{/if}}
+/// ```
+///
+/// When an extension's `is_active()` returns `true`, the Handlebars context
+/// includes its name as `true` and the `{{#if name}}` block is rendered.
+/// When `is_active()` returns `false`, the entire block is omitted.
+///
+/// The condition check (`is_active()`) is implemented in code — e.g., probing
+/// the system for a command, checking a config flag, or testing network
+/// reachability. It is **not** left to the LLM to decide.
+pub trait PromptExtension: Send + Sync {
+    /// Unique identifier matching the key used in `{{#if name}}` blocks.
+    fn name(&self) -> &str;
+
+    /// Evaluate whether this extension should be active.
+    /// Implemented in code — e.g., probing the system for a command, checking a
+    /// config flag, or testing network reachability.
+    fn is_active(&self) -> bool;
+
+    /// Return the prompt section content when `is_active()` is true.
+    /// Used as a standalone fallback for dynamic injection outside of
+    /// Handlebars template files (e.g., when a template lacks the `{{#if}}`
+    /// block for this extension).
+    fn prompt_section(&self) -> String;
+}
+
+/// Built-in extension: checks whether the `rtk` command-proxy exists on the
+/// system. When active, all shell-tool commands must be prefixed with `rtk`
+/// so that auditing, sandboxing, and policy enforcement are applied.
+pub struct RtkPromptExtension;
+
+impl PromptExtension for RtkPromptExtension {
+    fn name(&self) -> &str {
+        "rtk"
+    }
+
+    fn is_active(&self) -> bool {
+        is_command_available("rtk")
+    }
+
+    fn prompt_section(&self) -> String {
+        RTK_PROMPT_SECTION.to_string()
+    }
+}
+
+const RTK_PROMPT_SECTION: &str = r#"## Extension Agent: rtk Command Proxy
+
+The `rtk` command is available on this system and acts as a proxy/wrapper for shell operations. It provides auditing, sandboxing, and policy enforcement for all command execution.
+
+**Rule:** When using the shell tool to execute commands, **always prefix the command with `rtk`**. Examples:
+- Instead of `git status` → run `rtk git status`
+- Instead of `npm install` → run `rtk npm install`
+- Instead of `cargo build` → run `rtk cargo build`
+- Instead of `ls -la` → run `rtk ls -la`
+
+This applies to **every** shell command — no exceptions. `rtk` intercepts the command, applies runtime policies, logs the execution, and forwards it to the real binary. Skipping the `rtk` prefix bypasses safety controls."#;
+
+/// Return the default set of built-in prompt extensions.
+/// Callers may append additional extensions before passing the list into
+/// `build_runtime_system_prompt_with_extensions`.
+pub fn default_prompt_extensions() -> Vec<Arc<dyn PromptExtension>> {
+    vec![Arc::new(RtkPromptExtension)]
+}
+
+/// Check whether a command is available on the system by searching PATH.
+/// Uses `which` on Unix-like systems and `where` on Windows.
+fn is_command_available(name: &str) -> bool {
+    let checker = if cfg!(target_family = "unix") {
+        "which"
+    } else {
+        "where"
+    };
+    std::process::Command::new(checker)
+        .arg(name)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Render a Handlebars template string, injecting extension activity flags
+/// into the template context.
+///
+/// Each extension contributes a boolean key (`name` → `is_active()`) to the
+/// context. Template sections wrapped in `{{#if name}}` / `{{/if}}` are
+/// included when the extension is active and omitted when it is not.
+///
+/// Falls back to the raw content on rendering errors (e.g., malformed
+/// Handlebars syntax in a user-edited file), ensuring the prompt is always
+/// available even if template processing fails.
+fn render_template_with_extensions(
+    content: &str,
+    extensions: &[Arc<dyn PromptExtension>],
+) -> String {
+    let mut hb = Handlebars::new();
+    // Non-strict mode: unknown `{{variables}}` render as empty string instead
+    // of raising an error. This is safer for user-edited markdown files that
+    // may inadvertently contain `{{…}}` patterns unrelated to extensions.
+    hb.set_strict_mode(false);
+
+    let mut ctx = Map::new();
+    for ext in extensions {
+        ctx.insert(ext.name().to_string(), Value::Bool(ext.is_active()));
+    }
+
+    match hb.render_template(content, &Value::Object(ctx)) {
+        Ok(rendered) => rendered,
+        Err(e) => {
+            warn!("Handlebars template rendering failed, using raw content: {e}");
+            content.to_string()
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptTemplateWriteReport {
@@ -272,19 +402,32 @@ fn compose_runtime_prompt_with_descriptor(
 }
 
 pub fn build_runtime_system_prompt(skills: Vec<SkillPromptEntry>) -> Option<String> {
+    build_runtime_system_prompt_with_extensions(skills, default_prompt_extensions())
+}
+
+/// Build the full runtime system prompt with explicit prompt extensions.
+/// Extensions are evaluated to build a Handlebars context; template files
+/// containing `{{#if name}}` / `{{/if}}` blocks are rendered so that active
+/// extension sections are included and inactive ones are omitted.
+pub fn build_runtime_system_prompt_with_extensions(
+    skills: Vec<SkillPromptEntry>,
+    extensions: Vec<Arc<dyn PromptExtension>>,
+) -> Option<String> {
     let data_dir = resolve_default_data_dir().ok()?;
-    build_runtime_system_prompt_in_dir(&data_dir, skills)
+    build_runtime_system_prompt_in_dir(&data_dir, skills, &extensions)
 }
 
 fn build_runtime_system_prompt_in_dir(
     data_dir: &Path,
     skills: Vec<SkillPromptEntry>,
+    extensions: &[Arc<dyn PromptExtension>],
 ) -> Option<String> {
     compose_runtime_prompt_with_descriptor(
         RuntimePromptInput {
-            workspace_context: format_inlined_workspace_context_for_prompt_in_dir(&workspace_dir(
-                data_dir,
-            )),
+            workspace_context: format_inlined_workspace_context_for_prompt_in_dir(
+                &workspace_dir(data_dir),
+                extensions,
+            ),
             runtime_metadata: None,
             rules: Some(RUNTIME_PROMPT_RULES.to_string()),
             local_docs: Some(format_workspace_docs_for_prompt_in_dir(data_dir)),
@@ -309,7 +452,10 @@ fn format_workspace_descriptor_for_prompt_in_dir(data_dir: &Path) -> String {
     )
 }
 
-fn format_inlined_workspace_context_for_prompt_in_dir(workspace_dir: &Path) -> Option<String> {
+fn format_inlined_workspace_context_for_prompt_in_dir(
+    workspace_dir: &Path,
+    extensions: &[Arc<dyn PromptExtension>],
+) -> Option<String> {
     let mut sections = Vec::new();
 
     for file_name in INLINED_WORKSPACE_PROMPT_DOC_FILES {
@@ -317,7 +463,7 @@ fn format_inlined_workspace_context_for_prompt_in_dir(workspace_dir: &Path) -> O
         let Ok(content) = std::fs::read_to_string(path) else {
             continue;
         };
-        let content = content.trim().to_string();
+        let content = render_template_with_extensions(content.trim(), extensions);
         if content.is_empty() {
             continue;
         }
@@ -550,6 +696,7 @@ mod tests {
                 description: "interact with GitHub repositories".to_string(),
                 source: "workspace".to_string(),
             }],
+            &default_prompt_extensions(),
         )
         .expect("runtime prompt expected");
 
@@ -615,8 +762,11 @@ mod tests {
             .await
             .expect("tools should be written");
 
-        let prompt = format_inlined_workspace_context_for_prompt_in_dir(&workspace)
-            .expect("workspace context should be composed");
+        let prompt = format_inlined_workspace_context_for_prompt_in_dir(
+            &workspace,
+            &default_prompt_extensions(),
+        )
+        .expect("workspace context should be composed");
 
         assert!(prompt.contains("# AGENTS.md\n\nagents body"));
         assert!(prompt.contains("# SOUL.md\n\nsoul body"));
@@ -659,5 +809,250 @@ mod tests {
         assert!(rules_pos < instructions_pos);
         assert!(prompt.contains("## Local Docs\n\ndocs-a"));
         assert!(prompt.contains("## Additional Instructions\n\nextra-a"));
+    }
+
+    // ---- Prompt Extension tests ----
+
+    /// A simple mock extension for testing Handlebars rendering without
+    /// depending on the actual system environment.
+    struct MockExtension {
+        name: &'static str,
+        active: bool,
+    }
+
+    impl PromptExtension for MockExtension {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn is_active(&self) -> bool {
+            self.active
+        }
+        fn prompt_section(&self) -> String {
+            format!("## Extension: {}", self.name)
+        }
+    }
+
+    #[test]
+    fn render_template_keeps_active_if_block() {
+        let input = "# AGENTS.md\n\n## Every Session\n\nDo stuff.\n\n{{#if rtk}}\n## Extension Agent: rtk\n\nPrefix with rtk.\n{{/if}}\n\n## Make It Yours\n";
+        let extensions: Vec<Arc<dyn PromptExtension>> = vec![Arc::new(MockExtension {
+            name: "rtk",
+            active: true,
+        })];
+        let result = render_template_with_extensions(input, &extensions);
+
+        assert!(result.contains("## Extension Agent: rtk"));
+        assert!(result.contains("Prefix with rtk."));
+        assert!(!result.contains("{{#if rtk}}"));
+        assert!(!result.contains("{{/if}}"));
+        assert!(result.contains("## Every Session"));
+        assert!(result.contains("## Make It Yours"));
+    }
+
+    #[test]
+    fn render_template_strips_inactive_if_block() {
+        let input = "# AGENTS.md\n\n## Every Session\n\nDo stuff.\n\n{{#if rtk}}\n## Extension Agent: rtk\n\nPrefix with rtk.\n{{/if}}\n\n## Make It Yours\n";
+        let extensions: Vec<Arc<dyn PromptExtension>> = vec![Arc::new(MockExtension {
+            name: "rtk",
+            active: false,
+        })];
+        let result = render_template_with_extensions(input, &extensions);
+
+        assert!(!result.contains("## Extension Agent: rtk"));
+        assert!(!result.contains("Prefix with rtk."));
+        assert!(!result.contains("{{#if rtk}}"));
+        assert!(!result.contains("{{/if}}"));
+        assert!(result.contains("## Every Session"));
+        assert!(result.contains("## Make It Yours"));
+    }
+
+    #[test]
+    fn render_template_preserves_content_without_handlebars_syntax() {
+        let input = "# AGENTS.md\n\n## Every Session\n\nDo stuff.\n\n## Make It Yours\n";
+        let extensions: Vec<Arc<dyn PromptExtension>> = vec![Arc::new(MockExtension {
+            name: "rtk",
+            active: true,
+        })];
+        let result = render_template_with_extensions(input, &extensions);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn render_template_handles_multiple_extensions() {
+        let input = "# AGENTS.md\n\n{{#if rtk}}\n## rtk\n\nrtk content\n{{/if}}\n\n{{#if docker}}\n## docker\n\ndocker content\n{{/if}}\n\n## End\n";
+        let extensions: Vec<Arc<dyn PromptExtension>> = vec![
+            Arc::new(MockExtension {
+                name: "rtk",
+                active: true,
+            }),
+            Arc::new(MockExtension {
+                name: "docker",
+                active: false,
+            }),
+        ];
+        let result = render_template_with_extensions(input, &extensions);
+
+        assert!(result.contains("## rtk"));
+        assert!(result.contains("rtk content"));
+        assert!(!result.contains("## docker"));
+        assert!(!result.contains("docker content"));
+        assert!(!result.contains("{{#if"));
+        assert!(!result.contains("{{/if}}"));
+        assert!(result.contains("## End"));
+    }
+
+    #[test]
+    fn render_template_if_else_block_works() {
+        let input = "{{#if rtk}}\nrtk is active\n{{else}}\nrtk is not available\n{{/if}}\n";
+        let active_exts: Vec<Arc<dyn PromptExtension>> = vec![Arc::new(MockExtension {
+            name: "rtk",
+            active: true,
+        })];
+        let active_result = render_template_with_extensions(input, &active_exts);
+        assert!(active_result.contains("rtk is active"));
+        assert!(!active_result.contains("rtk is not available"));
+
+        let inactive_exts: Vec<Arc<dyn PromptExtension>> = vec![Arc::new(MockExtension {
+            name: "rtk",
+            active: false,
+        })];
+        let inactive_result = render_template_with_extensions(input, &inactive_exts);
+        assert!(!inactive_result.contains("rtk is active"));
+        assert!(inactive_result.contains("rtk is not available"));
+    }
+
+    #[test]
+    fn render_template_falls_back_on_invalid_syntax() {
+        // Malformed Handlebars syntax should fall back to raw content.
+        let input = "{{#if}}\nbroken block\n{{/if}}\n";
+        let extensions: Vec<Arc<dyn PromptExtension>> = vec![Arc::new(MockExtension {
+            name: "rtk",
+            active: true,
+        })];
+        let result = render_template_with_extensions(input, &extensions);
+        // Fallback returns raw content unchanged.
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn rtk_prompt_extension_has_correct_name() {
+        let ext = RtkPromptExtension;
+        assert_eq!(ext.name(), "rtk");
+    }
+
+    #[test]
+    fn rtk_prompt_extension_section_contains_shell_prefix_rule() {
+        let ext = RtkPromptExtension;
+        let section = ext.prompt_section();
+        assert!(section.contains("## Extension Agent: rtk Command Proxy"));
+        assert!(section.contains("always prefix the command with `rtk`"));
+        assert!(section.contains("rtk git status"));
+    }
+
+    #[test]
+    fn is_command_available_returns_false_for_nonexistent_command() {
+        // A command that almost certainly does not exist on any system.
+        assert!(!is_command_available("klaw_nonexistent_test_command_xyz"));
+    }
+
+    #[test]
+    fn default_prompt_extensions_includes_rtk() {
+        let exts = default_prompt_extensions();
+        assert!(exts.iter().any(|e| e.name() == "rtk"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn format_inlined_workspace_context_strips_inactive_extension_from_template() {
+        // Write the actual AGENTS.md template content (which contains
+        // {{#if rtk}} Handlebars blocks) into a temp workspace and verify
+        // that inactive extensions are stripped.
+        let workspace =
+            std::env::temp_dir().join(format!("klaw-prompt-ext-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&workspace)
+            .await
+            .expect("workspace dir should be created");
+
+        let agents_content =
+            get_default_template_content("AGENTS.md").expect("AGENTS.md template should exist");
+        assert!(
+            agents_content.contains("{{#if rtk}}"),
+            "template should contain rtk Handlebars block"
+        );
+
+        fs::write(workspace.join("AGENTS.md"), agents_content)
+            .await
+            .expect("agents should be written");
+        fs::write(workspace.join("SOUL.md"), "# SOUL.md\n\nsoul body")
+            .await
+            .expect("soul should be written");
+        fs::write(
+            workspace.join("IDENTITY.md"),
+            "# IDENTITY.md\n\nidentity body",
+        )
+        .await
+        .expect("identity should be written");
+        fs::write(workspace.join("TOOLS.md"), "# TOOLS.md\n\ntools body")
+            .await
+            .expect("tools should be written");
+
+        // Use a mock rtk extension that is inactive to simulate a system without rtk.
+        let inactive_exts: Vec<Arc<dyn PromptExtension>> = vec![Arc::new(MockExtension {
+            name: "rtk",
+            active: false,
+        })];
+
+        let prompt = format_inlined_workspace_context_for_prompt_in_dir(&workspace, &inactive_exts)
+            .expect("workspace context should be composed");
+
+        assert!(!prompt.contains("{{#if rtk}}"));
+        assert!(!prompt.contains("{{/if}}"));
+        assert!(!prompt.contains("Extension Agent: rtk Command Proxy"));
+        assert!(!prompt.contains("always prefix the command with `rtk`"));
+        assert!(prompt.contains("# AGENTS.md"));
+        assert!(prompt.contains("## Make It Yours"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn format_inlined_workspace_context_keeps_active_extension_from_template() {
+        let workspace =
+            std::env::temp_dir().join(format!("klaw-prompt-ext-active-{}", Uuid::new_v4()));
+        fs::create_dir_all(&workspace)
+            .await
+            .expect("workspace dir should be created");
+
+        let agents_content =
+            get_default_template_content("AGENTS.md").expect("AGENTS.md template should exist");
+
+        fs::write(workspace.join("AGENTS.md"), agents_content)
+            .await
+            .expect("agents should be written");
+        fs::write(workspace.join("SOUL.md"), "# SOUL.md\n\nsoul body")
+            .await
+            .expect("soul should be written");
+        fs::write(
+            workspace.join("IDENTITY.md"),
+            "# IDENTITY.md\n\nidentity body",
+        )
+        .await
+        .expect("identity should be written");
+        fs::write(workspace.join("TOOLS.md"), "# TOOLS.md\n\ntools body")
+            .await
+            .expect("tools should be written");
+
+        // Use a mock rtk extension that is active to simulate a system with rtk.
+        let active_exts: Vec<Arc<dyn PromptExtension>> = vec![Arc::new(MockExtension {
+            name: "rtk",
+            active: true,
+        })];
+
+        let prompt = format_inlined_workspace_context_for_prompt_in_dir(&workspace, &active_exts)
+            .expect("workspace context should be composed");
+
+        assert!(!prompt.contains("{{#if rtk}}"));
+        assert!(!prompt.contains("{{/if}}"));
+        assert!(prompt.contains("Extension Agent: rtk Command Proxy"));
+        assert!(prompt.contains("always prefix the command with `rtk`"));
+        assert!(prompt.contains("# AGENTS.md"));
+        assert!(prompt.contains("## Make It Yours"));
     }
 }
