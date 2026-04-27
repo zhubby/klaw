@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery,
-    KnowledgeSourceInfo,
+    CreateKnowledgeNoteInput, KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider,
+    KnowledgeSearchQuery, KnowledgeSourceInfo,
 };
 
 #[derive(Default, Clone)]
@@ -57,6 +57,17 @@ impl KnowledgeProviderRouter {
             .get(provider_name)
             .ok_or_else(|| KnowledgeError::SourceUnavailable(provider_name.to_string()))?;
         provider.list_sources().await
+    }
+
+    pub async fn create_note(
+        &self,
+        provider_name: &str,
+        input: CreateKnowledgeNoteInput,
+    ) -> Result<KnowledgeEntry, KnowledgeError> {
+        let provider = self
+            .get(provider_name)
+            .ok_or_else(|| KnowledgeError::SourceUnavailable(provider_name.to_string()))?;
+        provider.create_note(input).await
     }
 }
 
@@ -114,6 +125,23 @@ mod tests {
                 entry_count: 1,
             }])
         }
+
+        async fn create_note(
+            &self,
+            input: CreateKnowledgeNoteInput,
+        ) -> Result<KnowledgeEntry, KnowledgeError> {
+            Ok(KnowledgeEntry {
+                id: input.path.clone(),
+                title: "Created".to_string(),
+                content: input.content,
+                tags: vec![],
+                uri: input.path,
+                source: "mock".to_string(),
+                metadata: json!({}),
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            })
+        }
     }
 
     #[tokio::test]
@@ -138,6 +166,18 @@ mod tests {
             .await
             .expect("get should succeed");
         assert_eq!(entry.expect("entry").content, "full content");
+
+        let created = router
+            .create_note(
+                "mock",
+                CreateKnowledgeNoteInput {
+                    path: "notes/new.md".to_string(),
+                    content: "# New".to_string(),
+                },
+            )
+            .await
+            .expect("create should succeed");
+        assert_eq!(created.uri, "notes/new.md");
     }
 
     #[tokio::test]

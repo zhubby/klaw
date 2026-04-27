@@ -1,16 +1,18 @@
 # klaw-knowledge
 
-`klaw-knowledge` provides read-only retrieval over external knowledge sources for Klaw.
+`klaw-knowledge` provides retrieval-first access to external knowledge sources for Klaw, including constrained write-back for Obsidian notes.
 
 ## Knowledge vs Memory
 
 - `klaw-memory` stores agent-produced long-term facts and session recall.
 - `klaw-knowledge` retrieves external knowledge owned outside the agent, such as an Obsidian vault.
+- `klaw-knowledge` can explicitly create new Obsidian notes in the configured vault, but it remains separate from agent memory storage.
 - `klaw-knowledge` does not write user knowledge back into `memory.db` or the runtime `Memory` prompt section.
 
 ## Capabilities
 
 - Provider-based knowledge retrieval via `KnowledgeProvider`
+- Constrained note creation for Obsidian vaults with immediate single-note reindexing
 - Obsidian markdown parsing, scored semantic chunking, and indexing helpers
 - Obsidian link discovery for explicit wikilinks plus exact name, alias, fuzzy Levenshtein, and unique first-name matches without rewriting vault files
 - Structured search result types (`KnowledgeHit`, `KnowledgeEntry`, `ContextBundle`)

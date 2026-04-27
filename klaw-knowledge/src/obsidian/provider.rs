@@ -9,10 +9,11 @@ use async_trait::async_trait;
 use klaw_model::QueryIntent;
 use klaw_storage::{DatabaseExecutor, DbRow, DbValue};
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 use crate::{
-    KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery,
-    KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress,
+    CreateKnowledgeNoteInput, KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider,
+    KnowledgeSearchQuery, KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress,
     models::{EmbeddingModel, KnowledgeOrchestration, OrchestratorModel, RerankModel},
     obsidian::indexer::{
         KNOWLEDGE_VECTOR_INDEX_NAME, embed_missing_chunks, embed_missing_chunks_with_progress,
@@ -129,6 +130,46 @@ impl ObsidianKnowledgeProvider {
 
     pub fn start_auto_index_watcher(&self) -> Result<AutoIndexWatcher, KnowledgeError> {
         start_auto_index_watcher(self.clone())
+    }
+
+    pub async fn create_note(
+        &self,
+        input: CreateKnowledgeNoteInput,
+    ) -> Result<KnowledgeEntry, KnowledgeError> {
+        let relative_path = normalize_note_path(&input.path)?;
+        let absolute_path = self.vault_root.join(&relative_path);
+        if absolute_path.exists() {
+            return Err(KnowledgeError::NoteAlreadyExists(relative_path));
+        }
+
+        let parent = absolute_path.parent().ok_or_else(|| {
+            KnowledgeError::InvalidNotePath("note path must include a file name".to_string())
+        })?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| KnowledgeError::Provider(format!("create note parent failed: {err}")))?;
+
+        let temp_path = temp_note_path(&absolute_path);
+        tokio::fs::write(&temp_path, input.content)
+            .await
+            .map_err(|err| KnowledgeError::Provider(format!("write note failed: {err}")))?;
+        if let Err(err) = tokio::fs::rename(&temp_path, &absolute_path).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(KnowledgeError::Provider(format!("finalize note failed: {err}")));
+        }
+
+        if let Err(err) = self.index_path(&absolute_path).await {
+            let _ = tokio::fs::remove_file(&absolute_path).await;
+            return Err(KnowledgeError::Provider(format!(
+                "reindex after note creation failed: {err}"
+            )));
+        }
+
+        self.get(&relative_path).await?.ok_or_else(|| {
+            KnowledgeError::Provider(format!(
+                "created note missing from knowledge index: {relative_path}"
+            ))
+        })
     }
 
     pub async fn reindex_with_progress<F>(&self, progress: F) -> Result<usize, KnowledgeError>
@@ -614,6 +655,13 @@ impl KnowledgeProvider for ObsidianKnowledgeProvider {
             entry_count: self.entry_count().await?,
         }])
     }
+
+    async fn create_note(
+        &self,
+        input: CreateKnowledgeNoteInput,
+    ) -> Result<KnowledgeEntry, KnowledgeError> {
+        ObsidianKnowledgeProvider::create_note(self, input).await
+    }
 }
 
 impl ObsidianKnowledgeProvider {
@@ -773,6 +821,59 @@ fn is_vector_query_capability_error(message: &str) -> bool {
         || normalized.contains("libsql_vector_idx")
         || normalized.contains("no such function")
         || normalized.contains("no such module")
+}
+
+fn normalize_note_path(path: &str) -> Result<String, KnowledgeError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(KnowledgeError::InvalidNotePath(
+            "note path cannot be empty".to_string(),
+        ));
+    }
+    if trimmed.starts_with('/') || Path::new(trimmed).is_absolute() {
+        return Err(KnowledgeError::InvalidNotePath(
+            "note path must be relative to the vault root".to_string(),
+        ));
+    }
+    if !trimmed.ends_with(".md") {
+        return Err(KnowledgeError::InvalidNotePath(
+            "note path must end with `.md`".to_string(),
+        ));
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in Path::new(trimmed).components() {
+        match component {
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                return Err(KnowledgeError::InvalidNotePath(
+                    "note path cannot escape the vault root".to_string(),
+                ));
+            }
+            _ => {
+                return Err(KnowledgeError::InvalidNotePath(
+                    "note path contains unsupported components".to_string(),
+                ));
+            }
+        }
+    }
+
+    let normalized = normalized.to_string_lossy().replace('\\', "/");
+    if normalized.is_empty() {
+        return Err(KnowledgeError::InvalidNotePath(
+            "note path must include a file name".to_string(),
+        ));
+    }
+    Ok(normalized)
+}
+
+fn temp_note_path(absolute_path: &Path) -> PathBuf {
+    let file_name = absolute_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("note.md");
+    absolute_path.with_file_name(format!("{file_name}.{}.tmp", Uuid::new_v4()))
 }
 
 fn dedup_ranked_hits<F>(rows: Vec<DbRow>, map: F) -> Vec<RankedHit>
@@ -1453,5 +1554,73 @@ mod tests {
                 .and_then(Value::as_array)
                 .is_some_and(|lanes| lanes.iter().any(|lane| lane == "rerank"))
         }));
+    }
+
+    #[test]
+    fn normalize_note_path_rejects_invalid_paths() {
+        assert!(matches!(
+            normalize_note_path("/tmp/note.md"),
+            Err(KnowledgeError::InvalidNotePath(_))
+        ));
+        assert!(matches!(
+            normalize_note_path("../note.md"),
+            Err(KnowledgeError::InvalidNotePath(_))
+        ));
+        assert!(matches!(
+            normalize_note_path("notes/note.txt"),
+            Err(KnowledgeError::InvalidNotePath(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn create_note_writes_indexes_and_returns_entry() {
+        let provider = test_provider_unindexed().await;
+        let entry = provider
+            .create_note(CreateKnowledgeNoteInput {
+                path: "notes/new.md".to_string(),
+                content: "# New\n\nFresh knowledge for the vault.".to_string(),
+            })
+            .await
+            .expect("create note should succeed");
+
+        assert_eq!(entry.id, "notes/new.md");
+        assert_eq!(entry.uri, "notes/new.md");
+        assert!(provider.vault_root().join("notes/new.md").exists());
+
+        let indexed = provider
+            .get("notes/new.md")
+            .await
+            .expect("get should succeed")
+            .expect("entry should be indexed");
+        assert!(indexed.content.contains("Fresh knowledge"));
+
+        let hits = provider
+            .search(KnowledgeSearchQuery {
+                text: "fresh knowledge".to_string(),
+                ..Default::default()
+            })
+            .await
+            .expect("search should succeed");
+        assert!(hits.iter().any(|hit| hit.id == "notes/new.md"));
+    }
+
+    #[tokio::test]
+    async fn create_note_rejects_existing_paths_without_overwriting() {
+        let provider = test_provider_unindexed().await;
+        let original = std::fs::read_to_string(provider.vault_root().join("auth.md"))
+            .expect("existing note should be readable");
+
+        let err = provider
+            .create_note(CreateKnowledgeNoteInput {
+                path: "auth.md".to_string(),
+                content: "# Replacement".to_string(),
+            })
+            .await
+            .expect_err("existing path should fail");
+
+        assert!(matches!(err, KnowledgeError::NoteAlreadyExists(_)));
+        let current = std::fs::read_to_string(provider.vault_root().join("auth.md"))
+            .expect("existing note should remain readable");
+        assert_eq!(current, original);
     }
 }

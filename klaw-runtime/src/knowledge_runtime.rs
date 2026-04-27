@@ -6,10 +6,10 @@ use std::sync::{
 use async_trait::async_trait;
 use klaw_config::AppConfig;
 use klaw_knowledge::{
-    KnowledgeAutoIndexHandle, KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider,
-    KnowledgeRuntimeSnapshot, KnowledgeRuntimeState, KnowledgeSearchQuery, KnowledgeSourceInfo,
-    KnowledgeStatus, KnowledgeSyncProgress, KnowledgeSyncResult, ObsidianKnowledgeProvider,
-    open_configured_obsidian_provider,
+    CreateKnowledgeNoteInput, KnowledgeAutoIndexHandle, KnowledgeEntry, KnowledgeError,
+    KnowledgeHit, KnowledgeProvider, KnowledgeRuntimeSnapshot, KnowledgeRuntimeState,
+    KnowledgeSearchQuery, KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress,
+    KnowledgeSyncResult, ObsidianKnowledgeProvider, open_configured_obsidian_provider,
 };
 use tokio::sync::{Mutex, Notify, mpsc};
 
@@ -337,6 +337,13 @@ impl KnowledgeProvider for KnowledgeRuntimeService {
     async fn list_sources(&self) -> Result<Vec<KnowledgeSourceInfo>, KnowledgeError> {
         self.ready_provider().await?.list_sources().await
     }
+
+    async fn create_note(
+        &self,
+        input: CreateKnowledgeNoteInput,
+    ) -> Result<KnowledgeEntry, KnowledgeError> {
+        self.ready_provider().await?.create_note(input).await
+    }
 }
 
 fn initial_snapshot(config: &AppConfig) -> KnowledgeRuntimeSnapshot {
@@ -378,9 +385,9 @@ mod tests {
     use async_trait::async_trait;
     use klaw_config::AppConfig;
     use klaw_knowledge::{
-        KnowledgeAutoIndexHandle, KnowledgeEntry, KnowledgeError, KnowledgeHit, KnowledgeProvider,
-        KnowledgeRuntimeState, KnowledgeSearchQuery, KnowledgeSourceInfo, KnowledgeStatus,
-        KnowledgeSyncProgress, KnowledgeSyncResult,
+        CreateKnowledgeNoteInput, KnowledgeAutoIndexHandle, KnowledgeEntry, KnowledgeError,
+        KnowledgeHit, KnowledgeProvider, KnowledgeRuntimeState, KnowledgeSearchQuery,
+        KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress, KnowledgeSyncResult,
     };
     use tokio::sync::mpsc;
 
@@ -447,6 +454,23 @@ mod tests {
 
         async fn list_sources(&self) -> Result<Vec<KnowledgeSourceInfo>, KnowledgeError> {
             Ok(Vec::new())
+        }
+
+        async fn create_note(
+            &self,
+            input: CreateKnowledgeNoteInput,
+        ) -> Result<KnowledgeEntry, KnowledgeError> {
+            Ok(KnowledgeEntry {
+                id: input.path.clone(),
+                title: "Created".to_string(),
+                content: input.content,
+                tags: Vec::new(),
+                uri: input.path,
+                source: "fake".to_string(),
+                metadata: serde_json::json!({}),
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            })
         }
     }
 
