@@ -14,7 +14,7 @@
 
 - Obsidian provider 打开时不再支持启动即全量索引，首次同步保持为显式调用
 - Search 结果 metadata 补全改为只按 fused hit ids 批量读取，避免每次搜索全表读取 `knowledge_entries`
-- Obsidian markdown chunking 改为 `engraph` 风格的断点评分，优先标题、代码围栏、主题分隔符和空行，并避免切开代码块
+- Obsidian markdown chunking 改为断点评分，优先标题、代码围栏、主题分隔符和空行，并避免切开代码块
 
 ## 2026-04-25
 

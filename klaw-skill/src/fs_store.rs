@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::task::JoinSet;
 use tokio::time::{Duration, timeout};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::{
     RegistrySkillMatch, RegistrySkillSummary, ReqwestSkillFetcher, SkillError, SkillFetcher,
@@ -319,7 +319,7 @@ where
                     available_registries.insert(registry_name);
                 }
                 Ok((registry_name, Ok(Err(err)))) => {
-                    warn!(
+                    error!(
                         registry = %registry_name,
                         error = %err,
                         "skills registry sync failed, skipping"

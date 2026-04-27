@@ -144,7 +144,7 @@ impl Default for KnowledgePanel {
             sync_request: None,
             sync_progress: None,
             search_query: String::new(),
-            search_limit: "5".to_string(),
+            search_limit: "10".to_string(),
             search_request: None,
             hits: Vec::new(),
             selected_id: None,
@@ -470,6 +470,7 @@ impl KnowledgePanel {
         ui.add_space(4.0);
         let mut selected = None;
         egui::ScrollArea::vertical()
+            .id_salt("knowledge_hits")
             .max_height(ui.available_height() - 8.0)
             .show(ui, |ui| {
                 let row_height = ui.spacing().interact_size.y;
@@ -536,12 +537,17 @@ impl KnowledgePanel {
         ui.small(format!("URI: {}", entry.uri));
         ui.add_space(6.0);
         let mut content = entry.content.clone();
-        ui.add(
-            egui::TextEdit::multiline(&mut content)
-                .desired_width(f32::INFINITY)
-                .desired_rows(18)
-                .interactive(false),
-        );
+        egui::ScrollArea::vertical()
+            .id_salt("knowledge_entry_preview")
+            .max_height(ui.available_height())
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut content)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(18)
+                        .interactive(false),
+                );
+            });
     }
 
     fn render_sync_progress_window(&self, ui: &mut egui::Ui) {
@@ -609,19 +615,19 @@ impl KnowledgePanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Enabled");
+                        label_with_hint(ui, "Enabled", "Enable or disable the knowledge retrieval subsystem.");
                         ui.checkbox(&mut form.enabled, "");
                         ui.end_row();
 
-                        ui.label("Provider");
+                        label_with_hint(ui, "Provider", "The knowledge source provider (e.g. Obsidian vault).");
                         provider_combo(ui, &mut form.provider);
                         ui.end_row();
 
-                        ui.label("Vault path");
+                        label_with_hint(ui, "Vault path", "Absolute path to the local vault directory on your device.");
                         ui.text_edit_singleline(&mut form.vault_path);
                         ui.end_row();
 
-                        ui.label("Auto-index vault changes");
+                        label_with_hint(ui, "Auto-index vault changes", "Automatically re-index when vault files change. Run Sync once for the initial index.");
                         ui.vertical(|ui| {
                             ui.checkbox(&mut form.auto_index, "");
                             ui.small(
@@ -630,31 +636,31 @@ impl KnowledgePanel {
                         });
                         ui.end_row();
 
-                        ui.label("Max excerpt length");
+                        label_with_hint(ui, "Max excerpt length", "Maximum character length of each excerpt chunk returned in search results.");
                         ui.text_edit_singleline(&mut form.max_excerpt_length);
                         ui.end_row();
 
-                        ui.label("Exclude folders");
+                        label_with_hint(ui, "Exclude folders", "Comma-separated list of folder names to skip during indexing.");
                         ui.text_edit_singleline(&mut form.exclude_folders);
                         ui.end_row();
 
-                        ui.label("Top K");
+                        label_with_hint(ui, "Top K", "Number of top results to return from a knowledge search query.");
                         ui.text_edit_singleline(&mut form.top_k);
                         ui.end_row();
 
-                        ui.label("Rerank candidates");
+                        label_with_hint(ui, "Rerank candidates", "Number of candidate results to consider before applying reranking.");
                         ui.text_edit_singleline(&mut form.rerank_candidates);
                         ui.end_row();
 
-                        ui.label("Graph hops");
+                        label_with_hint(ui, "Graph hops", "Depth of graph traversal for link-based knowledge expansion.");
                         ui.text_edit_singleline(&mut form.graph_hops);
                         ui.end_row();
 
-                        ui.label("Temporal decay");
+                        label_with_hint(ui, "Temporal decay", "Decay factor applied to older notes; lower values prefer recent content.");
                         ui.text_edit_singleline(&mut form.temporal_decay);
                         ui.end_row();
 
-                        ui.label("Embedding model id");
+                        label_with_hint(ui, "Embedding model id", "Model used to generate vector embeddings for indexing and retrieval.");
                         model_combo(
                             ui,
                             "knowledge-config-embedding-model",
@@ -664,7 +670,7 @@ impl KnowledgePanel {
                         );
                         ui.end_row();
 
-                        ui.label("Orchestrator model id");
+                        label_with_hint(ui, "Orchestrator model id", "Model used to orchestrate multi-step knowledge queries and synthesis.");
                         model_combo(
                             ui,
                             "knowledge-config-orchestrator-model",
@@ -674,7 +680,7 @@ impl KnowledgePanel {
                         );
                         ui.end_row();
 
-                        ui.label("Reranker model id");
+                        label_with_hint(ui, "Reranker model id", "Model used to rerank retrieval candidates for improved result ordering.");
                         model_combo(
                             ui,
                             "knowledge-config-reranker-model",
@@ -739,6 +745,7 @@ impl PanelRenderer for KnowledgePanel {
         }
 
         ui.heading(ctx.tab_title);
+        ui.label("Search, index, and retrieve knowledge from your connected vaults and document sources.");
         ui.horizontal(|ui| {
             if ui
                 .button(format!("{} Refresh", regular::ARROW_CLOCKWISE))
@@ -794,6 +801,15 @@ fn split_csv(value: &str) -> Vec<String> {
 fn optional_string(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
+}
+
+fn label_with_hint(ui: &mut egui::Ui, label: &str, hint: &str) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.add_space(2.0);
+        let response = ui.label(RichText::new(regular::INFO).size(14.0).color(Color32::GRAY));
+        response.on_hover_text(hint);
+    });
 }
 
 fn status_label(path: Option<&Path>) -> String {

@@ -444,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn scores_semantic_break_points_like_engraph() {
+    fn scores_semantic_break_points() {
         let content = "# One\n\n## Two\n---\n```rust\nlet value = 1;\n```\n###### Six\n";
         let break_points = find_break_points(content);
         let scores: Vec<u32> = break_points

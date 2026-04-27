@@ -105,7 +105,7 @@ impl PanelRenderer for LocalModelsPanel {
         self.poll_tasks(notifications);
         self.ensure_store_loaded(notifications);
         ui.heading(ctx.tab_title);
-        ui.label("Manage local Hugging Face model assets under .klaw/models.");
+        ui.label("Browse, install, and manage local LLM models stored on your device.");
         ui.separator();
 
         let selected_model = self.selected_model.clone();
@@ -147,15 +147,6 @@ impl PanelRenderer for LocalModelsPanel {
                 }
             }
         });
-        if let Some(model_id) = selected_model.as_deref() {
-            ui.label(format!(
-                "Selected model default GGUF: {}",
-                selected_default_gguf.as_deref().unwrap_or("not configured")
-            ));
-            ui.small(format!("Selected model: {model_id}"));
-        } else {
-            ui.label("Select a model row to set its default GGUF file.");
-        }
 
         ui.separator();
         self.render_installed_models(ui, notifications);
@@ -555,6 +546,7 @@ impl LocalModelsPanel {
             .column(Column::remainder())
             .column(Column::auto())
             .column(Column::remainder())
+            .column(Column::auto())
             .header(22.0, |mut header| {
                 header.col(|ui| {
                     ui.strong("Name");
@@ -564,6 +556,9 @@ impl LocalModelsPanel {
                 });
                 header.col(|ui| {
                     ui.strong("Created");
+                });
+                header.col(|ui| {
+                    ui.strong("Default GGUF");
                 });
             })
             .body(|body| {
@@ -582,6 +577,9 @@ impl LocalModelsPanel {
                     });
                     row.col(|ui| {
                         ui.label(&summary.installed_at);
+                    });
+                    row.col(|ui| {
+                        ui.label(summary.default_gguf_model_file.as_deref().unwrap_or("—"));
                     });
 
                     let response = row.response();

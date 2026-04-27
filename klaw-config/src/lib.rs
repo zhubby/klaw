@@ -1181,7 +1181,7 @@ fn default_obsidian_knowledge_exclude_folders() -> Vec<String> {
 }
 
 fn default_knowledge_top_k() -> usize {
-    5
+    10
 }
 
 fn default_knowledge_rerank_candidates() -> usize {

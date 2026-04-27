@@ -47,7 +47,7 @@ is no longer used.
 - Per-model default GGUF selection via `models/manifest.json` `default_gguf_model_file`
 - Per-request `LlamaContext` creation for embedding, rerank, chat, and orchestrator generation
 - Query/document prompt formatting for embedding model families such as Qwen and embeddinggemma
-- Query-expansion orchestration with JSON parsing and heuristic fallback inspired by `engraph`
+- Query-expansion orchestration with JSON parsing and heuristic fallback
 - Native llama.cpp logs are disabled at initialization; Klaw emits its own tracing around model load and runtime operations
 
 ### Build Requirements
