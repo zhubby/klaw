@@ -3,8 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use klaw_config::{AppConfig, KnowledgeToolConfig};
 use klaw_knowledge::{
-    KnowledgeEntry, KnowledgeHit, KnowledgeProvider, KnowledgeSearchQuery, assemble_context_bundle,
-    open_configured_obsidian_provider,
+    CreateKnowledgeNoteInput, KnowledgeEntry, KnowledgeHit, KnowledgeProvider,
+    KnowledgeSearchQuery, assemble_context_bundle, open_configured_obsidian_provider,
 };
 use serde_json::{Value, json};
 
@@ -76,6 +76,14 @@ impl KnowledgeTool {
             .ok_or_else(|| ToolError::InvalidArgs(format!("missing `{key}`")))
     }
 
+    fn require_nonempty_content(args: &Value, key: &'static str) -> Result<String, ToolError> {
+        args.get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| ToolError::InvalidArgs(format!("missing `{key}`")))
+    }
+
     fn parse_limit(value: Option<u64>, fallback: usize) -> Result<usize, ToolError> {
         match value {
             Some(limit) if limit > 0 => Ok(limit as usize),
@@ -101,6 +109,22 @@ impl KnowledgeTool {
             parsed.push(tag.trim().to_string());
         }
         Ok(Some(parsed))
+    }
+
+    fn validate_source(args: &Value) -> Result<(), ToolError> {
+        let Some(source) = args.get("source") else {
+            return Ok(());
+        };
+        let source = source
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArgs("`source` must be a string".to_string()))?;
+        let source = source.trim();
+        if source.is_empty() || matches!(source, "obsidian" | "Obsidian Vault") {
+            return Ok(());
+        }
+        Err(ToolError::InvalidArgs(format!(
+            "`source` must match the configured Obsidian provider, got `{source}`"
+        )))
     }
 
     async fn run_search(&self, args: &Value) -> Result<Vec<KnowledgeHit>, ToolError> {
@@ -139,49 +163,125 @@ impl Tool for KnowledgeTool {
     }
 
     fn description(&self) -> &str {
-        "Search connected knowledge bases such as an Obsidian vault for relevant notes, documents, and reference material. Use this when the answer may exist in the user's personal or project knowledge sources."
+        "Access the user's connected knowledge base (e.g. an Obsidian vault) to retrieve or store information. Use `search` to find relevant notes by keywords or tags. Use `get` to fetch a specific note by its ID. Use `context` to assemble a compact, budget-controlled context bundle for injection into the conversation. Use `list_sources` to discover available knowledge sources. Use `create_note` to write a new note into the vault when the user asks you to save or record information persistently."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "description": "Search read-only knowledge sources, fetch a specific entry, or assemble a context bundle.",
+            "description": "Interact with the user's knowledge base (Obsidian vault). Choose an action to search notes, retrieve a specific entry, build a compact context bundle, discover available sources, or create a new note.",
             "oneOf": [
                 {
+                    "description": "List all configured knowledge sources (e.g. Obsidian vault name, provider, entry count). Use this first to discover what sources are available before searching.",
                     "properties": {
-                        "action": { "const": "list_sources" }
+                        "action": {
+                            "const": "list_sources",
+                            "description": "List available knowledge sources and their metadata."
+                        }
                     },
                     "required": ["action"],
                     "additionalProperties": false
                 },
                 {
+                    "description": "Search the knowledge base for notes matching a query. Returns ranked hits with title, excerpt, score, and tags. Use this when you need relevant reference material on a topic.",
                     "properties": {
-                        "action": { "const": "search" },
-                        "query": { "type": "string", "minLength": 1 },
-                        "tags": { "type": "array", "items": { "type": "string" } },
-                        "limit": { "type": "integer", "minimum": 1 },
-                        "source": { "type": "string" },
-                        "mode": { "type": "string" }
+                        "action": {
+                            "const": "search",
+                            "description": "Search knowledge base for relevant notes."
+                        },
+                        "query": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Natural language search query describing the topic or question. Use specific keywords for better results, e.g. 'Rust async error handling' or 'project deployment workflow'."
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Filter results to notes that contain at least one of these Obsidian tags (without the # prefix). Example: ['project-alpha', 'meeting-notes']."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Maximum number of search hits to return. Defaults to the runtime-configured search limit (typically 10)."
+                        },
+                        "source": {
+                            "type": "string",
+                            "description": "Restrict search to a specific knowledge source by name. Must match a source returned by `list_sources`. Example: 'Obsidian Vault'."
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["keyword", "semantic", "hybrid"],
+                            "description": "Search retrieval mode. 'keyword' matches exact terms, 'semantic' uses embedding similarity for conceptual matches, 'hybrid' combines both. Defaults to the provider's default mode."
+                        }
                     },
                     "required": ["action", "query"],
                     "additionalProperties": false
                 },
                 {
+                    "description": "Retrieve a single knowledge entry by its unique ID. Returns the full note content, metadata, tags, and timestamps. Use this when you already have an entry ID (e.g. from a prior search hit) and need the complete document.",
                     "properties": {
-                        "action": { "const": "get" },
-                        "id": { "type": "string", "minLength": 1 }
+                        "action": {
+                            "const": "get",
+                            "description": "Retrieve a specific knowledge entry by ID."
+                        },
+                        "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Unique identifier of the knowledge entry to retrieve. This is the `id` field returned by `search` or `list_sources`."
+                        }
                     },
                     "required": ["action", "id"],
                     "additionalProperties": false
                 },
                 {
+                    "description": "Search the knowledge base and assemble a compact context bundle that fits within a character budget. Use this instead of `search` when you need a ready-to-inject summary of relevant knowledge that won't overwhelm the conversation context.",
                     "properties": {
-                        "action": { "const": "context" },
-                        "query": { "type": "string", "minLength": 1 },
-                        "limit": { "type": "integer", "minimum": 1 },
-                        "budget_chars": { "type": "integer", "minimum": 1 }
+                        "action": {
+                            "const": "context",
+                            "description": "Assemble a budget-controlled context bundle from search results."
+                        },
+                        "query": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Natural language query describing the topic for which context is needed."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Maximum number of search hits to consider for the bundle. Defaults to the runtime-configured context limit (typically 5)."
+                        },
+                        "budget_chars": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Maximum total character length of the assembled context bundle. Excerpts are trimmed to fit within this budget. Defaults to 2000."
+                        }
                     },
                     "required": ["action", "query"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Create a new note in the user's Obsidian vault. Use this when the user explicitly asks you to save, record, or write information into their knowledge base, or when a conversation result should be persisted as a vault note.",
+                    "properties": {
+                        "action": {
+                            "const": "create_note",
+                            "description": "Create a new note in the knowledge base."
+                        },
+                        "path": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Vault-relative path for the new note, including the filename with a .md extension. Subfolders are created automatically. Example: 'projects/alpha/meeting-2024-01-15.md'."
+                        },
+                        "content": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Full Markdown content of the note. Obsidian wikilinks, tags, and frontmatter (YAML) are supported."
+                        },
+                        "source": {
+                            "type": "string",
+                            "description": "Target knowledge source where the note should be created. Must match a source returned by `list_sources`. Defaults to the primary configured vault."
+                        }
+                    },
+                    "required": ["action", "path", "content"],
                     "additionalProperties": false
                 }
             ]
@@ -234,9 +334,31 @@ impl Tool for KnowledgeTool {
                     "bundle": assemble_context_bundle(&query, &hits, budget_chars),
                 })
             }
+            "create_note" => {
+                Self::validate_source(&args)?;
+                let path = Self::require_string(&args, "path")?;
+                let content = Self::require_nonempty_content(&args, "content")?;
+                let entry = self
+                    .provider
+                    .create_note(CreateKnowledgeNoteInput { path, content })
+                    .await
+                    .map_err(map_knowledge_error)?;
+                let path = entry.uri.clone();
+                let id = entry.id.clone();
+                let uri = entry.uri.clone();
+                json!({
+                    "action": "create_note",
+                    "created": true,
+                    "path": path,
+                    "id": id,
+                    "uri": uri,
+                    "entry": entry,
+                })
+            }
             _ => {
                 return Err(ToolError::InvalidArgs(
-                    "`action` must be one of list_sources/search/get/context".to_string(),
+                    "`action` must be one of list_sources/search/get/context/create_note"
+                        .to_string(),
                 ));
             }
         };
@@ -255,7 +377,10 @@ impl Tool for KnowledgeTool {
 fn map_knowledge_error(err: klaw_knowledge::KnowledgeError) -> ToolError {
     match err {
         klaw_knowledge::KnowledgeError::InvalidConfig(message)
-        | klaw_knowledge::KnowledgeError::InvalidQuery(message) => ToolError::InvalidArgs(message),
+        | klaw_knowledge::KnowledgeError::InvalidQuery(message)
+        | klaw_knowledge::KnowledgeError::InvalidNotePath(message) => {
+            ToolError::InvalidArgs(message)
+        }
         other => ToolError::ExecutionFailed(other.to_string()),
     }
 }
@@ -267,7 +392,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
-    use klaw_knowledge::{KnowledgeError, KnowledgeSourceInfo};
+    use klaw_knowledge::{CreateKnowledgeNoteInput, KnowledgeError, KnowledgeSourceInfo};
     use serde_json::json;
 
     use super::*;
@@ -352,6 +477,23 @@ mod tests {
                 entry_count: 1,
             }])
         }
+
+        async fn create_note(
+            &self,
+            input: CreateKnowledgeNoteInput,
+        ) -> Result<KnowledgeEntry, KnowledgeError> {
+            Ok(KnowledgeEntry {
+                id: input.path.clone(),
+                title: "Created".to_string(),
+                content: input.content,
+                tags: vec!["created".to_string()],
+                uri: input.path,
+                source: "mock".to_string(),
+                metadata: json!({}),
+                created_at_ms: 2,
+                updated_at_ms: 2,
+            })
+        }
     }
 
     fn tool() -> KnowledgeTool {
@@ -430,5 +572,30 @@ mod tests {
             .expect("context should succeed");
         assert!(output.content_for_model.contains("\"bundle\""));
         assert!(output.content_for_model.contains("Direct match"));
+    }
+
+    #[tokio::test]
+    async fn create_note_action_returns_created_entry() {
+        let output = tool()
+            .execute(
+                json!({"action":"create_note","path":"notes/new.md","content":"# New note"}),
+                &ctx(),
+            )
+            .await
+            .expect("create_note should succeed");
+        assert!(output.content_for_model.contains("\"created\": true"));
+        assert!(output.content_for_model.contains("notes/new.md"));
+    }
+
+    #[tokio::test]
+    async fn create_note_rejects_unknown_source() {
+        let err = tool()
+            .execute(
+                json!({"action":"create_note","path":"notes/new.md","content":"# New note","source":"notion"}),
+                &ctx(),
+            )
+            .await
+            .expect_err("create_note should reject unsupported source");
+        assert!(matches!(err, ToolError::InvalidArgs(_)));
     }
 }

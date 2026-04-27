@@ -17,9 +17,10 @@ pub use models::{build_local_embedding_model, build_local_orchestrator, build_lo
 pub use obsidian::provider::ObsidianKnowledgeProvider;
 pub use provider_router::KnowledgeProviderRouter;
 pub use types::{
-    KnowledgeAutoIndexHandle, KnowledgeEntry, KnowledgeHit, KnowledgeProvider,
-    KnowledgeRuntimeSnapshot, KnowledgeRuntimeState, KnowledgeSearchQuery, KnowledgeSourceInfo,
-    KnowledgeStatus, KnowledgeSyncProgress, KnowledgeSyncProgressStage, KnowledgeSyncResult,
+    CreateKnowledgeNoteInput, KnowledgeAutoIndexHandle, KnowledgeEntry, KnowledgeHit,
+    KnowledgeProvider, KnowledgeRuntimeSnapshot, KnowledgeRuntimeState, KnowledgeSearchQuery,
+    KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress, KnowledgeSyncProgressStage,
+    KnowledgeSyncResult,
 };
 
 pub async fn open_configured_obsidian_provider(

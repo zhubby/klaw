@@ -29,6 +29,12 @@ pub struct KnowledgeEntry {
     pub updated_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CreateKnowledgeNoteInput {
+    pub path: String,
+    pub content: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KnowledgeSourceInfo {
     pub provider: String,
@@ -120,6 +126,11 @@ pub trait KnowledgeProvider: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<KnowledgeEntry>, KnowledgeError>;
 
     async fn list_sources(&self) -> Result<Vec<KnowledgeSourceInfo>, KnowledgeError>;
+
+    async fn create_note(
+        &self,
+        input: CreateKnowledgeNoteInput,
+    ) -> Result<KnowledgeEntry, KnowledgeError>;
 }
 
 #[async_trait]

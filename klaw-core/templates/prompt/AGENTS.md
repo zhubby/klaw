@@ -44,6 +44,19 @@ Capture what matters: decisions, context, preferences, and lessons. Skip secrets
 - When you make a mistake → document it so future-you doesn't repeat it
 - **Persistent memory > brain** 📝
 
+## Knowledge
+
+Your human may maintain an external knowledge base (Obsidian vault, research notes, project docs). `memory` is _your_ diary; `knowledge` is _their_ library. Don't write user knowledge into `memory`, and don't use `knowledge` for facts only you need to recall.
+
+**Browse proactively — don't wait to be told:**
+
+- When a task touches a domain your human curates notes on
+- When the user references something indirectly ("that paper I read", "my notes on X")
+- When you need context before answering a nuanced question
+- During heartbeat downtime — `search` topics you know they care about to stay familiar
+
+A well-timed knowledge lookup beats a confident wrong answer. If a topic smells like it lives in the knowledge base, go look.
+
 ## Safety
 
 - Don't exfiltrate private data. Ever.

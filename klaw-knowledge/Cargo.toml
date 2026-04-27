@@ -12,7 +12,8 @@ thiserror = { workspace = true }
 time = { workspace = true, features = ["parsing"] }
 regex = { workspace = true }
 strsim = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["fs", "macros", "rt"] }
+uuid = { workspace = true }
 ignore = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }

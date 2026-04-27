@@ -74,10 +74,12 @@ pub use media::{MediaReference, MediaSourceKind};
 pub use mock::{InMemoryIdempotencyStore, InMemorySessionScheduler, InMemoryTransport};
 pub use observability::{AgentTelemetry, HealthStatus};
 pub use prompt::{
-    PromptError, PromptTemplateWriteReport, RuntimePromptInput, SkillPromptEntry,
-    build_runtime_system_prompt, compose_runtime_prompt, ensure_workspace_prompt_templates,
-    ensure_workspace_prompt_templates_in_dir, format_skills_for_prompt,
-    format_workspace_docs_for_prompt, get_default_template_content, skills_lazy_load_instructions,
+    PromptError, PromptExtension, PromptTemplateWriteReport, RtkPromptExtension,
+    RuntimePromptInput, SkillPromptEntry, build_runtime_system_prompt,
+    build_runtime_system_prompt_with_extensions, compose_runtime_prompt, default_prompt_extensions,
+    ensure_workspace_prompt_templates, ensure_workspace_prompt_templates_in_dir,
+    format_skills_for_prompt, format_workspace_docs_for_prompt, get_default_template_content,
+    skills_lazy_load_instructions,
 };
 pub use protocol::{Envelope, EnvelopeHeader, ErrorCode, MessageTopic, SchemaVersion};
 pub use reliability::{

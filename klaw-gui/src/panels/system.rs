@@ -251,6 +251,7 @@ enum DirKind {
     Logs,
     Skills,
     SkillsRegistry,
+    Models,
 }
 
 impl DirKind {
@@ -263,6 +264,7 @@ impl DirKind {
             DirKind::Logs => "Logs",
             DirKind::Skills => "Skills",
             DirKind::SkillsRegistry => "Skills Registry",
+            DirKind::Models => "Models",
         }
     }
 
@@ -275,6 +277,7 @@ impl DirKind {
             DirKind::Logs => "logs",
             DirKind::Skills => "skills",
             DirKind::SkillsRegistry => "skills-registry",
+            DirKind::Models => "models",
         }
     }
 
@@ -287,6 +290,7 @@ impl DirKind {
             DirKind::Logs => paths.logs_dir.clone(),
             DirKind::Skills => paths.skills_dir.clone(),
             DirKind::SkillsRegistry => paths.skills_registry_dir.clone(),
+            DirKind::Models => paths.models_dir.clone(),
         }
     }
 }
@@ -337,6 +341,7 @@ impl SystemPanel {
             DirKind::Logs => 4,
             DirKind::Skills => 5,
             DirKind::SkillsRegistry => 6,
+            DirKind::Models => 7,
         }
     }
 
@@ -409,6 +414,7 @@ impl SystemPanel {
             DirKind::Logs,
             DirKind::Skills,
             DirKind::SkillsRegistry,
+            DirKind::Models,
         ] {
             let dir = self.get_dir(kind);
             if dir.usage_bytes.is_none() && dir.usage_rx.is_none() {
@@ -948,6 +954,8 @@ impl PanelRenderer for SystemPanel {
                     self.render_section(ui, DirKind::Skills, notifications);
                     ui.separator();
                     self.render_section(ui, DirKind::SkillsRegistry, notifications);
+                    ui.separator();
+                    self.render_section(ui, DirKind::Models, notifications);
                 }
                 SystemView::Environment => {
                     self.render_env_check_section(ui);

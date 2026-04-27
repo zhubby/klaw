@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-27
+
+### Added
+- `knowledge` 工具新增 `create_note` 动作，可按 vault 相对路径创建新的 Obsidian Markdown 笔记并返回立即可检索的 `KnowledgeEntry`
+
+### Changed
+- `knowledge` 工具文档与参数 schema 现在显式区分受限写回能力：仅支持 Obsidian、新建 `.md` 笔记、路径必须位于 vault 内
+
+### Fixed
+- `knowledge.create_note` 现在会把 provider 侧路径校验错误映射为参数错误，帮助调用方更快收敛到合法请求
+
 ## 2026-04-25
 
 ### Fixed

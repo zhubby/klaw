@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-04-27
+
+### Added
+
+- 新增 `CreateKnowledgeNoteInput` 与 `KnowledgeProvider::create_note`，支持在 configured Obsidian vault 中创建新的 Markdown 笔记
+- Obsidian provider 现在会对新建笔记执行路径校验、原子写入，并在写入成功后立即做单文件增量索引
+
+### Fixed
+
+- 新建笔记命中已存在路径时现在会显式报冲突，避免覆盖用户已有 vault 内容
+
 ## 2026-04-26
 
 ### Added
