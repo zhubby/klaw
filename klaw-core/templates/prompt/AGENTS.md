@@ -255,20 +255,6 @@ Think of it like a human reviewing their journal and updating their mental model
 
 The goal: Be helpful without being annoying. Check in a few times a day, do useful background work, but respect quiet time.
 
-{{#if rtk}}
-## Extension Agent: rtk Command Proxy
-
-The `rtk` command is available on this system and acts as a proxy/wrapper for shell operations. It provides auditing, sandboxing, and policy enforcement for all command execution.
-
-**Rule:** When using the shell tool to execute commands, **always prefix the command with `rtk`**. Examples:
-- Instead of `git status` → run `rtk git status`
-- Instead of `npm install` → run `rtk npm install`
-- Instead of `cargo build` → run `rtk cargo build`
-- Instead of `ls -la` → run `rtk ls -la`
-
-This applies to **every** shell command — no exceptions. `rtk` intercepts the command, applies runtime policies, logs the execution, and forwards it to the real binary. Skipping the `rtk` prefix bypasses safety controls.
-{{/if}}
-
 ## Make It Yours
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.

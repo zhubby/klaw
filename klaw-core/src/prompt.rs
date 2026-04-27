@@ -170,6 +170,12 @@ fn is_command_available(name: &str) -> bool {
 /// context. Template sections wrapped in `{{#if name}}` / `{{/if}}` are
 /// included when the extension is active and omitted when it is not.
 ///
+/// Built-in extension content is injected by code in
+/// `format_inlined_workspace_context_for_prompt_in_dir`, not embedded in
+/// template files, so that AGENTS.md stays pure markdown without visible
+/// Handlebars syntax. This function is still applied to on-disk content as
+/// a safety net for user-edited files that may add `{{#if}}` blocks.
+///
 /// Falls back to the raw content on rendering errors (e.g., malformed
 /// Handlebars syntax in a user-edited file), ensuring the prompt is always
 /// available even if template processing fails.
@@ -406,9 +412,11 @@ pub fn build_runtime_system_prompt(skills: Vec<SkillPromptEntry>) -> Option<Stri
 }
 
 /// Build the full runtime system prompt with explicit prompt extensions.
-/// Extensions are evaluated to build a Handlebars context; template files
-/// containing `{{#if name}}` / `{{/if}}` blocks are rendered so that active
-/// extension sections are included and inactive ones are omitted.
+/// Active extensions inject their `prompt_section()` content after the
+/// inlined workspace context. Inactive extensions are omitted entirely.
+/// Template files may optionally use Handlebars `{{#if name}}` / `{{/if}}`
+/// blocks for advanced conditional rendering, but built-in extension
+/// sections are injected by code — not embedded in template files.
 pub fn build_runtime_system_prompt_with_extensions(
     skills: Vec<SkillPromptEntry>,
     extensions: Vec<Arc<dyn PromptExtension>>,
@@ -468,6 +476,19 @@ fn format_inlined_workspace_context_for_prompt_in_dir(
             continue;
         }
         sections.push(content);
+    }
+
+    // Inject active extension prompt sections after the inlined file content.
+    // Extension content is defined in code (via `prompt_section()`), not
+    // embedded in template files, so that AGENTS.md stays pure markdown
+    // without visible Handlebars syntax in GUI previews.
+    for ext in extensions {
+        if ext.is_active() {
+            let section = ext.prompt_section().trim().to_string();
+            if !section.is_empty() {
+                sections.push(section);
+            }
+        }
     }
 
     if sections.is_empty() {
@@ -962,10 +983,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn format_inlined_workspace_context_strips_inactive_extension_from_template() {
-        // Write the actual AGENTS.md template content (which contains
-        // {{#if rtk}} Handlebars blocks) into a temp workspace and verify
-        // that inactive extensions are stripped.
+    async fn format_inlined_workspace_context_omits_inactive_extension_section() {
+        // Extension content is injected by code via prompt_section(), not
+        // embedded in template files. Verify that inactive extensions do not
+        // appear in the inlined workspace context.
         let workspace =
             std::env::temp_dir().join(format!("klaw-prompt-ext-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&workspace)
@@ -974,10 +995,6 @@ mod tests {
 
         let agents_content =
             get_default_template_content("AGENTS.md").expect("AGENTS.md template should exist");
-        assert!(
-            agents_content.contains("{{#if rtk}}"),
-            "template should contain rtk Handlebars block"
-        );
 
         fs::write(workspace.join("AGENTS.md"), agents_content)
             .await
@@ -1006,14 +1023,16 @@ mod tests {
 
         assert!(!prompt.contains("{{#if rtk}}"));
         assert!(!prompt.contains("{{/if}}"));
-        assert!(!prompt.contains("Extension Agent: rtk Command Proxy"));
-        assert!(!prompt.contains("always prefix the command with `rtk`"));
+        assert!(!prompt.contains("## Extension: rtk"));
         assert!(prompt.contains("# AGENTS.md"));
         assert!(prompt.contains("## Make It Yours"));
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn format_inlined_workspace_context_keeps_active_extension_from_template() {
+    async fn format_inlined_workspace_context_injects_active_extension_section() {
+        // Extension content is injected by code via prompt_section(), not
+        // embedded in template files. Verify that active extensions appear
+        // in the inlined workspace context.
         let workspace =
             std::env::temp_dir().join(format!("klaw-prompt-ext-active-{}", Uuid::new_v4()));
         fs::create_dir_all(&workspace)
@@ -1040,6 +1059,7 @@ mod tests {
             .expect("tools should be written");
 
         // Use a mock rtk extension that is active to simulate a system with rtk.
+        // MockExtension.prompt_section() returns "## Extension: rtk".
         let active_exts: Vec<Arc<dyn PromptExtension>> = vec![Arc::new(MockExtension {
             name: "rtk",
             active: true,
@@ -1050,8 +1070,7 @@ mod tests {
 
         assert!(!prompt.contains("{{#if rtk}}"));
         assert!(!prompt.contains("{{/if}}"));
-        assert!(prompt.contains("Extension Agent: rtk Command Proxy"));
-        assert!(prompt.contains("always prefix the command with `rtk`"));
+        assert!(prompt.contains("## Extension: rtk"));
         assert!(prompt.contains("# AGENTS.md"));
         assert!(prompt.contains("## Make It Yours"));
     }
