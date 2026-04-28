@@ -322,7 +322,7 @@ impl DirState {
 #[derive(Default)]
 pub struct SystemPanel {
     paths: Option<StoragePaths>,
-    dirs: [DirState; 7],
+    dirs: [DirState; 8],
     clear_confirm: Option<DirKind>,
     env_check: Option<EnvironmentCheckReport>,
     env_check_loaded: bool,
@@ -728,6 +728,7 @@ impl SystemPanel {
             DirKind::Logs,
             DirKind::Skills,
             DirKind::SkillsRegistry,
+            DirKind::Models,
         ] {
             let dir = self.get_dir_mut(kind);
 
