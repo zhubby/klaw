@@ -49,11 +49,59 @@ flowchart LR
 
 ### Key Components
 
+**Runtime & Reliability**
+
 - **AgentLoop** (`klaw-core`): State machine driving sessions (`Received` → `Validating` → `Scheduling` → `CallingModel` → `ToolLoop` → `Completed`)
 - **SessionScheduler**: Serial execution per `session_key` with configurable queue strategies
-- **Reliability**: Retry policies, idempotency stores, circuit breakers, DLQ
-- **Tool System**: Trait-based abstraction (shell, fs, web, memory, sub-agent)
-- **Transport**: In-memory pub/sub with multi-channel support
+- **Reliability**: Retry policies with exponential backoff, idempotency stores, circuit breakers, budget exhaustion, dead letter queue
+- **Session Management** (`klaw-session`): Full lifecycle — create, list, archive, delete; LLM/tool audit trail, usage tracking, and compression
+
+**Tool System (20+ built-in tools)**
+
+- **Shell**: Execute commands with timeout, policy gates, and working directory control
+- **File Read**: Read local files with line-range selection and media detection (images, PDFs)
+- **Local Search**: Grep-like workspace search with pattern, path, and case filters
+- **Web Fetch**: Fetch and extract web pages with character budget and content trimming
+- **Web Search**: Search via Brave / Tavily APIs with result capping
+- **Apply Patch**: Apply unified diff patches to local files
+- **Memory** (`klaw-memory`): Long-term memory with BM25 + Vector search, governance (priority/kind/status), and automatic maintenance
+- **Knowledge** (`klaw-knowledge`): Obsidian vault indexing, 5-lane hybrid search, WRRF fusion, local rerank, and context-bundle assembly
+- **Sub Agent**: Spawn sub-agents for scoped, delegated tasks
+- **Ask Question**: Interactive clarification loops between agent and user
+- **Approval** (`klaw-approval`): Policy-gated approval workflows — create, list, resolve with accept/reject
+- **Archive** (`klaw-archive`): Ingest and retrieve conversation archives with media attachment support
+- **Cron Manager** (`klaw-cron`): Create, list, update, delete cron schedules; one-shot and recurring execution
+- **Heartbeat Manager** (`klaw-heartbeat`): Periodic liveness probes with task-run tracking and status history
+- **Skills Manager / Registry** (`klaw-skill`): Install, sync, and uninstall skills from Git registries; dynamic skill loading
+- **Channel Attachment**: Attach media references (images, files, audio) to outbound channel messages
+- **Terminal Multiplexer**: Manage persistent terminal sessions for long-running shell tasks
+- **Geo**: Location-aware queries with geocoding support
+- **Voice** (`klaw-voice`): Speech-to-text (Deepgram) and text-to-speech (ElevenLabs) streaming
+
+**Protocol Integration**
+
+- **MCP** (`klaw-mcp`): Model Context Protocol — discover and call external tool servers, per-server lifecycle management (bootstrap → ready → error)
+- **ACP** (`klaw-acp`): Agent Client Protocol — connect to remote ACP agents, stream session events, handle permission requests and plan approvals
+- **Gateway** (`klaw-gateway`): WebSocket server with embedded WebUI, Webhook receiver for external triggers, Tailscale auto-discovery for zero-config networking
+
+**Multi-Channel Messaging**
+
+- **Terminal / TUI** (`klaw-channel`): Interactive terminal UI with real-time agent loop
+- **DingTalk**: DingTalk bot integration with interactive card rendering
+- **Telegram**: Telegram bot with Markdown-formatted responses
+- **Feishu**: Feishu/Lark bot support
+- **WebSocket**: Bidirectional real-time channel for GUI and WebUI
+
+**Observability & Config**
+
+- **Audit** (`klaw-observability`): LLM call audit trail, tool invocation logs, structured event recording
+- **Metrics & Telemetry**: Token usage tracking, request latency, error rates, health checks
+- **Config** (`klaw-config`): Single TOML source of truth (`~/.klaw/config.toml`), validation, migration from older formats, targeted reload on partial edits
+
+**Desktop & Web UI**
+
+- **GUI** (`klaw-gui`): Native desktop app built with egui — 30+ panels (LLM, sessions, tools, knowledge, models, cron, MCP, ACP, observability, …)
+- **WebUI** (`klaw-webui`): Browser-based WASM interface served through the gateway
 
 ### Knowledge
 
