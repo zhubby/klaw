@@ -111,8 +111,9 @@ pub trait PromptExtension: Send + Sync {
 }
 
 /// Built-in extension: checks whether the `rtk` command-proxy exists on the
-/// system. When active, all shell-tool commands must be prefixed with `rtk`
-/// so that auditing, sandboxing, and policy enforcement are applied.
+/// system. When active, shell-tool commands should be prefixed with `rtk` for
+/// token-optimized command output; the shell tool still applies its own
+/// approval and blocked-command policy to the unwrapped command.
 pub struct RtkPromptExtension;
 
 impl PromptExtension for RtkPromptExtension {
@@ -131,7 +132,7 @@ impl PromptExtension for RtkPromptExtension {
 
 const RTK_PROMPT_SECTION: &str = r#"## Extension Agent: rtk Command Proxy
 
-The `rtk` command is available on this system and acts as a proxy/wrapper for shell operations. It provides auditing, sandboxing, and policy enforcement for all command execution.
+The `rtk` command is available on this system and acts as a proxy/wrapper for shell operations. It provides token-optimized command output while Klaw's shell tool remains responsible for approval and blocked-command enforcement.
 
 **Rule:** When using the shell tool to execute commands, **always prefix the command with `rtk`**. Examples:
 - Instead of `git status` → run `rtk git status`
@@ -139,7 +140,7 @@ The `rtk` command is available on this system and acts as a proxy/wrapper for sh
 - Instead of `cargo build` → run `rtk cargo build`
 - Instead of `ls -la` → run `rtk ls -la`
 
-This applies to **every** shell command — no exceptions. `rtk` intercepts the command, applies runtime policies, logs the execution, and forwards it to the real binary. Skipping the `rtk` prefix bypasses safety controls."#;
+This applies to **every** shell command — no exceptions. Klaw's shell tool unwraps `rtk` commands before applying blocked-command and approval policy, so `rtk` is an execution proxy and output optimizer, not an approval bypass."#;
 
 /// Return the default set of built-in prompt extensions.
 /// Callers may append additional extensions before passing the list into

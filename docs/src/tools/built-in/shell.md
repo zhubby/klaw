@@ -50,10 +50,12 @@ max_output_bytes = 131072
 
 ## 规则判定
 
+- 如果命令通过 `rtk` 或 `rtk proxy` 包装，工具会先提取真实命令作为 `effective_command`
 - 命中 `blocked_patterns`：直接拒绝
 - 命中 `unsafe_patterns`：请求审批
 - 未命中任一模式：直接执行
 - shell 组合操作符、重定向与未知命令本身不再自动触发审批；是否需要审批完全由两组模式控制
+- 审批 hash 与审批预览基于 `effective_command`，避免 `rtk` 包装绕开或改变审批匹配
 
 ## 执行语义
 
@@ -75,6 +77,9 @@ max_output_bytes = 131072
 
 - 输出为结构化 JSON，字段包括：
   - `success`
+  - `command`
+  - `effective_command`
+  - `command_proxy`
   - `exit_code`
   - `risk`
   - `approval_required` / `approved`

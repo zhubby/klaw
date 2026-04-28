@@ -17,6 +17,7 @@
 - support runtime system-prompt hot reload through `AgentLoop::set_system_prompt`
 - backfill standard workspace prompt templates under `~/.klaw/workspace` on demand, while creating `BOOTSTRAP.md` only on first initialization
 - compose runtime prompts by inlining core workspace docs (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `TOOLS.md`) ahead of the runtime sections, while keeping remaining workspace docs and skills lazy-loaded
+- inject the RTK prompt extension when `rtk` is available, while leaving command approval and blocked-command enforcement in the shell tool
 
 ## Notes
 

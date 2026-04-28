@@ -44,10 +44,18 @@ enum CommandRisk {
     Unsafe,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandPolicyTarget {
+    effective_command: String,
+    command_proxy: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct ShellExecutionResult {
     success: bool,
     command: String,
+    effective_command: String,
+    command_proxy: Option<String>,
     cwd: String,
     risk: &'static str,
     approval_required: bool,
@@ -155,6 +163,58 @@ impl ShellTool {
             return CommandRisk::Unsafe;
         }
         CommandRisk::Safe
+    }
+
+    fn policy_target(command: &str) -> CommandPolicyTarget {
+        let Some(words) = shlex::split(command) else {
+            return CommandPolicyTarget {
+                effective_command: command.trim().to_string(),
+                command_proxy: None,
+            };
+        };
+
+        let Some(first) = words.first() else {
+            return CommandPolicyTarget {
+                effective_command: command.trim().to_string(),
+                command_proxy: None,
+            };
+        };
+
+        if !Self::is_rtk_command(first) {
+            return CommandPolicyTarget {
+                effective_command: command.trim().to_string(),
+                command_proxy: None,
+            };
+        }
+
+        let rtk_args = &words[1..];
+        let effective_args = if matches!(rtk_args.first().map(String::as_str), Some("proxy")) {
+            &rtk_args[1..]
+        } else {
+            rtk_args
+        };
+
+        let effective_command = if effective_args.is_empty() {
+            command.trim().to_string()
+        } else {
+            effective_args.join(" ")
+        };
+
+        CommandPolicyTarget {
+            effective_command,
+            command_proxy: Some("rtk".to_string()),
+        }
+    }
+
+    fn is_rtk_command(command: &str) -> bool {
+        let trimmed = command.trim();
+        if trimmed == "rtk" {
+            return true;
+        }
+        Path::new(trimmed)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "rtk")
     }
 
     async fn check_approval(
@@ -450,10 +510,16 @@ impl Tool for ShellTool {
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let request = Self::parse_request(args)?;
+        let policy_target = Self::policy_target(&request.command);
 
-        let risk = self.classify_risk(&request.command);
+        let risk = self.classify_risk(&policy_target.effective_command);
         let (approval_required, approved) = self
-            .check_approval(risk, &request.command, &ctx.session_key, &ctx.metadata)
+            .check_approval(
+                risk,
+                &policy_target.effective_command,
+                &ctx.session_key,
+                &ctx.metadata,
+            )
             .await?;
 
         let base = self.resolve_workspace_base(ctx)?;
@@ -467,6 +533,8 @@ impl Tool for ShellTool {
             session_key = %ctx.session_key,
             tool = "shell",
             command = %request.command,
+            effective_command = %policy_target.effective_command,
+            command_proxy = ?policy_target.command_proxy,
             cwd = %cwd.display(),
             risk = ?risk,
             approval_required,
@@ -503,6 +571,8 @@ impl Tool for ShellTool {
         let result = ShellExecutionResult {
             success: output.status.success(),
             command: request.command,
+            effective_command: policy_target.effective_command,
+            command_proxy: policy_target.command_proxy,
             cwd: cwd.display().to_string(),
             risk: match risk {
                 CommandRisk::Blocked => "blocked",
@@ -746,6 +816,70 @@ mod tests {
         assert!(err.contains("requires approval"), "unexpected error: {err}");
     }
 
+    #[test]
+    fn test_rtk_policy_target_unwraps_wrapped_command() {
+        let target = ShellTool::policy_target("rtk echo 'hello world'");
+        assert_eq!(target.effective_command, "echo hello world");
+        assert_eq!(target.command_proxy.as_deref(), Some("rtk"));
+    }
+
+    #[test]
+    fn test_rtk_policy_target_unwraps_proxy_command() {
+        let target = ShellTool::policy_target("rtk proxy rm -rf /");
+        assert_eq!(target.effective_command, "rm -rf /");
+        assert_eq!(target.command_proxy.as_deref(), Some("rtk"));
+    }
+
+    #[test]
+    fn test_rtk_policy_target_leaves_meta_command_as_rtk_operation() {
+        let target = ShellTool::policy_target("rtk gain --history");
+        assert_eq!(target.effective_command, "gain --history");
+        assert_eq!(target.command_proxy.as_deref(), Some("rtk"));
+    }
+
+    #[tokio::test]
+    async fn test_rtk_wrapped_unsafe_command_requires_approval() {
+        let config = test_config();
+        let tool = ShellTool::new(&config);
+
+        let result = tool
+            .execute(json!({"command": "rtk rm -rf /"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("requires approval"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_rtk_proxy_unsafe_command_requires_approval() {
+        let config = test_config();
+        let tool = ShellTool::new(&config);
+
+        let result = tool
+            .execute(json!({"command": "rtk proxy rm -rf /"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("requires approval"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_rtk_wrapped_blocked_command_is_rejected() {
+        let mut config = test_config();
+        config.tools.shell.blocked_patterns = vec!["mkfs".to_string()];
+        let tool = ShellTool::new(&config);
+
+        let result = tool
+            .execute(json!({"command": "rtk mkfs /dev/disk1"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("security violation"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[tokio::test]
     async fn test_non_blocked_command_runs_without_approval() {
         let config = test_config();
@@ -783,6 +917,33 @@ mod tests {
         let tool_err = result.expect_err("approval should be required");
         let err = tool_err.to_string();
         assert!(err.contains("Approval ID: "), "unexpected error: {err}");
+        assert_eq!(tool_err.code(), "approval_required");
+        let approval_signal = tool_err
+            .signals()
+            .iter()
+            .find(|signal| signal.kind == "approval_required")
+            .expect("approval signal should be present");
+        assert_eq!(
+            approval_signal.payload.get("command_preview"),
+            Some(&json!("rm -rf /"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rtk_wrapped_unsafe_command_creates_approval_for_effective_command() {
+        let config = test_config();
+        let store = create_store().await;
+        store
+            .touch_session("s1", "chat-1", "terminal")
+            .await
+            .expect("session should exist");
+        let tool = ShellTool::with_store(&config, store.clone());
+
+        let result = tool
+            .execute(json!({"command": "rtk proxy rm -rf /"}), &base_ctx())
+            .await;
+        assert!(result.is_err());
+        let tool_err = result.expect_err("approval should be required");
         assert_eq!(tool_err.code(), "approval_required");
         let approval_signal = tool_err
             .signals()

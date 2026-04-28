@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-28
+
+### Changed
+- clarified the RTK prompt extension so models still prefix shell commands with `rtk`, while Klaw's shell tool remains the approval and blocked-command enforcement boundary
+
 ## 2026-04-14
 
 ### Fixed

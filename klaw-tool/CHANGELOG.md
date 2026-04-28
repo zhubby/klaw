@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-28
+
+### Fixed
+- `shell` now unwraps `rtk` and `rtk proxy` commands before applying blocked-pattern and unsafe approval checks, so the RTK command proxy cannot hide the real command from Klaw policy enforcement
+
 ## 2026-04-27
 
 ### Added
