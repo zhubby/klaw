@@ -4,6 +4,7 @@
 - [快速开始](./quickstart.md)
 - [教程](./tutorial/README.md)
   - [Quick Start](./tutorial/quick_start.md)
+  - [WebUI 使用指南](./tutorial/webui-guide.md)
 - [Agent Core](./agent-core/README.md)
   - [消息协议](./agent-core/message-protocol.md)
   - [运行时状态机](./agent-core/runtime-state-machine.md)
