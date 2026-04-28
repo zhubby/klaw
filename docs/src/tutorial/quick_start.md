@@ -12,7 +12,7 @@
 2. **API 密钥**——至少有一个模型服务的密钥（如 OpenAI、DeepSeek 等）
 3. **钉钉应用**——已在 [钉钉开发者后台](https://open-dev.dingtalk.com/) 创建企业内部应用，获取了 AppKey 和 AppSecret
 
-> 如果你暂时没有钉钉应用，可以先完成模型 Provider 配置，通过 TUI 渠道验证模型可用后再接入钉钉。
+> 如果你暂时没有钉钉应用，可以先完成模型 Provider 配置，后续接入钉钉时再做完整验证。
 
 ---
 
@@ -45,12 +45,11 @@
 
 **Default Model**——该 Provider 的默认模型名称。会话中未通过 `/model` 指定模型时，Klaw 使用此值。常见填法：OpenAI → `gpt-4o-mini`，DeepSeek → `deepseek-chat`，Ollama → `qwen3:8b`。
 
-**密钥配置（Env Key 或 API Key 二选一）**：
-- **Env Key**（推荐）：填写环境变量名，如 `OPENAI_API_KEY`。Klaw 启动时从环境变量读取密钥，不会将密钥写入配置文件。使用前需设置环境变量：`export OPENAI_API_KEY="sk-xxx"`
-- **API Key**：直接填写密钥字符串，会保存在 `~/.klaw/config.toml` 中。不推荐，若必须使用请设置文件权限 `chmod 600 ~/.klaw/config.toml`
+**密钥配置（API Key 或 Env Key 二选一）**：
+- **API Key**（推荐）：直接填写密钥字符串，保存在 `~/.klaw/config.toml` 中。macOS 打包应用不会继承 shell 环境变量，Env Key 可能无法生效，因此推荐直接填入 API Key。配置完成后建议设置文件权限：`chmod 600 ~/.klaw/config.toml`
+- **Env Key**：填写环境变量名，如 `OPENAI_API_KEY`，Klaw 启动时从环境变量读取密钥。仅适用于通过终端命令（`klaw tui` 等）启动的场景，macOS 打包应用启动时通常无法获取用户 shell 环境变量，存在密钥读取失败的风险
 
-> 密钥解析优先级：`api_key` > `env_key`。两者都填时优先使用 `api_key`。本地 Ollama 无需密钥，两者均可留空
-。
+> 密钥解析优先级：`api_key` > `env_key`。两者都填时优先使用 `api_key`。本地 Ollama 无需密钥，两者均可留空。
 
 ### 建议勾选的选项
 
@@ -130,27 +129,24 @@
 
 ## 第三步：验证运行
 
-配置保存后，验证两项核心功能是否正常：
+Provider 和 DingTalk 渠道都配置完成后，直接在钉钉中进行端到端验证：
 
-### 检查模型 Provider
+### 在钉钉中发送消息
 
-在 Klaw TUI 中发送一条消息：
+在钉钉中找到已配置的机器人，发送一条消息（如「你好」）。如果机器人正常回复，说明模型 Provider 和 DingTalk 渠道均配置成功。
 
-```
-你好
-```
+如果无响应或报错，按以下顺序排查：
 
-如果收到模型回复，说明 Provider 配置正确。如果无响应或报错，检查：
-- API 密钥是否有效（`env_key` 对应的环境变量是否已设置）
-- Base URL 是否可达
-- Wire API 是否匹配服务类型
-
-### 检查钉钉渠道
-
-在钉钉中找到已配置的机器人，发送一条消息。如果机器人回复，说明渠道连接正常。如果无响应，检查：
+**渠道层排查**：
 - Client ID / Client Secret 是否与钉钉开发者后台一致
 - 钉钉应用是否已发布且机器人功能已启用
+- 企业内网环境下是否需要配置 Proxy
 - Klaw 日志中是否有连接错误（GUI「Logs」面板可查看）
+
+**模型层排查**：
+- API Key 是否有效（直接填写的密钥是否正确）
+- Base URL 是否可达
+- Wire API 是否匹配服务类型
 
 ### 切换 Provider
 
@@ -175,7 +171,7 @@ base_url = "https://api.openai.com/v1"
 wire_api = "chat_completions"
 default_model = "gpt-4o-mini"
 stream = true
-env_key = "OPENAI_API_KEY"
+api_key = "sk-xxxxxxxx"
 
 [[channels.dingtalk]]
 id = "default"
@@ -196,7 +192,7 @@ base_url = "https://api.deepseek.com/v1"
 wire_api = "chat_completions"
 default_model = "deepseek-chat"
 stream = true
-env_key = "DEEPSEEK_API_KEY"
+api_key = "sk-xxxxxxxx"
 
 [[channels.dingtalk]]
 id = "default"
@@ -257,9 +253,9 @@ url = "http://proxy.example.com:8080"
 3. 创建卡片模板，添加一个文本类型的数据字段
 4. 发布后复制模板 ID 填入 Stream Template ID
 
-### Env Key 和 API Key 该填哪个？
+### API Key 和 Env Key 该填哪个？
 
-优先用 Env Key。通过环境变量传递密钥更安全，不会写入配置文件。只在无法设置环境变量时才用 API Key。
+推荐直接填 API Key。macOS 打包应用启动时不会继承用户 shell 环境变量，Env Key 存在读取失败的风险。只有通过终端命令（如 `klaw tui`）启动时 Env Key 才能可靠生效。使用 API Key 时建议设置配置文件权限：`chmod 600 ~/.klaw/config.toml`
 
 ### Wire API 选错了会怎样？
 
@@ -267,4 +263,4 @@ API 调用失败（404 或格式错误）。兼容服务一律选 `chat_completi
 
 ### 模型无响应？
 
-检查 API 密钥是否有效、Base URL 是否可达、Wire API 是否正确。可在 TUI 中直接发消息测试，排除渠道因素。
+检查 API Key 是否填写正确、Base URL 是否可达、Wire API 是否匹配服务类型。可在钉钉中直接发消息测试，同时观察 GUI「Logs」面板中的错误信息。
