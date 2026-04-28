@@ -10,6 +10,7 @@
 ~/.klaw/
 ├── klaw.db                # 主数据库（session + 辅助表）
 ├── memory.db              # 长期记忆（FTS5 + vector）
+├── knowledge.db           # 知识索引（FTS5 + vector + 图链接）
 ├── archive.db             # 归档索引
 ├── config.toml            # 全局配置
 ├── settings.json          # GUI 设置
@@ -20,19 +21,25 @@
 ├── archives/              # 归档物理文件
 │   └── YYYY-MM-DD/
 │       └── <uuid>.<ext>
+├── models/                # 本地模型存储
+│   ├── manifest.json      # 全局模型索引
+│   ├── snapshots/         # 模型文件实体（GGUF 等）
+│   └── cache/downloads/   # 下载临时文件
 ├── skills/                # 技能定义
 ├── skills-registry/       # 技能注册表
 ├── workspace/             # 工作区（copy_to_workspace 目标）
 └── logs/                  # 日志文件
 ```
 
-三个 SQLite 数据库各司其职：
+四个 SQLite 数据库和一个 JSON 索引各司其职：
 
-| 数据库 | 责责模块 | 主要内容 |
-|--------|---------|---------|
+| 数据库 / 索引 | 责任模块 | 主要内容 |
+|---------------|---------|---------|
 | `klaw.db` | `klaw-storage` | session 索引 + 辅助表（audit、cron、heartbeat、approval 等） |
 | `memory.db` | `klaw-memory` | 长期记忆记录 + FTS5 全文检索 + 向量索引 |
+| `knowledge.db` | `klaw-knowledge` | 知识条目 + 分块 + FTS5 + 向量索引 + 链接图谱 |
 | `archive.db` | `klaw-archive` | 归档文件索引 |
+| `models/manifest.json` | `klaw-model` | 已安装模型索引 + 文件列表 + 能力标注 + 绑定信息 |
 
 ## klaw.db 表结构
 
@@ -390,6 +397,8 @@ idx_memories_embedding  — libsql_vector_idx(embedding)
 | `HeartbeatStorage` | `klaw-storage` | `SqlxSessionStore` / `TursoSessionStore` | `klaw.db` |
 | `ArchiveService` | `klaw-archive` | `SqliteArchiveService` | `archive.db` |
 | `MemoryService` | `klaw-memory` | `SqliteMemoryService` | `memory.db` |
+| `KnowledgeProvider` | `klaw-knowledge` | `ObsidianKnowledgeProvider` | `knowledge.db` |
+| `ModelService` | `klaw-model` | `ModelStorage`（manifest.json）+ `ModelLlamaRuntime` | `~/.klaw/models/` |
 | `DatabaseExecutor` | `klaw-storage` | `DefaultMemoryDb` / `DefaultKnowledgeDb` / `DefaultArchiveDb` | `memory.db` / `knowledge.db` / `archive.db` |
 
 `SessionStorage` 是最大的 trait，涵盖会话索引、聊天记录、LLM 用量/审计、Tool 审计、Webhook 事件/Agent、审批和待答问题——这些辅助数据表都存储在同一个 `klaw.db` 中，与 `sessions` 表共享连接池。
@@ -427,3 +436,4 @@ idx_memories_embedding  — libsql_vector_idx(embedding)
 - [Cron 存储语义](./cron.md) — 调度类型、CAS 防重、CronWorker、GUI 面板
 - [Archive 存储语义](./archive.md) — 归档索引、去重、文件识别、ArchiveTool/VoiceTool 集成
 - [Memory 存储语义](./memory.md) — 长期记忆 CRUD、混合检索、写入治理、prompt 渲染、统计聚合
+- [Knowledge 存储语义](./knowledge.md) — Obsidian vault 索引、五通道融合检索、Smart Chunking、链接图谱、上下文组装

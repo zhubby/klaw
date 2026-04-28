@@ -1,6 +1,6 @@
 # 存储模块
 
-`klaw-storage` 与相关领域模块共同构成 Klaw 的本地存储层：`klaw-storage` 负责路径与通用持久化抽象，`klaw-memory` 与 `klaw-archive` 在其之上实现各自领域服务。
+`klaw-storage` 与相关领域模块共同构成 Klaw 的本地存储层：`klaw-storage` 负责路径与通用持久化抽象，`klaw-memory`、`klaw-archive`、`klaw-knowledge` 与 `klaw-model` 在其之上实现各自领域服务。
 
 ## 设计目标
 
@@ -55,7 +55,12 @@ klaw-storage = { path = "../klaw-storage", default-features = false, features = 
 ├── config.toml       # 配置文件
 ├── klaw.db          # SQLite 索引数据库
 ├── memory.db        # 记忆数据库（可选）
+├── knowledge.db     # 知识索引数据库（FTS5 + vector + 图链接）
 ├── archive.db       # 媒体归档索引数据库
+├── models/          # 本地模型存储
+│   ├── manifest.json   # 全局模型索引
+│   ├── snapshots/      # 模型文件实体（GGUF 等）
+│   └── cache/downloads/  # 下载临时文件
 ├── sessions/        # 会话 JSONL 文件
 │   └── <session_id>.jsonl
 └── archives/        # 归档媒体文件
@@ -100,6 +105,34 @@ pub trait ArchiveService {
 }
 ```
 
+### Knowledge 存储
+
+`klaw-knowledge` 在 `klaw-storage` 提供的 `DefaultKnowledgeDb` 之上实现知识检索服务：
+
+```rust
+pub trait KnowledgeProvider: Send + Sync {
+    fn provider_name(&self) -> &str;
+    async fn search(&self, query: KnowledgeSearchQuery) -> Result<Vec<KnowledgeHit>>;
+    async fn get(&self, id: &str) -> Result<Option<KnowledgeEntry>>;
+    async fn list_sources(&self) -> Result<Vec<KnowledgeSourceInfo>>;
+    async fn create_note(&self, input: CreateKnowledgeNoteInput) -> Result<KnowledgeEntry>>;
+}
+```
+
+### Local Model 存储
+
+`klaw-model` 管理本地 GGUF 模型的下载、索引、绑定保护与推理运行时：
+
+```rust
+pub struct ModelStorage {
+    // manifest.json 索引 + snapshots/ 文件管理
+    pub fn save_manifest(&self, manifest: &InstalledModelManifest) -> Result<()>;
+    pub fn list_installed(&self) -> Result<Vec<ModelSummary>>;
+    pub fn load_manifest(&self, model_id: &str) -> Result<InstalledModelManifest>;
+    pub fn remove_model(&self, model_id: &str, bindings: &[ModelUsageBinding]) -> Result<()>;
+}
+```
+
 ## Session 语义
 
 - `turn_count` 表示"已完成轮次"（用户请求 + agent 响应）
@@ -117,3 +150,5 @@ pub trait ArchiveService {
 - [Cron 存储](./cron.md)
 - [Archive 存储](./archive.md)
 - [Memory 存储](./memory.md)
+- [Knowledge 存储](./knowledge.md)
+- [Local Model 存储](./local-model.md)

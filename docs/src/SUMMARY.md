@@ -38,6 +38,8 @@
   - [Cron 存储](./storage/cron.md)
   - [Archive 存储](./storage/archive.md)
   - [Memory 存储](./storage/memory.md)
+  - [Knowledge 存储](./storage/knowledge.md)
+  - [Local Model 存储](./storage/local-model.md)
 - [网关](./gateway/README.md)
   - [WebSocket](./gateway/websocket.md)
   - [Webhook](./gateway/webhook.md)
