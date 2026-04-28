@@ -55,39 +55,37 @@ flowchart LR
 - **Tool System**: Trait-based abstraction (shell, fs, web, memory, sub-agent)
 - **Transport**: In-memory pub/sub with multi-channel support
 
-### Local Models
+### Knowledge
 
-Klaw 内置本地模型子系统 (`klaw-model`)，支持从 HuggingFace 下载 GGUF 格式模型并通过 `llama-cpp-2` Rust binding 在本机推理，无需外部 API：
+Klaw ships a built-in knowledge retrieval system (`klaw-knowledge`) backed by local GGUF models (`klaw-model`), enabling fully offline semantic search over Obsidian vaults — no external API required.
 
-- **Embedding**：文本向量生成（L2 归一化），驱动 Knowledge 语义检索
-- **Rerank**：基于 Yes/No logits + softmax 的二次精排，提升搜索精度
-- **Orchestrator**：本地 Query Intent 分类 + Expansion 生成，替代启发式规则
-- **Chat**：自回归生成，用于 Orchestrator 内部调用
+**Local Models** — GGUF models are downloaded from HuggingFace and run through `llama-cpp-2` Rust bindings on the host machine. Four inference capabilities are supported:
 
-测试推荐模型：
+| Capability | Algorithm | Role in Knowledge Pipeline |
+|-----------|-----------|---------------------------|
+| **Embedding** | Tokenize → encode → L2 normalize | Drives semantic vector search |
+| **Rerank** | Yes/No logits → softmax binary probability | Second-pass relevance scoring on fused results |
+| **Orchestrator** | ChatML prompt → JSON parse (heuristic fallback) | Query intent classification + multi-query expansion |
+| **Chat** | Greedy autoregressive generation | Internal Orchestrator channel |
 
-| 模型 | 用途 | repo_id |
-|------|------|---------|
+Recommended test models:
+
+| Model | Capability | repo_id |
+|-------|-----------|---------|
 | EmbeddingGemma-300M | Embedding | `unsloth/embeddinggemma-300m-GGUF` |
 | Qwen3-Reranker-0.6B-Q8_0 | Rerank | `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF` |
 
-详见 [本地模型系统设计文档](docs/src/design/local-models.md)。
+**5-Lane Search Pipeline** — each query flows through an Orchestrator (intent + expansion), four parallel retrieval lanes, a Weighted Reciprocal Rank Fusion pass, a Rerank refinement, and a final WRRF fusion:
 
-### Knowledge Search
+| Lane | Method | Model Required |
+|------|--------|---------------|
+| **Semantic** | Vector search with 3-tier fallback (ANN index → SQL `vector_distance_cos` → Rust cosine) | Embedding |
+| **FTS** | FTS5 `MATCH + bm25()` or token-scoring fallback | — |
+| **Graph** | Wiki-link + discovered link outbound traversal | — |
+| **Temporal** | Date-pattern filtering (`today` / `recent` / `2025` …) | — |
+| **Rerank** | Yes/No softmax re-scoring of Pass-1 fused hits | Reranker |
 
-Klaw 内置知识检索系统 (`klaw-knowledge`)，面向 Obsidian vault 等外部知识库，提供 **五路检索 + Weighted RRF 融合** 的混合搜索：
-
-| Lane | 说明 | 依赖模型 |
-|------|------|---------|
-| **Semantic** | Embedding 向量检索（ANN → SQL → Rust 三级降级） | Embedding 模型 |
-| **FTS** | FTS5 全文检索（bm25 或 token scoring） | 无 |
-| **Graph** | Wiki-link / 隐式链接图关联跳转 | 无 |
-| **Temporal** | 时间模式检索（today/recent/2025 等） | 无 |
-| **Rerank** | 对融合结果二次 Yes/No softmax 精排 | Rerank 模型 |
-
-搜索流程：Orchestrator（Intent + Expansion）→ 四路并行检索 → Pass1 WRRF 融合 → Rerank 精排 → 最终 WRRF 融合 → 截断输出。无模型时各路自动降级（Rerank 返回空 Vec 跳过，Semantic 返回空 Vec 跳过，Orchestrator 启发式回退）。
-
-详见 [Knowledge 搜索系统设计文档](docs/src/design/knowledge-search.md)。
+When a model is not configured, the corresponding lane gracefully degrades: Semantic and Rerank return empty vectors (skipped), Orchestrator falls back to heuristic intent + stopword-stripped expansions, and the remaining lanes continue with unchanged weights. See the [Local Models design doc](docs/src/design/local-models.md) and [Knowledge Search design doc](docs/src/design/knowledge-search.md) for full algorithm details.
 
 ### GUI Preview
 
