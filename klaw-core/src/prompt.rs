@@ -257,6 +257,8 @@ pub async fn ensure_workspace_prompt_templates_in_dir(
 
     let workspace_dir = workspace_dir(&data_dir);
     let workspace_previously_existed = path_exists(&workspace_dir).await?;
+    let workspace_previously_initialized =
+        workspace_previously_existed && any_prompt_template_exists(&workspace_dir).await?;
     fs::create_dir_all(&workspace_dir)
         .await
         .map_err(|source| PromptError::CreateDir {
@@ -267,7 +269,7 @@ pub async fn ensure_workspace_prompt_templates_in_dir(
     let mut created_files = Vec::new();
     let mut skipped_files = Vec::new();
 
-    if !workspace_previously_existed {
+    if !workspace_previously_initialized {
         let bootstrap_path = workspace_dir.join("BOOTSTRAP.md");
         let bootstrap_content = get_default_template_content("BOOTSTRAP.md")
             .expect("BOOTSTRAP.md template content should exist");
@@ -518,6 +520,15 @@ async fn path_exists(path: &Path) -> Result<bool, PromptError> {
         })
 }
 
+async fn any_prompt_template_exists(workspace_dir: &Path) -> Result<bool, PromptError> {
+    for (file_name, _) in PROMPT_TEMPLATE_FILES {
+        if path_exists(&workspace_dir.join(file_name)).await? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn resolve_default_data_dir() -> Result<PathBuf, PromptError> {
     default_data_dir().ok_or(PromptError::HomeDirUnavailable)
 }
@@ -545,6 +556,25 @@ mod tests {
                 .expect("template file should exist");
             assert!(!content.trim().is_empty());
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ensure_templates_writes_bootstrap_when_workspace_dir_is_empty() {
+        let data_dir = std::env::temp_dir().join(format!("klaw-prompt-test-{}", Uuid::new_v4()));
+        let workspace = workspace_dir(&data_dir);
+        fs::create_dir_all(&workspace)
+            .await
+            .expect("empty workspace dir should be created");
+
+        let report = ensure_workspace_prompt_templates_in_dir(data_dir.clone())
+            .await
+            .expect("should initialize empty workspace templates");
+
+        assert!(
+            report.created_files.contains(&"BOOTSTRAP.md".to_string()),
+            "empty workspace dir should still be treated as first init"
+        );
+        assert!(workspace.join("BOOTSTRAP.md").exists());
     }
 
     #[tokio::test(flavor = "current_thread")]
