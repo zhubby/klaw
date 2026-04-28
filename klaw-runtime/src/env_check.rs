@@ -76,6 +76,15 @@ const DEPENDENCIES: &[BinaryDependency] = &[
         category: DependencyCategory::OptionalWithFallback,
         version_parser: parse_container_version,
     },
+    BinaryDependency {
+        name: "rtk",
+        description: "Command proxy for token-optimized shell output",
+        project_url: None,
+        version_args: &["--version"],
+        required: false,
+        category: DependencyCategory::Preferred,
+        version_parser: parse_rtk_version,
+    },
 ];
 
 pub fn check_environment() -> EnvironmentCheckReport {
@@ -298,6 +307,23 @@ fn parse_container_version(output: &str) -> Option<String> {
     Some(line.to_string())
 }
 
+fn parse_rtk_version(output: &str) -> Option<String> {
+    let line = output.lines().next()?.trim();
+    if line.is_empty() {
+        return None;
+    }
+
+    if let Some(version) = line.strip_prefix("rtk version ") {
+        return Some(version.trim().to_string());
+    }
+
+    if let Some(version) = line.strip_prefix("rtk ") {
+        return Some(version.trim().to_string());
+    }
+
+    Some(line.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,5 +420,35 @@ mod tests {
     fn parse_tailscale_version_extracts_version() {
         let output = "1.76.6\n";
         assert_eq!(parse_tailscale_version(output), Some("1.76.6".to_string()));
+    }
+
+    #[test]
+    fn parse_rtk_version_extracts_prefixed_version() {
+        let output = "rtk 0.3.0\n";
+        assert_eq!(parse_rtk_version(output), Some("0.3.0".to_string()));
+    }
+
+    #[test]
+    fn parse_rtk_version_extracts_version_prefix() {
+        let output = "rtk version 0.3.0\n";
+        assert_eq!(parse_rtk_version(output), Some("0.3.0".to_string()));
+    }
+
+    #[test]
+    fn parse_rtk_version_keeps_plain_version() {
+        let output = "0.3.0\n";
+        assert_eq!(parse_rtk_version(output), Some("0.3.0".to_string()));
+    }
+
+    #[test]
+    fn rtk_is_preferred_not_required() {
+        let rtk = DEPENDENCIES
+            .iter()
+            .find(|dep| dep.name == "rtk")
+            .expect("rtk dependency should exist");
+
+        assert!(!rtk.required);
+        assert!(matches!(rtk.category, DependencyCategory::Preferred));
+        assert!(rtk.project_url.is_none());
     }
 }

@@ -141,12 +141,12 @@ Skills live under `~/.klaw/` in two separate directories with distinct roles:
 
 - **`~/.klaw/skills/`** — Local manual skills. This is where you create new skills. Each skill is a subdirectory containing a `SKILL.md` entry point and optional supporting files.
 
-  ```
-  ~/.klaw/skills/<skill-name>/SKILL.md
-  ~/.klaw/skills/<skill-name>/agents/        # agent-specific overrides (optional)
-  ~/.klaw/skills/<skill-name>/scripts/       # executable helper scripts (optional)
-  ~/.klaw/skills/<skill-name>/references/    # supplementary docs and templates (optional)
-  ```
+```
+~/.klaw/skills/<skill-name>/SKILL.md
+~/.klaw/skills/<skill-name>/agents/        # agent-specific overrides (optional)
+~/.klaw/skills/<skill-name>/scripts/       # executable helper scripts (optional)
+~/.klaw/skills/<skill-name>/references/    # supplementary docs and templates (optional)
+```
 
 - **`~/.klaw/skills-registry/`** — Registry mirror. Stores skills synced from configured remote registries (e.g., Anthropic's public skill repo). **Do not manually create or edit files here.** Use `install_from_registry` / `sync_source` / `delete_source` commands to manage registry skills. The runtime tracks registry state in `~/.klaw/skills-registry-manifest.json`.
 

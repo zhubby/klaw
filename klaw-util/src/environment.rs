@@ -55,6 +55,13 @@ impl EnvironmentCheckReport {
             .filter(|c| matches!(c.category, DependencyCategory::Preferred))
             .all(|c| c.available)
     }
+
+    pub fn rtk_available(&self) -> bool {
+        self.checks
+            .iter()
+            .filter(|c| c.name == "rtk")
+            .any(|c| c.available)
+    }
 }
 
 #[cfg(test)]
