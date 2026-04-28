@@ -2,6 +2,8 @@
 
 - [简介](./introduction.md)
 - [快速开始](./quickstart.md)
+- [教程](./tutorial/README.md)
+  - [Quick Start](./tutorial/quick_start.md)
 - [Agent Core](./agent-core/README.md)
   - [消息协议](./agent-core/message-protocol.md)
   - [运行时状态机](./agent-core/runtime-state-machine.md)
