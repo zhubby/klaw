@@ -894,7 +894,14 @@ fn dedup_ranked_hits_from_vec(hits: Vec<RankedHit>) -> Vec<RankedHit> {
             by_id.insert(hit.id.clone(), hit);
         }
     }
-    by_id.into_values().collect()
+    let mut results: Vec<RankedHit> = by_id.into_values().collect();
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    results
 }
 
 fn temporal_pattern(query: &str) -> Option<String> {
