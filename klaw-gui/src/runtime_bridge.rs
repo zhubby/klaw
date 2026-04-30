@@ -163,6 +163,7 @@ static LOG_BRIDGE: OnceLock<Mutex<Option<Arc<GuiLogBridge>>>> = OnceLock::new();
 const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 const RUNTIME_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_MCP_RESTART_TIMEOUT: Duration = Duration::from_secs(90);
+const RUNTIME_KNOWLEDGE_TIMEOUT: Duration = Duration::from_secs(60);
 const LOG_BRIDGE_MAX_CHUNKS: usize = 8_192;
 
 fn sender_slot() -> &'static Mutex<Option<UnboundedSender<RuntimeCommand>>> {
@@ -497,7 +498,7 @@ pub fn request_knowledge_status() -> Result<KnowledgeRuntimeSnapshot, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "knowledge status")?
+    recv_response(response_rx, RUNTIME_KNOWLEDGE_TIMEOUT, "knowledge status")?
 }
 
 pub fn begin_knowledge_status_request() -> RuntimeRequestHandle<KnowledgeRuntimeSnapshot> {
@@ -517,7 +518,7 @@ pub fn request_reload_knowledge() -> Result<KnowledgeRuntimeSnapshot, String> {
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "knowledge reload")?
+    recv_response(response_rx, RUNTIME_KNOWLEDGE_TIMEOUT, "knowledge reload")?
 }
 
 pub fn begin_reload_knowledge_request() -> RuntimeRequestHandle<KnowledgeRuntimeSnapshot> {
@@ -539,7 +540,7 @@ pub fn request_search_knowledge(query: String, limit: usize) -> Result<Vec<Knowl
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "knowledge search")?
+    recv_response(response_rx, RUNTIME_KNOWLEDGE_TIMEOUT, "knowledge search")?
 }
 
 pub fn begin_search_knowledge_request(
@@ -563,7 +564,7 @@ pub fn request_knowledge_entry(id: String) -> Result<Option<KnowledgeEntry>, Str
         })
         .map_err(|_| "failed to send runtime command".to_string())?;
 
-    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "knowledge entry")?
+    recv_response(response_rx, RUNTIME_KNOWLEDGE_TIMEOUT, "knowledge entry")?
 }
 
 pub fn begin_knowledge_entry_request(id: String) -> RuntimeRequestHandle<Option<KnowledgeEntry>> {
