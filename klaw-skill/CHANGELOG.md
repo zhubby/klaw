@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-30
+
+### Fixed
+- registry skill resolution now also matches by `fallback_name` (skill directory name) so that installed skills remain discoverable even when the upstream SKILL.md frontmatter `name` field changes after a sync
+- added regression test covering the case where a manifest stores a name that differs from the parsed SKILL.md `name` field
+
 ## 2026-03-27
 
 ### Fixed

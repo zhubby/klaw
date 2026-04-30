@@ -72,6 +72,7 @@ struct InstalledSkillsManifest {
 struct RegistrySkillEntry {
     id: String,
     name: String,
+    fallback_name: String,
     description: String,
     skill_dir: PathBuf,
     markdown_path: PathBuf,
@@ -1211,7 +1212,10 @@ async fn resolve_registry_skill_dir(
     let entries = discover_registry_skills(registry_repo_dir).await?;
     let mut matched: Option<(PathBuf, String)> = None;
     for entry in entries {
-        if entry.id != requested_name && entry.name != requested_name {
+        if entry.id != requested_name
+            && entry.name != requested_name
+            && entry.fallback_name != requested_name
+        {
             continue;
         }
         if matched.is_some() {
@@ -1297,7 +1301,7 @@ async fn discover_registry_skills(
             let name = parsed_name
                 .clone()
                 .filter(|value| !value.trim().is_empty())
-                .or_else(|| (!fallback_name.is_empty()).then_some(fallback_name))
+                .or_else(|| (!fallback_name.is_empty()).then_some(fallback_name.clone()))
                 .or_else(|| (!registry_name.is_empty()).then_some(registry_name.clone()))
                 .unwrap_or_default();
             if name.is_empty() {
@@ -1316,6 +1320,7 @@ async fn discover_registry_skills(
             items.push(RegistrySkillEntry {
                 id,
                 name,
+                fallback_name,
                 description: extract_skill_description(&content),
                 skill_dir,
                 markdown_path: path,
@@ -2298,5 +2303,56 @@ mod tests {
             .await
             .expect_err("duplicate managed name should fail");
         assert!(matches!(err, SkillError::InvalidSkillName(_)));
+    }
+
+    /// Regression test: when a manifest stores a skill name that later differs from the
+    /// parsed `name` field in SKILL.md (e.g. upstream repo changed the frontmatter), the
+    /// skill should still be resolvable via its directory/fallback name.
+    #[tokio::test]
+    async fn resolve_registry_skill_matches_by_fallback_name_when_parsed_name_differs() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+
+        // Create a registry repo where the SKILL.md frontmatter says `name: browser`
+        // but the directory name (fallback_name) is `browser-harness`.
+        // This mirrors the real-world scenario where the upstream changed `name: browser-harness`
+        // to `name: browser`, but the manifest still references `browser-harness`.
+        write_registry_skill_at(
+            &root,
+            "browser-harness",
+            "",
+            "SKILL.md",
+            "---\nname: browser\n---\n# browser-harness\nDirect browser control",
+        )
+        .await;
+
+        // Simulate a manifest that stored the old name "browser-harness" before
+        // the upstream repo changed the frontmatter.
+        let mut manifest = InstalledSkillsManifest::default();
+        manifest.managed.push(InstalledSkill {
+            registry: "browser-harness".to_string(),
+            name: "browser-harness".to_string(),
+        });
+        store
+            .write_installed_manifest(&manifest)
+            .await
+            .expect("write initial manifest");
+
+        // list_installed should succeed and find the skill by fallback_name,
+        // even though the parsed name is "browser" and the manifest says "browser-harness".
+        let installed = store
+            .list_installed()
+            .await
+            .expect("list_installed should succeed");
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].name, "browser");
+        assert_eq!(installed[0].registry.as_deref(), Some("browser-harness"));
+
+        // get_installed should also succeed.
+        let record = store
+            .get_installed("browser-harness")
+            .await
+            .expect("get_installed should resolve by fallback_name");
+        assert_eq!(record.name, "browser");
     }
 }
