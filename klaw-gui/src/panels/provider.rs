@@ -440,10 +440,6 @@ impl ProviderPanel {
                         ui.checkbox(&mut form.stream, "");
                         ui.end_row();
 
-                        ui.label("Env Key");
-                        ui.text_edit_singleline(&mut form.env_key);
-                        ui.end_row();
-
                         ui.label("API Key");
                         ui.text_edit_singleline(&mut form.api_key);
                         ui.end_row();

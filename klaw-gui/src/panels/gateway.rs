@@ -503,13 +503,6 @@ impl GatewayPanel {
                             }
                         });
                         ui.end_row();
-
-                        ui.label("Env Key");
-                        ui.add_sized(
-                            [240.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.auth_env_key),
-                        );
-                        ui.end_row();
                     });
 
                 ui.add_space(8.0);
