@@ -193,6 +193,27 @@ fn recv_response<T>(
     })
 }
 
+fn get_sender() -> Result<UnboundedSender<RuntimeCommand>, String> {
+    sender_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "runtime command channel is not available".to_string())
+}
+
+fn send_command<R>(
+    make_command: impl FnOnce(mpsc::Sender<R>) -> RuntimeCommand,
+    timeout: Duration,
+    label: &str,
+) -> Result<R, String> {
+    let sender = get_sender()?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(make_command(response_tx))
+        .map_err(|_| "failed to send runtime command".to_string())?;
+    recv_response(response_rx, timeout, label)
+}
+
 pub fn install_runtime_command_sender(sender: UnboundedSender<RuntimeCommand>) {
     let mut guard = sender_slot()
         .lock()
@@ -408,12 +429,7 @@ impl GuiLogBridge {
 }
 
 pub fn request_reload_skills_prompt() -> Result<(), String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    sender
+    get_sender()?
         .send(RuntimeCommand::ReloadSkillsPrompt)
         .map_err(|_| "failed to send runtime command".to_string())
 }
@@ -421,20 +437,14 @@ pub fn request_reload_skills_prompt() -> Result<(), String> {
 pub fn request_set_provider_override(
     provider_id: Option<String>,
 ) -> Result<(String, String), String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::SetProviderOverride {
+    send_command(
+        |response_tx| RuntimeCommand::SetProviderOverride {
             provider_id,
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "set provider override")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "set provider override",
+    )?
 }
 
 pub fn begin_set_provider_override_request(
@@ -444,20 +454,14 @@ pub fn begin_set_provider_override_request(
 }
 
 pub fn request_run_cron_now(cron_id: &str) -> Result<String, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::RunCronNow {
+    send_command(
+        |response_tx| RuntimeCommand::RunCronNow {
             cron_id: cron_id.to_string(),
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "run cron")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "run cron",
+    )?
 }
 
 pub fn begin_run_cron_now_request(cron_id: String) -> RuntimeRequestHandle<String> {
@@ -465,20 +469,13 @@ pub fn begin_run_cron_now_request(cron_id: String) -> RuntimeRequestHandle<Strin
 }
 
 pub fn request_run_memory_archive_now(timeout: Duration) -> Result<String, String> {
-    let (response_tx, response_rx) = mpsc::channel();
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-
-    sender
-        .send(RuntimeCommand::RunMemoryArchiveNow {
+    send_command(
+        |response_tx| RuntimeCommand::RunMemoryArchiveNow {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, timeout, "memory archive")?
+        },
+        timeout,
+        "memory archive",
+    )?
 }
 
 pub fn begin_run_memory_archive_now_request(timeout: Duration) -> RuntimeRequestHandle<String> {
@@ -486,19 +483,13 @@ pub fn begin_run_memory_archive_now_request(timeout: Duration) -> RuntimeRequest
 }
 
 pub fn request_knowledge_status() -> Result<KnowledgeRuntimeSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::GetKnowledgeStatus {
+    send_command(
+        |response_tx| RuntimeCommand::GetKnowledgeStatus {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_KNOWLEDGE_TIMEOUT, "knowledge status")?
+        },
+        RUNTIME_KNOWLEDGE_TIMEOUT,
+        "knowledge status",
+    )?
 }
 
 pub fn begin_knowledge_status_request() -> RuntimeRequestHandle<KnowledgeRuntimeSnapshot> {
@@ -506,19 +497,13 @@ pub fn begin_knowledge_status_request() -> RuntimeRequestHandle<KnowledgeRuntime
 }
 
 pub fn request_reload_knowledge() -> Result<KnowledgeRuntimeSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::ReloadKnowledge {
+    send_command(
+        |response_tx| RuntimeCommand::ReloadKnowledge {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_KNOWLEDGE_TIMEOUT, "knowledge reload")?
+        },
+        RUNTIME_KNOWLEDGE_TIMEOUT,
+        "knowledge reload",
+    )?
 }
 
 pub fn begin_reload_knowledge_request() -> RuntimeRequestHandle<KnowledgeRuntimeSnapshot> {
@@ -526,21 +511,15 @@ pub fn begin_reload_knowledge_request() -> RuntimeRequestHandle<KnowledgeRuntime
 }
 
 pub fn request_search_knowledge(query: String, limit: usize) -> Result<Vec<KnowledgeHit>, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::SearchKnowledge {
+    send_command(
+        |response_tx| RuntimeCommand::SearchKnowledge {
             query,
             limit,
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_KNOWLEDGE_TIMEOUT, "knowledge search")?
+        },
+        RUNTIME_KNOWLEDGE_TIMEOUT,
+        "knowledge search",
+    )?
 }
 
 pub fn begin_search_knowledge_request(
@@ -551,20 +530,14 @@ pub fn begin_search_knowledge_request(
 }
 
 pub fn request_knowledge_entry(id: String) -> Result<Option<KnowledgeEntry>, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::GetKnowledgeEntry {
+    send_command(
+        |response_tx| RuntimeCommand::GetKnowledgeEntry {
             id,
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_KNOWLEDGE_TIMEOUT, "knowledge entry")?
+        },
+        RUNTIME_KNOWLEDGE_TIMEOUT,
+        "knowledge entry",
+    )?
 }
 
 pub fn begin_knowledge_entry_request(id: String) -> RuntimeRequestHandle<Option<KnowledgeEntry>> {
@@ -581,11 +554,7 @@ pub fn request_sync_knowledge_index_with_progress<F>(
 where
     F: FnMut(KnowledgeSyncProgress),
 {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let sender = get_sender()?;
     let (response_tx, response_rx) = mpsc::channel();
     let (progress_tx, progress_rx) = mpsc::channel();
     sender
@@ -633,52 +602,34 @@ pub fn begin_sync_knowledge_index_request() -> KnowledgeSyncRequestHandle {
 }
 
 pub fn request_run_heartbeat_now(heartbeat_id: &str) -> Result<String, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::RunHeartbeatNow {
+    send_command(
+        |response_tx| RuntimeCommand::RunHeartbeatNow {
             heartbeat_id: heartbeat_id.to_string(),
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "run heartbeat")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "run heartbeat",
+    )?
 }
 
 pub fn request_sync_channels() -> Result<ChannelSyncResult, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::SyncChannels {
+    send_command(
+        |response_tx| RuntimeCommand::SyncChannels {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync channels")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "sync channels",
+    )?
 }
 
 pub fn request_channel_status() -> Result<Vec<ChannelInstanceStatus>, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::GetChannelStatus {
+    send_command(
+        |response_tx| RuntimeCommand::GetChannelStatus {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "channel status")?
+        },
+        RUNTIME_STATUS_TIMEOUT,
+        "channel status",
+    )?
 }
 
 pub fn begin_channel_status_request() -> RuntimeRequestHandle<Vec<ChannelInstanceStatus>> {
@@ -687,20 +638,14 @@ pub fn begin_channel_status_request() -> RuntimeRequestHandle<Vec<ChannelInstanc
 
 pub fn request_restart_channel(instance_key: &str) -> Result<ChannelSyncResult, String> {
     let key = ChannelInstanceKey::parse(instance_key)?;
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::RestartChannel {
+    send_command(
+        |response_tx| RuntimeCommand::RestartChannel {
             instance_key: key.as_str().to_string(),
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "restart channel")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "restart channel",
+    )?
 }
 
 pub fn begin_restart_channel_request(
@@ -711,21 +656,11 @@ pub fn begin_restart_channel_request(
 
 pub fn request_restart_mcp_server(server_id: &str) -> Result<McpRuntimeSnapshot, String> {
     let server_id = McpServerKey::new(server_id).as_str().to_string();
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::RestartMcpServer {
+    send_command(
+        |response_tx| RuntimeCommand::RestartMcpServer {
             server_id,
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(
-        response_rx,
+        },
         RUNTIME_MCP_RESTART_TIMEOUT,
         "restart mcp server",
     )?
@@ -738,19 +673,13 @@ pub fn begin_restart_mcp_server_request(
 }
 
 pub fn request_sync_providers() -> Result<ProviderRuntimeSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::SyncProviders {
+    send_command(
+        |response_tx| RuntimeCommand::SyncProviders {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync providers")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "sync providers",
+    )?
 }
 
 pub fn begin_sync_providers_request() -> RuntimeRequestHandle<ProviderRuntimeSnapshot> {
@@ -758,19 +687,13 @@ pub fn begin_sync_providers_request() -> RuntimeRequestHandle<ProviderRuntimeSna
 }
 
 pub fn request_provider_status() -> Result<ProviderRuntimeSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::GetProviderStatus {
+    send_command(
+        |response_tx| RuntimeCommand::GetProviderStatus {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "provider status")?
+        },
+        RUNTIME_STATUS_TIMEOUT,
+        "provider status",
+    )?
 }
 
 pub fn begin_provider_status_request() -> RuntimeRequestHandle<ProviderRuntimeSnapshot> {
@@ -778,19 +701,13 @@ pub fn begin_provider_status_request() -> RuntimeRequestHandle<ProviderRuntimeSn
 }
 
 pub fn request_env_check() -> Result<EnvironmentCheckReport, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::GetEnvCheck {
+    send_command(
+        |response_tx| RuntimeCommand::GetEnvCheck {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "environment check")
+        },
+        RUNTIME_STATUS_TIMEOUT,
+        "environment check",
+    )
 }
 
 pub fn begin_env_check_request() -> RuntimeRequestHandle<EnvironmentCheckReport> {
@@ -798,209 +715,125 @@ pub fn begin_env_check_request() -> RuntimeRequestHandle<EnvironmentCheckReport>
 }
 
 pub fn request_gateway_status() -> Result<GatewayStatusSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::GetGatewayStatus {
+    send_command(
+        |response_tx| RuntimeCommand::GetGatewayStatus {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "gateway status")
+        },
+        RUNTIME_STATUS_TIMEOUT,
+        "gateway status",
+    )
 }
 
 pub fn request_tailscale_host_status() -> Result<TailscaleHostInfo, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::GetTailscaleHostStatus {
+    send_command(
+        |response_tx| RuntimeCommand::GetTailscaleHostStatus {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "tailscale host status")?
+        },
+        RUNTIME_STATUS_TIMEOUT,
+        "tailscale host status",
+    )?
 }
 
 pub fn request_start_gateway() -> Result<GatewayStatusSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::StartGateway {
+    send_command(
+        |response_tx| RuntimeCommand::StartGateway {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "start gateway")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "start gateway",
+    )?
 }
 
 pub fn request_set_gateway_enabled(enabled: bool) -> Result<GatewayStatusSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::SetGatewayEnabled {
+    send_command(
+        |response_tx| RuntimeCommand::SetGatewayEnabled {
             enabled,
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "set gateway enabled")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "set gateway enabled",
+    )?
 }
 
 pub fn request_restart_gateway() -> Result<GatewayStatusSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::RestartGateway {
+    send_command(
+        |response_tx| RuntimeCommand::RestartGateway {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "restart gateway")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "restart gateway",
+    )?
 }
 
 pub fn request_set_tailscale_mode(mode: TailscaleMode) -> Result<GatewayStatusSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::SetTailscaleMode {
+    send_command(
+        |response_tx| RuntimeCommand::SetTailscaleMode {
             mode,
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "set tailscale mode")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "set tailscale mode",
+    )?
 }
 
 pub fn request_sync_mcp() -> Result<McpSyncResult, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::SyncMcp {
+    send_command(
+        |response_tx| RuntimeCommand::SyncMcp {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync mcp")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "sync mcp",
+    )?
 }
 
 pub fn request_sync_acp() -> Result<AcpSyncResult, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::SyncAcp {
+    send_command(
+        |response_tx| RuntimeCommand::SyncAcp {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync acp")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "sync acp",
+    )?
 }
 
 pub fn request_sync_tools() -> Result<Vec<String>, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::SyncTools {
+    send_command(
+        |response_tx| RuntimeCommand::SyncTools {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "sync tools")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "sync tools",
+    )?
 }
 
 pub fn request_tool_definitions() -> Result<Vec<ToolDefinition>, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::GetToolDefinitions {
+    send_command(
+        |response_tx| RuntimeCommand::GetToolDefinitions {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "tool definitions")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "tool definitions",
+    )?
 }
 
 pub fn request_mcp_status() -> Result<McpRuntimeSnapshot, String> {
-    let sender = match sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-    {
-        Some(s) => s,
-        None => return Err("runtime command channel is not available".to_string()),
-    };
-    let (response_tx, response_rx) = mpsc::channel();
-    if sender
-        .send(RuntimeCommand::GetMcpStatus {
+    send_command(
+        |response_tx| RuntimeCommand::GetMcpStatus {
             response: response_tx,
-        })
-        .is_err()
-    {
-        return Err("failed to send runtime command".to_string());
-    }
-
-    match recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "mcp status") {
-        Ok(result) => result,
-        Err(error) => Err(error),
-    }
+        },
+        RUNTIME_STATUS_TIMEOUT,
+        "mcp status",
+    )?
 }
 
 pub fn request_acp_status() -> Result<AcpRuntimeSnapshot, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::GetAcpStatus {
+    send_command(
+        |response_tx| RuntimeCommand::GetAcpStatus {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-
-    match recv_response(response_rx, RUNTIME_STATUS_TIMEOUT, "acp status") {
-        Ok(result) => result,
-        Err(error) => Err(error),
-    }
+        },
+        RUNTIME_STATUS_TIMEOUT,
+        "acp status",
+    )?
 }
 
 pub fn request_execute_acp_prompt_stream(
@@ -1009,11 +842,7 @@ pub fn request_execute_acp_prompt_stream(
     working_directory: Option<String>,
     timeout_seconds: Option<u64>,
 ) -> Result<mpsc::Receiver<AcpPromptEvent>, String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
+    let sender = get_sender()?;
     let (events_tx, events_rx) = mpsc::channel();
     sender
         .send(RuntimeCommand::ExecuteAcpPromptStream {
@@ -1028,39 +857,25 @@ pub fn request_execute_acp_prompt_stream(
 }
 
 pub fn request_stop_acp_prompt() -> Result<(), String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::StopAcpPrompt {
+    send_command(
+        |response_tx| RuntimeCommand::StopAcpPrompt {
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-    recv_response(response_rx, RUNTIME_ACTION_TIMEOUT, "stop acp prompt")?
+        },
+        RUNTIME_ACTION_TIMEOUT,
+        "stop acp prompt",
+    )?
 }
 
 pub fn request_resolve_acp_permission(
     request_id: u64,
     decision: AcpPermissionDecision,
 ) -> Result<(), String> {
-    let sender = sender_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "runtime command channel is not available".to_string())?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(RuntimeCommand::ResolveAcpPermission {
+    send_command(
+        |response_tx| RuntimeCommand::ResolveAcpPermission {
             request_id,
             decision,
             response: response_tx,
-        })
-        .map_err(|_| "failed to send runtime command".to_string())?;
-    recv_response(
-        response_rx,
+        },
         RUNTIME_ACTION_TIMEOUT,
         "resolve acp permission",
     )?
