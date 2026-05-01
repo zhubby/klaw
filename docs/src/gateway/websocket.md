@@ -13,6 +13,7 @@
 ## 代码位置
 
 - 网关实现：`klaw-gateway/src/lib.rs`
+- WebSocket 实现：`klaw-gateway/src/websocket.rs`
 - 配置结构：`klaw-config/src/lib.rs`
 - 配置校验：`klaw-config/src/validate.rs`
 - CLI 启动命令：`klaw-cli/src/commands/gateway.rs`
@@ -97,25 +98,127 @@ ws://127.0.0.1:18080/ws/chat?token=secret
 
 ### 帧模型
 
-- 客户端上行统一使用 `method` 帧：
-  - `session.subscribe`
-  - `session.unsubscribe`
-  - `session.ping`
-  - `session.submit`
-- 服务端下行统一使用：
-  - `result`
-  - `error`
-  - `event`
+#### 客户端上行方法 (Client → Server)
+
+客户端上行统一使用 `method` 帧，包含以下方法：
+
+| 方法 | 描述 | 参数 |
+|------|------|------|
+| `session.ping` | 心跳检测 | 无 |
+| `provider.list` | 获取模型提供商列表 | 无 |
+| `workspace.bootstrap` | 初始化工作区，获取会话列表 | 无 |
+| `session.create` | 创建新会话 | 无 |
+| `session.update` | 更新会话信息 | `session_key`, `title` |
+| `session.delete` | 删除会话 | `session_key` |
+| `session.subscribe` | 订阅指定会话 | `session_key` |
+| `session.unsubscribe` | 取消订阅当前会话 | 无 |
+| `session.history.load` | 加载会话历史消息 | `session_key`, `before_message_id`, `limit` |
+| `session.submit` | 提交用户输入 | `input`, `session_key`, `stream`, `attachments`, `model_provider`, `model` 等 |
+
+**请求帧格式：**
+
+```json
+{
+  "type": "method",
+  "id": "uuid-request-id",
+  "method": "session.submit",
+  "params": {
+    "session_key": "session-uuid",
+    "input": "用户输入内容",
+    "stream": true,
+    "model_provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "attachments": []
+  }
+}
+```
+
+#### 服务端下行帧 (Server → Client)
+
+服务端下行统一使用以下帧类型：
+
+| 类型 | 描述 | 字段 |
+|------|------|------|
+| `result` | 方法调用成功响应 | `id`, `result` |
+| `error` | 方法调用错误响应 | `id`, `error` (含 `code`, `message`, `data`) |
+| `event` | 服务端主动推送事件 | `event`, `payload` |
+
+**响应帧格式：**
+
+```json
+// Result 帧
+{
+  "type": "result",
+  "id": "uuid-request-id",
+  "result": {
+    "session_key": "session-uuid",
+    "messages": [],
+    "has_more": false
+  }
+}
+
+// Error 帧
+{
+  "type": "error",
+  "id": "uuid-request-id",
+  "error": {
+    "code": "invalid_params",
+    "message": "session_key is required",
+    "data": null
+  }
+}
+
+// Event 帧
+{
+  "type": "event",
+  "event": "session.message",
+  "payload": {
+    "session_key": "session-uuid",
+    "response": { "content": "AI 回复内容" },
+    "role": "assistant"
+  }
+}
+```
+
+#### 服务端事件类型
+
+| 事件 | 描述 | 触发时机 |
+|------|------|----------|
+| `session.connected` | 连接已建立 | WebSocket 握手成功后 |
+| `session.subscribed` | 会话已订阅 | `session.subscribe` 成功后 |
+| `session.unsubscribed` | 会话已取消订阅 | `session.unsubscribe` 成功后 |
+| `session.message` | 会话消息 | 收到新消息时 |
+| `session.history.done` | 历史加载完成 | `session.history.load` 完成后 |
+| `session.stream.clear` | 流式输出清除 | 流式响应开始前 |
+| `session.stream.delta` | 流式输出增量 | 流式响应数据块 |
+| `session.stream.done` | 流式输出完成 | 流式响应结束时 |
 
 ### 消息处理
 
 - `Text` 帧：按 JSON 解析为结构化 websocket method。
 - `Binary` 帧：返回 `invalid_message_type` 错误。
-- `session.subscribe`：把目标会话加入当前连接的实时订阅集合，并把它设为默认提交会话，然后下发 `session.subscribed`。
+- `session.subscribe`：把目标会话加入当前连接的实时订阅集合，并把它设为默认提交会话，然后下发 `session.subscribed` 事件。
 - `session.submit`：映射到 runtime `ChannelRequest`；返回 `result`，并在 streaming 模式下追加 `session.message` / `session.stream.*` 事件。
 - `session.message` / `result.response`：`response` 结构除 `content` 外还会携带 `metadata` 与 `attachments`；浏览器端可据此恢复 `im.card` 等结构化消息状态。
 - `Ping/Pong`：保留 websocket 心跳语义，不参与业务处理。
 - `Close`：结束连接并触发连接注册表清理。
+
+### 会话提交参数详解
+
+`session.submit` 方法支持以下参数：
+
+| 参数 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| `input` | string | 条件 | 用户输入文本（与 `attachments` 至少填一个） |
+| `session_key` | string | 条件 | 目标会话键，默认使用当前订阅会话 |
+| `chat_id` | string | 否 | 聊天 ID，默认使用 `session_key` |
+| `channel_id` | string | 否 | 通道 ID，默认 `"default"` |
+| `stream` | boolean | 否 | 是否启用流式响应，默认 `false` |
+| `model_provider` | string | 否 | 模型提供商（如 `anthropic`, `openai`） |
+| `model` | string | 否 | 具体模型名称 |
+| `archive_id` | string | 否 | 归档文件 ID（单附件快捷方式） |
+| `attachments` | array | 否 | 附件列表，每项含 `archive_id`, `filename`, `mime_type`, `size_bytes` |
+| `metadata` | object | 否 | 自定义元数据键值对 |
 
 ## 连接生命周期与清理
 
@@ -138,11 +241,11 @@ ws://127.0.0.1:18080/ws/chat?token=secret
 
 业务级 websocket method 失败不会抛 `GatewayError`，而是下发结构化 `error` 帧，例如：
 
-- `invalid_json`
-- `invalid_params`
-- `missing_session`
-- `unknown_method`
-- `not_configured`
+- `invalid_json`：JSON 解析失败
+- `invalid_params`：参数校验失败
+- `missing_session`：缺少 session_key
+- `unknown_method`：未知方法
+- `not_configured`：处理器未配置
 
 ## Webhook 输入
 
