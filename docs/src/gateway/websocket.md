@@ -1,27 +1,21 @@
-# Gateway WebSocket 设计与实现
+# Gateway WebSocket v1 协议
 
-本文档记录 `klaw-gateway` 模块的 HTTP 服务设计，覆盖配置模型、服务启动链路、`/ws/chat` 协议行为、webhook 事件输入、错误处理和后续演进方向。
+本文档是 `klaw-gateway` 当前 `/ws/chat` WebSocket 协议的完整说明。Gateway WebSocket v1 是面向 WebUI、桌面端、移动端和第三方客户端的长期 agent 交互协议底座，使用 JSON-RPC 语义的轻量 envelope，覆盖初始化、会话、历史、turn/item 生命周期、结构化内容、反向请求、错误、背压、安全和 schema 管理。
 
-## 目标
-
-- 提供基于 `axum` 的独立 HTTP 服务。
-- 暴露 `GET /ws/chat` 端点，承载 WebSocket 聊天。
-- 暴露受 Bearer Token 保护的 webhook 事件输入端点。
-- 在根配置 `gateway` 下统一管理监听地址和 TLS 配置。
-- 以 `session_key` 作为 websocket 会话路由键，并把输入映射到统一 channel/runtime 抽象。
+`klaw-webui` 已直接切换到 v1，不再发送旧版 `type: "method"` 帧，也不把旧版 `type: "event" | "result" | "error"` 服务端帧作为正常输入路径。
 
 ## 代码位置
 
-- 网关实现：`klaw-gateway/src/lib.rs`
-- WebSocket 实现：`klaw-gateway/src/websocket.rs`
-- 配置结构：`klaw-config/src/lib.rs`
-- 配置校验：`klaw-config/src/validate.rs`
-- CLI 启动命令：`klaw-cli/src/commands/gateway.rs`
-- CLI 子命令注册：`klaw-cli/src/main.rs`
+- Gateway WebSocket 实现：`klaw-gateway/src/websocket.rs`
+- v1 协议类型与 schema：`klaw-gateway/src/protocol.rs`
+- Gateway 状态与路由：`klaw-gateway/src/lib.rs`
+- Runtime WebSocket 桥接：`klaw-runtime/src/gateway_websocket.rs`
+- WebUI v1 客户端：`klaw-webui/src/web_chat/protocol.rs`、`klaw-webui/src/web_chat/transport.rs`
+- Gateway 配置结构：`klaw-config/src/lib.rs`
 
-## 配置模型
+## 配置与启动
 
-网关配置位于根节点 `gateway`：
+Gateway 配置位于根节点 `gateway`：
 
 ```toml
 [gateway]
@@ -42,53 +36,19 @@ cert_path = "/path/to/fullchain.pem"
 key_path = "/path/to/privkey.pem"
 ```
 
-字段说明：
+启动链路：
 
-- `enabled`：是否启用 gateway 服务，默认 `false`。
-- `listen_ip`：监听 IP，默认 `127.0.0.1`。
-- `listen_port`：监听端口，默认 `0`，表示由系统分配随机可用端口。
-- `webhook.enabled`：是否启用 webhook 能力，默认 `false`。
-- `webhook.events.enabled`：是否注册结构化事件入口，默认 `true`。
-- `webhook.events.path`：结构化事件路径，默认 `"/webhook/events"`。
-- `webhook.events.max_body_bytes`：结构化事件请求体大小限制，默认 `262144`。
-- `webhook.agents.enabled`：是否注册模板驱动入口，默认 `false`。
-- `webhook.agents.path`：agent webhook 路径，默认 `"/webhook/agents"`。
-- `webhook.agents.max_body_bytes`：agent webhook 请求体大小限制，默认 `262144`。
-- `tls.enabled`：是否启用 TLS（当前版本仅保留配置结构，尚未启用 TLS 监听实现）。
-- `tls.cert_path`：TLS 证书路径（当 `tls.enabled=true` 时必填）。
-- `tls.key_path`：TLS 私钥路径（当 `tls.enabled=true` 时必填）。
+- `klaw gateway` 或 GUI 内嵌 gateway 加载并校验配置。
+- Gateway 绑定 `listen_ip:listen_port`；当 `listen_port = 0` 时由系统分配端口。
+- 服务注册 `/ws/chat`、可选 webhook、archive 和 provider HTTP 路由。
+- 远程暴露时应启用 gateway auth；`/ws/chat` 支持 Bearer 鉴权，也保留 query token 兼容浏览器限制。
 
-## 配置校验规则
-
-在 `klaw-config` 校验阶段执行：
-
-- `gateway.listen_ip` 必须能解析为合法 IP。
-- `gateway.listen_port` 允许为 `0` 或任意合法 `u16` 端口。
-- `gateway.webhook.events.path` 与 `gateway.webhook.agents.path` 必须以 `/` 开头且不能为空。
-- `gateway.webhook.events.max_body_bytes` 与 `gateway.webhook.agents.max_body_bytes` 必须大于 `0`。
-- `gateway.webhook.events.path` 与 `gateway.webhook.agents.path` 不能相同。
-- `gateway.tls.enabled=true` 时：
-  - `gateway.tls.cert_path` 不能为空字符串。
-  - `gateway.tls.key_path` 不能为空字符串。
-
-这保证了 `klaw gateway` 启动前即可发现配置错误。
-
-## 启动链路
-
-- 用户执行 `klaw gateway`。
-- `klaw-cli` 先完成通用配置加载与校验（`load_or_init`）。
-- `GatewayCommand::run()` 和 `klaw gui` 内嵌 gateway 都会构造带 runtime webhook handler 的 `GatewayOptions`。
-- `klaw-gateway` 先对 `listen_ip:listen_port` 执行 `TcpListener::bind`，再从 `local_addr()` 读取实际监听端口。
-- 当 `listen_port = 0` 时，日志和运行态快照中都使用实际分配端口。
-- 网关创建 `axum::Router`，注册 `/ws/chat` 和可选的 webhook 路由，然后启动服务。
-
-## `/ws/chat` 协议行为
-
-### 握手
+## 端点与握手
 
 - 端点：`GET /ws/chat`
-- 可选 query：`token`
-- 可选 query：`session_key`，仅用于兼容旧连接方式；推荐在握手后通过 `session.subscribe` 显式订阅。
+- 推荐鉴权：`Authorization: Bearer <token>`
+- 兼容鉴权：`?token=<token>` 或 `?access_token=<token>`
+- 兼容 query：`session_key`，仅用于旧连接方式；v1 客户端应通过 `session/subscribe` 显式订阅。
 
 示例：
 
@@ -96,234 +56,548 @@ key_path = "/path/to/privkey.pem"
 ws://127.0.0.1:18080/ws/chat?token=secret
 ```
 
-### 帧模型
+连接建立后，v1 客户端发送 `initialize` 完成协议初始化和能力协商。
 
-#### 客户端上行方法 (Client → Server)
+## Envelope
 
-客户端上行统一使用 `method` 帧，包含以下方法：
+v1 使用 JSON-RPC 2.0 语义，但线上帧省略 `jsonrpc` 字段。每个 WebSocket 文本帧承载一个 JSON 消息：
 
-| 方法 | 描述 | 参数 |
-|------|------|------|
-| `session.ping` | 心跳检测 | 无 |
-| `provider.list` | 获取模型提供商列表 | 无 |
-| `workspace.bootstrap` | 初始化工作区，获取会话列表 | 无 |
-| `session.create` | 创建新会话 | 无 |
-| `session.update` | 更新会话信息 | `session_key`, `title` |
-| `session.delete` | 删除会话 | `session_key` |
-| `session.subscribe` | 订阅指定会话 | `session_key` |
-| `session.unsubscribe` | 取消订阅当前会话 | 无 |
-| `session.history.load` | 加载会话历史消息 | `session_key`, `before_message_id`, `limit` |
-| `session.submit` | 提交用户输入 | `input`, `session_key`, `stream`, `attachments`, `model_provider`, `model` 等 |
+```json
+{ "id": "req_1", "method": "turn/start", "params": {} }
+{ "id": "req_1", "result": {} }
+{ "method": "item/started", "params": {} }
+{ "id": "srv_req_1", "method": "approval/request", "params": {} }
+{ "id": "req_2", "error": { "code": "invalid_params", "message": "..." } }
+```
 
-**请求帧格式：**
+规则：
+
+- 客户端请求必须包含 `id`、`method` 和可选 `params`。
+- 成功响应必须 echo 同一个 `id`，并包含 `result`。
+- 错误响应必须 echo 同一个 `id`（无法解析请求时可为 `null`），并包含 `error`。
+- 服务端通知没有 `id`，只包含 `method` 和 `params`。
+- 服务端反向请求包含 `id`，客户端通过 `approval/respond`、`tool/respond` 或 `user_input/respond` 闭环。
+
+## 初始化
+
+客户端连接后发送：
 
 ```json
 {
-  "type": "method",
-  "id": "uuid-request-id",
-  "method": "session.submit",
+  "id": "init_1",
+  "method": "initialize",
   "params": {
-    "session_key": "session-uuid",
-    "input": "用户输入内容",
+    "client_info": {
+      "name": "klaw-webui",
+      "title": "Klaw WebUI",
+      "version": "0.15.6"
+    },
+    "capabilities": {
+      "protocol_version": "v1",
+      "turns": true,
+      "items": true,
+      "tools": true,
+      "approvals": true,
+      "server_requests": true,
+      "cancellation": true,
+      "schema": true
+    }
+  }
+}
+```
+
+服务端响应包含：
+
+- `protocol_version`
+- `protocol_name`
+- `connection_id`
+- 协商后的 `capabilities`
+- `server_info`
+
+客户端随后可发送 `initialized` 通知：
+
+```json
+{ "method": "initialized", "params": {} }
+```
+
+实验字段必须通过 `capabilities.experimental = true` 显式启用。未协商的能力不能作为稳定协议依赖。
+
+## 身份模型
+
+- `connection_id`：连接级诊断和路由 ID，不作为权限边界。
+- `session_id`：Klaw 工作区会话；当前兼容旧 `session_key`。
+- `thread_id`：agent 对话上下文；当前 WebUI 通常与 `session_id` 相同，但协议不要求永久绑定。
+- `turn_id`：一次用户请求及其后续 agent 工作。
+- `item_id`：turn 内的一个工作单元，例如 assistant message、reasoning、tool call 或 file change。
+- `request_id`：RPC 请求响应匹配 ID，不能替代 `turn_id` 或 `item_id`。
+
+## 方法总览
+
+当前 v1 稳定方法：
+
+| 方法 | 方向 | 描述 |
+|------|------|------|
+| `initialize` | Client -> Server | 初始化协议与能力协商 |
+| `initialized` | Client -> Server | 客户端初始化完成通知 |
+| `session/list` | Client -> Server | 获取工作区会话列表 |
+| `session/create` | Client -> Server | 创建新会话 |
+| `session/update` | Client -> Server | 更新会话标题等信息 |
+| `session/delete` | Client -> Server | 删除会话 |
+| `session/subscribe` | Client -> Server | 订阅会话实时事件 |
+| `session/unsubscribe` | Client -> Server | 取消当前连接的会话订阅 |
+| `provider/list` | Client -> Server | 获取模型提供商列表 |
+| `thread/history` | Client -> Server | 按游标分页读取会话历史 |
+| `turn/start` | Client -> Server | 创建一次用户 turn |
+| `turn/cancel` | Client -> Server | 中断一个 turn |
+| `approval/respond` | Client -> Server | 响应审批反向请求 |
+| `tool/respond` | Client -> Server | 响应客户端工具反向请求 |
+| `user_input/respond` | Client -> Server | 响应补充用户输入反向请求 |
+
+预留但尚未完整实现的方法包括 `thread/start`、`thread/resume`、`thread/read`、`thread/list`、`thread/rollback`、`turn/steer` 和 `turn/read`。
+
+## 会话、Provider 与历史
+
+WebUI 启动后通常按以下顺序加载工作区：
+
+```json
+{ "id": "sessions_1", "method": "session/list", "params": {} }
+{ "id": "providers_1", "method": "provider/list", "params": {} }
+```
+
+`session/list` 响应：
+
+```json
+{
+  "id": "sessions_1",
+  "result": {
+    "sessions": [
+      {
+        "session_key": "websocket:abc",
+        "title": "Agent abc",
+        "created_at_ms": 1714200000000,
+        "model_provider": "anthropic",
+        "model": "claude-sonnet-4-5"
+      }
+    ],
+    "active_session_key": "websocket:abc"
+  }
+}
+```
+
+`provider/list` 响应：
+
+```json
+{
+  "id": "providers_1",
+  "result": {
+    "default_provider": "anthropic",
+    "providers": [
+      { "id": "anthropic", "default_model": "claude-sonnet-4-5" }
+    ]
+  }
+}
+```
+
+会话操作：
+
+```json
+{ "id": "create_1", "method": "session/create", "params": {} }
+{
+  "id": "rename_1",
+  "method": "session/update",
+  "params": { "session_key": "websocket:abc", "title": "New title" }
+}
+{
+  "id": "delete_1",
+  "method": "session/delete",
+  "params": { "session_key": "websocket:abc" }
+}
+{
+  "id": "subscribe_1",
+  "method": "session/subscribe",
+  "params": { "session_key": "websocket:abc" }
+}
+```
+
+订阅成功后，服务端返回 success envelope，并发送 `session/subscribed` 通知。取消订阅同理发送 `session/unsubscribed`。
+
+历史分页：
+
+```json
+{
+  "id": "history_1",
+  "method": "thread/history",
+  "params": {
+    "session_key": "websocket:abc",
+    "before_message_id": null,
+    "limit": 30
+  }
+}
+```
+
+响应：
+
+```json
+{
+  "id": "history_1",
+  "result": {
+    "session_key": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "previous answer",
+        "timestamp_ms": 1714200000000,
+        "metadata": {},
+        "message_id": "msg_1"
+      }
+    ],
+    "has_more": false,
+    "oldest_loaded_message_id": "msg_1"
+  }
+}
+```
+
+## Turn 与 Item 生命周期
+
+`turn/start` 创建一次 agent 交互：
+
+```json
+{
+  "id": "turn_req_1",
+  "method": "turn/start",
+  "params": {
+    "session_id": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "input": [{ "type": "text", "text": "hello" }],
     "stream": true,
     "model_provider": "anthropic",
     "model": "claude-sonnet-4-5",
-    "attachments": []
+    "metadata": {}
   }
 }
 ```
 
-#### 服务端下行帧 (Server → Client)
-
-服务端下行统一使用以下帧类型：
-
-| 类型 | 描述 | 字段 |
-|------|------|------|
-| `result` | 方法调用成功响应 | `id`, `result` |
-| `error` | 方法调用错误响应 | `id`, `error` (含 `code`, `message`, `data`) |
-| `event` | 服务端主动推送事件 | `event`, `payload` |
-
-**响应帧格式：**
+服务端先返回初始 turn，再发送生命周期通知：
 
 ```json
-// Result 帧
 {
-  "type": "result",
-  "id": "uuid-request-id",
+  "id": "turn_req_1",
   "result": {
-    "session_key": "session-uuid",
-    "messages": [],
-    "has_more": false
+    "turn": {
+      "session_id": "websocket:abc",
+      "thread_id": "websocket:abc",
+      "turn_id": "turn_1",
+      "request_id": "turn_req_1",
+      "status": "in_progress"
+    }
   }
 }
-
-// Error 帧
 {
-  "type": "error",
-  "id": "uuid-request-id",
+  "method": "turn/started",
+  "params": {
+    "session_id": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "request_id": "turn_req_1",
+    "status": "in_progress"
+  }
+}
+```
+
+流式输出：
+
+```json
+{
+  "method": "item/started",
+  "params": {
+    "session_id": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "item": {
+      "item_id": "item_agent_turn_1",
+      "turn_id": "turn_1",
+      "type": "agentMessage",
+      "status": "inProgress",
+      "payload": {
+        "response": {
+          "content": "Hel",
+          "metadata": {},
+          "attachments": []
+        }
+      }
+    }
+  }
+}
+{
+  "method": "item/agentMessage/delta",
+  "params": {
+    "session_id": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "item_id": "item_agent_turn_1",
+    "delta": "lo"
+  }
+}
+```
+
+终态：
+
+```json
+{
+  "method": "item/completed",
+  "params": {
+    "session_id": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "item": {
+      "item_id": "item_agent_turn_1",
+      "turn_id": "turn_1",
+      "type": "agentMessage",
+      "status": "completed",
+      "payload": {
+        "response": {
+          "content": "Hello",
+          "metadata": {},
+          "attachments": []
+        }
+      }
+    }
+  }
+}
+{
+  "method": "turn/completed",
+  "params": {
+    "session_id": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "request_id": "turn_req_1",
+    "status": "completed",
+    "response": {
+      "content": "Hello",
+      "metadata": {},
+      "attachments": []
+    }
+  }
+}
+```
+
+非流式 v1 turn 也必须以 `item/completed` 和 `turn/completed` 闭环。客户端应以 `turn/completed`、`turn/failed` 或 `turn/interrupted` 作为 turn 终态。
+
+## 内容块
+
+`turn/start.params.input` 使用结构化 content blocks：
+
+```json
+[
+  { "type": "text", "text": "请总结附件" },
+  {
+    "type": "attachment",
+    "archive_id": "archive_1",
+    "filename": "report.pdf",
+    "mime_type": "application/pdf",
+    "size_bytes": 1024
+  },
+  {
+    "type": "image",
+    "uri": "data:image/png;base64,...",
+    "mime_type": "image/png"
+  },
+  {
+    "type": "uiPayload",
+    "namespace": "webui.card",
+    "payload": {}
+  }
+]
+```
+
+稳定内容块：
+
+- `text`：纯文本。
+- `image`：图片 URI 或 archive 引用。
+- `attachment`：归档附件引用。
+- `uiPayload`：命名空间化 UI payload，不承载核心协议语义。
+
+`metadata` 仅用于扩展命名空间，不承载核心协议语义，也不能存放密钥或长期凭据。
+
+## Item 类型
+
+v1 稳定 item 类型包括：
+
+- `userMessage`：用户文本、图片和附件引用。
+- `agentMessage`：assistant 正文和 content blocks。
+- `reasoning`：推理摘要或可选原始 reasoning，受 capability 与配置控制。
+- `plan`：计划文本与条目状态。
+- `toolCall`：通用工具调用，包含 `tool_call_id`、`name`、`kind`、`status`、`arguments`、`result`、`error`。
+- `commandExecution`：命令、cwd、stdout/stderr delta、exit code、sandbox/network 信息。
+- `fileChange`：path、diff、status、approval state、grant root。
+- `mcpToolCall`：server、tool、arguments、result/error。
+- `approvalRequest`：审批目标、可选决策和权限范围。
+- `dynamicToolCall`：动态工具调用。
+
+客户端应按 `item_id` 合并同一 item 的 started、delta/update 和 completed 状态。
+
+## 反向请求
+
+当服务端需要审批、客户端工具执行或补充用户输入时，会发送带 `id` 的反向请求：
+
+```json
+{
+  "id": "srv_req_1",
+  "method": "approval/request",
+  "params": {
+    "request_id": "srv_req_1",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "scope": "turn",
+    "prompt": "Allow command execution?",
+    "metadata": {}
+  }
+}
+```
+
+客户端响应：
+
+```json
+{
+  "id": "approval_response_1",
+  "method": "approval/respond",
+  "params": {
+    "request_id": "srv_req_1",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "decision": "accept"
+  }
+}
+```
+
+服务端完成处理后发送：
+
+```json
+{
+  "method": "serverRequest/resolved",
+  "params": {
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "request_id": "srv_req_1",
+    "item_id": "item_approval_1"
+  }
+}
+```
+
+审批必须包含 `scope`，取值为 `turn`、`session` 或 `thread`。默认应使用 `turn`，避免一次授权扩大到长期会话。
+
+## 控制面
+
+`turn/cancel` 请求中断一个 turn：
+
+```json
+{
+  "id": "cancel_1",
+  "method": "turn/cancel",
+  "params": {
+    "session_id": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1"
+  }
+}
+```
+
+服务端响应 success envelope，并发送 `turn/interrupted` 终态通知：
+
+```json
+{
+  "method": "turn/interrupted",
+  "params": {
+    "session_id": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "request_id": "cancel_1",
+    "status": "interrupted"
+  }
+}
+```
+
+## 错误模型
+
+错误帧：
+
+```json
+{
+  "id": "req_1",
   "error": {
-    "code": "invalid_params",
-    "message": "session_key is required",
-    "data": null
-  }
-}
-
-// Event 帧
-{
-  "type": "event",
-  "event": "session.message",
-  "payload": {
-    "session_key": "session-uuid",
-    "response": { "content": "AI 回复内容" },
-    "role": "assistant"
+    "code": "payload_too_large",
+    "message": "websocket text frame exceeds the configured payload limit",
+    "data": {
+      "max_bytes": 1048576,
+      "actual_bytes": 1048577,
+      "retryable": false
+    }
   }
 }
 ```
 
-#### 服务端事件类型
+稳定错误码：
 
-| 事件 | 描述 | 触发时机 |
-|------|------|----------|
-| `session.connected` | 连接已建立 | WebSocket 握手成功后 |
-| `session.subscribed` | 会话已订阅 | `session.subscribe` 成功后 |
-| `session.unsubscribed` | 会话已取消订阅 | `session.unsubscribe` 成功后 |
-| `session.message` | 会话消息 | 收到新消息时 |
-| `session.history.done` | 历史加载完成 | `session.history.load` 完成后 |
-| `session.stream.clear` | 流式输出清除 | 流式响应开始前 |
-| `session.stream.delta` | 流式输出增量 | 流式响应数据块 |
-| `session.stream.done` | 流式输出完成 | 流式响应结束时 |
+| 类别 | code |
+|------|------|
+| 协议错误 | `invalid_json`, `invalid_request`, `method_not_found`, `invalid_params`, `not_initialized`, `unsupported_capability` |
+| 资源错误 | `overloaded`, `payload_too_large`, `rate_limited`, `too_many_active_turns` |
+| 业务错误 | `session_not_found`, `thread_not_found`, `turn_not_found`, `permission_denied` |
+| Runtime 错误 | `model_error`, `tool_error`, `cancelled`, `timeout`, `internal_error` |
 
-### 消息处理
+## 背压与资源限制
 
-- `Text` 帧：按 JSON 解析为结构化 websocket method。
-- `Binary` 帧：返回 `invalid_message_type` 错误。
-- `session.subscribe`：把目标会话加入当前连接的实时订阅集合，并把它设为默认提交会话，然后下发 `session.subscribed` 事件。
-- `session.submit`：映射到 runtime `ChannelRequest`；返回 `result`，并在 streaming 模式下追加 `session.message` / `session.stream.*` 事件。
-- `session.message` / `result.response`：`response` 结构除 `content` 外还会携带 `metadata` 与 `attachments`；浏览器端可据此恢复 `im.card` 等结构化消息状态。
-- `Ping/Pong`：保留 websocket 心跳语义，不参与业务处理。
-- `Close`：结束连接并触发连接注册表清理。
+当前基础限制：
 
-### 会话提交参数详解
+- 单个 WebSocket 文本帧最大 `1048576` 字节。
+- 出站队列容量目标 `256`。
+- 单连接 active turn 目标上限 `4`。
 
-`session.submit` 方法支持以下参数：
+当服务端检测到队列或调度过载时，应返回 `overloaded`，并在 `data.retry_after_ms` 中给出带 jitter 的重试建议。客户端收到 `payload_too_large`、`too_many_active_turns`、`rate_limited` 或 `overloaded` 时不应立即无限重试。
 
-| 参数 | 类型 | 必填 | 描述 |
-|------|------|------|------|
-| `input` | string | 条件 | 用户输入文本（与 `attachments` 至少填一个） |
-| `session_key` | string | 条件 | 目标会话键，默认使用当前订阅会话 |
-| `chat_id` | string | 否 | 聊天 ID，默认使用 `session_key` |
-| `channel_id` | string | 否 | 通道 ID，默认 `"default"` |
-| `stream` | boolean | 否 | 是否启用流式响应，默认 `false` |
-| `model_provider` | string | 否 | 模型提供商（如 `anthropic`, `openai`） |
-| `model` | string | 否 | 具体模型名称 |
-| `archive_id` | string | 否 | 归档文件 ID（单附件快捷方式） |
-| `attachments` | array | 否 | 附件列表，每项含 `archive_id`, `filename`, `mime_type`, `size_bytes` |
-| `metadata` | object | 否 | 自定义元数据键值对 |
+## 安全边界
 
-## 连接生命周期与清理
+- 远程暴露 Gateway 时必须启用 gateway auth。
+- 推荐使用 `Authorization: Bearer <token>` 握手认证。
+- `token` / `access_token` query 参数仅为浏览器兼容保留，不建议用于新客户端。
+- `connection_id` 不能作为授权凭据。
+- `metadata` 和 `uiPayload` 不得存放密钥或长期凭据。
+- 权限审批必须有 `scope`，避免将一次 turn 授权扩大为长期权限。
 
-- 每条连接在进程内连接表中维护：
-  - `connection_id`
-  - 默认提交会话 `current_session_key`
-  - 当前连接已订阅的 `session_key` 集合
-- 握手成功后服务端会先发送 `session.connected` 事件。
-- 连接断开后会移除对应连接记录。
+## Schema 与版本
 
-## 错误处理语义
+`klaw-gateway` 暴露 `GatewayProtocolSchemaBundle::v1()`，包含核心 Rust 类型生成的 JSON Schema 定义。新增字段应默认可选；删除、改名或改变语义属于 breaking change，需要提升协议版本。
 
-`GatewayError` 当前包含：
+协议版本和 crate 版本绑定发布。客户端应优先基于 schema 生成类型，并对未知通知或未知可选字段保持前向兼容。
 
-- `InvalidListenAddress`：监听地址格式非法。
-- `TlsNotImplemented`：TLS 配置启用但服务端 TLS 尚未实现。
-- `Bind`：端口绑定失败。
-- `Serve`：服务运行阶段错误。
-- `MissingWebhookHandler`：启用 webhook 但没有注入处理器。
+## 旧协议边界
 
-业务级 websocket method 失败不会抛 `GatewayError`，而是下发结构化 `error` 帧，例如：
+旧版 `type: "method" | "result" | "event" | "error"` 帧属于兼容层，不是当前 WebUI 的正常协议路径。新客户端应使用 v1 JSON-RPC envelope：
 
-- `invalid_json`：JSON 解析失败
-- `invalid_params`：参数校验失败
-- `missing_session`：缺少 session_key
-- `unknown_method`：未知方法
-- `not_configured`：处理器未配置
-
-## Webhook 输入
-
-### 路由与鉴权
-
-- 端点：`POST <gateway.webhook.events.path>` 与可选的 `POST <gateway.webhook.agents.path>`
-- 默认路径：`POST /webhook/events`
-- 认证方式：`Authorization: Bearer <token>`
-- token 解析顺序：
-  - 由 gateway auth 统一控制
-
-缺少或错误的 Bearer Token 会返回 `401 Unauthorized`。
-
-### 请求体
-
-```json
-{
-  "source": "github",
-  "event_type": "issue_comment.created",
-  "content": "PR #42 收到新的 review comment",
-  "session_key": "webhook:github:42",
-  "chat_id": "repo-42",
-  "sender_id": "github:webhook",
-  "payload": {"number": 42},
-  "metadata": {"repo": "openclaw/klaw"}
-}
-```
-
-字段规则：
-
-- `source`：必填，外部系统来源标识。
-- `event_type`：必填，事件类型。
-- `content`：必填，给 agent 的文本摘要。
-- `session_key`：可选，不传时自动生成 `webhook:<source>:<uuid>`。
-- `chat_id`：可选，默认回退到 `session_key`。
-- `sender_id`：可选，默认回退到 `<source>:webhook`。
-- `payload`：可选，原始结构化事件体。
-- `metadata`：可选，附加元数据。
-
-### 规范化与处理
-
-- 入站 channel 固定为 `webhook`。
-- 服务端会自动补充 metadata：
-  - `trigger.kind = "webhook"`
-  - `webhook.source`
-  - `webhook.event_type`
-  - `webhook.event_id`
-- webhook 请求通过校验后会先落库为 `accepted`。
-- runtime 随后异步执行一次 webhook turn。
-- 处理成功后状态更新为 `processed`；失败则更新为 `failed`。
-
-### 响应语义
-
-成功受理时返回 `202 Accepted`：
-
-```json
-{
-  "event_id": "2f4e6f1c-8d8d-4b4f-a45e-2f9a71e84384",
-  "status": "accepted",
-  "session_key": "webhook:github:42"
-}
-```
-
-请求体非法时返回 `400 Bad Request`，请求超过 `max_body_bytes` 时返回 `413 Payload Too Large`。
+- 旧 `workspace.bootstrap` 对应 v1 `session/list`。
+- 旧 `provider.list` 对应 v1 `provider/list`。
+- 旧 `session.history.load` 对应 v1 `thread/history`。
+- 旧 `session.submit` 对应 v1 `turn/start`。
+- 旧 `session.message` / `session.stream.*` 对应 v1 `item/*` 与 `turn/*` 生命周期通知。
 
 ## 当前限制
 
 - TLS 仅有配置模型和校验，暂未接入证书加载与 HTTPS/WSS 监听。
-- 房间状态为进程内内存结构，重启后不保留。
-- WebSocket 连接仍不包含独立鉴权、限流、房间成员上限等策略。
-- webhook 现支持 `events` / `agents` 双入口；但仍不支持 replay 与重放映射。
-- 不包含跨实例共享房间（当前适用于单实例）。
+- 连接和订阅状态为进程内内存结构，重启后不保留。
+- 当前适用于单实例；尚未提供跨实例共享订阅或广播后端。
+- `turn/steer`、`thread/resume`、`thread/rollback` 等控制面能力仍为预留协议面。
+- 工具调用、审批和用户输入反向请求已有协议类型，运行时事件覆盖会继续扩展。
 
-## 后续演进建议
+## 验证入口
 
-- 接入 `rustls`，实现 `tls.enabled=true` 的 HTTPS/WSS 监听。
-- 增加连接鉴权（例如 token / session 绑定校验）。
-- 增加 observability：连接数、房间数、广播失败数指标。
-- 对消息大小、发送频率、房间成员数量增加防护阈值。
-- 支持跨实例广播后端（如 Redis pub/sub）以支持水平扩展。
-- 在 GUI 中增加 webhook 记录实时刷新、重跑和导出能力。
+维护本协议时至少运行：
+
+```bash
+cargo test -p klaw-gateway websocket_v1 --lib
+cargo test -p klaw-gateway --test protocol_v1
+cargo test -p klaw-runtime stream_ --lib
+cargo check -p klaw-webui --target wasm32-unknown-unknown
+mdbook build docs
+```
