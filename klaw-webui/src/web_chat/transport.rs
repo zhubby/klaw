@@ -6,14 +6,14 @@ use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
 use crate::{
     ConnectionState, MessageRole, ProviderCatalog, WebArchiveAttachment, WorkspaceSessionEntry,
-    build_websocket_submit_params, classify_stream_message_action,
+    build_websocket_turn_start_params, classify_stream_message_action,
     next_pending_attachments_after_submit, should_hide_heartbeat_operational_message,
     should_hide_heartbeat_silent_ack, should_register_non_stream_fade,
 };
 
 use super::{
     app::ChatApp,
-    protocol::{ServerFrame, send_method},
+    protocol::{RpcFrame, send_rpc_notification, send_rpc_request},
     session::ChatMessage,
     session::HistoryRequestCursor,
     session::PendingHistoryScrollRestore,
@@ -105,11 +105,32 @@ impl ChatApp {
             } else {
                 "[non-text message]".to_string()
             };
-            let frame =
-                serde_json::from_str::<ServerFrame>(&text).unwrap_or_else(|_| ServerFrame::Event {
-                    event: "system.raw".to_string(),
-                    payload: json!({ "text": text }),
-                });
+            let raw_value = match serde_json::from_str::<Value>(&text) {
+                Ok(value) => value,
+                Err(_) => {
+                    pending_frames.borrow_mut().push(RpcFrame::Error {
+                        id: None,
+                        error: super::protocol::ServerErrorFrame {
+                            code: "invalid_frame".to_string(),
+                            message: text,
+                        },
+                    });
+                    ctx.request_repaint();
+                    return;
+                }
+            };
+            if raw_value.get("type").is_some() {
+                return;
+            }
+            let frame = serde_json::from_value::<RpcFrame>(raw_value).unwrap_or_else(|err| {
+                RpcFrame::Error {
+                    id: None,
+                    error: super::protocol::ServerErrorFrame {
+                        code: "invalid_frame".to_string(),
+                        message: err.to_string(),
+                    },
+                }
+            });
             pending_frames.borrow_mut().push(frame);
             ctx.request_repaint();
         }) as Box<dyn FnMut(MessageEvent)>);
@@ -121,15 +142,39 @@ impl ChatApp {
         let ctx_open = self.ctx.clone();
         let onopen = Closure::wrap(Box::new(move |_event: JsValue| {
             *state_open.borrow_mut() = ConnectionState::Connected;
-            let bootstrap_id = Uuid::new_v4().to_string();
-            if let Err(err) = send_method(&ws_open, &bootstrap_id, "workspace.bootstrap", json!({}))
-            {
+            let initialize_id = Uuid::new_v4().to_string();
+            if let Err(err) = send_rpc_request(
+                &ws_open,
+                &initialize_id,
+                "initialize",
+                json!({
+                    "client_info": {
+                        "name": "klaw-webui",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    },
+                    "capabilities": {
+                        "protocol_version": "v1",
+                        "turns": true,
+                        "items": true,
+                        "server_requests": true,
+                        "cancellation": true,
+                    },
+                }),
+            ) {
+                *state_open.borrow_mut() = ConnectionState::Error(err);
+                ctx_open.request_repaint();
+                return;
+            }
+            let _ = send_rpc_notification(&ws_open, "initialized", json!({}));
+            let sessions_id = Uuid::new_v4().to_string();
+            if let Err(err) = send_rpc_request(&ws_open, &sessions_id, "session/list", json!({})) {
                 *state_open.borrow_mut() = ConnectionState::Error(err);
                 ctx_open.request_repaint();
                 return;
             }
             let providers_id = Uuid::new_v4().to_string();
-            if let Err(err) = send_method(&ws_open, &providers_id, "provider.list", json!({})) {
+            if let Err(err) = send_rpc_request(&ws_open, &providers_id, "provider/list", json!({}))
+            {
                 *state_open.borrow_mut() = ConnectionState::Error(err);
             }
             ctx_open.request_repaint();
@@ -172,7 +217,7 @@ impl ChatApp {
             return;
         }
         let request_id = Uuid::new_v4().to_string();
-        let _ = send_method(&ws, &request_id, "session.create", json!({}));
+        let _ = send_rpc_request(&ws, &request_id, "session/create", json!({}));
     }
 
     pub(in crate::web_chat) fn ensure_session_ready(&mut self, session_key: &str) {
@@ -194,10 +239,10 @@ impl ChatApp {
             return;
         }
         let request_id = Uuid::new_v4().to_string();
-        if let Err(err) = send_method(
+        if let Err(err) = send_rpc_request(
             &ws,
             &request_id,
-            "session.subscribe",
+            "session/subscribe",
             json!({ "session_key": session_key }),
         ) {
             self.toasts.borrow_mut().error(err);
@@ -238,10 +283,10 @@ impl ChatApp {
         *self.sessions[index].buffers.history_loading.borrow_mut() = true;
         self.sessions[index].last_requested_history_cursor = Some(request_cursor);
         self.sessions[index].pending_history_scroll_restore = scroll_restore;
-        if let Err(err) = send_method(
+        if let Err(err) = send_rpc_request(
             &ws,
             &request_id,
-            "session.history.load",
+            "thread/history",
             json!({
                 "session_key": session_key,
                 "before_message_id": before_message_id,
@@ -262,10 +307,10 @@ impl ChatApp {
             return;
         }
         let request_id = Uuid::new_v4().to_string();
-        let _ = send_method(
+        let _ = send_rpc_request(
             &ws,
             &request_id,
-            "session.update",
+            "session/update",
             json!({
                 "session_key": session_key,
                 "title": title,
@@ -281,10 +326,10 @@ impl ChatApp {
             return;
         }
         let request_id = Uuid::new_v4().to_string();
-        let _ = send_method(
+        let _ = send_rpc_request(
             &ws,
             &request_id,
-            "session.delete",
+            "session/delete",
             json!({
                 "session_key": session_key,
             }),
@@ -302,11 +347,18 @@ impl ChatApp {
         }
     }
 
-    pub(in crate::web_chat) fn process_frame(&mut self, frame: ServerFrame) {
+    pub(in crate::web_chat) fn process_frame(&mut self, frame: RpcFrame) {
         match frame {
-            ServerFrame::Event { event, payload } => self.process_event_frame(&event, &payload),
-            ServerFrame::Result { id: _, result } => self.process_result_frame(&result),
-            ServerFrame::Error { id: _, error } => {
+            RpcFrame::Success { id: _, result } => self.process_result_frame(&result),
+            RpcFrame::Notification { method, params } => {
+                self.process_notification_frame(&method, &params)
+            }
+            RpcFrame::Request {
+                id: _,
+                method,
+                params,
+            } => self.process_server_request_frame(&method, &params),
+            RpcFrame::Error { id: _, error } => {
                 let message = format!("{}: {}", error.code, error.message);
                 *self.connection_state.borrow_mut() = ConnectionState::Error(message.clone());
                 self.workspace_loaded = false;
@@ -506,139 +558,10 @@ impl ChatApp {
             .borrow_mut() = None;
     }
 
-    fn process_event_frame(&mut self, event: &str, payload: &Value) {
-        match event {
-            "session.connected" => {
-                *self.connection_state.borrow_mut() = ConnectionState::Connected;
-            }
-            "session.message" => {
-                let Some(session_key) = payload.get("session_key").and_then(Value::as_str) else {
-                    return;
-                };
-                let Some(index) = self.session_index(session_key) else {
-                    return;
-                };
-                let request_id = payload
-                    .get("request_id")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string);
-                let content = payload
-                    .get("response")
-                    .and_then(|response| response.get("content"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let role = match payload.get("role").and_then(Value::as_str) {
-                    Some("user") => MessageRole::User,
-                    Some("system") => MessageRole::System,
-                    _ => MessageRole::Assistant,
-                };
-                let timestamp_ms = payload
-                    .get("timestamp_ms")
-                    .and_then(Value::as_i64)
-                    .unwrap_or_else(current_timestamp_ms);
-                let history_event = payload
-                    .get("history")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                let response_metadata = payload
-                    .get("response")
-                    .and_then(|response| response.get("metadata"))
-                    .cloned()
-                    .and_then(|value| serde_json::from_value::<BTreeMap<String, Value>>(value).ok())
-                    .unwrap_or_default();
-                let mut history = self.sessions[index].buffers.messages.borrow_mut();
-                if history_event || !matches!(role, MessageRole::Assistant) {
-                    if message_id_exists(
-                        &history,
-                        payload.get("message_id").and_then(Value::as_str),
-                    ) {
-                        return;
-                    }
-                    if matches!(role, MessageRole::Assistant)
-                        && should_hide_heartbeat_silent_ack(&content, &response_metadata)
-                    {
-                        return;
-                    }
-                    let message = ChatMessage::new_with_metadata(
-                        content,
-                        role,
-                        timestamp_ms,
-                        payload
-                            .get("message_id")
-                            .and_then(Value::as_str)
-                            .map(ToString::to_string),
-                        response_metadata,
-                    );
-                    history.push(message);
-                    let messages = history.clone();
-                    drop(history);
-                    sync_card_state_overrides(
-                        &messages,
-                        &mut self.sessions[index].card_state_overrides,
-                    );
-                    return;
-                }
-                if should_hide_heartbeat_silent_ack(&content, &response_metadata) {
-                    *self.sessions[index]
-                        .buffers
-                        .active_stream_request_id
-                        .borrow_mut() = request_id;
-                    return;
-                }
-                let action = classify_stream_message_action(
-                    history.last().map(|message| message.role),
-                    self.sessions[index]
-                        .buffers
-                        .active_stream_request_id
-                        .borrow()
-                        .as_deref(),
-                    request_id.as_deref(),
-                    &content,
-                );
-                match action {
-                    crate::StreamMessageAction::IgnoreEmpty => {}
-                    crate::StreamMessageAction::ReplaceLastAssistant => {
-                        if let Some(message) = history.last_mut() {
-                            message.text = content;
-                            message.timestamp_ms = current_timestamp_ms();
-                            message.metadata = response_metadata.clone();
-                            message.card = crate::resolve_im_card(&message.text, &message.metadata);
-                        }
-                        let messages = history.clone();
-                        drop(history);
-                        sync_card_state_overrides(
-                            &messages,
-                            &mut self.sessions[index].card_state_overrides,
-                        );
-                    }
-                    crate::StreamMessageAction::PushAssistant => {
-                        history.push(ChatMessage::new_with_metadata(
-                            content.clone(),
-                            MessageRole::Assistant,
-                            timestamp_ms,
-                            payload
-                                .get("message_id")
-                                .and_then(Value::as_str)
-                                .map(ToString::to_string),
-                            response_metadata,
-                        ));
-                        let messages = history.clone();
-                        *self.sessions[index]
-                            .buffers
-                            .active_stream_request_id
-                            .borrow_mut() = request_id;
-                        drop(history);
-                        sync_card_state_overrides(
-                            &messages,
-                            &mut self.sessions[index].card_state_overrides,
-                        );
-                        self.notify_new_assistant_reply(session_key, &content);
-                    }
-                }
-            }
-            "session.subscribed" => {
-                let Some(session_key) = payload.get("session_key").and_then(Value::as_str) else {
+    fn process_notification_frame(&mut self, method: &str, params: &Value) {
+        match method {
+            "session/subscribed" => {
+                let Some(session_key) = params.get("session_key").and_then(Value::as_str) else {
                     return;
                 };
                 let Some(index) = self.session_index(session_key) else {
@@ -646,28 +569,227 @@ impl ChatApp {
                 };
                 self.sessions[index].subscribed = true;
             }
-            "session.stream.clear" | "session.stream.done" => {
-                let Some(session_key) = payload.get("session_key").and_then(Value::as_str) else {
+            "item/agentMessage/delta" => {
+                let Some(session_key) = params.get("session_id").and_then(Value::as_str) else {
                     return;
                 };
-                let Some(index) = self.session_index(session_key) else {
-                    return;
-                };
-                *self.sessions[index]
-                    .buffers
-                    .active_stream_request_id
-                    .borrow_mut() = None;
-            }
-            "system.raw" => {
-                let text = payload
-                    .get("text")
+                let turn_id = params
+                    .get("turn_id")
                     .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                self.toasts.borrow_mut().info(text);
+                    .map(ToString::to_string);
+                let delta = params
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                self.apply_assistant_stream_delta(
+                    session_key,
+                    turn_id,
+                    delta,
+                    BTreeMap::new(),
+                    None,
+                );
+            }
+            "item/completed" => {
+                let Some(session_key) = params.get("session_id").and_then(Value::as_str) else {
+                    return;
+                };
+                let Some(item) = params.get("item") else {
+                    return;
+                };
+                let response = item
+                    .get("payload")
+                    .and_then(|payload| payload.get("response"))
+                    .filter(|value| !value.is_null());
+                let content = response
+                    .and_then(|response| response.get("content"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let metadata = response
+                    .and_then(|response| response.get("metadata"))
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<BTreeMap<String, Value>>(value).ok())
+                    .unwrap_or_default();
+                let message_id = response
+                    .and_then(|response| response.get("message_id"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                self.complete_assistant_response(session_key, content, metadata, message_id);
+            }
+            "turn/completed" => {
+                let Some(session_key) = params.get("session_id").and_then(Value::as_str) else {
+                    return;
+                };
+                let response = params.get("response").filter(|value| !value.is_null());
+                let content = response
+                    .and_then(|response| response.get("content"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let metadata = response
+                    .and_then(|response| response.get("metadata"))
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<BTreeMap<String, Value>>(value).ok())
+                    .unwrap_or_default();
+                let message_id = response
+                    .and_then(|response| response.get("message_id"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                self.complete_assistant_response(session_key, content, metadata, message_id);
+                if let Some(index) = self.session_index(session_key) {
+                    *self.sessions[index]
+                        .buffers
+                        .active_stream_request_id
+                        .borrow_mut() = None;
+                }
+            }
+            "turn/interrupted" => {
+                let Some(session_key) = params.get("session_id").and_then(Value::as_str) else {
+                    return;
+                };
+                if let Some(index) = self.session_index(session_key) {
+                    *self.sessions[index]
+                        .buffers
+                        .active_stream_request_id
+                        .borrow_mut() = None;
+                }
+            }
+            "serverRequest/resolved" => {
+                for session in &mut self.sessions {
+                    let messages = session.buffers.messages.borrow().clone();
+                    sync_card_state_overrides(&messages, &mut session.card_state_overrides);
+                }
             }
             _ => {}
         }
+    }
+
+    fn process_server_request_frame(&mut self, method: &str, _params: &Value) {
+        self.toasts
+            .borrow_mut()
+            .info(format!("Unsupported gateway server request: {method}"));
+    }
+
+    fn apply_assistant_stream_delta(
+        &mut self,
+        session_key: &str,
+        request_id: Option<String>,
+        content: &str,
+        response_metadata: BTreeMap<String, Value>,
+        message_id: Option<String>,
+    ) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
+        if should_hide_heartbeat_silent_ack(content, &response_metadata) {
+            *self.sessions[index]
+                .buffers
+                .active_stream_request_id
+                .borrow_mut() = request_id;
+            return;
+        }
+        let mut history = self.sessions[index].buffers.messages.borrow_mut();
+        let action = classify_stream_message_action(
+            history.last().map(|message| message.role),
+            self.sessions[index]
+                .buffers
+                .active_stream_request_id
+                .borrow()
+                .as_deref(),
+            request_id.as_deref(),
+            content,
+        );
+        match action {
+            crate::StreamMessageAction::IgnoreEmpty => {}
+            crate::StreamMessageAction::ReplaceLastAssistant => {
+                if let Some(message) = history.last_mut() {
+                    message.text.push_str(content);
+                    message.timestamp_ms = current_timestamp_ms();
+                    if !response_metadata.is_empty() {
+                        message.metadata = response_metadata;
+                    }
+                    message.card = crate::resolve_im_card(&message.text, &message.metadata);
+                }
+                let messages = history.clone();
+                drop(history);
+                sync_card_state_overrides(
+                    &messages,
+                    &mut self.sessions[index].card_state_overrides,
+                );
+            }
+            crate::StreamMessageAction::PushAssistant => {
+                history.push(ChatMessage::new_with_metadata(
+                    content.to_string(),
+                    MessageRole::Assistant,
+                    current_timestamp_ms(),
+                    message_id,
+                    response_metadata,
+                ));
+                let messages = history.clone();
+                *self.sessions[index]
+                    .buffers
+                    .active_stream_request_id
+                    .borrow_mut() = request_id;
+                drop(history);
+                sync_card_state_overrides(
+                    &messages,
+                    &mut self.sessions[index].card_state_overrides,
+                );
+                self.notify_new_assistant_reply(session_key, content);
+            }
+        }
+    }
+
+    fn complete_assistant_response(
+        &mut self,
+        session_key: &str,
+        content: &str,
+        metadata: BTreeMap<String, Value>,
+        message_id: Option<String>,
+    ) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
+        if content.is_empty() || should_hide_heartbeat_silent_ack(content, &metadata) {
+            return;
+        }
+        let mut history = self.sessions[index].buffers.messages.borrow_mut();
+        if message_id_exists(&history, message_id.as_deref()) {
+            return;
+        }
+        if let Some(message) = history
+            .last_mut()
+            .filter(|message| matches!(message.role, MessageRole::Assistant))
+        {
+            if message.text.is_empty() {
+                message.text = content.to_string();
+            }
+            if message.message_id.is_none() {
+                message.message_id = message_id;
+            }
+            if !metadata.is_empty() {
+                message.metadata = metadata;
+                message.card = crate::resolve_im_card(&message.text, &message.metadata);
+            }
+            let messages = history.clone();
+            drop(history);
+            sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
+            return;
+        }
+        let message = ChatMessage::new_with_metadata(
+            content.to_string(),
+            MessageRole::Assistant,
+            current_timestamp_ms(),
+            message_id,
+            metadata,
+        );
+        let should_fade =
+            should_register_non_stream_fade(message.role, false, false, &message.text);
+        history.push(message);
+        let messages = history.clone();
+        drop(history);
+        if should_fade && let Some(message) = messages.last() {
+            self.sessions[index].register_fade_in_message(message);
+        }
+        sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
     }
 
     pub(in crate::web_chat) fn send_session_draft(&mut self, session_key: &str) {
@@ -761,8 +883,9 @@ impl ChatApp {
                 .active_stream_request_id
                 .borrow_mut() = stream.then_some(request_id.clone());
         }
-        let params = build_submit_params(
+        let params = build_turn_start_params(
             session_key,
+            &request_id,
             text,
             stream,
             attachments,
@@ -770,7 +893,7 @@ impl ChatApp {
             model,
             metadata,
         );
-        let send_result = send_method(&ws, &request_id, "session.submit", params);
+        let send_result = send_rpc_request(&ws, &request_id, "turn/start", params);
         if let Err(err) = send_result {
             *self.connection_state.borrow_mut() = ConnectionState::Error(err);
             return false;
@@ -779,8 +902,9 @@ impl ChatApp {
     }
 }
 
-fn build_submit_params(
+fn build_turn_start_params(
     session_key: &str,
+    turn_id: &str,
     input: &str,
     stream: bool,
     attachments: &[WebArchiveAttachment],
@@ -788,8 +912,10 @@ fn build_submit_params(
     model: &str,
     metadata: Option<&BTreeMap<String, Value>>,
 ) -> Value {
-    build_websocket_submit_params(
+    build_websocket_turn_start_params(
         session_key,
+        session_key,
+        turn_id,
         input,
         stream,
         attachments,

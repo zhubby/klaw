@@ -6,6 +6,7 @@
 
 - 新增 Gateway WebSocket v1 基线协议类型，覆盖 JSON-RPC envelope、initialize capabilities、turn/item 生命周期、结构化 content blocks、tool call、approval request、server request resolved、稳定错误码与 JSON Schema bundle
 - `/ws/chat` 现在接受 v1 `initialize`、`turn/start`、`turn/cancel`、`approval/respond`、`tool/respond` 和 `user_input/respond` JSON-RPC 形态帧，并继续兼容旧版 `type: "method"` 协议
+- `/ws/chat` v1 现在实现 WebUI 所需的 `session/list`、`session/create`、`session/update`、`session/delete`、`session/subscribe`、`session/unsubscribe`、`provider/list` 和 `thread/history` 方法，响应统一使用 v1 success/error envelope
 - v1 streaming 在 runtime 可根据 websocket v1 metadata 额外发出 `item/started`、`item/agentMessage/delta`、`item/completed` 和 `turn/completed` 通知
 - 新增 Gateway WebSocket v1 mdBook 文档，说明身份模型、生命周期、工具审批、背压、安全和迁移策略
 

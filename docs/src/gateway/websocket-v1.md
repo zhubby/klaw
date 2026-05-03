@@ -1,6 +1,6 @@
 # Gateway WebSocket v1 基线协议
 
-Gateway WebSocket v1 是 `klaw-gateway` 面向 WebUI、桌面端、移动端和第三方客户端的长期 agent 交互协议底座。旧版 `type: "method"` 协议继续保留为兼容层，新客户端应优先使用 v1 JSON-RPC 形态。
+Gateway WebSocket v1 是 `klaw-gateway` 面向 WebUI、桌面端、移动端和第三方客户端的长期 agent 交互协议底座。`klaw-webui` 已直接切换到 v1 JSON-RPC envelope，不再把旧版 `type: "method"` 帧作为正常收发路径。
 
 ## Envelope
 
@@ -17,7 +17,7 @@ v1 使用 JSON-RPC 2.0 语义，但线上帧省略 `jsonrpc` 字段。每个 Web
 
 ## 初始化
 
-连接建立后服务端仍会发送旧版 `session.connected` 事件以兼容现有客户端。v1 客户端随后发送 `initialize`：
+v1 客户端连接建立后发送 `initialize`：
 
 ```json
 {
@@ -42,6 +42,26 @@ v1 使用 JSON-RPC 2.0 语义，但线上帧省略 `jsonrpc` 字段。每个 Web
 ```
 
 响应包含协议名、连接 ID、服务端信息和协商后的 capabilities。实验字段必须通过 `capabilities.experimental = true` 显式启用。
+
+## 工作区与历史
+
+WebUI 启动后使用 v1 方法加载工作区、provider 和历史：
+
+```json
+{ "id": "sessions_1", "method": "session/list", "params": {} }
+{ "id": "providers_1", "method": "provider/list", "params": {} }
+{
+  "id": "history_1",
+  "method": "thread/history",
+  "params": {
+    "session_key": "websocket:session",
+    "before_message_id": null,
+    "limit": 30
+  }
+}
+```
+
+会话操作使用 `session/create`、`session/update`、`session/delete`、`session/subscribe` 和 `session/unsubscribe`。所有响应均使用 v1 success/error envelope，不返回旧版 `type: "result"`。
 
 ## 身份模型
 
@@ -82,7 +102,7 @@ v1 使用 JSON-RPC 2.0 语义，但线上帧省略 `jsonrpc` 字段。每个 Web
 { "method": "turn/completed", "params": { "turn_id": "turn_1", "status": "completed" } }
 ```
 
-旧版 `session.message` 与 `session.stream.*` 会继续发送，直到客户端迁移完成。
+WebUI 以 `item/*` 与 `turn/*` 为实时渲染主路径，不依赖旧版 `session.message` 或 `session.stream.*` 帧。
 
 ## 内容与工具
 
@@ -130,7 +150,7 @@ v1 稳定 item 类型包括 `userMessage`、`agentMessage`、`reasoning`、`plan
 }
 ```
 
-协议预留 `turn/steer`、`turn/read`、`thread/resume`、`thread/history` 和 `thread/rollback`，用于后续恢复、追加输入、分页历史和回滚能力。
+协议预留 `turn/steer`、`turn/read`、`thread/resume` 和 `thread/rollback`，用于后续恢复、追加输入和回滚能力；`thread/history` 当前用于分页读取会话历史。
 
 ## 错误与背压
 

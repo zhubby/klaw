@@ -557,33 +557,42 @@ pub(crate) fn resolve_session_route_inputs(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-pub(crate) fn build_websocket_submit_params(
-    session_key: &str,
-    input: &str,
+pub(crate) fn build_websocket_turn_start_params(
+    session_id: &str,
+    thread_id: &str,
+    turn_id: &str,
+    text: &str,
     stream: bool,
     attachments: &[WebArchiveAttachment],
     model_provider: &str,
     model: &str,
     metadata: Option<&BTreeMap<String, Value>>,
 ) -> Value {
+    let mut input = Vec::new();
+    if !text.trim().is_empty() {
+        input.push(json!({
+            "type": "text",
+            "text": text,
+        }));
+    }
+    input.extend(attachments.iter().map(|attachment| {
+        json!({
+            "type": "attachment",
+            "archive_id": attachment.archive_id,
+            "filename": attachment.filename,
+            "mime_type": attachment.mime_type,
+            "size_bytes": attachment.size_bytes,
+        })
+    }));
     let mut params = json!({
-        "session_key": session_key,
-        "chat_id": session_key,
+        "session_id": session_id,
+        "thread_id": thread_id,
+        "turn_id": turn_id,
         "input": input,
         "stream": stream,
         "model_provider": model_provider,
         "model": model,
     });
-    if let Some(archive_id) = attachments
-        .first()
-        .map(|attachment| attachment.archive_id.trim())
-        .filter(|value| !value.is_empty())
-    {
-        params["archive_id"] = json!(archive_id);
-    }
-    if !attachments.is_empty() {
-        params["attachments"] = json!(attachments);
-    }
     if let Some(metadata) = metadata.filter(|metadata| !metadata.is_empty()) {
         params["metadata"] = json!(metadata);
     }
@@ -915,20 +924,22 @@ mod tests {
 
     use serde_json::json;
 
+    use klaw_ui_kit::ThemeMode;
+
     use super::{
         ArchiveRecord, ArchiveUploadResponse, ConnectionState, ImCardKind, MessageRole, PageMode,
         ProviderCatalog, ProviderCatalogEntry, ResolvedSessionRoute, SessionListEntry,
-        StreamMessageAction, ThemeMode, WebArchiveAttachment, WorkspaceSessionEntry,
-        apply_slash_completion, attachment_action_in_progress, build_websocket_submit_params,
-        can_trigger_file_picker, classify_message_role, classify_stream_message_action,
-        connection_action_label, delete_confirmation_body, derive_page_mode,
-        detect_active_slash_command, has_exact_slash_command_match,
-        next_pending_attachments_after_submit, normalize_gateway_token_input,
-        resolve_assistant_bubble_palette, resolve_gateway_token, resolve_im_card,
-        resolve_im_card_palette, resolve_session_route_inputs, session_card_activity_label,
-        should_activate_session_window, should_cancel_file_picker_selection,
-        should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
-        slash_command_matches, sort_session_entries_by_created_at_desc,
+        StreamMessageAction, WebArchiveAttachment, apply_slash_completion,
+        attachment_action_in_progress, build_websocket_turn_start_params, can_trigger_file_picker,
+        classify_message_role, classify_stream_message_action, connection_action_label,
+        delete_confirmation_body, derive_page_mode, detect_active_slash_command,
+        has_exact_slash_command_match, next_pending_attachments_after_submit,
+        normalize_gateway_token_input, resolve_assistant_bubble_palette, resolve_gateway_token,
+        resolve_im_card, resolve_im_card_palette, resolve_session_route_inputs,
+        session_card_activity_label, should_activate_session_window,
+        should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
+        should_register_non_stream_fade, slash_command_matches,
+        sort_session_entries_by_created_at_desc,
     };
 
     #[test]
@@ -1330,9 +1341,11 @@ mod tests {
     }
 
     #[test]
-    fn websocket_submit_params_include_model_route() {
-        let params = build_websocket_submit_params(
+    fn websocket_turn_start_params_include_model_route_and_content_blocks() {
+        let params = build_websocket_turn_start_params(
             "websocket:test",
+            "websocket:test",
+            "turn-1",
             "hello",
             true,
             &[WebArchiveAttachment {
@@ -1347,18 +1360,32 @@ mod tests {
         );
 
         assert_eq!(
-            params
-                .get("session_key")
-                .and_then(serde_json::Value::as_str),
+            params.get("session_id").and_then(serde_json::Value::as_str),
             Some("websocket:test")
         );
         assert_eq!(
-            params.get("chat_id").and_then(serde_json::Value::as_str),
+            params.get("thread_id").and_then(serde_json::Value::as_str),
             Some("websocket:test")
         );
         assert_eq!(
-            params.get("input").and_then(serde_json::Value::as_str),
-            Some("hello")
+            params.get("turn_id").and_then(serde_json::Value::as_str),
+            Some("turn-1")
+        );
+        assert_eq!(
+            params["input"],
+            json!([
+                {
+                    "type": "text",
+                    "text": "hello",
+                },
+                {
+                    "type": "attachment",
+                    "archive_id": "archive-1",
+                    "filename": "report.pdf",
+                    "mime_type": "application/pdf",
+                    "size_bytes": 42
+                }
+            ])
         );
         assert_eq!(
             params.get("stream").and_then(serde_json::Value::as_bool),
@@ -1374,29 +1401,18 @@ mod tests {
             params.get("model").and_then(serde_json::Value::as_str),
             Some("claude-sonnet-4-5")
         );
-        assert_eq!(
-            params.get("archive_id").and_then(serde_json::Value::as_str),
-            Some("archive-1")
-        );
-        assert_eq!(
-            params["attachments"],
-            json!([{
-                "archive_id": "archive-1",
-                "filename": "report.pdf",
-                "mime_type": "application/pdf",
-                "size_bytes": 42
-            }])
-        );
     }
 
     #[test]
-    fn websocket_submit_params_include_card_metadata() {
+    fn websocket_turn_start_params_include_card_metadata() {
         let metadata = BTreeMap::from([(
             "webui.card.action".to_string(),
             serde_json::Value::Bool(true),
         )]);
-        let params = build_websocket_submit_params(
+        let params = build_websocket_turn_start_params(
             "websocket:test",
+            "websocket:test",
+            "turn-2",
             "/approve approval-1",
             false,
             &[],

@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    protocol::ServerFrame,
+    protocol::RpcFrame,
     session::{SessionWindow, session_window_id, window_anchor_for_slot},
     storage::{PersistedWorkspaceState, load_workspace_state, save_workspace_state},
 };
@@ -26,7 +26,7 @@ pub(super) struct ChatApp {
     pub(in crate::web_chat) gateway_token_input: String,
     pub(in crate::web_chat) ws: Rc<RefCell<Option<WebSocket>>>,
     pub(in crate::web_chat) connection_state: Rc<RefCell<ConnectionState>>,
-    pub(in crate::web_chat) pending_frames: Rc<RefCell<Vec<ServerFrame>>>,
+    pub(in crate::web_chat) pending_frames: Rc<RefCell<Vec<RpcFrame>>>,
     pub(in crate::web_chat) sessions: Vec<SessionWindow>,
     pub(in crate::web_chat) provider_catalog: ProviderCatalog,
     pub(in crate::web_chat) active_session_key: Option<String>,

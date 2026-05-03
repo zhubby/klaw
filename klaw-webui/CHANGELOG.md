@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-03
+
+### Changed
+
+- WebUI WebSocket 实现已直接切换到 Gateway WebSocket v1 JSON-RPC envelope：连接初始化使用 `initialize`，工作区、provider、历史和会话操作使用 v1 方法，发送消息使用 `turn/start` content blocks。
+- WebUI 实时渲染现在消费 v1 `item/agentMessage/delta`、`item/completed`、`turn/completed` 和 `turn/interrupted` 通知，不再以旧版 `type: "method"` / `session.submit` / `session.message` 帧作为正常协议路径。
+
 ## 2026-04-22
 
 ### Changed

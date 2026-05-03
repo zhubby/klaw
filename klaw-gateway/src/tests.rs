@@ -567,6 +567,386 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn websocket_v1_session_list_returns_workspace_bootstrap() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _connected = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "sessions-v1",
+                    "method": "session/list",
+                    "params": {}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("session/list should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("session/list response")
+            .expect("session/list message");
+        let Message::Text(text) = frame else {
+            panic!("unexpected session/list frame: {frame:?}");
+        };
+        let frame =
+            serde_json::from_str::<serde_json::Value>(&text).expect("session/list should parse");
+        assert_eq!(
+            frame.get("id").and_then(|value| value.as_str()),
+            Some("sessions-v1")
+        );
+        assert!(frame.get("type").is_none());
+        assert_eq!(
+            frame
+                .pointer("/result/sessions/0/session_key")
+                .and_then(|value| value.as_str()),
+            Some("websocket:newer")
+        );
+        assert_eq!(
+            frame
+                .pointer("/result/active_session_key")
+                .and_then(|value| value.as_str()),
+            Some("websocket:newer")
+        );
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_v1_provider_list_returns_runtime_provider_catalog() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _connected = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "providers-v1",
+                    "method": "provider/list",
+                    "params": {}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("provider/list should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("provider/list response")
+            .expect("provider/list message");
+        let Message::Text(text) = frame else {
+            panic!("unexpected provider/list frame: {frame:?}");
+        };
+        let frame =
+            serde_json::from_str::<serde_json::Value>(&text).expect("provider/list should parse");
+        assert_eq!(
+            frame.get("id").and_then(|value| value.as_str()),
+            Some("providers-v1")
+        );
+        assert_eq!(
+            frame
+                .pointer("/result/default_provider")
+                .and_then(|value| value.as_str()),
+            Some("anthropic")
+        );
+        assert_eq!(
+            frame
+                .pointer("/result/providers/0/id")
+                .and_then(|value| value.as_str()),
+            Some("anthropic")
+        );
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_v1_session_create_update_delete_and_subscribe_use_rpc_frames() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _connected = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "create-v1",
+                    "method": "session/create",
+                    "params": {}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("session/create should send");
+        let create = socket
+            .next()
+            .await
+            .expect("create response")
+            .expect("create message");
+        let Message::Text(text) = create else {
+            panic!("unexpected create frame: {create:?}");
+        };
+        let create = serde_json::from_str::<serde_json::Value>(&text).expect("create should parse");
+        assert_eq!(
+            create
+                .pointer("/result/session_key")
+                .and_then(|value| value.as_str()),
+            Some("websocket:created")
+        );
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "update-v1",
+                    "method": "session/update",
+                    "params": {
+                        "session_key": "websocket:newer",
+                        "title": "Renamed v1"
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("session/update should send");
+        let update = socket
+            .next()
+            .await
+            .expect("update response")
+            .expect("update message");
+        let Message::Text(text) = update else {
+            panic!("unexpected update frame: {update:?}");
+        };
+        let update = serde_json::from_str::<serde_json::Value>(&text).expect("update should parse");
+        assert_eq!(
+            update
+                .pointer("/result/title")
+                .and_then(|value| value.as_str()),
+            Some("Renamed v1")
+        );
+        assert_eq!(
+            update
+                .pointer("/result/updated")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "subscribe-v1",
+                    "method": "session/subscribe",
+                    "params": { "session_key": "websocket:newer" }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("session/subscribe should send");
+        let subscribe = socket
+            .next()
+            .await
+            .expect("subscribe response")
+            .expect("subscribe message");
+        let Message::Text(text) = subscribe else {
+            panic!("unexpected subscribe frame: {subscribe:?}");
+        };
+        let subscribe =
+            serde_json::from_str::<serde_json::Value>(&text).expect("subscribe should parse");
+        assert_eq!(
+            subscribe
+                .pointer("/result/session_key")
+                .and_then(|value| value.as_str()),
+            Some("websocket:newer")
+        );
+        let subscribed_event = socket
+            .next()
+            .await
+            .expect("subscribed notification")
+            .expect("subscribed notification message");
+        let Message::Text(text) = subscribed_event else {
+            panic!("unexpected subscribed event: {subscribed_event:?}");
+        };
+        let subscribed_event = serde_json::from_str::<serde_json::Value>(&text)
+            .expect("subscribed event should parse");
+        assert_eq!(
+            subscribed_event
+                .get("method")
+                .and_then(|value| value.as_str()),
+            Some("session/subscribed")
+        );
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "delete-v1",
+                    "method": "session/delete",
+                    "params": { "session_key": "websocket:newer" }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("session/delete should send");
+        let delete = socket
+            .next()
+            .await
+            .expect("delete response")
+            .expect("delete message");
+        let Message::Text(text) = delete else {
+            panic!("unexpected delete frame: {delete:?}");
+        };
+        let delete = serde_json::from_str::<serde_json::Value>(&text).expect("delete should parse");
+        assert_eq!(
+            delete
+                .pointer("/result/deleted")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_v1_thread_history_loads_paginated_session_history() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _connected = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "history-v1",
+                    "method": "thread/history",
+                    "params": {
+                        "session_key": "websocket:history",
+                        "before_message_id": null,
+                        "limit": 30
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("thread/history should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("history response")
+            .expect("history message");
+        let Message::Text(text) = frame else {
+            panic!("unexpected history frame: {frame:?}");
+        };
+        let frame = serde_json::from_str::<serde_json::Value>(&text).expect("history should parse");
+        assert_eq!(
+            frame
+                .pointer("/result/session_key")
+                .and_then(|value| value.as_str()),
+            Some("websocket:history")
+        );
+        assert_eq!(
+            frame
+                .pointer("/result/messages/0/content")
+                .and_then(|value| value.as_str()),
+            Some("previous answer (30)")
+        );
+        assert_eq!(
+            frame
+                .pointer("/result/has_more")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
     async fn websocket_v1_turn_start_links_request_session_thread_turn_and_handler_metadata() {
         let config = test_gateway_config();
         let handler = RecordingWebsocketHandler::default();
