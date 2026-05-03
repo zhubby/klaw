@@ -15,6 +15,7 @@
   - `GET /archive/:id`: 获取文件元数据
 - 可选暴露 model providers 列表接口：
   - `GET /providers/list`: 获取所有配置的 model providers
+- `/ws/chat` 同时支持兼容旧版 `type: "method"` 帧和 v1 JSON-RPC 形态 agent 协议；v1 覆盖 initialize、turn/item 生命周期、结构化 content/tool/approval payload、取消与 server request 闭环
 - webhook 请求会进入独立的 `webhook:*` 执行 session；若提供 `base_session_key`，最终回复会路由回目标 IM 会话当前 active session
 - 按 `session_key` 维护房间广播通道
 - 在启动成功后打印实际可连接的 WebSocket 地址
@@ -26,6 +27,7 @@
 - `runtime.rs`: gateway 启动、监听、路由装配与生命周期入口
 - `state.rs`: 运行态共享状态、`GatewayHandle` 与 `GatewayRuntimeInfo`
 - `websocket.rs`: `/ws/chat` WebSocket 连接与房间广播逻辑
+- `protocol.rs`: Gateway WebSocket v1 协议类型、capabilities、错误码、内容块、tool/approval payload 和 JSON Schema bundle
 - `chat_page.rs`: `/chat` 与 `/chat/dist/*` WASM/JS 内嵌资源响应
 - `webhook.rs`: webhook 鉴权、`events` / `agents` payload 归一化与 handler 集成
 - `archive.rs`: archive 文件上传下载接口实现
@@ -39,6 +41,8 @@
 - 启动成功后会输出实际监听地址对应的 `http://<listen_addr>/ws/chat`
 - 根路径 `/` 会返回单页品牌首页，logo 资源位于 `/logo.webp`；浏览器聊天 UI 位于 `/chat`（会话 `session_key` 形如 `websocket:<uuid>`，存于 `localStorage`）
 - 当 `gateway.auth.enabled = true` 时，浏览器无法为 WebSocket 设置 `Authorization` 头，因此 `/ws/chat` 同时接受 query 参数 `token` 或 `access_token`（值与配置的 Bearer secret 相同）。**Token 会出现在 URL 与访问日志中**，公网请优先使用 WSS 并知晓风险
+- 新客户端应优先使用 `Authorization: Bearer <token>` 握手鉴权；query token 仅作为浏览器兼容回退。v1 协议中 `connection_id` 仅用于诊断和路由，不作为授权凭据
+- `/ws/chat` v1 文本帧默认最大 `1048576` 字节；超限会返回 `payload_too_large` 协议错误。出站队列与单连接 active turn 也有稳定目标上限，供客户端实现重试和限流
 - webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 仅可分别启停并配置独立 body limit，路径固定不再开放配置
 - archive 路由在 `GatewayOptions` 中提供 `archive_service` 时自动注册，所有 archive 接口均需要 Bearer 鉴权
 - 仅 `/ws/chat` 和 `/archive/*` 会走 gateway Bearer 鉴权中间件（含 query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics 不做鉴权

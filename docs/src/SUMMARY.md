@@ -43,6 +43,7 @@
   - [Local Model 存储](./storage/local-model.md)
 - [网关](./gateway/README.md)
   - [WebSocket 协议](./gateway/websocket.md)
+  - [WebSocket v1 基线协议](./gateway/websocket-v1.md)
   - [HTTP API 接口](./gateway/http-api.md)
   - [Webhook](./gateway/webhook.md)
   - [Tailscale](./gateway/tailscale.md)

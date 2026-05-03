@@ -4334,6 +4334,7 @@ dependencies = [
  "klaw-util",
  "reqwest",
  "rust-embed",
+ "schemars",
  "serde",
  "serde_json",
  "sha1",

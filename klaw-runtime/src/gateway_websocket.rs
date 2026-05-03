@@ -6,10 +6,12 @@ use klaw_channel::{ChannelResponse, websocket::WebsocketSubmitEnvelope};
 use klaw_config::{AppConfig, WebsocketConfig};
 use klaw_core::{MediaReference, MediaSourceKind};
 use klaw_gateway::{
-    GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
-    GatewaySessionHistoryPage, GatewayWebsocketAttachmentRef, GatewayWebsocketHandler,
-    GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
-    GatewayWorkspaceBootstrap, GatewayWorkspaceSession, OutboundEvent,
+    GatewayProtocolMethod, GatewayProviderCatalog, GatewayProviderEntry, GatewayRpcMessage,
+    GatewaySessionHistoryMessage, GatewaySessionHistoryPage, GatewayThreadItem,
+    GatewayThreadItemStatus, GatewayThreadItemType, GatewayTurnStatus,
+    GatewayWebsocketAttachmentRef, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
+    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
+    GatewayWorkspaceSession, META_WEBSOCKET_V1_THREAD_ID, META_WEBSOCKET_V1_TURN_ID, OutboundEvent,
 };
 use klaw_heartbeat::{HeartbeatManager, should_exclude_chat_record_from_context};
 use klaw_session::{SessionHistoryPage, SessionListQuery, SessionManager};
@@ -314,6 +316,11 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
         let stream_output = request.stream.unwrap_or(config.stream_output);
         let request_id = request.request_id.clone();
         let session_key = request.session_key.clone();
+        let v1_context = GatewayV1StreamContext::from_metadata(
+            &request.metadata,
+            request.session_key.clone(),
+            request.request_id.clone(),
+        );
         let channel_request = WebsocketSubmitEnvelope {
             channel_id: request.channel_id.clone(),
             connection_id: request.connection_id,
@@ -327,7 +334,7 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
         .into_channel_request();
 
         if stream_output {
-            let mut stream_state = GatewayStreamState::default();
+            let mut stream_state = GatewayStreamState::new(v1_context.clone());
             let response = submit_channel_request_streaming_with_callback(
                 self.runtime.as_ref(),
                 channel_request,
@@ -343,6 +350,23 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
             )
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+            if let Some(context) = v1_context.as_ref() {
+                send_v1_item_completed(
+                    &frame_tx,
+                    context,
+                    response.as_ref(),
+                    config.show_reasoning,
+                )?;
+                send_v1_turn_finished(
+                    &frame_tx,
+                    context,
+                    GatewayProtocolMethod::TurnCompleted,
+                    GatewayTurnStatus::Completed,
+                    response
+                        .as_ref()
+                        .map(|response| serialize_response(response, config.show_reasoning)),
+                )?;
+            }
             send_frame(
                 &frame_tx,
                 GatewayWebsocketServerFrame::Event {
@@ -386,9 +410,53 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GatewayV1StreamContext {
+    session_id: String,
+    thread_id: String,
+    turn_id: String,
+    request_id: String,
+    agent_message_item_id: String,
+}
+
+impl GatewayV1StreamContext {
+    fn from_metadata(
+        metadata: &BTreeMap<String, Value>,
+        session_id: String,
+        request_id: String,
+    ) -> Option<Self> {
+        let thread_id = metadata
+            .get(META_WEBSOCKET_V1_THREAD_ID)
+            .and_then(Value::as_str)?
+            .to_string();
+        let turn_id = metadata
+            .get(META_WEBSOCKET_V1_TURN_ID)
+            .and_then(Value::as_str)?
+            .to_string();
+        Some(Self {
+            session_id,
+            thread_id,
+            turn_id: turn_id.clone(),
+            request_id: request_id.clone(),
+            agent_message_item_id: format!("item_agent_{turn_id}"),
+        })
+    }
+}
+
 struct GatewayStreamState {
     last_snapshot: Option<String>,
+    v1_context: Option<GatewayV1StreamContext>,
+    v1_agent_message_started: bool,
+}
+
+impl GatewayStreamState {
+    fn new(v1_context: Option<GatewayV1StreamContext>) -> Self {
+        Self {
+            last_snapshot: None,
+            v1_context,
+            v1_agent_message_started: false,
+        }
+    }
 }
 
 impl GatewayStreamState {
@@ -409,6 +477,17 @@ impl GatewayStreamState {
                     _ => response.content.clone(),
                 };
                 self.last_snapshot = Some(response.content.clone());
+                if let Some(context) = self.v1_context.clone() {
+                    if !self.v1_agent_message_started {
+                        send_v1_item_started(frame_tx, &context, &response, show_reasoning)
+                            .map_err(|err| std::io::Error::other(err.message.clone()))?;
+                        self.v1_agent_message_started = true;
+                    }
+                    if !delta.is_empty() {
+                        send_v1_agent_delta(frame_tx, &context, &delta)
+                            .map_err(|err| std::io::Error::other(err.message.clone()))?;
+                    }
+                }
                 send_frame(
                     frame_tx,
                     GatewayWebsocketServerFrame::Event {
@@ -455,6 +534,111 @@ impl GatewayStreamState {
     }
 }
 
+fn send_v1_item_started(
+    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    context: &GatewayV1StreamContext,
+    response: &ChannelResponse,
+    show_reasoning: bool,
+) -> Result<(), GatewayWebsocketHandlerError> {
+    let item = GatewayThreadItem {
+        item_id: context.agent_message_item_id.clone(),
+        turn_id: context.turn_id.clone(),
+        item_type: GatewayThreadItemType::AgentMessage,
+        status: GatewayThreadItemStatus::InProgress,
+        payload: json!({
+            "session_id": context.session_id,
+            "thread_id": context.thread_id,
+            "response": serialize_response(response, show_reasoning),
+        }),
+    };
+    send_frame(
+        frame_tx,
+        GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+            GatewayProtocolMethod::ItemStarted,
+            json!({
+                "session_id": context.session_id,
+                "thread_id": context.thread_id,
+                "turn_id": context.turn_id,
+                "item": item,
+            }),
+        )),
+    )
+}
+
+fn send_v1_agent_delta(
+    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    context: &GatewayV1StreamContext,
+    delta: &str,
+) -> Result<(), GatewayWebsocketHandlerError> {
+    send_frame(
+        frame_tx,
+        GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+            GatewayProtocolMethod::ItemAgentMessageDelta,
+            json!({
+                "session_id": context.session_id,
+                "thread_id": context.thread_id,
+                "turn_id": context.turn_id,
+                "item_id": context.agent_message_item_id,
+                "delta": delta,
+            }),
+        )),
+    )
+}
+
+fn send_v1_item_completed(
+    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    context: &GatewayV1StreamContext,
+    response: Option<&ChannelResponse>,
+    show_reasoning: bool,
+) -> Result<(), GatewayWebsocketHandlerError> {
+    let item = GatewayThreadItem {
+        item_id: context.agent_message_item_id.clone(),
+        turn_id: context.turn_id.clone(),
+        item_type: GatewayThreadItemType::AgentMessage,
+        status: GatewayThreadItemStatus::Completed,
+        payload: json!({
+            "session_id": context.session_id,
+            "thread_id": context.thread_id,
+            "response": response.map(|response| serialize_response(response, show_reasoning)),
+        }),
+    };
+    send_frame(
+        frame_tx,
+        GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+            GatewayProtocolMethod::ItemCompleted,
+            json!({
+                "session_id": context.session_id,
+                "thread_id": context.thread_id,
+                "turn_id": context.turn_id,
+                "item": item,
+            }),
+        )),
+    )
+}
+
+fn send_v1_turn_finished(
+    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    context: &GatewayV1StreamContext,
+    method: GatewayProtocolMethod,
+    status: GatewayTurnStatus,
+    response: Option<Value>,
+) -> Result<(), GatewayWebsocketHandlerError> {
+    send_frame(
+        frame_tx,
+        GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+            method,
+            json!({
+                "session_id": context.session_id,
+                "thread_id": context.thread_id,
+                "turn_id": context.turn_id,
+                "request_id": context.request_id,
+                "status": status,
+                "response": response,
+            }),
+        )),
+    )
+}
+
 fn send_frame(
     frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
     frame: GatewayWebsocketServerFrame,
@@ -471,48 +655,51 @@ fn stream_events_to_frames(
     show_reasoning: bool,
     events: &[klaw_channel::ChannelStreamEvent],
 ) -> Vec<GatewayWebsocketServerFrame> {
-    let mut frames = Vec::new();
-    let mut last_snapshot: Option<String> = None;
+    stream_events_to_frames_with_identity(
+        request_id,
+        session_key,
+        None,
+        None,
+        show_reasoning,
+        events,
+    )
+}
+
+#[cfg(test)]
+fn stream_events_to_frames_with_identity(
+    request_id: &str,
+    session_key: &str,
+    thread_id: Option<&str>,
+    turn_id: Option<&str>,
+    show_reasoning: bool,
+    events: &[klaw_channel::ChannelStreamEvent],
+) -> Vec<GatewayWebsocketServerFrame> {
+    let v1_context = thread_id
+        .zip(turn_id)
+        .map(|(thread_id, turn_id)| GatewayV1StreamContext {
+            session_id: session_key.to_string(),
+            thread_id: thread_id.to_string(),
+            turn_id: turn_id.to_string(),
+            request_id: request_id.to_string(),
+            agent_message_item_id: format!("item_agent_{turn_id}"),
+        });
+    let (frame_tx, mut frame_rx) = mpsc::unbounded_channel();
+    let mut stream_state = GatewayStreamState::new(v1_context);
     for event in events {
-        match event {
-            klaw_channel::ChannelStreamEvent::Snapshot(response) => {
-                let delta = match last_snapshot.as_deref() {
-                    Some(previous) if response.content.starts_with(previous) => {
-                        response.content[previous.len()..].to_string()
-                    }
-                    _ => response.content.clone(),
-                };
-                last_snapshot = Some(response.content.clone());
-                frames.push(GatewayWebsocketServerFrame::Event {
-                    event: OutboundEvent::SessionMessage,
-                    payload: json!({
-                        "request_id": request_id,
-                        "session_key": session_key,
-                        "response": serialize_response(response, show_reasoning),
-                    }),
-                });
-                if !delta.is_empty() {
-                    frames.push(GatewayWebsocketServerFrame::Event {
-                        event: OutboundEvent::SessionStreamDelta,
-                        payload: json!({
-                            "request_id": request_id,
-                            "session_key": session_key,
-                            "delta": delta,
-                        }),
-                    });
-                }
-            }
-            klaw_channel::ChannelStreamEvent::Clear => {
-                last_snapshot = None;
-                frames.push(GatewayWebsocketServerFrame::Event {
-                    event: OutboundEvent::SessionStreamClear,
-                    payload: json!({
-                        "request_id": request_id,
-                        "session_key": session_key,
-                    }),
-                });
-            }
-        }
+        stream_state
+            .push_event(
+                &frame_tx,
+                request_id,
+                session_key,
+                show_reasoning,
+                event.clone(),
+            )
+            .expect("test stream event should convert to frames");
+    }
+    drop(frame_tx);
+    let mut frames = Vec::new();
+    while let Ok(frame) = frame_rx.try_recv() {
+        frames.push(frame);
     }
     frames
 }
@@ -559,6 +746,7 @@ mod tests {
     use super::{
         build_web_workspace_bootstrap, finalize_visible_history_page,
         prepend_visible_history_records, resolved_history_session_key, stream_events_to_frames,
+        stream_events_to_frames_with_identity,
     };
     use klaw_channel::{ChannelResponse, ChannelStreamEvent};
     use klaw_gateway::OutboundEvent;
@@ -629,6 +817,47 @@ mod tests {
             }
             other => panic!("unexpected frame: {other:?}"),
         }
+    }
+
+    #[test]
+    fn stream_events_emit_v1_item_lifecycle_when_turn_identity_is_available() {
+        let frames = stream_events_to_frames_with_identity(
+            "req-v1",
+            "websocket:test",
+            Some("thr_v1"),
+            Some("turn_v1"),
+            false,
+            &[ChannelStreamEvent::Snapshot(ChannelResponse {
+                content: "Hello".to_string(),
+                reasoning: Some("hidden".to_string()),
+                metadata: BTreeMap::new(),
+                attachments: Vec::new(),
+            })],
+        );
+
+        assert!(frames.iter().any(|frame| match frame {
+            klaw_gateway::GatewayWebsocketServerFrame::Protocol(
+                klaw_gateway::GatewayRpcMessage::Notification { method, params },
+            ) if *method == klaw_gateway::GatewayProtocolMethod::ItemStarted => {
+                params
+                    .pointer("/item/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("agentMessage")
+                    && params
+                        .pointer("/item/turn_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("turn_v1")
+            }
+            _ => false,
+        }));
+        assert!(frames.iter().any(|frame| match frame {
+            klaw_gateway::GatewayWebsocketServerFrame::Protocol(
+                klaw_gateway::GatewayRpcMessage::Notification { method, params },
+            ) if *method == klaw_gateway::GatewayProtocolMethod::ItemAgentMessageDelta => {
+                params.get("delta").and_then(serde_json::Value::as_str) == Some("Hello")
+            }
+            _ => false,
+        }));
     }
 
     #[test]

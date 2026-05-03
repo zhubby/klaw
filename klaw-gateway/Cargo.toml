@@ -15,6 +15,7 @@ klaw-config = { workspace = true }
 klaw-observability = { workspace = true }
 klaw-util = { workspace = true }
 rust-embed = { workspace = true }
+schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true }

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-03
+
+### Added
+
+- Gateway WebSocket streaming now emits v1 `item/started`, `item/agentMessage/delta`, `item/completed`, and `turn/completed` notifications when a submit request carries websocket v1 thread/turn metadata, while preserving existing legacy stream frames
+
 ## 2026-04-26
 
 ### Added
