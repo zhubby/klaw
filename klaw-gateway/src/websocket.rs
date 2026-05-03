@@ -1140,6 +1140,333 @@ async fn handle_protocol_message(
             )]
         }
         GatewayProtocolMethod::Initialized => Vec::new(),
+        GatewayProtocolMethod::SessionList => {
+            let Some(id) = id else {
+                return vec![protocol_error_frame(
+                    None,
+                    GatewayProtocolErrorCode::InvalidRequest,
+                    "session/list requires an id",
+                )];
+            };
+            let Some(websocket) = state.websocket.as_ref() else {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InternalError,
+                    "gateway websocket handler is not configured",
+                )];
+            };
+            match websocket.handler.bootstrap().await {
+                Ok(mut workspace) => {
+                    workspace.sessions.sort_by(|left, right| {
+                        right
+                            .created_at_ms
+                            .cmp(&left.created_at_ms)
+                            .then_with(|| right.session_key.cmp(&left.session_key))
+                    });
+                    vec![GatewayWebsocketServerFrame::Protocol(
+                        GatewayRpcMessage::success(
+                            id,
+                            json!({
+                                "sessions": workspace.sessions,
+                                "active_session_key": workspace.active_session_key,
+                            }),
+                        ),
+                    )]
+                }
+                Err(err) => vec![handler_protocol_error_frame(Some(id), err)],
+            }
+        }
+        GatewayProtocolMethod::ProviderList => {
+            let Some(id) = id else {
+                return vec![protocol_error_frame(
+                    None,
+                    GatewayProtocolErrorCode::InvalidRequest,
+                    "provider/list requires an id",
+                )];
+            };
+            let Some(websocket) = state.websocket.as_ref() else {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InternalError,
+                    "gateway websocket handler is not configured",
+                )];
+            };
+            match websocket.handler.list_providers().await {
+                Ok(catalog) => vec![GatewayWebsocketServerFrame::Protocol(
+                    GatewayRpcMessage::success(
+                        id,
+                        json!({
+                            "default_provider": catalog.default_provider,
+                            "providers": catalog.providers,
+                        }),
+                    ),
+                )],
+                Err(err) => vec![handler_protocol_error_frame(Some(id), err)],
+            }
+        }
+        GatewayProtocolMethod::SessionCreate => {
+            let Some(id) = id else {
+                return vec![protocol_error_frame(
+                    None,
+                    GatewayProtocolErrorCode::InvalidRequest,
+                    "session/create requires an id",
+                )];
+            };
+            let Some(websocket) = state.websocket.as_ref() else {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InternalError,
+                    "gateway websocket handler is not configured",
+                )];
+            };
+            match websocket.handler.create_session().await {
+                Ok(session) => {
+                    *current_session_key = Some(session.session_key.clone());
+                    track_connection_session_key(state, connection_id, session.session_key.clone())
+                        .await;
+                    vec![GatewayWebsocketServerFrame::Protocol(
+                        GatewayRpcMessage::success(
+                            id,
+                            json!({
+                                "session_key": session.session_key,
+                                "title": session.title,
+                                "created_at_ms": session.created_at_ms,
+                                "model_provider": session.model_provider,
+                                "model": session.model,
+                            }),
+                        ),
+                    )]
+                }
+                Err(err) => vec![handler_protocol_error_frame(Some(id), err)],
+            }
+        }
+        GatewayProtocolMethod::SessionUpdate => {
+            let Some(id) = id else {
+                return vec![protocol_error_frame(
+                    None,
+                    GatewayProtocolErrorCode::InvalidRequest,
+                    "session/update requires an id",
+                )];
+            };
+            let params = match serde_json::from_value::<SessionUpdateParams>(params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return vec![protocol_error_frame(
+                        Some(id),
+                        GatewayProtocolErrorCode::InvalidParams,
+                        format!("invalid session/update params: {err}"),
+                    )];
+                }
+            };
+            let session_key = params.session_key.trim().to_string();
+            if session_key.is_empty() {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InvalidParams,
+                    "session/update requires a non-empty session_key",
+                )];
+            }
+            let title = params.title.trim().to_string();
+            if title.is_empty() {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InvalidParams,
+                    "session/update requires a non-empty title",
+                )];
+            }
+            let Some(websocket) = state.websocket.as_ref() else {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InternalError,
+                    "gateway websocket handler is not configured",
+                )];
+            };
+            match websocket.handler.update_session(&session_key, title).await {
+                Ok(session) => vec![GatewayWebsocketServerFrame::Protocol(
+                    GatewayRpcMessage::success(
+                        id,
+                        json!({
+                            "session_key": session.session_key,
+                            "title": session.title,
+                            "created_at_ms": session.created_at_ms,
+                            "model_provider": session.model_provider,
+                            "model": session.model,
+                            "updated": true,
+                        }),
+                    ),
+                )],
+                Err(err) => vec![handler_protocol_error_frame(Some(id), err)],
+            }
+        }
+        GatewayProtocolMethod::SessionDelete => {
+            let Some(id) = id else {
+                return vec![protocol_error_frame(
+                    None,
+                    GatewayProtocolErrorCode::InvalidRequest,
+                    "session/delete requires an id",
+                )];
+            };
+            let params = match serde_json::from_value::<SessionDeleteParams>(params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return vec![protocol_error_frame(
+                        Some(id),
+                        GatewayProtocolErrorCode::InvalidParams,
+                        format!("invalid session/delete params: {err}"),
+                    )];
+                }
+            };
+            let session_key = params.session_key.trim().to_string();
+            if session_key.is_empty() {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InvalidParams,
+                    "session/delete requires a non-empty session_key",
+                )];
+            }
+            let Some(websocket) = state.websocket.as_ref() else {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InternalError,
+                    "gateway websocket handler is not configured",
+                )];
+            };
+            match websocket.handler.delete_session(&session_key).await {
+                Ok(deleted) => vec![GatewayWebsocketServerFrame::Protocol(
+                    GatewayRpcMessage::success(
+                        id,
+                        json!({
+                            "session_key": session_key,
+                            "deleted": deleted,
+                        }),
+                    ),
+                )],
+                Err(err) => vec![handler_protocol_error_frame(Some(id), err)],
+            }
+        }
+        GatewayProtocolMethod::SessionSubscribe => {
+            let Some(id) = id else {
+                return vec![protocol_error_frame(
+                    None,
+                    GatewayProtocolErrorCode::InvalidRequest,
+                    "session/subscribe requires an id",
+                )];
+            };
+            let params = match serde_json::from_value::<SessionSubscribeParams>(params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return vec![protocol_error_frame(
+                        Some(id),
+                        GatewayProtocolErrorCode::InvalidParams,
+                        format!("invalid session/subscribe params: {err}"),
+                    )];
+                }
+            };
+            let session_key = params.session_key.trim().to_string();
+            if session_key.is_empty() {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InvalidParams,
+                    "session/subscribe requires a non-empty session_key",
+                )];
+            }
+            let Some(_websocket) = state.websocket.as_ref() else {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InternalError,
+                    "gateway websocket handler is not configured",
+                )];
+            };
+            *current_session_key = Some(session_key.clone());
+            track_connection_session_key(state, connection_id, session_key.clone()).await;
+            let payload = json!({ "session_key": session_key });
+            vec![
+                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::success(
+                    id,
+                    payload.clone(),
+                )),
+                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+                    GatewayProtocolMethod::SessionSubscribed,
+                    payload,
+                )),
+            ]
+        }
+        GatewayProtocolMethod::SessionUnsubscribe => {
+            let Some(id) = id else {
+                return vec![protocol_error_frame(
+                    None,
+                    GatewayProtocolErrorCode::InvalidRequest,
+                    "session/unsubscribe requires an id",
+                )];
+            };
+            let previous_session_key = current_session_key.take();
+            clear_connection_session_keys(state, connection_id).await;
+            let payload = json!({ "session_key": previous_session_key });
+            vec![
+                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::success(
+                    id,
+                    payload.clone(),
+                )),
+                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+                    GatewayProtocolMethod::SessionUnsubscribed,
+                    payload,
+                )),
+            ]
+        }
+        GatewayProtocolMethod::ThreadHistory | GatewayProtocolMethod::ThreadRead => {
+            let Some(id) = id else {
+                return vec![protocol_error_frame(
+                    None,
+                    GatewayProtocolErrorCode::InvalidRequest,
+                    "thread/history requires an id",
+                )];
+            };
+            let params = match serde_json::from_value::<SessionHistoryLoadParams>(params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return vec![protocol_error_frame(
+                        Some(id),
+                        GatewayProtocolErrorCode::InvalidParams,
+                        format!("invalid thread/history params: {err}"),
+                    )];
+                }
+            };
+            let session_key = params.session_key.trim().to_string();
+            if session_key.is_empty() {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InvalidParams,
+                    "thread/history requires a non-empty session_key",
+                )];
+            }
+            let Some(websocket) = state.websocket.as_ref() else {
+                return vec![protocol_error_frame(
+                    Some(id),
+                    GatewayProtocolErrorCode::InternalError,
+                    "gateway websocket handler is not configured",
+                )];
+            };
+            let limit = params.limit.unwrap_or(10).max(1);
+            match websocket
+                .handler
+                .load_session_history(&session_key, params.before_message_id.as_deref(), limit)
+                .await
+            {
+                Ok(page) => vec![GatewayWebsocketServerFrame::Protocol(
+                    GatewayRpcMessage::success(
+                        id,
+                        json!({
+                            "session_key": session_key,
+                            "thread_id": session_key,
+                            "messages": page.messages,
+                            "has_more": page.has_more,
+                            "oldest_loaded_message_id": page.oldest_loaded_message_id,
+                        }),
+                    ),
+                )],
+                Err(err) => vec![handler_protocol_error_frame(Some(id), err)],
+            }
+        }
         GatewayProtocolMethod::TurnStart => {
             let Some(id) = id else {
                 return vec![protocol_error_frame(
@@ -1500,6 +1827,29 @@ fn protocol_error_frame_with_data(
             code,
             message: message.into(),
             data: Some(data),
+        },
+    })
+}
+
+fn handler_protocol_error_frame(
+    id: Option<String>,
+    err: GatewayWebsocketHandlerError,
+) -> GatewayWebsocketServerFrame {
+    let code = match err.code.as_str() {
+        "invalid_request" => GatewayProtocolErrorCode::InvalidParams,
+        "session_not_found" | "missing_session" => GatewayProtocolErrorCode::SessionNotFound,
+        "thread_not_found" => GatewayProtocolErrorCode::ThreadNotFound,
+        "turn_not_found" => GatewayProtocolErrorCode::TurnNotFound,
+        "permission_denied" => GatewayProtocolErrorCode::PermissionDenied,
+        "timeout" => GatewayProtocolErrorCode::Timeout,
+        _ => GatewayProtocolErrorCode::InternalError,
+    };
+    GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::Error {
+        id,
+        error: GatewayProtocolError {
+            code,
+            message: err.message,
+            data: err.data,
         },
     })
 }

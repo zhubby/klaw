@@ -9,7 +9,7 @@
 - wire runtime submission helpers for one-shot and streaming flows
 - host runtime-only IM command handling and session routing policy
 - integrate background services, webhook processing, and gateway lifecycle glue
-- map gateway WebSocket v1 turn metadata into structured `item/*` and `turn/*` protocol notifications while preserving legacy `session.stream.*` frames
+- map gateway WebSocket v1 turn metadata into structured `item/*` and `turn/*` protocol notifications for both streaming and non-streaming turns
 - own the shared Knowledge service so GUI search, Knowledge tool calls, and index/vector sync reuse one provider/model runtime instead of reopening it per request
 - clear the shared Knowledge service during runtime shutdown so local model resources are released before process exit
 

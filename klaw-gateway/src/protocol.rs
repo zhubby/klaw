@@ -128,6 +128,12 @@ pub enum GatewayProtocolMethod {
     SessionSubscribe,
     #[serde(rename = "session/unsubscribe")]
     SessionUnsubscribe,
+    #[serde(rename = "session/subscribed")]
+    SessionSubscribed,
+    #[serde(rename = "session/unsubscribed")]
+    SessionUnsubscribed,
+    #[serde(rename = "provider/list")]
+    ProviderList,
     #[serde(rename = "thread/start")]
     ThreadStart,
     #[serde(rename = "thread/resume")]

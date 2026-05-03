@@ -366,6 +366,7 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
                         .as_ref()
                         .map(|response| serialize_response(response, config.show_reasoning)),
                 )?;
+                return Ok(());
             }
             send_frame(
                 &frame_tx,
@@ -395,6 +396,19 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
         let response = submit_channel_request(self.runtime.as_ref(), channel_request)
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        if let Some(context) = v1_context.as_ref() {
+            send_v1_item_completed(&frame_tx, context, response.as_ref(), config.show_reasoning)?;
+            send_v1_turn_finished(
+                &frame_tx,
+                context,
+                GatewayProtocolMethod::TurnCompleted,
+                GatewayTurnStatus::Completed,
+                response
+                    .as_ref()
+                    .map(|response| serialize_response(response, config.show_reasoning)),
+            )?;
+            return Ok(());
+        }
         send_frame(
             &frame_tx,
             GatewayWebsocketServerFrame::Result {
@@ -487,6 +501,7 @@ impl GatewayStreamState {
                         send_v1_agent_delta(frame_tx, &context, &delta)
                             .map_err(|err| std::io::Error::other(err.message.clone()))?;
                     }
+                    return Ok(());
                 }
                 send_frame(
                     frame_tx,
@@ -517,6 +532,9 @@ impl GatewayStreamState {
             }
             klaw_channel::ChannelStreamEvent::Clear => {
                 self.last_snapshot = None;
+                if self.v1_context.is_some() {
+                    return Ok(());
+                }
                 send_frame(
                     frame_tx,
                     GatewayWebsocketServerFrame::Event {
@@ -858,6 +876,10 @@ mod tests {
             }
             _ => false,
         }));
+        assert!(frames.iter().all(|frame| matches!(
+            frame,
+            klaw_gateway::GatewayWebsocketServerFrame::Protocol(_)
+        )));
     }
 
     #[test]

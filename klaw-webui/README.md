@@ -1,6 +1,6 @@
 # klaw-webui
 
-基于 **egui** + **eframe** Web 后端的浏览器聊天壳，连接本仓库 `klaw-gateway` 的 `GET /ws/chat`（按 `session_key` 房间广播纯文本）。
+基于 **egui** + **eframe** Web 后端的浏览器聊天壳，连接本仓库 `klaw-gateway` 的 `GET /ws/chat`，使用 Gateway WebSocket v1 JSON-RPC envelope 与 agent 交互。
 
 - 会话键：`websocket:<uuid>`；业务状态默认写入浏览器 `localStorage`（`klaw_webui_workspace_state`），现包含 gateway token 与会话列表
 - `egui/eframe` 的内建持久化已启用，主题偏好与页面布局（如侧栏宽度、浮动窗口位置和尺寸）交由框架写入浏览器存储恢复
@@ -8,6 +8,7 @@
 - 底部状态栏显示主题切换、agent/open 计数、stream 开关，以及当前 agent 的路由、消息数、活动状态和实时 FPS
 - 顶部菜单栏包含 `Connection` 和 `Help` 菜单；`Help -> About` 会弹出版本信息，并复用连接页同源的 crab 图片
 - agent 对话输入框支持 slash command 自动补全；输入 `/` 会弹出命令建议面板，便于插入 runtime 支持的会话命令
+- WebSocket 路径连接后发送 `initialize`，工作区/会话/provider/历史使用 v1 `session/*`、`provider/list`、`thread/history` 方法，用户输入使用 `turn/start` 结构化 content blocks；浏览器端不再发送旧版 `type: "method"` 帧，也不把旧版服务端帧作为正常输入
 
 ## 模块布局
 
