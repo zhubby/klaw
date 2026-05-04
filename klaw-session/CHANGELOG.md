@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 2026-05-04
+
+### Changed
+- session deletion now follows storage soft-delete behavior and preserves chat history while hiding inactive sessions from normal reads
+
 ## 2026-04-14
 
 ### Added

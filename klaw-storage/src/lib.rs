@@ -224,7 +224,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn delete_session_removes_index_and_history_file() {
+    async fn delete_session_soft_deletes_index_and_preserves_history_file() {
         let store = create_store().await;
         store
             .touch_session("websocket:delete-test", "chat-1", "websocket")
@@ -243,14 +243,43 @@ mod tests {
             .await
             .expect("delete should succeed");
         assert!(deleted);
+        let deleted_again = store
+            .delete_session("websocket:delete-test")
+            .await
+            .expect("second delete should succeed");
+        assert!(!deleted_again);
+        let history = store
+            .read_chat_records("websocket:delete-test")
+            .await
+            .expect("history should read");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].content, "hello");
+        assert!(store.get_session("websocket:delete-test").await.is_err());
+
+        let listed = store
+            .list_sessions(
+                Some(10),
+                0,
+                None,
+                None,
+                Some("websocket"),
+                None,
+                SessionSortOrder::UpdatedAtAsc,
+            )
+            .await
+            .expect("session list should load");
+        assert!(listed.is_empty());
+        let channels = store
+            .list_session_channels()
+            .await
+            .expect("channel list should load");
+        assert!(channels.is_empty());
         assert!(
             store
-                .read_chat_records("websocket:delete-test")
+                .touch_session("websocket:delete-test", "chat-1", "websocket")
                 .await
-                .expect("history should read")
-                .is_empty()
+                .is_err()
         );
-        assert!(store.get_session("websocket:delete-test").await.is_err());
     }
 
     #[tokio::test(flavor = "current_thread")]

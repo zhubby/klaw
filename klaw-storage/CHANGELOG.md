@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-04
+
+### Changed
+- session deletion now soft-deletes rows with `is_active = 0`, keeps JSONL chat history, and filters inactive sessions from normal lookup/list/channel queries
+
 ## 2026-04-25
 
 ### Changed

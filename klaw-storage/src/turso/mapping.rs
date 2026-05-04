@@ -61,11 +61,12 @@ pub(crate) fn row_to_session_index(row: &Row) -> Result<SessionIndex, StorageErr
         delivery_metadata_json: value_to_opt_string(
             row.get_value(9).map_err(StorageError::backend)?,
         ),
-        created_at_ms: value_to_i64(row.get_value(10).map_err(StorageError::backend)?)?,
-        updated_at_ms: value_to_i64(row.get_value(11).map_err(StorageError::backend)?)?,
-        last_message_at_ms: value_to_i64(row.get_value(12).map_err(StorageError::backend)?)?,
-        turn_count: value_to_i64(row.get_value(13).map_err(StorageError::backend)?)?,
-        jsonl_path: value_to_string(row.get_value(14).map_err(StorageError::backend)?)?,
+        is_active: value_to_i64(row.get_value(10).map_err(StorageError::backend)?)? != 0,
+        created_at_ms: value_to_i64(row.get_value(11).map_err(StorageError::backend)?)?,
+        updated_at_ms: value_to_i64(row.get_value(12).map_err(StorageError::backend)?)?,
+        last_message_at_ms: value_to_i64(row.get_value(13).map_err(StorageError::backend)?)?,
+        turn_count: value_to_i64(row.get_value(14).map_err(StorageError::backend)?)?,
+        jsonl_path: value_to_string(row.get_value(15).map_err(StorageError::backend)?)?,
     })
 }
 

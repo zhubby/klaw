@@ -9,6 +9,7 @@
 - expose the `DatabaseExecutor` SQL execution interface used by higher-level modules such as memory, knowledge, and archive services
 - persist session routing/model state used by IM command routing (`active_session_key`, `model_provider`, `model`)
 - support SQL-backed session listing with optional `channel` filtering, `updated_at` ordering, and distinct channel option queries
+- soft-delete sessions by marking them inactive while preserving JSONL history and audit/usage records
 - persist structured `tool_audit` and `llm_audit` records for runtime/GUI diagnostics
 - sync and restore versioned manifests plus deduplicated blobs for the managed data root via S3-compatible object storage
 
@@ -37,6 +38,7 @@
 - the default Turso-backed session store serializes access through one shared connection to avoid driver-level concurrent-use failures
 - `tmp/` is the dedicated temporary data directory under the Klaw data root
 - session records support Base Session -> Active Session routing
+- normal session lookup/list APIs hide inactive soft-deleted sessions
 - `model_provider` / `model` now represent per-session routing state, and the persisted explicitness flags let runtimes distinguish user-chosen overrides from legacy default-route residue during normalization
 - `llm_audit` records support optional `metadata_json`, which runtimes can use to annotate model requests with delegated execution context such as sub-agent parent/child session lineage
 - `tool_audit` records capture per-call arguments, full tool result/error payloads, signals, timing, and optional execution metadata such as tool call ids or sub-agent lineage
