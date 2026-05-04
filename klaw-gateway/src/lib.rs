@@ -44,8 +44,9 @@ pub use websocket::{
     GATEWAY_WEBSOCKET_MAX_ACTIVE_TURNS_PER_CONNECTION, GATEWAY_WEBSOCKET_MAX_TEXT_FRAME_BYTES,
     GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY, GatewayProviderCatalog, GatewayProviderEntry,
     GatewaySessionHistoryMessage, GatewaySessionHistoryPage, GatewayWebsocketAttachmentRef,
-    GatewayWebsocketErrorFrame, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
-    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-    GatewayWorkspaceSession, InboundMethod, META_WEBSOCKET_MODEL, META_WEBSOCKET_MODEL_PROVIDER,
-    META_WEBSOCKET_V1_THREAD_ID, META_WEBSOCKET_V1_TURN_ID, OutboundEvent,
+    GatewayWebsocketErrorFrame, GatewayWebsocketFrameTx, GatewayWebsocketHandler,
+    GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
+    GatewayWorkspaceBootstrap, GatewayWorkspaceSession, InboundMethod, META_WEBSOCKET_MODEL,
+    META_WEBSOCKET_MODEL_PROVIDER, META_WEBSOCKET_V1_THREAD_ID, META_WEBSOCKET_V1_TURN_ID,
+    OutboundEvent,
 };

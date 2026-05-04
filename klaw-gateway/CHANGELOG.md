@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-05-05
+
+### Fixed
+
+- Gateway WebSocket v1 now tracks active turns per connection, enforces the configured active-turn limit, aborts tracked backend work on `turn/cancel`, and emits `turn/failed` when accepted turns fail asynchronously.
+- WebSocket outbound delivery now uses the configured bounded queue capacity instead of an unbounded channel.
+
+### Changed
+
+- Gateway WebSocket v1 no longer advertises server request/tool/approval response capabilities before those response methods are wired into runtime handling.
+
 ## 2026-05-03
 
 ### Added

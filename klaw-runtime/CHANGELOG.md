@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-05
+
+### Fixed
+
+- Gateway WebSocket runtime frame delivery now uses bounded sender semantics so slow clients surface backpressure instead of accumulating unbounded queued frames.
+
 ## 2026-05-04
 
 ### Fixed
