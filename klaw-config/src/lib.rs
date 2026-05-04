@@ -359,6 +359,8 @@ pub struct DingtalkConfig {
     pub stream_template_id: String,
     #[serde(default = "default_dingtalk_stream_content_key")]
     pub stream_content_key: String,
+    #[serde(default = "default_dingtalk_stream_reasoning_key")]
+    pub stream_reasoning_key: String,
     #[serde(default)]
     pub allowlist: Vec<String>,
     #[serde(default)]
@@ -377,6 +379,7 @@ impl Default for DingtalkConfig {
             stream_output: false,
             stream_template_id: String::new(),
             stream_content_key: default_dingtalk_stream_content_key(),
+            stream_reasoning_key: default_dingtalk_stream_reasoning_key(),
             allowlist: Vec::new(),
             proxy: DingtalkProxyConfig::default(),
         }
@@ -404,6 +407,10 @@ fn default_dingtalk_bot_title() -> String {
 
 fn default_dingtalk_stream_content_key() -> String {
     "content".to_string()
+}
+
+fn default_dingtalk_stream_reasoning_key() -> String {
+    "reasoning".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

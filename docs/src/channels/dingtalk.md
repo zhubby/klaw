@@ -34,6 +34,10 @@ client_id = "your-app-key"
 client_secret = "your-app-secret"
 bot_title = "Klaw"
 show_reasoning = false
+stream_output = false
+stream_template_id = ""
+stream_content_key = "content"
+stream_reasoning_key = "reasoning"
 allowlist = ["USER123", "*"]
 
 [channels.dingtalk.proxy]
@@ -51,13 +55,20 @@ url = "http://proxy.example.com:8080"
 | `client_secret` | `string` | 是 | 钉钉应用 AppSecret | - |
 | `bot_title` | `string` | 否 | 机器人显示名称 | `"Klaw"` |
 | `show_reasoning` | `bool` | 否 | 响应中是否展示推理过程 | `false` |
+| `stream_output` | `bool` | 否 | 是否使用钉钉 AI 卡片模板流式刷新回复 | `false` |
+| `stream_template_id` | `string` | 条件必填 | `stream_output=true` 时使用的钉钉 AI 卡片模板 ID | `""` |
+| `stream_content_key` | `string` | 条件必填 | AI 卡片模板中承载正文的变量名 | `"content"` |
+| `stream_reasoning_key` | `string` | 条件必填 | AI 卡片模板中承载 reasoning 的变量名 | `"reasoning"` |
 | `allowlist` | `string[]` | 否 | 发送者白名单（`*` 表示允许所有） | `[]`（允许所有） |
 | `proxy.enabled` | `bool` | 否 | 是否启用代理 | `false` |
 | `proxy.url` | `string` | 条件必填 | 代理地址 | - |
 
 配置校验：
 - `client_id` 和 `client_secret` 不能为空
+- `stream_output=true` 时 `stream_template_id`、`stream_content_key`、`stream_reasoning_key` 均不能为空，且正文变量名不能与 reasoning 变量名相同
 - `proxy.enabled=true` 时 `proxy.url` 必填
+
+流式 AI 卡片模板需要在钉钉侧声明 `stream_content_key` 与 `stream_reasoning_key` 对应的变量。开启 `show_reasoning` 时，正文变量只刷新模型正文，reasoning 变量按全量覆盖方式刷新模型返回的 reasoning，避免正文与独立 reasoning 区块重复展示。
 
 ## 连接建立流程
 

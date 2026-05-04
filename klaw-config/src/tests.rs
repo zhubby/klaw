@@ -94,7 +94,7 @@ fn parse_default_template_succeeds() {
     assert!(template.contains("auto_index = false"));
     assert!(!template.contains("index_on_startup"));
     assert_eq!(parsed.knowledge.obsidian.max_excerpt_length, 400);
-    assert_eq!(parsed.knowledge.retrieval.top_k, 5);
+    assert_eq!(parsed.knowledge.retrieval.top_k, 10);
     assert_eq!(parsed.knowledge.retrieval.rerank_candidates, 20);
     assert_eq!(parsed.knowledge.retrieval.graph_hops, 1);
     assert!(!parsed.models.enabled);
@@ -709,12 +709,40 @@ allowlist = ["u123", "u456"]
     assert!(account.stream_output);
     assert_eq!(account.stream_template_id, "template-1.schema");
     assert_eq!(account.stream_content_key, "content");
+    assert_eq!(account.stream_reasoning_key, "reasoning");
     assert_eq!(
         account.allowlist,
         vec!["u123".to_string(), "u456".to_string()]
     );
     assert!(!account.proxy.enabled);
     assert!(account.proxy.url.is_empty());
+}
+
+#[test]
+fn parse_dingtalk_channel_config_allows_custom_reasoning_stream_key() {
+    let raw = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "chat_completions"
+default_model = "gpt-4o-mini"
+env_key = "OPENAI_API_KEY"
+
+[[channels.dingtalk]]
+id = "ops"
+client_id = "ding-client"
+client_secret = "ding-secret"
+stream_output = true
+stream_template_id = "template-1.schema"
+stream_content_key = "answer"
+stream_reasoning_key = "thinking"
+"#;
+
+    let parsed: AppConfig = toml::from_str(raw).expect("dingtalk config should parse");
+    let account = &parsed.channels.dingtalk[0];
+    assert_eq!(account.stream_content_key, "answer");
+    assert_eq!(account.stream_reasoning_key, "thinking");
 }
 
 #[test]
@@ -869,6 +897,7 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             stream_output: false,
             stream_template_id: String::new(),
             stream_content_key: "content".to_string(),
+            stream_reasoning_key: "reasoning".to_string(),
             allowlist: vec![],
             proxy: DingtalkProxyConfig::default(),
         },
@@ -882,6 +911,7 @@ fn validate_fails_when_dingtalk_channel_ids_duplicate() {
             stream_output: false,
             stream_template_id: String::new(),
             stream_content_key: "content".to_string(),
+            stream_reasoning_key: "reasoning".to_string(),
             allowlist: vec![],
             proxy: DingtalkProxyConfig::default(),
         },
@@ -904,6 +934,7 @@ fn validate_fails_when_enabled_dingtalk_channel_missing_secret() {
         stream_output: false,
         stream_template_id: String::new(),
         stream_content_key: "content".to_string(),
+        stream_reasoning_key: "reasoning".to_string(),
         allowlist: vec![],
         proxy: DingtalkProxyConfig::default(),
     }];
@@ -925,6 +956,7 @@ fn validate_fails_when_enabled_dingtalk_proxy_missing_url() {
         stream_output: false,
         stream_template_id: String::new(),
         stream_content_key: "content".to_string(),
+        stream_reasoning_key: "reasoning".to_string(),
         allowlist: vec![],
         proxy: DingtalkProxyConfig {
             enabled: true,
@@ -949,12 +981,57 @@ fn validate_fails_when_streaming_dingtalk_channel_missing_template_id() {
         stream_output: true,
         stream_template_id: String::new(),
         stream_content_key: "content".to_string(),
+        stream_reasoning_key: "reasoning".to_string(),
         allowlist: vec![],
         proxy: DingtalkProxyConfig::default(),
     }];
 
     let err = validate(&cfg).expect_err("should fail");
     assert!(format!("{err}").contains("channels.dingtalk.stream_template_id"));
+}
+
+#[test]
+fn validate_fails_when_streaming_dingtalk_reasoning_key_is_empty() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.dingtalk = vec![DingtalkConfig {
+        id: "ops".to_string(),
+        enabled: true,
+        client_id: "client-a".to_string(),
+        client_secret: "secret-a".to_string(),
+        bot_title: "Ops".to_string(),
+        show_reasoning: true,
+        stream_output: true,
+        stream_template_id: "template-1.schema".to_string(),
+        stream_content_key: "content".to_string(),
+        stream_reasoning_key: String::new(),
+        allowlist: vec![],
+        proxy: DingtalkProxyConfig::default(),
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("channels.dingtalk.stream_reasoning_key"));
+}
+
+#[test]
+fn validate_fails_when_streaming_dingtalk_keys_match() {
+    let mut cfg = AppConfig::default();
+    cfg.channels.dingtalk = vec![DingtalkConfig {
+        id: "ops".to_string(),
+        enabled: true,
+        client_id: "client-a".to_string(),
+        client_secret: "secret-a".to_string(),
+        bot_title: "Ops".to_string(),
+        show_reasoning: true,
+        stream_output: true,
+        stream_template_id: "template-1.schema".to_string(),
+        stream_content_key: "content".to_string(),
+        stream_reasoning_key: "content".to_string(),
+        allowlist: vec![],
+        proxy: DingtalkProxyConfig::default(),
+    }];
+
+    let err = validate(&cfg).expect_err("should fail");
+    assert!(format!("{err}").contains("stream_content_key and stream_reasoning_key"));
 }
 
 #[test]
@@ -970,6 +1047,7 @@ fn validate_fails_when_enabled_dingtalk_proxy_has_invalid_scheme() {
         stream_output: false,
         stream_template_id: String::new(),
         stream_content_key: "content".to_string(),
+        stream_reasoning_key: "reasoning".to_string(),
         allowlist: vec![],
         proxy: DingtalkProxyConfig {
             enabled: true,
@@ -994,6 +1072,7 @@ fn validate_fails_when_dingtalk_local_attachment_allowlist_is_relative() {
         stream_output: false,
         stream_template_id: String::new(),
         stream_content_key: "content".to_string(),
+        stream_reasoning_key: "reasoning".to_string(),
         allowlist: vec![],
         proxy: DingtalkProxyConfig::default(),
     }];

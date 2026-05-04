@@ -1,14 +1,14 @@
 use super::{
-    DingtalkStreamWriter,
+    DINGTALK_STREAM_MAX_CONTENT_BYTES, DingtalkStreamSnapshotParts, DingtalkStreamWriter,
     attachments::{
         build_unsupported_file_attachment_markdown, infer_dingtalk_file_type,
         supported_dingtalk_file_type,
     },
     client::{
         DingtalkApiClient, ProactiveChatTargetKind, build_ai_card_card_data,
-        build_create_and_deliver_ai_card_payload, build_proactive_markdown_payload,
-        build_streaming_ai_card_payload, ensure_ai_card_delivery_success,
-        proactive_chat_target_kind,
+        build_ai_card_card_data_from_pairs, build_create_and_deliver_ai_card_payload,
+        build_proactive_markdown_payload, build_streaming_ai_card_payload,
+        ensure_ai_card_delivery_success, proactive_chat_target_kind,
     },
     error::{DingtalkApiError, is_session_webhook_session_not_found_error},
     parsing::{
@@ -957,6 +957,53 @@ fn build_ai_card_card_data_uses_default_ai_template_keys() {
 }
 
 #[test]
+fn build_ai_card_card_data_from_pairs_initializes_multiple_template_keys() {
+    let payload = build_ai_card_card_data_from_pairs([("content", ""), ("reasoning", "")]);
+    assert_eq!(
+        payload
+            .pointer("/cardParamMap/content")
+            .and_then(serde_json::Value::as_str),
+        Some("")
+    );
+    assert_eq!(
+        payload
+            .pointer("/cardParamMap/reasoning")
+            .and_then(serde_json::Value::as_str),
+        Some("")
+    );
+}
+
+#[test]
+fn dingtalk_stream_writer_initial_card_data_preserves_legacy_content_shape() {
+    let writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
+        "reasoning".to_string(),
+        true,
+    );
+
+    let payload = writer.build_initial_card_data();
+
+    assert_eq!(
+        payload
+            .pointer("/cardParamMap/content")
+            .and_then(serde_json::Value::as_str),
+        Some("")
+    );
+    assert!(payload.pointer("/cardParamMap/reasoning").is_none());
+}
+
+#[test]
 fn build_create_and_deliver_ai_card_payload_targets_private_chat() {
     let payload = build_create_and_deliver_ai_card_payload(
         "template-1.schema",
@@ -1131,6 +1178,7 @@ async fn dingtalk_stream_writer_marks_special_cards_without_network_calls() {
         "staff-1".to_string(),
         "template-1.schema".to_string(),
         "content".to_string(),
+        "reasoning".to_string(),
         false,
     );
     let output = ChannelResponse {
@@ -1164,6 +1212,156 @@ async fn dingtalk_stream_writer_marks_special_cards_without_network_calls() {
     assert!(!writer.stream_failed);
 }
 
+#[test]
+fn dingtalk_stream_writer_splits_content_and_reasoning_template_values() {
+    let writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
+        "reasoning".to_string(),
+        true,
+    );
+    let output = ChannelResponse {
+        content: "hello".to_string(),
+        reasoning: Some("thinking".to_string()),
+        metadata: BTreeMap::new(),
+        attachments: Vec::new(),
+    };
+
+    let parts = writer.stream_snapshot_parts(&output);
+
+    assert_eq!(parts.content, "hello");
+    assert_eq!(parts.reasoning, "thinking");
+    assert!(!parts.content.contains("Reasoning"));
+}
+
+#[test]
+fn dingtalk_stream_writer_does_not_stream_initial_empty_reasoning() {
+    let writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
+        "reasoning".to_string(),
+        true,
+    );
+    let parts = DingtalkStreamSnapshotParts {
+        content: "hello".to_string(),
+        reasoning: String::new(),
+    };
+
+    assert!(!writer.should_stream_reasoning_update(&parts, false, false));
+}
+
+#[test]
+fn dingtalk_stream_writer_does_not_stream_initial_empty_content() {
+    let writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
+        "reasoning".to_string(),
+        true,
+    );
+    let parts = DingtalkStreamSnapshotParts {
+        content: String::new(),
+        reasoning: "thinking".to_string(),
+    };
+
+    assert!(!writer.should_stream_content_update(&parts, false, false));
+    assert!(writer.should_stream_reasoning_update(&parts, false, false));
+}
+
+#[test]
+fn dingtalk_stream_writer_uses_non_empty_placeholder_when_clearing_reasoning() {
+    assert_eq!(DingtalkStreamWriter::stream_api_content(""), " ");
+    assert_eq!(
+        DingtalkStreamWriter::stream_api_content("thinking"),
+        "thinking"
+    );
+}
+
+#[test]
+fn dingtalk_stream_writer_closes_unfinished_markdown_code_fence() {
+    let content = "Here is code:\n```rust\nfn main() {";
+
+    assert_eq!(
+        DingtalkStreamWriter::stream_api_content(content),
+        "Here is code:\n```rust\nfn main() {\n```"
+    );
+}
+
+#[test]
+fn dingtalk_stream_writer_finalizes_only_last_streaming_key() {
+    assert!(!DingtalkStreamWriter::content_finalize_flag(true, true));
+    assert!(DingtalkStreamWriter::content_finalize_flag(false, true));
+    assert!(!DingtalkStreamWriter::content_finalize_flag(true, false));
+}
+
+#[test]
+fn dingtalk_stream_writer_rejects_streaming_content_over_dingtalk_limit() {
+    let large_content = "a".repeat(DINGTALK_STREAM_MAX_CONTENT_BYTES + 1);
+    let err = DingtalkStreamWriter::validate_stream_api_content("content", &large_content)
+        .expect_err("oversized streaming update should fail before calling dingtalk");
+
+    assert!(err.contains("content"));
+    assert!(err.contains("exceeds dingtalk streaming limit"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dingtalk_stream_writer_clear_resets_content_and_reasoning_cache() {
+    let mut writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
+        "reasoning".to_string(),
+        true,
+    );
+    writer.last_content = Some("hello".to_string());
+    writer.last_reasoning = Some("thinking".to_string());
+
+    ChannelStreamWriter::write(&mut writer, ChannelStreamEvent::Clear)
+        .await
+        .expect("clear should succeed");
+
+    assert_eq!(writer.last_content, None);
+    assert_eq!(writer.last_reasoning, None);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn dingtalk_stream_writer_falls_back_after_stream_failure() {
     let mut writer = DingtalkStreamWriter::new(
@@ -1179,6 +1377,7 @@ async fn dingtalk_stream_writer_falls_back_after_stream_failure() {
         "staff-1".to_string(),
         "template-1.schema".to_string(),
         "content".to_string(),
+        "reasoning".to_string(),
         false,
     );
     let output = ChannelResponse {
