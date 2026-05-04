@@ -179,18 +179,6 @@ fn process_history_line(
     Ok(true)
 }
 
-pub async fn delete_chat_records(
-    paths: &StoragePaths,
-    session_key: &str,
-) -> Result<(), StorageError> {
-    let file_path = session_jsonl_path(paths, session_key);
-    match fs::remove_file(file_path).await {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(StorageError::WriteJsonl(err)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

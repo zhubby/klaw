@@ -68,6 +68,7 @@ impl TursoSessionStore {
                     model TEXT,
                     model_explicit INTEGER NOT NULL DEFAULT 0,
                     delivery_metadata_json TEXT,
+                    is_active INTEGER NOT NULL DEFAULT 1,
                     compression_last_len INTEGER NOT NULL DEFAULT 0,
                     compression_summary_json TEXT,
                     created_at_ms INTEGER NOT NULL,
@@ -340,6 +341,8 @@ impl TursoSessionStore {
         self.ensure_session_column("model_explicit", "INTEGER NOT NULL DEFAULT 0")
             .await?;
         self.ensure_session_column("delivery_metadata_json", "TEXT")
+            .await?;
+        self.ensure_session_column("is_active", "INTEGER NOT NULL DEFAULT 1")
             .await?;
         self.ensure_llm_audit_column("metadata_json", "TEXT")
             .await?;

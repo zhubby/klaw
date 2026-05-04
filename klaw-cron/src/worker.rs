@@ -568,6 +568,7 @@ mod tests {
                 model: None,
                 model_explicit: false,
                 delivery_metadata_json: None,
+                is_active: true,
                 created_at_ms: now_ms(),
                 updated_at_ms: now_ms(),
                 last_message_at_ms: now_ms(),

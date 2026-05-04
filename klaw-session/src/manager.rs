@@ -790,7 +790,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn manager_deletes_session_and_history() {
+    async fn manager_soft_deletes_session_and_preserves_history() {
         let store = create_store().await;
         let manager = SqliteSessionManager::from_store(store);
         manager
@@ -810,13 +810,17 @@ mod tests {
             .await
             .expect("delete should succeed");
         assert!(deleted);
-        assert!(
-            manager
-                .read_chat_records("websocket:delete-me")
-                .await
-                .expect("history should load")
-                .is_empty()
-        );
+        let deleted_again = manager
+            .delete_session("websocket:delete-me")
+            .await
+            .expect("second delete should succeed");
+        assert!(!deleted_again);
+        let history = manager
+            .read_chat_records("websocket:delete-me")
+            .await
+            .expect("history should load");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].content, "hello");
         assert!(manager.get_session("websocket:delete-me").await.is_err());
     }
 }

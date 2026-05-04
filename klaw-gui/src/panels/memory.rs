@@ -1884,6 +1884,7 @@ mod tests {
             model: None,
             model_explicit: false,
             delivery_metadata_json: None,
+            is_active: true,
             created_at_ms: 1,
             updated_at_ms: 2,
             last_message_at_ms: 2,
