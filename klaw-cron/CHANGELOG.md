@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-04
+
+### Fixed
+
+- Cron runs now skip before publishing inbound work when the routed base session is unavailable, logging the skip at debug level instead of executing against a deleted session.
+
 ## 2026-04-25
 
 ### Changed

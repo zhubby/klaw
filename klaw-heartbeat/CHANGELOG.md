@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-04
+
+### Fixed
+- heartbeat runs now skip before publishing inbound work when the bound session or routed active session is unavailable, logging the skip at debug level instead of executing against a deleted session.
+
 ## 2026-04-22
 
 ### Fixed

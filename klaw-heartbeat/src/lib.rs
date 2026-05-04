@@ -6,6 +6,7 @@ use klaw_storage::{
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use thiserror::Error;
+use tracing::debug;
 use uuid::Uuid;
 
 pub const TRIGGER_KIND_KEY: &str = "trigger.kind";
@@ -266,7 +267,10 @@ where
                 continue;
             }
 
-            if self.execute_job_run(&job, job.next_run_at_ms).await.is_ok() {
+            if matches!(
+                self.execute_job_run(&job, job.next_run_at_ms).await,
+                Ok(HeartbeatRunOutcome::Published(_))
+            ) {
                 executed += 1;
             }
         }
@@ -276,7 +280,10 @@ where
 
     pub async fn run_job_now(&self, heartbeat_id: &str) -> Result<String, HeartbeatError> {
         let job = self.storage.get_heartbeat(heartbeat_id).await?;
-        self.execute_job_run(&job, now_ms()).await
+        match self.execute_job_run(&job, now_ms()).await? {
+            HeartbeatRunOutcome::Published(message_id) => Ok(message_id),
+            HeartbeatRunOutcome::Skipped => Ok(String::new()),
+        }
     }
 
     pub async fn run_until_stopped(
@@ -297,7 +304,7 @@ where
         &self,
         job: &HeartbeatJob,
         scheduled_at_ms: i64,
-    ) -> Result<String, HeartbeatError> {
+    ) -> Result<HeartbeatRunOutcome, HeartbeatError> {
         let run_id = Uuid::new_v4().to_string();
         self.storage
             .append_heartbeat_task_run(&NewHeartbeatTaskRun {
@@ -314,7 +321,7 @@ where
             .await?;
 
         match self.publish_inbound(job).await {
-            Ok(message_id) => {
+            Ok(HeartbeatRunOutcome::Published(message_id)) => {
                 self.storage
                     .mark_heartbeat_task_result(
                         &run_id,
@@ -324,7 +331,19 @@ where
                         Some(&message_id),
                     )
                     .await?;
-                Ok(message_id)
+                Ok(HeartbeatRunOutcome::Published(message_id))
+            }
+            Ok(HeartbeatRunOutcome::Skipped) => {
+                self.storage
+                    .mark_heartbeat_task_result(
+                        &run_id,
+                        HeartbeatTaskStatus::Success,
+                        now_ms(),
+                        Some("skipped because session is unavailable"),
+                        None,
+                    )
+                    .await?;
+                Ok(HeartbeatRunOutcome::Skipped)
             }
             Err(err) => {
                 self.storage
@@ -341,11 +360,18 @@ where
         }
     }
 
-    async fn publish_inbound(&self, job: &HeartbeatJob) -> Result<String, HeartbeatError> {
-        let resolved_session_key = self
-            .resolve_active_session_key(&job.session_key)
-            .await?
-            .unwrap_or_else(|| job.session_key.clone());
+    async fn publish_inbound(
+        &self,
+        job: &HeartbeatJob,
+    ) -> Result<HeartbeatRunOutcome, HeartbeatError> {
+        let Some(resolved_session_key) = self.resolve_available_session_key(job).await? else {
+            debug!(
+                heartbeat_id = job.id.as_str(),
+                session_key = job.session_key.as_str(),
+                "skipping heartbeat run because session is unavailable"
+            );
+            return Ok(HeartbeatRunOutcome::Skipped);
+        };
         let mut payload = build_inbound_message(job);
         payload.session_key = resolved_session_key.clone();
         payload.metadata.insert(
@@ -376,20 +402,32 @@ where
             .publish(MessageTopic::Inbound.as_str(), envelope)
             .await
             .map_err(|err| HeartbeatError::Transport(err.to_string()))?;
-        Ok(message_id)
+        Ok(HeartbeatRunOutcome::Published(message_id))
     }
 
-    async fn resolve_active_session_key(
+    async fn resolve_available_session_key(
         &self,
-        session_key: &str,
+        job: &HeartbeatJob,
     ) -> Result<Option<String>, HeartbeatError> {
-        match self.storage.get_session(session_key).await {
-            Ok(session) => Ok(session
-                .active_session_key
-                .filter(|value| !value.trim().is_empty())),
-            Err(_) => Ok(None),
+        let Ok(session) = self.storage.get_session(&job.session_key).await else {
+            return Ok(None);
+        };
+        let Some(active_session_key) = session
+            .active_session_key
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(Some(job.session_key.clone()));
+        };
+        if self.storage.get_session(&active_session_key).await.is_err() {
+            return Ok(None);
         }
+        Ok(Some(active_session_key))
     }
+}
+
+enum HeartbeatRunOutcome {
+    Published(String),
+    Skipped,
 }
 
 pub fn build_inbound_message(job: &HeartbeatJob) -> InboundMessage {
@@ -979,6 +1017,49 @@ mod tests {
         );
         assert_eq!(history[1]["content"].as_str(), Some("keep-1"));
         assert_eq!(history[2]["content"].as_str(), Some("keep-2"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn worker_skips_when_bound_session_is_unavailable() {
+        let store = Arc::new(create_store().await);
+        store
+            .create_heartbeat(&NewHeartbeatJob {
+                id: "hb-deleted".to_string(),
+                session_key: "terminal:deleted".to_string(),
+                channel: "terminal".to_string(),
+                chat_id: "deleted".to_string(),
+                enabled: true,
+                every: "1m".to_string(),
+                prompt: String::new(),
+                silent_ack_token: DEFAULT_SILENT_ACK_TOKEN.to_string(),
+                recent_messages_limit: DEFAULT_RECENT_MESSAGES_LIMIT,
+                timezone: "UTC".to_string(),
+                next_run_at_ms: now_ms(),
+            })
+            .await
+            .expect("create heartbeat");
+        let transport = Arc::new(InMemoryTransport::<InboundMessage>::default());
+        let worker = HeartbeatWorker::new(
+            store.clone(),
+            transport.clone(),
+            HeartbeatWorkerConfig::default(),
+        );
+
+        let executed = worker.run_tick().await.expect("tick");
+
+        assert_eq!(executed, 0);
+        assert!(transport.published_messages().await.is_empty());
+        let runs = store
+            .list_heartbeat_task_runs("hb-deleted", 10, 0)
+            .await
+            .expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, HeartbeatTaskStatus::Success);
+        assert_eq!(
+            runs[0].error_message.as_deref(),
+            Some("skipped because session is unavailable")
+        );
+        assert!(runs[0].published_message_id.is_none());
     }
 
     #[tokio::test(flavor = "current_thread")]

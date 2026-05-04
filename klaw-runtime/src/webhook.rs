@@ -241,6 +241,37 @@ async fn process_webhook_event(
         }
         return;
     }
+    if let Some(base_session_key) = request
+        .base_session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        && webhook_session_unavailable(&manager, base_session_key).await
+    {
+        debug!(
+            webhook_kind = "events",
+            event_id = request.event_id.as_str(),
+            base_session_key,
+            "skipping webhook event before agent loop because session is unavailable"
+        );
+        let update = UpdateWebhookEventResult {
+            status: WebhookEventStatus::Processed,
+            error_message: None,
+            response_summary: None,
+            processed_at_ms: Some(now_ms()),
+        };
+        if let Err(err) = manager
+            .update_webhook_event_status(&request.event_id, &update)
+            .await
+        {
+            warn!(
+                error = %err,
+                webhook_event_id = request.event_id.as_str(),
+                "failed to persist skipped webhook event status"
+            );
+        }
+        return;
+    }
     let result = submit_webhook_event(runtime.as_ref(), &request).await;
     let update = match result {
         Ok(output) => UpdateWebhookEventResult {
@@ -345,6 +376,38 @@ async fn process_webhook_agent(
         }
         return;
     }
+    if let Some(base_session_key) = request
+        .base_session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        && webhook_session_unavailable(&manager, base_session_key).await
+    {
+        debug!(
+            webhook_kind = "agents",
+            request_id = request.request_id.as_str(),
+            hook_id = request.hook_id.as_str(),
+            base_session_key,
+            "skipping webhook agent before agent loop because session is unavailable"
+        );
+        let update = UpdateWebhookAgentResult {
+            status: WebhookEventStatus::Processed,
+            error_message: None,
+            response_summary: None,
+            processed_at_ms: Some(now_ms()),
+        };
+        if let Err(err) = manager
+            .update_webhook_agent_status(&request.request_id, &update)
+            .await
+        {
+            warn!(
+                error = %err,
+                webhook_request_id = request.request_id.as_str(),
+                "failed to persist skipped webhook agent status"
+            );
+        }
+        return;
+    }
     let result = submit_webhook_agent(runtime.as_ref(), &request, content).await;
     let update = match result {
         Ok(output) => UpdateWebhookAgentResult {
@@ -399,6 +462,19 @@ pub(crate) fn webhook_target_disabled_reason(
     session_key: &str,
 ) -> Option<String> {
     availability.disabled_reason(channel, session_key)
+}
+
+async fn webhook_session_unavailable(manager: &SqliteSessionManager, session_key: &str) -> bool {
+    let Ok(session) = manager.get_session(session_key).await else {
+        return true;
+    };
+    let Some(active_session_key) = session
+        .active_session_key
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return false;
+    };
+    manager.get_session(&active_session_key).await.is_err()
 }
 
 async fn load_webhook_agent_prompt(request: &GatewayWebhookAgentRequest) -> Result<String, String> {
@@ -465,10 +541,34 @@ fn _metadata_json(metadata: &BTreeMap<String, Value>) -> Result<String, serde_js
 
 #[cfg(test)]
 mod tests {
-    use super::{build_webhook_agent_content, webhook_target_disabled_reason};
+    use super::{
+        build_webhook_agent_content, webhook_session_unavailable, webhook_target_disabled_reason,
+    };
     use crate::service_loop::ChannelAvailability;
     use klaw_config::{AppConfig, ChannelsConfig, TelegramConfig};
+    use klaw_session::{SessionManager, SqliteSessionManager};
+    use klaw_storage::{DefaultSessionStore, StoragePaths};
     use serde_json::json;
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    async fn create_session_manager() -> SqliteSessionManager {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default();
+        let root =
+            std::env::temp_dir().join(format!("klaw-runtime-webhook-test-{now_ms}-{suffix}"));
+        let store = DefaultSessionStore::open(StoragePaths::from_root(root))
+            .await
+            .expect("session store should open");
+        SqliteSessionManager::from_store(store)
+    }
 
     #[test]
     fn build_webhook_agent_content_appends_only_pretty_json_block() {
@@ -508,5 +608,35 @@ mod tests {
             webhook_target_disabled_reason(&availability, "telegram", "telegram:bot-a:chat-1"),
             None
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn webhook_session_unavailable_tracks_base_and_active_session() {
+        let manager = create_session_manager().await;
+
+        assert!(webhook_session_unavailable(&manager, "telegram:bot-a:missing").await);
+
+        manager
+            .get_or_create_session_state(
+                "telegram:bot-a:chat-1",
+                "chat-1",
+                "telegram",
+                "openai",
+                "gpt-4o-mini",
+            )
+            .await
+            .expect("base session should be created");
+        assert!(!webhook_session_unavailable(&manager, "telegram:bot-a:chat-1").await);
+
+        manager
+            .set_active_session(
+                "telegram:bot-a:chat-1",
+                "chat-1",
+                "telegram",
+                "telegram:bot-a:deleted-child",
+            )
+            .await
+            .expect("active session should update");
+        assert!(webhook_session_unavailable(&manager, "telegram:bot-a:chat-1").await);
     }
 }

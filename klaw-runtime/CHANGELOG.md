@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-04
+
+### Fixed
+
+- Webhook event and agent processing now skip before entering the agent loop when the target base or active delivery session is unavailable, logging the skip at debug level instead of failing the request after acceptance.
+
 ## 2026-05-03
 
 ### Added

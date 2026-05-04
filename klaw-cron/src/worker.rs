@@ -2,6 +2,7 @@ use crate::{CronError, ScheduleSpec, time::now_ms};
 use klaw_core::{Envelope, EnvelopeHeader, InboundMessage, MessageTopic, MessageTransport};
 use klaw_storage::{CronJob, CronStorage, CronTaskStatus, NewCronTaskRun, SessionStorage};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use tracing::debug;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -72,7 +73,10 @@ where
                 continue;
             }
 
-            if self.execute_job_run(&job, job.next_run_at_ms).await.is_ok() {
+            if matches!(
+                self.execute_job_run(&job, job.next_run_at_ms).await,
+                Ok(JobRunOutcome::Published(_))
+            ) {
                 executed += 1;
             }
         }
@@ -82,7 +86,10 @@ where
 
     pub async fn run_job_now(&self, cron_id: &str) -> Result<String, CronError> {
         let job = self.storage.get_cron(cron_id).await?;
-        self.execute_job_run(&job, now_ms()).await
+        match self.execute_job_run(&job, now_ms()).await? {
+            JobRunOutcome::Published(message_id) => Ok(message_id),
+            JobRunOutcome::Skipped => Ok(String::new()),
+        }
     }
 
     pub async fn run_until_stopped(
@@ -99,11 +106,25 @@ where
         Ok(())
     }
 
-    async fn publish_inbound(&self, job: &CronJob, run_id: &str) -> Result<String, CronError> {
+    async fn publish_inbound(
+        &self,
+        job: &CronJob,
+        run_id: &str,
+    ) -> Result<JobRunOutcome, CronError> {
         let mut payload: InboundMessage = serde_json::from_str(&job.payload_json)?;
         let original_session_key = payload.session_key.clone();
         let execution_session_key = build_execution_session_key(&job.id, run_id);
         let base_session_key = infer_base_session_key(&payload);
+        if let Some(base_session_key) = base_session_key.as_deref()
+            && self.session_unavailable(base_session_key).await
+        {
+            debug!(
+                cron_id = job.id.as_str(),
+                session_key = base_session_key,
+                "skipping cron run because session is unavailable"
+            );
+            return Ok(JobRunOutcome::Skipped);
+        }
         let delivery_session_key = self
             .resolve_delivery_session_key(&payload)
             .await?
@@ -162,7 +183,11 @@ where
         self.transport
             .publish(MessageTopic::Inbound.as_str(), envelope)
             .await?;
-        Ok(message_id)
+        Ok(JobRunOutcome::Published(message_id))
+    }
+
+    async fn session_unavailable(&self, session_key: &str) -> bool {
+        self.storage.get_session(session_key).await.is_err()
     }
 
     async fn refresh_session_delivery_metadata(
@@ -188,7 +213,7 @@ where
         &self,
         job: &CronJob,
         scheduled_at_ms: i64,
-    ) -> Result<String, CronError> {
+    ) -> Result<JobRunOutcome, CronError> {
         let run_id = Uuid::new_v4().to_string();
         self.storage
             .append_task_run(&NewCronTaskRun {
@@ -203,7 +228,7 @@ where
         self.storage.mark_task_running(&run_id, now_ms()).await?;
 
         match self.publish_inbound(job, &run_id).await {
-            Ok(message_id) => {
+            Ok(JobRunOutcome::Published(message_id)) => {
                 self.storage
                     .mark_task_result(
                         &run_id,
@@ -213,7 +238,19 @@ where
                         Some(&message_id),
                     )
                     .await?;
-                Ok(message_id)
+                Ok(JobRunOutcome::Published(message_id))
+            }
+            Ok(JobRunOutcome::Skipped) => {
+                self.storage
+                    .mark_task_result(
+                        &run_id,
+                        CronTaskStatus::Success,
+                        now_ms(),
+                        Some("skipped because session is unavailable"),
+                        None,
+                    )
+                    .await?;
+                Ok(JobRunOutcome::Skipped)
             }
             Err(err) => {
                 self.storage
@@ -245,6 +282,11 @@ where
             Err(_) => Ok(None),
         }
     }
+}
+
+enum JobRunOutcome {
+    Published(String),
+    Skipped,
 }
 
 fn build_execution_session_key(job_id: &str, run_id: &str) -> String {
@@ -1524,6 +1566,10 @@ mod tests {
     async fn run_tick_uses_isolated_execution_session_when_no_active_route_exists() {
         let storage = Arc::new(FakeStorage::default());
         let transport = Arc::new(InMemoryTransport::new());
+        storage
+            .touch_session("dingtalk:acc:chat1", "chat1", "dingtalk")
+            .await
+            .expect("base session");
         insert_due_job(
             &storage,
             "job-fallback",
@@ -1543,6 +1589,37 @@ mod tests {
             messages[0].header.session_key,
             messages[0].payload.session_key
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_tick_skips_when_base_session_is_unavailable() {
+        let storage = Arc::new(FakeStorage::default());
+        let transport = Arc::new(InMemoryTransport::new());
+        insert_due_job(
+            &storage,
+            "job-deleted",
+            "dingtalk",
+            "cron:job-deleted",
+            "{\"cron.base_session_key\":\"dingtalk:acc:deleted\"}",
+        )
+        .await;
+
+        let worker = test_worker(&storage, &transport);
+        let executed = worker.run_tick().await.expect("tick");
+
+        assert_eq!(executed, 0);
+        assert!(transport.published_messages().await.is_empty());
+        let runs = storage
+            .list_task_runs("job-deleted", 10, 0)
+            .await
+            .expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, CronTaskStatus::Success);
+        assert_eq!(
+            runs[0].error_message.as_deref(),
+            Some("skipped because session is unavailable")
+        );
+        assert!(runs[0].published_message_id.is_none());
     }
 
     #[tokio::test(flavor = "current_thread")]
