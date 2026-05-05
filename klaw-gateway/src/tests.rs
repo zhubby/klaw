@@ -149,14 +149,22 @@ mod tests {
         async fn submit(
             &self,
             request: GatewayWebsocketSubmitRequest,
-            frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+            frame_tx: mpsc::Sender<GatewayWebsocketServerFrame>,
         ) -> Result<(), GatewayWebsocketHandlerError> {
             self.requests
                 .lock()
                 .unwrap_or_else(|err| err.into_inner())
                 .push(request.clone());
+            if request.input == "__fail__" {
+                return Err(GatewayWebsocketHandlerError::internal(
+                    "simulated submit failure",
+                ));
+            }
+            if request.input == "__hold__" {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
             frame_tx
-                .send(GatewayWebsocketServerFrame::Result {
+                .try_send(GatewayWebsocketServerFrame::Result {
                     id: request.request_id,
                     result: json!({
                         "response": {
@@ -1062,7 +1070,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn websocket_v1_server_request_responses_emit_resolved_notification() {
+    async fn websocket_v1_server_request_responses_return_not_implemented_error() {
         let config = test_gateway_config();
         let handle = match spawn_gateway_with_options(
             &config,
@@ -1108,43 +1116,22 @@ mod tests {
         let result = socket
             .next()
             .await
-            .expect("approval response result")
+            .expect("approval response error")
             .expect("approval response message");
         let Message::Text(text) = result else {
-            panic!("unexpected approval result frame: {result:?}");
+            panic!("unexpected approval error frame: {result:?}");
         };
         let result =
-            serde_json::from_str::<serde_json::Value>(&text).expect("approval result should parse");
+            serde_json::from_str::<serde_json::Value>(&text).expect("approval error should parse");
         assert_eq!(
             result.get("id").and_then(|value| value.as_str()),
             Some("approval-response-1")
         );
         assert_eq!(
             result
-                .pointer("/result/resolved/request_id")
+                .pointer("/error/code")
                 .and_then(|value| value.as_str()),
-            Some("srv_req_1")
-        );
-
-        let resolved = socket
-            .next()
-            .await
-            .expect("resolved notification")
-            .expect("resolved message");
-        let Message::Text(text) = resolved else {
-            panic!("unexpected resolved frame: {resolved:?}");
-        };
-        let resolved = serde_json::from_str::<serde_json::Value>(&text)
-            .expect("resolved notification should parse");
-        assert_eq!(
-            resolved.get("method").and_then(|value| value.as_str()),
-            Some("serverRequest/resolved")
-        );
-        assert_eq!(
-            resolved
-                .pointer("/params/request_id")
-                .and_then(|value| value.as_str()),
-            Some("srv_req_1")
+            Some("method_not_found")
         );
 
         handle.shutdown().await.expect("gateway should stop");
@@ -1175,6 +1162,34 @@ mod tests {
             .await
             .expect("websocket should connect");
         let _connected = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "turn-start-1",
+                    "method": "turn/start",
+                    "params": {
+                        "session_id": "websocket:v1-session",
+                        "thread_id": "thr_v1",
+                        "turn_id": "turn_v1",
+                        "input": [{ "type": "text", "text": "__hold__" }]
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("turn/start should send");
+        let _start_result = socket
+            .next()
+            .await
+            .expect("turn/start result")
+            .expect("turn/start result message");
+        let _started_event = socket
+            .next()
+            .await
+            .expect("turn/started event")
+            .expect("turn/started event message");
 
         socket
             .send(Message::Text(
@@ -1233,6 +1248,183 @@ mod tests {
                 .pointer("/params/turn_id")
                 .and_then(|value| value.as_str()),
             Some("turn_v1")
+        );
+        assert!(
+            timeout(Duration::from_millis(100), socket.next())
+                .await
+                .is_err(),
+            "cancelled turn should not emit a later completion frame"
+        );
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_v1_turn_start_failure_emits_turn_failed_event() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _connected = socket.next().await;
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "turn-fail-1",
+                    "method": "turn/start",
+                    "params": {
+                        "session_id": "websocket:v1-session",
+                        "thread_id": "thr_v1",
+                        "turn_id": "turn_fail_v1",
+                        "input": [{ "type": "text", "text": "__fail__" }]
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("turn/start should send");
+
+        let _start_result = socket
+            .next()
+            .await
+            .expect("turn/start result")
+            .expect("turn/start result message");
+        let _started_event = socket
+            .next()
+            .await
+            .expect("turn/started event")
+            .expect("turn/started event message");
+        let failed = socket
+            .next()
+            .await
+            .expect("turn/failed event")
+            .expect("turn/failed event message");
+        let Message::Text(text) = failed else {
+            panic!("unexpected failed frame: {failed:?}");
+        };
+        let failed =
+            serde_json::from_str::<serde_json::Value>(&text).expect("failed event should parse");
+        assert_eq!(
+            failed.get("method").and_then(|value| value.as_str()),
+            Some("turn/failed")
+        );
+        assert_eq!(
+            failed
+                .pointer("/params/error/code")
+                .and_then(|value| value.as_str()),
+            Some("internal_error")
+        );
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_v1_turn_start_enforces_active_turn_limit() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        let _connected = socket.next().await;
+
+        for index in 0..crate::websocket::GATEWAY_WEBSOCKET_MAX_ACTIVE_TURNS_PER_CONNECTION {
+            socket
+                .send(Message::Text(
+                    json!({
+                        "id": format!("turn-start-{index}"),
+                        "method": "turn/start",
+                        "params": {
+                            "session_id": "websocket:v1-session",
+                            "thread_id": "thr_v1",
+                            "turn_id": format!("turn_v1_{index}"),
+                            "input": [{ "type": "text", "text": "__hold__" }]
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("turn/start should send");
+            let _start_result = socket
+                .next()
+                .await
+                .expect("turn/start result")
+                .expect("turn/start result message");
+            let _started_event = socket
+                .next()
+                .await
+                .expect("turn/started event")
+                .expect("turn/started event message");
+        }
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "turn-start-over-limit",
+                    "method": "turn/start",
+                    "params": {
+                        "session_id": "websocket:v1-session",
+                        "thread_id": "thr_v1",
+                        "turn_id": "turn_v1_over_limit",
+                        "input": [{ "type": "text", "text": "__hold__" }]
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("over limit turn/start should send");
+
+        let error = socket
+            .next()
+            .await
+            .expect("over limit error")
+            .expect("over limit error message");
+        let Message::Text(text) = error else {
+            panic!("unexpected over limit frame: {error:?}");
+        };
+        let error = serde_json::from_str::<serde_json::Value>(&text).expect("error should parse");
+        assert_eq!(
+            error
+                .pointer("/error/code")
+                .and_then(|value| value.as_str()),
+            Some("too_many_active_turns")
         );
 
         handle.shutdown().await.expect("gateway should stop");

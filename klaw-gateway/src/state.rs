@@ -1,7 +1,7 @@
 use crate::{
     GatewayError,
     webhook::GatewayWebhookHandler,
-    websocket::{GatewayWebsocketHandler, GatewayWebsocketServerFrame},
+    websocket::{GatewayWebsocketFrameTx, GatewayWebsocketHandler, GatewayWebsocketServerFrame},
 };
 use crate::{
     auth::WebhookAuth,
@@ -17,7 +17,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    sync::{RwLock, mpsc, oneshot},
+    sync::{RwLock, oneshot},
     task::JoinHandle,
 };
 
@@ -43,7 +43,7 @@ pub struct GatewayProvidersState {
 pub(crate) struct GatewayWebsocketConnection {
     pub(crate) current_session_key: Option<String>,
     pub(crate) subscribed_session_keys: BTreeSet<String>,
-    pub(crate) frame_tx: Option<mpsc::UnboundedSender<GatewayWebsocketServerFrame>>,
+    pub(crate) frame_tx: Option<GatewayWebsocketFrameTx>,
 }
 
 #[derive(Debug, Default)]
@@ -61,7 +61,7 @@ impl GatewayWebsocketBroadcaster {
         &self,
         connection_id: String,
         session_key: Option<String>,
-        frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+        frame_tx: GatewayWebsocketFrameTx,
     ) {
         let subscribed_session_keys = session_key.iter().cloned().collect();
         self.connections.write().await.insert(
@@ -111,7 +111,7 @@ impl GatewayWebsocketBroadcaster {
                     stale_connection_ids.push(connection_id.clone());
                     continue;
                 };
-                if frame_tx.send(frame.clone()).is_ok() {
+                if frame_tx.try_send(frame.clone()).is_ok() {
                     delivered += 1;
                 } else {
                     stale_connection_ids.push(connection_id.clone());
@@ -133,6 +133,7 @@ impl GatewayWebsocketBroadcaster {
 #[cfg(test)]
 mod tests {
     use super::GatewayWebsocketBroadcaster;
+    use crate::websocket::GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY;
     use crate::{GatewayWebsocketServerFrame, OutboundEvent};
     use serde_json::json;
     use tokio::sync::mpsc;
@@ -140,7 +141,7 @@ mod tests {
     #[tokio::test]
     async fn broadcaster_keeps_all_tracked_sessions_for_connection() {
         let broadcaster = GatewayWebsocketBroadcaster::new();
-        let (frame_tx, mut frame_rx) = mpsc::unbounded_channel();
+        let (frame_tx, mut frame_rx) = mpsc::channel(GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY);
         broadcaster
             .register(
                 "conn-1".to_string(),
@@ -180,7 +181,7 @@ mod tests {
     #[tokio::test]
     async fn broadcaster_clear_session_keys_removes_all_subscriptions() {
         let broadcaster = GatewayWebsocketBroadcaster::new();
-        let (frame_tx, _frame_rx) = mpsc::unbounded_channel();
+        let (frame_tx, _frame_rx) = mpsc::channel(GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY);
         broadcaster
             .register(
                 "conn-1".to_string(),

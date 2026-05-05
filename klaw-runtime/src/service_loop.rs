@@ -1379,7 +1379,7 @@ mod tests {
             .expect("session should exist");
 
         let broadcaster = GatewayWebsocketBroadcaster::new();
-        let (frame_tx, mut frame_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(256);
         broadcaster
             .register(
                 "conn-1".to_string(),
@@ -1441,7 +1441,7 @@ mod tests {
             .expect("session should exist");
 
         let broadcaster = GatewayWebsocketBroadcaster::new();
-        let (frame_tx, mut frame_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(256);
         broadcaster
             .register(
                 "conn-1".to_string(),

@@ -17,8 +17,15 @@ use axum::{
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, sync::Arc};
-use tokio::{spawn, sync::mpsc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
+use tokio::{
+    spawn,
+    sync::{RwLock, mpsc},
+    task::AbortHandle,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, strum::EnumString, strum::AsRefStr)]
@@ -53,6 +60,18 @@ pub const META_WEBSOCKET_V1_TURN_ID: &str = "channel.websocket.v1.turn_id";
 pub const GATEWAY_WEBSOCKET_MAX_TEXT_FRAME_BYTES: usize = 1024 * 1024;
 pub const GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY: usize = 256;
 pub const GATEWAY_WEBSOCKET_MAX_ACTIVE_TURNS_PER_CONNECTION: usize = 4;
+
+pub type GatewayWebsocketFrameTx = mpsc::Sender<GatewayWebsocketServerFrame>;
+
+type ActiveTurns = Arc<RwLock<HashMap<String, ActiveTurn>>>;
+
+struct ActiveTurn {
+    session_id: String,
+    thread_id: String,
+    turn_id: String,
+    request_id: String,
+    abort_handle: AbortHandle,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, strum::EnumString, strum::AsRefStr)]
 #[strum(serialize_all = "snake_case")]
@@ -349,7 +368,7 @@ pub trait GatewayWebsocketHandler: Send + Sync {
     async fn submit(
         &self,
         request: GatewayWebsocketSubmitRequest,
-        frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+        frame_tx: GatewayWebsocketFrameTx,
     ) -> Result<(), GatewayWebsocketHandlerError>;
 }
 
@@ -452,21 +471,6 @@ struct SessionSubmitParams {
 }
 
 #[derive(Debug, Deserialize)]
-struct V1ServerRequestResponseParams {
-    request_id: String,
-    thread_id: String,
-    turn_id: String,
-    #[serde(default)]
-    item_id: Option<String>,
-    #[serde(default)]
-    decision: Option<Value>,
-    #[serde(default)]
-    result: Option<Value>,
-    #[serde(default)]
-    answers: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
 struct V1TurnControlParams {
     #[serde(default, alias = "session_key")]
     session_id: Option<String>,
@@ -515,7 +519,9 @@ async fn handle_socket(
     mut socket: WebSocket,
 ) {
     let connection_id = Uuid::new_v4().to_string();
-    let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<GatewayWebsocketServerFrame>();
+    let (outgoing_tx, mut outgoing_rx) =
+        mpsc::channel::<GatewayWebsocketServerFrame>(GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY);
+    let active_turns: ActiveTurns = Arc::new(RwLock::new(HashMap::new()));
     register_connection(
         &state,
         &connection_id,
@@ -526,7 +532,7 @@ async fn handle_socket(
 
     let mut current_session_key = initial_session_key;
     if outgoing_tx
-        .send(GatewayWebsocketServerFrame::Event {
+        .try_send(GatewayWebsocketServerFrame::Event {
             event: OutboundEvent::SessionConnected,
             payload: json!({
                 "connection_id": connection_id,
@@ -559,6 +565,7 @@ async fn handle_socket(
                             &state,
                             &connection_id,
                             &mut current_session_key,
+                            Arc::clone(&active_turns),
                             &text,
                             outgoing_tx.clone(),
                         )
@@ -594,6 +601,7 @@ async fn handle_socket(
         }
     }
 
+    abort_active_turns(&active_turns).await;
     cleanup_connection(state, connection_id).await;
 }
 
@@ -601,8 +609,9 @@ async fn handle_text_message(
     state: &Arc<GatewayState>,
     connection_id: &str,
     current_session_key: &mut Option<String>,
+    active_turns: ActiveTurns,
     text: &str,
-    outgoing_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    outgoing_tx: GatewayWebsocketFrameTx,
 ) -> Vec<GatewayWebsocketServerFrame> {
     if text.len() > GATEWAY_WEBSOCKET_MAX_TEXT_FRAME_BYTES {
         return vec![protocol_error_frame_with_data(
@@ -632,6 +641,7 @@ async fn handle_text_message(
             state,
             connection_id,
             current_session_key,
+            active_turns,
             raw_value,
             outgoing_tx,
         )
@@ -1064,7 +1074,7 @@ async fn handle_text_message(
                             )
                             .await;
                         if let Err(err) = result {
-                            let _ = outgoing_tx.send(GatewayWebsocketServerFrame::Error {
+                            let _ = outgoing_tx.try_send(GatewayWebsocketServerFrame::Error {
                                 id: Some(id),
                                 error: GatewayWebsocketErrorFrame {
                                     code: err.code,
@@ -1085,8 +1095,9 @@ async fn handle_protocol_message(
     state: &Arc<GatewayState>,
     connection_id: &str,
     current_session_key: &mut Option<String>,
+    active_turns: ActiveTurns,
     raw_value: Value,
-    outgoing_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    outgoing_tx: GatewayWebsocketFrameTx,
 ) -> Vec<GatewayWebsocketServerFrame> {
     let id = raw_value
         .get("id")
@@ -1489,6 +1500,7 @@ async fn handle_protocol_message(
                 state,
                 connection_id,
                 current_session_key,
+                active_turns,
                 id,
                 params,
                 outgoing_tx,
@@ -1498,44 +1510,11 @@ async fn handle_protocol_message(
         GatewayProtocolMethod::ApprovalRespond
         | GatewayProtocolMethod::ToolRespond
         | GatewayProtocolMethod::UserInputRespond => {
-            let Some(id) = id else {
-                return vec![protocol_error_frame(
-                    None,
-                    GatewayProtocolErrorCode::InvalidRequest,
-                    "server request response methods require an id",
-                )];
-            };
-            let params = match serde_json::from_value::<V1ServerRequestResponseParams>(params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return vec![protocol_error_frame(
-                        Some(id),
-                        GatewayProtocolErrorCode::InvalidParams,
-                        format!("invalid server request response params: {err}"),
-                    )];
-                }
-            };
-            let resolved = json!({
-                "thread_id": params.thread_id,
-                "turn_id": params.turn_id,
-                "request_id": params.request_id,
-                "item_id": params.item_id,
-            });
-            vec![
-                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::success(
-                    id,
-                    json!({
-                        "resolved": resolved,
-                        "decision": params.decision,
-                        "result": params.result,
-                        "answers": params.answers,
-                    }),
-                )),
-                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
-                    GatewayProtocolMethod::ServerRequestResolved,
-                    resolved,
-                )),
-            ]
+            vec![protocol_error_frame(
+                id,
+                GatewayProtocolErrorCode::MethodNotFound,
+                "gateway websocket v1 server request responses are not wired to runtime handling yet",
+            )]
         }
         GatewayProtocolMethod::TurnCancel => {
             let Some(id) = id else {
@@ -1555,31 +1534,7 @@ async fn handle_protocol_message(
                     )];
                 }
             };
-            let session_id = params
-                .session_id
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .or_else(|| current_session_key.clone());
-            let payload = json!({
-                "session_id": session_id,
-                "thread_id": params.thread_id,
-                "turn_id": params.turn_id,
-                "request_id": id,
-                "status": GatewayTurnStatus::Interrupted,
-            });
-            vec![
-                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::success(
-                    id,
-                    json!({
-                        "status": GatewayTurnStatus::Interrupted,
-                        "turn": payload,
-                    }),
-                )),
-                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
-                    GatewayProtocolMethod::TurnInterrupted,
-                    payload,
-                )),
-            ]
+            handle_protocol_turn_cancel(active_turns, id, params).await
         }
         _ => vec![protocol_error_frame(
             id,
@@ -1593,9 +1548,10 @@ async fn handle_protocol_turn_start(
     state: &Arc<GatewayState>,
     connection_id: &str,
     current_session_key: &mut Option<String>,
+    active_turns: ActiveTurns,
     request_id: String,
     params: V1TurnStartParams,
-    outgoing_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    outgoing_tx: GatewayWebsocketFrameTx,
 ) -> Vec<GatewayWebsocketServerFrame> {
     let Some(websocket) = state.websocket.as_ref() else {
         return vec![protocol_error_frame(
@@ -1637,6 +1593,27 @@ async fn handle_protocol_turn_start(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("turn_{request_id}"));
+    {
+        let active = active_turns.read().await;
+        if active.len() >= GATEWAY_WEBSOCKET_MAX_ACTIVE_TURNS_PER_CONNECTION {
+            return vec![protocol_error_frame_with_data(
+                Some(request_id),
+                GatewayProtocolErrorCode::TooManyActiveTurns,
+                "too many active websocket v1 turns for this connection",
+                json!({
+                    "max_active_turns": GATEWAY_WEBSOCKET_MAX_ACTIVE_TURNS_PER_CONNECTION,
+                    "retryable": true,
+                }),
+            )];
+        }
+        if active.contains_key(&turn_id) {
+            return vec![protocol_error_frame(
+                Some(request_id),
+                GatewayProtocolErrorCode::InvalidParams,
+                "turn/start received a duplicate active turn_id",
+            )];
+        }
+    }
     let channel_id = params
         .channel_id
         .map(|value| value.trim().to_string())
@@ -1678,15 +1655,17 @@ async fn handle_protocol_turn_start(
     let submit_request_id = request_id.clone();
     let submit_session_id = session_id.clone();
     let submit_thread_id = thread_id.clone();
-    spawn(async move {
+    let submit_turn_id = turn_id.clone();
+    let active_turns_for_task = Arc::clone(&active_turns);
+    let handle = spawn(async move {
         let result = handler
             .submit(
                 GatewayWebsocketSubmitRequest {
                     connection_id: submit_connection_id,
                     request_id: submit_request_id.clone(),
                     channel_id,
-                    session_key: submit_session_id,
-                    chat_id: submit_thread_id,
+                    session_key: submit_session_id.clone(),
+                    chat_id: submit_thread_id.clone(),
                     input,
                     attachments,
                     metadata,
@@ -1696,13 +1675,29 @@ async fn handle_protocol_turn_start(
             )
             .await;
         if let Err(err) = result {
-            let _ = outgoing_tx.send(protocol_error_frame(
-                Some(submit_request_id),
-                GatewayProtocolErrorCode::InternalError,
-                err.message,
+            let _ = outgoing_tx.try_send(v1_turn_failed_frame(
+                &submit_session_id,
+                &submit_thread_id,
+                &submit_turn_id,
+                &submit_request_id,
+                err,
             ));
         }
+        active_turns_for_task.write().await.remove(&submit_turn_id);
     });
+    active_turns.write().await.insert(
+        turn_id.clone(),
+        ActiveTurn {
+            session_id: session_id.clone(),
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            request_id: request_id.clone(),
+            abort_handle: handle.abort_handle(),
+        },
+    );
+    if handle.is_finished() {
+        active_turns.write().await.remove(&turn_id);
+    }
 
     let turn = GatewayWebsocketTurnStarted {
         session_id,
@@ -1722,6 +1717,84 @@ async fn handle_protocol_turn_start(
             json!(turn),
         )),
     ]
+}
+
+async fn handle_protocol_turn_cancel(
+    active_turns: ActiveTurns,
+    request_id: String,
+    params: V1TurnControlParams,
+) -> Vec<GatewayWebsocketServerFrame> {
+    let Some(active_turn) = active_turns.write().await.remove(&params.turn_id) else {
+        return vec![protocol_error_frame(
+            Some(request_id),
+            GatewayProtocolErrorCode::TurnNotFound,
+            "turn/cancel could not find an active turn with the requested turn_id",
+        )];
+    };
+    if active_turn.thread_id != params.thread_id {
+        active_turns
+            .write()
+            .await
+            .insert(active_turn.turn_id.clone(), active_turn);
+        return vec![protocol_error_frame(
+            Some(request_id),
+            GatewayProtocolErrorCode::ThreadNotFound,
+            "turn/cancel thread_id does not match the active turn",
+        )];
+    }
+    active_turn.abort_handle.abort();
+    let payload = json!({
+        "session_id": params
+            .session_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(active_turn.session_id),
+        "thread_id": active_turn.thread_id,
+        "turn_id": active_turn.turn_id,
+        "request_id": active_turn.request_id,
+        "status": GatewayTurnStatus::Interrupted,
+    });
+    vec![
+        GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::success(
+            request_id,
+            json!({
+                "status": GatewayTurnStatus::Interrupted,
+                "turn": payload,
+            }),
+        )),
+        GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+            GatewayProtocolMethod::TurnInterrupted,
+            payload,
+        )),
+    ]
+}
+
+async fn abort_active_turns(active_turns: &ActiveTurns) {
+    let active = std::mem::take(&mut *active_turns.write().await);
+    for (_, active_turn) in active {
+        active_turn.abort_handle.abort();
+    }
+}
+
+fn v1_turn_failed_frame(
+    session_id: &str,
+    thread_id: &str,
+    turn_id: &str,
+    request_id: &str,
+    err: GatewayWebsocketHandlerError,
+) -> GatewayWebsocketServerFrame {
+    let error = handler_protocol_error(err);
+    GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+        GatewayProtocolMethod::TurnFailed,
+        json!({
+            "session_id": session_id,
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "request_id": request_id,
+            "status": GatewayTurnStatus::Failed,
+            "error": error,
+        }),
+    ))
 }
 
 fn render_v1_input(input: &[GatewayContentBlock]) -> String {
@@ -1835,6 +1908,11 @@ fn handler_protocol_error_frame(
     id: Option<String>,
     err: GatewayWebsocketHandlerError,
 ) -> GatewayWebsocketServerFrame {
+    let error = handler_protocol_error(err);
+    GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::Error { id, error })
+}
+
+fn handler_protocol_error(err: GatewayWebsocketHandlerError) -> GatewayProtocolError {
     let code = match err.code.as_str() {
         "invalid_request" => GatewayProtocolErrorCode::InvalidParams,
         "session_not_found" | "missing_session" => GatewayProtocolErrorCode::SessionNotFound,
@@ -1844,21 +1922,18 @@ fn handler_protocol_error_frame(
         "timeout" => GatewayProtocolErrorCode::Timeout,
         _ => GatewayProtocolErrorCode::InternalError,
     };
-    GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::Error {
-        id,
-        error: GatewayProtocolError {
-            code,
-            message: err.message,
-            data: err.data,
-        },
-    })
+    GatewayProtocolError {
+        code,
+        message: err.message,
+        data: err.data,
+    }
 }
 
 async fn register_connection(
     state: &GatewayState,
     connection_id: &str,
     session_key: Option<String>,
-    frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    frame_tx: GatewayWebsocketFrameTx,
 ) {
     state
         .websocket_broadcaster

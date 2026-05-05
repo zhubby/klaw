@@ -9,16 +9,16 @@ use klaw_gateway::{
     GatewayProtocolMethod, GatewayProviderCatalog, GatewayProviderEntry, GatewayRpcMessage,
     GatewaySessionHistoryMessage, GatewaySessionHistoryPage, GatewayThreadItem,
     GatewayThreadItemStatus, GatewayThreadItemType, GatewayTurnStatus,
-    GatewayWebsocketAttachmentRef, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
-    GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-    GatewayWorkspaceSession, META_WEBSOCKET_V1_THREAD_ID, META_WEBSOCKET_V1_TURN_ID, OutboundEvent,
+    GatewayWebsocketAttachmentRef, GatewayWebsocketFrameTx, GatewayWebsocketHandler,
+    GatewayWebsocketHandlerError, GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest,
+    GatewayWorkspaceBootstrap, GatewayWorkspaceSession, META_WEBSOCKET_V1_THREAD_ID,
+    META_WEBSOCKET_V1_TURN_ID, OutboundEvent,
 };
 use klaw_heartbeat::{HeartbeatManager, should_exclude_chat_record_from_context};
 use klaw_session::{SessionHistoryPage, SessionListQuery, SessionManager};
 use klaw_storage::{ChatRecord, StorageError};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub fn build_gateway_websocket_handler(
@@ -310,7 +310,7 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
     async fn submit(
         &self,
         request: GatewayWebsocketSubmitRequest,
-        frame_tx: mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+        frame_tx: GatewayWebsocketFrameTx,
     ) -> Result<(), GatewayWebsocketHandlerError> {
         let config = self.resolve_config(&request.channel_id)?;
         let stream_output = request.stream.unwrap_or(config.stream_output);
@@ -476,7 +476,7 @@ impl GatewayStreamState {
 impl GatewayStreamState {
     fn push_event(
         &mut self,
-        frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+        frame_tx: &GatewayWebsocketFrameTx,
         request_id: &str,
         session_key: &str,
         show_reasoning: bool,
@@ -553,7 +553,7 @@ impl GatewayStreamState {
 }
 
 fn send_v1_item_started(
-    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    frame_tx: &GatewayWebsocketFrameTx,
     context: &GatewayV1StreamContext,
     response: &ChannelResponse,
     show_reasoning: bool,
@@ -584,7 +584,7 @@ fn send_v1_item_started(
 }
 
 fn send_v1_agent_delta(
-    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    frame_tx: &GatewayWebsocketFrameTx,
     context: &GatewayV1StreamContext,
     delta: &str,
 ) -> Result<(), GatewayWebsocketHandlerError> {
@@ -604,7 +604,7 @@ fn send_v1_agent_delta(
 }
 
 fn send_v1_item_completed(
-    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    frame_tx: &GatewayWebsocketFrameTx,
     context: &GatewayV1StreamContext,
     response: Option<&ChannelResponse>,
     show_reasoning: bool,
@@ -635,7 +635,7 @@ fn send_v1_item_completed(
 }
 
 fn send_v1_turn_finished(
-    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    frame_tx: &GatewayWebsocketFrameTx,
     context: &GatewayV1StreamContext,
     method: GatewayProtocolMethod,
     status: GatewayTurnStatus,
@@ -658,11 +658,11 @@ fn send_v1_turn_finished(
 }
 
 fn send_frame(
-    frame_tx: &mpsc::UnboundedSender<GatewayWebsocketServerFrame>,
+    frame_tx: &GatewayWebsocketFrameTx,
     frame: GatewayWebsocketServerFrame,
 ) -> Result<(), GatewayWebsocketHandlerError> {
-    frame_tx.send(frame).map_err(|_| {
-        GatewayWebsocketHandlerError::internal("websocket connection closed before frame delivery")
+    frame_tx.try_send(frame).map_err(|err| {
+        GatewayWebsocketHandlerError::internal(format!("websocket frame delivery failed: {err}"))
     })
 }
 
@@ -701,7 +701,7 @@ fn stream_events_to_frames_with_identity(
             request_id: request_id.to_string(),
             agent_message_item_id: format!("item_agent_{turn_id}"),
         });
-    let (frame_tx, mut frame_rx) = mpsc::unbounded_channel();
+    let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(256);
     let mut stream_state = GatewayStreamState::new(v1_context);
     for event in events {
         stream_state
