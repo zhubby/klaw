@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_session_is_active() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRecord {
     pub ts_ms: i64,
@@ -52,6 +56,8 @@ pub struct SessionIndex {
     pub model_explicit: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery_metadata_json: Option<String>,
+    #[serde(default = "default_session_is_active")]
+    pub is_active: bool,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub last_message_at_ms: i64,

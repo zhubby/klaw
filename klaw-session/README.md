@@ -7,6 +7,7 @@
 - Defines the `SessionManager` trait for session lifecycle workflows
 - Provides `SqliteSessionManager` as the default manager backed by the workspace storage layer
 - Supports session listing, lookup, route-state initialization, explicit provider/model override updates, override clearing, and chat history read/write
+- Deletes sessions through storage soft-delete semantics, hiding inactive sessions while preserving stored history
 - Exposes append/list access for persisted `llm_audit` and `tool_audit` diagnostic records
 - Normalizes session list pagination, optional `channel` filtering, and `updated_at` sort selection through `SessionListQuery`
 - Exposes distinct persisted session channels for SQL-backed UI filter dropdowns

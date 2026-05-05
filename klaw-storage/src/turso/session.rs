@@ -24,6 +24,8 @@ use crate::{
 use async_trait::async_trait;
 use std::path::PathBuf;
 
+const SESSION_INDEX_SELECT: &str = "session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, is_active, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path";
+
 #[async_trait]
 impl SessionStorage for TursoSessionStore {
     async fn touch_session(
@@ -44,7 +46,8 @@ impl SessionStorage for TursoSessionStore {
                 channel=excluded.channel,
                 updated_at_ms=excluded.updated_at_ms,
                 last_message_at_ms=excluded.last_message_at_ms,
-                jsonl_path=excluded.jsonl_path",
+                jsonl_path=excluded.jsonl_path
+             WHERE sessions.is_active = 1",
             escape_sql_text(session_key),
             escape_sql_text(chat_id),
             escape_sql_text(channel),
@@ -80,7 +83,7 @@ impl SessionStorage for TursoSessionStore {
                 last_message_at_ms = {},
                 turn_count = turn_count + 1,
                 jsonl_path = '{}'
-             WHERE session_key = '{}'",
+             WHERE session_key = '{}' AND is_active = 1",
             escape_sql_text(chat_id),
             escape_sql_text(channel),
             now,
@@ -98,7 +101,8 @@ impl SessionStorage for TursoSessionStore {
                 let insert_sql = format!(
                     "INSERT INTO sessions (
                         session_key, chat_id, channel, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-                    ) VALUES ('{}', '{}', '{}', NULL, NULL, 0, NULL, 0, NULL, {}, {}, {}, 1, '{}')",
+                    ) VALUES ('{}', '{}', '{}', NULL, NULL, 0, NULL, 0, NULL, {}, {}, {}, 1, '{}')
+                    ON CONFLICT(session_key) DO NOTHING",
                     escape_sql_text(session_key),
                     escape_sql_text(chat_id),
                     escape_sql_text(channel),
@@ -138,9 +142,9 @@ impl SessionStorage for TursoSessionStore {
 
     async fn get_session(&self, session_key: &str) -> Result<SessionIndex, StorageError> {
         let sql = format!(
-            "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT {SESSION_INDEX_SELECT}
              FROM sessions
-             WHERE session_key = '{}'
+             WHERE session_key = '{}' AND is_active = 1
              LIMIT 1",
             escape_sql_text(session_key)
         );
@@ -165,7 +169,7 @@ impl SessionStorage for TursoSessionStore {
         let sql = format!(
             "UPDATE sessions
              SET title = {title_sql}
-             WHERE session_key = '{}'",
+             WHERE session_key = '{}' AND is_active = 1",
             escape_sql_text(session_key)
         );
         let affected = {
@@ -184,7 +188,9 @@ impl SessionStorage for TursoSessionStore {
 
     async fn delete_session(&self, session_key: &str) -> Result<bool, StorageError> {
         let sql = format!(
-            "DELETE FROM sessions WHERE session_key = '{}'",
+            "UPDATE sessions
+             SET is_active = 0
+             WHERE session_key = '{}' AND is_active = 1",
             escape_sql_text(session_key)
         );
         let deleted = {
@@ -194,9 +200,6 @@ impl SessionStorage for TursoSessionStore {
                 .map_err(StorageError::backend)?
                 > 0
         };
-        if deleted {
-            jsonl::delete_chat_records(&self.paths, session_key).await?;
-        }
         Ok(deleted)
     }
 
@@ -205,9 +208,9 @@ impl SessionStorage for TursoSessionStore {
         active_session_key: &str,
     ) -> Result<SessionIndex, StorageError> {
         let sql = format!(
-            "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
+            "SELECT {SESSION_INDEX_SELECT}
              FROM sessions
-             WHERE active_session_key = '{}'
+             WHERE active_session_key = '{}' AND is_active = 1
              ORDER BY CASE WHEN session_key = active_session_key THEN 1 ELSE 0 END, updated_at_ms DESC
              LIMIT 1",
             escape_sql_text(active_session_key)
@@ -242,7 +245,8 @@ impl SessionStorage for TursoSessionStore {
                 channel=excluded.channel,
                 updated_at_ms=excluded.updated_at_ms,
                 active_session_key=COALESCE(sessions.active_session_key, excluded.active_session_key),
-                jsonl_path=excluded.jsonl_path",
+                jsonl_path=excluded.jsonl_path
+             WHERE sessions.is_active = 1",
             escape_sql_text(session_key),
             escape_sql_text(chat_id),
             escape_sql_text(channel),
@@ -274,7 +278,7 @@ impl SessionStorage for TursoSessionStore {
                  channel = '{}',
                  updated_at_ms = {},
                  active_session_key = '{}'
-             WHERE session_key = '{}'",
+             WHERE session_key = '{}' AND is_active = 1",
             escape_sql_text(chat_id),
             escape_sql_text(channel),
             now_ms(),
@@ -313,7 +317,7 @@ impl SessionStorage for TursoSessionStore {
                  model_provider_explicit = 1,
                  model = '{}',
                  model_explicit = 1
-             WHERE session_key = '{}'",
+             WHERE session_key = '{}' AND is_active = 1",
             escape_sql_text(chat_id),
             escape_sql_text(channel),
             now_ms(),
@@ -350,7 +354,7 @@ impl SessionStorage for TursoSessionStore {
                  updated_at_ms = {},
                  model = '{}',
                  model_explicit = 0
-             WHERE session_key = '{}'",
+             WHERE session_key = '{}' AND is_active = 1",
             escape_sql_text(chat_id),
             escape_sql_text(channel),
             now_ms(),
@@ -385,7 +389,7 @@ impl SessionStorage for TursoSessionStore {
                  channel = '{}',
                  updated_at_ms = {},
                  delivery_metadata_json = {}
-             WHERE session_key = '{}'",
+             WHERE session_key = '{}' AND is_active = 1",
             escape_sql_text(chat_id),
             escape_sql_text(channel),
             now_ms(),
@@ -422,7 +426,7 @@ impl SessionStorage for TursoSessionStore {
                  model_provider_explicit = 0,
                  model = NULL,
                  model_explicit = 0
-             WHERE session_key = '{}'",
+             WHERE session_key = '{}' AND is_active = 1",
             escape_sql_text(chat_id),
             escape_sql_text(channel),
             now_ms(),
@@ -450,7 +454,7 @@ impl SessionStorage for TursoSessionStore {
         let sql = format!(
             "SELECT compression_last_len, compression_summary_json
              FROM sessions
-             WHERE session_key = '{}'",
+             WHERE session_key = '{}' AND is_active = 1",
             escape_sql_text(session_key)
         );
         let conn = self.connection().await?;
@@ -478,7 +482,7 @@ impl SessionStorage for TursoSessionStore {
              SET compression_last_len = {},
                  compression_summary_json = {},
                  updated_at_ms = {}
-             WHERE session_key = '{}'",
+             WHERE session_key = '{}' AND is_active = 1",
             state.last_compressed_len,
             summary_sql,
             now_ms(),
@@ -507,10 +511,7 @@ impl SessionStorage for TursoSessionStore {
         session_key_prefix: Option<&str>,
         sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError> {
-        let mut sql = String::from(
-            "SELECT session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path
-             FROM sessions WHERE 1=1",
-        );
+        let mut sql = format!("SELECT {SESSION_INDEX_SELECT} FROM sessions WHERE is_active = 1");
         if let Some(from) = updated_from_ms {
             sql.push_str(&format!(" AND updated_at_ms >= {}", from));
         }
@@ -545,6 +546,7 @@ impl SessionStorage for TursoSessionStore {
             .query(
                 "SELECT DISTINCT channel
                  FROM sessions
+                 WHERE is_active = 1
                  ORDER BY channel ASC",
                 (),
             )
