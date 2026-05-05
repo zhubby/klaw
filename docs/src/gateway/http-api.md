@@ -472,16 +472,18 @@ curl -X POST http://localhost:18080/archive/upload \
 
 # 响应: {"success":true,"record":{"id":"archive-123"}}
 
-# 2. 通过 WebSocket 发送消息引用该文件
-# 使用 session.submit 方法，包含 attachments:
+# 2. 通过 WebSocket v1 发送消息引用该文件
+# 使用 turn/start 方法，content blocks 包含 attachment:
 # {
-#   "type": "method",
 #   "id": "...",
-#   "method": "session.submit",
+#   "method": "turn/start",
 #   "params": {
-#     "session_key": "my-session",
-#     "input": "请分析这个文档",
-#     "attachments": [{"archive_id": "archive-123"}]
+#     "session_id": "my-session",
+#     "thread_id": "my-session",
+#     "input": [
+#       {"type": "text", "text": "请分析这个文档"},
+#       {"type": "attachment", "archive_id": "archive-123"}
+#     ]
 #   }
 # }
 ```
@@ -492,7 +494,7 @@ curl -X POST http://localhost:18080/archive/upload \
 # 获取提供商列表
 curl http://localhost:18080/providers/list
 
-# 使用返回的 provider id 和 model 名称在 WebSocket 中调用 session.submit
+# 使用返回的 provider id 和 model 名称在 WebSocket v1 中调用 turn/start
 ```
 
 ### 发送 Webhook 事件

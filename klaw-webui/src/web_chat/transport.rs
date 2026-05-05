@@ -119,9 +119,6 @@ impl ChatApp {
                     return;
                 }
             };
-            if raw_value.get("type").is_some() {
-                return;
-            }
             let frame = serde_json::from_value::<RpcFrame>(raw_value).unwrap_or_else(|err| {
                 RpcFrame::Error {
                     id: None,

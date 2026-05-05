@@ -6,6 +6,7 @@
 
 - Gateway WebSocket runtime frame delivery now uses bounded sender semantics so slow clients surface backpressure instead of accumulating unbounded queued frames.
 - Background runtime queue draining now filters heartbeat silent acknowledgements before persisting assistant history, keeping `HEARTBEAT_OK` invisible in chat transcripts.
+- Gateway WebSocket runtime delivery now emits v1 protocol notifications only; legacy websocket result/event frames are no longer produced.
 
 ## 2026-05-04
 

@@ -134,7 +134,7 @@ impl GatewayWebsocketBroadcaster {
 mod tests {
     use super::GatewayWebsocketBroadcaster;
     use crate::websocket::GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY;
-    use crate::{GatewayWebsocketServerFrame, OutboundEvent};
+    use crate::{GatewayProtocolMethod, GatewayRpcMessage, GatewayWebsocketServerFrame};
     use serde_json::json;
     use tokio::sync::mpsc;
 
@@ -156,19 +156,19 @@ mod tests {
         let delivered_alpha = broadcaster
             .broadcast_to_session(
                 "websocket:alpha",
-                GatewayWebsocketServerFrame::Event {
-                    event: OutboundEvent::SessionMessage,
-                    payload: json!({ "session_key": "websocket:alpha" }),
-                },
+                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+                    GatewayProtocolMethod::ItemAgentMessageDelta,
+                    json!({ "session_id": "websocket:alpha" }),
+                )),
             )
             .await;
         let delivered_beta = broadcaster
             .broadcast_to_session(
                 "websocket:beta",
-                GatewayWebsocketServerFrame::Event {
-                    event: OutboundEvent::SessionMessage,
-                    payload: json!({ "session_key": "websocket:beta" }),
-                },
+                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+                    GatewayProtocolMethod::ItemAgentMessageDelta,
+                    json!({ "session_id": "websocket:beta" }),
+                )),
             )
             .await;
 
@@ -198,10 +198,10 @@ mod tests {
         let delivered = broadcaster
             .broadcast_to_session(
                 "websocket:alpha",
-                GatewayWebsocketServerFrame::Event {
-                    event: OutboundEvent::SessionMessage,
-                    payload: json!({ "session_key": "websocket:alpha" }),
-                },
+                GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+                    GatewayProtocolMethod::ItemAgentMessageDelta,
+                    json!({ "session_id": "websocket:alpha" }),
+                )),
             )
             .await;
         assert_eq!(delivered, 0);

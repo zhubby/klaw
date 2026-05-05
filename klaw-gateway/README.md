@@ -15,7 +15,7 @@
   - `GET /archive/:id`: 获取文件元数据
 - 可选暴露 model providers 列表接口：
   - `GET /providers/list`: 获取所有配置的 model providers
-- `/ws/chat` 同时支持兼容旧版 `type: "method"` 帧和 v1 JSON-RPC 形态 agent 协议；v1 覆盖 initialize、turn/item 生命周期、结构化 content/tool/approval payload、取消与 server request 闭环
+- `/ws/chat` 仅支持 v1 JSON-RPC 形态 agent 协议，覆盖 initialize、session/thread 方法、turn/item 生命周期、结构化 content/tool/approval payload、取消与 server request 闭环
 - webhook 请求会进入独立的 `webhook:*` 执行 session；若提供 `base_session_key`，最终回复会路由回目标 IM 会话当前 active session
 - 按 `session_key` 维护房间广播通道
 - 在启动成功后打印实际可连接的 WebSocket 地址

@@ -4,7 +4,9 @@ mod tests {
         GatewayOptions, GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
         GatewaySessionHistoryPage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
         GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-        GatewayWorkspaceSession, OutboundEvent, Route, spawn_gateway, spawn_gateway_with_options,
+        GatewayWorkspaceSession, Route,
+        protocol::{GatewayProtocolMethod, GatewayRpcMessage},
+        spawn_gateway, spawn_gateway_with_options,
         webhook::{
             GatewayWebhookAgentQuery, GatewayWebhookPayload, normalize_webhook_agent_request,
             normalize_webhook_request,
@@ -164,16 +166,25 @@ mod tests {
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
             frame_tx
-                .try_send(GatewayWebsocketServerFrame::Result {
-                    id: request.request_id,
-                    result: json!({
-                        "response": {
-                            "content": format!("ack: {}", request.input),
-                        },
-                        "session_key": request.session_key,
-                        "stream": false,
-                    }),
-                })
+                .try_send(GatewayWebsocketServerFrame::Protocol(
+                    GatewayRpcMessage::notification(
+                        GatewayProtocolMethod::TurnCompleted,
+                        json!({
+                            "session_id": request.session_key,
+                            "thread_id": request.chat_id,
+                            "turn_id": request
+                                .metadata
+                                .get("channel.websocket.v1.turn_id")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("turn_test"),
+                            "request_id": request.request_id,
+                            "status": "completed",
+                            "response": {
+                                "content": format!("ack: {}", request.input),
+                            },
+                        }),
+                    ),
+                ))
                 .map_err(|_| GatewayWebsocketHandlerError::internal("connection closed"))?;
             Ok(())
         }
@@ -515,7 +526,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -598,7 +608,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -668,7 +677,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -737,7 +745,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -904,7 +911,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -980,7 +986,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -1093,7 +1098,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -1161,7 +1165,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -1283,7 +1286,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -1361,7 +1363,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         for index in 0..crate::websocket::GATEWAY_WEBSOCKET_MAX_ACTIVE_TURNS_PER_CONNECTION {
             socket
@@ -1454,7 +1455,6 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let _connected = socket.next().await;
 
         socket
             .send(Message::Text(
@@ -1491,7 +1491,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn websocket_submit_routes_structured_request_to_handler() {
+    async fn websocket_does_not_emit_legacy_startup_frame_before_initialize() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("websocket should connect");
+        assert!(
+            timeout(Duration::from_millis(100), socket.next())
+                .await
+                .is_err(),
+            "v1 websocket should not emit a legacy startup frame"
+        );
+
+        socket
+            .send(Message::Text(
+                json!({
+                    "id": "init-after-silence",
+                    "method": "initialize",
+                    "params": {
+                        "client_info": { "name": "test-client" },
+                        "capabilities": { "protocol_version": "v1" }
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("initialize should send");
+
+        let frame = socket
+            .next()
+            .await
+            .expect("initialize response")
+            .expect("initialize message");
+        let Message::Text(text) = frame else {
+            panic!("unexpected initialize frame: {frame:?}");
+        };
+        let frame = serde_json::from_str::<serde_json::Value>(&text)
+            .expect("initialize response should parse");
+        assert_eq!(
+            frame.get("id").and_then(|value| value.as_str()),
+            Some("init-after-silence")
+        );
+        assert!(frame.get("type").is_none());
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_rejects_legacy_method_frames_as_v1_errors() {
         let config = test_gateway_config();
         let handler = RecordingWebsocketHandler::default();
         let requests = Arc::clone(&handler.requests);
@@ -1516,934 +1582,46 @@ mod tests {
         let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
             .await
             .expect("websocket should connect");
-        let connected = socket
-            .next()
-            .await
-            .expect("connected frame")
-            .expect("connected message");
-        let connected = match connected {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid connected frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-        match connected {
-            GatewayWebsocketServerFrame::Event { event, .. } => {
-                assert_eq!(event, OutboundEvent::SessionConnected);
-            }
-            other => panic!("unexpected connected frame: {other:?}"),
-        }
-
         socket
             .send(Message::Text(
                 json!({
                     "type": "method",
-                    "id": "sub-1",
-                    "method": "session.subscribe",
-                    "params": { "session_key": "websocket:test-session" }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("subscribe should send");
-
-        for _ in 0..2 {
-            let _ = timeout(Duration::from_millis(250), socket.next())
-                .await
-                .expect("subscribe ack frame should arrive");
-        }
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "req-1",
+                    "id": "legacy-submit",
                     "method": "session.submit",
-                    "params": {
-                        "input": "hello gateway",
-                        "channel_id": "default",
-                        "model_provider": "anthropic",
-                        "model": "claude-opus-4-1"
-                    }
+                    "params": { "input": "legacy request" }
                 })
                 .to_string()
                 .into(),
             ))
             .await
-            .expect("submit should send");
-
-        let result = socket
-            .next()
-            .await
-            .expect("submit response")
-            .expect("submit message");
-        let result = match result {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid result frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-        match result {
-            GatewayWebsocketServerFrame::Result { id, result } => {
-                assert_eq!(id, "req-1");
-                assert_eq!(
-                    result
-                        .get("response")
-                        .and_then(|response| response.get("content"))
-                        .and_then(|value| value.as_str()),
-                    Some("ack: hello gateway")
-                );
-            }
-            other => panic!("unexpected submit frame: {other:?}"),
-        }
-
-        let recorded = requests.lock().unwrap_or_else(|err| err.into_inner());
-        assert_eq!(recorded.len(), 1);
-        assert_eq!(recorded[0].session_key, "websocket:test-session");
-        assert_eq!(recorded[0].chat_id, "websocket:test-session");
-        assert_eq!(recorded[0].channel_id, "default");
-        assert_eq!(recorded[0].input, "hello gateway");
-        assert_eq!(
-            recorded[0].metadata.get("channel.websocket.model_provider"),
-            Some(&json!("anthropic"))
-        );
-        assert_eq!(
-            recorded[0].metadata.get("channel.websocket.model"),
-            Some(&json!("claude-opus-4-1"))
-        );
-
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_submit_accepts_attachment_only_payload() {
-        let config = test_gateway_config();
-        let handler = RecordingWebsocketHandler::default();
-        let requests = Arc::clone(&handler.requests);
-        let handle = match spawn_gateway_with_options(
-            &config,
-            GatewayOptions {
-                websocket_handler: Some(Arc::new(handler)),
-                ..GatewayOptions::default()
-            },
-        )
-        .await
-        {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
-            .await
-            .expect("websocket should connect");
-        let _ = socket.next().await;
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "sub-attachments",
-                    "method": "session.subscribe",
-                    "params": { "session_key": "websocket:attachments-only" }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("subscribe should send");
-
-        for _ in 0..2 {
-            let _ = timeout(Duration::from_millis(250), socket.next())
-                .await
-                .expect("subscribe ack frame should arrive");
-        }
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "req-attachments-only",
-                    "method": "session.submit",
-                    "params": {
-                        "input": "",
-                        "attachments": [{
-                            "archive_id": "archive-1",
-                            "filename": "report.pdf",
-                            "mime_type": "application/pdf",
-                            "size_bytes": 42
-                        }]
-                    }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("submit should send");
-
-        let result = socket
-            .next()
-            .await
-            .expect("submit response")
-            .expect("submit message");
-        let result = match result {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid result frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-        match result {
-            GatewayWebsocketServerFrame::Result { id, .. } => {
-                assert_eq!(id, "req-attachments-only");
-            }
-            other => panic!("unexpected submit frame: {other:?}"),
-        }
-
-        let recorded = requests.lock().unwrap_or_else(|err| err.into_inner());
-        assert_eq!(recorded.len(), 1);
-        assert_eq!(recorded[0].session_key, "websocket:attachments-only");
-        assert_eq!(recorded[0].input, "");
-        assert_eq!(recorded[0].attachments.len(), 1);
-        assert_eq!(recorded[0].attachments[0].archive_id, "archive-1");
-
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_workspace_bootstrap_returns_sessions_sorted_by_created_at_desc() {
-        let config = test_gateway_config();
-        let handle = match spawn_gateway_with_options(
-            &config,
-            GatewayOptions {
-                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
-                ..GatewayOptions::default()
-            },
-        )
-        .await
-        {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
-            .await
-            .expect("websocket should connect");
-        let _ = socket.next().await;
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "bootstrap-1",
-                    "method": "workspace.bootstrap",
-                    "params": {}
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("bootstrap should send");
+            .expect("legacy method should send");
 
         let frame = socket
             .next()
             .await
-            .expect("bootstrap response")
-            .expect("bootstrap frame");
-        let frame = match frame {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid result frame"),
-            other => panic!("unexpected frame: {other:?}"),
+            .expect("legacy rejection response")
+            .expect("legacy rejection message");
+        let Message::Text(text) = frame else {
+            panic!("unexpected legacy rejection frame: {frame:?}");
         };
-
-        match frame {
-            GatewayWebsocketServerFrame::Result { id, result } => {
-                assert_eq!(id, "bootstrap-1");
-                let sessions = result
-                    .get("sessions")
-                    .and_then(|value| value.as_array())
-                    .expect("sessions array");
-                assert_eq!(sessions.len(), 2);
-                assert_eq!(
-                    sessions[0]
-                        .get("session_key")
-                        .and_then(|value| value.as_str()),
-                    Some("websocket:newer")
-                );
-                assert_eq!(
-                    sessions[1]
-                        .get("session_key")
-                        .and_then(|value| value.as_str()),
-                    Some("websocket:older")
-                );
-                assert_eq!(
-                    result
-                        .get("active_session_key")
-                        .and_then(|value| value.as_str()),
-                    Some("websocket:newer")
-                );
-                assert_eq!(
-                    sessions[0]
-                        .get("model_provider")
-                        .and_then(|value| value.as_str()),
-                    Some("anthropic")
-                );
-                assert_eq!(
-                    sessions[0].get("model").and_then(|value| value.as_str()),
-                    Some("claude-sonnet-4-5")
-                );
-            }
-            other => panic!("unexpected bootstrap frame: {other:?}"),
-        }
-
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_session_create_returns_created_session_metadata() {
-        let config = test_gateway_config();
-        let handle = match spawn_gateway_with_options(
-            &config,
-            GatewayOptions {
-                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
-                ..GatewayOptions::default()
-            },
-        )
-        .await
-        {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
-            .await
-            .expect("websocket should connect");
-        let _ = socket.next().await;
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "create-1",
-                    "method": "session.create",
-                    "params": {}
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("create should send");
-
-        let frame = socket
-            .next()
-            .await
-            .expect("create response")
-            .expect("create frame");
-        let frame = match frame {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid result frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-
-        match frame {
-            GatewayWebsocketServerFrame::Result { id, result } => {
-                assert_eq!(id, "create-1");
-                assert_eq!(
-                    result.get("session_key").and_then(|value| value.as_str()),
-                    Some("websocket:created")
-                );
-                assert_eq!(
-                    result.get("title").and_then(|value| value.as_str()),
-                    Some("Agent 3")
-                );
-                assert_eq!(
-                    result.get("created_at_ms").and_then(|value| value.as_i64()),
-                    Some(30)
-                );
-                assert_eq!(
-                    result
-                        .get("model_provider")
-                        .and_then(|value| value.as_str()),
-                    Some("openai")
-                );
-                assert_eq!(
-                    result.get("model").and_then(|value| value.as_str()),
-                    Some("gpt-4.1-mini")
-                );
-            }
-            other => panic!("unexpected create frame: {other:?}"),
-        }
-
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_session_update_returns_updated_session_metadata() {
-        let config = test_gateway_config();
-        let handle = match spawn_gateway_with_options(
-            &config,
-            GatewayOptions {
-                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
-                ..GatewayOptions::default()
-            },
-        )
-        .await
-        {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let url = ws_url(handle.info().actual_port, None);
-        let (mut socket, _) = connect_async(url).await.expect("websocket should connect");
-        let _connected = socket
-            .next()
-            .await
-            .expect("connected frame")
-            .expect("frame ok");
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "update-1",
-                    "method": "session.update",
-                    "params": {
-                        "session_key": "websocket:newer",
-                        "title": "Renamed agent"
-                    }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("update should send");
-
-        let frame = socket
-            .next()
-            .await
-            .expect("update result frame")
-            .expect("frame should decode");
-        let payload = match frame {
-            Message::Text(text) => serde_json::from_str::<serde_json::Value>(&text)
-                .expect("frame payload should parse"),
-            other => panic!("unexpected websocket frame: {other:?}"),
-        };
+        let frame = serde_json::from_str::<serde_json::Value>(&text)
+            .expect("legacy rejection should parse");
         assert_eq!(
-            payload.get("type").and_then(|value| value.as_str()),
-            Some("result")
-        );
-        let result = payload.get("result").expect("result payload");
-        assert_eq!(
-            result.get("session_key").and_then(|value| value.as_str()),
-            Some("websocket:newer")
+            frame.get("id").and_then(|value| value.as_str()),
+            Some("legacy-submit")
         );
         assert_eq!(
-            result.get("title").and_then(|value| value.as_str()),
-            Some("Renamed agent")
-        );
-        assert_eq!(
-            result.get("updated").and_then(|value| value.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            result
-                .get("model_provider")
+            frame
+                .pointer("/error/code")
                 .and_then(|value| value.as_str()),
-            Some("anthropic")
+            Some("invalid_request")
         );
-        assert_eq!(
-            result.get("model").and_then(|value| value.as_str()),
-            Some("claude-sonnet-4-5")
+        assert!(
+            requests
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .is_empty()
         );
-
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_provider_list_returns_runtime_provider_catalog() {
-        let config = test_gateway_config();
-        let handle = match spawn_gateway_with_options(
-            &config,
-            GatewayOptions {
-                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
-                ..GatewayOptions::default()
-            },
-        )
-        .await
-        {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
-            .await
-            .expect("websocket should connect");
-        let _ = socket.next().await;
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "providers-1",
-                    "method": "provider.list",
-                    "params": {}
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("provider.list should send");
-
-        let frame = socket
-            .next()
-            .await
-            .expect("provider.list response")
-            .expect("provider.list frame");
-        let frame = match frame {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid provider.list frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-
-        match frame {
-            GatewayWebsocketServerFrame::Result { id, result } => {
-                assert_eq!(id, "providers-1");
-                assert_eq!(
-                    result
-                        .get("default_provider")
-                        .and_then(|value| value.as_str()),
-                    Some("anthropic")
-                );
-                let providers = result
-                    .get("providers")
-                    .and_then(|value| value.as_array())
-                    .expect("providers array");
-                assert_eq!(providers.len(), 2);
-                assert_eq!(
-                    providers[0].get("id").and_then(|value| value.as_str()),
-                    Some("anthropic")
-                );
-                assert_eq!(
-                    providers[0]
-                        .get("default_model")
-                        .and_then(|value| value.as_str()),
-                    Some("claude-sonnet-4-5")
-                );
-            }
-            other => panic!("unexpected provider.list frame: {other:?}"),
-        }
-
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_session_delete_returns_deleted_flag() {
-        let config = test_gateway_config();
-        let handle = match spawn_gateway_with_options(
-            &config,
-            GatewayOptions {
-                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
-                ..GatewayOptions::default()
-            },
-        )
-        .await
-        {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let url = ws_url(handle.info().actual_port, None);
-        let (mut socket, _) = connect_async(url).await.expect("websocket should connect");
-        let _connected = socket
-            .next()
-            .await
-            .expect("connected frame")
-            .expect("frame ok");
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "delete-1",
-                    "method": "session.delete",
-                    "params": {
-                        "session_key": "websocket:newer"
-                    }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("delete should send");
-
-        let frame = socket
-            .next()
-            .await
-            .expect("delete result frame")
-            .expect("frame should decode");
-        let payload = match frame {
-            Message::Text(text) => serde_json::from_str::<serde_json::Value>(&text)
-                .expect("frame payload should parse"),
-            other => panic!("unexpected websocket frame: {other:?}"),
-        };
-        assert_eq!(
-            payload.get("type").and_then(|value| value.as_str()),
-            Some("result")
-        );
-        let result = payload.get("result").expect("result payload");
-        assert_eq!(
-            result.get("session_key").and_then(|value| value.as_str()),
-            Some("websocket:newer")
-        );
-        assert_eq!(
-            result.get("deleted").and_then(|value| value.as_bool()),
-            Some(true)
-        );
-
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_subscribe_only_acknowledges_realtime_subscription() {
-        let config = test_gateway_config();
-        let handle = match spawn_gateway_with_options(
-            &config,
-            GatewayOptions {
-                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
-                ..GatewayOptions::default()
-            },
-        )
-        .await
-        {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
-            .await
-            .expect("websocket should connect");
-        let _ = socket.next().await;
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "sub-history-1",
-                    "method": "session.subscribe",
-                    "params": { "session_key": "websocket:history" }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("subscribe should send");
-
-        let first = socket
-            .next()
-            .await
-            .expect("subscribe result")
-            .expect("subscribe result frame");
-        let second = socket
-            .next()
-            .await
-            .expect("subscribed event")
-            .expect("subscribed event frame");
-        let first = match first {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid result frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-        let second = match second {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid event frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-
-        match first {
-            GatewayWebsocketServerFrame::Result { id, .. } => {
-                assert_eq!(id, "sub-history-1");
-            }
-            other => panic!("unexpected subscribe result: {other:?}"),
-        }
-        match second {
-            GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, OutboundEvent::SessionSubscribed);
-                assert_eq!(
-                    payload.get("session_key").and_then(|value| value.as_str()),
-                    Some("websocket:history")
-                );
-            }
-            other => panic!("unexpected subscribe event: {other:?}"),
-        }
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_history_load_returns_paginated_result() {
-        let config = test_gateway_config();
-        let handle = match spawn_gateway_with_options(
-            &config,
-            GatewayOptions {
-                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
-                ..GatewayOptions::default()
-            },
-        )
-        .await
-        {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
-            .await
-            .expect("websocket should connect");
-        let _ = socket.next().await;
-
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "history-1",
-                    "method": "session.history.load",
-                    "params": {
-                        "session_key": "websocket:history",
-                        "limit": 10
-                    }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("history.load should send");
-
-        let frame = timeout(Duration::from_millis(250), socket.next())
-            .await
-            .expect("history result should arrive before timeout")
-            .expect("history result")
-            .expect("history result frame");
-        let frame = match frame {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid result frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-        match frame {
-            GatewayWebsocketServerFrame::Result { id, result } => {
-                assert_eq!(id, "history-1");
-                assert_eq!(
-                    result.get("session_key").and_then(|value| value.as_str()),
-                    Some("websocket:history")
-                );
-                assert_eq!(
-                    result.get("has_more").and_then(|value| value.as_bool()),
-                    Some(true)
-                );
-                assert_eq!(
-                    result
-                        .get("oldest_loaded_message_id")
-                        .and_then(|value| value.as_str()),
-                    Some("msg-2")
-                );
-                assert_eq!(
-                    result
-                        .get("messages")
-                        .and_then(|value| value.as_array())
-                        .and_then(|messages| messages.first())
-                        .and_then(|message| message.get("content"))
-                        .and_then(|value| value.as_str()),
-                    Some("previous answer (10)")
-                );
-            }
-            other => panic!("unexpected history result: {other:?}"),
-        }
-
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_connection_keeps_realtime_delivery_for_all_subscribed_sessions() {
-        let config = test_gateway_config();
-        let broadcaster = Arc::new(crate::state::GatewayWebsocketBroadcaster::new());
-        let handle = match spawn_gateway_with_options(
-            &config,
-            GatewayOptions {
-                websocket_broadcaster: Some(Arc::clone(&broadcaster)),
-                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
-                ..GatewayOptions::default()
-            },
-        )
-        .await
-        {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
-            .await
-            .expect("websocket should connect");
-        let _ = socket.next().await;
-
-        for (request_id, session_key) in [("sub-a", "websocket:alpha"), ("sub-b", "websocket:beta")]
-        {
-            socket
-                .send(Message::Text(
-                    json!({
-                        "type": "method",
-                        "id": request_id,
-                        "method": "session.subscribe",
-                        "params": { "session_key": session_key }
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await
-                .expect("subscribe should send");
-
-            for _ in 0..2 {
-                let _ = timeout(Duration::from_millis(250), socket.next())
-                    .await
-                    .expect("subscribe response should arrive before timeout")
-                    .expect("subscribe frame should exist");
-            }
-        }
-
-        let delivered = broadcaster
-            .broadcast_to_session(
-                "websocket:alpha",
-                GatewayWebsocketServerFrame::Event {
-                    event: OutboundEvent::SessionMessage,
-                    payload: json!({
-                        "session_key": "websocket:alpha",
-                        "response": {
-                            "content": "background alpha reply",
-                        },
-                        "role": "assistant",
-                        "timestamp_ms": 99,
-                    }),
-                },
-            )
-            .await;
-        assert_eq!(delivered, 1);
-
-        let frame = timeout(Duration::from_millis(250), socket.next())
-            .await
-            .expect("realtime alpha event should arrive before timeout")
-            .expect("realtime alpha event")
-            .expect("realtime alpha frame");
-        let frame = match frame {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid websocket event frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-        match frame {
-            GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, OutboundEvent::SessionMessage);
-                assert_eq!(
-                    payload.get("session_key").and_then(|value| value.as_str()),
-                    Some("websocket:alpha")
-                );
-                assert_eq!(
-                    payload
-                        .get("response")
-                        .and_then(|response| response.get("content"))
-                        .and_then(|value| value.as_str()),
-                    Some("background alpha reply")
-                );
-            }
-            other => panic!("unexpected realtime frame: {other:?}"),
-        }
-
-        handle.shutdown().await.expect("gateway should stop");
-    }
-
-    #[tokio::test]
-    async fn websocket_unknown_method_returns_structured_error() {
-        let config = test_gateway_config();
-        let handle = match spawn_gateway(&config).await {
-            Ok(handle) => handle,
-            Err(crate::GatewayError::Bind(err))
-                if err.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(err) => panic!("gateway should start: {err}"),
-        };
-
-        let (mut socket, _) = connect_async(ws_url(handle.info().actual_port, None))
-            .await
-            .expect("websocket should connect");
-        let _ = socket.next().await;
-        socket
-            .send(Message::Text(
-                json!({
-                    "type": "method",
-                    "id": "bad-1",
-                    "method": "session.unknown",
-                    "params": {}
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("bad method should send");
-
-        let frame = socket
-            .next()
-            .await
-            .expect("error response")
-            .expect("error frame");
-        let frame = match frame {
-            Message::Text(text) => serde_json::from_str::<GatewayWebsocketServerFrame>(&text)
-                .expect("valid error frame"),
-            other => panic!("unexpected frame: {other:?}"),
-        };
-        match frame {
-            GatewayWebsocketServerFrame::Error { id, error } => {
-                assert_eq!(id.as_deref(), Some("bad-1"));
-                assert_eq!(error.code, "unknown_method");
-            }
-            other => panic!("unexpected error frame: {other:?}"),
-        }
 
         handle.shutdown().await.expect("gateway should stop");
     }

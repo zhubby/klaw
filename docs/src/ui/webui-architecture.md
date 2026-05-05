@@ -148,7 +148,7 @@ connect_workspace()
    ↓
 创建 WebSocket → ws://host/ws/chat?token=...
    ↓
-onopen → 发送 workspace.bootstrap 请求
+onopen → 发送 initialize、initialized、session/list 请求
    ↓
 服务端返回 sessions 列表
    ↓
@@ -170,7 +170,7 @@ send_session_draft()
    ↓
 生成 request_id → 保存到 active_stream_request_id
    ↓
-发送 session.submit 请求 (stream = true)
+发送 turn/start 请求 (stream = true)
    ↓
 清空 draft
 ```
@@ -331,14 +331,16 @@ resolve_gateway_token(query_token, persisted_token) -> Option<String>
 
 | 客户端方法 | 对应服务端事件 |
 |------------|----------------|
-| `workspace.bootstrap` | `session.connected` → `Result` |
-| `session.create` → `Result` | |
-| `session.update` → `Result` | |
-| `session.delete` → `Result` | |
-| `session.subscribe` | `session.subscribed` → 该会话历史 `session.message`，并保留该会话的实时订阅 |
-| `session.submit` (`stream=true`) | `session.message` (增量) → `session.stream.done` |
+| `initialize` / `initialized` | v1 capability result |
+| `session/list` | v1 success result |
+| `session/create` | v1 success result |
+| `session/update` | v1 success result |
+| `session/delete` | v1 success result |
+| `session/subscribe` | `session/subscribed`，并保留该会话的实时订阅 |
+| `thread/history` | v1 success result |
+| `turn/start` (`stream=true`) | `turn/started` → `item/agentMessage/delta` → `item/completed` → `turn/completed` |
 
-单条 websocket 连接可以为多个已打开 agent 窗口重复调用 `session.subscribe`；服务端会把这些会话都保留在实时订阅集合中，而最近一次订阅的会话仅作为默认提交目标。
+单条 websocket 连接可以为多个已打开 agent 窗口重复调用 `session/subscribe`；服务端会把这些会话都保留在实时订阅集合中，而最近一次订阅的会话仅作为默认提交目标。
 
 完整协议文档参见 [WebSocket Channel](./websocket-channel.md)。
 

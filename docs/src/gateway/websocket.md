@@ -48,7 +48,7 @@ key_path = "/path/to/privkey.pem"
 - 端点：`GET /ws/chat`
 - 推荐鉴权：`Authorization: Bearer <token>`
 - 兼容鉴权：`?token=<token>` 或 `?access_token=<token>`
-- 兼容 query：`session_key`，仅用于旧连接方式；v1 客户端应通过 `session/subscribe` 显式订阅。
+- 客户端应通过 `session/subscribe` 显式订阅目标会话；`/ws/chat?session_key=` 旧默认会话入口不再生效。
 
 示例：
 
@@ -125,7 +125,7 @@ v1 使用 JSON-RPC 2.0 语义，但线上帧省略 `jsonrpc` 字段。每个 Web
 ## 身份模型
 
 - `connection_id`：连接级诊断和路由 ID，不作为权限边界。
-- `session_id`：Klaw 工作区会话；当前兼容旧 `session_key`。
+- `session_id`：Klaw 工作区会话。
 - `thread_id`：agent 对话上下文；当前 WebUI 通常与 `session_id` 相同，但协议不要求永久绑定。
 - `turn_id`：一次用户请求及其后续 agent 工作。
 - `item_id`：turn 内的一个工作单元，例如 assistant message、reasoning、tool call 或 file change。
@@ -572,9 +572,9 @@ v1 稳定 item 类型包括：
 
 协议版本和 crate 版本绑定发布。客户端应优先基于 schema 生成类型，并对未知通知或未知可选字段保持前向兼容。
 
-## 旧协议边界
+## v1-only 边界
 
-旧版 `type: "method" | "result" | "event" | "error"` 帧属于兼容层，不是当前 WebUI 的正常协议路径。新客户端应使用 v1 JSON-RPC envelope：
+旧版 `type: "method" | "result" | "event" | "error"` 帧已移除。服务端不会发送 legacy startup frame，也不会接受旧客户端 method frame。客户端应使用 v1 JSON-RPC envelope：
 
 - 旧 `workspace.bootstrap` 对应 v1 `session/list`。
 - 旧 `provider.list` 对应 v1 `provider/list`。

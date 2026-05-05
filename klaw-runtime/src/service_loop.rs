@@ -11,7 +11,10 @@ use klaw_core::{
     Subscription, TransportAckHandle, TransportError,
 };
 use klaw_cron::{CronScheduleKind, CronWorker, CronWorkerConfig, MissedRunPolicy, ScheduleSpec};
-use klaw_gateway::{GatewayWebsocketServerFrame, OutboundEvent};
+use klaw_gateway::{
+    GatewayProtocolMethod, GatewayRpcMessage, GatewayThreadItem, GatewayThreadItemStatus,
+    GatewayThreadItemType, GatewayWebsocketServerFrame,
+};
 use klaw_heartbeat::{HeartbeatWorker, HeartbeatWorkerConfig, should_suppress_output};
 use klaw_llm::{ChatOptions, LlmMessage, LlmProvider};
 use klaw_memory::{LongTermArchiveConfig, SummaryGenerator, archive_stale_long_term_memories};
@@ -985,14 +988,24 @@ async fn dispatch_websocket_outbound_message(
     let delivered = websocket_broadcaster
         .broadcast_to_session(
             &target_session_key,
-            GatewayWebsocketServerFrame::Event {
-                event: OutboundEvent::SessionMessage,
-                payload: serde_json::json!({
+            GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+                GatewayProtocolMethod::ItemCompleted,
+                serde_json::json!({
                     "message_id": msg.header.message_id.to_string(),
-                    "session_key": target_session_key,
-                    "response": {
-                        "content": msg.payload.content,
-                        "metadata": msg.payload.metadata,
+                    "session_id": target_session_key,
+                    "thread_id": target_session_key,
+                    "turn_id": msg.header.message_id.to_string(),
+                    "item": GatewayThreadItem {
+                        item_id: format!("item_agent_{}", msg.header.message_id),
+                        turn_id: msg.header.message_id.to_string(),
+                        item_type: GatewayThreadItemType::AgentMessage,
+                        status: GatewayThreadItemStatus::Completed,
+                        payload: serde_json::json!({
+                            "response": {
+                                "content": msg.payload.content,
+                                "metadata": msg.payload.metadata,
+                            },
+                        }),
                     },
                     "role": "assistant",
                     "timestamp_ms": SystemTime::now()
@@ -1000,7 +1013,7 @@ async fn dispatch_websocket_outbound_message(
                         .unwrap_or_default()
                         .as_millis() as i64,
                 }),
-            },
+            )),
         )
         .await;
     if delivered == 0 {
@@ -1477,9 +1490,11 @@ mod tests {
 
         let frame = frame_rx.try_recv().expect("frame should be broadcast");
         let payload = match frame {
-            klaw_gateway::GatewayWebsocketServerFrame::Event { event, payload } => {
-                assert_eq!(event, klaw_gateway::OutboundEvent::SessionMessage);
-                payload
+            klaw_gateway::GatewayWebsocketServerFrame::Protocol(
+                klaw_gateway::GatewayRpcMessage::Notification { method, params },
+            ) => {
+                assert_eq!(method, klaw_gateway::GatewayProtocolMethod::ItemCompleted);
+                params
             }
             other => panic!("unexpected frame: {other:?}"),
         };
@@ -1490,15 +1505,13 @@ mod tests {
         );
         assert_eq!(
             payload
-                .get("response")
-                .and_then(|response| response.get("content"))
+                .pointer("/item/payload/response/content")
                 .and_then(Value::as_str),
             Some("Need action")
         );
         assert_eq!(
             payload
-                .get("response")
-                .and_then(|response| response.get("metadata"))
+                .pointer("/item/payload/response/metadata")
                 .and_then(Value::as_object)
                 .and_then(|metadata| metadata.get("custom.flag"))
                 .and_then(Value::as_bool),

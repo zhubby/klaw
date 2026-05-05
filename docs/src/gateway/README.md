@@ -91,29 +91,23 @@ Webhook 请求在鉴权和参数校验通过后会立即返回 `202 Accepted`，
 
 ## WebSocket 协议
 
-- 连接建立后服务端先下发 `event`：`session.connected`
-- 客户端通过 `method` 调用：
-  - `session.subscribe`
-  - `session.unsubscribe`
-  - `session.ping`
-  - `session.submit`
-- 服务端返回：
-  - `result`：method 成功结果
-  - `error`：结构化错误
-  - `event`：连接态、消息快照、流式事件
+- `/ws/chat` 只接受 Gateway WebSocket v1 JSON-RPC 形态帧，不再兼容旧版 `type: "method"` 协议。
+- 连接建立后服务端不会发送旧版 `session.connected` startup frame；客户端应先发送 `initialize`。
+- 客户端通过 v1 `session/*`、`provider/list`、`thread/history`、`turn/start` 和 `turn/cancel` 方法交互。
+- 服务端通过 v1 success/error envelope 和 `item/*`、`turn/*`、`session/*` 通知返回结果。
 
 示例：
 
 ```json
-{"type":"method","id":"sub-1","method":"session.subscribe","params":{"session_key":"websocket:demo"}}
-{"type":"method","id":"req-1","method":"session.submit","params":{"input":"hello","stream":true}}
+{"id":"init-1","method":"initialize","params":{"client_info":{"name":"example-client"},"capabilities":{"protocol_version":"v1"}}}
+{"id":"turn-1","method":"turn/start","params":{"session_id":"websocket:demo","thread_id":"websocket:demo","input":[{"type":"text","text":"hello"}]}}
 ```
 
 ## 连接生命周期
 
 - 每条连接维护独立的连接上下文、默认提交会话，以及当前连接已订阅的 `session_key` 集合
-- `session.subscribe` 会把目标会话加入当前连接的实时订阅集合，并更新默认提交会话
-- `session.submit` 会把输入映射为 runtime `ChannelRequest`；未显式携带 `session_key` 时回退到默认提交会话
+- `session/subscribe` 会把目标会话加入当前连接的实时订阅集合，并更新默认提交会话
+- `turn/start` 会把结构化输入映射为 runtime `ChannelRequest`；未显式携带 `session_id` 时回退到默认提交会话
 - 连接断开后，进程内连接注册表会立即清理
 
 ## 当前限制
