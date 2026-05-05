@@ -3625,6 +3625,10 @@ pub async fn drain_runtime_queue(
             .map(|session| session.turn_count)
             .unwrap_or(0);
         enqueue_llm_audit_records_from_outcome(runtime, turn_index, &outcome);
+        if !should_emit_outbound(msg) {
+            drained += 1;
+            continue;
+        }
         persist_assistant_response_state(
             runtime,
             &msg.header.session_key,
@@ -3871,8 +3875,8 @@ mod tests {
     use klaw_core::{
         CircuitBreakerPolicy, DeadLetterPolicy, Envelope, EnvelopeHeader,
         ExponentialBackoffRetryPolicy, InMemoryCircuitBreaker, InMemoryIdempotencyStore,
-        InMemoryTransport, OutboundMessage, QueueStrategy, RunLimits, SessionSchedulingPolicy,
-        Subscription,
+        InMemoryTransport, InboundMessage, OutboundMessage, QueueStrategy, RunLimits,
+        SessionSchedulingPolicy, Subscription,
     };
     use klaw_gateway::{
         GatewayWebhookAgentRequest, GatewayWebhookRequest, GatewayWebsocketBroadcaster,
@@ -3909,6 +3913,9 @@ mod tests {
         last_model: Arc<Mutex<Option<String>>>,
         last_tool_choice: Arc<Mutex<Option<Value>>>,
     }
+
+    #[derive(Default, Clone)]
+    struct SilentHeartbeatAckProvider;
 
     #[derive(Default, Clone)]
     struct ApprovalResumeShellProvider {
@@ -4290,6 +4297,34 @@ mod tests {
                 .unwrap_or_else(|err| err.into_inner()) = options.tool_choice;
             Ok(klaw_llm::LlmResponse {
                 content: "bootstrap reply".to_string(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
+                audit: None,
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for SilentHeartbeatAckProvider {
+        fn name(&self) -> &str {
+            "test-provider"
+        }
+
+        fn default_model(&self) -> &str {
+            "test-model"
+        }
+
+        async fn chat(
+            &self,
+            _messages: Vec<klaw_llm::LlmMessage>,
+            _tools: Vec<klaw_llm::ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<klaw_llm::LlmResponse, LlmError> {
+            Ok(klaw_llm::LlmResponse {
+                content: "HEARTBEAT_OK".to_string(),
                 reasoning: None,
                 tool_calls: Vec::new(),
                 usage: None,
@@ -4701,6 +4736,59 @@ mod tests {
         };
 
         assert!(should_emit_outbound(&msg));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn drain_runtime_queue_does_not_persist_silent_heartbeat_ack() {
+        let provider = Arc::new(SilentHeartbeatAckProvider) as Arc<dyn LlmProvider>;
+        let runtime = build_test_runtime(provider).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "websocket:heartbeat",
+                "chat-heartbeat",
+                "websocket",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("session should exist");
+
+        runtime
+            .inbound_transport
+            .enqueue(Envelope {
+                header: EnvelopeHeader::new("websocket:heartbeat"),
+                metadata: BTreeMap::new(),
+                payload: InboundMessage {
+                    channel: "websocket".to_string(),
+                    sender_id: "system-heartbeat".to_string(),
+                    chat_id: "chat-heartbeat".to_string(),
+                    session_key: "websocket:heartbeat".to_string(),
+                    content: "Review session state.".to_string(),
+                    media_references: Vec::new(),
+                    metadata: BTreeMap::from([
+                        ("trigger.kind".to_string(), json!("heartbeat")),
+                        (
+                            "heartbeat.silent_ack_token".to_string(),
+                            json!("HEARTBEAT_OK"),
+                        ),
+                    ]),
+                },
+            })
+            .await;
+
+        let drained = super::drain_runtime_queue(&runtime, 1)
+            .await
+            .expect("runtime queue should drain");
+
+        assert_eq!(drained, 1);
+        assert!(
+            sessions
+                .read_chat_records("websocket:heartbeat")
+                .await
+                .expect("history should load")
+                .is_empty()
+        );
     }
 
     #[test]

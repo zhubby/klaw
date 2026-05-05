@@ -5,6 +5,7 @@
 ### Fixed
 
 - Gateway WebSocket runtime frame delivery now uses bounded sender semantics so slow clients surface backpressure instead of accumulating unbounded queued frames.
+- Background runtime queue draining now filters heartbeat silent acknowledgements before persisting assistant history, keeping `HEARTBEAT_OK` invisible in chat transcripts.
 
 ## 2026-05-04
 
