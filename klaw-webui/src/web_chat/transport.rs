@@ -153,7 +153,7 @@ impl ChatApp {
                         "protocol_version": "v1",
                         "turns": true,
                         "items": true,
-                        "server_requests": true,
+                        "server_requests": false,
                         "cancellation": true,
                     },
                 }),

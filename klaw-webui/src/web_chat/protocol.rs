@@ -48,11 +48,6 @@ impl<'de> Deserialize<'de> for RpcFrame {
         D: serde::Deserializer<'de>,
     {
         let value = Value::deserialize(deserializer)?;
-        if value.get("type").is_some() {
-            return Err(serde::de::Error::custom(
-                "legacy websocket frames are not accepted by the v1 webui client",
-            ));
-        }
         if value.get("error").is_some() {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]

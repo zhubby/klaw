@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-05
+
+### Changed
+
+- WebUI websocket client now declares only currently supported v1 capabilities during `initialize` and treats any non-v1 frame as an invalid frame instead of carrying a legacy compatibility path.
+
 ## 2026-05-03
 
 ### Changed
