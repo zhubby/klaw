@@ -155,7 +155,9 @@ impl ObsidianKnowledgeProvider {
             .map_err(|err| KnowledgeError::Provider(format!("write note failed: {err}")))?;
         if let Err(err) = tokio::fs::rename(&temp_path, &absolute_path).await {
             let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(KnowledgeError::Provider(format!("finalize note failed: {err}")));
+            return Err(KnowledgeError::Provider(format!(
+                "finalize note failed: {err}"
+            )));
         }
 
         if let Err(err) = self.index_path(&absolute_path).await {

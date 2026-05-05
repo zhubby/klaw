@@ -5,6 +5,7 @@
 ### Changed
 
 - Knowledge 配置窗口将 `Index on startup` 替换为 `Auto-index vault changes`，并提示首次索引仍需手动同步
+- Voice 配置窗口将通用配置与各语音 provider 表单拆成 `General`、`Deepgram`、`AssemblyAI`、`ElevenLabs` 页签，避免所有 provider 字段堆叠在同一视图
 
 ## 2026-04-25
 

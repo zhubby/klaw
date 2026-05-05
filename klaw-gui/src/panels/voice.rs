@@ -166,6 +166,33 @@ impl VoiceConfigForm {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum VoiceConfigTab {
+    #[default]
+    General,
+    Deepgram,
+    Assemblyai,
+    Elevenlabs,
+}
+
+impl VoiceConfigTab {
+    const ALL: [Self; 4] = [
+        Self::General,
+        Self::Deepgram,
+        Self::Assemblyai,
+        Self::Elevenlabs,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Deepgram => "Deepgram",
+            Self::Assemblyai => "AssemblyAI",
+            Self::Elevenlabs => "ElevenLabs",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VoiceTestMode {
     Stt,
@@ -248,6 +275,7 @@ pub struct VoicePanel {
     config: AppConfig,
     config_form: VoiceConfigForm,
     config_window_open: bool,
+    config_tab: VoiceConfigTab,
     test_mode: VoiceTestMode,
     recording: Option<RecordingHandle>,
     stt_state: SttTestState,
@@ -266,6 +294,7 @@ impl Default for VoicePanel {
             config: AppConfig::default(),
             config_form: VoiceConfigForm::default(),
             config_window_open: false,
+            config_tab: VoiceConfigTab::default(),
             test_mode: VoiceTestMode::Stt,
             recording: None,
             stt_state: SttTestState::Idle,
@@ -301,6 +330,7 @@ impl VoicePanel {
 
     fn open_config_window(&mut self) {
         self.config_form = VoiceConfigForm::from_config(&self.config.voice);
+        self.config_tab = VoiceConfigTab::General;
         self.config_window_open = true;
     }
 
@@ -570,96 +600,9 @@ impl VoicePanel {
                 ui.separator();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    egui::Grid::new("voice-config-grid")
-                        .num_columns(2)
-                        .spacing([12.0, 8.0])
-                        .show(ui, |ui| {
-                            ui.label("Enabled");
-                            ui.checkbox(&mut self.config_form.enabled, "Enable voice runtime");
-                            ui.end_row();
-
-                            ui.label("Default Language");
-                            ui.text_edit_singleline(&mut self.config_form.default_language);
-                            ui.end_row();
-
-                            ui.label("Default Voice ID");
-                            ui.text_edit_singleline(&mut self.config_form.default_voice_id);
-                            ui.end_row();
-
-                            ui.label("STT Provider");
-                            egui::ComboBox::from_id_salt("voice-stt-provider")
-                                .selected_text(self.config_form.stt_provider.as_str())
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut self.config_form.stt_provider,
-                                        SttProviderKind::Deepgram,
-                                        SttProviderKind::Deepgram.as_str(),
-                                    );
-                                    ui.selectable_value(
-                                        &mut self.config_form.stt_provider,
-                                        SttProviderKind::Assemblyai,
-                                        SttProviderKind::Assemblyai.as_str(),
-                                    );
-                                });
-                            ui.end_row();
-
-                            ui.label("TTS Provider");
-                            egui::ComboBox::from_id_salt("voice-tts-provider")
-                                .selected_text(self.config_form.tts_provider.as_str())
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut self.config_form.tts_provider,
-                                        TtsProviderKind::Elevenlabs,
-                                        TtsProviderKind::Elevenlabs.as_str(),
-                                    );
-                                });
-                            ui.end_row();
-                        });
-
-                    ui.separator();
-                    ui.strong("Deepgram");
-                    render_secret_provider_section(
-                        ui,
-                        "voice-deepgram",
-                        &mut self.config_form.deepgram_api_key,
-                        &mut self.config_form.deepgram_api_key_env,
-                        &mut self.config_form.deepgram_base_url,
-                        &mut self.config_form.deepgram_streaming_base_url,
-                        Some((&mut self.config_form.deepgram_stt_model, "STT Model")),
-                        None,
-                    );
-
-                    ui.separator();
-                    ui.strong("AssemblyAI");
-                    render_secret_provider_section(
-                        ui,
-                        "voice-assemblyai",
-                        &mut self.config_form.assemblyai_api_key,
-                        &mut self.config_form.assemblyai_api_key_env,
-                        &mut self.config_form.assemblyai_base_url,
-                        &mut self.config_form.assemblyai_streaming_base_url,
-                        Some((&mut self.config_form.assemblyai_stt_model, "STT Model")),
-                        None,
-                    );
-
-                    ui.separator();
-                    ui.strong("ElevenLabs");
-                    render_secret_provider_section(
-                        ui,
-                        "voice-elevenlabs",
-                        &mut self.config_form.elevenlabs_api_key,
-                        &mut self.config_form.elevenlabs_api_key_env,
-                        &mut self.config_form.elevenlabs_base_url,
-                        &mut self.config_form.elevenlabs_streaming_base_url,
-                        Some((
-                            &mut self.config_form.elevenlabs_default_model,
-                            "Default Model",
-                        )),
-                        Some((
-                            &mut self.config_form.elevenlabs_default_voice_id,
-                            "Provider Default Voice ID",
-                        )),
-                    );
+                    self.render_config_tabs(ui);
+                    ui.add_space(10.0);
+                    self.render_selected_config_tab(ui);
                 });
 
                 ui.separator();
@@ -673,6 +616,123 @@ impl VoicePanel {
                 });
             });
         self.config_window_open = open;
+    }
+
+    fn render_config_tabs(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            for tab in VoiceConfigTab::ALL {
+                if ui
+                    .selectable_label(self.config_tab == tab, tab.label())
+                    .clicked()
+                {
+                    self.config_tab = tab;
+                }
+            }
+        });
+    }
+
+    fn render_selected_config_tab(&mut self, ui: &mut egui::Ui) {
+        match self.config_tab {
+            VoiceConfigTab::General => self.render_general_config_tab(ui),
+            VoiceConfigTab::Deepgram => {
+                ui.strong("Deepgram");
+                ui.add_space(6.0);
+                render_secret_provider_section(
+                    ui,
+                    "voice-deepgram",
+                    &mut self.config_form.deepgram_api_key,
+                    &mut self.config_form.deepgram_api_key_env,
+                    &mut self.config_form.deepgram_base_url,
+                    &mut self.config_form.deepgram_streaming_base_url,
+                    Some((&mut self.config_form.deepgram_stt_model, "STT Model")),
+                    None,
+                );
+            }
+            VoiceConfigTab::Assemblyai => {
+                ui.strong("AssemblyAI");
+                ui.add_space(6.0);
+                render_secret_provider_section(
+                    ui,
+                    "voice-assemblyai",
+                    &mut self.config_form.assemblyai_api_key,
+                    &mut self.config_form.assemblyai_api_key_env,
+                    &mut self.config_form.assemblyai_base_url,
+                    &mut self.config_form.assemblyai_streaming_base_url,
+                    Some((&mut self.config_form.assemblyai_stt_model, "STT Model")),
+                    None,
+                );
+            }
+            VoiceConfigTab::Elevenlabs => {
+                ui.strong("ElevenLabs");
+                ui.add_space(6.0);
+                render_secret_provider_section(
+                    ui,
+                    "voice-elevenlabs",
+                    &mut self.config_form.elevenlabs_api_key,
+                    &mut self.config_form.elevenlabs_api_key_env,
+                    &mut self.config_form.elevenlabs_base_url,
+                    &mut self.config_form.elevenlabs_streaming_base_url,
+                    Some((
+                        &mut self.config_form.elevenlabs_default_model,
+                        "Default Model",
+                    )),
+                    Some((
+                        &mut self.config_form.elevenlabs_default_voice_id,
+                        "Provider Default Voice ID",
+                    )),
+                );
+            }
+        }
+    }
+
+    fn render_general_config_tab(&mut self, ui: &mut egui::Ui) {
+        ui.strong("General");
+        ui.add_space(6.0);
+        egui::Grid::new("voice-config-general-grid")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Enabled");
+                ui.checkbox(&mut self.config_form.enabled, "Enable voice runtime");
+                ui.end_row();
+
+                ui.label("Default Language");
+                ui.text_edit_singleline(&mut self.config_form.default_language);
+                ui.end_row();
+
+                ui.label("Default Voice ID");
+                ui.text_edit_singleline(&mut self.config_form.default_voice_id);
+                ui.end_row();
+
+                ui.label("STT Provider");
+                egui::ComboBox::from_id_salt("voice-stt-provider")
+                    .selected_text(self.config_form.stt_provider.as_str())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.config_form.stt_provider,
+                            SttProviderKind::Deepgram,
+                            SttProviderKind::Deepgram.as_str(),
+                        );
+                        ui.selectable_value(
+                            &mut self.config_form.stt_provider,
+                            SttProviderKind::Assemblyai,
+                            SttProviderKind::Assemblyai.as_str(),
+                        );
+                    });
+                ui.end_row();
+
+                ui.label("TTS Provider");
+                egui::ComboBox::from_id_salt("voice-tts-provider")
+                    .selected_text(self.config_form.tts_provider.as_str())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.config_form.tts_provider,
+                            TtsProviderKind::Elevenlabs,
+                            TtsProviderKind::Elevenlabs.as_str(),
+                        );
+                    });
+                ui.end_row();
+            });
     }
 
     fn render_test_mode_tabs(&mut self, ui: &mut egui::Ui) {
