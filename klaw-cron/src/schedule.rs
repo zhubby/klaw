@@ -5,7 +5,7 @@ use std::{str::FromStr, time::Duration};
 
 #[derive(Debug, Clone)]
 pub enum ScheduleSpec {
-    Cron(cron::Schedule),
+    Cron(Box<cron::Schedule>),
     Every(Duration),
 }
 
@@ -15,7 +15,7 @@ impl ScheduleSpec {
             CronScheduleKind::Cron => {
                 let schedule = cron::Schedule::from_str(expr)
                     .map_err(|err| CronError::InvalidSchedule(err.to_string()))?;
-                Ok(Self::Cron(schedule))
+                Ok(Self::Cron(Box::new(schedule)))
             }
             CronScheduleKind::Every => {
                 let parsed = humantime::parse_duration(expr)
