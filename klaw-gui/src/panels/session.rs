@@ -208,28 +208,29 @@ impl PanelRenderer for SessionPanel {
                     need_refresh = true;
                 }
             });
-        });
-        ui.horizontal(|ui| {
-            ui.label("page");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-            ui.label("size");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.size).range(1..=1000),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("page");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+                ui.label("size");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.size).range(1..=1000),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
         });
         if need_refresh {
             self.refresh(notifications);

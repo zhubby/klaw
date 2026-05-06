@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Builder;
 
-const FILTER_INPUT_WIDTH: f32 = 220.0;
+const FILTER_INPUT_WIDTH: f32 = 120.0;
 const PAGING_INPUT_WIDTH: f32 = 50.0;
 
 #[derive(Default)]
@@ -179,6 +179,7 @@ impl PanelRenderer for ApprovalPanel {
                         changed
                     });
                 if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
@@ -212,6 +213,7 @@ impl PanelRenderer for ApprovalPanel {
                         changed
                     });
                 if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
@@ -249,6 +251,7 @@ impl PanelRenderer for ApprovalPanel {
                         changed
                     });
                 if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
@@ -262,31 +265,33 @@ impl PanelRenderer for ApprovalPanel {
                     )
                     .changed()
                 {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
-        });
-        ui.horizontal(|ui| {
-            ui.label("page");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-            ui.label("size");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.size).range(1..=1000),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("page");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+                ui.label("size");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.size).range(1..=1000),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
         });
         if need_refresh {
             self.refresh(notifications);

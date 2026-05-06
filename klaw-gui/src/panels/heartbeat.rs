@@ -545,33 +545,38 @@ impl PanelRenderer for HeartbeatPanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal(|ui| {
-            ui.label("start date");
-            if render_date_picker(ui, &mut self.start_date, "heartbeat-start-date") {
-                need_refresh = true;
-            }
+        ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("start date");
+                if render_date_picker(ui, &mut self.start_date, "heartbeat-start-date") {
+                    need_refresh = true;
+                }
+            });
             ui.separator();
-            ui.label("end date");
-            if render_date_picker(ui, &mut self.end_date, "heartbeat-end-date") {
-                need_refresh = true;
-            }
+            ui.horizontal(|ui| {
+                ui.label("end date");
+                if render_date_picker(ui, &mut self.end_date, "heartbeat-end-date") {
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("page");
+                ui.add_sized(
+                    [50.0, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                );
+                ui.label("size");
+                ui.add_sized(
+                    [50.0, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.size).range(1..=1000),
+                );
+            });
         });
         if need_refresh {
             self.refresh_sessions(notifications);
             self.refresh_jobs(notifications);
         }
-        ui.horizontal(|ui| {
-            ui.label("page");
-            ui.add_sized(
-                [50.0, ui.spacing().interact_size.y],
-                egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-            );
-            ui.label("size");
-            ui.add_sized(
-                [50.0, ui.spacing().interact_size.y],
-                egui::DragValue::new(&mut self.size).range(1..=1000),
-            );
-        });
 
         ui.separator();
 

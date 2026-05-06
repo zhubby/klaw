@@ -644,39 +644,42 @@ impl PanelRenderer for CronPanel {
                     need_refresh = true;
                 }
             });
-        });
-        ui.horizontal(|ui| {
-            let sort_label = match self.sort_order {
-                CronSortOrder::UpdatedAtDesc => "Updated At ↓",
-                CronSortOrder::CreatedAtDesc => "Created At ↓",
-                CronSortOrder::UpdatedAtAsc => "Updated At ↑",
-                CronSortOrder::CreatedAtAsc => "Created At ↑",
-            };
-            if ui.button(sort_label).clicked() {
-                self.toggle_sort_order();
-                need_refresh = true;
-            }
             ui.separator();
-            ui.label("page");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-            ui.label("size");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.size).range(1..=1000),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
+            ui.horizontal(|ui| {
+                let sort_label = match self.sort_order {
+                    CronSortOrder::UpdatedAtDesc => "Updated At ↓",
+                    CronSortOrder::CreatedAtDesc => "Created At ↓",
+                    CronSortOrder::UpdatedAtAsc => "Updated At ↑",
+                    CronSortOrder::CreatedAtAsc => "Created At ↑",
+                };
+                if ui.button(sort_label).clicked() {
+                    self.toggle_sort_order();
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("page");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+                ui.label("size");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.size).range(1..=1000),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
         });
         if need_refresh {
             self.refresh_jobs(notifications);
