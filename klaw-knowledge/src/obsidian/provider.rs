@@ -484,7 +484,7 @@ impl ObsidianKnowledgeProvider {
                 let embedding = blob_at(&row, 3).and_then(|blob| deserialize_embedding(&blob));
                 let score = embedding
                     .as_deref()
-                    .map(|candidate| cosine_similarity(&query_vector, candidate))?;
+                    .map(|candidate| cosine_similarity(query_vector, candidate))?;
                 Some(RankedHit {
                     id: text_at(&row, 0)?,
                     title: text_at(&row, 1)?,
@@ -1043,7 +1043,7 @@ fn real_at(row: &DbRow, index: usize) -> Option<f64> {
 }
 
 fn deserialize_embedding(bytes: &[u8]) -> Option<Vec<f32>> {
-    if bytes.len() % std::mem::size_of::<f32>() != 0 {
+    if !bytes.len().is_multiple_of(std::mem::size_of::<f32>()) {
         return None;
     }
     let mut values = Vec::with_capacity(bytes.len() / std::mem::size_of::<f32>());

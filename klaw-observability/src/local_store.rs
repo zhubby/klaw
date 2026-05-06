@@ -1063,14 +1063,14 @@ impl LocalMetricsStore for SqliteLocalMetricsStore {
             let successes = row.get::<i64, _>("successes").max(0) as u64;
             let failures = row.get::<i64, _>("failures").max(0) as u64;
 
-            if let Some(last) = points.last_mut() {
-                if last.bucket_start_unix_ms == collapsed_bucket {
-                    last.calls += calls;
-                    last.successes += successes;
-                    last.failures += failures;
-                    last.success_rate = ratio(last.successes, last.calls);
-                    continue;
-                }
+            if let Some(last) = points.last_mut()
+                && last.bucket_start_unix_ms == collapsed_bucket
+            {
+                last.calls += calls;
+                last.successes += successes;
+                last.failures += failures;
+                last.success_rate = ratio(last.successes, last.calls);
+                continue;
             }
 
             points.push(ToolTimeseriesPoint {

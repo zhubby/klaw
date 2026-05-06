@@ -206,8 +206,8 @@ impl AgentTelemetry for OtelAgentTelemetry {
         error_code: Option<&str>,
         duration: Duration,
     ) {
-        if let Some(store) = &self.local_store {
-            if let Err(err) = store
+        if let Some(store) = &self.local_store
+            && let Err(err) = store
                 .record_tool_outcome(ToolMetricEvent {
                     occurred_at_unix_ms: OffsetDateTime::now_utc().unix_timestamp_nanos() as i64
                         / 1_000_000,
@@ -218,9 +218,8 @@ impl AgentTelemetry for OtelAgentTelemetry {
                     duration_ms: duration.as_millis() as u64,
                 })
                 .await
-            {
-                tracing::warn!(error = %err, "failed to record local tool outcome");
-            }
+        {
+            tracing::warn!(error = %err, "failed to record local tool outcome");
         }
     }
 
@@ -255,10 +254,10 @@ impl AgentTelemetry for OtelAgentTelemetry {
                 );
             }
         }
-        if let Some(store) = &self.local_store {
-            if let Err(err) = store.record_model_request(record).await {
-                tracing::warn!(error = %err, "failed to record local model request");
-            }
+        if let Some(store) = &self.local_store
+            && let Err(err) = store.record_model_request(record).await
+        {
+            tracing::warn!(error = %err, "failed to record local model request");
         }
     }
 
@@ -278,10 +277,10 @@ impl AgentTelemetry for OtelAgentTelemetry {
                 record.error_code.as_deref().unwrap_or("unknown"),
             ),
         }
-        if let Some(store) = &self.local_store {
-            if let Err(err) = store.record_model_tool_outcome(record).await {
-                tracing::warn!(error = %err, "failed to record model-attributed tool outcome");
-            }
+        if let Some(store) = &self.local_store
+            && let Err(err) = store.record_model_tool_outcome(record).await
+        {
+            tracing::warn!(error = %err, "failed to record model-attributed tool outcome");
         }
     }
 
@@ -294,10 +293,10 @@ impl AgentTelemetry for OtelAgentTelemetry {
             self.metrics
                 .incr_turn_degraded(&record.session_key, &record.provider, &record.model);
         }
-        if let Some(store) = &self.local_store {
-            if let Err(err) = store.record_turn_outcome(record).await {
-                tracing::warn!(error = %err, "failed to record turn outcome");
-            }
+        if let Some(store) = &self.local_store
+            && let Err(err) = store.record_turn_outcome(record).await
+        {
+            tracing::warn!(error = %err, "failed to record turn outcome");
         }
     }
 

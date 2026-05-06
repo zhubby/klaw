@@ -77,10 +77,10 @@ impl AuditLogger {
     }
 
     pub fn emit(&self, event: AuditEvent) {
-        if let Some(path) = &self.output_path {
-            if let Err(err) = self.write_to_file(path, &event) {
-                tracing::warn!(error = %err, "failed to write audit event to file");
-            }
+        if let Some(path) = &self.output_path
+            && let Err(err) = self.write_to_file(path, &event)
+        {
+            tracing::warn!(error = %err, "failed to write audit event to file");
         }
 
         let mut buffer = self

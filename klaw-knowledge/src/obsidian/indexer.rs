@@ -817,6 +817,7 @@ async fn delete_entry(db: Arc<dyn DatabaseExecutor>, entry_id: &str) -> Result<(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_chunk(
     db: Arc<dyn DatabaseExecutor>,
     entry_id: &str,
