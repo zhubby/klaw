@@ -536,7 +536,7 @@ fn node_contains_bot_target(node: &Value, mention_targets: &[String]) -> bool {
     collect_strings(node)
         .into_iter()
         .filter_map(|value| normalized_match_target(value.as_str()))
-        .any(|candidate| mention_targets.iter().any(|target| candidate == *target))
+        .any(|candidate| mention_targets.contains(&candidate))
 }
 
 fn mention_targets(

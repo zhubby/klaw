@@ -65,6 +65,7 @@ impl SessionChannel {
         matches!(self, Self::Cron | Self::Heartbeat | Self::Webhook)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "dingtalk" => Some(Self::Dingtalk),

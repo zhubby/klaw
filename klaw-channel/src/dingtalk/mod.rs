@@ -126,6 +126,7 @@ struct DingtalkStreamWriter {
 }
 
 impl DingtalkStreamWriter {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         client: DingtalkApiClient,
         client_id: String,
