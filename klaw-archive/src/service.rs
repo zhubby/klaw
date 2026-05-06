@@ -101,6 +101,7 @@ impl SqliteArchiveService {
         rows.into_iter().next().map(row_to_record).transpose()
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn insert_record(
         &self,
         input: &ArchiveIngestInput,
@@ -160,6 +161,7 @@ impl SqliteArchiveService {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn insert_with_cleanup(
         &self,
         input: &ArchiveIngestInput,
