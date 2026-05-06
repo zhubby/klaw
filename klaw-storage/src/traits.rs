@@ -20,6 +20,7 @@ pub struct ChatRecordPage {
     pub oldest_message_id: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub trait SessionStorage: Send + Sync {
     async fn touch_session(

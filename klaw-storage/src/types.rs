@@ -195,17 +195,12 @@ impl LlmAuditStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmAuditSortOrder {
     RequestedAtAsc,
+    #[default]
     RequestedAtDesc,
-}
-
-impl Default for LlmAuditSortOrder {
-    fn default() -> Self {
-        Self::RequestedAtDesc
-    }
 }
 
 impl LlmAuditSortOrder {
@@ -333,17 +328,12 @@ impl ToolAuditStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolAuditSortOrder {
     StartedAtAsc,
+    #[default]
     StartedAtDesc,
-}
-
-impl Default for ToolAuditSortOrder {
-    fn default() -> Self {
-        Self::StartedAtDesc
-    }
 }
 
 impl ToolAuditSortOrder {
@@ -455,17 +445,12 @@ impl WebhookEventStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WebhookEventSortOrder {
     ReceivedAtAsc,
+    #[default]
     ReceivedAtDesc,
-}
-
-impl Default for WebhookEventSortOrder {
-    fn default() -> Self {
-        Self::ReceivedAtDesc
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
