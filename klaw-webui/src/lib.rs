@@ -34,6 +34,7 @@ pub(crate) enum ImCardActionKind {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 impl ImCardActionKind {
+    #[allow(dead_code)]
     fn default_label(&self) -> &'static str {
         match self {
             Self::Approve => "Approve",
@@ -60,6 +61,7 @@ pub(crate) struct ImCardAction {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 impl ImCardAction {
+    #[allow(dead_code)]
     fn label_or_default(&self) -> &str {
         self.label
             .as_deref()
@@ -98,6 +100,7 @@ pub(crate) struct ImCard {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 impl ImCard {
+    #[allow(dead_code)]
     pub(crate) fn title_or<'a>(&'a self, fallback: &'a str) -> &'a str {
         self.title
             .as_deref()
@@ -106,11 +109,13 @@ impl ImCard {
             .unwrap_or(fallback)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn body_or<'a>(&'a self, fallback: &'a str) -> &'a str {
         let body = self.body.trim();
         if body.is_empty() { fallback } else { body }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn fallback_text_or<'a>(&'a self, fallback: &'a str) -> &'a str {
         self.fallback_text
             .as_deref()
@@ -407,6 +412,7 @@ pub(crate) struct SessionListEntry {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WorkspaceSessionEntry {
     pub(crate) session_key: String,
@@ -557,6 +563,7 @@ pub(crate) fn resolve_session_route_inputs(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_websocket_turn_start_params(
     session_id: &str,
     thread_id: &str,
@@ -825,6 +832,7 @@ pub(crate) fn should_register_non_stream_fade(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[allow(dead_code)]
 pub(crate) fn should_hide_heartbeat_silent_ack(
     content: &str,
     metadata: &BTreeMap<String, Value>,
@@ -846,6 +854,7 @@ pub(crate) fn should_hide_heartbeat_silent_ack(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[allow(dead_code)]
 pub(crate) fn should_hide_heartbeat_operational_message(
     role: &str,
     content: &str,
