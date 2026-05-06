@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use chrono_tz::Tz;
 use klaw_storage::{
-    CronJob, CronScheduleKind, CronStorage, CronTaskRun, DefaultSessionStore, NewCronJob,
-    SessionIndex, SessionStorage, StorageError, UpdateCronJobPatch, open_default_store,
+    CronJob, CronListQuery, CronScheduleKind, CronStorage, CronTaskRun, DefaultSessionStore,
+    NewCronJob, SessionIndex, SessionStorage, StorageError, UpdateCronJobPatch, open_default_store,
 };
 use klaw_util::system_timezone_name;
 use serde_json::{Value, json};
@@ -357,9 +357,14 @@ impl CronManagerTool {
         let limit = Self::optional_i64(args, "limit")?.unwrap_or(DEFAULT_LIST_LIMIT);
         let offset = Self::optional_i64(args, "offset")?.unwrap_or(0).max(0);
         let bounded_limit = limit.clamp(1, MAX_LIST_LIMIT);
+        let query = CronListQuery {
+            limit: bounded_limit,
+            offset,
+            ..Default::default()
+        };
         let items = self
             .storage
-            .list_crons(bounded_limit, offset)
+            .list_crons(&query)
             .await
             .map_err(map_storage_err)?;
         Ok(json!({

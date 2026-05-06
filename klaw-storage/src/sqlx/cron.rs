@@ -3,8 +3,8 @@ use super::{
     rows::{CronJobRow, CronTaskRunRow},
 };
 use crate::{
-    CronJob, CronStorage, CronTaskRun, CronTaskStatus, NewCronJob, NewCronTaskRun, StorageError,
-    UpdateCronJobPatch, util::now_ms,
+    CronJob, CronListQuery, CronStorage, CronTaskRun, CronTaskStatus, NewCronJob, NewCronTaskRun,
+    StorageError, UpdateCronJobPatch, util::now_ms,
 };
 use async_trait::async_trait;
 
@@ -130,19 +130,44 @@ impl CronStorage for SqlxSessionStore {
         row.try_into()
     }
 
-    async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError> {
-        let rows = sqlx::query_as::<_, CronJobRow>(
-            "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone,
-                    next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
-             FROM cron
-             ORDER BY updated_at_ms DESC
-             LIMIT ?1 OFFSET ?2",
-        )
-        .bind(limit.max(1))
-        .bind(offset.max(0))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(StorageError::backend)?;
+    async fn list_crons(&self, query: &CronListQuery) -> Result<Vec<CronJob>, StorageError> {
+        let limit = query.limit.max(1);
+        let offset = query.offset.max(0);
+        let mut sql = "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms FROM cron WHERE 1=1".to_string();
+        if query.name_search.is_some() {
+            sql.push_str(" AND name LIKE ?");
+        }
+        if query.kind.is_some() {
+            sql.push_str(" AND schedule_kind = ?");
+        }
+        if query.created_from_ms.is_some() {
+            sql.push_str(" AND created_at_ms >= ?");
+        }
+        if query.created_to_ms.is_some() {
+            sql.push_str(" AND created_at_ms <= ?");
+        }
+        sql.push_str(&format!(" ORDER BY {}", query.sort_order.sql_order_by()));
+        sql.push_str(" LIMIT ? OFFSET ?");
+
+        let mut q = sqlx::query_as::<_, CronJobRow>(&sql);
+        if let Some(name) = &query.name_search {
+            q = q.bind(format!("%{}%", name));
+        }
+        if let Some(kind) = query.kind {
+            q = q.bind(kind.as_str());
+        }
+        if let Some(from) = query.created_from_ms {
+            q = q.bind(from);
+        }
+        if let Some(to) = query.created_to_ms {
+            q = q.bind(to);
+        }
+        q = q.bind(limit).bind(offset);
+
+        let rows = q
+            .fetch_all(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
         rows.into_iter().map(TryInto::try_into).collect()
     }
 

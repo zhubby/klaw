@@ -3,8 +3,8 @@ use super::{
     mapping::{escape_sql_text, row_to_cron_job, row_to_cron_task_run},
 };
 use crate::{
-    CronJob, CronStorage, CronTaskRun, CronTaskStatus, NewCronJob, NewCronTaskRun, StorageError,
-    UpdateCronJobPatch, util::now_ms,
+    CronJob, CronListQuery, CronStorage, CronTaskRun, CronTaskStatus, NewCronJob, NewCronTaskRun,
+    StorageError, UpdateCronJobPatch, util::now_ms,
 };
 use async_trait::async_trait;
 
@@ -147,17 +147,25 @@ impl CronStorage for TursoSessionStore {
         row_to_cron_job(&row)
     }
 
-    async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError> {
-        let sql = format!(
-            "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone,
-                    next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms
-             FROM cron
-             ORDER BY updated_at_ms DESC
-             LIMIT {}
-             OFFSET {}",
-            limit.max(1),
-            offset.max(0)
-        );
+    async fn list_crons(&self, query: &CronListQuery) -> Result<Vec<CronJob>, StorageError> {
+        let limit = query.limit.max(1);
+        let offset = query.offset.max(0);
+        let mut sql = "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms FROM cron WHERE 1=1".to_string();
+        if let Some(name) = &query.name_search {
+            sql.push_str(&format!(" AND name LIKE '%{}%'", escape_sql_text(name)));
+        }
+        if let Some(kind) = query.kind {
+            sql.push_str(&format!(" AND schedule_kind = '{}'", kind.as_str()));
+        }
+        if let Some(from) = query.created_from_ms {
+            sql.push_str(&format!(" AND created_at_ms >= {}", from));
+        }
+        if let Some(to) = query.created_to_ms {
+            sql.push_str(&format!(" AND created_at_ms <= {}", to));
+        }
+        sql.push_str(&format!(" ORDER BY {}", query.sort_order.sql_order_by()));
+        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+
         let conn = self.connection().await?;
         let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
         let mut out = Vec::new();

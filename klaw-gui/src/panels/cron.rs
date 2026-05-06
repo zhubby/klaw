@@ -2,11 +2,12 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
 use crate::{RuntimeRequestHandle, begin_run_cron_now_request};
+use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, RichText};
-use egui_extras::{Column, TableBuilder};
+use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_cron::{
-    CronError, CronJob, CronListQuery, CronScheduleKind, CronTaskRun, NewCronJob,
+    CronError, CronJob, CronListQuery, CronScheduleKind, CronSortOrder, CronTaskRun, NewCronJob,
     SqliteCronManager, UpdateCronJobPatch,
 };
 use klaw_storage::CronTaskStatus;
@@ -14,10 +15,12 @@ use klaw_util::system_timezone_name;
 use std::future::Future;
 use std::thread;
 use std::time::Duration;
+use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
 use uuid::Uuid;
 
 const CRON_RUNS_WINDOW_WIDTH: f32 = 760.0;
+const PAGING_INPUT_WIDTH: f32 = 50.0;
 
 #[derive(Debug, Clone)]
 struct CronForm {
@@ -67,10 +70,17 @@ impl CronForm {
     }
 }
 
-#[derive(Default)]
 pub struct CronPanel {
     loaded: bool,
     jobs: Vec<CronJob>,
+    total_jobs: i64,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+    name_search: String,
+    kind_filter: Option<CronScheduleKind>,
+    sort_order: CronSortOrder,
+    page: i64,
+    size: i64,
     runs_cron_id: Option<String>,
     runs: Vec<CronTaskRun>,
     form: Option<CronForm>,
@@ -80,7 +90,42 @@ pub struct CronPanel {
     pending_run_now_cron_id: Option<String>,
 }
 
+impl Default for CronPanel {
+    fn default() -> Self {
+        let today = Local::now().date_naive();
+        let one_year_ago = today - chrono::Duration::days(365);
+        Self {
+            loaded: false,
+            jobs: Vec::new(),
+            total_jobs: 0,
+            start_date: Some(one_year_ago),
+            end_date: Some(today),
+            name_search: String::new(),
+            kind_filter: None,
+            sort_order: CronSortOrder::UpdatedAtDesc,
+            page: 1,
+            size: 50,
+            runs_cron_id: None,
+            runs: Vec::new(),
+            form: None,
+            delete_confirm_id: None,
+            selected_cron: None,
+            run_now_request: None,
+            pending_run_now_cron_id: None,
+        }
+    }
+}
+
 impl CronPanel {
+    fn toggle_sort_order(&mut self) {
+        self.sort_order = match self.sort_order {
+            CronSortOrder::UpdatedAtDesc => CronSortOrder::UpdatedAtAsc,
+            CronSortOrder::UpdatedAtAsc => CronSortOrder::CreatedAtDesc,
+            CronSortOrder::CreatedAtDesc => CronSortOrder::CreatedAtAsc,
+            CronSortOrder::CreatedAtAsc => CronSortOrder::UpdatedAtDesc,
+        };
+    }
+
     fn poll_run_now_request(&mut self, notifications: &mut NotificationCenter) {
         let Some(request) = self.run_now_request.as_mut() else {
             return;
@@ -111,13 +156,31 @@ impl CronPanel {
     }
 
     fn refresh_jobs(&mut self, notifications: &mut NotificationCenter) {
+        let size = self.size.max(1);
+        let page = self.page.max(1);
+        let offset = (page - 1) * size;
+        let name_search = if self.name_search.trim().is_empty() {
+            None
+        } else {
+            Some(self.name_search.trim().to_string())
+        };
         let query = CronListQuery {
-            limit: 200,
-            offset: 0,
+            name_search,
+            kind: self.kind_filter,
+            created_from_ms: self.start_date.and_then(date_start_ms),
+            created_to_ms: self.end_date.and_then(date_end_ms),
+            sort_order: self.sort_order,
+            limit: size,
+            offset,
         };
 
-        match run_cron_task(move |manager| async move { manager.list_jobs(query).await }) {
-            Ok(jobs) => {
+        match run_cron_task(move |manager| async move {
+            let total = manager.count_jobs().await?;
+            let jobs = manager.list_jobs(&query).await?;
+            Ok((total, jobs))
+        }) {
+            Ok((total, jobs)) => {
+                self.total_jobs = total;
                 self.jobs = jobs;
                 self.loaded = true;
                 if let Some(id) = self.runs_cron_id.clone() {
@@ -498,6 +561,7 @@ impl PanelRenderer for CronPanel {
             if ui.button("Add Cron Job").clicked() {
                 self.open_add_form();
             }
+            ui.label(format!("Total: {}", self.total_jobs));
             if let Some(cron_id) = self.pending_run_now_cron_id.as_deref() {
                 ui.label(
                     RichText::new(format!("Running: {cron_id}"))
@@ -508,7 +572,117 @@ impl PanelRenderer for CronPanel {
         });
 
         ui.separator();
-        ui.label(format!("Jobs: {}", self.jobs.len()));
+        let mut need_refresh = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("name");
+                if ui
+                    .add_enabled(
+                        true,
+                        egui::TextEdit::singleline(&mut self.name_search).desired_width(140.0),
+                    )
+                    .changed()
+                {
+                    self.page = 1;
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("kind");
+                let combo_resp = egui::ComboBox::from_id_salt("cron-kind-filter")
+                    .selected_text(self.kind_filter.map(|k| k.as_str()).unwrap_or("All"))
+                    .width(80.0)
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        if ui
+                            .selectable_value(&mut self.kind_filter, None, "All")
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                        if ui
+                            .selectable_value(
+                                &mut self.kind_filter,
+                                Some(CronScheduleKind::Cron),
+                                "cron",
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                        if ui
+                            .selectable_value(
+                                &mut self.kind_filter,
+                                Some(CronScheduleKind::Every),
+                                "every",
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                        changed
+                    });
+                if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("created from");
+                if render_date_picker(ui, &mut self.start_date, "cron-start-date") {
+                    self.page = 1;
+                    need_refresh = true;
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("created to");
+                if render_date_picker(ui, &mut self.end_date, "cron-end-date") {
+                    self.page = 1;
+                    need_refresh = true;
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            let sort_label = match self.sort_order {
+                CronSortOrder::UpdatedAtDesc => "Updated At ↓",
+                CronSortOrder::CreatedAtDesc => "Created At ↓",
+                CronSortOrder::UpdatedAtAsc => "Updated At ↑",
+                CronSortOrder::CreatedAtAsc => "Created At ↑",
+            };
+            if ui.button(sort_label).clicked() {
+                self.toggle_sort_order();
+                need_refresh = true;
+            }
+            ui.separator();
+            ui.label("page");
+            if ui
+                .add_sized(
+                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+            ui.label("size");
+            if ui
+                .add_sized(
+                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut self.size).range(1..=1000),
+                )
+                .changed()
+            {
+                need_refresh = true;
+            }
+        });
+        if need_refresh {
+            self.refresh_jobs(notifications);
+        }
+
+        ui.separator();
 
         egui::ScrollArea::both()
             .auto_shrink([false, false])
@@ -742,6 +916,45 @@ fn enabled_display(enabled: bool) -> (&'static str, Color32, &'static str) {
     } else {
         (regular::X_CIRCLE, Color32::from_rgb(0xEF, 0x44, 0x44), "no")
     }
+}
+
+fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        if let Some(date) = value.as_mut() {
+            if ui
+                .add(DatePickerButton::new(date).id_salt(id).format("%Y/%m/%d"))
+                .changed()
+            {
+                changed = true;
+            }
+            if ui.small_button("×").clicked() {
+                *value = None;
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+fn date_start_ms(date: NaiveDate) -> Option<i64> {
+    date_boundary_ms(date, Time::MIDNIGHT)
+}
+
+fn date_end_ms(date: NaiveDate) -> Option<i64> {
+    let time = Time::from_hms_milli(23, 59, 59, 999).ok()?;
+    date_boundary_ms(date, time)
+}
+
+fn date_boundary_ms(date: NaiveDate, time: Time) -> Option<i64> {
+    let month = Month::try_from(date.month() as u8).ok()?;
+    let date = time::Date::from_calendar_date(date.year(), month, date.day() as u8).ok()?;
+    let datetime = PrimitiveDateTime::new(date, time).assume_utc();
+    Some(offset_to_ms(datetime))
+}
+
+fn offset_to_ms(datetime: OffsetDateTime) -> i64 {
+    datetime.unix_timestamp_nanos().saturating_div(1_000_000) as i64
 }
 
 fn run_cron_task<T, F, Fut>(op: F) -> Result<T, String>

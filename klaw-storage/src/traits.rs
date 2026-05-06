@@ -1,14 +1,15 @@
 use crate::{
-    ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronTaskRun, CronTaskStatus, HeartbeatJob,
-    HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
-    LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord, LlmUsageRecord, LlmUsageSummary,
-    NewApprovalRecord, NewCronJob, NewCronTaskRun, NewHeartbeatJob, NewHeartbeatTaskRun,
-    NewLlmAuditRecord, NewLlmUsageRecord, NewPendingQuestionRecord, NewToolAuditRecord,
-    NewWebhookAgentRecord, NewWebhookEventRecord, PendingQuestionRecord, PendingQuestionStatus,
-    SessionCompressionState, SessionIndex, SessionSortOrder, StorageError, ToolAuditFilterOptions,
-    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch,
-    UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
-    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
+    ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronListQuery, CronTaskRun,
+    CronTaskStatus, HeartbeatJob, HeartbeatTaskRun, HeartbeatTaskStatus, LlmAuditFilterOptions,
+    LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord,
+    LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+    NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
+    NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
+    SessionSortOrder, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
+    ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
+    WebhookEventQuery, WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -322,7 +323,7 @@ pub trait CronStorage: Send + Sync {
 
     async fn get_cron(&self, cron_id: &str) -> Result<CronJob, StorageError>;
 
-    async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError>;
+    async fn list_crons(&self, query: &CronListQuery) -> Result<Vec<CronJob>, StorageError>;
 
     async fn list_due_crons(&self, now_ms: i64, limit: i64) -> Result<Vec<CronJob>, StorageError>;
 

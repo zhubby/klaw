@@ -370,16 +370,16 @@ mod tests {
     use async_trait::async_trait;
     use klaw_core::{InMemoryTransport, InboundMessage};
     use klaw_storage::{
-        ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronScheduleKind, CronStorage,
-        CronTaskRun, CronTaskStatus, LlmAuditFilterOptions, LlmAuditFilterOptionsQuery,
-        LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord, LlmUsageRecord, LlmUsageSummary,
-        NewApprovalRecord, NewCronJob, NewCronTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
-        NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-        PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
-        SessionStorage, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
-        ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateWebhookAgentResult,
-        UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
-        WebhookEventRecord,
+        ApprovalRecord, ApprovalStatus, ChatRecord, CronJob, CronListQuery, CronScheduleKind,
+        CronSortOrder, CronStorage, CronTaskRun, CronTaskStatus, LlmAuditFilterOptions,
+        LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord,
+        LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
+        NewLlmAuditRecord, NewLlmUsageRecord, NewPendingQuestionRecord, NewToolAuditRecord,
+        NewWebhookAgentRecord, NewWebhookEventRecord, PendingQuestionRecord, PendingQuestionStatus,
+        SessionCompressionState, SessionIndex, SessionStorage, StorageError,
+        ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
+        UpdateCronJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
+        WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
     };
     use std::{
         collections::BTreeMap,
@@ -458,11 +458,32 @@ mod tests {
                 .ok_or_else(|| StorageError::backend("not found"))
         }
 
-        async fn list_crons(&self, limit: i64, offset: i64) -> Result<Vec<CronJob>, StorageError> {
+        async fn list_crons(&self, query: &CronListQuery) -> Result<Vec<CronJob>, StorageError> {
             let mut jobs: Vec<CronJob> = self.jobs.lock().expect("lock").iter().cloned().collect();
-            jobs.sort_by_key(|job| std::cmp::Reverse(job.updated_at_ms));
-            let skip = offset.max(0) as usize;
-            let take = limit.max(1) as usize;
+            if let Some(kind) = query.kind {
+                jobs.retain(|job| job.schedule_kind == kind);
+            }
+            if let Some(name) = &query.name_search {
+                jobs.retain(|job| job.name.contains(name));
+            }
+            if let Some(from) = query.created_from_ms {
+                jobs.retain(|job| job.created_at_ms >= from);
+            }
+            if let Some(to) = query.created_to_ms {
+                jobs.retain(|job| job.created_at_ms <= to);
+            }
+            match query.sort_order {
+                CronSortOrder::UpdatedAtDesc => {
+                    jobs.sort_by_key(|job| std::cmp::Reverse(job.updated_at_ms))
+                }
+                CronSortOrder::CreatedAtDesc => {
+                    jobs.sort_by_key(|job| std::cmp::Reverse(job.created_at_ms))
+                }
+                CronSortOrder::UpdatedAtAsc => jobs.sort_by_key(|job| job.updated_at_ms),
+                CronSortOrder::CreatedAtAsc => jobs.sort_by_key(|job| job.created_at_ms),
+            }
+            let skip = query.offset.max(0) as usize;
+            let take = query.limit.max(1) as usize;
             Ok(jobs.into_iter().skip(skip).take(take).collect())
         }
 

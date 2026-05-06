@@ -1,23 +1,8 @@
 use crate::{CronError, ScheduleSpec, time::now_ms};
 use klaw_storage::{
-    CronJob, CronScheduleKind, CronStorage, CronTaskRun, DatabaseExecutor, DbRow, DbValue,
-    DefaultSessionStore, NewCronJob, UpdateCronJobPatch, open_default_store,
+    CronJob, CronListQuery, CronScheduleKind, CronStorage, CronTaskRun, DatabaseExecutor, DbRow,
+    DbValue, DefaultSessionStore, NewCronJob, UpdateCronJobPatch, open_default_store,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub struct CronListQuery {
-    pub limit: i64,
-    pub offset: i64,
-}
-
-impl Default for CronListQuery {
-    fn default() -> Self {
-        Self {
-            limit: 200,
-            offset: 0,
-        }
-    }
-}
 
 pub struct SqliteCronManager {
     store: DefaultSessionStore,
@@ -33,15 +18,34 @@ impl SqliteCronManager {
         Self { store }
     }
 
-    pub async fn list_jobs(&self, query: CronListQuery) -> Result<Vec<CronJob>, CronError> {
+    pub async fn count_jobs(&self) -> Result<i64, CronError> {
+        let sql = "SELECT COUNT(*) FROM cron";
+        let rows = self.store.query(sql, &[]).await?;
+        let row = rows
+            .into_iter()
+            .next()
+            .ok_or_else(|| CronError::InvalidCronRow("empty count result".to_string()))?;
+        row_i64(&row, 0)
+    }
+
+    pub async fn list_jobs(&self, query: &CronListQuery) -> Result<Vec<CronJob>, CronError> {
         let limit = query.limit.max(1);
         let offset = query.offset.max(0);
-        let sql = format!(
-            "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms \
-             FROM cron \
-             ORDER BY updated_at_ms DESC \
-             LIMIT {limit} OFFSET {offset}"
-        );
+        let mut sql = "SELECT id, name, schedule_kind, schedule_expr, payload_json, enabled, timezone, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms FROM cron WHERE 1=1".to_string();
+        if let Some(name) = &query.name_search {
+            sql.push_str(&format!(" AND name LIKE '%{}%'", escape_sql_text(name)));
+        }
+        if let Some(kind) = query.kind {
+            sql.push_str(&format!(" AND schedule_kind = '{}'", kind.as_str()));
+        }
+        if let Some(from) = query.created_from_ms {
+            sql.push_str(&format!(" AND created_at_ms >= {}", from));
+        }
+        if let Some(to) = query.created_to_ms {
+            sql.push_str(&format!(" AND created_at_ms <= {}", to));
+        }
+        sql.push_str(&format!(" ORDER BY {}", query.sort_order.sql_order_by()));
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
         let rows = self.store.query(&sql, &[]).await?;
         rows.into_iter().map(row_to_cron_job).collect()
     }
@@ -145,4 +149,8 @@ fn row_opt_i64(row: &DbRow, index: usize) -> Result<Option<i64>, CronError> {
             "unexpected value at column {index}: {other:?}"
         ))),
     }
+}
+
+fn escape_sql_text(input: &str) -> String {
+    input.replace('\'', "''")
 }

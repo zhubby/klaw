@@ -788,6 +788,39 @@ impl CronTaskStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CronSortOrder {
+    #[default]
+    UpdatedAtDesc,
+    CreatedAtDesc,
+    UpdatedAtAsc,
+    CreatedAtAsc,
+}
+
+impl CronSortOrder {
+    #[must_use]
+    pub fn sql_order_by(self) -> &'static str {
+        match self {
+            Self::UpdatedAtDesc => "updated_at_ms DESC, id DESC",
+            Self::CreatedAtDesc => "created_at_ms DESC, id DESC",
+            Self::UpdatedAtAsc => "updated_at_ms ASC, id ASC",
+            Self::CreatedAtAsc => "created_at_ms ASC, id ASC",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CronListQuery {
+    pub name_search: Option<String>,
+    pub kind: Option<CronScheduleKind>,
+    pub created_from_ms: Option<i64>,
+    pub created_to_ms: Option<i64>,
+    pub sort_order: CronSortOrder,
+    pub limit: i64,
+    pub offset: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronTaskRun {
     pub id: String,
