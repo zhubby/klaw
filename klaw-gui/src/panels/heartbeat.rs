@@ -128,6 +128,7 @@ pub struct HeartbeatPanel {
 
 impl Default for HeartbeatPanel {
     fn default() -> Self {
+        let today = Local::now().date_naive();
         Self {
             loaded: false,
             defaults: HeartbeatDefaults::default(),
@@ -138,8 +139,8 @@ impl Default for HeartbeatPanel {
             form: None,
             delete_confirm_id: None,
             selected_heartbeat: None,
-            start_date: None,
-            end_date: None,
+            start_date: Some(today),
+            end_date: Some(today),
             page: 1,
             size: 20,
             config_window: false,
@@ -866,22 +867,16 @@ fn run_session_query(limit: i64, offset: i64) -> Result<Vec<SessionIndex>, Strin
 fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        if let Some(date) = value.as_mut() {
-            if ui
-                .add(DatePickerButton::new(date).id_salt(id).format("%Y/%m/%d"))
-                .changed()
-            {
-                changed = true;
-            }
-            if ui.small_button("×").clicked() {
-                *value = None;
-                changed = true;
-            }
-        } else {
-            if ui.small_button("Pick date").clicked() {
-                *value = Some(Local::now().date_naive());
-                changed = true;
-            }
+        let date = value.get_or_insert_with(|| Local::now().date_naive());
+        if ui
+            .add(DatePickerButton::new(date).id_salt(id).format("%Y/%m/%d"))
+            .changed()
+        {
+            changed = true;
+        }
+        if ui.small_button("×").clicked() {
+            *value = Some(Local::now().date_naive());
+            changed = true;
         }
     });
     changed
