@@ -1,9 +1,10 @@
 use super::{
-    DingtalkStreamWriter,
+    DingtalkStreamWriter, WS_STALL_TIMEOUT,
     attachments::{
         build_unsupported_file_attachment_markdown, infer_dingtalk_file_type,
         supported_dingtalk_file_type,
     },
+    binary_text_payload,
     client::{
         DingtalkApiClient, ProactiveChatTargetKind, build_ai_card_card_data,
         build_create_and_deliver_ai_card_payload, build_proactive_markdown_payload,
@@ -11,6 +12,7 @@ use super::{
         proactive_chat_target_kind,
     },
     error::{DingtalkApiError, is_session_webhook_session_not_found_error},
+    mark_ws_activity,
     parsing::{
         ApprovalAction, CardCallbackEvent, EventDeduper, InboundEvent,
         build_approval_action_card_body, build_im_card_action_buttons,
@@ -19,7 +21,7 @@ use super::{
         parse_card_callback_event, parse_inbound_event, parse_stream_data, resolve_approval_card,
         resolve_chat_id, resolve_download_code_candidates,
     },
-    runtime_metadata,
+    runtime_metadata, ws_idle_stalled,
 };
 use crate::{
     ChannelResponse, ChannelStreamEvent, ChannelStreamWriter,
@@ -29,6 +31,7 @@ use crate::{
 use std::collections::BTreeMap;
 use std::thread;
 use std::time::Duration;
+use tokio::time::Instant;
 
 const BOT_TITLE: &str = "Klaw";
 
@@ -427,6 +430,30 @@ fn parse_stream_data_supports_string_payload() {
         parsed.get("text").and_then(|v| v.get("content")),
         Some(&serde_json::json!("hello"))
     );
+}
+
+#[test]
+fn binary_text_payload_decodes_utf8_stream_envelope() {
+    let payload = br#"{"type":"SYSTEM","headers":{"topic":"ping"},"data":"{\"opaque\":\"o1\"}"}"#;
+
+    assert_eq!(
+        binary_text_payload(payload).as_deref(),
+        Some(r#"{"type":"SYSTEM","headers":{"topic":"ping"},"data":"{\"opaque\":\"o1\"}"}"#)
+    );
+}
+
+#[test]
+fn keepalive_activity_refresh_prevents_idle_stall() {
+    let now = Instant::now();
+    let mut last_activity_at = now - WS_STALL_TIMEOUT - Duration::from_secs(1);
+    assert!(ws_idle_stalled(last_activity_at, now));
+
+    mark_ws_activity(&mut last_activity_at, now);
+
+    assert!(!ws_idle_stalled(
+        last_activity_at,
+        now + Duration::from_secs(30)
+    ));
 }
 
 #[test]

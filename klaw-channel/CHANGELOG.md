@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-06
+
+### Fixed
+
+- `dingtalk` WebSocket 监听现在会把 UTF-8 binary frame 按 Stream envelope 处理，避免钉钉应用层 ping 以 binary frame 到达时被忽略，导致连接每 90 秒误判 stall 并重连
+- `dingtalk` WebSocket 恢复客户端主动 keepalive Ping，并在成功写出 keepalive 后刷新连接活动时间，避免钉钉空闲 Stream 没有入站帧时被 watchdog 固定 90 秒误判为 stall
+
 ## 2026-04-22
 
 ### Changed

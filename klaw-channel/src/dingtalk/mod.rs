@@ -43,12 +43,11 @@ use uuid::Uuid;
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
-// DingTalk Stream uses application-level ping/ACK (SYSTEM + topic="ping"),
-// not WebSocket protocol-level Ping/Pong.  The server sends an app-level
-// ping roughly every 30 s; we reply with an ACK.  Stall detection
-// therefore relies on receiving any message (including app-level ping)
-// within this timeout.  90 s tolerates missing two consecutive pings
-// (3 × 30 s) before declaring the connection dead.
+// DingTalk Stream may push application-level ping/ACK (SYSTEM + topic="ping"),
+// but field evidence shows some idle connections do not receive any inbound
+// frames. Send protocol-level pings too so an otherwise quiet stream still has
+// transport I/O; failed writes force reconnect through the same loop.
+const WS_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const WS_STALL_TIMEOUT: Duration = Duration::from_secs(90);
 const WS_WATCHDOG_INTERVAL: Duration = Duration::from_secs(15);
 const EVENT_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
@@ -103,6 +102,18 @@ fn runtime_metadata(
         );
     }
     metadata
+}
+
+fn binary_text_payload(payload: &[u8]) -> Option<String> {
+    std::str::from_utf8(payload).ok().map(ToOwned::to_owned)
+}
+
+fn mark_ws_activity(last_activity_at: &mut Instant, at: Instant) {
+    *last_activity_at = at;
+}
+
+fn ws_idle_stalled(last_activity_at: Instant, now: Instant) -> bool {
+    now.duration_since(last_activity_at) >= WS_STALL_TIMEOUT
 }
 
 #[derive(Debug, Clone)]
@@ -450,6 +461,7 @@ impl DingtalkChannel {
                     );
                     let mut cron_tick = time::interval(runtime.cron_tick_interval());
                     let mut runtime_tick = time::interval(runtime.runtime_tick_interval());
+                    let mut keepalive_tick = time::interval(WS_KEEPALIVE_INTERVAL);
                     let mut watchdog_tick = time::interval(WS_WATCHDOG_INTERVAL);
                     let mut cron_job: Option<Pin<Box<dyn Future<Output = ()> + '_>>> = None;
                     let mut runtime_job: Option<Pin<Box<dyn Future<Output = ()> + '_>>> = None;
@@ -491,9 +503,23 @@ impl DingtalkChannel {
                                     runtime_job = Some(Box::pin(runtime.on_runtime_tick()));
                                 }
                             }
+                            _ = keepalive_tick.tick() => {
+                                if let Err(err) = ws.send(Message::Ping(Vec::new().into())).await {
+                                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                    reporter.mark_reconnecting(
+                                        reconnect_attempt,
+                                        format!("dingtalk websocket keepalive ping failed: {err}"),
+                                    );
+                                    warn!(error = %err, "failed to send dingtalk websocket keepalive ping");
+                                    break;
+                                }
+                                mark_ws_activity(&mut last_activity_at, Instant::now());
+                                reporter.record_activity("dingtalk keepalive ping sent");
+                            }
                             _ = watchdog_tick.tick() => {
-                                let idle_for = last_activity_at.elapsed();
-                                if idle_for >= WS_STALL_TIMEOUT {
+                                let now = Instant::now();
+                                if ws_idle_stalled(last_activity_at, now) {
+                                    let idle_for = now.duration_since(last_activity_at);
                                     let message = format!(
                                         "dingtalk websocket stalled after {}s without activity",
                                         idle_for.as_secs()
@@ -518,7 +544,7 @@ impl DingtalkChannel {
 
                                 match message {
                                     Ok(Message::Text(text)) => {
-                                        last_activity_at = Instant::now();
+                                        mark_ws_activity(&mut last_activity_at, Instant::now());
                                         reporter.record_activity("dingtalk inbound event received");
                                         if let Err(err) = self
                                             .handle_text_message(runtime, &mut ws, text.as_str())
@@ -528,7 +554,7 @@ impl DingtalkChannel {
                                         }
                                     }
                                     Ok(Message::Ping(payload)) => {
-                                        last_activity_at = Instant::now();
+                                        mark_ws_activity(&mut last_activity_at, Instant::now());
                                         reporter.record_activity("dingtalk ping received");
                                         if let Err(err) = ws.send(Message::Pong(payload)).await {
                                             reconnect_attempt = reconnect_attempt.saturating_add(1);
@@ -541,7 +567,7 @@ impl DingtalkChannel {
                                         }
                                     }
                                     Ok(Message::Pong(_)) => {
-                                        last_activity_at = Instant::now();
+                                        mark_ws_activity(&mut last_activity_at, Instant::now());
                                         reporter.record_activity("dingtalk pong received");
                                         trace!("received dingtalk websocket pong");
                                     }
@@ -554,7 +580,24 @@ impl DingtalkChannel {
                                         info!(close_frame = ?frame, "dingtalk stream connection closed");
                                         break;
                                     }
-                                    Ok(Message::Binary(_)) | Ok(Message::Frame(_)) => {}
+                                    Ok(Message::Binary(payload)) => {
+                                        if let Some(text) = binary_text_payload(&payload) {
+                                            mark_ws_activity(&mut last_activity_at, Instant::now());
+                                            reporter.record_activity("dingtalk binary text frame received");
+                                            if let Err(err) = self
+                                                .handle_text_message(runtime, &mut ws, text.as_str())
+                                                .await
+                                            {
+                                                warn!(error = %err, "failed to process dingtalk binary message");
+                                            }
+                                        } else {
+                                            debug!(
+                                                payload_bytes = payload.len(),
+                                                "ignoring non-utf8 dingtalk binary websocket frame"
+                                            );
+                                        }
+                                    }
+                                    Ok(Message::Frame(_)) => {}
                                     Err(err) => {
                                         reconnect_attempt = reconnect_attempt.saturating_add(1);
                                         reporter.mark_reconnecting(
