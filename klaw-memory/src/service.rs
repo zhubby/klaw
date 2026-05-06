@@ -277,10 +277,7 @@ impl MemoryService for SqliteMemoryService {
 
         let mut vector_rank = BTreeMap::new();
         if query.use_vector && self.vector_enabled {
-            let query_blob = match self.try_embed_one(&query.text).await {
-                Some(blob) => blob,
-                None => Vec::new(),
-            };
+            let query_blob: Vec<u8> = self.try_embed_one(&query.text).await.unwrap_or_default();
             if !query_blob.is_empty() {
                 let vector_rows = self
                     .db
@@ -297,17 +294,15 @@ impl MemoryService for SqliteMemoryService {
                 for (idx, row) in vector_rows.iter().enumerate() {
                     let id = db_string(row.get(0), "vector_top_k.id")?;
                     vector_rank.insert(id.clone(), idx + 1);
-                    if !records_by_id.contains_key(&id) {
-                        if let Some(record) = self.get(&id).await? {
-                            if query
-                                .scope
-                                .as_ref()
-                                .map(|scope| scope == &record.scope)
-                                .unwrap_or(true)
-                            {
-                                records_by_id.insert(id, record);
-                            }
-                        }
+                    if let std::collections::hash_map::Entry::Vacant(e) = records_by_id.entry(id)
+                        && let Some(record) = self.get(e.key()).await?
+                        && query
+                            .scope
+                            .as_ref()
+                            .map(|scope| scope == &record.scope)
+                            .unwrap_or(true)
+                    {
+                        e.insert(record);
                     }
                 }
             }
