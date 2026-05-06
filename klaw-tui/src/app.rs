@@ -22,7 +22,7 @@ pub async fn run_tui(meta: TuiMeta, runtime: &dyn ChannelRuntime) -> ChannelResu
     let result = run_loop(Rc::clone(&term), Rc::clone(&state), runtime).await;
     {
         let mut t = term.borrow_mut();
-        restore_terminal(&mut *t)?;
+        restore_terminal(&mut t)?;
     }
     result
 }

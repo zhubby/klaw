@@ -350,7 +350,7 @@ fn help_widget(state: &AppState) -> Paragraph<'static> {
     };
     let line = Line::from(vec![
         Span::styled(
-            format!("Enter send | Shift+Enter newline | status: "),
+            "Enter send | Shift+Enter newline | status: ".to_string(),
             Style::default().fg(Color::DarkGray),
         ),
         Span::styled(
