@@ -2,7 +2,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::request_run_heartbeat_now;
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate};
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
@@ -543,12 +543,22 @@ impl PanelRenderer for HeartbeatPanel {
         });
 
         ui.separator();
+        let mut need_refresh = false;
         ui.horizontal(|ui| {
             ui.label("start date");
-            render_date_picker(ui, &mut self.start_date, "heartbeat-start-date");
+            if render_date_picker(ui, &mut self.start_date, "heartbeat-start-date") {
+                need_refresh = true;
+            }
+            ui.separator();
             ui.label("end date");
-            render_date_picker(ui, &mut self.end_date, "heartbeat-end-date");
+            if render_date_picker(ui, &mut self.end_date, "heartbeat-end-date") {
+                need_refresh = true;
+            }
         });
+        if need_refresh {
+            self.refresh_sessions(notifications);
+            self.refresh_jobs(notifications);
+        }
         ui.horizontal(|ui| {
             ui.label("page");
             ui.add_sized(
@@ -853,15 +863,28 @@ fn run_session_query(limit: i64, offset: i64) -> Result<Vec<SessionIndex>, Strin
     }
 }
 
-fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) {
+fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) -> bool {
+    let mut changed = false;
     ui.horizontal(|ui| {
         if let Some(date) = value.as_mut() {
-            ui.add(DatePickerButton::new(date).id_salt(id).format("%Y/%m/%d"));
+            if ui
+                .add(DatePickerButton::new(date).id_salt(id).format("%Y/%m/%d"))
+                .changed()
+            {
+                changed = true;
+            }
             if ui.small_button("×").clicked() {
                 *value = None;
+                changed = true;
+            }
+        } else {
+            if ui.small_button("Pick date").clicked() {
+                *value = Some(Local::now().date_naive());
+                changed = true;
             }
         }
     });
+    changed
 }
 
 #[cfg(test)]
