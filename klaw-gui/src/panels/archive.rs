@@ -18,12 +18,13 @@ use tokio::runtime::Builder;
 use uuid::Uuid;
 
 const MAX_PREVIEW_TEXT_CHARS: usize = 200_000;
-const FILTER_INPUT_WIDTH: f32 = 220.0;
+const FILTER_INPUT_WIDTH: f32 = 120.0;
 const PAGING_INPUT_WIDTH: f32 = 50.0;
 
 #[derive(Default)]
 pub struct ArchivePanel {
     loaded: bool,
+    total_items: i64,
     items: Vec<ArchiveRecord>,
     selected_archive: Option<String>,
     detail_id: Option<String>,
@@ -74,8 +75,13 @@ impl ArchivePanel {
             offset,
         };
 
-        match run_archive_task(move |service| async move { service.find(query).await }) {
-            Ok(items) => {
+        match run_archive_task(move |service| async move {
+            let total = service.count().await?;
+            let items = service.find(query).await?;
+            Ok((total, items))
+        }) {
+            Ok((total, items)) => {
+                self.total_items = total;
                 self.items = items;
                 self.loaded = true;
             }
@@ -126,14 +132,14 @@ impl PanelRenderer for ArchivePanel {
             if ui.button("Refresh").clicked() {
                 self.refresh(notifications);
             }
-            ui.label(format!("Items: {}", self.items.len()));
+            ui.label(format!("Total: {}", self.total_items));
         });
 
         ui.separator();
         let mut need_refresh = false;
         ui.horizontal_wrapped(|ui| {
             ui.horizontal(|ui| {
-                ui.label("session_key");
+                ui.label("Session Key");
                 let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
                 let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
                     .selected_text(selected_text)
@@ -161,12 +167,13 @@ impl PanelRenderer for ArchivePanel {
                         changed
                     });
                 if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("chat_id");
+                ui.label("Chat ID");
                 if ui
                     .add_sized(
                         [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -174,12 +181,13 @@ impl PanelRenderer for ArchivePanel {
                     )
                     .changed()
                 {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("source_kind");
+                ui.label("Source Kind");
                 let selected_text = self.source_kind_filter.map_or("All", |s| s.as_str());
                 let combo_resp = egui::ComboBox::from_id_salt("source_kind_filter")
                     .selected_text(selected_text)
@@ -211,12 +219,13 @@ impl PanelRenderer for ArchivePanel {
                         changed
                     });
                 if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("media_kind");
+                ui.label("Media Kind");
                 let selected_text = self.media_kind_filter.map_or("All", |s| s.as_str());
                 let combo_resp = egui::ComboBox::from_id_salt("media_kind_filter")
                     .selected_text(selected_text)
@@ -250,12 +259,13 @@ impl PanelRenderer for ArchivePanel {
                         changed
                     });
                 if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("filename");
+                ui.label("Filename");
                 if ui
                     .add_sized(
                         [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -263,31 +273,33 @@ impl PanelRenderer for ArchivePanel {
                     )
                     .changed()
                 {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
-        });
-        ui.horizontal(|ui| {
-            ui.label("page");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-            ui.label("size");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.size).range(1..=1000),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Page");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+                ui.label("Size");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.size).range(1..=1000),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
         });
         if need_refresh {
             self.refresh(notifications);

@@ -801,6 +801,14 @@ impl SessionStorage for SqlxSessionStore {
         })
     }
 
+    async fn count_llm_audit(&self) -> Result<i64, StorageError> {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM llm_audit")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(row.0)
+    }
+
     async fn append_tool_audit(
         &self,
         input: &NewToolAuditRecord,

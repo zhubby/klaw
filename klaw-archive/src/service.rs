@@ -382,6 +382,16 @@ impl ArchiveService for SqliteArchiveService {
             })
             .collect())
     }
+
+    async fn count(&self) -> Result<i64, ArchiveError> {
+        let sql = "SELECT COUNT(*) FROM archives";
+        let rows = self.db.query(sql, &[]).await?;
+        let row = rows
+            .into_iter()
+            .next()
+            .ok_or_else(|| ArchiveError::InvalidQuery("empty count result".to_string()))?;
+        row_i64(&row, 0)
+    }
 }
 
 fn opt_text(value: Option<String>) -> DbValue {

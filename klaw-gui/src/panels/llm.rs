@@ -17,7 +17,7 @@ use std::time::Duration;
 use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
 
-const FILTER_INPUT_WIDTH: f32 = 220.0;
+const FILTER_INPUT_WIDTH: f32 = 120.0;
 const PAGING_INPUT_WIDTH: f32 = 50.0;
 const LLM_AUDIT_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
@@ -30,6 +30,7 @@ enum DetailTab {
 
 struct LlmAuditLoad {
     filter_options: LlmAuditFilterOptions,
+    total_count: i64,
     rows: Vec<LlmAuditSummaryRecord>,
 }
 
@@ -91,6 +92,7 @@ impl LlmAuditWorker {
 pub struct LlmPanel {
     loaded: bool,
     loading: bool,
+    total_count: i64,
     rows: Vec<LlmAuditSummaryRecord>,
     session_options: Vec<String>,
     provider_options: Vec<String>,
@@ -120,6 +122,7 @@ impl Default for LlmPanel {
         Self {
             loaded: false,
             loading: false,
+            total_count: 0,
             rows: Vec::new(),
             session_options: Vec::new(),
             provider_options: Vec::new(),
@@ -225,6 +228,7 @@ impl LlmPanel {
                 Ok(load) => {
                     self.session_options = load.filter_options.session_keys;
                     self.provider_options = load.filter_options.providers;
+                    self.total_count = load.total_count;
                     self.rows = load.rows;
                     self.loaded = true;
                     self.loading = false;
@@ -350,7 +354,7 @@ impl PanelRenderer for LlmPanel {
                 self.reload_config(notifications);
                 self.refresh(notifications);
             }
-            ui.label(format!("Rows: {}", self.rows.len()));
+            ui.label(format!("Total: {}", self.total_count));
             if self.loading {
                 ui.add(egui::Spinner::new());
                 ui.small("Loading...");
@@ -361,7 +365,7 @@ impl PanelRenderer for LlmPanel {
         let mut need_refresh = false;
         ui.horizontal_wrapped(|ui| {
             ui.horizontal(|ui| {
-                ui.label("session");
+                ui.label("Session");
                 let combo_resp = egui::ComboBox::from_id_salt("llm-audit-session-filter")
                     .selected_text(self.session_filter.as_deref().unwrap_or("All"))
                     .width(FILTER_INPUT_WIDTH)
@@ -388,12 +392,13 @@ impl PanelRenderer for LlmPanel {
                         changed
                     });
                 if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("provider");
+                ui.label("Provider");
                 let combo_resp = egui::ComboBox::from_id_salt("llm-audit-provider-filter")
                     .selected_text(
                         self.provider_filter
@@ -426,45 +431,49 @@ impl PanelRenderer for LlmPanel {
                         changed
                     });
                 if combo_resp.inner.unwrap_or(false) {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("start date");
+                ui.label("Start Date");
                 if render_date_picker(ui, &mut self.start_date, "llm-audit-start-date") {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("end date");
+                ui.label("End Date");
                 if render_date_picker(ui, &mut self.end_date, "llm-audit-end-date") {
+                    self.page = 1;
                     need_refresh = true;
                 }
             });
-        });
-        ui.horizontal(|ui| {
-            ui.label("page");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-            ui.label("size");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.size).range(1..=1000),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Page");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+                ui.label("Size");
+                if ui
+                    .add_sized(
+                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.size).range(1..=1000),
+                    )
+                    .changed()
+                {
+                    need_refresh = true;
+                }
+            });
         });
         if need_refresh {
             self.reload_config(notifications);
@@ -829,12 +838,17 @@ fn run_llm_audit_worker(request_rx: Receiver<LlmAuditWorkerRequest>) {
                         .list_llm_audit_filter_options(&filter_query)
                         .await
                         .map_err(|err| format!("session operation failed: {err}"))?;
+                    let total_count = manager
+                        .count_llm_audit()
+                        .await
+                        .map_err(|err| format!("session operation failed: {err}"))?;
                     let rows = manager
                         .list_llm_audit_summaries(&query)
                         .await
                         .map_err(|err| format!("session operation failed: {err}"))?;
                     Ok(LlmAuditLoad {
                         filter_options,
+                        total_count,
                         rows,
                     })
                 });
@@ -980,6 +994,7 @@ mod tests {
                 session_keys: vec!["session-1".to_string()],
                 providers: vec!["openai".to_string()],
             },
+            total_count: 1,
             rows: vec![sample_summary()],
         }))
         .expect("send load result");

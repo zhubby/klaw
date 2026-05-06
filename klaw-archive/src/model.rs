@@ -134,4 +134,6 @@ pub trait ArchiveService: Send + Sync {
     async fn open_download(&self, archive_id: &str) -> Result<ArchiveBlob, ArchiveError>;
 
     async fn list_session_keys(&self) -> Result<Vec<String>, ArchiveError>;
+
+    async fn count(&self) -> Result<i64, ArchiveError>;
 }

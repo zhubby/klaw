@@ -933,6 +933,20 @@ impl SessionStorage for TursoSessionStore {
         })
     }
 
+    async fn count_llm_audit(&self) -> Result<i64, StorageError> {
+        let conn = self.connection().await?;
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM llm_audit", ())
+            .await
+            .map_err(StorageError::backend)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(StorageError::backend)?
+            .ok_or_else(|| StorageError::backend("empty count result"))?;
+        value_to_i64(row.get_value(0).map_err(StorageError::backend)?)
+    }
+
     async fn append_tool_audit(
         &self,
         input: &NewToolAuditRecord,

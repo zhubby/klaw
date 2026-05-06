@@ -547,26 +547,26 @@ impl PanelRenderer for HeartbeatPanel {
         let mut need_refresh = false;
         ui.horizontal_wrapped(|ui| {
             ui.horizontal(|ui| {
-                ui.label("start date");
+                ui.label("Start Date");
                 if render_date_picker(ui, &mut self.start_date, "heartbeat-start-date") {
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("end date");
+                ui.label("End Date");
                 if render_date_picker(ui, &mut self.end_date, "heartbeat-end-date") {
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("page");
+                ui.label("Page");
                 ui.add_sized(
                     [50.0, ui.spacing().interact_size.y],
                     egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
                 );
-                ui.label("size");
+                ui.label("Size");
                 ui.add_sized(
                     [50.0, ui.spacing().interact_size.y],
                     egui::DragValue::new(&mut self.size).range(1..=1000),

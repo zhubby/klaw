@@ -195,6 +195,8 @@ pub trait SessionManager: Send + Sync {
         query: &LlmAuditFilterOptionsQuery,
     ) -> Result<LlmAuditFilterOptions, SessionError>;
 
+    async fn count_llm_audit(&self) -> Result<i64, SessionError>;
+
     async fn append_tool_audit(
         &self,
         input: &NewToolAuditRecord,
@@ -531,6 +533,10 @@ impl SessionManager for SqliteSessionManager {
         query: &LlmAuditFilterOptionsQuery,
     ) -> Result<LlmAuditFilterOptions, SessionError> {
         Ok(self.store.list_llm_audit_filter_options(query).await?)
+    }
+
+    async fn count_llm_audit(&self) -> Result<i64, SessionError> {
+        Ok(self.store.count_llm_audit().await?)
     }
 
     async fn append_tool_audit(

@@ -931,6 +931,10 @@ mod tests {
             Ok(LlmAuditFilterOptions::default())
         }
 
+        async fn count_llm_audit(&self) -> Result<i64, StorageError> {
+            Ok(0)
+        }
+
         async fn append_tool_audit(
             &self,
             _input: &NewToolAuditRecord,

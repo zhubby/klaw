@@ -575,7 +575,7 @@ impl PanelRenderer for CronPanel {
         let mut need_refresh = false;
         ui.horizontal_wrapped(|ui| {
             ui.horizontal(|ui| {
-                ui.label("name");
+                ui.label("Name");
                 if ui
                     .add_enabled(
                         true,
@@ -589,7 +589,7 @@ impl PanelRenderer for CronPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("kind");
+                ui.label("Kind");
                 let combo_resp = egui::ComboBox::from_id_salt("cron-kind-filter")
                     .selected_text(self.kind_filter.map(|k| k.as_str()).unwrap_or("All"))
                     .width(80.0)
@@ -630,7 +630,7 @@ impl PanelRenderer for CronPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("created from");
+                ui.label("Created From");
                 if render_date_picker(ui, &mut self.start_date, "cron-start-date") {
                     self.page = 1;
                     need_refresh = true;
@@ -638,7 +638,7 @@ impl PanelRenderer for CronPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("created to");
+                ui.label("Created To");
                 if render_date_picker(ui, &mut self.end_date, "cron-end-date") {
                     self.page = 1;
                     need_refresh = true;
@@ -659,7 +659,7 @@ impl PanelRenderer for CronPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("page");
+                ui.label("Page");
                 if ui
                     .add_sized(
                         [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -669,7 +669,7 @@ impl PanelRenderer for CronPanel {
                 {
                     need_refresh = true;
                 }
-                ui.label("size");
+                ui.label("Size");
                 if ui
                     .add_sized(
                         [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],

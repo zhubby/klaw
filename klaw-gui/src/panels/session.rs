@@ -163,21 +163,21 @@ impl PanelRenderer for SessionPanel {
         let mut need_refresh = false;
         ui.horizontal_wrapped(|ui| {
             ui.horizontal(|ui| {
-                ui.label("start date");
+                ui.label("Start Date");
                 if render_date_picker(ui, &mut self.start_date, "session-start-date") {
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("end date");
+                ui.label("End Date");
                 if render_date_picker(ui, &mut self.end_date, "session-end-date") {
                     need_refresh = true;
                 }
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("channel");
+                ui.label("Channel");
                 let combo_resp = egui::ComboBox::from_id_salt("session-channel-filter")
                     .selected_text(self.channel_filter.as_deref().unwrap_or("All"))
                     .width(140.0)
@@ -210,7 +210,7 @@ impl PanelRenderer for SessionPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("page");
+                ui.label("Page");
                 if ui
                     .add_sized(
                         [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -220,7 +220,7 @@ impl PanelRenderer for SessionPanel {
                 {
                     need_refresh = true;
                 }
-                ui.label("size");
+                ui.label("Size");
                 if ui
                     .add_sized(
                         [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],

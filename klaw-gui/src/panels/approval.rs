@@ -151,7 +151,7 @@ impl PanelRenderer for ApprovalPanel {
         let mut need_refresh = false;
         ui.horizontal_wrapped(|ui| {
             ui.horizontal(|ui| {
-                ui.label("session_key");
+                ui.label("Session Key");
                 let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
                 let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
                     .selected_text(selected_text)
@@ -185,7 +185,7 @@ impl PanelRenderer for ApprovalPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("tool_name");
+                ui.label("Tool Name");
                 let selected_text = self.tool_name_filter.as_deref().unwrap_or("All");
                 let combo_resp = egui::ComboBox::from_id_salt("tool_name_filter")
                     .selected_text(selected_text)
@@ -219,7 +219,7 @@ impl PanelRenderer for ApprovalPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("status");
+                ui.label("Status");
                 let combo_resp = egui::ComboBox::from_id_salt("status_filter")
                     .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
                     .show_ui(ui, |ui| {
@@ -257,7 +257,7 @@ impl PanelRenderer for ApprovalPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("preview");
+                ui.label("Preview");
                 if ui
                     .add_sized(
                         [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -271,7 +271,7 @@ impl PanelRenderer for ApprovalPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("page");
+                ui.label("Page");
                 if ui
                     .add_sized(
                         [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -281,7 +281,7 @@ impl PanelRenderer for ApprovalPanel {
                 {
                     need_refresh = true;
                 }
-                ui.label("size");
+                ui.label("Size");
                 if ui
                     .add_sized(
                         [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],

@@ -186,6 +186,8 @@ pub trait SessionStorage: Send + Sync {
         query: &LlmAuditFilterOptionsQuery,
     ) -> Result<LlmAuditFilterOptions, StorageError>;
 
+    async fn count_llm_audit(&self) -> Result<i64, StorageError>;
+
     async fn append_tool_audit(
         &self,
         input: &NewToolAuditRecord,

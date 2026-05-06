@@ -427,6 +427,10 @@ mod tests {
         async fn list_session_keys(&self) -> Result<Vec<String>, ArchiveError> {
             Ok(Vec::new())
         }
+
+        async fn count(&self) -> Result<i64, ArchiveError> {
+            Ok(0)
+        }
     }
 
     struct FakeVoiceRuntime;
