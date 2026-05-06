@@ -204,9 +204,12 @@ fn format_bytes_si(value: u64) -> String {
     }
 }
 
-fn host_info_row(ui: &mut egui::Ui, key: &str, value: String) {
-    ui.label(key);
-    ui.monospace(value);
+fn host_info_row(ui: &mut egui::Ui, col_width: f32, key: &str, value: String) {
+    ui.add_sized([col_width, 0.0], egui::Label::new(key).truncate(true));
+    ui.add_sized(
+        [col_width, 0.0],
+        egui::Label::new(value).monospace().truncate(true),
+    );
     ui.end_row();
 }
 
@@ -502,6 +505,9 @@ impl SystemPanel {
         ui.separator();
         ui.strong("System Information");
         ui.add_space(6.0);
+
+        let info_width = ui.available_width();
+        let col_width = info_width / 2.0;
 
         egui::ScrollArea::vertical()
             .id_salt("system-host-info-scroll")

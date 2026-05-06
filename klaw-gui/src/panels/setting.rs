@@ -791,12 +791,21 @@ impl SettingPanel {
         let sync_validation_error = self.sync_validation_error();
 
         let mut changed = false;
-        changed |= ui
-            .checkbox(
-                &mut self.settings.sync.enabled,
-                "Enable manifest sync and S3 storage",
-            )
-            .changed();
+
+        ui.horizontal(|ui| {
+            let previous = self.settings.sync.enabled;
+            ui.add(klaw_ui_kit::toggle::toggle(&mut self.settings.sync.enabled));
+            ui.label("Enable manifest sync and S3 storage");
+            let changed_now = self.settings.sync.enabled != previous;
+            changed |= changed_now;
+            if changed_now {
+                if self.settings.sync.enabled {
+                    notifications.success("Manifest sync enabled.");
+                } else {
+                    notifications.info("Manifest sync disabled.");
+                }
+            }
+        });
 
         ui.add_space(8.0);
         egui::CollapsingHeader::new("General")
