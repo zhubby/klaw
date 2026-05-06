@@ -221,14 +221,15 @@ impl OpenAiCompatibleProvider {
             }
         }
 
-        if !buffer.trim().is_empty() {
-            if let Some(event) = parse_sse_event(&buffer)? {
-                on_event(event)?;
-            }
+        if !buffer.trim().is_empty()
+            && let Some(event) = parse_sse_event(&buffer)?
+        {
+            on_event(event)?;
         }
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_audit(
         &self,
         model: &str,
@@ -828,18 +829,7 @@ fn build_responses_input(messages: Vec<LlmMessage>) -> Vec<OpenAiResponsesInputI
             continue;
         }
 
-        if !message.content.trim().is_empty() {
-            let content = build_responses_message_content(&message);
-            if content.is_empty() {
-                continue;
-            }
-            input.push(OpenAiResponsesInputItem::Message(
-                OpenAiResponsesInputMessage {
-                    role: message.role.clone(),
-                    content,
-                },
-            ));
-        } else if !message.media.is_empty() {
+        if !message.content.trim().is_empty() || !message.media.is_empty() {
             let content = build_responses_message_content(&message);
             if content.is_empty() {
                 continue;
@@ -852,18 +842,18 @@ fn build_responses_input(messages: Vec<LlmMessage>) -> Vec<OpenAiResponsesInputI
             ));
         }
 
-        if message.role == "assistant" {
-            if let Some(tool_calls) = message.tool_calls {
-                for (index, call) in tool_calls.into_iter().enumerate() {
-                    input.push(OpenAiResponsesInputItem::FunctionCall(
-                        OpenAiResponsesFunctionCallInput {
-                            r#type: "function_call".to_string(),
-                            call_id: call.id.unwrap_or_else(|| format!("call_{}", index + 1)),
-                            name: call.name,
-                            arguments: call.arguments.to_string(),
-                        },
-                    ));
-                }
+        if message.role == "assistant"
+            && let Some(tool_calls) = message.tool_calls
+        {
+            for (index, call) in tool_calls.into_iter().enumerate() {
+                input.push(OpenAiResponsesInputItem::FunctionCall(
+                    OpenAiResponsesFunctionCallInput {
+                        r#type: "function_call".to_string(),
+                        call_id: call.id.unwrap_or_else(|| format!("call_{}", index + 1)),
+                        name: call.name,
+                        arguments: call.arguments.to_string(),
+                    },
+                ));
             }
         }
     }
@@ -1000,12 +990,12 @@ fn parse_responses_payload(payload: OpenAiResponsesResponse) -> LlmResponse {
         }
     }
 
-    if content_chunks.is_empty() {
-        if let Some(output_text) = payload.output_text {
-            let trimmed = output_text.trim();
-            if !trimmed.is_empty() {
-                content_chunks.push(trimmed.to_string());
-            }
+    if content_chunks.is_empty()
+        && let Some(output_text) = payload.output_text
+    {
+        let trimmed = output_text.trim();
+        if !trimmed.is_empty() {
+            content_chunks.push(trimmed.to_string());
         }
     }
 

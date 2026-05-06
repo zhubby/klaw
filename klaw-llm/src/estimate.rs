@@ -10,6 +10,7 @@ use tokenizers::Tokenizer;
 
 static TOKENIZER_CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<Tokenizer>>>> = OnceLock::new();
 
+#[allow(clippy::too_many_arguments)]
 pub fn estimate_chat_usage(
     provider: &str,
     model: &str,
@@ -116,10 +117,10 @@ fn count_tokens(tokenizer: Option<&Tokenizer>, text: &str) -> u64 {
     if text.trim().is_empty() {
         return 0;
     }
-    if let Some(tokenizer) = tokenizer {
-        if let Ok(encoding) = tokenizer.encode(text, false) {
-            return encoding.len() as u64;
-        }
+    if let Some(tokenizer) = tokenizer
+        && let Ok(encoding) = tokenizer.encode(text, false)
+    {
+        return encoding.len() as u64;
     }
     heuristic_token_count(text)
 }

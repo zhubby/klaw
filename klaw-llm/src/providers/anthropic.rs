@@ -264,6 +264,7 @@ impl LlmProvider for AnthropicProvider {
 }
 
 impl AnthropicProvider {
+    #[allow(clippy::too_many_arguments)]
     fn build_audit(
         &self,
         model: String,
