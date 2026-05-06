@@ -256,8 +256,7 @@ pub async fn submit_channel_request(
 ) -> ChannelResult<Option<ChannelResponse>> {
     if !is_channel_commands_disabled(runtime, &request.channel)
         && request.input.trim_start().starts_with('/')
-    {
-        if let Some(response) = im_commands::try_handle(
+        && let Some(response) = im_commands::try_handle(
             runtime,
             request.channel.clone(),
             request.session_key.clone(),
@@ -266,9 +265,8 @@ pub async fn submit_channel_request(
             request.metadata.clone(),
         )
         .await?
-        {
-            return Ok(Some(response));
-        }
+    {
+        return Ok(Some(response));
     }
 
     if request_wants_isolated_turn(&request.metadata) {
@@ -394,8 +392,7 @@ pub async fn submit_channel_request_streaming_into(
 ) -> ChannelResult<Option<ChannelResponse>> {
     if !is_channel_commands_disabled(runtime, &request.channel)
         && request.input.trim_start().starts_with('/')
-    {
-        if let Some(response) = im_commands::try_handle(
+        && let Some(response) = im_commands::try_handle(
             runtime,
             request.channel.clone(),
             request.session_key.clone(),
@@ -404,12 +401,11 @@ pub async fn submit_channel_request_streaming_into(
             request.metadata.clone(),
         )
         .await?
-        {
-            writer
-                .write(ChannelStreamEvent::Snapshot(response.clone()))
-                .await?;
-            return Ok(Some(response));
-        }
+    {
+        writer
+            .write(ChannelStreamEvent::Snapshot(response.clone()))
+            .await?;
+        return Ok(Some(response));
     }
 
     apply_websocket_route_override_from_metadata(
@@ -456,8 +452,7 @@ where
 {
     if !is_channel_commands_disabled(runtime, &request.channel)
         && request.input.trim_start().starts_with('/')
-    {
-        if let Some(response) = im_commands::try_handle(
+        && let Some(response) = im_commands::try_handle(
             runtime,
             request.channel.clone(),
             request.session_key.clone(),
@@ -466,10 +461,9 @@ where
             request.metadata.clone(),
         )
         .await?
-        {
-            on_event(ChannelStreamEvent::Snapshot(response.clone()))?;
-            return Ok(Some(response));
-        }
+    {
+        on_event(ChannelStreamEvent::Snapshot(response.clone()))?;
+        return Ok(Some(response));
     }
 
     apply_websocket_route_override_from_metadata(
@@ -693,6 +687,7 @@ async fn persist_llm_usage_records(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn persist_assistant_response_state(
     runtime: &RuntimeBundle,
     session_key: &str,
@@ -2594,6 +2589,7 @@ async fn maybe_refresh_summary(
     next_summary
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn submit_and_get_turn_outcome(
     runtime: &RuntimeBundle,
     channel: String,
@@ -2718,6 +2714,7 @@ pub(crate) async fn submit_and_get_turn_outcome(
     .map(|output| AssistantTurnOutcome { output })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn submit_history_only_turn_outcome(
     runtime: &RuntimeBundle,
     channel: String,
@@ -2825,6 +2822,7 @@ pub(crate) async fn submit_history_only_turn_outcome(
     .map(|output| AssistantTurnOutcome { output })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn submit_and_get_output(
     runtime: &RuntimeBundle,
     channel: String,
@@ -5145,6 +5143,7 @@ A .docx file is a ZIP archive containing XML files.
         assert!(response.content.contains("tool `shell` failed"));
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[tokio::test(flavor = "current_thread")]
     async fn help_command_lists_usage_and_shell_commands() {
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
@@ -5174,6 +5173,7 @@ A .docx file is a ZIP archive containing XML files.
         assert!(!response.content.contains("🧩 Providers:"));
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[test]
     fn resolve_new_session_target_uses_global_active_provider_and_model() {
         let mut config = AppConfig::default();
@@ -5194,6 +5194,7 @@ A .docx file is a ZIP archive containing XML files.
         );
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[test]
     fn resolve_new_session_target_uses_provider_default_model_even_with_root_model() {
         let mut config = AppConfig::default();
@@ -5243,6 +5244,7 @@ A .docx file is a ZIP archive containing XML files.
         assert!(err.to_string().contains("unknown runtime provider"));
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[tokio::test(flavor = "current_thread")]
     async fn sync_runtime_providers_refreshes_live_snapshot_and_clears_invalid_override() {
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
@@ -5282,6 +5284,7 @@ A .docx file is a ZIP archive containing XML files.
         );
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[tokio::test(flavor = "current_thread")]
     async fn sync_runtime_providers_ignores_legacy_root_model_field() {
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
@@ -5309,6 +5312,7 @@ A .docx file is a ZIP archive containing XML files.
         );
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[tokio::test(flavor = "current_thread")]
     async fn model_provider_command_lists_live_runtime_providers_after_sync() {
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
@@ -5339,6 +5343,7 @@ A .docx file is a ZIP archive containing XML files.
         assert!(!response.content.contains("test-provider"));
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[tokio::test(flavor = "current_thread")]
     async fn resolve_session_route_clears_invalid_provider_override_after_sync() {
         let provider = Arc::new(BootstrapCaptureProvider::default()) as Arc<dyn LlmProvider>;
@@ -5379,6 +5384,7 @@ A .docx file is a ZIP archive containing XML files.
         assert_eq!(route.model, "fresh-model");
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[tokio::test(flavor = "current_thread")]
     async fn resolve_session_route_preserves_explicit_provider_override_after_global_provider_change()
      {
@@ -5425,6 +5431,7 @@ A .docx file is a ZIP archive containing XML files.
         assert_eq!(route.model, "explicit-model");
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[tokio::test(flavor = "current_thread")]
     async fn resolve_session_route_clears_legacy_model_only_override_after_global_provider_change()
     {

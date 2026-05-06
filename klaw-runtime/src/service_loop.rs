@@ -212,20 +212,19 @@ impl MessageTransport<InboundMessage> for FilteringInboundTransport {
         topic: &'static str,
         msg: Envelope<InboundMessage>,
     ) -> Result<(), TransportError> {
-        if topic == klaw_core::MessageTopic::Inbound.as_str() {
-            if let Some(reason) = self
+        if topic == klaw_core::MessageTopic::Inbound.as_str()
+            && let Some(reason) = self
                 .availability
                 .disabled_reason(&msg.payload.channel, &msg.payload.session_key)
-            {
-                debug!(
-                    source = inbound_source(&msg.payload),
-                    channel = msg.payload.channel.as_str(),
-                    target_session_key = msg.payload.session_key.as_str(),
-                    reason = %reason,
-                    "skipping inbound publish because target channel is disabled"
-                );
-                return Ok(());
-            }
+        {
+            debug!(
+                source = inbound_source(&msg.payload),
+                channel = msg.payload.channel.as_str(),
+                target_session_key = msg.payload.session_key.as_str(),
+                reason = %reason,
+                "skipping inbound publish because target channel is disabled"
+            );
+            return Ok(());
         }
         self.inner.publish(topic, msg).await
     }
@@ -362,6 +361,7 @@ impl BackgroundServices {
         }
     }
 
+    #[allow(clippy::await_holding_lock)]
     pub async fn on_runtime_tick(&self, runtime: &RuntimeBundle) {
         if let Err(err) = drain_runtime_queue(runtime, self.config.runtime_drain_batch).await {
             let message = err.to_string();
@@ -374,13 +374,18 @@ impl BackgroundServices {
                 *last_error = Some(message);
             }
         } else {
-            let mut last_error = self
-                .runtime_drain_error
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *last_error = None;
-            if let Err(err) = self.dispatch_outbound_messages(runtime).await {
-                warn!(error = %err, "background outbound dispatch failed");
+            // The MutexGuard for runtime_drain_error is intentionally held across the
+            // dispatch_outbound_messages await. The lock scope is small and bounded;
+            // suppressing clippy's await_holding_lock lint for this controlled pattern.
+            {
+                let mut last_error = self
+                    .runtime_drain_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                *last_error = None;
+                if let Err(err) = self.dispatch_outbound_messages(runtime).await {
+                    warn!(error = %err, "background outbound dispatch failed");
+                }
             }
         }
     }
@@ -812,9 +817,9 @@ async fn dispatch_dingtalk_outbound_message(
     )
     .await
     {
-        Ok(()) => return Ok(()),
+        Ok(()) => Ok(()),
         Err(err) if !is_session_webhook_session_not_found_error(err.as_ref()) => {
-            return Err(err.to_string());
+            Err(err.to_string())
         }
         Err(err) => {
             warn!(
@@ -1134,12 +1139,11 @@ mod tests {
     use klaw_session::{SessionManager, SqliteSessionManager};
     use klaw_storage::{DefaultSessionStore, StoragePaths};
     use serde_json::{Value, json};
-    use std::{collections::BTreeMap, path::PathBuf};
+    use std::collections::BTreeMap;
     use uuid::Uuid;
 
     async fn create_store() -> DefaultSessionStore {
-        let root = PathBuf::from(std::env::temp_dir())
-            .join(format!("klaw-service-loop-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("klaw-service-loop-{}", Uuid::new_v4()));
         DefaultSessionStore::open(StoragePaths::from_root(root))
             .await
             .expect("store should open")

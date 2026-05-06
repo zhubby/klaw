@@ -30,7 +30,7 @@ pub(super) async fn execute_im_shell(
         Ok(output) => Ok(format_shell_output_for_im(
             &output
                 .content_for_user
-                .unwrap_or_else(|| output.content_for_model),
+                .unwrap_or(output.content_for_model),
         )),
         Err(err) => Ok(format!("tool `shell` failed: {err}")),
     }
@@ -65,10 +65,10 @@ fn format_shell_output_for_im(raw: &str) -> String {
     if let Some(cwd) = payload.get("cwd").and_then(Value::as_str) {
         lines.push(format!("- CWD: `{cwd}`"));
     }
-    if let Some(exit_code) = payload.get("exit_code") {
-        if !exit_code.is_null() {
-            lines.push(format!("- Exit code: `{exit_code}`"));
-        }
+    if let Some(exit_code) = payload.get("exit_code")
+        && !exit_code.is_null()
+    {
+        lines.push(format!("- Exit code: `{exit_code}`"));
     }
     if let Some(duration_ms) = payload.get("duration_ms").and_then(Value::as_u64) {
         lines.push(format!("- Duration: `{duration_ms}ms`"));

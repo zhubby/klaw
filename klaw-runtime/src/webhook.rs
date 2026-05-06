@@ -129,7 +129,7 @@ impl GatewayWebhookHandler for RuntimeWebhookHandler {
         );
         let content = load_webhook_agent_prompt(&request)
             .await
-            .map_err(|err| GatewayWebhookHandlerError::not_found(err))?;
+            .map_err(GatewayWebhookHandlerError::not_found)?;
         let manager = SqliteSessionManager::from_store(self.runtime.session_store.clone());
         manager
             .touch_session(&request.session_key, &request.chat_id, "webhook")

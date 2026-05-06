@@ -261,6 +261,7 @@ fn build_approved_tool_resume_history(
     conversation_history
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn submit_approved_tool_resume(
     runtime: &RuntimeBundle,
     followup_channel: String,
@@ -306,6 +307,7 @@ async fn submit_approved_tool_resume(
     Ok(outcome.output)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn submit_isolated_session_followup(
     runtime: &RuntimeBundle,
     channel: String,
