@@ -568,10 +568,10 @@ impl GatewayAuthConfig {
         if let Some(token) = &self.token {
             return Some(token.clone());
         }
-        if let Some(env_key) = &self.env_key {
-            if let Ok(val) = std::env::var(env_key) {
-                return Some(val);
-            }
+        if let Some(env_key) = &self.env_key
+            && let Ok(val) = std::env::var(env_key)
+        {
+            return Some(val);
         }
         None
     }
@@ -691,8 +691,10 @@ impl<'de> Deserialize<'de> for GatewayWebhookConfig {
         D: Deserializer<'de>,
     {
         let compat = GatewayWebhookConfigCompat::deserialize(deserializer)?;
-        let mut config = GatewayWebhookConfig::default();
-        config.enabled = compat.enabled;
+        let mut config = GatewayWebhookConfig {
+            enabled: compat.enabled,
+            ..Default::default()
+        };
         if let Some(events) = compat.events {
             if let Some(enabled) = events.enabled {
                 config.events.enabled = enabled;
