@@ -539,64 +539,77 @@ impl LocalModelsPanel {
         let mut upgrade_summary = None;
         let installed = self.installed.clone();
         let row_height = ui.spacing().interact_size.y;
-        TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .sense(egui::Sense::click())
-            .column(Column::remainder())
-            .column(Column::auto())
-            .column(Column::remainder())
-            .column(Column::auto())
-            .header(22.0, |mut header| {
-                header.col(|ui| {
-                    ui.strong("Name");
-                });
-                header.col(|ui| {
-                    ui.strong("Size");
-                });
-                header.col(|ui| {
-                    ui.strong("Created");
-                });
-                header.col(|ui| {
-                    ui.strong("Default GGUF");
-                });
-            })
-            .body(|body| {
-                body.rows(row_height, installed.len(), |mut row| {
-                    let summary = &installed[row.index()];
-                    let is_selected = self.selected_model.as_deref() == Some(&summary.model_id);
-                    row.set_selected(is_selected);
-                    row.col(|ui| {
-                        ui.label(
-                            RichText::new(format!("{} ({})", summary.repo_id, summary.revision))
-                                .monospace(),
-                        );
-                    });
-                    row.col(|ui| {
-                        ui.label(format_bytes(summary.size_bytes));
-                    });
-                    row.col(|ui| {
-                        ui.label(&summary.installed_at);
-                    });
-                    row.col(|ui| {
-                        ui.label(summary.default_gguf_model_file.as_deref().unwrap_or("—"));
-                    });
+        egui::ScrollArea::both()
+            .id_salt("local-models-table-scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .sense(egui::Sense::click())
+                    .column(Column::remainder().at_least(200.0))
+                    .column(Column::auto().at_least(80.0))
+                    .column(Column::remainder().at_least(160.0))
+                    .column(Column::auto().at_least(120.0))
+                    .header(22.0, |mut header| {
+                        header.col(|ui| {
+                            ui.strong("Name");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Size");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Created");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Default Model File");
+                        });
+                    })
+                    .body(|body| {
+                        body.rows(row_height, installed.len(), |mut row| {
+                            let summary = &installed[row.index()];
+                            let is_selected =
+                                self.selected_model.as_deref() == Some(&summary.model_id);
+                            row.set_selected(is_selected);
+                            row.col(|ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} ({})",
+                                        summary.repo_id, summary.revision
+                                    ))
+                                    .monospace(),
+                                );
+                            });
+                            row.col(|ui| {
+                                ui.label(format_bytes(summary.size_bytes));
+                            });
+                            row.col(|ui| {
+                                ui.label(&summary.installed_at);
+                            });
+                            row.col(|ui| {
+                                if summary.default_gguf_model_file.is_some() {
+                                    ui.label(RichText::new("✓").strong());
+                                } else {
+                                    ui.label("—");
+                                }
+                            });
 
-                    let response = row.response();
-                    if response.clicked() {
-                        self.selected_model = if is_selected {
-                            None
-                        } else {
-                            Some(summary.model_id.clone())
-                        };
-                    }
-                    model_row_context_menu(
-                        response,
-                        summary,
-                        &mut upgrade_summary,
-                        &mut delete_model_id,
-                    );
-                });
+                            let response = row.response();
+                            if response.clicked() {
+                                self.selected_model = if is_selected {
+                                    None
+                                } else {
+                                    Some(summary.model_id.clone())
+                                };
+                            }
+                            model_row_context_menu(
+                                response,
+                                summary,
+                                &mut upgrade_summary,
+                                &mut delete_model_id,
+                            );
+                        });
+                    });
             });
         if let Some(model_id) = delete_model_id {
             self.delete_confirm = Some(model_id);
