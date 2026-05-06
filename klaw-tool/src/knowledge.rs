@@ -513,6 +513,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn open_default_does_not_reindex_vault() {
         let _home_lock = HOME_ENV_LOCK

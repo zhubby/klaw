@@ -194,10 +194,10 @@ impl MemoryTool {
             .and_then(|session| session.active_session_key)
             .filter(|value| !value.trim().is_empty());
         let mut session_keys = vec![base_session_key.clone()];
-        if let Some(active_session_key) = active_session_key {
-            if active_session_key != base_session_key {
-                session_keys.push(active_session_key);
-            }
+        if let Some(active_session_key) = active_session_key
+            && active_session_key != base_session_key
+        {
+            session_keys.push(active_session_key);
         }
         if ctx.session_key != base_session_key && !session_keys.contains(&ctx.session_key) {
             session_keys.push(ctx.session_key.clone());

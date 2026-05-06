@@ -86,10 +86,10 @@ fn truncate_content(
     let _end = (start + effective_limit).min(lines.len());
 
     let mut first_line_exceeds_limit = false;
-    if let Some(first_line) = lines.get(start) {
-        if first_line.len() > max_bytes {
-            first_line_exceeds_limit = true;
-        }
+    if let Some(first_line) = lines.get(start)
+        && first_line.len() > max_bytes
+    {
+        first_line_exceeds_limit = true;
     }
 
     if first_line_exceeds_limit {

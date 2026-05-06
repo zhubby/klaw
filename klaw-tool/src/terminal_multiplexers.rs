@@ -881,6 +881,7 @@ impl TerminalMultiplexerTool {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn send_to_target(
         &self,
         layout: &SocketLayout,

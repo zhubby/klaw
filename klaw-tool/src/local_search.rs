@@ -263,10 +263,10 @@ impl LocalSearchTool {
         command.arg(&request.query).arg(search_path);
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        if let Some(workspace) = Self::workspace_root(ctx) {
-            if Path::new(search_path).is_relative() {
-                command.current_dir(workspace);
-            }
+        if let Some(workspace) = Self::workspace_root(ctx)
+            && Path::new(search_path).is_relative()
+        {
+            command.current_dir(workspace);
         }
 
         command
@@ -353,7 +353,7 @@ impl LocalSearchTool {
         let execution = timeout(
             Duration::from_millis(request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)),
             Self::collect_search_execution(child, limit, |path| {
-                Self::normalize_rg_result_path(path, &search_paths)
+                Self::normalize_rg_result_path(path, search_paths)
             }),
         )
         .await
@@ -398,7 +398,7 @@ impl LocalSearchTool {
                     .file_name()
                     .map(PathBuf::from)
                     .unwrap_or_else(|| path.to_path_buf());
-                if !matcher.is_match(&normalize_path_for_glob(&candidate)) {
+                if !matcher.is_match(normalize_path_for_glob(&candidate)) {
                     return Ok(Vec::new());
                 }
             }

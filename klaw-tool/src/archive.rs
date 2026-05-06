@@ -107,12 +107,12 @@ impl ArchiveTool {
                 ));
             }
         }
-        if let Some(max_chars) = request.max_chars {
-            if max_chars == 0 || max_chars > MAX_READ_MAX_CHARS {
-                return Err(ToolError::InvalidArgs(format!(
-                    "`max_chars` must be between 1 and {MAX_READ_MAX_CHARS}"
-                )));
-            }
+        if let Some(max_chars) = request.max_chars
+            && (max_chars == 0 || max_chars > MAX_READ_MAX_CHARS)
+        {
+            return Err(ToolError::InvalidArgs(format!(
+                "`max_chars` must be between 1 and {MAX_READ_MAX_CHARS}"
+            )));
         }
         Ok(request)
     }
@@ -268,10 +268,10 @@ impl ArchiveTool {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
         let mut session_keys = vec![base_session_key.clone()];
-        if let Some(active_session_key) = active_session_key {
-            if active_session_key != base_session_key {
-                session_keys.push(active_session_key);
-            }
+        if let Some(active_session_key) = active_session_key
+            && active_session_key != base_session_key
+        {
+            session_keys.push(active_session_key);
         }
         if ctx.session_key != base_session_key && !session_keys.contains(&ctx.session_key) {
             session_keys.push(ctx.session_key.clone());

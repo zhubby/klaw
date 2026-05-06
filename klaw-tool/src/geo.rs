@@ -24,6 +24,12 @@ struct GeoResponse {
     accuracy_authorization: Option<&'static str>,
 }
 
+impl Default for GeoTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GeoTool {
     #[must_use]
     pub fn new() -> Self {

@@ -19,6 +19,7 @@ const MAX_PATCH_OPERATIONS: usize = 50;
 const MAX_CONTENT_BYTES: usize = 1_000_000;
 const APPROVAL_TTL_MINUTES: i64 = 10;
 
+#[derive(Default)]
 pub struct ApplyPatchTool {
     config: ApplyPatchConfig,
     storage_root_dir: Option<String>,
@@ -33,6 +34,7 @@ struct ApplyPatchRequest {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[allow(clippy::enum_variant_names)]
 enum PatchOperation {
     AddFile { path: String, content: String },
     UpdateFile { path: String, content: String },
@@ -47,6 +49,7 @@ struct PatchResult {
     summary: Vec<String>,
 }
 
+#[allow(clippy::enum_variant_names)]
 enum ResolvedPatchOperation {
     AddFile { path: PathBuf, content: String },
     UpdateFile { path: PathBuf, content: String },
@@ -594,16 +597,6 @@ impl ApplyPatchTool {
             operations_applied: summary.len(),
             summary,
         })
-    }
-}
-
-impl Default for ApplyPatchTool {
-    fn default() -> Self {
-        Self {
-            config: ApplyPatchConfig::default(),
-            storage_root_dir: None,
-            approval_manager: None,
-        }
     }
 }
 

@@ -393,18 +393,17 @@ impl Tool for SubAgentTool {
             }
         })?;
 
-        if let Some(audit_sink) = &self.audit_sink {
-            if let Err(err) = audit_sink
+        if let Some(audit_sink) = &self.audit_sink
+            && let Err(err) = audit_sink
                 .persist_sub_agent_audits(&parent_session, &child_session_key, &output)
                 .await
-            {
-                debug!(
-                    parent_session = parent_session,
-                    child_session = child_session_key,
-                    error = %err,
-                    "failed to persist sub-agent audit records"
-                );
-            }
+        {
+            debug!(
+                parent_session = parent_session,
+                child_session = child_session_key,
+                error = %err,
+                "failed to persist sub-agent audit records"
+            );
         }
 
         Self::finalize_output(output)
