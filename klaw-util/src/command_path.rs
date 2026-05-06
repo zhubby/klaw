@@ -42,7 +42,7 @@ fn command_path_update() -> Option<CommandPathUpdate> {
             .map(PathBuf::from)
             .filter(|candidate| candidate.exists())
             .collect::<Vec<_>>();
-        return compute_command_path_update(env::var_os("PATH"), installed_candidates);
+        compute_command_path_update(env::var_os("PATH"), installed_candidates)
     }
 
     #[cfg(not(target_os = "macos"))]
