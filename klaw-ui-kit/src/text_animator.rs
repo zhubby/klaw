@@ -159,10 +159,9 @@ impl TextAnimator {
             for i in 0..visible_chars.min(num_chars) {
                 if self.intermediate_text.get(i) != chars.get(i)
                     && rng.random_range(0.0..1.0) < lock_threshold
+                    && let Some(intermediate_char) = self.intermediate_text.get_mut(i)
                 {
-                    if let Some(intermediate_char) = self.intermediate_text.get_mut(i) {
-                        *intermediate_char = chars[i];
-                    }
+                    *intermediate_char = chars[i];
                 }
             }
 

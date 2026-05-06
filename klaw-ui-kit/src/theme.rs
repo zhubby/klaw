@@ -76,11 +76,13 @@ pub fn dark_visuals(preset: DarkThemePreset) -> egui::Visuals {
 }
 
 fn catppuccin_visuals(theme: catppuccin_egui::Theme, dark_mode: bool) -> egui::Visuals {
-    let mut style = egui::Style::default();
-    style.visuals = if dark_mode {
-        egui::Visuals::dark()
-    } else {
-        egui::Visuals::light()
+    let mut style = egui::Style {
+        visuals: if dark_mode {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        },
+        ..Default::default()
     };
     catppuccin_egui::set_style_theme(&mut style, theme);
     style.visuals
