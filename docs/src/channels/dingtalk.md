@@ -96,7 +96,9 @@ DingTalk 渠道使用 WebSocket 长连接协议，连接建立流程如下：
 
 ### Keepalive
 
-WebSocket 层每 10 秒发送 Ping 帧保活。
+钉钉 Stream 协议使用应用层心跳（`SYSTEM` + `topic="ping"`），而非 WebSocket 协议层 Ping/Pong。服务器每隔约 30 秒发送应用层 ping，客户端收到后回复 ACK（含 `opaque` 回传），双方借此确认连接存活。
+
+watchdog 每 15 秒检查最近一次收到任何消息的时间；若连续 90 秒无任何入站活动（即容忍跳过 2 次服务端 ping），判定连接 stall 并触发重连。
 
 ## 消息协议
 

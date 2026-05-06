@@ -43,9 +43,14 @@ use uuid::Uuid;
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
-const WS_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
-const WS_WATCHDOG_INTERVAL: Duration = Duration::from_secs(5);
-const WS_STALL_TIMEOUT: Duration = Duration::from_secs(35);
+// DingTalk Stream uses application-level ping/ACK (SYSTEM + topic="ping"),
+// not WebSocket protocol-level Ping/Pong.  The server sends an app-level
+// ping roughly every 30 s; we reply with an ACK.  Stall detection
+// therefore relies on receiving any message (including app-level ping)
+// within this timeout.  90 s tolerates missing two consecutive pings
+// (3 × 30 s) before declaring the connection dead.
+const WS_STALL_TIMEOUT: Duration = Duration::from_secs(90);
+const WS_WATCHDOG_INTERVAL: Duration = Duration::from_secs(15);
 const EVENT_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const EVENT_DEDUP_MAX_ENTRIES: usize = 20_000;
 const DINGTALK_STREAM_UPDATE_INTERVAL: Duration = Duration::from_millis(400);
@@ -445,7 +450,6 @@ impl DingtalkChannel {
                     );
                     let mut cron_tick = time::interval(runtime.cron_tick_interval());
                     let mut runtime_tick = time::interval(runtime.runtime_tick_interval());
-                    let mut keepalive_tick = time::interval(WS_KEEPALIVE_INTERVAL);
                     let mut watchdog_tick = time::interval(WS_WATCHDOG_INTERVAL);
                     let mut cron_job: Option<Pin<Box<dyn Future<Output = ()> + '_>>> = None;
                     let mut runtime_job: Option<Pin<Box<dyn Future<Output = ()> + '_>>> = None;
@@ -485,17 +489,6 @@ impl DingtalkChannel {
                             _ = runtime_tick.tick() => {
                                 if runtime_job.is_none() {
                                     runtime_job = Some(Box::pin(runtime.on_runtime_tick()));
-                                }
-                            }
-                            _ = keepalive_tick.tick() => {
-                                if let Err(err) = ws.send(Message::Ping(Vec::new().into())).await {
-                                    reconnect_attempt = reconnect_attempt.saturating_add(1);
-                                    reporter.mark_reconnecting(
-                                        reconnect_attempt,
-                                        format!("dingtalk websocket keepalive ping failed: {err}"),
-                                    );
-                                    warn!(error = %err, "failed to send dingtalk websocket keepalive ping");
-                                    break;
                                 }
                             }
                             _ = watchdog_tick.tick() => {

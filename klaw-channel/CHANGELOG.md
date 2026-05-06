@@ -141,6 +141,8 @@
 
 ### Changed
 
+- `dingtalk` 通道移除 WebSocket 协议层 Ping/Pong 保活机制：钉钉 Stream 协议使用应用层心跳（`SYSTEM` + `topic="ping"` → ACK），服务端不回标准 WebSocket Pong，之前的 `Message::Ping` 既无法确认连接存活又导致了 idle ≥ 35s 的 stall 误判
+- `dingtalk` stall 超时从 35s 提升到 90s（容忍跳过 2 次服务端 ~30s ping），watchdog 检查间隔从 5s 放宽到 15s
 - `dingtalk` 通道新增 `richText` 解析，支持从 `content.richText[]` 提取文本片段与多图媒体引用
 - `dingtalk` 图片消息现在会调用下载接口拉取原始文件，并在入站阶段写入 `klaw-archive`（落库 `archive.db` + 文件存储）
 - 归档成功的媒体引用会补充 `archive.*` 元数据，并在体积允许时内联 `data:` URL 供模型请求直接携带图片
