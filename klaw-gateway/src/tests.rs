@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::{
         GatewayOptions, GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
@@ -960,6 +961,7 @@ mod tests {
         handle.shutdown().await.expect("gateway should stop");
     }
 
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn websocket_v1_turn_start_links_request_session_thread_turn_and_handler_metadata() {
         let config = test_gateway_config();
@@ -1070,6 +1072,7 @@ mod tests {
             recorded[0].metadata.get("channel.websocket.v1.turn_id"),
             Some(&json!("turn_client_1"))
         );
+        drop(recorded);
 
         handle.shutdown().await.expect("gateway should stop");
     }

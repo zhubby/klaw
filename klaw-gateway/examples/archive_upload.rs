@@ -38,16 +38,16 @@ async fn main() -> Result<()> {
 
     if status.is_success() {
         let json: serde_json::Value = serde_json::from_str(&body)?;
-        if let Some(record) = json.get("record") {
-            if let Some(id) = record.get("id").and_then(|v| v.as_str()) {
-                println!("\n✓ File uploaded successfully!");
-                println!("Archive ID: {}", id);
-                println!("\nYou can download it with:");
-                println!(
-                    "curl -H 'Authorization: Bearer {}' {}/archive/download/{} -o downloaded.txt",
-                    token, base_url, id
-                );
-            }
+        if let Some(record) = json.get("record")
+            && let Some(id) = record.get("id").and_then(|v| v.as_str())
+        {
+            println!("\n✓ File uploaded successfully!");
+            println!("Archive ID: {}", id);
+            println!("\nYou can download it with:");
+            println!(
+                "curl -H 'Authorization: Bearer {}' {}/archive/download/{} -o downloaded.txt",
+                token, base_url, id
+            );
         }
     }
 

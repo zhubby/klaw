@@ -31,6 +31,7 @@ use klaw_observability::{HealthRegistry, exporter::PrometheusExporter};
 use std::{net::SocketAddr, sync::Arc};
 use tracing::{info, warn};
 
+#[derive(Default)]
 pub struct GatewayOptions {
     pub websocket_broadcaster: Option<Arc<GatewayWebsocketBroadcaster>>,
     pub health: Option<Arc<HealthRegistry>>,
@@ -41,19 +42,7 @@ pub struct GatewayOptions {
     pub app_config: Option<Arc<AppConfig>>,
 }
 
-impl Default for GatewayOptions {
-    fn default() -> Self {
-        Self {
-            websocket_broadcaster: None,
-            health: None,
-            prometheus: None,
-            webhook_handler: None,
-            websocket_handler: None,
-            archive_service: None,
-            app_config: None,
-        }
-    }
-}
+impl GatewayOptions {}
 
 pub async fn run_gateway(config: &GatewayConfig) -> Result<(), GatewayError> {
     run_gateway_with_options(config, GatewayOptions::default()).await
@@ -128,10 +117,10 @@ pub async fn spawn_gateway_with_options(
         "gateway server started"
     );
     println!("{:<18} {}", "🌐 Gateway", info.ws_url);
-    if let Some(ref ts) = info.tailscale {
-        if let Some(ref url) = ts.public_url {
-            println!("{:<18} {}", "🌐 Tailscale", url);
-        }
+    if let Some(ref ts) = info.tailscale
+        && let Some(ref url) = ts.public_url
+    {
+        println!("{:<18} {}", "\u{1f310} Tailscale", url);
     }
     println!("{:<18} {}", "💚 Health", info.health_url);
     println!("{:<18} {}", "📊 Metrics", info.metrics_url);
@@ -209,6 +198,7 @@ fn tailscale_runtime_error(mode: TailscaleMode, err: TailscaleError) -> Tailscal
 }
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use super::tailscale_runtime_error;
     use crate::tailscale::{TailscaleError, TailscaleStatus};
@@ -229,6 +219,7 @@ mod tests {
     }
 }
 
+#[allow(clippy::items_after_test_module)]
 fn parse_socket_addr(config: &GatewayConfig) -> Result<SocketAddr, GatewayError> {
     format!("{}:{}", config.listen_ip, config.listen_port)
         .parse()
@@ -237,6 +228,7 @@ fn parse_socket_addr(config: &GatewayConfig) -> Result<SocketAddr, GatewayError>
         })
 }
 
+#[allow(clippy::items_after_test_module)]
 fn build_health_registry(health: Option<Arc<HealthRegistry>>) -> Arc<HealthRegistry> {
     health.unwrap_or_else(|| {
         let registry = HealthRegistry::new();

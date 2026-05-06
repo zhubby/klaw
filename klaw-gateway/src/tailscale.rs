@@ -29,17 +29,12 @@ pub enum TailscaleError {
     HttpsNotEnabled,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TailscaleStatus {
+    #[default]
     Disconnected,
     Connected,
     Error(String),
-}
-
-impl Default for TailscaleStatus {
-    fn default() -> Self {
-        Self::Disconnected
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

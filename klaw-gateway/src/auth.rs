@@ -48,10 +48,10 @@ pub(crate) fn extract_gateway_credential(request: &Request<Body>) -> Option<Stri
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
-    if let Some(hdr) = auth_header {
-        if let Some(token) = hdr.strip_prefix("Bearer ") {
-            return Some(token.to_string());
-        }
+    if let Some(hdr) = auth_header
+        && let Some(token) = hdr.strip_prefix("Bearer ")
+    {
+        return Some(token.to_string());
     }
     if request.uri().path() != Route::WsChat.as_str() {
         return None;
@@ -293,7 +293,7 @@ impl WebhookRequestValidator for GitLabSignatureValidator {
     }
 }
 
-fn header_str<'a>(headers: &'a HeaderMap, name: impl header::AsHeaderName) -> Option<&'a str> {
+fn header_str(headers: &HeaderMap, name: impl header::AsHeaderName) -> Option<&str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 
