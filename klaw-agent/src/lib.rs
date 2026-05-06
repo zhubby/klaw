@@ -601,6 +601,7 @@ fn is_supported_history_role(role: &str) -> bool {
     matches!(role, "system" | "user" | "assistant" | "tool")
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn apply_tool_calls(
     tools: &dyn ToolExecutor,
     llm_messages: &mut Vec<LlmMessage>,

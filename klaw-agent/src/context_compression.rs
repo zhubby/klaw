@@ -81,10 +81,10 @@ pub fn parse_conversation_summary(model_output: &str) -> Option<ConversationSumm
         return Some(summary);
     }
 
-    if let Some(fenced) = extract_fenced_json(direct) {
-        if let Ok(summary) = serde_json::from_str::<ConversationSummary>(&fenced) {
-            return Some(summary);
-        }
+    if let Some(fenced) = extract_fenced_json(direct)
+        && let Ok(summary) = serde_json::from_str::<ConversationSummary>(&fenced)
+    {
+        return Some(summary);
     }
 
     extract_first_json_object(direct)
@@ -104,9 +104,7 @@ fn render_messages(messages: &[ConversationMessage]) -> String {
 
 fn extract_fenced_json(input: &str) -> Option<String> {
     let stripped = input.strip_prefix("```")?;
-    let mut parts = stripped.splitn(2, '\n');
-    let _lang = parts.next()?;
-    let rest = parts.next()?;
+    let (_lang, rest) = stripped.split_once('\n')?;
     let end = rest.rfind("```")?;
     Some(rest[..end].trim().to_string())
 }
