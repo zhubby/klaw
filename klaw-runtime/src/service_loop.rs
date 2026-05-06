@@ -95,6 +95,7 @@ pub struct BackgroundDingtalkAccountConfig {
     pub client_id: String,
     pub client_secret: String,
     pub bot_title: String,
+    pub show_reasoning: bool,
     pub proxy: DingtalkProxyConfig,
 }
 
@@ -145,6 +146,7 @@ impl BackgroundServiceConfig {
                             client_id: cfg.client_id.clone(),
                             client_secret: cfg.client_secret.clone(),
                             bot_title: cfg.bot_title.clone(),
+                            show_reasoning: cfg.show_reasoning,
                             proxy: DingtalkProxyConfig {
                                 enabled: cfg.proxy.enabled,
                                 url: cfg.proxy.url.clone(),
@@ -774,7 +776,10 @@ async fn dispatch_dingtalk_outbound_message(
         .map(ToString::to_string)
         .or_else(|| account.map(|account| account.bot_title.clone()))
         .unwrap_or_else(|| "Klaw".to_string());
-    let body = render_outbound_markdown(&msg.payload);
+    let show_reasoning = account
+        .map(|account| account.show_reasoning)
+        .unwrap_or(false);
+    let body = render_outbound_markdown(&msg.payload, show_reasoning);
 
     let Some(session_webhook) = msg
         .payload
@@ -1095,7 +1100,10 @@ fn resolve_outbound_channel_session_key<'a>(
         })
 }
 
-fn render_outbound_markdown(output: &OutboundMessage) -> String {
+fn render_outbound_markdown(output: &OutboundMessage, show_reasoning: bool) -> String {
+    if !show_reasoning {
+        return output.content.clone();
+    }
     match output
         .metadata
         .get("reasoning")
@@ -1113,7 +1121,7 @@ mod tests {
     use super::{
         BackgroundDingtalkAccountConfig, BackgroundServiceConfig, ChannelAvailability,
         FilteringInboundTransport, dispatch_outbound_message, next_memory_archive_due_ms,
-        resolve_outbound_account_id,
+        render_outbound_markdown, resolve_outbound_account_id,
     };
     use klaw_channel::dingtalk::is_session_webhook_session_not_found_error;
     use klaw_config::{AppConfig, DingtalkConfig};
@@ -1272,6 +1280,7 @@ mod tests {
                 client_id: "client-1".to_string(),
                 client_secret: "secret-1".to_string(),
                 bot_title: "Ops Bot".to_string(),
+                show_reasoning: false,
                 proxy: klaw_channel::dingtalk::DingtalkProxyConfig {
                     enabled: true,
                     url: "http://127.0.0.1:8080".to_string(),
@@ -1516,6 +1525,81 @@ mod tests {
                 .and_then(|metadata| metadata.get("custom.flag"))
                 .and_then(Value::as_bool),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn render_outbound_markdown_hides_reasoning_when_show_reasoning_false() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "reasoning".to_string(),
+            Value::String("deep thoughts".to_string()),
+        );
+        let output = OutboundMessage {
+            channel: "dingtalk".to_string(),
+            chat_id: "chat-1".to_string(),
+            content: "hello".to_string(),
+            reply_to: None,
+            metadata,
+        };
+        let result = render_outbound_markdown(&output, false);
+        assert_eq!(result, "hello");
+        assert!(!result.contains("reasoning"));
+    }
+
+    #[test]
+    fn render_outbound_markdown_shows_reasoning_when_show_reasoning_true() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "reasoning".to_string(),
+            Value::String("deep thoughts".to_string()),
+        );
+        let output = OutboundMessage {
+            channel: "dingtalk".to_string(),
+            chat_id: "chat-1".to_string(),
+            content: "hello".to_string(),
+            reply_to: None,
+            metadata,
+        };
+        let result = render_outbound_markdown(&output, true);
+        assert!(result.contains("hello"));
+        assert!(result.contains("reasoning"));
+        assert!(result.contains("deep thoughts"));
+    }
+
+    #[test]
+    fn background_service_config_collects_dingtalk_show_reasoning_true() {
+        let config = BackgroundServiceConfig::from_app_config(&AppConfig {
+            channels: klaw_config::ChannelsConfig {
+                dingtalk: vec![DingtalkConfig {
+                    id: "acc-1".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: "secret-1".to_string(),
+                    bot_title: "Ops Bot".to_string(),
+                    show_reasoning: true,
+                    proxy: klaw_config::DingtalkProxyConfig {
+                        enabled: false,
+                        url: String::new(),
+                    },
+                    ..DingtalkConfig::default()
+                }],
+                ..klaw_config::ChannelsConfig::default()
+            },
+            ..AppConfig::default()
+        });
+
+        assert_eq!(
+            config.dingtalk_accounts.get("acc-1"),
+            Some(&BackgroundDingtalkAccountConfig {
+                client_id: "client-1".to_string(),
+                client_secret: "secret-1".to_string(),
+                bot_title: "Ops Bot".to_string(),
+                show_reasoning: true,
+                proxy: klaw_channel::dingtalk::DingtalkProxyConfig {
+                    enabled: false,
+                    url: String::new(),
+                },
+            })
         );
     }
 }
