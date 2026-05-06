@@ -28,9 +28,7 @@ pub(super) async fn execute_im_shell(
 
     match output {
         Ok(output) => Ok(format_shell_output_for_im(
-            &output
-                .content_for_user
-                .unwrap_or(output.content_for_model),
+            &output.content_for_user.unwrap_or(output.content_for_model),
         )),
         Err(err) => Ok(format!("tool `shell` failed: {err}")),
     }

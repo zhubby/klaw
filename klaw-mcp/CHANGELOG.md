@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-06
+
+### Fixed
+
+- SSE MCP client 现在会解析 `text/event-stream` 响应中的 `data:` JSON-RPC 帧，避免将 SSE 响应直接当作普通 JSON body 解码失败。
+
 ## 2026-04-10
 
 ### Added

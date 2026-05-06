@@ -427,10 +427,16 @@ impl SseMcpClient {
             .await
             .map_err(|err| McpClientError::Request(err.to_string()))?;
         let status = response.status();
-        let value: Value = response
-            .json()
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string);
+        let body = response
+            .bytes()
             .await
             .map_err(|err| McpClientError::Protocol(err.to_string()))?;
+        let value = parse_http_rpc_response(content_type.as_deref(), &body)?;
         if !status.is_success() {
             return Err(McpClientError::Request(format!(
                 "http status {}: {}",
@@ -461,6 +467,62 @@ impl SseMcpClient {
             .map_err(|err| McpClientError::Request(err.to_string()))?;
         Ok(())
     }
+}
+
+fn parse_http_rpc_response(
+    content_type: Option<&str>,
+    body: &[u8],
+) -> Result<Value, McpClientError> {
+    if content_type.is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream")) {
+        return parse_sse_rpc_response(body);
+    }
+
+    serde_json::from_slice(body).map_err(|err| McpClientError::Protocol(err.to_string()))
+}
+
+fn parse_sse_rpc_response(body: &[u8]) -> Result<Value, McpClientError> {
+    let text =
+        std::str::from_utf8(body).map_err(|err| McpClientError::Protocol(err.to_string()))?;
+    let mut data_lines = Vec::new();
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            if let Some(value) = parse_sse_data_event(&data_lines)? {
+                return Ok(value);
+            }
+            data_lines.clear();
+            continue;
+        }
+
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        data_lines.push(data.strip_prefix(' ').unwrap_or(data).to_string());
+    }
+
+    if let Some(value) = parse_sse_data_event(&data_lines)? {
+        return Ok(value);
+    }
+
+    Err(McpClientError::Protocol(
+        "SSE response missing JSON-RPC data".to_string(),
+    ))
+}
+
+fn parse_sse_data_event(data_lines: &[String]) -> Result<Option<Value>, McpClientError> {
+    if data_lines.is_empty() {
+        return Ok(None);
+    }
+
+    let data = data_lines.join("\n");
+    let trimmed = data.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    serde_json::from_str(trimmed)
+        .map(Some)
+        .map_err(|err| McpClientError::Protocol(err.to_string()))
 }
 
 #[async_trait]
@@ -658,6 +720,81 @@ mod tests {
             std::str::from_utf8(&frame).expect("utf8"),
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"
         );
+    }
+
+    #[tokio::test]
+    async fn sse_rpc_request_accepts_event_stream_message_response() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 1024];
+                let read = stream.read(&mut chunk).await.expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let header_end = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|pos| pos + 4)
+                .expect("request headers");
+            let headers = std::str::from_utf8(&request[..header_end]).expect("headers utf8");
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or_default();
+            while request.len() < header_end + content_length {
+                let mut chunk = [0_u8; 1024];
+                let read = stream.read(&mut chunk).await.expect("read body");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+            }
+            let body = concat!(
+                "event: message\n",
+                "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n",
+                "\n"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+        });
+
+        let mut server = sse_server(BTreeMap::new());
+        server.url = Some(format!("http://{addr}/sse"));
+        let mut client = SseMcpClient::new(&server).expect("should construct");
+        client.client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("build test client");
+
+        let result = client
+            .rpc_request("initialize", json!({}))
+            .await
+            .expect("should parse SSE response");
+
+        assert_eq!(result, json!({"ok": true}));
     }
 
     #[tokio::test]

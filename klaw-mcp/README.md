@@ -6,6 +6,7 @@
 
 - 按配置启动 `stdio` MCP 子进程或连接 `sse` MCP 服务
 - 执行 `initialize` / `tools/list` 并汇总可用工具
+- 解析 SSE MCP 服务返回的 `text/event-stream` 响应，从 `data:` 帧中提取 JSON-RPC 消息
 - 缓存每个 MCP server 最近一次成功 `tools/list` 的响应，供 GUI/调试面板查看
 - 处理工具名冲突与 bootstrap 失败汇总
 - 支持动态启动/停止/重启 MCP 服务器（热重载）
