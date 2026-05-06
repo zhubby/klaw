@@ -418,6 +418,7 @@ fn approval_im_card_metadata(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn record_model_requests(
     telemetry: Option<&Arc<dyn AgentTelemetry>>,
     session_key: &str,
@@ -528,6 +529,7 @@ fn normalize_audit_payload_provider(
     payload
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn record_turn_outcome(
     telemetry: Option<&Arc<dyn AgentTelemetry>>,
     session_key: &str,
@@ -1453,43 +1455,43 @@ impl AgentLoop {
             }
 
             let outcome = self.process_message(inbound.payload.clone(), false).await;
-            if outcome.error_code.is_none() {
-                if let Some(outbound) = outcome.final_response.clone() {
-                    match outbound_transport
-                        .publish(MessageTopic::Outbound.as_str(), outbound)
-                        .await
-                    {
-                        Ok(_) => {
-                            circuit_breaker.on_success().await;
-                            idempotency
-                                .mark_seen(
-                                    &dedupe_key,
-                                    self.limits.agent_timeout + self.scheduling.lock_ttl,
-                                )
-                                .await;
-                            inbound_transport.ack(&inbound.ack_handle).await?;
-                            return Ok(outcome);
+            if outcome.error_code.is_none()
+                && let Some(outbound) = outcome.final_response.clone()
+            {
+                match outbound_transport
+                    .publish(MessageTopic::Outbound.as_str(), outbound)
+                    .await
+                {
+                    Ok(_) => {
+                        circuit_breaker.on_success().await;
+                        idempotency
+                            .mark_seen(
+                                &dedupe_key,
+                                self.limits.agent_timeout + self.scheduling.lock_ttl,
+                            )
+                            .await;
+                        inbound_transport.ack(&inbound.ack_handle).await?;
+                        return Ok(outcome);
+                    }
+                    Err(_) => {
+                        circuit_breaker.on_failure().await;
+                        let decision = retry_policy.classify("transport_unavailable", attempt);
+                        if let Some(done) = self
+                            .handle_retry_decision(
+                                decision,
+                                attempt,
+                                &inbound.payload,
+                                inbound_transport,
+                                deadletter_transport,
+                                &inbound.ack_handle,
+                                deadletter_policy,
+                            )
+                            .await?
+                        {
+                            return Ok(done);
                         }
-                        Err(_) => {
-                            circuit_breaker.on_failure().await;
-                            let decision = retry_policy.classify("transport_unavailable", attempt);
-                            if let Some(done) = self
-                                .handle_retry_decision(
-                                    decision,
-                                    attempt,
-                                    &inbound.payload,
-                                    inbound_transport,
-                                    deadletter_transport,
-                                    &inbound.ack_handle,
-                                    deadletter_policy,
-                                )
-                                .await?
-                            {
-                                return Ok(done);
-                            }
-                            attempt += 1;
-                            continue;
-                        }
+                        attempt += 1;
+                        continue;
                     }
                 }
             }
