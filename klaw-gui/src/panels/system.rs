@@ -204,12 +204,9 @@ fn format_bytes_si(value: u64) -> String {
     }
 }
 
-fn host_info_row(ui: &mut egui::Ui, col_width: f32, key: &str, value: String) {
-    ui.add_sized([col_width, 0.0], egui::Label::new(key).truncate(true));
-    ui.add_sized(
-        [col_width, 0.0],
-        egui::Label::new(value).monospace().truncate(true),
-    );
+fn host_info_row(ui: &mut egui::Ui, key: &str, value: String) {
+    ui.label(key);
+    ui.monospace(value);
     ui.end_row();
 }
 
@@ -515,6 +512,7 @@ impl SystemPanel {
             .show(ui, |ui| {
                 egui::Grid::new("system-host-info-grid")
                     .num_columns(2)
+                    .min_col_width(col_width)
                     .spacing([14.0, 6.0])
                     .striped(true)
                     .show(ui, |ui| {
