@@ -317,6 +317,7 @@ impl AcpManager {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute_prompt_with_config_stream(
         config: AcpAgentConfig,
         startup_timeout: Duration,
@@ -495,6 +496,7 @@ impl AcpManager {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_prompt_blocking(
     config: AcpAgentConfig,
     startup_timeout: Duration,
@@ -525,6 +527,7 @@ fn run_prompt_blocking(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_prompt_async(
     config: AcpAgentConfig,
     startup_timeout: Duration,
@@ -594,7 +597,7 @@ async fn run_prompt_async(
             tokio::task::spawn_local(fut);
         },
     );
-    let mut io_handle = tokio::task::spawn_local(async move { io_driver.await });
+    let mut io_handle = tokio::task::spawn_local(io_driver);
 
     let init_request = acp::InitializeRequest::new(acp::ProtocolVersion::from(1u16))
         .client_capabilities(
@@ -909,6 +912,7 @@ fn plan_agent_updates(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::path::Path;
     use uuid::Uuid;
 
     fn agent(id: &str, enabled: bool) -> AcpAgentConfig {
@@ -938,7 +942,7 @@ mod tests {
         assert!(status.success(), "python3 --version should succeed");
     }
 
-    fn write_mock_agent_script(dir: &PathBuf) -> PathBuf {
+    fn write_mock_agent_script(dir: &Path) -> PathBuf {
         let script = dir.join("mock_acp_agent.py");
         std::fs::write(
             &script,
@@ -1039,7 +1043,7 @@ for raw_line in sys.stdin:
         script
     }
 
-    fn write_hanging_mock_agent_script(dir: &PathBuf) -> PathBuf {
+    fn write_hanging_mock_agent_script(dir: &Path) -> PathBuf {
         let script = dir.join("hanging_mock_acp_agent.py");
         std::fs::write(
             &script,
