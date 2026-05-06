@@ -50,6 +50,7 @@ impl HuggingFaceDownloader {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn download_file<F>(
         &self,
         model_id: &str,
