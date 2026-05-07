@@ -1,7 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
-use crate::request_run_heartbeat_now;
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
+use crate::{RuntimeRequestHandle, begin_run_heartbeat_now_request};
 use chrono::{Local, NaiveDate};
 use egui::{Color32, RichText};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
@@ -124,6 +124,7 @@ pub struct HeartbeatPanel {
     page: i64,
     size: i64,
     config_window: bool,
+    run_now_request: Option<(String, RuntimeRequestHandle<String>)>,
 }
 
 impl Default for HeartbeatPanel {
@@ -144,6 +145,7 @@ impl Default for HeartbeatPanel {
             page: 1,
             size: 20,
             config_window: false,
+            run_now_request: None,
         }
     }
 }
@@ -326,11 +328,37 @@ impl HeartbeatPanel {
     }
 
     fn run_heartbeat_now(&mut self, heartbeat_id: &str, notifications: &mut NotificationCenter) {
-        match request_run_heartbeat_now(heartbeat_id) {
+        if self.run_now_request.is_some() {
+            notifications.info("A heartbeat run is already in progress");
+            return;
+        }
+        self.run_now_request = Some((
+            heartbeat_id.to_string(),
+            begin_run_heartbeat_now_request(heartbeat_id.to_string()),
+        ));
+        notifications.info(format!(
+            "Running heartbeat '{heartbeat_id}' in background..."
+        ));
+    }
+
+    fn poll_run_now_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some((_, request)) = self.run_now_request.as_mut() else {
+            return;
+        };
+        let Some(result) = request.try_take_result() else {
+            return;
+        };
+        let heartbeat_id = self
+            .run_now_request
+            .take()
+            .map(|(heartbeat_id, _)| heartbeat_id);
+        match result {
             Ok(message_id) => {
                 notifications.success(format!("Heartbeat executed: {message_id}"));
                 self.refresh_jobs(notifications);
-                self.load_runs(heartbeat_id, notifications);
+                if let Some(heartbeat_id) = heartbeat_id {
+                    self.load_runs(&heartbeat_id, notifications);
+                }
             }
             Err(err) => notifications.error(format!("Failed to run heartbeat now: {err}")),
         }
@@ -468,7 +496,10 @@ impl HeartbeatPanel {
                     if ui.button("Refresh Runs").clicked() {
                         self.load_runs(&heartbeat_id, notifications);
                     }
-                    if ui.button("Run Now").clicked() {
+                    if ui
+                        .add_enabled(self.run_now_request.is_none(), egui::Button::new("Run Now"))
+                        .clicked()
+                    {
                         self.run_heartbeat_now(&heartbeat_id, notifications);
                     }
                 });
@@ -526,7 +557,12 @@ impl PanelRenderer for HeartbeatPanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
+        self.poll_run_now_request(notifications);
         self.ensure_loaded(notifications);
+        if self.run_now_request.is_some() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
@@ -541,6 +577,9 @@ impl PanelRenderer for HeartbeatPanel {
                 self.config_window = true;
             }
             ui.label(format!("Jobs: {}", self.jobs.len()));
+            if self.run_now_request.is_some() {
+                ui.label("Running heartbeat...");
+            }
         });
 
         ui.separator();
@@ -692,7 +731,13 @@ impl PanelRenderer for HeartbeatPanel {
                                         runs_heartbeat_id = Some(job.id.clone());
                                         ui.close();
                                     }
-                                    if ui.button(format!("{} Run Now", regular::PLAY)).clicked() {
+                                    if ui
+                                        .add_enabled(
+                                            self.run_now_request.is_none(),
+                                            egui::Button::new(format!("{} Run Now", regular::PLAY)),
+                                        )
+                                        .clicked()
+                                    {
                                         run_now_heartbeat_id = Some(job.id.clone());
                                         ui.close();
                                     }

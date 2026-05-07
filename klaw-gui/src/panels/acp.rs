@@ -1,8 +1,8 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::{
-    AcpPromptEvent, request_acp_status, request_execute_acp_prompt_stream,
-    request_resolve_acp_permission, request_stop_acp_prompt, request_sync_acp,
+    AcpPromptEvent, RuntimeRequestHandle, begin_stop_acp_prompt_request, request_acp_status,
+    request_execute_acp_prompt_stream, request_resolve_acp_permission, request_sync_acp,
 };
 use crate::widgets::{ArrayEditor, KeyValueEditor};
 use egui::{Color32, RichText};
@@ -137,6 +137,7 @@ pub struct AcpPanel {
     status_fetch_rx: Option<Receiver<Result<AcpRuntimeSnapshot, String>>>,
     sync_fetch_rx: Option<Receiver<Result<AcpSyncResult, String>>>,
     prompt_fetch_rx: Option<Receiver<AcpPromptEvent>>,
+    stop_prompt_request: Option<RuntimeRequestHandle<()>>,
     permission_action_rx: Option<Receiver<(u64, Result<(), String>)>>,
     prompt_test: PromptTestState,
     last_status_refresh_at: Option<Instant>,
@@ -750,13 +751,24 @@ impl AcpPanel {
     }
 
     fn stop_test_prompt(&mut self, notifications: &mut NotificationCenter) {
-        match request_stop_acp_prompt() {
-            Ok(()) => {
-                notifications.info("Stopping ACP test prompt...");
-            }
-            Err(err) => {
-                notifications.error(format!("Failed to stop ACP test prompt: {err}"));
-            }
+        if self.stop_prompt_request.is_some() {
+            notifications.info("ACP test prompt stop is already in progress");
+            return;
+        }
+        self.stop_prompt_request = Some(begin_stop_acp_prompt_request());
+        notifications.info("Stopping ACP test prompt...");
+    }
+
+    fn poll_stop_prompt(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.stop_prompt_request.as_mut() else {
+            return;
+        };
+        let Some(result) = request.try_take_result() else {
+            return;
+        };
+        self.stop_prompt_request = None;
+        if let Err(err) = result {
+            notifications.error(format!("Failed to stop ACP test prompt: {err}"));
         }
     }
 
@@ -1589,6 +1601,7 @@ impl PanelRenderer for AcpPanel {
         self.poll_manager_sync(notifications);
         self.poll_status_refresh(notifications);
         self.poll_prompt_test(notifications);
+        self.poll_stop_prompt(notifications);
         self.poll_permission_action(notifications);
         self.refresh_status_if_due();
         ui.ctx().request_repaint_after(ACP_STATUS_POLL_INTERVAL);

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-07
+
+### Changed
+
+- Channel、Tool、Heartbeat 和 ACP 测试面板的运行时动作改为后台请求加轮询结果，避免 UI 线程在 runtime 响应超时或忙碌时同步等待。
+
 ## 2026-04-26
 
 ### Changed

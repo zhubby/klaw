@@ -69,7 +69,8 @@
 - `tui` 与 `gateway` 都监听统一的 shutdown signal；`tui` 在运行阶段可中断，在 shutdown 阶段再次收到信号会直接退出
 - `gateway` 在收到终止信号时会执行 runtime shutdown，确保 MCP/bootstrap 资源收尾
 - `klaw gui` 现在会在技能安装、卸载和 registry sync 后向 GUI runtime 发送技能 prompt 热重载命令，使后续请求可立即看到最新 skills
-- `klaw gui` / `klaw gateway` 通过共享 `ChannelManager` 管理运行中的 channel 实例；GUI 保存 channel 配置后会立即发送通用 `SyncChannels` 事件，由 runtime 按最新快照执行 keep/start/stop/restart
+- `klaw gui` / `klaw gateway` 通过共享 `ChannelManager` 管理运行中的 channel 实例；GUI 保存 channel 配置后会立即发送通用 `SyncChannels` 事件，由 runtime 按最新快照执行 keep/start/stop/restart，并在 channel manager 忙碌时用缓存状态快照响应 GUI 状态查询
+- `klaw gui` 的 skills prompt 热重载会在 runtime dispatcher 后台执行，避免技能重载阻塞其他面板状态请求
 - `klaw gui` 的 gateway 状态查询现在会先从磁盘最新配置同步 `configured_enabled` / `auth_configured` / `tailscale_mode` 元数据，并重新探测本机 Tailscale host 状态，避免面板状态停留在旧快照；同时运行时新增按当前配置单独启动 gateway 的命令通道，且 GUI 启动时的自动 Gateway 启动会在 runtime command loop 就绪后后台执行，避免 Tailscale setup 阻塞其他状态面板
 - `klaw gui` now exposes runtime commands backed by the shared Knowledge service for status, search, entry inspection, config reload, index/vector sync, and sync progress streaming
 - runtime 现在会在构建 channel driver factory 时按配置装配共享 `VoiceService`，供 Telegram 等 channel 在入站媒体阶段直接调用 STT

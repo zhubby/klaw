@@ -84,7 +84,7 @@
   - show per-instance `type / id / enabled / status` with color-coded runtime state icons, without exposing auth secrets in the list, and with proxy reduced to an on/off indicator
   - delete channel instances from the table
   - edit and save `channels.disable_session_commands_for`
-  - request a live GUI runtime `SyncChannels` after channel saves/reloads so running channel instances update without restarting the app
+  - request a live GUI runtime `SyncChannels` in the background after channel saves/reloads so running channel instances update without blocking the UI
 - Voice panel features:
   - read/write `voice.enabled`, default language/voice, and provider-specific Deepgram/AssemblyAI/ElevenLabs fields
   - show configured key source per provider (`api_key` vs `api_key_env`) without exposing secret values in the summary view
@@ -111,6 +111,7 @@
   - install/uninstall registry-managed skills through the installed-skills manager flow
   - uninstall local skills and registry-managed skills
   - request a runtime skills-prompt reload after install/uninstall actions
+- Runtime-backed panel actions use background request handles for channel sync/restart, tool metadata sync, heartbeat run-now, and ACP prompt stop so slow runtime operations surface as toasts instead of freezing tab navigation
 - Memory panel features:
   - read memory-layer aggregate stats via `klaw-memory` stats abstraction
   - open a `Config` dialog from the toolbar to edit `memory.embedding.enabled/provider/model`

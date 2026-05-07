@@ -4,7 +4,7 @@ use crate::time_format::format_timestamp_seconds;
 use crate::widgets::ArrayEditor;
 use crate::{
     RuntimeRequestHandle, begin_channel_status_request, begin_restart_channel_request,
-    request_sync_channels,
+    begin_sync_channels_request,
 };
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
@@ -367,6 +367,8 @@ pub struct ChannelPanel {
     delete_confirm: Option<(ChannelKind, String)>,
     last_runtime_status_at: Option<Instant>,
     runtime_status_request: Option<RuntimeRequestHandle<Vec<ChannelInstanceStatus>>>,
+    sync_request: Option<RuntimeRequestHandle<ChannelSyncResult>>,
+    sync_announce: bool,
     restart_request: Option<RuntimeRequestHandle<ChannelSyncResult>>,
     restart_target_key: Option<String>,
 }
@@ -412,6 +414,34 @@ impl ChannelPanel {
                 notifications.error(format!("Failed to restart {}: {}", target, err));
             }
         }
+    }
+
+    fn poll_sync_request(&mut self, notifications: &mut NotificationCenter) {
+        let Some(request) = self.sync_request.as_mut() else {
+            return;
+        };
+        let Some(result) = request.try_take_result() else {
+            return;
+        };
+        self.sync_request = None;
+        match result {
+            Ok(result) => {
+                self.apply_runtime_statuses(&result.statuses);
+                if self.sync_announce {
+                    notifications.success(format!(
+                        "Channels synchronized (keep: {}, start: {}, restart: {}, stop: {})",
+                        result.keep.len(),
+                        result.start.len(),
+                        result.restart.len(),
+                        result.stop.len()
+                    ));
+                }
+            }
+            Err(err) => notifications.error(format!(
+                "Saved config but failed to synchronize channels: {err}"
+            )),
+        }
+        self.sync_announce = false;
     }
 
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
@@ -475,23 +505,19 @@ impl ChannelPanel {
         notifications: &mut NotificationCenter,
         announce_success: bool,
     ) {
-        match request_sync_channels() {
-            Ok(result) => {
-                self.apply_runtime_statuses(&result.statuses);
-                if announce_success {
-                    notifications.success(format!(
-                        "Channels synchronized (keep: {}, start: {}, restart: {}, stop: {})",
-                        result.keep.len(),
-                        result.start.len(),
-                        result.restart.len(),
-                        result.stop.len()
-                    ));
-                }
-            }
-            Err(err) => notifications.error(format!(
-                "Saved config but failed to synchronize channels: {err}"
-            )),
+        if self.sync_request.is_some() {
+            self.sync_announce |= announce_success;
+            return;
         }
+        self.sync_announce = announce_success;
+        self.sync_request = Some(begin_sync_channels_request());
+        if announce_success {
+            notifications.info("Synchronizing channels in the background...");
+        }
+    }
+
+    fn has_pending_runtime_action(&self) -> bool {
+        self.sync_request.is_some() || self.restart_request.is_some()
     }
 
     fn apply_runtime_statuses(&mut self, statuses: &[ChannelInstanceStatus]) {
@@ -1106,8 +1132,13 @@ impl PanelRenderer for ChannelPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
+        self.poll_sync_request(notifications);
         self.refresh_runtime_status();
         self.poll_restart_request(notifications);
+        if self.has_pending_runtime_action() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
 
         let rows = self.all_rows();
 
@@ -1116,6 +1147,9 @@ impl PanelRenderer for ChannelPanel {
             ui.label(format!("Channel instances: {}", rows.len()));
             if self.restart_request.is_some() {
                 ui.label("Restarting channel...");
+            }
+            if self.sync_request.is_some() {
+                ui.label("Synchronizing channels...");
             }
         });
         ui.separator();

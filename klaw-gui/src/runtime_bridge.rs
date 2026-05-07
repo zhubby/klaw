@@ -612,6 +612,10 @@ pub fn request_run_heartbeat_now(heartbeat_id: &str) -> Result<String, String> {
     )?
 }
 
+pub fn begin_run_heartbeat_now_request(heartbeat_id: String) -> RuntimeRequestHandle<String> {
+    spawn_request(move || request_run_heartbeat_now(&heartbeat_id))
+}
+
 pub fn request_sync_channels() -> Result<ChannelSyncResult, String> {
     send_command(
         |response_tx| RuntimeCommand::SyncChannels {
@@ -620,6 +624,10 @@ pub fn request_sync_channels() -> Result<ChannelSyncResult, String> {
         RUNTIME_ACTION_TIMEOUT,
         "sync channels",
     )?
+}
+
+pub fn begin_sync_channels_request() -> RuntimeRequestHandle<ChannelSyncResult> {
+    spawn_request(request_sync_channels)
 }
 
 pub fn request_channel_status() -> Result<Vec<ChannelInstanceStatus>, String> {
@@ -806,6 +814,10 @@ pub fn request_sync_tools() -> Result<Vec<String>, String> {
     )?
 }
 
+pub fn begin_sync_tools_request() -> RuntimeRequestHandle<Vec<String>> {
+    spawn_request(request_sync_tools)
+}
+
 pub fn request_tool_definitions() -> Result<Vec<ToolDefinition>, String> {
     send_command(
         |response_tx| RuntimeCommand::GetToolDefinitions {
@@ -814,6 +826,10 @@ pub fn request_tool_definitions() -> Result<Vec<ToolDefinition>, String> {
         RUNTIME_ACTION_TIMEOUT,
         "tool definitions",
     )?
+}
+
+pub fn begin_tool_definitions_request() -> RuntimeRequestHandle<Vec<ToolDefinition>> {
+    spawn_request(request_tool_definitions)
 }
 
 pub fn request_mcp_status() -> Result<McpRuntimeSnapshot, String> {
@@ -864,6 +880,10 @@ pub fn request_stop_acp_prompt() -> Result<(), String> {
         RUNTIME_ACTION_TIMEOUT,
         "stop acp prompt",
     )?
+}
+
+pub fn begin_stop_acp_prompt_request() -> RuntimeRequestHandle<()> {
+    spawn_request(request_stop_acp_prompt)
 }
 
 pub fn request_resolve_acp_permission(

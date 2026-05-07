@@ -1,8 +1,10 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::runtime_bridge::{
+    RuntimeRequestHandle, begin_sync_tools_request, begin_tool_definitions_request,
+};
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::{ArrayEditor, show_json_tree_with_id};
-use crate::{request_sync_tools, request_tool_definitions};
 use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, FontId, TextFormat, text::LayoutJob};
 use egui_extras::{Column, DatePickerButton, Size, StripBuilder, TableBuilder};
@@ -27,6 +29,8 @@ pub struct ToolPanel {
     config: AppConfig,
     form: Option<ToolForm>,
     runtime_definitions: Vec<ToolDefinition>,
+    runtime_definitions_request: Option<(RuntimeRequestHandle<Vec<ToolDefinition>>, bool)>,
+    sync_tools_request: Option<RuntimeRequestHandle<Vec<String>>>,
     inspect_key: Option<&'static str>,
     logs_key: Option<&'static str>,
     log_rows: Vec<ToolAuditRecord>,
@@ -233,6 +237,8 @@ impl Default for ToolPanel {
             config: AppConfig::default(),
             form: None,
             runtime_definitions: Vec::new(),
+            runtime_definitions_request: None,
+            sync_tools_request: None,
             inspect_key: None,
             logs_key: None,
             log_rows: Vec::new(),
@@ -685,18 +691,55 @@ impl ToolPanel {
 
     fn refresh_runtime_tool_definitions(
         &mut self,
-        notifications: &mut NotificationCenter,
+        _notifications: &mut NotificationCenter,
         notify_on_error: bool,
     ) {
-        match request_tool_definitions() {
-            Ok(definitions) => {
-                self.runtime_definitions = definitions;
-            }
-            Err(err) if notify_on_error => {
-                notifications.error(format!("Failed to load runtime tool metadata: {err}"));
-            }
-            Err(_) => {}
+        if let Some((_, pending_notify_on_error)) = self.runtime_definitions_request.as_mut() {
+            *pending_notify_on_error |= notify_on_error;
+            return;
         }
+        self.runtime_definitions_request =
+            Some((begin_tool_definitions_request(), notify_on_error));
+    }
+
+    fn poll_runtime_requests(&mut self, notifications: &mut NotificationCenter) {
+        if let Some((request, notify_on_error)) = self.runtime_definitions_request.as_mut()
+            && let Some(result) = request.try_take_result()
+        {
+            let notify_on_error = *notify_on_error;
+            self.runtime_definitions_request = None;
+            match result {
+                Ok(definitions) => {
+                    self.runtime_definitions = definitions;
+                }
+                Err(err) if notify_on_error => {
+                    notifications.error(format!("Failed to load runtime tool metadata: {err}"));
+                }
+                Err(_) => {}
+            }
+        }
+
+        if let Some(request) = self.sync_tools_request.as_mut()
+            && let Some(result) = request.try_take_result()
+        {
+            self.sync_tools_request = None;
+            match result {
+                Ok(tool_names) => {
+                    notifications.success(format!(
+                        "Tool config saved and runtime synced ({} tools active)",
+                        tool_names.len()
+                    ));
+                    self.refresh_runtime_tool_definitions(notifications, true);
+                }
+                Err(err) => notifications.error(format!(
+                    "Tool config saved, but failed to sync running runtime: {err}"
+                )),
+            }
+        }
+    }
+
+    fn has_pending_runtime_request(&self) -> bool {
+        self.runtime_definitions_request.is_some() || self.sync_tools_request.is_some()
     }
 
     fn tools(&self) -> Vec<ToolDescriptor> {
@@ -881,16 +924,8 @@ impl ToolPanel {
                 }
             },
         ) {
-            match request_sync_tools() {
-                Ok(tool_names) => notifications.success(format!(
-                    "Tool config saved and runtime synced ({} tools active)",
-                    tool_names.len()
-                )),
-                Err(err) => notifications.error(format!(
-                    "Tool config saved, but failed to sync running runtime: {err}"
-                )),
-            }
-            self.refresh_runtime_tool_definitions(notifications, true);
+            self.sync_tools_request = Some(begin_sync_tools_request());
+            notifications.info("Syncing tool config with runtime...");
             self.form = None;
         }
     }
@@ -1688,10 +1723,18 @@ impl PanelRenderer for ToolPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_store_loaded(notifications);
+        self.poll_runtime_requests(notifications);
+        if self.has_pending_runtime_request() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
             ui.label("Manage tool enablement and per-tool settings.");
+            if self.has_pending_runtime_request() {
+                ui.label("Runtime sync pending...");
+            }
             if ui.button("Reload").clicked() {
                 self.reload(notifications);
             }

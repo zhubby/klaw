@@ -51,6 +51,16 @@ fn mark_gateway_status_cache_transitioning(cache: &StdMutex<klaw_gui::GatewaySta
     cache.transitioning = true;
 }
 
+fn update_channel_status_cache(
+    cache: &StdMutex<Vec<klaw_channel::ChannelInstanceStatus>>,
+    statuses: Vec<klaw_channel::ChannelInstanceStatus>,
+) {
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *cache = statuses;
+}
+
 async fn cancel_pending_acp_permissions(
     pending: &AsyncMutex<BTreeMap<u64, oneshot::Sender<klaw_acp::AcpPermissionDecision>>>,
 ) {
@@ -321,7 +331,13 @@ impl GuiCommand {
                                     channel_factory,
                                 ),
                             ));
-                            channel_manager.lock().await.sync(channel_snapshot).await;
+                            let initial_channel_statuses = {
+                                let mut manager = channel_manager.lock().await;
+                                manager.sync(channel_snapshot).await;
+                                manager.snapshot()
+                            };
+                            let channel_status_cache =
+                                Arc::new(StdMutex::new(initial_channel_statuses));
 
                             let mcp_manager = {
                                 let guard = runtime.mcp_init.lock().await;
@@ -368,9 +384,12 @@ impl GuiCommand {
                                     command = runtime_cmd_rx.recv(), if runtime_cmd_open => {
                                         match command {
                                             Some(klaw_gui::RuntimeCommand::ReloadSkillsPrompt) => {
-                                                if let Err(err) = reload_runtime_skills_prompt(runtime.as_ref()).await {
-                                                    warn!(error = %err, "failed to reload runtime skills prompt");
-                                                }
+                                                let runtime = Arc::clone(&runtime);
+                                                tokio::task::spawn_local(async move {
+                                                    if let Err(err) = reload_runtime_skills_prompt(runtime.as_ref()).await {
+                                                        warn!(error = %err, "failed to reload runtime skills prompt");
+                                                    }
+                                                });
                                             }
                                             Some(klaw_gui::RuntimeCommand::SetProviderOverride { provider_id, response }) => {
                                                 let result = set_runtime_provider_override(
@@ -400,6 +419,7 @@ impl GuiCommand {
                                             }
                                             Some(klaw_gui::RuntimeCommand::SyncChannels { response }) => {
                                                 let channel_manager = Arc::clone(&channel_manager);
+                                                let channel_status_cache = Arc::clone(&channel_status_cache);
                                                 tokio::task::spawn_local(async move {
                                                     let result = match ConfigStore::open(None) {
                                                         Ok(store) => {
@@ -411,18 +431,38 @@ impl GuiCommand {
                                                         }
                                                         Err(err) => Err(err.to_string()),
                                                     };
+                                                    if let Ok(result) = &result {
+                                                        update_channel_status_cache(
+                                                            &channel_status_cache,
+                                                            result.statuses.clone(),
+                                                        );
+                                                    }
                                                     let _ = response.send(result);
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::GetChannelStatus { response }) => {
                                                 let channel_manager = Arc::clone(&channel_manager);
+                                                let channel_status_cache = Arc::clone(&channel_status_cache);
                                                 tokio::task::spawn_local(async move {
-                                                    let statuses = channel_manager.lock().await.snapshot();
+                                                    let statuses = if let Ok(manager) = channel_manager.try_lock() {
+                                                        let statuses = manager.snapshot();
+                                                        update_channel_status_cache(
+                                                            &channel_status_cache,
+                                                            statuses.clone(),
+                                                        );
+                                                        statuses
+                                                    } else {
+                                                        channel_status_cache
+                                                            .lock()
+                                                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                                            .clone()
+                                                    };
                                                     let _ = response.send(Ok(statuses));
                                                 });
                                             }
                                             Some(klaw_gui::RuntimeCommand::RestartChannel { instance_key, response }) => {
                                                 let channel_manager = Arc::clone(&channel_manager);
+                                                let channel_status_cache = Arc::clone(&channel_status_cache);
                                                 tokio::task::spawn_local(async move {
                                                     let result = match ConfigStore::open(None) {
                                                         Ok(store) => {
@@ -445,6 +485,12 @@ impl GuiCommand {
                                                         }
                                                         Err(err) => Err(err.to_string()),
                                                     };
+                                                    if let Ok(result) = &result {
+                                                        update_channel_status_cache(
+                                                            &channel_status_cache,
+                                                            result.statuses.clone(),
+                                                        );
+                                                    }
                                                     let _ = response.send(result);
                                                 });
                                             }
