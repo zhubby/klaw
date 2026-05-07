@@ -42,6 +42,10 @@ pub use runtime_bridge::{
 pub use state::UiAction;
 pub use state::workbench::{TabId, WorkbenchState, WorkbenchTab};
 
+pub fn request_quit() {
+    app::request_quit();
+}
+
 pub fn run() -> anyhow::Result<()> {
     let viewport = configure_platform_viewport(
         egui::ViewportBuilder::default()

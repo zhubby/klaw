@@ -26,8 +26,9 @@ use std::{
 use tokio::sync::{Mutex as AsyncMutex, oneshot, watch};
 
 use super::startup_display::print_startup_banner;
-use crate::commands::signal::shutdown_signal;
 use klaw_config::ConfigStore;
+use signal_hook::consts::signal::{SIGINT, SIGTERM};
+use signal_hook::iterator::Signals;
 use tracing::{info, warn};
 
 const GUI_GATEWAY_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
@@ -102,6 +103,31 @@ where
             "gui runtime worker join channel closed unexpectedly",
         )),
     }
+}
+
+fn request_gui_shutdown(shutdown_tx: &watch::Sender<bool>, reason: &'static str) {
+    info!(reason, "requesting gui shutdown");
+    let _ = shutdown_tx.send(true);
+    klaw_gui::request_quit();
+}
+
+fn spawn_gui_signal_bridge(
+    shutdown_tx: watch::Sender<bool>,
+) -> io::Result<std::thread::JoinHandle<()>> {
+    let mut signals = Signals::new([SIGINT, SIGTERM])?;
+    std::thread::Builder::new()
+        .name("klaw-gui-signal-bridge".to_string())
+        .spawn(move || {
+            if let Some(signal) = signals.forever().next() {
+                let reason = match signal {
+                    SIGINT => "SIGINT",
+                    SIGTERM => "SIGTERM",
+                    _ => "signal",
+                };
+                request_gui_shutdown(&shutdown_tx, reason);
+            }
+        })
+        .map_err(|err| io::Error::other(format!("failed to spawn gui signal bridge: {err}")))
 }
 
 async fn run_shutdown_step_with_timeout<T, E>(
@@ -326,6 +352,7 @@ impl GuiCommand {
     pub async fn run(self, config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
         let (startup_tx, startup_rx) = std::sync::mpsc::channel::<Result<_, String>>();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let _signal_bridge = spawn_gui_signal_bridge(shutdown_tx.clone())?;
         let (runtime_cmd_tx, runtime_cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let config_for_thread = config.as_ref().clone();
         let channel_snapshot = ChannelConfigSnapshot::from_channels_config(&config.channels)
@@ -429,9 +456,6 @@ impl GuiCommand {
                                             Ok(()) => break !*shutdown_rx.borrow(),
                                             Err(_) => break false,
                                         }
-                                    }
-                                    _ = shutdown_signal() => {
-                                        break true
                                     }
                                     command = runtime_cmd_rx.recv(), if runtime_cmd_open => {
                                         match command {
@@ -961,7 +985,7 @@ impl GuiCommand {
                                 warn!(error = %err, "runtime shutdown failed");
                             }
                             if shutdown_by_signal {
-                                std::process::exit(130);
+                                info!("gui runtime stopped after process signal");
                             }
                             Ok::<(), String>(())
                         })
@@ -1010,10 +1034,11 @@ impl GuiCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_shutdown_step_with_timeout, wait_for_worker_shutdown};
+    use super::{request_gui_shutdown, run_shutdown_step_with_timeout, wait_for_worker_shutdown};
     use std::future;
     use std::io;
     use std::time::Duration;
+    use tokio::sync::watch;
 
     #[test]
     fn wait_for_worker_shutdown_returns_result_before_timeout() {
@@ -1049,5 +1074,14 @@ mod tests {
 
         let err = result.expect_err("stuck shutdown step should time out");
         assert!(err.to_string().contains("stuck step timed out"));
+    }
+
+    #[test]
+    fn request_gui_shutdown_notifies_runtime_worker() {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        request_gui_shutdown(&shutdown_tx, "test");
+
+        assert!(*shutdown_rx.borrow());
     }
 }

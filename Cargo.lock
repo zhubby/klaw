@@ -4258,6 +4258,7 @@ dependencies = [
  "klaw-voice",
  "serde",
  "serde_json",
+ "signal-hook",
  "thiserror 2.0.18",
  "time",
  "tokio",

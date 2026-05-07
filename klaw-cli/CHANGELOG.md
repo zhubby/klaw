@@ -8,6 +8,7 @@
 - GUI runtime channel status requests now return the latest cached snapshot when channel sync/restart is busy, and skills prompt reload runs in a background task so these operations do not stall the command dispatcher.
 - GUI shutdown now bounds Gateway, channel, and runtime-bundle teardown steps separately and waits longer for the bounded worker sequence, preventing terminal Ctrl+C/window close from surfacing spurious runtime worker timeout errors.
 - GUI shutdown now logs each runtime teardown step and cancels any active ACP test prompt before stopping subsystems, so stuck prompt workers are not left to hold process exit open.
+- GUI Ctrl+C/SIGTERM handling now uses a process-level signal bridge that requests runtime shutdown and forces the eframe viewport through the real quit path, restoring graceful terminal interruption instead of relying on a non-zero fallback exit.
 
 ## 2026-04-25
 

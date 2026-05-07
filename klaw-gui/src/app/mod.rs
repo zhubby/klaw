@@ -7,9 +7,36 @@ use crate::ui::shell::ShellUi;
 use crate::{hide_macos_app, show_macos_app};
 use klaw_config::ConfigStore;
 use klaw_ui_kit::install_fonts;
+use std::sync::{
+    Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 const UI_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+
+static GUI_CONTEXT: OnceLock<Mutex<Option<egui::Context>>> = OnceLock::new();
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+fn gui_context_slot() -> &'static Mutex<Option<egui::Context>> {
+    GUI_CONTEXT.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) fn request_quit() {
+    QUIT_REQUESTED.store(true, Ordering::SeqCst);
+    let context = gui_context_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    if let Some(context) = context {
+        context.send_viewport_cmd(egui::ViewportCommand::Close);
+        context.request_repaint();
+    }
+}
+
+fn quit_requested() -> bool {
+    QUIT_REQUESTED.load(Ordering::SeqCst)
+}
 
 fn tray_command_ui_action(command: TrayCommand) -> Option<UiAction> {
     match command {
@@ -49,6 +76,12 @@ impl KlawGuiApp {
         puffin::set_scopes_on(Self::profiler_enabled());
 
         install_fonts(&creation_ctx.egui_ctx);
+        {
+            let mut guard = gui_context_slot()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *guard = Some(creation_ctx.egui_ctx.clone());
+        }
         theme::apply_theme(&creation_ctx.egui_ctx, &app.state);
         creation_ctx
             .egui_ctx
@@ -265,6 +298,10 @@ impl eframe::App for KlawGuiApp {
         self.poll_pending_actions();
         self.sync_fullscreen_from_viewport(ctx);
         self.sync_window_size_from_viewport(ctx);
+        if quit_requested() {
+            self.should_quit = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         let actions = self.shell.render(ctx, &self.state);
         for action in actions {
             self.handle_action(ctx, action);
@@ -278,7 +315,7 @@ impl eframe::App for KlawGuiApp {
 
         let close_requested = ctx.input(|input| input.viewport().close_requested());
         if close_requested {
-            if self.should_quit {
+            if self.should_quit || quit_requested() {
                 self.save_state_now();
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
