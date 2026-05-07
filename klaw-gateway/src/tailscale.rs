@@ -2,17 +2,15 @@ use klaw_config::TailscaleMode;
 use klaw_util::command_search_path;
 use std::{
     io,
-    io::Read,
-    process::{Command, Output, Stdio},
-    thread,
-    time::{Duration, Instant},
+    process::{Output, Stdio},
+    time::Duration,
 };
 use thiserror::Error;
+use tokio::process::Command;
 use tracing::{debug, info, warn};
 
 const TAILSCALE_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const TAILSCALE_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
-const TAILSCALE_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Clone, Error)]
 pub enum TailscaleError {
@@ -77,8 +75,9 @@ impl TailscaleManager {
         }
     }
 
-    pub fn check_prerequisites() -> Result<(), TailscaleError> {
+    pub async fn check_prerequisites() -> Result<(), TailscaleError> {
         let output = run_tailscale_command_with_timeout(&["version"], TAILSCALE_SETUP_TIMEOUT)
+            .await
             .map_err(prerequisite_version_error)?;
 
         if !output.status.success() {
@@ -87,6 +86,7 @@ impl TailscaleManager {
 
         let status_output =
             run_tailscale_command_with_timeout(&["status", "--json"], TAILSCALE_SETUP_TIMEOUT)
+                .await
                 .map_err(status_command_error)?;
 
         if !status_output.status.success() {
@@ -104,12 +104,10 @@ impl TailscaleManager {
     }
 
     #[must_use]
-    pub fn inspect_host() -> TailscaleHostInfo {
-        let mut version_command = tailscale_command();
-        version_command.arg("version");
+    pub async fn inspect_host() -> TailscaleHostInfo {
         debug!("probing tailscale host via `tailscale version`");
         let version_output =
-            match run_command_with_timeout(&mut version_command, TAILSCALE_PROBE_TIMEOUT) {
+            match run_tailscale_command_with_timeout(&["version"], TAILSCALE_PROBE_TIMEOUT).await {
                 Ok(output) if output.status.success() => {
                     debug!(
                         exit_code = output.status.code(),
@@ -167,45 +165,47 @@ impl TailscaleManager {
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
 
-        let mut status_command = tailscale_command();
-        status_command.args(["status", "--json"]);
         debug!("probing tailscale host via `tailscale status --json`");
-        let status_output =
-            match run_command_with_timeout(&mut status_command, TAILSCALE_PROBE_TIMEOUT) {
-                Ok(output) => {
-                    debug!(
-                        exit_code = output.status.code(),
-                        stdout = summarize_command_stream(&output.stdout),
-                        stderr = summarize_command_stream(&output.stderr),
-                        "`tailscale status --json` probe completed"
-                    );
-                    output
-                }
-                Err(CommandProbeError::Io(err)) => {
-                    debug!(error = %err, "`tailscale status --json` probe failed to spawn");
-                    return TailscaleHostInfo {
-                        status: TailscaleStatus::Error(format!(
-                            "failed to get tailscale status: {err}"
-                        )),
-                        version,
-                        message: Some("Unable to query local Tailscale status.".to_string()),
-                        ..TailscaleHostInfo::default()
-                    };
-                }
-                Err(CommandProbeError::TimedOut) => {
-                    debug!("`tailscale status --json` probe timed out");
-                    return TailscaleHostInfo {
-                        status: TailscaleStatus::Error(
-                            "tailscale status command timed out".to_string(),
-                        ),
-                        version,
-                        message: Some(
-                            "Timed out while querying the local Tailscale daemon.".to_string(),
-                        ),
-                        ..TailscaleHostInfo::default()
-                    };
-                }
-            };
+        let status_output = match run_tailscale_command_with_timeout(
+            &["status", "--json"],
+            TAILSCALE_PROBE_TIMEOUT,
+        )
+        .await
+        {
+            Ok(output) => {
+                debug!(
+                    exit_code = output.status.code(),
+                    stdout = summarize_command_stream(&output.stdout),
+                    stderr = summarize_command_stream(&output.stderr),
+                    "`tailscale status --json` probe completed"
+                );
+                output
+            }
+            Err(CommandProbeError::Io(err)) => {
+                debug!(error = %err, "`tailscale status --json` probe failed to spawn");
+                return TailscaleHostInfo {
+                    status: TailscaleStatus::Error(format!(
+                        "failed to get tailscale status: {err}"
+                    )),
+                    version,
+                    message: Some("Unable to query local Tailscale status.".to_string()),
+                    ..TailscaleHostInfo::default()
+                };
+            }
+            Err(CommandProbeError::TimedOut) => {
+                debug!("`tailscale status --json` probe timed out");
+                return TailscaleHostInfo {
+                    status: TailscaleStatus::Error(
+                        "tailscale status command timed out".to_string(),
+                    ),
+                    version,
+                    message: Some(
+                        "Timed out while querying the local Tailscale daemon.".to_string(),
+                    ),
+                    ..TailscaleHostInfo::default()
+                };
+            }
+        };
 
         let parsed_status = serde_json::from_slice::<serde_json::Value>(&status_output.stdout);
         if !status_output.status.success() && parsed_status.is_err() {
@@ -299,7 +299,7 @@ impl TailscaleManager {
         }
     }
 
-    pub fn setup(&self) -> Result<TailscaleRuntimeInfo, TailscaleError> {
+    pub async fn setup(&self) -> Result<TailscaleRuntimeInfo, TailscaleError> {
         if self.mode == TailscaleMode::Off {
             return Ok(TailscaleRuntimeInfo {
                 mode: TailscaleMode::Off,
@@ -309,19 +309,19 @@ impl TailscaleManager {
             });
         }
 
-        Self::check_prerequisites()?;
+        Self::check_prerequisites().await?;
 
         let backend = format!("127.0.0.1:{}", self.port);
         let result = match self.mode {
-            TailscaleMode::Funnel => self.run_funnel(&backend),
-            TailscaleMode::Serve => self.run_serve(&backend),
+            TailscaleMode::Funnel => self.run_funnel(&backend).await,
+            TailscaleMode::Serve => self.run_serve(&backend).await,
             TailscaleMode::Off => unreachable!(),
         };
 
         result?;
-        self.verify_active_config()?;
+        self.verify_active_config().await?;
 
-        let public_url = self.get_public_url()?;
+        let public_url = self.get_public_url().await?;
 
         info!(
             mode = ?self.mode,
@@ -337,11 +337,12 @@ impl TailscaleManager {
         })
     }
 
-    fn run_funnel(&self, backend: &str) -> Result<(), TailscaleError> {
+    async fn run_funnel(&self, backend: &str) -> Result<(), TailscaleError> {
         let output = run_tailscale_command_with_timeout(
             &["funnel", "--bg", backend],
             TAILSCALE_SETUP_TIMEOUT,
         )
+        .await
         .map_err(setup_command_error)?;
 
         if !output.status.success() {
@@ -355,11 +356,12 @@ impl TailscaleManager {
         Ok(())
     }
 
-    fn run_serve(&self, backend: &str) -> Result<(), TailscaleError> {
+    async fn run_serve(&self, backend: &str) -> Result<(), TailscaleError> {
         let output = run_tailscale_command_with_timeout(
             &["serve", "--bg", backend],
             TAILSCALE_SETUP_TIMEOUT,
         )
+        .await
         .map_err(setup_command_error)?;
 
         if !output.status.success() {
@@ -369,7 +371,7 @@ impl TailscaleManager {
         Ok(())
     }
 
-    fn verify_active_config(&self) -> Result<(), TailscaleError> {
+    async fn verify_active_config(&self) -> Result<(), TailscaleError> {
         let subcommand = match self.mode {
             TailscaleMode::Funnel => "funnel",
             TailscaleMode::Serve => "serve",
@@ -379,6 +381,7 @@ impl TailscaleManager {
             &[subcommand, "status", "--json"],
             TAILSCALE_SETUP_TIMEOUT,
         )
+        .await
         .map_err(status_command_error)?;
 
         if !output.status.success() {
@@ -408,9 +411,10 @@ impl TailscaleManager {
         }
     }
 
-    fn get_public_url(&self) -> Result<String, TailscaleError> {
+    async fn get_public_url(&self) -> Result<String, TailscaleError> {
         let output =
             run_tailscale_command_with_timeout(&["status", "--json"], TAILSCALE_SETUP_TIMEOUT)
+                .await
                 .map_err(status_command_error)?;
 
         let status: serde_json::Value = serde_json::from_slice(&output.stdout)
@@ -425,14 +429,14 @@ impl TailscaleManager {
         Ok(format!("https://{}/", dns_name))
     }
 
-    pub fn teardown(&self) {
+    pub async fn teardown(&self) {
         if !self.reset_on_exit || self.mode == TailscaleMode::Off {
             return;
         }
 
         let result = match self.mode {
-            TailscaleMode::Funnel => self.reset_funnel(),
-            TailscaleMode::Serve => self.reset_serve(),
+            TailscaleMode::Funnel => self.reset_funnel().await,
+            TailscaleMode::Serve => self.reset_serve().await,
             TailscaleMode::Off => return,
         };
 
@@ -443,9 +447,10 @@ impl TailscaleManager {
         }
     }
 
-    fn reset_funnel(&self) -> Result<(), TailscaleError> {
+    async fn reset_funnel(&self) -> Result<(), TailscaleError> {
         let output =
             run_tailscale_command_with_timeout(&["funnel", "reset"], TAILSCALE_SETUP_TIMEOUT)
+                .await
                 .map_err(reset_command_error)?;
 
         if !output.status.success() {
@@ -455,9 +460,10 @@ impl TailscaleManager {
         Ok(())
     }
 
-    fn reset_serve(&self) -> Result<(), TailscaleError> {
+    async fn reset_serve(&self) -> Result<(), TailscaleError> {
         let output =
             run_tailscale_command_with_timeout(&["serve", "reset"], TAILSCALE_SETUP_TIMEOUT)
+                .await
                 .map_err(reset_command_error)?;
 
         if !output.status.success() {
@@ -465,12 +471,6 @@ impl TailscaleManager {
         }
 
         Ok(())
-    }
-}
-
-impl Drop for TailscaleManager {
-    fn drop(&mut self) {
-        self.teardown();
     }
 }
 
@@ -482,13 +482,13 @@ fn tailscale_command() -> Command {
     command
 }
 
-fn run_tailscale_command_with_timeout(
+async fn run_tailscale_command_with_timeout(
     args: &[&str],
     timeout: Duration,
 ) -> Result<Output, CommandProbeError> {
     let mut command = tailscale_command();
     command.args(args);
-    run_command_with_timeout(&mut command, timeout)
+    run_command_with_timeout(&mut command, timeout).await
 }
 
 fn prerequisite_version_error(err: CommandProbeError) -> TailscaleError {
@@ -527,66 +527,20 @@ fn reset_command_error(err: CommandProbeError) -> TailscaleError {
     }
 }
 
-fn run_command_with_timeout(
+async fn run_command_with_timeout(
     command: &mut Command,
     timeout: Duration,
 ) -> Result<Output, CommandProbeError> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(CommandProbeError::Io)?;
-    let stdout_reader = child.stdout.take().map(spawn_pipe_reader);
-    let stderr_reader = child.stderr.take().map(spawn_pipe_reader);
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let stdout = join_pipe_reader(stdout_reader);
-                let stderr = join_pipe_reader(stderr_reader);
-                return Ok(Output {
-                    status,
-                    stdout,
-                    stderr,
-                });
-            }
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = join_pipe_reader(stdout_reader);
-                    let _ = join_pipe_reader(stderr_reader);
-                    return Err(CommandProbeError::TimedOut);
-                }
-                thread::sleep(TAILSCALE_PROBE_POLL_INTERVAL);
-            }
-            Err(err) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = join_pipe_reader(stdout_reader);
-                let _ = join_pipe_reader(stderr_reader);
-                return Err(CommandProbeError::Io(err));
-            }
-        }
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    match tokio::time::timeout(timeout, command.output()).await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(err)) => Err(CommandProbeError::Io(err)),
+        Err(_) => Err(CommandProbeError::TimedOut),
     }
-}
-
-fn spawn_pipe_reader<R>(mut reader: R) -> std::thread::JoinHandle<Vec<u8>>
-where
-    R: Read + Send + 'static,
-{
-    std::thread::spawn(move || {
-        let mut buffer = Vec::new();
-        let _ = reader.read_to_end(&mut buffer);
-        buffer
-    })
-}
-
-fn join_pipe_reader(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
-    handle
-        .and_then(|handle| handle.join().ok())
-        .unwrap_or_default()
 }
 
 fn command_error_output(output: &std::process::Output) -> String {
@@ -665,7 +619,8 @@ mod tests {
         setup_command_error,
     };
     use serde_json::json;
-    use std::{process::Command, process::Output, time::Duration};
+    use std::{process::Output, time::Duration};
+    use tokio::process::Command;
 
     #[test]
     fn detects_active_funnel_from_allow_funnel_flag() {
@@ -727,26 +682,7 @@ mod tests {
             stderr: stderr.as_bytes().to_vec(),
         };
 
-        let info = if !output.status.success() {
-            let stderr = super::command_error_output(&output);
-            let disconnected = looks_like_not_logged_in(&stderr);
-            super::TailscaleHostInfo {
-                status: if disconnected {
-                    TailscaleStatus::Disconnected
-                } else {
-                    TailscaleStatus::Error(format!("failed to get tailscale status: {stderr}"))
-                },
-                version: Some("1.94.1".to_string()),
-                message: Some(if disconnected {
-                    "Tailscale is installed but not logged in.".to_string()
-                } else {
-                    stderr
-                }),
-                ..Default::default()
-            }
-        } else {
-            unreachable!()
-        };
+        let info = host_info_from_status_failure(&output);
 
         assert!(matches!(info.status, TailscaleStatus::Error(_)));
         assert_eq!(info.message.as_deref(), Some(stderr));
@@ -760,26 +696,7 @@ mod tests {
             stderr: b"backend state: NeedsLogin".to_vec(),
         };
 
-        let info = if !output.status.success() {
-            let stderr = super::command_error_output(&output);
-            let disconnected = looks_like_not_logged_in(&stderr);
-            super::TailscaleHostInfo {
-                status: if disconnected {
-                    TailscaleStatus::Disconnected
-                } else {
-                    TailscaleStatus::Error(format!("failed to get tailscale status: {stderr}"))
-                },
-                version: Some("1.94.1".to_string()),
-                message: Some(if disconnected {
-                    "Tailscale is installed but not logged in.".to_string()
-                } else {
-                    stderr
-                }),
-                ..Default::default()
-            }
-        } else {
-            unreachable!()
-        };
+        let info = host_info_from_status_failure(&output);
 
         assert_eq!(info.status, TailscaleStatus::Disconnected);
         assert_eq!(
@@ -815,13 +732,32 @@ mod tests {
         std::process::ExitStatus::from_raw(code << 8)
     }
 
+    fn host_info_from_status_failure(output: &Output) -> super::TailscaleHostInfo {
+        let stderr = super::command_error_output(output);
+        let disconnected = looks_like_not_logged_in(&stderr);
+        super::TailscaleHostInfo {
+            status: if disconnected {
+                TailscaleStatus::Disconnected
+            } else {
+                TailscaleStatus::Error(format!("failed to get tailscale status: {stderr}"))
+            },
+            version: Some("1.94.1".to_string()),
+            message: Some(if disconnected {
+                "Tailscale is installed but not logged in.".to_string()
+            } else {
+                stderr
+            }),
+            ..Default::default()
+        }
+    }
+
     #[cfg(unix)]
-    #[test]
-    fn probe_timeout_aborts_slow_command() {
+    #[tokio::test]
+    async fn probe_timeout_aborts_slow_command() {
         let mut command = Command::new("sh");
         command.args(["-c", "sleep 1"]);
 
-        let result = run_command_with_timeout(&mut command, Duration::from_millis(50));
+        let result = run_command_with_timeout(&mut command, Duration::from_millis(50)).await;
 
         assert!(matches!(result, Err(CommandProbeError::TimedOut)));
     }

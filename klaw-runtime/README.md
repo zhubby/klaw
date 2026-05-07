@@ -12,6 +12,7 @@
 - map gateway WebSocket v1 turn metadata into structured `item/*` and `turn/*` protocol notifications for both streaming and non-streaming turns
 - own the shared Knowledge service so GUI search, Knowledge tool calls, and index/vector sync reuse one provider/model runtime instead of reopening it per request
 - clear the shared Knowledge service during runtime shutdown so local model resources are released before process exit
+- provide Gateway lifecycle state helpers so GUI command handlers can recover from timed-out start/restart/mode operations without leaving the Gateway snapshot stuck in `transitioning`
 
 ## Notes
 

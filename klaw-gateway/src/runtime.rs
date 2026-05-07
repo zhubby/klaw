@@ -42,8 +42,6 @@ pub struct GatewayOptions {
     pub app_config: Option<Arc<AppConfig>>,
 }
 
-impl GatewayOptions {}
-
 pub async fn run_gateway(config: &GatewayConfig) -> Result<(), GatewayError> {
     run_gateway_with_options(config, GatewayOptions::default()).await
 }
@@ -151,21 +149,10 @@ async fn setup_tailscale(config: &GatewayConfig, actual_port: u16) -> Option<Tai
     let mode = config.tailscale.mode;
     let reset_on_exit = config.tailscale.reset_on_exit;
 
-    let result = tokio::task::spawn_blocking(move || {
-        TailscaleManager::new(mode, actual_port, reset_on_exit).setup()
-    })
-    .await;
-
-    match result {
-        Ok(setup_result) => tailscale_setup_result(config, setup_result),
-        Err(err) => {
-            warn!(error = %err, mode = ?config.tailscale.mode, "tailscale setup worker failed; gateway will continue without exposure");
-            Some(tailscale_runtime_error(
-                config.tailscale.mode,
-                TailscaleError::SetupFailed(format!("tailscale setup worker failed: {err}")),
-            ))
-        }
-    }
+    let result = TailscaleManager::new(mode, actual_port, reset_on_exit)
+        .setup()
+        .await;
+    tailscale_setup_result(config, result)
 }
 
 fn tailscale_setup_result(
@@ -215,29 +202,6 @@ fn tailscale_runtime_error(mode: TailscaleMode, err: TailscaleError) -> Tailscal
     }
 }
 
-#[cfg(test)]
-#[allow(clippy::module_inception)]
-mod tests {
-    use super::tailscale_runtime_error;
-    use crate::tailscale::{TailscaleError, TailscaleStatus};
-    use klaw_config::TailscaleMode;
-
-    #[test]
-    fn tailscale_runtime_error_keeps_mode_and_error_status() {
-        let info = tailscale_runtime_error(TailscaleMode::Serve, TailscaleError::NotLoggedIn);
-
-        assert_eq!(info.mode, TailscaleMode::Serve);
-        assert!(matches!(info.status, TailscaleStatus::Error(_)));
-        assert!(info.public_url.is_none());
-        assert!(
-            info.message
-                .as_deref()
-                .is_some_and(|message| message.contains("without Tailscale exposure"))
-        );
-    }
-}
-
-#[allow(clippy::items_after_test_module)]
 fn parse_socket_addr(config: &GatewayConfig) -> Result<SocketAddr, GatewayError> {
     format!("{}:{}", config.listen_ip, config.listen_port)
         .parse()
@@ -246,7 +210,6 @@ fn parse_socket_addr(config: &GatewayConfig) -> Result<SocketAddr, GatewayError>
         })
 }
 
-#[allow(clippy::items_after_test_module)]
 fn build_health_registry(health: Option<Arc<HealthRegistry>>) -> Arc<HealthRegistry> {
     health.unwrap_or_else(|| {
         let registry = HealthRegistry::new();
@@ -315,5 +278,26 @@ fn build_router(
         ))
     } else {
         app
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tailscale_runtime_error;
+    use crate::tailscale::{TailscaleError, TailscaleStatus};
+    use klaw_config::TailscaleMode;
+
+    #[test]
+    fn tailscale_runtime_error_keeps_mode_and_error_status() {
+        let info = tailscale_runtime_error(TailscaleMode::Serve, TailscaleError::NotLoggedIn);
+
+        assert_eq!(info.mode, TailscaleMode::Serve);
+        assert!(matches!(info.status, TailscaleStatus::Error(_)));
+        assert!(info.public_url.is_none());
+        assert!(
+            info.message
+                .as_deref()
+                .is_some_and(|message| message.contains("without Tailscale exposure"))
+        );
     }
 }

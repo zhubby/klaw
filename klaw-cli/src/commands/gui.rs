@@ -13,7 +13,9 @@ use klaw_runtime::{
 };
 use std::{
     collections::BTreeMap,
+    future::Future,
     io,
+    pin::Pin,
     sync::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
@@ -26,6 +28,28 @@ use super::startup_display::print_startup_banner;
 use crate::commands::signal::shutdown_signal;
 use klaw_config::ConfigStore;
 use tracing::{info, warn};
+
+const GUI_GATEWAY_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
+
+type GatewayOperationFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<klaw_gui::GatewayStatusSnapshot, String>> + 'a>>;
+
+fn update_gateway_status_cache(
+    cache: &StdMutex<klaw_gui::GatewayStatusSnapshot>,
+    snapshot: klaw_gui::GatewayStatusSnapshot,
+) {
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *cache = snapshot;
+}
+
+fn mark_gateway_status_cache_transitioning(cache: &StdMutex<klaw_gui::GatewayStatusSnapshot>) {
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.transitioning = true;
+}
 
 async fn cancel_pending_acp_permissions(
     pending: &AsyncMutex<BTreeMap<u64, oneshot::Sender<klaw_acp::AcpPermissionDecision>>>,
@@ -200,6 +224,39 @@ async fn run_execute_acp_prompt_stream_command(
     }
 }
 
+async fn run_gateway_operation_with_timeout(
+    gateway_manager: Arc<AsyncMutex<GatewayManager>>,
+    gateway_status_cache: Arc<StdMutex<klaw_gui::GatewayStatusSnapshot>>,
+    operation_name: &'static str,
+    operation: impl for<'a> FnOnce(&'a mut GatewayManager) -> GatewayOperationFuture<'a>,
+) -> Result<klaw_gui::GatewayStatusSnapshot, String> {
+    mark_gateway_status_cache_transitioning(&gateway_status_cache);
+
+    let (result, snapshot) = {
+        let mut manager = gateway_manager.lock().await;
+        match tokio::time::timeout(GUI_GATEWAY_OPERATION_TIMEOUT, operation(&mut manager)).await {
+            Ok(Ok(snapshot)) => (Ok(snapshot.clone()), snapshot),
+            Ok(Err(err)) => (Err(err), manager.snapshot()),
+            Err(_) => {
+                let message = format!(
+                    "{operation_name} timed out after {}s",
+                    GUI_GATEWAY_OPERATION_TIMEOUT.as_secs()
+                );
+                warn!(
+                    operation = operation_name,
+                    "gateway runtime operation timed out"
+                );
+                let snapshot = manager.mark_operation_timed_out(message.clone());
+                (Err(message), snapshot)
+            }
+        }
+    };
+
+    update_gateway_status_cache(&gateway_status_cache, snapshot);
+
+    result
+}
+
 #[derive(Debug, Args)]
 pub struct GuiCommand {}
 
@@ -241,21 +298,6 @@ impl GuiCommand {
                         let manager = gateway_manager.lock().await;
                         manager.snapshot()
                     }));
-                    if let Err(err) = gateway_manager
-                        .lock()
-                        .await
-                        .start_if_enabled(&config_for_thread)
-                        .await
-                    {
-                        warn!(error = %err, "failed to start gateway for gui runtime");
-                    }
-                    {
-                        let snapshot = gateway_manager.lock().await.snapshot();
-                        let mut cache = gateway_status_cache
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        *cache = snapshot;
-                    }
                     let adapter = Arc::clone(&hosted.adapter);
                     let local = tokio::task::LocalSet::new();
                     local
@@ -289,6 +331,28 @@ impl GuiCommand {
                                 let guard = runtime.acp_init.lock().await;
                                 guard.manager()
                             };
+
+                            if config_for_thread.gateway.enabled {
+                                mark_gateway_status_cache_transitioning(&gateway_status_cache);
+                                let gateway_manager_for_start = Arc::clone(&gateway_manager);
+                                let gateway_status_cache_for_start =
+                                    Arc::clone(&gateway_status_cache);
+                                tokio::task::spawn_local(async move {
+                                    if let Err(err) = run_gateway_operation_with_timeout(
+                                        gateway_manager_for_start,
+                                        gateway_status_cache_for_start,
+                                        "start gateway",
+                                        |manager| Box::pin(manager.start_from_store()),
+                                    )
+                                    .await
+                                    {
+                                        warn!(
+                                            error = %err,
+                                            "failed to start gateway for gui runtime"
+                                        );
+                                    }
+                                });
+                            }
 
                             let shutdown_by_signal = loop {
                                 tokio::select! {
@@ -657,10 +721,10 @@ impl GuiCommand {
                                                             warn!(error = %err, "failed to refresh gateway config metadata");
                                                         }
                                                         let snapshot = gateway_manager.snapshot();
-                                                        let mut cache = gateway_status_cache
-                                                            .lock()
-                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                        *cache = snapshot.clone();
+                                                        update_gateway_status_cache(
+                                                            &gateway_status_cache,
+                                                            snapshot.clone(),
+                                                        );
                                                         let _ = response.send(snapshot);
                                                         return;
                                                     }
@@ -675,27 +739,14 @@ impl GuiCommand {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
                                                 let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
-                                                    let host = tokio::task::spawn_blocking(
-                                                        klaw_gateway::TailscaleManager::inspect_host,
-                                                    )
-                                                    .await
-                                                    .unwrap_or_else(|err| klaw_gateway::TailscaleHostInfo {
-                                                        status: klaw_gateway::TailscaleStatus::Error(
-                                                            format!("failed to join tailscale host probe: {err}"),
-                                                        ),
-                                                        message: Some(
-                                                            "Tailscale host probe worker failed unexpectedly."
-                                                                .to_string(),
-                                                        ),
-                                                        ..Default::default()
-                                                    });
+                                                    let host = klaw_gateway::TailscaleManager::inspect_host().await;
                                                     let mut gateway_manager = gateway_manager.lock().await;
                                                     gateway_manager.set_tailscale_host(host.clone());
                                                     let snapshot = gateway_manager.snapshot();
-                                                    let mut cache = gateway_status_cache
-                                                        .lock()
-                                                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                    *cache = snapshot;
+                                                    update_gateway_status_cache(
+                                                        &gateway_status_cache,
+                                                        snapshot,
+                                                    );
                                                     let _ = response.send(Ok(host));
                                                 });
                                             }
@@ -703,19 +754,13 @@ impl GuiCommand {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
                                                 let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
-                                                    {
-                                                        let mut cache = gateway_status_cache
-                                                            .lock()
-                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                        cache.transitioning = true;
-                                                    }
-                                                    let result = gateway_manager.lock().await.start_from_store().await;
-                                                    if let Ok(snapshot) = &result {
-                                                        let mut cache = gateway_status_cache
-                                                            .lock()
-                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                        *cache = snapshot.clone();
-                                                    }
+                                                    let result = run_gateway_operation_with_timeout(
+                                                        gateway_manager,
+                                                        gateway_status_cache,
+                                                        "start gateway",
+                                                        |manager| Box::pin(manager.start_from_store()),
+                                                    )
+                                                    .await;
                                                     let _ = response.send(result);
                                                 });
                                             }
@@ -723,19 +768,13 @@ impl GuiCommand {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
                                                 let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
-                                                    {
-                                                        let mut cache = gateway_status_cache
-                                                            .lock()
-                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                        cache.transitioning = true;
-                                                    }
-                                                    let result = gateway_manager.lock().await.set_enabled(enabled).await;
-                                                    if let Ok(snapshot) = &result {
-                                                        let mut cache = gateway_status_cache
-                                                            .lock()
-                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                        *cache = snapshot.clone();
-                                                    }
+                                                    let result = run_gateway_operation_with_timeout(
+                                                        gateway_manager,
+                                                        gateway_status_cache,
+                                                        "set gateway enabled",
+                                                        |manager| Box::pin(manager.set_enabled(enabled)),
+                                                    )
+                                                    .await;
                                                     let _ = response.send(result);
                                                 });
                                             }
@@ -743,19 +782,13 @@ impl GuiCommand {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
                                                 let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
-                                                    {
-                                                        let mut cache = gateway_status_cache
-                                                            .lock()
-                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                        cache.transitioning = true;
-                                                    }
-                                                    let result = gateway_manager.lock().await.restart_from_store().await;
-                                                    if let Ok(snapshot) = &result {
-                                                        let mut cache = gateway_status_cache
-                                                            .lock()
-                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                        *cache = snapshot.clone();
-                                                    }
+                                                    let result = run_gateway_operation_with_timeout(
+                                                        gateway_manager,
+                                                        gateway_status_cache,
+                                                        "restart gateway",
+                                                        |manager| Box::pin(manager.restart_from_store()),
+                                                    )
+                                                    .await;
                                                     let _ = response.send(result);
                                                 });
                                             }
@@ -763,19 +796,13 @@ impl GuiCommand {
                                                 let gateway_manager = Arc::clone(&gateway_manager);
                                                 let gateway_status_cache = Arc::clone(&gateway_status_cache);
                                                 tokio::task::spawn_local(async move {
-                                                    {
-                                                        let mut cache = gateway_status_cache
-                                                            .lock()
-                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                        cache.transitioning = true;
-                                                    }
-                                                    let result = gateway_manager.lock().await.set_tailscale_mode(mode).await;
-                                                    if let Ok(snapshot) = &result {
-                                                        let mut cache = gateway_status_cache
-                                                            .lock()
-                                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                                        *cache = snapshot.clone();
-                                                    }
+                                                    let result = run_gateway_operation_with_timeout(
+                                                        gateway_manager,
+                                                        gateway_status_cache,
+                                                        "set tailscale mode",
+                                                        |manager| Box::pin(manager.set_tailscale_mode(mode)),
+                                                    )
+                                                    .await;
                                                     let _ = response.send(result);
                                                 });
                                             }

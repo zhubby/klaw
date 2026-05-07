@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-07
+
+### Fixed
+
+- Gateway manager now exposes a timeout recovery hook so GUI runtime command handlers can clear `transitioning`, record an error, and keep cached status responsive when a Gateway lifecycle operation exceeds its runtime deadline.
+
 ## 2026-05-05
 
 ### Fixed

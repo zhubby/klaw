@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-07
+
+### Fixed
+
+- GUI runtime now starts an enabled Gateway in the background after the command loop is ready and bounds Gateway start/restart/mode operations with an internal timeout, so slow Tailscale Funnel/Serve setup no longer causes Gateway status requests or other runtime status panels to time out.
+
 ## 2026-04-25
 
 ### Added

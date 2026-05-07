@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Gateway Tailscale setup/reset commands now run with bounded timeouts and are offloaded from async runtime threads, preventing GUI runtime status requests and shutdown from hanging when the local Tailscale CLI stalls.
+- Gateway Tailscale setup/reset/status commands now use `tokio::process::Command` with bounded timeouts and child termination on timeout, preventing GUI runtime status requests and shutdown from hanging when the local Tailscale CLI stalls.
 
 ## 2026-05-05
 

@@ -20,6 +20,7 @@ use tokio::{
     sync::{RwLock, oneshot},
     task::JoinHandle,
 };
+use tracing::warn;
 
 pub(crate) struct GatewayWebhookState {
     pub(crate) handler: Arc<dyn GatewayWebhookHandler>,
@@ -334,9 +335,8 @@ impl GatewayHandle {
         let Some(manager) = self.tailscale_manager.take() else {
             return Ok(());
         };
-        tokio::task::spawn_blocking(move || drop(manager))
-            .await
-            .map_err(|err| GatewayError::Join(err.to_string()))
+        manager.teardown().await;
+        Ok(())
     }
 }
 
@@ -346,9 +346,19 @@ impl Drop for GatewayHandle {
             let _ = tx.send(());
         }
         if let Some(manager) = self.tailscale_manager.take() {
-            let _ = std::thread::Builder::new()
-                .name("klaw-gateway-tailscale-teardown".to_string())
-                .spawn(move || drop(manager));
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    handle.spawn(async move {
+                        manager.teardown().await;
+                    });
+                }
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "dropped gateway handle outside a tokio runtime; skipping tailscale teardown"
+                    );
+                }
+            }
         }
     }
 }

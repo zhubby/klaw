@@ -32,8 +32,8 @@ impl GatewayManager {
         }
     }
 
-    fn refresh_tailscale_host_status(&mut self) {
-        self.tailscale_host = TailscaleManager::inspect_host();
+    async fn refresh_tailscale_host_status(&mut self) {
+        self.tailscale_host = TailscaleManager::inspect_host().await;
     }
 
     pub fn snapshot(&self) -> GatewayStatusSnapshot {
@@ -125,15 +125,21 @@ impl GatewayManager {
         Ok(self.snapshot())
     }
 
-    pub fn refresh_tailscale_host_from_store(&mut self) -> Result<TailscaleHostInfo, String> {
+    pub async fn refresh_tailscale_host_from_store(&mut self) -> Result<TailscaleHostInfo, String> {
         let config = load_config_from_store()?;
         self.sync_metadata_from_config(&config);
-        self.refresh_tailscale_host_status();
+        self.refresh_tailscale_host_status().await;
         Ok(self.tailscale_host.clone())
     }
 
     pub fn set_tailscale_host(&mut self, host: TailscaleHostInfo) {
         self.tailscale_host = host;
+    }
+
+    pub fn mark_operation_timed_out(&mut self, message: String) -> GatewayStatusSnapshot {
+        self.transitioning = false;
+        self.last_error = Some(message);
+        self.snapshot()
     }
 
     pub async fn start_from_store(&mut self) -> Result<GatewayStatusSnapshot, String> {
@@ -193,31 +199,32 @@ impl GatewayManager {
         self.tailscale_mode = mode;
         self.auth_configured = config.gateway.auth.is_enabled();
 
-        if self.handle.is_some() {
-            if let Err(err) = self.stop().await {
-                warn!(error = %err, "failed to stop gateway before tailscale mode change");
-            }
-            if config.gateway.enabled {
-                match self.start_from_config(&config).await {
-                    Ok(status) => Ok(status),
-                    Err(err) => {
-                        if let Err(revert_err) = save_tailscale_mode(previous_mode) {
-                            warn!(
-                                error = %revert_err,
-                                previous_mode = ?previous_mode,
-                                "failed to revert tailscale mode after start failure"
-                            );
-                        }
-                        self.tailscale_mode = previous_mode;
-                        self.last_error = Some(err.clone());
-                        Err(err)
-                    }
+        if self.handle.is_none() {
+            return Ok(self.snapshot());
+        }
+
+        if let Err(err) = self.stop().await {
+            warn!(error = %err, "failed to stop gateway before tailscale mode change");
+        }
+
+        if !config.gateway.enabled {
+            return Ok(self.snapshot());
+        }
+
+        match self.start_from_config(&config).await {
+            Ok(status) => Ok(status),
+            Err(err) => {
+                if let Err(revert_err) = save_tailscale_mode(previous_mode) {
+                    warn!(
+                        error = %revert_err,
+                        previous_mode = ?previous_mode,
+                        "failed to revert tailscale mode after start failure"
+                    );
                 }
-            } else {
-                Ok(self.snapshot())
+                self.tailscale_mode = previous_mode;
+                self.last_error = Some(err.clone());
+                Err(err)
             }
-        } else {
-            Ok(self.snapshot())
         }
     }
 }
