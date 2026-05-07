@@ -283,7 +283,7 @@ pub struct GatewayHandle {
     info: GatewayRuntimeInfo,
     shutdown_tx: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<Result<(), GatewayError>>>,
-    _tailscale_manager: Option<Box<TailscaleManager>>,
+    tailscale_manager: Option<Box<TailscaleManager>>,
 }
 
 impl GatewayHandle {
@@ -297,7 +297,7 @@ impl GatewayHandle {
             info,
             shutdown_tx: Some(shutdown_tx),
             task: Some(task),
-            _tailscale_manager: tailscale_manager,
+            tailscale_manager,
         }
     }
 
@@ -306,18 +306,37 @@ impl GatewayHandle {
     }
 
     pub async fn wait(mut self) -> Result<(), GatewayError> {
-        let Some(task) = self.task.take() else {
-            return Ok(());
+        let result = match self.task.take() {
+            Some(task) => task
+                .await
+                .map_err(|err| GatewayError::Join(err.to_string()))?,
+            None => Ok(()),
         };
-        task.await
-            .map_err(|err| GatewayError::Join(err.to_string()))?
+        self.teardown_tailscale().await?;
+        result
     }
 
     pub async fn shutdown(mut self) -> Result<(), GatewayError> {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
-        self.wait().await
+        let result = match self.task.take() {
+            Some(task) => task
+                .await
+                .map_err(|err| GatewayError::Join(err.to_string()))?,
+            None => Ok(()),
+        };
+        self.teardown_tailscale().await?;
+        result
+    }
+
+    async fn teardown_tailscale(&mut self) -> Result<(), GatewayError> {
+        let Some(manager) = self.tailscale_manager.take() else {
+            return Ok(());
+        };
+        tokio::task::spawn_blocking(move || drop(manager))
+            .await
+            .map_err(|err| GatewayError::Join(err.to_string()))
     }
 }
 
@@ -325,6 +344,11 @@ impl Drop for GatewayHandle {
     fn drop(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
+        }
+        if let Some(manager) = self.tailscale_manager.take() {
+            let _ = std::thread::Builder::new()
+                .name("klaw-gateway-tailscale-teardown".to_string())
+                .spawn(move || drop(manager));
         }
     }
 }

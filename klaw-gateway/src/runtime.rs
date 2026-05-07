@@ -106,7 +106,7 @@ pub async fn spawn_gateway_with_options(
         .await
         .map_err(GatewayError::Bind)?;
     let actual_addr = listener.local_addr().map_err(GatewayError::Bind)?;
-    let tailscale_info = setup_tailscale(config, actual_addr.port());
+    let tailscale_info = setup_tailscale(config, actual_addr.port()).await;
     let tailscale_manager = create_tailscale_manager(config, actual_addr.port());
     let info = GatewayRuntimeInfo::from_socket_addr(config, actual_addr, tailscale_info);
 
@@ -143,18 +143,36 @@ pub async fn spawn_gateway_with_options(
     ))
 }
 
-fn setup_tailscale(config: &GatewayConfig, actual_port: u16) -> Option<TailscaleRuntimeInfo> {
+async fn setup_tailscale(config: &GatewayConfig, actual_port: u16) -> Option<TailscaleRuntimeInfo> {
     if config.tailscale.mode == TailscaleMode::Off {
         return None;
     }
 
-    let manager = TailscaleManager::new(
-        config.tailscale.mode,
-        actual_port,
-        config.tailscale.reset_on_exit,
-    );
+    let mode = config.tailscale.mode;
+    let reset_on_exit = config.tailscale.reset_on_exit;
 
-    match manager.setup() {
+    let result = tokio::task::spawn_blocking(move || {
+        TailscaleManager::new(mode, actual_port, reset_on_exit).setup()
+    })
+    .await;
+
+    match result {
+        Ok(setup_result) => tailscale_setup_result(config, setup_result),
+        Err(err) => {
+            warn!(error = %err, mode = ?config.tailscale.mode, "tailscale setup worker failed; gateway will continue without exposure");
+            Some(tailscale_runtime_error(
+                config.tailscale.mode,
+                TailscaleError::SetupFailed(format!("tailscale setup worker failed: {err}")),
+            ))
+        }
+    }
+}
+
+fn tailscale_setup_result(
+    config: &GatewayConfig,
+    result: Result<TailscaleRuntimeInfo, TailscaleError>,
+) -> Option<TailscaleRuntimeInfo> {
+    match result {
         Ok(info) => Some(info),
         Err(err) => {
             warn!(error = %err, mode = ?config.tailscale.mode, "tailscale setup failed; gateway will continue without exposure");

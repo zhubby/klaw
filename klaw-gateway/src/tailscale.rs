@@ -11,6 +11,7 @@ use thiserror::Error;
 use tracing::{debug, info, warn};
 
 const TAILSCALE_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+const TAILSCALE_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 const TAILSCALE_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Clone, Error)]
@@ -77,19 +78,16 @@ impl TailscaleManager {
     }
 
     pub fn check_prerequisites() -> Result<(), TailscaleError> {
-        let output = tailscale_command()
-            .arg("version")
-            .output()
-            .map_err(|_| TailscaleError::CliNotFound)?;
+        let output = run_tailscale_command_with_timeout(&["version"], TAILSCALE_SETUP_TIMEOUT)
+            .map_err(prerequisite_version_error)?;
 
         if !output.status.success() {
             return Err(TailscaleError::CliNotFound);
         }
 
-        let status_output = tailscale_command()
-            .args(["status", "--json"])
-            .output()
-            .map_err(|e| TailscaleError::StatusFailed(e.to_string()))?;
+        let status_output =
+            run_tailscale_command_with_timeout(&["status", "--json"], TAILSCALE_SETUP_TIMEOUT)
+                .map_err(status_command_error)?;
 
         if !status_output.status.success() {
             return Err(TailscaleError::NotLoggedIn);
@@ -340,10 +338,11 @@ impl TailscaleManager {
     }
 
     fn run_funnel(&self, backend: &str) -> Result<(), TailscaleError> {
-        let output = tailscale_command()
-            .args(["funnel", "--bg", backend])
-            .output()
-            .map_err(|e| TailscaleError::SetupFailed(e.to_string()))?;
+        let output = run_tailscale_command_with_timeout(
+            &["funnel", "--bg", backend],
+            TAILSCALE_SETUP_TIMEOUT,
+        )
+        .map_err(setup_command_error)?;
 
         if !output.status.success() {
             let stderr = command_error_output(&output);
@@ -357,10 +356,11 @@ impl TailscaleManager {
     }
 
     fn run_serve(&self, backend: &str) -> Result<(), TailscaleError> {
-        let output = tailscale_command()
-            .args(["serve", "--bg", backend])
-            .output()
-            .map_err(|e| TailscaleError::SetupFailed(e.to_string()))?;
+        let output = run_tailscale_command_with_timeout(
+            &["serve", "--bg", backend],
+            TAILSCALE_SETUP_TIMEOUT,
+        )
+        .map_err(setup_command_error)?;
 
         if !output.status.success() {
             return Err(TailscaleError::SetupFailed(command_error_output(&output)));
@@ -375,10 +375,11 @@ impl TailscaleManager {
             TailscaleMode::Serve => "serve",
             TailscaleMode::Off => return Ok(()),
         };
-        let output = tailscale_command()
-            .args([subcommand, "status", "--json"])
-            .output()
-            .map_err(|e| TailscaleError::StatusFailed(e.to_string()))?;
+        let output = run_tailscale_command_with_timeout(
+            &[subcommand, "status", "--json"],
+            TAILSCALE_SETUP_TIMEOUT,
+        )
+        .map_err(status_command_error)?;
 
         if !output.status.success() {
             return Err(TailscaleError::StatusFailed(command_error_output(&output)));
@@ -408,10 +409,9 @@ impl TailscaleManager {
     }
 
     fn get_public_url(&self) -> Result<String, TailscaleError> {
-        let output = tailscale_command()
-            .args(["status", "--json"])
-            .output()
-            .map_err(|e| TailscaleError::StatusFailed(e.to_string()))?;
+        let output =
+            run_tailscale_command_with_timeout(&["status", "--json"], TAILSCALE_SETUP_TIMEOUT)
+                .map_err(status_command_error)?;
 
         let status: serde_json::Value = serde_json::from_slice(&output.stdout)
             .map_err(|e| TailscaleError::StatusFailed(e.to_string()))?;
@@ -444,10 +444,9 @@ impl TailscaleManager {
     }
 
     fn reset_funnel(&self) -> Result<(), TailscaleError> {
-        let output = tailscale_command()
-            .args(["funnel", "reset"])
-            .output()
-            .map_err(|e| TailscaleError::ResetFailed(e.to_string()))?;
+        let output =
+            run_tailscale_command_with_timeout(&["funnel", "reset"], TAILSCALE_SETUP_TIMEOUT)
+                .map_err(reset_command_error)?;
 
         if !output.status.success() {
             return Err(TailscaleError::ResetFailed(command_error_output(&output)));
@@ -457,10 +456,9 @@ impl TailscaleManager {
     }
 
     fn reset_serve(&self) -> Result<(), TailscaleError> {
-        let output = tailscale_command()
-            .args(["serve", "reset"])
-            .output()
-            .map_err(|e| TailscaleError::ResetFailed(e.to_string()))?;
+        let output =
+            run_tailscale_command_with_timeout(&["serve", "reset"], TAILSCALE_SETUP_TIMEOUT)
+                .map_err(reset_command_error)?;
 
         if !output.status.success() {
             return Err(TailscaleError::ResetFailed(command_error_output(&output)));
@@ -482,6 +480,51 @@ fn tailscale_command() -> Command {
         command.env("PATH", path);
     }
     command
+}
+
+fn run_tailscale_command_with_timeout(
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Output, CommandProbeError> {
+    let mut command = tailscale_command();
+    command.args(args);
+    run_command_with_timeout(&mut command, timeout)
+}
+
+fn prerequisite_version_error(err: CommandProbeError) -> TailscaleError {
+    match err {
+        CommandProbeError::Io(_) => TailscaleError::CliNotFound,
+        CommandProbeError::TimedOut => {
+            TailscaleError::SetupFailed("tailscale version command timed out".to_string())
+        }
+    }
+}
+
+fn status_command_error(err: CommandProbeError) -> TailscaleError {
+    match err {
+        CommandProbeError::Io(err) => TailscaleError::StatusFailed(err.to_string()),
+        CommandProbeError::TimedOut => {
+            TailscaleError::StatusFailed("tailscale status command timed out".to_string())
+        }
+    }
+}
+
+fn setup_command_error(err: CommandProbeError) -> TailscaleError {
+    match err {
+        CommandProbeError::Io(err) => TailscaleError::SetupFailed(err.to_string()),
+        CommandProbeError::TimedOut => {
+            TailscaleError::SetupFailed("tailscale setup command timed out".to_string())
+        }
+    }
+}
+
+fn reset_command_error(err: CommandProbeError) -> TailscaleError {
+    match err {
+        CommandProbeError::Io(err) => TailscaleError::ResetFailed(err.to_string()),
+        CommandProbeError::TimedOut => {
+            TailscaleError::ResetFailed("tailscale reset command timed out".to_string())
+        }
+    }
 }
 
 fn run_command_with_timeout(
@@ -617,8 +660,9 @@ fn has_non_empty_value(value: &serde_json::Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandProbeError, TailscaleStatus, has_active_funnel_config, has_active_serve_config,
-        looks_like_not_logged_in, run_command_with_timeout,
+        CommandProbeError, TailscaleError, TailscaleStatus, has_active_funnel_config,
+        has_active_serve_config, looks_like_not_logged_in, run_command_with_timeout,
+        setup_command_error,
     };
     use serde_json::json;
     use std::{process::Command, process::Output, time::Duration};
@@ -780,5 +824,14 @@ mod tests {
         let result = run_command_with_timeout(&mut command, Duration::from_millis(50));
 
         assert!(matches!(result, Err(CommandProbeError::TimedOut)));
+    }
+
+    #[test]
+    fn setup_timeout_is_reported_as_setup_failure() {
+        let err = setup_command_error(CommandProbeError::TimedOut);
+
+        assert!(
+            matches!(err, TailscaleError::SetupFailed(message) if message.contains("timed out"))
+        );
     }
 }

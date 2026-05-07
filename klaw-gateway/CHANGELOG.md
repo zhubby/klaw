@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-07
+
+### Fixed
+
+- Gateway Tailscale setup/reset commands now run with bounded timeouts and are offloaded from async runtime threads, preventing GUI runtime status requests and shutdown from hanging when the local Tailscale CLI stalls.
+
 ## 2026-05-05
 
 ### Fixed
