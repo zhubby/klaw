@@ -126,6 +126,59 @@ mod tests {
             .expect("session store should open")
     }
 
+    async fn create_memory_db() -> DefaultMemoryDb {
+        let suffix = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!(
+            "klaw-storage-memory-test-{}-{suffix}",
+            util::now_ms()
+        ));
+        DefaultMemoryDb::open(StoragePaths::from_root(base))
+            .await
+            .expect("memory db should open")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn memory_database_executor_serializes_concurrent_queries() {
+        let db = create_memory_db().await;
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS concurrent_test (
+                id INTEGER PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+        )
+        .await
+        .expect("schema should initialize");
+
+        let left = db.clone();
+        let right = db.clone();
+        let (left_result, right_result) = tokio::join!(
+            async move {
+                for i in 0..25 {
+                    left.execute(
+                        "INSERT INTO concurrent_test (value) VALUES (?)",
+                        &[DbValue::Text(format!("left-{i}"))],
+                    )
+                    .await?;
+                }
+                Ok::<(), StorageError>(())
+            },
+            async move {
+                for i in 0..25 {
+                    right
+                        .query(
+                            "SELECT value FROM concurrent_test WHERE value LIKE ?",
+                            &[DbValue::Text(format!("right-{i}%"))],
+                        )
+                        .await?;
+                }
+                Ok::<(), StorageError>(())
+            },
+        );
+
+        left_result.expect("left worker should complete");
+        right_result.expect("right worker should complete");
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn touch_does_not_increase_turn_count() {
         let store = create_store().await;

@@ -19,13 +19,13 @@ pub struct TursoSessionStore {
 #[derive(Debug, Clone)]
 pub struct TursoDatabaseExecutor {
     _db: Database,
-    conn: Connection,
+    conn: Arc<Mutex<Connection>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TursoArchiveDb {
     _db: Database,
-    conn: Connection,
+    conn: Arc<Mutex<Connection>>,
 }
 
 impl TursoSessionStore {
@@ -471,7 +471,10 @@ impl TursoDatabaseExecutor {
         let conn = db.connect().map_err(StorageError::backend)?;
         apply_sqlite_journal_mode(&conn).await?;
         apply_sqlite_connection_pragmas(&conn).await?;
-        Ok(Self { _db: db, conn })
+        Ok(Self {
+            _db: db,
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 
     pub async fn open_knowledge(paths: StoragePaths) -> Result<Self, StorageError> {
@@ -483,7 +486,10 @@ impl TursoDatabaseExecutor {
         let conn = db.connect().map_err(StorageError::backend)?;
         apply_sqlite_journal_mode(&conn).await?;
         apply_sqlite_connection_pragmas(&conn).await?;
-        Ok(Self { _db: db, conn })
+        Ok(Self {
+            _db: db,
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 }
 
@@ -497,7 +503,10 @@ impl TursoArchiveDb {
         let conn = db.connect().map_err(StorageError::backend)?;
         apply_sqlite_journal_mode(&conn).await?;
         apply_sqlite_connection_pragmas(&conn).await?;
-        Ok(Self { _db: db, conn })
+        Ok(Self {
+            _db: db,
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 }
 
@@ -557,24 +566,22 @@ impl DatabaseExecutor for TursoSessionStore {
 #[async_trait]
 impl DatabaseExecutor for TursoDatabaseExecutor {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
-        self.conn
-            .execute_batch(sql)
-            .await
-            .map_err(StorageError::backend)
+        let conn = self.conn.lock().await;
+        conn.execute_batch(sql).await.map_err(StorageError::backend)
     }
 
     async fn execute(&self, sql: &str, params: &[DbValue]) -> Result<u64, StorageError> {
         let turso_params = to_turso_params(params);
-        self.conn
-            .execute(sql, turso_params)
+        let conn = self.conn.lock().await;
+        conn.execute(sql, turso_params)
             .await
             .map_err(StorageError::backend)
     }
 
     async fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, StorageError> {
         let turso_params = to_turso_params(params);
-        let mut rows = self
-            .conn
+        let conn = self.conn.lock().await;
+        let mut rows = conn
             .query(sql, turso_params)
             .await
             .map_err(StorageError::backend)?;
@@ -596,24 +603,22 @@ impl DatabaseExecutor for TursoDatabaseExecutor {
 #[async_trait]
 impl DatabaseExecutor for TursoArchiveDb {
     async fn execute_batch(&self, sql: &str) -> Result<(), StorageError> {
-        self.conn
-            .execute_batch(sql)
-            .await
-            .map_err(StorageError::backend)
+        let conn = self.conn.lock().await;
+        conn.execute_batch(sql).await.map_err(StorageError::backend)
     }
 
     async fn execute(&self, sql: &str, params: &[DbValue]) -> Result<u64, StorageError> {
         let turso_params = to_turso_params(params);
-        self.conn
-            .execute(sql, turso_params)
+        let conn = self.conn.lock().await;
+        conn.execute(sql, turso_params)
             .await
             .map_err(StorageError::backend)
     }
 
     async fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, StorageError> {
         let turso_params = to_turso_params(params);
-        let mut rows = self
-            .conn
+        let conn = self.conn.lock().await;
+        let mut rows = conn
             .query(sql, turso_params)
             .await
             .map_err(StorageError::backend)?;
