@@ -139,6 +139,14 @@ pub trait SessionStorage: Send + Sync {
         sort_order: SessionSortOrder,
     ) -> Result<Vec<SessionIndex>, StorageError>;
 
+    async fn count_sessions(
+        &self,
+        updated_from_ms: Option<i64>,
+        updated_to_ms: Option<i64>,
+        channel: Option<&str>,
+        session_key_prefix: Option<&str>,
+    ) -> Result<i64, StorageError>;
+
     async fn list_session_channels(&self) -> Result<Vec<String>, StorageError>;
 
     async fn append_llm_usage(

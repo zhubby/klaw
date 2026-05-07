@@ -19,6 +19,7 @@ const PAGING_INPUT_WIDTH: f32 = 50.0;
 pub struct SessionPanel {
     loaded: bool,
     sessions: Vec<SessionRow>,
+    total_count: i64,
     channels: Vec<String>,
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
@@ -37,6 +38,7 @@ impl Default for SessionPanel {
         Self {
             loaded: false,
             sessions: Vec::new(),
+            total_count: 0,
             channels: Vec::new(),
             start_date: Some(one_year_ago),
             end_date: Some(today),
@@ -80,6 +82,7 @@ impl SessionPanel {
 
         match run_session_task(move |manager| async move {
             let channels = manager.list_session_channels().await?;
+            let total_count = manager.count_sessions(query.clone()).await?;
             let sessions = manager.list_sessions(query).await?;
             let mut rows = Vec::with_capacity(sessions.len());
             for session in sessions {
@@ -88,10 +91,11 @@ impl SessionPanel {
                     .await?;
                 rows.push(SessionRow { session, usage });
             }
-            Ok((channels, rows))
+            Ok((channels, total_count, rows))
         }) {
-            Ok((channels, sessions)) => {
+            Ok((channels, total_count, sessions)) => {
                 self.channels = channels;
+                self.total_count = total_count;
                 self.sessions = sessions;
                 self.loaded = true;
             }
@@ -156,7 +160,7 @@ impl PanelRenderer for SessionPanel {
             if ui.button("Refresh").clicked() {
                 self.refresh(notifications);
             }
-            ui.label(format!("Sessions: {}", self.sessions.len()));
+            ui.label(format!("Sessions: {}", self.total_count));
         });
 
         ui.separator();

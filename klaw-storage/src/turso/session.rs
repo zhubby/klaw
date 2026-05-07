@@ -540,6 +540,39 @@ impl SessionStorage for TursoSessionStore {
         Ok(out)
     }
 
+    async fn count_sessions(
+        &self,
+        updated_from_ms: Option<i64>,
+        updated_to_ms: Option<i64>,
+        channel: Option<&str>,
+        session_key_prefix: Option<&str>,
+    ) -> Result<i64, StorageError> {
+        let mut sql = String::from("SELECT COUNT(*) FROM sessions WHERE is_active = 1");
+        if let Some(from) = updated_from_ms {
+            sql.push_str(&format!(" AND updated_at_ms >= {}", from));
+        }
+        if let Some(to) = updated_to_ms {
+            sql.push_str(&format!(" AND updated_at_ms <= {}", to));
+        }
+        if let Some(ch) = channel {
+            sql.push_str(&format!(" AND channel = '{}'", escape_sql_text(ch)));
+        }
+        if let Some(prefix) = session_key_prefix {
+            sql.push_str(&format!(
+                " AND session_key LIKE '{}%'",
+                escape_sql_text(prefix)
+            ));
+        }
+        let conn = self.connection().await?;
+        let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(StorageError::backend)?
+            .ok_or_else(|| StorageError::backend("empty count result"))?;
+        value_to_i64(row.get_value(0).map_err(StorageError::backend)?)
+    }
+
     async fn list_session_channels(&self) -> Result<Vec<String>, StorageError> {
         let conn = self.connection().await?;
         let mut rows = conn

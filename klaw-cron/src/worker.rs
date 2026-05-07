@@ -826,6 +826,16 @@ mod tests {
             Ok(self.sessions.lock().expect("lock").clone())
         }
 
+        async fn count_sessions(
+            &self,
+            _updated_from_ms: Option<i64>,
+            _updated_to_ms: Option<i64>,
+            _channel: Option<&str>,
+            _session_key_prefix: Option<&str>,
+        ) -> Result<i64, StorageError> {
+            Ok(self.sessions.lock().expect("lock").len() as i64)
+        }
+
         async fn list_session_channels(&self) -> Result<Vec<String>, StorageError> {
             Ok(Vec::new())
         }

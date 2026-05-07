@@ -509,6 +509,48 @@ impl SessionStorage for SqlxSessionStore {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
+    async fn count_sessions(
+        &self,
+        updated_from_ms: Option<i64>,
+        updated_to_ms: Option<i64>,
+        channel: Option<&str>,
+        session_key_prefix: Option<&str>,
+    ) -> Result<i64, StorageError> {
+        let mut query = String::from("SELECT COUNT(*) FROM sessions WHERE is_active = 1");
+        if updated_from_ms.is_some() {
+            query.push_str(" AND updated_at_ms >= ?");
+        }
+        if updated_to_ms.is_some() {
+            query.push_str(" AND updated_at_ms <= ?");
+        }
+        if channel.is_some() {
+            query.push_str(" AND channel = ?");
+        }
+        if session_key_prefix.is_some() {
+            query.push_str(" AND session_key LIKE ?");
+        }
+
+        let mut q = sqlx::query_scalar::<_, i64>(&query);
+        if let Some(from) = updated_from_ms {
+            q = q.bind(from);
+        }
+        if let Some(to) = updated_to_ms {
+            q = q.bind(to);
+        }
+        if let Some(ch) = channel {
+            q = q.bind(ch);
+        }
+        if let Some(prefix) = session_key_prefix {
+            q = q.bind(format!("{}%", prefix));
+        }
+
+        let count = q
+            .fetch_one(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        Ok(count)
+    }
+
     async fn list_session_channels(&self) -> Result<Vec<String>, StorageError> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT channel

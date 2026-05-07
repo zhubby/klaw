@@ -149,6 +149,8 @@ pub trait SessionManager: Send + Sync {
         query: SessionListQuery,
     ) -> Result<Vec<SessionIndex>, SessionError>;
 
+    async fn count_sessions(&self, query: SessionListQuery) -> Result<i64, SessionError>;
+
     async fn list_session_channels(&self) -> Result<Vec<String>, SessionError>;
 
     async fn append_llm_usage(
@@ -457,6 +459,18 @@ impl SessionManager for SqliteSessionManager {
                 query.channel.as_deref(),
                 query.session_key_prefix.as_deref(),
                 query.sort_order,
+            )
+            .await?)
+    }
+
+    async fn count_sessions(&self, query: SessionListQuery) -> Result<i64, SessionError> {
+        Ok(self
+            .store
+            .count_sessions(
+                query.updated_from_ms,
+                query.updated_to_ms,
+                query.channel.as_deref(),
+                query.session_key_prefix.as_deref(),
             )
             .await?)
     }
@@ -828,5 +842,63 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "hello");
         assert!(manager.get_session("websocket:delete-me").await.is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn count_sessions_returns_total_without_pagination() {
+        let store = create_store().await;
+        let _ = store
+            .touch_session("terminal:first", "chat-1", "terminal")
+            .await
+            .expect("first session should be created");
+        let _ = store
+            .touch_session("terminal:second", "chat-2", "terminal")
+            .await
+            .expect("second session should be created");
+        let _ = store
+            .touch_session("telegram:third", "chat-3", "telegram")
+            .await
+            .expect("telegram session should be created");
+
+        let manager = SqliteSessionManager::from_store(store);
+
+        // Total count across all channels
+        let total = manager
+            .count_sessions(SessionListQuery::default())
+            .await
+            .expect("total count should load");
+        assert_eq!(total, 3);
+
+        // Count filtered by channel
+        let terminal_count = manager
+            .count_sessions(SessionListQuery {
+                channel: Some("terminal".to_string()),
+                ..SessionListQuery::default()
+            })
+            .await
+            .expect("filtered count should load");
+        assert_eq!(terminal_count, 2);
+
+        // Paginated list should still return only limit items
+        let sessions = manager
+            .list_sessions(SessionListQuery {
+                limit: Some(1),
+                offset: 0,
+                ..SessionListQuery::default()
+            })
+            .await
+            .expect("sessions should load");
+        assert_eq!(sessions.len(), 1);
+
+        // But total count remains the same
+        let total = manager
+            .count_sessions(SessionListQuery {
+                limit: Some(1),
+                offset: 0,
+                ..SessionListQuery::default()
+            })
+            .await
+            .expect("total count should load");
+        assert_eq!(total, 3);
     }
 }
