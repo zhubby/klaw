@@ -13,8 +13,11 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
+use tracing::warn;
 
 use crate::{KnowledgeAutoIndexHandle, KnowledgeError, ObsidianKnowledgeProvider};
+
+const PRODUCER_JOIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatchEvent {
@@ -36,13 +39,27 @@ impl AutoIndexWatcher {
             let _ = shutdown_tx.send(());
         }
         if let Some(producer) = self.producer.take() {
-            let _ = tokio::task::spawn_blocking(move || producer.join()).await;
+            if !join_producer_with_timeout(producer, PRODUCER_JOIN_TIMEOUT) {
+                warn!(
+                    timeout_seconds = PRODUCER_JOIN_TIMEOUT.as_secs(),
+                    "knowledge auto-index producer join timed out; continuing shutdown"
+                );
+            }
         }
         if let Some(consumer) = self.consumer.take() {
             consumer.abort();
             let _ = consumer.await;
         }
     }
+}
+
+fn join_producer_with_timeout(producer: std::thread::JoinHandle<()>, timeout: Duration) -> bool {
+    let (join_tx, join_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = join_tx.send(producer.join());
+    });
+
+    matches!(join_rx.recv_timeout(timeout), Ok(Ok(())))
 }
 
 #[async_trait]
@@ -343,5 +360,18 @@ mod tests {
             notify_to_watch_events(&rename_to, &vault, &[]),
             vec![WatchEvent::Changed(vault.join("new.md"))]
         );
+    }
+
+    #[test]
+    fn producer_join_timeout_returns_without_waiting_for_stuck_thread() {
+        let producer = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(100));
+        });
+
+        let started = std::time::Instant::now();
+        let joined = join_producer_with_timeout(producer, Duration::from_millis(5));
+
+        assert!(!joined);
+        assert!(started.elapsed() < Duration::from_millis(50));
     }
 }

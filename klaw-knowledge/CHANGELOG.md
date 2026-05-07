@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-07
+
+### Fixed
+
+- Obsidian auto-index watcher shutdown now joins its producer thread with a bounded non-Tokio wait, preventing a stuck file watcher from leaving a Tokio blocking task that can hold GUI process shutdown open.
+
 ## 2026-04-27
 
 ### Added

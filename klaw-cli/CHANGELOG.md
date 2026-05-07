@@ -7,6 +7,7 @@
 - GUI runtime now starts an enabled Gateway in the background after the command loop is ready and bounds Gateway start/restart/mode operations with an internal timeout, so slow Tailscale Funnel/Serve setup no longer causes Gateway status requests or other runtime status panels to time out.
 - GUI runtime channel status requests now return the latest cached snapshot when channel sync/restart is busy, and skills prompt reload runs in a background task so these operations do not stall the command dispatcher.
 - GUI shutdown now bounds Gateway, channel, and runtime-bundle teardown steps separately and waits longer for the bounded worker sequence, preventing terminal Ctrl+C/window close from surfacing spurious runtime worker timeout errors.
+- GUI shutdown now logs each runtime teardown step and cancels any active ACP test prompt before stopping subsystems, so stuck prompt workers are not left to hold process exit open.
 
 ## 2026-04-25
 

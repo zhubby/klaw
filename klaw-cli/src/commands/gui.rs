@@ -34,7 +34,7 @@ const GUI_GATEWAY_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 const GUI_GATEWAY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const GUI_CHANNEL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 const GUI_RUNTIME_BUNDLE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(6);
-const GUI_RUNTIME_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
+const GUI_RUNTIME_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 type GatewayOperationFuture<'a> =
     Pin<Box<dyn Future<Output = Result<klaw_gui::GatewayStatusSnapshot, String>> + 'a>>;
@@ -112,13 +112,42 @@ async fn run_shutdown_step_with_timeout<T, E>(
 where
     E: fmt::Display,
 {
+    let started = std::time::Instant::now();
+    info!(
+        operation = operation_name,
+        timeout_seconds = timeout_duration.as_secs_f32(),
+        "starting gui runtime shutdown step"
+    );
     match tokio::time::timeout(timeout_duration, operation).await {
-        Ok(Ok(result)) => Ok(result),
-        Ok(Err(err)) => Err(io::Error::other(err.to_string())),
-        Err(_) => Err(io::Error::other(format!(
-            "{operation_name} timed out after {:?}",
-            timeout_duration
-        ))),
+        Ok(Ok(result)) => {
+            info!(
+                operation = operation_name,
+                elapsed_ms = started.elapsed().as_millis(),
+                "completed gui runtime shutdown step"
+            );
+            Ok(result)
+        }
+        Ok(Err(err)) => {
+            warn!(
+                operation = operation_name,
+                elapsed_ms = started.elapsed().as_millis(),
+                error = %err,
+                "gui runtime shutdown step failed"
+            );
+            Err(io::Error::other(err.to_string()))
+        }
+        Err(_) => {
+            warn!(
+                operation = operation_name,
+                elapsed_ms = started.elapsed().as_millis(),
+                timeout_seconds = timeout_duration.as_secs_f32(),
+                "gui runtime shutdown step timed out"
+            );
+            Err(io::Error::other(format!(
+                "{operation_name} timed out after {:?}",
+                timeout_duration
+            )))
+        }
     }
 }
 
@@ -885,6 +914,14 @@ impl GuiCommand {
                             if shutdown_by_signal {
                                 info!("shutdown signal received, stopping gui runtime");
                             }
+                            if let Some(cancel) = active_acp_prompt_cancel.take() {
+                                let _ = cancel.send(true);
+                                info!("requested active acp prompt cancellation during gui shutdown");
+                            }
+                            cancel_pending_acp_permissions(
+                                active_acp_permission_waiters.as_ref(),
+                            )
+                            .await;
 
                             if let Err(err) = run_shutdown_step_with_timeout(
                                 "gateway shutdown",
@@ -948,6 +985,10 @@ impl GuiCommand {
         klaw_gui::clear_runtime_command_sender();
         klaw_gui::clear_log_receiver();
         let _ = shutdown_tx.send(true);
+        info!(
+            timeout_seconds = GUI_RUNTIME_WORKER_SHUTDOWN_TIMEOUT.as_secs_f32(),
+            "waiting for gui runtime worker shutdown"
+        );
         let worker_result = tokio::task::spawn_blocking(move || {
             wait_for_worker_shutdown(worker, GUI_RUNTIME_WORKER_SHUTDOWN_TIMEOUT)
         })
@@ -959,6 +1000,7 @@ impl GuiCommand {
         })?;
         worker_result
             .map_err(|err| io::Error::other(format!("gui runtime worker failed: {err}")))?;
+        info!("gui runtime worker shutdown completed");
         if let Err(err) = gui_result {
             return Err(Box::new(io::Error::other(err.to_string())));
         }
