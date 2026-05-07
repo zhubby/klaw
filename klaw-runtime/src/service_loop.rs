@@ -30,7 +30,7 @@ use std::{
     time::SystemTime,
 };
 use tokio::time::timeout;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 type StdioCronWorker = CronWorker<DefaultSessionStore, FilteringInboundTransport>;
 type StdioHeartbeatWorker = HeartbeatWorker<DefaultSessionStore, FilteringInboundTransport>;
@@ -873,7 +873,7 @@ async fn send_dingtalk_proactive_fallback(
         };
         return Err(reason);
     };
-    warn!(
+    info!(
         account_id = account_id.unwrap_or("unknown"),
         chat_id = msg.payload.chat_id.as_str(),
         "dingtalk outbound using proactive fallback"
