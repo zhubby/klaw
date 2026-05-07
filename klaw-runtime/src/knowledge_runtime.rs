@@ -11,7 +11,13 @@ use klaw_knowledge::{
     KnowledgeSearchQuery, KnowledgeSourceInfo, KnowledgeStatus, KnowledgeSyncProgress,
     KnowledgeSyncResult, ObsidianKnowledgeProvider, open_configured_obsidian_provider,
 };
-use tokio::sync::{Mutex, Notify, mpsc};
+use tokio::{
+    sync::{Mutex, Notify, mpsc},
+    time::{Duration, timeout},
+};
+use tracing::warn;
+
+const AUTO_INDEX_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[async_trait]
 pub trait KnowledgeRuntimeProvider: KnowledgeProvider {
@@ -312,7 +318,15 @@ impl KnowledgeRuntimeService {
 
     async fn stop_auto_index(&self) {
         if let Some(handle) = self.auto_index.lock().await.take() {
-            handle.stop().await;
+            if timeout(AUTO_INDEX_SHUTDOWN_TIMEOUT, handle.stop())
+                .await
+                .is_err()
+            {
+                warn!(
+                    timeout_seconds = AUTO_INDEX_SHUTDOWN_TIMEOUT.as_secs(),
+                    "knowledge auto-index shutdown timed out; continuing runtime shutdown"
+                );
+            }
         }
     }
 }
@@ -398,6 +412,7 @@ mod tests {
         loads: AtomicUsize,
         auto_index_starts: Arc<AtomicUsize>,
         auto_index_stops: Arc<AtomicUsize>,
+        auto_index_stop_blocks: bool,
     }
 
     #[async_trait]
@@ -410,6 +425,7 @@ mod tests {
             Ok(Arc::new(FakeRuntimeProvider {
                 auto_index_starts: Arc::clone(&self.auto_index_starts),
                 auto_index_stops: Arc::clone(&self.auto_index_stops),
+                auto_index_stop_blocks: self.auto_index_stop_blocks,
                 ..Default::default()
             }))
         }
@@ -421,15 +437,20 @@ mod tests {
         syncs: AtomicUsize,
         auto_index_starts: Arc<AtomicUsize>,
         auto_index_stops: Arc<AtomicUsize>,
+        auto_index_stop_blocks: bool,
     }
 
     struct FakeAutoIndexHandle {
         stops: Arc<AtomicUsize>,
+        stop_blocks: bool,
     }
 
     #[async_trait]
     impl KnowledgeAutoIndexHandle for FakeAutoIndexHandle {
         async fn stop(self: Box<Self>) {
+            if self.stop_blocks {
+                std::future::pending::<()>().await;
+            }
             self.stops.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -509,6 +530,7 @@ mod tests {
             self.auto_index_starts.fetch_add(1, Ordering::Relaxed);
             Ok(Some(Box::new(FakeAutoIndexHandle {
                 stops: Arc::clone(&self.auto_index_stops),
+                stop_blocks: self.auto_index_stop_blocks,
             })))
         }
     }
@@ -586,6 +608,36 @@ mod tests {
             KnowledgeRuntimeState::Disabled
         );
         assert!(service.provider.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn shutdown_returns_when_auto_index_stop_hangs() {
+        let loader = Arc::new(CountingLoader {
+            auto_index_stop_blocks: true,
+            ..Default::default()
+        });
+        let mut config = AppConfig::default();
+        config.knowledge.enabled = true;
+        config.knowledge.obsidian.vault_path = Some("/tmp/fake".to_string());
+        config.knowledge.obsidian.auto_index = true;
+        let service = KnowledgeRuntimeService::start(config, loader);
+
+        service
+            .wait_until_ready()
+            .await
+            .expect("service should load");
+
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(1_500), service.shutdown()).await;
+
+        assert!(
+            result.is_ok(),
+            "shutdown should be bounded even when auto-index stop hangs"
+        );
+        assert_eq!(
+            service.snapshot().await.state,
+            KnowledgeRuntimeState::Disabled
+        );
     }
 
     #[tokio::test]

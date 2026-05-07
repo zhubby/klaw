@@ -13,6 +13,7 @@ use klaw_runtime::{
 };
 use std::{
     collections::BTreeMap,
+    fmt,
     future::Future,
     io,
     pin::Pin,
@@ -30,6 +31,10 @@ use klaw_config::ConfigStore;
 use tracing::{info, warn};
 
 const GUI_GATEWAY_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
+const GUI_GATEWAY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+const GUI_CHANNEL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+const GUI_RUNTIME_BUNDLE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(6);
+const GUI_RUNTIME_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 
 type GatewayOperationFuture<'a> =
     Pin<Box<dyn Future<Output = Result<klaw_gui::GatewayStatusSnapshot, String>> + 'a>>;
@@ -96,6 +101,24 @@ where
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::other(
             "gui runtime worker join channel closed unexpectedly",
         )),
+    }
+}
+
+async fn run_shutdown_step_with_timeout<T, E>(
+    operation_name: &'static str,
+    timeout_duration: Duration,
+    operation: impl Future<Output = Result<T, E>>,
+) -> io::Result<T>
+where
+    E: fmt::Display,
+{
+    match tokio::time::timeout(timeout_duration, operation).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(err)) => Err(io::Error::other(err.to_string())),
+        Err(_) => Err(io::Error::other(format!(
+            "{operation_name} timed out after {:?}",
+            timeout_duration
+        ))),
     }
 }
 
@@ -863,11 +886,41 @@ impl GuiCommand {
                                 info!("shutdown signal received, stopping gui runtime");
                             }
 
-                            if let Err(err) = gateway_manager.lock().await.stop().await {
+                            if let Err(err) = run_shutdown_step_with_timeout(
+                                "gateway shutdown",
+                                GUI_GATEWAY_SHUTDOWN_TIMEOUT,
+                                async {
+                                    gateway_manager
+                                        .lock()
+                                        .await
+                                        .stop()
+                                        .await
+                                        .map(|_| ())
+                                },
+                            )
+                            .await
+                            {
                                 warn!(error = %err, "failed to stop gateway during gui shutdown");
                             }
-                            channel_manager.lock().await.shutdown_all().await;
-                            if let Err(err) = shutdown_runtime_bundle(runtime.as_ref()).await {
+                            if let Err(err) = run_shutdown_step_with_timeout(
+                                "channel shutdown",
+                                GUI_CHANNEL_SHUTDOWN_TIMEOUT,
+                                async {
+                                    channel_manager.lock().await.shutdown_all().await;
+                                    Ok::<(), io::Error>(())
+                                },
+                            )
+                            .await
+                            {
+                                warn!(error = %err, "failed to stop channels during gui shutdown");
+                            }
+                            if let Err(err) = run_shutdown_step_with_timeout(
+                                "runtime bundle shutdown",
+                                GUI_RUNTIME_BUNDLE_SHUTDOWN_TIMEOUT,
+                                shutdown_runtime_bundle(runtime.as_ref()),
+                            )
+                            .await
+                            {
                                 warn!(error = %err, "runtime shutdown failed");
                             }
                             if shutdown_by_signal {
@@ -896,7 +949,7 @@ impl GuiCommand {
         klaw_gui::clear_log_receiver();
         let _ = shutdown_tx.send(true);
         let worker_result = tokio::task::spawn_blocking(move || {
-            wait_for_worker_shutdown(worker, Duration::from_secs(5))
+            wait_for_worker_shutdown(worker, GUI_RUNTIME_WORKER_SHUTDOWN_TIMEOUT)
         })
         .await
         .map_err(|err| io::Error::other(format!("gui worker join wait failed: {err}")))?
@@ -915,7 +968,9 @@ impl GuiCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::wait_for_worker_shutdown;
+    use super::{run_shutdown_step_with_timeout, wait_for_worker_shutdown};
+    use std::future;
+    use std::io;
     use std::time::Duration;
 
     #[test]
@@ -939,5 +994,18 @@ mod tests {
             .expect_err("join should time out");
 
         assert!(err.to_string().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn shutdown_step_timeout_returns_error_for_stuck_future() {
+        let result = run_shutdown_step_with_timeout(
+            "stuck step",
+            Duration::from_millis(5),
+            future::pending::<io::Result<()>>(),
+        )
+        .await;
+
+        let err = result.expect_err("stuck shutdown step should time out");
+        assert!(err.to_string().contains("stuck step timed out"));
     }
 }

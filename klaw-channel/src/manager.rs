@@ -3,6 +3,7 @@ use crate::{
     websocket::WebsocketChannel,
 };
 use ::time::OffsetDateTime;
+use futures_util::future::join_all;
 use klaw_config::{
     ChannelsConfig, DingtalkConfig, LocalAttachmentConfig, TelegramConfig, WebsocketConfig,
 };
@@ -451,10 +452,11 @@ where
     }
 
     pub async fn shutdown_all(&mut self) {
-        let keys = self.channels.keys().cloned().collect::<Vec<_>>();
-        for key in keys {
-            self.stop_channel(&key).await;
-        }
+        let statuses = Arc::clone(&self.statuses);
+        let stops = std::mem::take(&mut self.channels)
+            .into_iter()
+            .map(|(key, managed)| stop_managed_channel(Arc::clone(&statuses), key, managed));
+        join_all(stops).await;
     }
 
     pub async fn restart_channel(
@@ -598,35 +600,7 @@ where
         let Some(managed) = self.channels.remove(key) else {
             return;
         };
-        let _ = managed.shutdown_tx.send(true);
-        if let Err(err) = time::timeout(CHANNEL_SHUTDOWN_TIMEOUT, managed.handle).await {
-            let mut guard = self
-                .statuses
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            guard.insert(
-                key.clone(),
-                ChannelInstanceStatus::from_config(
-                    &managed.config,
-                    ChannelLifecycleState::Failed,
-                    Some(format!("timed out waiting channel shutdown: {err}")),
-                ),
-            );
-            return;
-        }
-
-        let mut guard = self
-            .statuses
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.insert(
-            key.clone(),
-            ChannelInstanceStatus::from_config(
-                &managed.config,
-                ChannelLifecycleState::Stopped,
-                None,
-            ),
-        );
+        stop_managed_channel(Arc::clone(&self.statuses), key.clone(), managed).await;
     }
 
     fn reconcile_statuses(&mut self, snapshot: &ChannelConfigSnapshot) {
@@ -676,6 +650,36 @@ where
             })
             .collect()
     }
+}
+
+async fn stop_managed_channel(
+    statuses: Arc<Mutex<BTreeMap<ChannelInstanceKey, ChannelInstanceStatus>>>,
+    key: ChannelInstanceKey,
+    managed: ManagedChannelHandle,
+) {
+    let _ = managed.shutdown_tx.send(true);
+    if let Err(err) = time::timeout(CHANNEL_SHUTDOWN_TIMEOUT, managed.handle).await {
+        let mut guard = statuses
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.insert(
+            key,
+            ChannelInstanceStatus::from_config(
+                &managed.config,
+                ChannelLifecycleState::Failed,
+                Some(format!("timed out waiting channel shutdown: {err}")),
+            ),
+        );
+        return;
+    }
+
+    let mut guard = statuses
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.insert(
+        key,
+        ChannelInstanceStatus::from_config(&managed.config, ChannelLifecycleState::Stopped, None),
+    );
 }
 
 #[derive(Debug, Default)]
@@ -772,6 +776,7 @@ mod tests {
         kind: ChannelKind,
         id: String,
         shutdowns: Arc<AtomicUsize>,
+        shutdown_delay: std::time::Duration,
         fail_on_run: bool,
     }
 
@@ -795,6 +800,7 @@ mod tests {
                 .changed()
                 .await
                 .map_err(|err| io::Error::other(err.to_string()))?;
+            time::sleep(self.shutdown_delay).await;
             self.shutdowns.fetch_add(1, Ordering::SeqCst);
             if self.fail_on_run {
                 Err(io::Error::other("driver run failure").into())
@@ -809,6 +815,7 @@ mod tests {
         shutdowns: Arc<AtomicUsize>,
         build_failures: Arc<Mutex<BTreeSet<String>>>,
         run_failures: Arc<Mutex<BTreeSet<String>>>,
+        shutdown_delay: std::time::Duration,
     }
 
     impl TestFactory {
@@ -817,7 +824,13 @@ mod tests {
                 shutdowns: Arc::new(AtomicUsize::new(0)),
                 build_failures: Arc::new(Mutex::new(BTreeSet::new())),
                 run_failures: Arc::new(Mutex::new(BTreeSet::new())),
+                shutdown_delay: std::time::Duration::ZERO,
             }
+        }
+
+        fn with_shutdown_delay(mut self, delay: std::time::Duration) -> Self {
+            self.shutdown_delay = delay;
+            self
         }
     }
 
@@ -846,6 +859,7 @@ mod tests {
                 kind: config.kind(),
                 id,
                 shutdowns: Arc::clone(&self.shutdowns),
+                shutdown_delay: self.shutdown_delay,
                 fail_on_run,
             }))
         }
@@ -992,6 +1006,37 @@ mod tests {
                         .snapshot()
                         .iter()
                         .all(|status| status.state == ChannelLifecycleState::Stopped)
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_all_stops_running_channels_concurrently() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let factory =
+                    TestFactory::new().with_shutdown_delay(std::time::Duration::from_millis(80));
+                let runtime = Arc::new(DummyRuntime);
+                let mut manager = ChannelManager::with_factory(runtime, factory);
+
+                manager
+                    .sync(ChannelConfigSnapshot {
+                        instances: vec![
+                            dingtalk("alpha", true),
+                            dingtalk("beta", true),
+                            websocket("browser", true),
+                        ],
+                    })
+                    .await;
+
+                let started = std::time::Instant::now();
+                manager.shutdown_all().await;
+
+                assert!(
+                    started.elapsed() < std::time::Duration::from_millis(160),
+                    "shutdown_all should stop independent channels concurrently"
                 );
             })
             .await;

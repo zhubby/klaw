@@ -5,6 +5,7 @@
 ### Fixed
 
 - Gateway manager now exposes a timeout recovery hook so GUI runtime command handlers can clear `transitioning`, record an error, and keep cached status responsive when a Gateway lifecycle operation exceeds its runtime deadline.
+- Knowledge runtime shutdown now bounds auto-index watcher teardown and logs a warning before continuing, so a stuck watcher cannot block process exit indefinitely.
 
 ## 2026-05-05
 

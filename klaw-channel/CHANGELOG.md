@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-07
+
+### Fixed
+
+- Channel manager shutdown now stops all running channel instances concurrently while preserving per-channel timeout/error reporting, avoiding serial timeout accumulation during GUI/runtime exit.
+
 ## 2026-05-06
 
 ### Fixed
