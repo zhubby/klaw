@@ -154,7 +154,7 @@ pub trait ChannelStreamWriter {
 }
 
 #[async_trait(?Send)]
-pub trait ChannelRuntime {
+pub trait ChannelRuntime: Send + Sync {
     async fn submit(&self, request: ChannelRequest) -> ChannelResult<Option<ChannelResponse>>;
 
     async fn submit_streaming(

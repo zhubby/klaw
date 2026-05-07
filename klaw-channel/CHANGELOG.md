@@ -5,6 +5,7 @@
 ### Fixed
 
 - Channel manager shutdown now stops all running channel instances concurrently while preserving per-channel timeout/error reporting, avoiding serial timeout accumulation during GUI/runtime exit.
+- Managed channel drivers now run on isolated OS threads with their own Tokio runtime instead of the GUI runtime `LocalSet`, keeping the GUI shutdown control loop responsive even when a long-lived channel/background tick stalls.
 
 ## 2026-05-06
 

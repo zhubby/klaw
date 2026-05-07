@@ -11,8 +11,9 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
     sync::{Arc, Mutex},
+    thread::JoinHandle as ThreadJoinHandle,
 };
-use tokio::{sync::watch, task::JoinHandle, time};
+use tokio::{sync::watch, time};
 use tracing::{info, warn};
 
 const CHANNEL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -325,7 +326,7 @@ pub struct ChannelSyncResult {
 }
 
 #[async_trait::async_trait(?Send)]
-pub trait ManagedChannelDriver {
+pub trait ManagedChannelDriver: Send {
     fn kind(&self) -> ChannelKind;
 
     fn instance_id(&self) -> &str;
@@ -377,12 +378,12 @@ impl ChannelDriverFactory for DefaultChannelDriverFactory {
 struct ManagedChannelHandle {
     config: ChannelInstanceConfig,
     shutdown_tx: watch::Sender<bool>,
-    handle: JoinHandle<()>,
+    handle: ThreadJoinHandle<()>,
 }
 
 pub struct ChannelManager<R, F = DefaultChannelDriverFactory>
 where
-    R: ChannelRuntime + 'static,
+    R: ChannelRuntime + Send + Sync + 'static,
     F: ChannelDriverFactory + 'static,
 {
     runtime: Arc<R>,
@@ -393,7 +394,7 @@ where
 
 impl<R> ChannelManager<R, DefaultChannelDriverFactory>
 where
-    R: ChannelRuntime + 'static,
+    R: ChannelRuntime + Send + Sync + 'static,
 {
     #[must_use]
     pub fn new(runtime: Arc<R>) -> Self {
@@ -403,7 +404,7 @@ where
 
 impl<R, F> ChannelManager<R, F>
 where
-    R: ChannelRuntime + 'static,
+    R: ChannelRuntime + Send + Sync + 'static,
     F: ChannelDriverFactory + 'static,
 {
     #[must_use]
@@ -504,7 +505,7 @@ where
     fn start_channel(&mut self, config: ChannelInstanceConfig) {
         let key = config.key();
         let key_for_task = key.clone();
-        let runtime = Arc::clone(&self.runtime);
+        let channel_runtime = Arc::clone(&self.runtime);
         let statuses = Arc::clone(&self.statuses);
         let config_for_task = config.clone();
         let reporter =
@@ -547,44 +548,93 @@ where
         }
         reporter.mark_running("channel task started");
 
-        let handle = tokio::task::spawn_local(async move {
-            info!(
-                channel_kind = driver.kind().as_str(),
-                channel_id = driver.instance_id(),
-                instance_key = key_for_task.as_str(),
-                "starting managed channel"
-            );
+        let statuses_for_task = Arc::clone(&statuses);
+        let handle = std::thread::Builder::new()
+            .name(format!("klaw-channel-{}", key.as_str()))
+            .spawn(move || {
+                let tokio_runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime,
+                    Err(err) => {
+                        let mut guard = statuses_for_task
+                            .lock()
+                            .unwrap_or_else(|err| err.into_inner());
+                        guard.insert(
+                            key_for_task,
+                            ChannelInstanceStatus::from_config(
+                                &config_for_task,
+                                ChannelLifecycleState::Failed,
+                                Some(format!("failed to start channel runtime: {err}")),
+                            ),
+                        );
+                        return;
+                    }
+                };
 
-            let result = driver
-                .run_until_shutdown(runtime.as_ref(), &mut channel_shutdown, reporter)
-                .await;
-            let stopping = *channel_shutdown.borrow();
-
-            let next_status = match result {
-                Ok(()) => ChannelInstanceStatus::from_config(
-                    &config_for_task,
-                    ChannelLifecycleState::Stopped,
-                    None,
-                ),
-                Err(err) => {
-                    warn!(
+                tokio_runtime.block_on(async move {
+                    info!(
+                        channel_kind = driver.kind().as_str(),
+                        channel_id = driver.instance_id(),
                         instance_key = key_for_task.as_str(),
-                        error = %err,
-                        "managed channel stopped with error"
+                        "starting managed channel"
                     );
-                    ChannelInstanceStatus::from_config(
-                        &config_for_task,
-                        ChannelLifecycleState::Failed,
-                        Some(err.to_string()),
-                    )
-                }
-            };
 
-            let mut guard = statuses.lock().unwrap_or_else(|err| err.into_inner());
-            if stopping || matches!(next_status.state, ChannelLifecycleState::Failed) {
-                guard.insert(key_for_task, next_status);
+                    let result = driver
+                        .run_until_shutdown(
+                            channel_runtime.as_ref(),
+                            &mut channel_shutdown,
+                            reporter,
+                        )
+                        .await;
+                    let stopping = *channel_shutdown.borrow();
+
+                    let next_status = match result {
+                        Ok(()) => ChannelInstanceStatus::from_config(
+                            &config_for_task,
+                            ChannelLifecycleState::Stopped,
+                            None,
+                        ),
+                        Err(err) => {
+                            warn!(
+                                instance_key = key_for_task.as_str(),
+                                error = %err,
+                                "managed channel stopped with error"
+                            );
+                            ChannelInstanceStatus::from_config(
+                                &config_for_task,
+                                ChannelLifecycleState::Failed,
+                                Some(err.to_string()),
+                            )
+                        }
+                    };
+
+                    let mut guard = statuses_for_task
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner());
+                    if stopping || matches!(next_status.state, ChannelLifecycleState::Failed) {
+                        guard.insert(key_for_task, next_status);
+                    }
+                });
+            });
+        let handle = match handle {
+            Ok(handle) => handle,
+            Err(err) => {
+                let mut guard = statuses
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                guard.insert(
+                    key,
+                    ChannelInstanceStatus::from_config(
+                        &config,
+                        ChannelLifecycleState::Failed,
+                        Some(format!("failed to spawn channel thread: {err}")),
+                    ),
+                );
+                return;
             }
-        });
+        };
 
         self.channels.insert(
             key,
@@ -658,7 +708,7 @@ async fn stop_managed_channel(
     managed: ManagedChannelHandle,
 ) {
     let _ = managed.shutdown_tx.send(true);
-    if let Err(err) = time::timeout(CHANNEL_SHUTDOWN_TIMEOUT, managed.handle).await {
+    if !join_channel_thread_with_timeout(managed.handle, CHANNEL_SHUTDOWN_TIMEOUT).await {
         let mut guard = statuses
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -667,7 +717,7 @@ async fn stop_managed_channel(
             ChannelInstanceStatus::from_config(
                 &managed.config,
                 ChannelLifecycleState::Failed,
-                Some(format!("timed out waiting channel shutdown: {err}")),
+                Some("timed out waiting channel shutdown".to_string()),
             ),
         );
         return;
@@ -680,6 +730,34 @@ async fn stop_managed_channel(
         key,
         ChannelInstanceStatus::from_config(&managed.config, ChannelLifecycleState::Stopped, None),
     );
+}
+
+async fn join_channel_thread_with_timeout(
+    handle: ThreadJoinHandle<()>,
+    timeout: std::time::Duration,
+) -> bool {
+    let (join_tx, join_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = join_tx.send(handle.join());
+    });
+
+    let started = std::time::Instant::now();
+    loop {
+        match join_rx.try_recv() {
+            Ok(Ok(())) => return true,
+            Ok(Err(err)) => {
+                warn!(error = ?err, "managed channel thread panicked during shutdown");
+                return false;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return false,
+            Err(std::sync::mpsc::TryRecvError::Empty) if started.elapsed() >= timeout => {
+                return false;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Default)]
