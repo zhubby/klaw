@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 2026-05-07
+
+### Added
+- Added session-manager cleanup wrappers for restricted cron/webhook session cleanup, including cleanup summary reporting.
+
 ## 2026-05-04
 
 ### Changed

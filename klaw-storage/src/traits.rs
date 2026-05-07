@@ -5,11 +5,11 @@ use crate::{
     LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
     NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
     NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
-    SessionSortOrder, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
-    ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
-    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
-    WebhookEventQuery, WebhookEventRecord,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupQuery, SessionCleanupSummary,
+    SessionCompressionState, SessionIndex, SessionSortOrder, StorageError, ToolAuditFilterOptions,
+    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch,
+    UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
+    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -146,6 +146,11 @@ pub trait SessionStorage: Send + Sync {
         channel: Option<&str>,
         session_key_prefix: Option<&str>,
     ) -> Result<i64, StorageError>;
+
+    async fn clean_sessions(
+        &self,
+        query: &SessionCleanupQuery,
+    ) -> Result<SessionCleanupSummary, StorageError>;
 
     async fn list_session_channels(&self) -> Result<Vec<String>, StorageError>;
 

@@ -140,6 +140,7 @@
   - read indexed sessions via `klaw-session` manager abstraction
   - render session metadata in a read-only table with limit/offset controls
   - support SQL-backed `channel` dropdown filtering and `Updated At` ascending/descending sorting
+  - clean old cron/webhook sessions from a confirmation dialog with an `Updated At` cutoff date
   - open the chat history window directly by double-clicking a session row
 - Approval panel features:
   - read approvals via `klaw-approval` manager abstraction

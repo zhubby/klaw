@@ -10,18 +10,28 @@ use crate::{
     LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditSummaryRecord, LlmUsageRecord,
     LlmUsageSummary, NewApprovalRecord, NewLlmAuditRecord, NewLlmUsageRecord,
     NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
-    SessionSortOrder, SessionStorage, StorageError, ToolAuditFilterOptions,
-    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateWebhookAgentResult,
-    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
-    WebhookEventRecord, WebhookEventSortOrder, jsonl,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupQuery, SessionCleanupSummary,
+    SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage, StorageError,
+    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
+    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, jsonl,
     util::{now_ms, relative_or_absolute_jsonl},
 };
 use async_trait::async_trait;
 use sqlx::Row;
-use std::path::PathBuf;
+use std::{io::ErrorKind, path::PathBuf};
+use tokio::fs;
 
 const SESSION_INDEX_SELECT: &str = "session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, is_active, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path";
+const CLEANUP_RELATED_TABLES: &[&str] = &[
+    "llm_usage",
+    "llm_audit",
+    "tool_audit",
+    "webhook_events",
+    "webhook_agents",
+    "pending_questions",
+    "approvals",
+];
 
 #[async_trait]
 impl SessionStorage for SqlxSessionStore {
@@ -549,6 +559,65 @@ impl SessionStorage for SqlxSessionStore {
             .await
             .map_err(StorageError::backend)?;
         Ok(count)
+    }
+
+    async fn clean_sessions(
+        &self,
+        query: &SessionCleanupQuery,
+    ) -> Result<SessionCleanupSummary, StorageError> {
+        let channels = validate_cleanup_channels(&query.channels)?;
+        let channel_filter = cleanup_channel_filter(channels.len());
+        let select_sql = format!(
+            "SELECT {SESSION_INDEX_SELECT}
+             FROM sessions
+             WHERE is_active = 1 AND updated_at_ms < ? AND {channel_filter}"
+        );
+        let mut select =
+            sqlx::query_as::<_, SessionIndexRow>(&select_sql).bind(query.updated_before_ms);
+        for channel in &channels {
+            select = select.bind(channel);
+        }
+        let rows = select
+            .fetch_all(&self.pool)
+            .await
+            .map_err(StorageError::backend)?;
+        let sessions: Vec<SessionIndex> = rows.into_iter().map(Into::into).collect();
+        if sessions.is_empty() {
+            return Ok(SessionCleanupSummary::default());
+        }
+
+        let session_keys: Vec<String> = sessions
+            .iter()
+            .map(|session| session.session_key.clone())
+            .collect();
+        let placeholders = vec!["?"; session_keys.len()].join(", ");
+        let mut related_records_deleted = 0;
+        for table in CLEANUP_RELATED_TABLES {
+            let deleted = execute_session_key_delete(
+                &self.pool,
+                &format!("DELETE FROM {table} WHERE session_key IN ({placeholders})"),
+                &session_keys,
+            )
+            .await?;
+            related_records_deleted += i64::try_from(deleted).unwrap_or(i64::MAX);
+        }
+
+        let session_records_deleted = execute_session_key_delete(
+            &self.pool,
+            &format!("DELETE FROM sessions WHERE session_key IN ({placeholders})"),
+            &session_keys,
+        )
+        .await?;
+        let (jsonl_files_deleted, jsonl_files_missing) =
+            remove_session_jsonl_files(self, &session_keys).await?;
+
+        Ok(SessionCleanupSummary {
+            matched_sessions: i64::try_from(sessions.len()).unwrap_or(i64::MAX),
+            session_records_deleted: i64::try_from(session_records_deleted).unwrap_or(i64::MAX),
+            related_records_deleted,
+            jsonl_files_deleted,
+            jsonl_files_missing,
+        })
     }
 
     async fn list_session_channels(&self) -> Result<Vec<String>, StorageError> {
@@ -1423,4 +1492,68 @@ impl SessionStorage for SqlxSessionStore {
     fn session_jsonl_path(&self, session_key: &str) -> PathBuf {
         jsonl::session_jsonl_path(&self.paths, session_key)
     }
+}
+
+fn validate_cleanup_channels(channels: &[String]) -> Result<Vec<String>, StorageError> {
+    if channels.is_empty() {
+        return Err(StorageError::backend(
+            "at least one cleanup channel must be selected",
+        ));
+    }
+
+    let mut out = Vec::new();
+    for channel in channels {
+        match channel.as_str() {
+            "cron" | "webhook" => {
+                if !out.iter().any(|existing| existing == channel) {
+                    out.push(channel.clone());
+                }
+            }
+            _ => {
+                return Err(StorageError::backend(format!(
+                    "session cleanup only supports cron and webhook channels, got '{channel}'"
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn cleanup_channel_filter(channel_count: usize) -> String {
+    let clauses = vec!["channel = ?"; channel_count].join(" OR ");
+    format!("({clauses})")
+}
+
+async fn execute_session_key_delete(
+    pool: &sqlx::SqlitePool,
+    sql: &str,
+    session_keys: &[String],
+) -> Result<u64, StorageError> {
+    let mut query = sqlx::query(sql);
+    for session_key in session_keys {
+        query = query.bind(session_key);
+    }
+    let rows = query
+        .execute(pool)
+        .await
+        .map_err(StorageError::backend)?
+        .rows_affected();
+    Ok(rows)
+}
+
+async fn remove_session_jsonl_files(
+    store: &SqlxSessionStore,
+    session_keys: &[String],
+) -> Result<(i64, i64), StorageError> {
+    let mut deleted = 0;
+    let mut missing = 0;
+    for session_key in session_keys {
+        let path = store.session_jsonl_path(session_key);
+        match fs::remove_file(path).await {
+            Ok(()) => deleted += 1,
+            Err(err) if err.kind() == ErrorKind::NotFound => missing += 1,
+            Err(err) => return Err(StorageError::backend(err)),
+        }
+    }
+    Ok((deleted, missing))
 }

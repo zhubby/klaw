@@ -6,8 +6,8 @@ use chrono::{Datelike, Local, NaiveDate};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_session::{
-    LlmUsageSummary, SessionError, SessionIndex, SessionListQuery, SessionManager,
-    SessionSortOrder, SqliteSessionManager,
+    LlmUsageSummary, SessionCleanupQuery, SessionError, SessionIndex, SessionListQuery,
+    SessionManager, SessionSortOrder, SqliteSessionManager,
 };
 use std::future::Future;
 use std::thread;
@@ -29,6 +29,10 @@ pub struct SessionPanel {
     size: i64,
     selected_session: Option<String>,
     chat_box: Option<ChatBox>,
+    cleanup_open: bool,
+    cleanup_updated_before: Option<NaiveDate>,
+    cleanup_cron: bool,
+    cleanup_webhook: bool,
 }
 
 impl Default for SessionPanel {
@@ -48,6 +52,10 @@ impl Default for SessionPanel {
             size: 100,
             selected_session: None,
             chat_box: None,
+            cleanup_open: false,
+            cleanup_updated_before: Some(today),
+            cleanup_cron: true,
+            cleanup_webhook: true,
         }
     }
 }
@@ -128,6 +136,26 @@ impl SessionPanel {
         }
     }
 
+    fn clean_sessions(&mut self, notifications: &mut NotificationCenter) {
+        let Some(query) = self.cleanup_query() else {
+            notifications.error("Select an Updated At date and at least one session type.");
+            return;
+        };
+
+        match run_session_task(move |manager| async move { manager.clean_sessions(&query).await }) {
+            Ok(summary) => {
+                notifications.success(format!(
+                    "Cleaned {} sessions and deleted {} JSONL files ({} already missing).",
+                    summary.session_records_deleted,
+                    summary.jsonl_files_deleted,
+                    summary.jsonl_files_missing
+                ));
+                self.refresh(notifications);
+            }
+            Err(err) => notifications.error(format!("Failed to clean sessions: {err}")),
+        }
+    }
+
     fn toggle_sort_order(&mut self) {
         self.sort_order = match self.sort_order {
             SessionSortOrder::UpdatedAtAsc => SessionSortOrder::UpdatedAtDesc,
@@ -142,6 +170,88 @@ impl SessionPanel {
             SessionSortOrder::UpdatedAtAsc => "Updated At ↑",
             SessionSortOrder::UpdatedAtDesc => "Updated At ↓",
             SessionSortOrder::CreatedAtDesc => "Created At ↓",
+        }
+    }
+
+    fn cleanup_channels(&self) -> Vec<String> {
+        let mut channels = Vec::new();
+        if self.cleanup_cron {
+            channels.push("cron".to_string());
+        }
+        if self.cleanup_webhook {
+            channels.push("webhook".to_string());
+        }
+        channels
+    }
+
+    fn cleanup_query(&self) -> Option<SessionCleanupQuery> {
+        let updated_before_ms = self.cleanup_updated_before.and_then(date_start_ms)?;
+        let channels = self.cleanup_channels();
+        if channels.is_empty() {
+            return None;
+        }
+        Some(SessionCleanupQuery {
+            updated_before_ms,
+            channels,
+        })
+    }
+
+    fn render_cleanup_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        if !self.cleanup_open {
+            return;
+        }
+
+        let mut open = self.cleanup_open;
+        let mut should_clean = false;
+        let mut should_close = false;
+        egui::Window::new("Clean Sessions")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label("Delete cron/webhook sessions updated before the selected date.");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label("Updated At before");
+                    if let Some(date) = self.cleanup_updated_before.as_mut() {
+                        ui.add(
+                            DatePickerButton::new(date)
+                                .id_salt("session-clean-updated-before")
+                                .format("%Y/%m/%d"),
+                        );
+                    }
+                });
+                ui.add_space(8.0);
+                ui.label("Session types");
+                ui.checkbox(&mut self.cleanup_cron, "cron");
+                ui.checkbox(&mut self.cleanup_webhook, "webhook");
+                ui.add_space(8.0);
+
+                if self.cleanup_query().is_none() {
+                    ui.label("Select a date and at least one session type to continue.");
+                }
+
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(self.cleanup_query().is_some(), egui::Button::new("Clean"))
+                        .clicked()
+                    {
+                        should_clean = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        should_close = true;
+                    }
+                });
+            });
+
+        self.cleanup_open = open && !should_close;
+        if should_clean {
+            self.cleanup_open = false;
+            self.clean_sessions(notifications);
         }
     }
 }
@@ -159,6 +269,12 @@ impl PanelRenderer for SessionPanel {
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
                 self.refresh(notifications);
+            }
+            if ui.button("Clean").clicked() {
+                if self.cleanup_updated_before.is_none() {
+                    self.cleanup_updated_before = Some(Local::now().date_naive());
+                }
+                self.cleanup_open = true;
             }
             ui.label(format!("Sessions: {}", self.total_count));
         });
@@ -407,6 +523,7 @@ impl PanelRenderer for SessionPanel {
         if let Some(chat_box) = &mut self.chat_box {
             chat_box.show(ui.ctx());
         }
+        self.render_cleanup_dialog(ui.ctx(), notifications);
     }
 }
 
@@ -477,4 +594,43 @@ fn date_boundary_ms(date: NaiveDate, time: Time) -> Option<i64> {
 
 fn offset_to_ms(datetime: OffsetDateTime) -> i64 {
     datetime.unix_timestamp_nanos().saturating_div(1_000_000) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_query_requires_date_and_channel() {
+        let mut panel = SessionPanel::default();
+
+        panel.cleanup_updated_before = None;
+        assert!(panel.cleanup_query().is_none());
+
+        panel.cleanup_updated_before =
+            Some(NaiveDate::from_ymd_opt(2026, 5, 7).expect("test date should be valid"));
+        panel.cleanup_cron = false;
+        panel.cleanup_webhook = false;
+        assert!(panel.cleanup_query().is_none());
+    }
+
+    #[test]
+    fn cleanup_query_uses_selected_cleanup_channels() {
+        let mut panel = SessionPanel::default();
+        panel.cleanup_updated_before =
+            Some(NaiveDate::from_ymd_opt(2026, 5, 7).expect("test date should be valid"));
+        panel.cleanup_cron = true;
+        panel.cleanup_webhook = false;
+
+        let query = panel
+            .cleanup_query()
+            .expect("selected date and channel should build query");
+
+        assert_eq!(query.channels, vec!["cron".to_string()]);
+        assert_eq!(
+            query.updated_before_ms,
+            date_start_ms(panel.cleanup_updated_before.expect("date should exist"))
+                .expect("date should convert")
+        );
+    }
 }

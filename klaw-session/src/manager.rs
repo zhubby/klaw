@@ -4,11 +4,11 @@ use klaw_storage::{
     ChatRecord, ChatRecordPage, DefaultSessionStore, LlmAuditFilterOptions,
     LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord,
     LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
-    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCompressionState, SessionIndex,
-    SessionSortOrder, SessionStorage, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
-    ToolAuditQuery, ToolAuditRecord, UpdateWebhookAgentResult, UpdateWebhookEventResult,
-    WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
-    open_default_store,
+    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCleanupQuery, SessionCleanupSummary,
+    SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
+    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
+    WebhookEventQuery, WebhookEventRecord, open_default_store,
 };
 
 #[derive(Debug, Clone)]
@@ -152,6 +152,11 @@ pub trait SessionManager: Send + Sync {
     async fn count_sessions(&self, query: SessionListQuery) -> Result<i64, SessionError>;
 
     async fn list_session_channels(&self) -> Result<Vec<String>, SessionError>;
+
+    async fn clean_sessions(
+        &self,
+        query: &SessionCleanupQuery,
+    ) -> Result<SessionCleanupSummary, SessionError>;
 
     async fn append_llm_usage(
         &self,
@@ -479,6 +484,13 @@ impl SessionManager for SqliteSessionManager {
         Ok(self.store.list_session_channels().await?)
     }
 
+    async fn clean_sessions(
+        &self,
+        query: &SessionCleanupQuery,
+    ) -> Result<SessionCleanupSummary, SessionError> {
+        Ok(self.store.clean_sessions(query).await?)
+    }
+
     async fn append_llm_usage(
         &self,
         input: &NewLlmUsageRecord,
@@ -629,7 +641,9 @@ impl SessionManager for SqliteSessionManager {
 mod tests {
     use super::{SessionListQuery, SessionManager, SqliteSessionManager};
     use crate::SessionSortOrder;
-    use klaw_storage::{ChatRecord, DefaultSessionStore, SessionStorage, StoragePaths};
+    use klaw_storage::{
+        ChatRecord, DatabaseExecutor, DefaultSessionStore, SessionStorage, StoragePaths,
+    };
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -842,6 +856,54 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "hello");
         assert!(manager.get_session("websocket:delete-me").await.is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn manager_cleans_old_cron_sessions_and_reports_summary() {
+        let store = create_store().await;
+        store
+            .touch_session("cron:manager-old", "chat-1", "cron")
+            .await
+            .expect("session should be created");
+        store
+            .append_chat_record(
+                "cron:manager-old",
+                &ChatRecord::new("user", "cleanup", Some("m1".to_string())),
+            )
+            .await
+            .expect("history should append");
+        let old_ms = 1_000;
+        store
+            .execute(
+                "UPDATE sessions SET updated_at_ms = ? WHERE session_key = ?",
+                &[
+                    klaw_storage::DbValue::Integer(old_ms),
+                    klaw_storage::DbValue::Text("cron:manager-old".to_string()),
+                ],
+            )
+            .await
+            .expect("timestamp should update");
+
+        let manager = SqliteSessionManager::from_store(store);
+        let summary = manager
+            .clean_sessions(&crate::SessionCleanupQuery {
+                updated_before_ms: old_ms + 1,
+                channels: vec!["cron".to_string()],
+            })
+            .await
+            .expect("cleanup should succeed");
+
+        assert_eq!(summary.matched_sessions, 1);
+        assert_eq!(summary.session_records_deleted, 1);
+        assert_eq!(summary.jsonl_files_deleted, 1);
+        assert!(manager.get_session("cron:manager-old").await.is_err());
+        assert!(
+            manager
+                .read_chat_records("cron:manager-old")
+                .await
+                .expect("missing history should read as empty")
+                .is_empty()
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

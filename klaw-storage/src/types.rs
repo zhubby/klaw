@@ -85,6 +85,21 @@ impl SessionSortOrder {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionCleanupQuery {
+    pub updated_before_ms: i64,
+    pub channels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionCleanupSummary {
+    pub matched_sessions: i64,
+    pub session_records_deleted: i64,
+    pub related_records_deleted: i64,
+    pub jsonl_files_deleted: i64,
+    pub jsonl_files_missing: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct SessionCompressionState {
     pub last_compressed_len: i64,
