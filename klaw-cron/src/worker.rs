@@ -376,10 +376,11 @@ mod tests {
         LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
         NewLlmAuditRecord, NewLlmUsageRecord, NewPendingQuestionRecord, NewToolAuditRecord,
         NewWebhookAgentRecord, NewWebhookEventRecord, PendingQuestionRecord, PendingQuestionStatus,
-        SessionCompressionState, SessionIndex, SessionStorage, StorageError,
-        ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
-        UpdateCronJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
-        WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
+        SessionCleanupQuery, SessionCleanupSummary, SessionCompressionState, SessionIndex,
+        SessionStorage, StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery,
+        ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch, UpdateWebhookAgentResult,
+        UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
+        WebhookEventRecord,
     };
     use std::{
         collections::BTreeMap,
@@ -834,6 +835,13 @@ mod tests {
             _session_key_prefix: Option<&str>,
         ) -> Result<i64, StorageError> {
             Ok(self.sessions.lock().expect("lock").len() as i64)
+        }
+
+        async fn clean_sessions(
+            &self,
+            _query: &SessionCleanupQuery,
+        ) -> Result<SessionCleanupSummary, StorageError> {
+            Ok(SessionCleanupSummary::default())
         }
 
         async fn list_session_channels(&self) -> Result<Vec<String>, StorageError> {

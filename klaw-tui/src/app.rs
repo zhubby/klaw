@@ -261,11 +261,17 @@ mod tests {
         ChannelStreamWriter,
     };
     use ratatui::{Terminal, backend::TestBackend};
-    use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Duration};
+    use std::{
+        cell::RefCell,
+        collections::BTreeMap,
+        rc::Rc,
+        sync::atomic::{AtomicBool, Ordering},
+        time::Duration,
+    };
 
     #[derive(Default)]
     struct FakeRuntime {
-        streaming_called: std::cell::Cell<bool>,
+        streaming_called: AtomicBool,
     }
 
     #[async_trait::async_trait(?Send)]
@@ -279,7 +285,7 @@ mod tests {
             _request: ChannelRequest,
             writer: &mut dyn ChannelStreamWriter,
         ) -> ChannelResult<Option<ChannelResponse>> {
-            self.streaming_called.set(true);
+            self.streaming_called.store(true, Ordering::Relaxed);
             let response = ChannelResponse {
                 content: "done".to_string(),
                 reasoning: Some("step1".to_string()),
@@ -333,7 +339,7 @@ mod tests {
                 .expect("submit should succeed");
 
         assert!(!should_quit);
-        assert!(runtime.streaming_called.get());
+        assert!(runtime.streaming_called.load(Ordering::Relaxed));
         assert_eq!(state.borrow().messages().len(), 2);
         assert!(state.borrow().messages()[1].content.contains("done"));
     }

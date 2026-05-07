@@ -602,25 +602,33 @@ mod tests {
 
     #[test]
     fn cleanup_query_requires_date_and_channel() {
-        let mut panel = SessionPanel::default();
-
-        panel.cleanup_updated_before = None;
+        let panel = SessionPanel {
+            cleanup_updated_before: None,
+            ..Default::default()
+        };
         assert!(panel.cleanup_query().is_none());
 
-        panel.cleanup_updated_before =
-            Some(NaiveDate::from_ymd_opt(2026, 5, 7).expect("test date should be valid"));
-        panel.cleanup_cron = false;
-        panel.cleanup_webhook = false;
+        let panel = SessionPanel {
+            cleanup_updated_before: Some(
+                NaiveDate::from_ymd_opt(2026, 5, 7).expect("test date should be valid"),
+            ),
+            cleanup_cron: false,
+            cleanup_webhook: false,
+            ..Default::default()
+        };
         assert!(panel.cleanup_query().is_none());
     }
 
     #[test]
     fn cleanup_query_uses_selected_cleanup_channels() {
-        let mut panel = SessionPanel::default();
-        panel.cleanup_updated_before =
-            Some(NaiveDate::from_ymd_opt(2026, 5, 7).expect("test date should be valid"));
-        panel.cleanup_cron = true;
-        panel.cleanup_webhook = false;
+        let panel = SessionPanel {
+            cleanup_updated_before: Some(
+                NaiveDate::from_ymd_opt(2026, 5, 7).expect("test date should be valid"),
+            ),
+            cleanup_cron: true,
+            cleanup_webhook: false,
+            ..Default::default()
+        };
 
         let query = panel
             .cleanup_query()

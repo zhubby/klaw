@@ -38,13 +38,13 @@ impl AutoIndexWatcher {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
         }
-        if let Some(producer) = self.producer.take() {
-            if !join_producer_with_timeout(producer, PRODUCER_JOIN_TIMEOUT) {
-                warn!(
-                    timeout_seconds = PRODUCER_JOIN_TIMEOUT.as_secs(),
-                    "knowledge auto-index producer join timed out; continuing shutdown"
-                );
-            }
+        if let Some(producer) = self.producer.take()
+            && !join_producer_with_timeout(producer, PRODUCER_JOIN_TIMEOUT)
+        {
+            warn!(
+                timeout_seconds = PRODUCER_JOIN_TIMEOUT.as_secs(),
+                "knowledge auto-index producer join timed out; continuing shutdown"
+            );
         }
         if let Some(consumer) = self.consumer.take() {
             consumer.abort();
