@@ -2,6 +2,11 @@
 
 ## 2026-05-07
 
+### Added
+
+- Session 面板新增 `Clean` 操作，可通过弹窗选择 `Updated At` 截止日期以及 cron/webhook 类型，并清理匹配的旧会话记录与本地 JSONL 文件。
+- Session 清理进度弹窗现在显示总数、已删除数量和百分比进度，而不是固定等待文案。
+
 ### Changed
 
 - Channel、Tool、Heartbeat 和 ACP 测试面板的运行时动作改为后台请求加轮询结果，避免 UI 线程在 runtime 响应超时或忙碌时同步等待。

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-07
+
+### Changed
+
+- Test `FakeStorage` now implements the session cleanup trait method so cron worker tests stay aligned with the expanded storage API.
+
 ## 2026-05-04
 
 ### Fixed

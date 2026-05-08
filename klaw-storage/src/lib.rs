@@ -30,12 +30,12 @@ pub use types::{
     LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
     NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
     NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
-    SessionSortOrder, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery,
-    ToolAuditRecord, ToolAuditSortOrder, ToolAuditStatus, UpdateCronJobPatch,
-    UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
-    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
-    WebhookEventStatus,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupProgress, SessionCleanupQuery,
+    SessionCleanupSummary, SessionCompressionState, SessionIndex, SessionSortOrder,
+    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
+    ToolAuditSortOrder, ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
+    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -334,6 +334,206 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn clean_sessions_deletes_only_old_cron_and_webhook_sessions() {
+        let store = create_store().await;
+        let old_ms = util::now_ms() - 10_000;
+        let cutoff_ms = util::now_ms() - 5_000;
+
+        for (session_key, channel) in [
+            ("cron:old-cron-run", "cron"),
+            ("webhook:old-webhook-run", "webhook"),
+            ("terminal:old-terminal-run", "terminal"),
+            ("cron:new-cron-run", "cron"),
+        ] {
+            store
+                .touch_session(session_key, session_key, channel)
+                .await
+                .expect("session should be created");
+            store
+                .append_chat_record(
+                    session_key,
+                    &ChatRecord::new("user", session_key, Some(format!("{session_key}-m1"))),
+                )
+                .await
+                .expect("history should append");
+        }
+
+        store
+            .execute(
+                "UPDATE sessions SET updated_at_ms = ? WHERE session_key IN (?, ?, ?)",
+                &[
+                    DbValue::Integer(old_ms),
+                    DbValue::Text("cron:old-cron-run".to_string()),
+                    DbValue::Text("webhook:old-webhook-run".to_string()),
+                    DbValue::Text("terminal:old-terminal-run".to_string()),
+                ],
+            )
+            .await
+            .expect("timestamps should update");
+
+        let cron_file = store.session_jsonl_path("cron:old-cron-run");
+        let webhook_file = store.session_jsonl_path("webhook:old-webhook-run");
+        let terminal_file = store.session_jsonl_path("terminal:old-terminal-run");
+        let new_cron_file = store.session_jsonl_path("cron:new-cron-run");
+
+        store
+            .execute(
+                "INSERT INTO llm_usage (
+                    id, session_key, chat_id, turn_index, request_seq, provider, model, wire_api,
+                    input_tokens, output_tokens, total_tokens, source, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                &[
+                    DbValue::Text("usage-cleanup".to_string()),
+                    DbValue::Text("webhook:old-webhook-run".to_string()),
+                    DbValue::Text("webhook:old-webhook-run".to_string()),
+                    DbValue::Integer(1),
+                    DbValue::Integer(1),
+                    DbValue::Text("openai".to_string()),
+                    DbValue::Text("gpt-4o-mini".to_string()),
+                    DbValue::Text("chat_completions".to_string()),
+                    DbValue::Integer(1),
+                    DbValue::Integer(2),
+                    DbValue::Integer(3),
+                    DbValue::Text("provider_reported".to_string()),
+                    DbValue::Integer(old_ms),
+                ],
+            )
+            .await
+            .expect("usage should insert");
+        store
+            .execute(
+                "INSERT INTO webhook_events (
+                    id, source, event_type, session_key, chat_id, sender_id, content, status,
+                    received_at_ms, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                &[
+                    DbValue::Text("event-cleanup".to_string()),
+                    DbValue::Text("github".to_string()),
+                    DbValue::Text("push".to_string()),
+                    DbValue::Text("webhook:old-webhook-run".to_string()),
+                    DbValue::Text("webhook:old-webhook-run".to_string()),
+                    DbValue::Text("sender".to_string()),
+                    DbValue::Text("payload".to_string()),
+                    DbValue::Text("accepted".to_string()),
+                    DbValue::Integer(old_ms),
+                    DbValue::Integer(old_ms),
+                ],
+            )
+            .await
+            .expect("webhook event should insert");
+
+        let progress_updates = std::sync::Mutex::new(Vec::new());
+        let summary = store
+            .clean_sessions_with_progress(
+                &SessionCleanupQuery {
+                    updated_before_ms: cutoff_ms,
+                    channels: vec!["cron".to_string(), "webhook".to_string()],
+                },
+                &|progress| {
+                    progress_updates
+                        .lock()
+                        .expect("progress lock should acquire")
+                        .push(progress);
+                },
+            )
+            .await
+            .expect("cleanup should succeed");
+
+        assert_eq!(
+            progress_updates
+                .lock()
+                .expect("progress lock should acquire")
+                .first()
+                .cloned(),
+            Some(SessionCleanupProgress {
+                total_sessions: 2,
+                deleted_sessions: 0,
+            })
+        );
+        assert_eq!(
+            progress_updates
+                .lock()
+                .expect("progress lock should acquire")
+                .last()
+                .cloned(),
+            Some(SessionCleanupProgress {
+                total_sessions: 2,
+                deleted_sessions: 2,
+            })
+        );
+
+        assert_eq!(summary.matched_sessions, 2);
+        assert_eq!(summary.session_records_deleted, 2);
+        assert_eq!(summary.related_records_deleted, 2);
+        assert_eq!(summary.jsonl_files_deleted, 2);
+        assert!(!fs::try_exists(cron_file).await.expect("stat should work"));
+        assert!(
+            !fs::try_exists(webhook_file)
+                .await
+                .expect("stat should work")
+        );
+        assert!(
+            fs::try_exists(terminal_file)
+                .await
+                .expect("stat should work")
+        );
+        assert!(
+            fs::try_exists(new_cron_file)
+                .await
+                .expect("stat should work")
+        );
+        let usage_rows = store
+            .query(
+                "SELECT COUNT(*) FROM llm_usage WHERE session_key = ?",
+                &[DbValue::Text("webhook:old-webhook-run".to_string())],
+            )
+            .await
+            .expect("usage count should query");
+        assert_eq!(usage_rows[0].get(0), Some(&DbValue::Integer(0)));
+        let event_rows = store
+            .query(
+                "SELECT COUNT(*) FROM webhook_events WHERE session_key = ?",
+                &[DbValue::Text("webhook:old-webhook-run".to_string())],
+            )
+            .await
+            .expect("event count should query");
+        assert_eq!(event_rows[0].get(0), Some(&DbValue::Integer(0)));
+        assert!(store.get_session("cron:old-cron-run").await.is_err());
+        assert!(store.get_session("webhook:old-webhook-run").await.is_err());
+        store
+            .get_session("terminal:old-terminal-run")
+            .await
+            .expect("old terminal session should remain");
+        store
+            .get_session("cron:new-cron-run")
+            .await
+            .expect("new cron session should remain");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn clean_sessions_rejects_unsupported_channels() {
+        let store = create_store().await;
+        store
+            .touch_session("terminal:keep", "chat-1", "terminal")
+            .await
+            .expect("session should be created");
+
+        let err = store
+            .clean_sessions(&SessionCleanupQuery {
+                updated_before_ms: util::now_ms() + 1,
+                channels: vec!["terminal".to_string()],
+            })
+            .await
+            .expect_err("unsupported channel should fail");
+
+        assert!(err.to_string().contains("cron and webhook"));
+        store
+            .get_session("terminal:keep")
+            .await
+            .expect("unsupported cleanup should not delete session");
     }
 
     #[tokio::test(flavor = "current_thread")]

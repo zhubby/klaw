@@ -317,16 +317,15 @@ impl KnowledgeRuntimeService {
     }
 
     async fn stop_auto_index(&self) {
-        if let Some(handle) = self.auto_index.lock().await.take() {
-            if timeout(AUTO_INDEX_SHUTDOWN_TIMEOUT, handle.stop())
+        if let Some(handle) = self.auto_index.lock().await.take()
+            && timeout(AUTO_INDEX_SHUTDOWN_TIMEOUT, handle.stop())
                 .await
                 .is_err()
-            {
-                warn!(
-                    timeout_seconds = AUTO_INDEX_SHUTDOWN_TIMEOUT.as_secs(),
-                    "knowledge auto-index shutdown timed out; continuing runtime shutdown"
-                );
-            }
+        {
+            warn!(
+                timeout_seconds = AUTO_INDEX_SHUTDOWN_TIMEOUT.as_secs(),
+                "knowledge auto-index shutdown timed out; continuing runtime shutdown"
+            );
         }
     }
 }

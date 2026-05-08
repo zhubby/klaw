@@ -14,17 +14,28 @@ use crate::{
     LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditSummaryRecord, LlmUsageRecord,
     LlmUsageSummary, NewApprovalRecord, NewLlmAuditRecord, NewLlmUsageRecord,
     NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    PendingQuestionRecord, PendingQuestionStatus, SessionCompressionState, SessionIndex,
-    SessionSortOrder, SessionStorage, StorageError, ToolAuditFilterOptions,
-    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateWebhookAgentResult,
-    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
-    WebhookEventRecord, WebhookEventSortOrder, jsonl,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupProgress, SessionCleanupQuery,
+    SessionCleanupSummary, SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
+    StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery,
+    ToolAuditRecord, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
+    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, jsonl,
     util::{now_ms, relative_or_absolute_jsonl},
 };
 use async_trait::async_trait;
-use std::path::PathBuf;
+use std::{io::ErrorKind, path::PathBuf};
+use tokio::fs;
+use turso::Connection;
 
 const SESSION_INDEX_SELECT: &str = "session_key, chat_id, channel, title, active_session_key, model_provider, model_provider_explicit, model, model_explicit, delivery_metadata_json, is_active, created_at_ms, updated_at_ms, last_message_at_ms, turn_count, jsonl_path";
+const CLEANUP_RELATED_TABLES: &[&str] = &[
+    "llm_usage",
+    "llm_audit",
+    "tool_audit",
+    "webhook_events",
+    "webhook_agents",
+    "pending_questions",
+    "approvals",
+];
 
 #[async_trait]
 impl SessionStorage for TursoSessionStore {
@@ -571,6 +582,85 @@ impl SessionStorage for TursoSessionStore {
             .map_err(StorageError::backend)?
             .ok_or_else(|| StorageError::backend("empty count result"))?;
         value_to_i64(row.get_value(0).map_err(StorageError::backend)?)
+    }
+
+    async fn clean_sessions(
+        &self,
+        query: &SessionCleanupQuery,
+    ) -> Result<SessionCleanupSummary, StorageError> {
+        self.clean_sessions_with_progress(query, &|_| {}).await
+    }
+
+    async fn clean_sessions_with_progress(
+        &self,
+        query: &SessionCleanupQuery,
+        progress: &(dyn Fn(SessionCleanupProgress) + Send + Sync),
+    ) -> Result<SessionCleanupSummary, StorageError> {
+        let channels = validate_cleanup_channels(&query.channels)?;
+        let channel_filter = cleanup_channel_filter(&channels);
+        let sql = format!(
+            "SELECT {SESSION_INDEX_SELECT}
+             FROM sessions
+             WHERE is_active = 1 AND updated_at_ms < {} AND {channel_filter}",
+            query.updated_before_ms
+        );
+        let mut sessions = Vec::new();
+        {
+            let conn = self.connection().await?;
+            let mut rows = conn.query(&sql, ()).await.map_err(StorageError::backend)?;
+            while let Some(row) = rows.next().await.map_err(StorageError::backend)? {
+                sessions.push(row_to_session_index(&row)?);
+            }
+        }
+        let total_sessions = i64::try_from(sessions.len()).unwrap_or(i64::MAX);
+        progress(SessionCleanupProgress {
+            total_sessions,
+            deleted_sessions: 0,
+        });
+        if sessions.is_empty() {
+            return Ok(SessionCleanupSummary::default());
+        }
+
+        let session_keys: Vec<String> = sessions
+            .iter()
+            .map(|session| session.session_key.clone())
+            .collect();
+        let session_key_filter = session_key_in_filter(&session_keys);
+        let mut related_records_deleted = 0;
+        {
+            let conn = self.connection().await?;
+            for table in CLEANUP_RELATED_TABLES {
+                related_records_deleted += count_rows(
+                    &conn,
+                    &format!(
+                        "SELECT COUNT(*) FROM {table} WHERE session_key IN ({session_key_filter})"
+                    ),
+                )
+                .await?;
+                conn.execute(
+                    &format!("DELETE FROM {table} WHERE session_key IN ({session_key_filter})"),
+                    (),
+                )
+                .await
+                .map_err(StorageError::backend)?;
+            }
+            conn.execute(
+                &format!("DELETE FROM sessions WHERE session_key IN ({session_key_filter})"),
+                (),
+            )
+            .await
+            .map_err(StorageError::backend)?;
+            let (jsonl_files_deleted, jsonl_files_missing) =
+                remove_session_jsonl_files(self, &session_keys, progress, total_sessions).await?;
+
+            Ok(SessionCleanupSummary {
+                matched_sessions: total_sessions,
+                session_records_deleted: total_sessions,
+                related_records_deleted,
+                jsonl_files_deleted,
+                jsonl_files_missing,
+            })
+        }
     }
 
     async fn list_session_channels(&self) -> Result<Vec<String>, StorageError> {
@@ -1722,4 +1812,79 @@ impl SessionStorage for TursoSessionStore {
     fn session_jsonl_path(&self, session_key: &str) -> PathBuf {
         jsonl::session_jsonl_path(&self.paths, session_key)
     }
+}
+
+fn validate_cleanup_channels(channels: &[String]) -> Result<Vec<String>, StorageError> {
+    if channels.is_empty() {
+        return Err(StorageError::backend(
+            "at least one cleanup channel must be selected",
+        ));
+    }
+
+    let mut out = Vec::new();
+    for channel in channels {
+        match channel.as_str() {
+            "cron" | "webhook" => {
+                if !out.iter().any(|existing| existing == channel) {
+                    out.push(channel.clone());
+                }
+            }
+            _ => {
+                return Err(StorageError::backend(format!(
+                    "session cleanup only supports cron and webhook channels, got '{channel}'"
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn cleanup_channel_filter(channels: &[String]) -> String {
+    let clauses = channels
+        .iter()
+        .map(|channel| format!("channel = '{}'", escape_sql_text(channel)))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    format!("({clauses})")
+}
+
+fn session_key_in_filter(session_keys: &[String]) -> String {
+    session_keys
+        .iter()
+        .map(|session_key| format!("'{}'", escape_sql_text(session_key)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+async fn count_rows(conn: &Connection, sql: &str) -> Result<i64, StorageError> {
+    let mut rows = conn.query(sql, ()).await.map_err(StorageError::backend)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(StorageError::backend)?
+        .ok_or_else(|| StorageError::backend("empty count result"))?;
+    value_to_i64(row.get_value(0).map_err(StorageError::backend)?)
+}
+
+async fn remove_session_jsonl_files(
+    store: &TursoSessionStore,
+    session_keys: &[String],
+    progress: &(dyn Fn(SessionCleanupProgress) + Send + Sync),
+    total_sessions: i64,
+) -> Result<(i64, i64), StorageError> {
+    let mut deleted = 0;
+    let mut missing = 0;
+    for (index, session_key) in session_keys.iter().enumerate() {
+        let path = store.session_jsonl_path(session_key);
+        match fs::remove_file(path).await {
+            Ok(()) => deleted += 1,
+            Err(err) if err.kind() == ErrorKind::NotFound => missing += 1,
+            Err(err) => return Err(StorageError::backend(err)),
+        }
+        progress(SessionCleanupProgress {
+            total_sessions,
+            deleted_sessions: i64::try_from(index + 1).unwrap_or(i64::MAX),
+        });
+    }
+    Ok((deleted, missing))
 }

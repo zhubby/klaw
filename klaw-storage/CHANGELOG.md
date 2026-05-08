@@ -2,6 +2,10 @@
 
 ## 2026-05-07
 
+### Added
+- Added restricted cron/webhook session cleanup APIs that physically remove matching session rows, related audit/usage records, and local JSONL history files.
+- Added cleanup progress reporting with total and deleted session counts for GUI progress dialogs.
+
 ### Fixed
 - Turso-backed memory, knowledge, and archive database executors now serialize access through their shared connection, preventing `concurrent use forbidden` errors when background tasks read long-term memory while other runtime work uses the same executor.
 
