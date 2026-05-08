@@ -835,6 +835,14 @@ pub(crate) fn should_clear_active_stream_assistant_message(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn should_show_thinking_placeholder(
+    last_visible_role: Option<MessageRole>,
+    active_stream_request_id: Option<&str>,
+) -> bool {
+    active_stream_request_id.is_some() && last_visible_role == Some(MessageRole::User)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn should_register_non_stream_fade(
     role: MessageRole,
     streamed: bool,
@@ -961,7 +969,8 @@ mod tests {
         session_card_activity_label, should_activate_session_window,
         should_cancel_file_picker_selection, should_clear_active_stream_assistant_message,
         should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
-        slash_command_matches, sort_session_entries_by_created_at_desc,
+        should_show_thinking_placeholder, slash_command_matches,
+        sort_session_entries_by_created_at_desc,
     };
 
     #[test]
@@ -1044,6 +1053,26 @@ mod tests {
             "",
         );
         assert_eq!(action, StreamMessageAction::IgnoreEmpty);
+    }
+
+    #[test]
+    fn active_stream_after_user_message_shows_thinking_placeholder() {
+        assert!(should_show_thinking_placeholder(
+            Some(MessageRole::User),
+            Some("turn-1"),
+        ));
+    }
+
+    #[test]
+    fn thinking_placeholder_hides_after_assistant_activity_or_stream_end() {
+        assert!(!should_show_thinking_placeholder(
+            Some(MessageRole::Assistant),
+            Some("turn-1"),
+        ));
+        assert!(!should_show_thinking_placeholder(
+            Some(MessageRole::User),
+            None
+        ));
     }
 
     #[test]

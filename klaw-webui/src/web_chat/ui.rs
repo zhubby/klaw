@@ -18,7 +18,8 @@ use crate::{
     attachment_action_in_progress, can_trigger_file_picker, connection_action_label,
     delete_confirmation_body, derive_page_mode, detect_active_slash_command,
     has_exact_slash_command_match, normalize_gateway_token_input, resolve_assistant_bubble_palette,
-    resolve_im_card_palette, should_activate_session_window, slash_command_matches,
+    resolve_im_card_palette, should_activate_session_window, should_show_thinking_placeholder,
+    slash_command_matches,
 };
 
 use super::{
@@ -741,6 +742,18 @@ impl ChatApp {
                                 }
                                 ui.add_space(8.0);
                             }
+                            let last_visible_role = messages
+                                .iter()
+                                .rev()
+                                .find(|message| !is_hidden_internal_card_command(message))
+                                .map(|message| message.role);
+                            if should_show_thinking_placeholder(
+                                last_visible_role,
+                                session.buffers.active_stream_request_id.borrow().as_deref(),
+                            ) {
+                                render_thinking_placeholder(ui);
+                                ui.add_space(8.0);
+                            }
                             trigger_card_action = card_action;
                         });
                     if let Some(restore) = session.pending_history_scroll_restore.as_ref()
@@ -1312,6 +1325,27 @@ fn render_history_page_loading_state(ui: &mut egui::Ui) {
         ui.add(egui::Spinner::new().size(12.0));
         ui.label(RichText::new("Loading older messages…").small().weak());
     });
+}
+
+fn render_thinking_placeholder(ui: &mut egui::Ui) {
+    let palette = resolve_assistant_bubble_palette(ui.visuals().dark_mode);
+    Frame::group(ui.style())
+        .fill(rgb(palette.fill))
+        .stroke(Stroke::new(1.0, rgb(palette.stroke)))
+        .inner_margin(8.0)
+        .outer_margin(2.0)
+        .corner_radius(6.0)
+        .show(ui, |ui| {
+            ui.set_max_width(BUBBLE_MAX_WIDTH);
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Klaw").strong().color(rgb(palette.heading)));
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new().size(12.0));
+                    ui.label(RichText::new("Thinking...").color(rgb(palette.body)));
+                });
+            });
+        });
 }
 
 fn render_message(

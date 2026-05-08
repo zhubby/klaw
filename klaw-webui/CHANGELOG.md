@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- WebUI now shows a transient `Thinking...` assistant bubble after a streamed user send until the first assistant, reasoning, tool, or completion event arrives, making pending turns visibly responsive without writing placeholders into history.
 - WebUI now handles v1 `item/agentMessage/clear` notifications by removing the current streaming assistant draft, preventing tool-triggered interim text from being merged into the final reply bubble.
 
 ## 2026-05-05

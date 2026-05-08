@@ -8,6 +8,7 @@
 - 底部状态栏显示主题切换、agent/open 计数、stream 开关，以及当前 agent 的路由、消息数、活动状态和实时 FPS
 - 顶部菜单栏包含 `Connection` 和 `Help` 菜单；`Help -> About` 会弹出版本信息，并复用连接页同源的 crab 图片
 - agent 对话输入框支持 slash command 自动补全；输入 `/` 会弹出命令建议面板，便于插入 runtime 支持的会话命令
+- 用户消息发送后，在最终回复、reasoning 或工具调用信息到达前，会临时显示 `Thinking...` 占位气泡，避免对话窗口看起来无响应
 - WebSocket 路径连接后发送 `initialize`，工作区/会话/provider/历史使用 v1 `session/*`、`provider/list`、`thread/history` 方法，用户输入使用 `turn/start` 结构化 content blocks；浏览器端不再发送旧版 `type: "method"` 帧，也不把旧版服务端帧作为正常输入
 
 ## 模块布局
