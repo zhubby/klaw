@@ -4366,6 +4366,7 @@ dependencies = [
  "egui_json_tree",
  "egui_plot",
  "egui_term",
+ "gtk",
  "hostname",
  "hound",
  "image",

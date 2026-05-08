@@ -8,13 +8,17 @@ use klaw_archive::{
     ArchiveBlob, ArchiveError, ArchiveMediaKind, ArchiveQuery, ArchiveRecord, ArchiveService,
     ArchiveSourceKind, SqliteArchiveService, open_default_archive_service,
 };
+#[cfg(target_os = "macos")]
 use klaw_util::command_search_path;
+#[cfg(target_os = "macos")]
 use std::ffi::OsStr;
+#[cfg(target_os = "macos")]
 use std::fs;
 use std::future::Future;
 use std::path::Path;
 use std::thread;
 use tokio::runtime::Builder;
+#[cfg(target_os = "macos")]
 use uuid::Uuid;
 
 const MAX_PREVIEW_TEXT_CHARS: usize = 200_000;

@@ -57,9 +57,11 @@ impl Default for ShellUi {
         let settings = load_settings();
         match autostart::reconcile(settings.general.launch_at_startup) {
             Ok(ReconcileOutcome::Unchanged) => {}
+            #[cfg(target_os = "macos")]
             Ok(ReconcileOutcome::Enabled) => {
                 notifications.info("Launch at startup was re-synced with macOS login items.");
             }
+            #[cfg(target_os = "macos")]
             Ok(ReconcileOutcome::Disabled) => {
                 notifications.info("Removed stale macOS login item for launch at startup.");
             }

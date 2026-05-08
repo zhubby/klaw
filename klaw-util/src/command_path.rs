@@ -1,8 +1,7 @@
-use std::{
-    env,
-    ffi::{OsStr, OsString},
-    path::PathBuf,
-};
+#[cfg(any(target_os = "macos", test))]
+use std::ffi::OsStr;
+use std::path::PathBuf;
+use std::{env, ffi::OsString};
 
 #[cfg(any(target_os = "macos", test))]
 const MACOS_STANDARD_BINARY_PATHS: &[&str] = &[

@@ -7,10 +7,12 @@ use klaw_util::home_dir;
 use std::ffi::OsStr;
 #[cfg(target_os = "macos")]
 use std::fs;
+#[cfg(any(target_os = "macos", test))]
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
+#[cfg(any(target_os = "macos", test))]
 const LAUNCH_AGENT_LABEL: &str = "io.klaw.app";
 #[cfg(target_os = "macos")]
 const MACOS_BUNDLE_UNAVAILABLE_REASON: &str =
@@ -20,6 +22,7 @@ const NON_MACOS_UNAVAILABLE_REASON: &str = "Launch at startup is only available 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Availability {
+    #[cfg(target_os = "macos")]
     Available,
     Unsupported(String),
 }
@@ -27,6 +30,7 @@ pub enum Availability {
 impl Availability {
     pub fn unsupported_reason(&self) -> Option<&str> {
         match self {
+            #[cfg(target_os = "macos")]
             Self::Available => None,
             Self::Unsupported(reason) => Some(reason.as_str()),
         }
@@ -36,7 +40,9 @@ impl Availability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReconcileOutcome {
     Unchanged,
+    #[cfg(target_os = "macos")]
     Enabled,
+    #[cfg(target_os = "macos")]
     Disabled,
 }
 
@@ -81,7 +87,7 @@ pub fn reconcile(desired_enabled: bool) -> anyhow::Result<ReconcileOutcome> {
         if desired_enabled {
             bail!(NON_MACOS_UNAVAILABLE_REASON);
         }
-        return Ok(ReconcileOutcome::Unchanged);
+        Ok(ReconcileOutcome::Unchanged)
     }
 
     #[cfg(target_os = "macos")]

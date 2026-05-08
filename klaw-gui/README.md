@@ -184,6 +184,17 @@ Use the CLI entrypoint:
 klaw gui
 ```
 
+The desktop GUI is intended to run on macOS and Linux. macOS-specific app icon,
+activation, autostart, and location-service integrations are conditionally
+compiled behind `target_os = "macos"`; Linux builds use the cross-platform
+`eframe` window path and return unsupported-platform errors for macOS-only
+system integrations.
+
+Linux builds also need the native GTK 3 stack used by tray/window integration
+available through `pkg-config` (`gdk-3.0`, `gdk-pixbuf-2.0`, `atk`, `pango`,
+and `cairo` development packages). The tray icon runs on a dedicated GTK event
+loop thread because `eframe` uses `winit` rather than GTK for the main window.
+
 ## macOS Packaging
 
 The repository-level macOS packaging flow wraps the existing GUI-capable `klaw` binary into a native app bundle:

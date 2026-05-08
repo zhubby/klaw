@@ -1,6 +1,8 @@
 use crate::icon;
 use anyhow::Context;
 use std::sync::mpsc::{self, Receiver};
+#[cfg(target_os = "linux")]
+use std::thread;
 use tray_icon::{
     MouseButton, MouseButtonState, TrayIcon, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
@@ -17,16 +19,64 @@ pub enum TrayCommand {
 }
 
 pub struct TrayIntegration {
+    #[cfg(not(target_os = "linux"))]
     #[allow(dead_code)]
     pub tray_icon: TrayIcon,
     pub command_rx: Receiver<TrayCommand>,
 }
 
+#[cfg(target_os = "linux")]
+pub fn install(egui_ctx: &egui::Context) -> anyhow::Result<Option<TrayIntegration>> {
+    let icon = load_tray_icon()?;
+    let (command_tx, command_rx) = mpsc::channel();
+    let (init_tx, init_rx) = mpsc::channel();
+    let repaint_ctx = egui_ctx.clone();
+
+    thread::Builder::new()
+        .name("klaw-linux-tray".to_string())
+        .spawn(move || {
+            if let Err(err) = gtk::init() {
+                let _ = init_tx.send(Err(anyhow::anyhow!("failed to initialize GTK: {err}")));
+                return;
+            }
+
+            install_event_handlers(command_tx, repaint_ctx);
+
+            let tray_result = build_tray_menu()
+                .and_then(|menu| build_tray_icon(icon, menu))
+                .map(|_tray_icon| {
+                    let _ = init_tx.send(Ok(()));
+                    gtk::main();
+                });
+
+            if let Err(err) = tray_result {
+                let _ = init_tx.send(Err(err));
+            }
+        })
+        .context("failed to spawn Linux tray thread")?;
+
+    init_rx
+        .recv()
+        .context("Linux tray thread exited before initialization")??;
+
+    Ok(Some(TrayIntegration { command_rx }))
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn install(egui_ctx: &egui::Context) -> anyhow::Result<Option<TrayIntegration>> {
     let icon = load_tray_icon()?;
     let menu = build_tray_menu()?;
     let (command_tx, command_rx) = mpsc::channel();
-    let repaint_ctx = egui_ctx.clone();
+    install_event_handlers(command_tx, egui_ctx.clone());
+    let tray_icon = build_tray_icon(icon, menu)?;
+
+    Ok(Some(TrayIntegration {
+        tray_icon,
+        command_rx,
+    }))
+}
+
+fn install_event_handlers(command_tx: mpsc::Sender<TrayCommand>, repaint_ctx: egui::Context) {
     let tray_click_tx = command_tx.clone();
     let tray_click_repaint_ctx = repaint_ctx.clone();
 
@@ -43,20 +93,17 @@ pub fn install(egui_ctx: &egui::Context) -> anyhow::Result<Option<TrayIntegratio
             tray_click_repaint_ctx.request_repaint();
         }
     }));
+}
 
-    let tray_icon = tray_icon::TrayIconBuilder::new()
+fn build_tray_icon(icon: tray_icon::Icon, menu: Menu) -> anyhow::Result<TrayIcon> {
+    tray_icon::TrayIconBuilder::new()
         .with_tooltip("Klaw")
         .with_menu(Box::new(menu))
         .with_icon(icon)
         .with_icon_as_template(true)
         .with_menu_on_left_click(false)
         .build()
-        .context("failed to create tray icon")?;
-
-    Ok(Some(TrayIntegration {
-        tray_icon,
-        command_rx,
-    }))
+        .context("failed to create tray icon")
 }
 
 fn load_tray_icon() -> anyhow::Result<tray_icon::Icon> {

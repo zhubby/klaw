@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2026-05-08
+
+### Fixed
+
+- Linux GUI builds no longer pull macOS Objective-C/CoreLocation dependencies through `klaw-tool`.
+- Linux tray initialization now runs on a dedicated GTK thread before creating tray menus, avoiding the `GTK has not been initialized` panic at startup.
+- Linux GUI builds no longer emit platform-gated dead-code and unused-import warnings from macOS-only integrations.
+
 ## 2026-05-07
 
 ### Added

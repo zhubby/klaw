@@ -116,6 +116,7 @@ egui-theme-switch = "0.5.1"
 egui_plot = { git = "https://github.com/emilk/egui_plot", rev = "445273e7edbb338d300b0e9e6c351d003f37a5a8" }
 egui-twemoji = "0.8.0"
 tray-icon = "0.19"
+gtk = "0.18.2"
 fontdb = "0.16"
 sysinfo = "0.37"
 image = { version = "0.25.10", default-features = false, features = ["tiff"] }

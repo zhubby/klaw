@@ -80,7 +80,11 @@ fn configure_platform_viewport(viewport: egui::ViewportBuilder) -> egui::Viewpor
 
 #[cfg(not(target_os = "macos"))]
 fn configure_platform_viewport(viewport: egui::ViewportBuilder) -> egui::ViewportBuilder {
-    viewport
+    if let Some(icon) = icon::viewport_icon() {
+        viewport.with_icon(icon)
+    } else {
+        viewport
+    }
 }
 
 #[cfg(target_os = "macos")]

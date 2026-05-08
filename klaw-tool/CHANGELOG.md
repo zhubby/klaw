@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-08
+
+### Fixed
+- `geo` tool Objective-C/CoreLocation dependencies are now macOS-only target dependencies, so Linux builds no longer try to compile Apple location bindings
+
 ## 2026-04-28
 
 ### Fixed

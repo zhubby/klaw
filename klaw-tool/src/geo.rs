@@ -1,9 +1,12 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+#[cfg(any(target_os = "macos", test))]
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{Tool, ToolCategory, ToolContext, ToolError, ToolOutput};
 
+#[cfg(target_os = "macos")]
 const GEO_TIMEOUT_SECONDS: u64 = 60;
 
 pub struct GeoTool;
@@ -12,6 +15,7 @@ pub struct GeoTool;
 #[serde(deny_unknown_fields)]
 struct GeoRequest {}
 
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Serialize)]
 struct GeoResponse {
     latitude: f64,
@@ -41,6 +45,7 @@ impl GeoTool {
             .map_err(|err| ToolError::InvalidArgs(format!("invalid request: {err}")))
     }
 
+    #[cfg(any(target_os = "macos", test))]
     fn format_user_message(location: &GeoResponse) -> String {
         let mut message = format!(
             "Current coordinates: {:.6}, {:.6}",
@@ -332,9 +337,11 @@ mod macos {
                     let mut slot = slot.borrow_mut();
                     *slot = Some(ActiveGeoRequest { manager, delegate });
 
-                    let active = slot
-                        .as_mut()
-                        .expect("active geo request must be present after insertion");
+                    let Some(active) = slot.as_mut() else {
+                        return Err(ToolError::ExecutionFailed(
+                            "failed to prepare macOS location request".to_string(),
+                        ));
+                    };
                     let delegate_ref = ProtocolObject::from_ref(&*active.delegate);
                     unsafe {
                         active.manager.setDelegate(Some(delegate_ref));

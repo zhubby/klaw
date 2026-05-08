@@ -20,6 +20,7 @@ use klaw_storage::{
     BackupItem, BackupPlan, BackupProgress, BackupService, S3SnapshotStoreConfig, SnapshotListItem,
     SnapshotMode,
 };
+#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -1149,13 +1150,19 @@ fn bool_status_label(enabled: bool) -> &'static str {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LocationAuthorizationState {
+    #[cfg(target_os = "macos")]
     NotDetermined,
+    #[cfg(target_os = "macos")]
     Restricted,
+    #[cfg(target_os = "macos")]
     Denied,
+    #[cfg(target_os = "macos")]
     AuthorizedAlways,
+    #[cfg(target_os = "macos")]
     AuthorizedWhenInUse,
     #[cfg(not(target_os = "macos"))]
     UnsupportedPlatform,
+    #[cfg(target_os = "macos")]
     Unknown(i32),
 }
 
@@ -1168,28 +1175,38 @@ struct LocationStatus {
 impl LocationStatus {
     fn authorization_label(self) -> &'static str {
         match self.authorization {
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::NotDetermined => "not determined",
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::Restricted => "restricted",
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::Denied => "denied",
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::AuthorizedAlways => "authorized always",
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::AuthorizedWhenInUse => "authorized when in use",
             #[cfg(not(target_os = "macos"))]
             LocationAuthorizationState::UnsupportedPlatform => "unsupported on this platform",
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::Unknown(_) => "unknown",
         }
     }
 
     fn detail_message(self) -> Option<&'static str> {
         match self.authorization {
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::NotDetermined => Some(
                 "Authorization has not been granted yet. Open system settings to review Location Services access.",
             ),
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::Restricted => Some(
                 "Location access is restricted by system policy or parental controls.",
             ),
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::Denied => Some(
                 "Location access is currently denied for this app context. Open system settings to allow it.",
             ),
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::AuthorizedAlways
             | LocationAuthorizationState::AuthorizedWhenInUse => {
                 (!self.services_enabled).then_some(
@@ -1200,6 +1217,7 @@ impl LocationStatus {
             LocationAuthorizationState::UnsupportedPlatform => Some(
                 "Location Services privacy integration is currently implemented for macOS only.",
             ),
+            #[cfg(target_os = "macos")]
             LocationAuthorizationState::Unknown(_) => Some(
                 "The system returned an unknown authorization state.",
             ),
