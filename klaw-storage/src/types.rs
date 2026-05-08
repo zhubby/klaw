@@ -100,6 +100,12 @@ pub struct SessionCleanupSummary {
     pub jsonl_files_missing: i64,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionCleanupProgress {
+    pub total_sessions: i64,
+    pub deleted_sessions: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct SessionCompressionState {
     pub last_compressed_len: i64,

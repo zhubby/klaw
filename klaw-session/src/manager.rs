@@ -4,8 +4,8 @@ use klaw_storage::{
     ChatRecord, ChatRecordPage, DefaultSessionStore, LlmAuditFilterOptions,
     LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord, LlmAuditSummaryRecord,
     LlmUsageRecord, LlmUsageSummary, NewLlmAuditRecord, NewLlmUsageRecord, NewToolAuditRecord,
-    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCleanupQuery, SessionCleanupSummary,
-    SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
+    NewWebhookAgentRecord, NewWebhookEventRecord, SessionCleanupProgress, SessionCleanupQuery,
+    SessionCleanupSummary, SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
     ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
     UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
     WebhookEventQuery, WebhookEventRecord, open_default_store,
@@ -156,6 +156,12 @@ pub trait SessionManager: Send + Sync {
     async fn clean_sessions(
         &self,
         query: &SessionCleanupQuery,
+    ) -> Result<SessionCleanupSummary, SessionError>;
+
+    async fn clean_sessions_with_progress(
+        &self,
+        query: &SessionCleanupQuery,
+        progress: &(dyn Fn(SessionCleanupProgress) + Send + Sync),
     ) -> Result<SessionCleanupSummary, SessionError>;
 
     async fn append_llm_usage(
@@ -489,6 +495,17 @@ impl SessionManager for SqliteSessionManager {
         query: &SessionCleanupQuery,
     ) -> Result<SessionCleanupSummary, SessionError> {
         Ok(self.store.clean_sessions(query).await?)
+    }
+
+    async fn clean_sessions_with_progress(
+        &self,
+        query: &SessionCleanupQuery,
+        progress: &(dyn Fn(SessionCleanupProgress) + Send + Sync),
+    ) -> Result<SessionCleanupSummary, SessionError> {
+        Ok(self
+            .store
+            .clean_sessions_with_progress(query, progress)
+            .await?)
     }
 
     async fn append_llm_usage(

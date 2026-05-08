@@ -5,11 +5,12 @@ use crate::{
     LlmUsageRecord, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
     NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
     NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupQuery, SessionCleanupSummary,
-    SessionCompressionState, SessionIndex, SessionSortOrder, StorageError, ToolAuditFilterOptions,
-    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, UpdateCronJobPatch,
-    UpdateHeartbeatJobPatch, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
-    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupProgress, SessionCleanupQuery,
+    SessionCleanupSummary, SessionCompressionState, SessionIndex, SessionSortOrder, StorageError,
+    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
+    UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
+    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
+    WebhookEventRecord,
 };
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -151,6 +152,19 @@ pub trait SessionStorage: Send + Sync {
         &self,
         query: &SessionCleanupQuery,
     ) -> Result<SessionCleanupSummary, StorageError>;
+
+    async fn clean_sessions_with_progress(
+        &self,
+        query: &SessionCleanupQuery,
+        progress: &(dyn Fn(SessionCleanupProgress) + Send + Sync),
+    ) -> Result<SessionCleanupSummary, StorageError> {
+        let summary = self.clean_sessions(query).await?;
+        progress(SessionCleanupProgress {
+            total_sessions: summary.matched_sessions,
+            deleted_sessions: summary.session_records_deleted,
+        });
+        Ok(summary)
+    }
 
     async fn list_session_channels(&self) -> Result<Vec<String>, StorageError>;
 

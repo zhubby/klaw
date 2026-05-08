@@ -6,11 +6,11 @@ use chrono::{Datelike, Local, NaiveDate};
 use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_session::{
-    LlmUsageSummary, SessionCleanupQuery, SessionError, SessionIndex, SessionListQuery,
-    SessionManager, SessionSortOrder, SqliteSessionManager,
+    LlmUsageSummary, SessionCleanupProgress, SessionCleanupQuery, SessionCleanupSummary,
+    SessionError, SessionIndex, SessionListQuery, SessionManager, SessionSortOrder,
+    SqliteSessionManager,
 };
-use std::future::Future;
-use std::thread;
+use std::{future::Future, sync::mpsc, thread, time::Duration};
 use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
 
@@ -33,6 +33,8 @@ pub struct SessionPanel {
     cleanup_updated_before: Option<NaiveDate>,
     cleanup_cron: bool,
     cleanup_webhook: bool,
+    cleanup_request: Option<mpsc::Receiver<SessionCleanupTaskMessage>>,
+    cleanup_progress: Option<SessionCleanupProgress>,
 }
 
 impl Default for SessionPanel {
@@ -56,6 +58,8 @@ impl Default for SessionPanel {
             cleanup_updated_before: Some(today),
             cleanup_cron: true,
             cleanup_webhook: true,
+            cleanup_request: None,
+            cleanup_progress: None,
         }
     }
 }
@@ -64,6 +68,11 @@ impl Default for SessionPanel {
 struct SessionRow {
     session: SessionIndex,
     usage: LlmUsageSummary,
+}
+
+enum SessionCleanupTaskMessage {
+    Progress(SessionCleanupProgress),
+    Completed(Result<SessionCleanupSummary, String>),
 }
 
 impl SessionPanel {
@@ -136,23 +145,79 @@ impl SessionPanel {
         }
     }
 
-    fn clean_sessions(&mut self, notifications: &mut NotificationCenter) {
+    fn begin_clean_sessions(&mut self, notifications: &mut NotificationCenter) {
+        if self.cleanup_request.is_some() {
+            notifications.info("Session cleanup is already in progress.");
+            return;
+        }
         let Some(query) = self.cleanup_query() else {
             notifications.error("Select an Updated At date and at least one session type.");
             return;
         };
 
-        match run_session_task(move |manager| async move { manager.clean_sessions(&query).await }) {
-            Ok(summary) => {
-                notifications.success(format!(
-                    "Cleaned {} sessions and deleted {} JSONL files ({} already missing).",
-                    summary.session_records_deleted,
-                    summary.jsonl_files_deleted,
-                    summary.jsonl_files_missing
-                ));
-                self.refresh(notifications);
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let progress_tx = tx.clone();
+            let result = run_session_task(move |manager| async move {
+                manager
+                    .clean_sessions_with_progress(&query, &move |progress| {
+                        let _ = progress_tx.send(SessionCleanupTaskMessage::Progress(progress));
+                    })
+                    .await
+            });
+            let _ = tx.send(SessionCleanupTaskMessage::Completed(result));
+        });
+        self.cleanup_progress = Some(SessionCleanupProgress::default());
+        self.cleanup_request = Some(rx);
+    }
+
+    fn poll_cleanup_request(
+        &mut self,
+        ctx: &egui::Context,
+        notifications: &mut NotificationCenter,
+    ) {
+        let Some(rx) = self.cleanup_request.take() else {
+            return;
+        };
+
+        let mut completed = false;
+        loop {
+            match rx.try_recv() {
+                Ok(SessionCleanupTaskMessage::Progress(progress)) => {
+                    self.cleanup_progress = Some(progress);
+                }
+                Ok(SessionCleanupTaskMessage::Completed(Ok(summary))) => {
+                    self.cleanup_progress = None;
+                    completed = true;
+                    notifications.success(format!(
+                        "Cleaned {} sessions and deleted {} JSONL files ({} already missing).",
+                        summary.session_records_deleted,
+                        summary.jsonl_files_deleted,
+                        summary.jsonl_files_missing
+                    ));
+                    self.refresh(notifications);
+                    break;
+                }
+                Ok(SessionCleanupTaskMessage::Completed(Err(err))) => {
+                    self.cleanup_progress = None;
+                    completed = true;
+                    notifications.error(format!("Failed to clean sessions: {err}"));
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.cleanup_progress = None;
+                    completed = true;
+                    notifications
+                        .error("Failed to clean sessions: cleanup task stopped unexpectedly");
+                    break;
+                }
             }
-            Err(err) => notifications.error(format!("Failed to clean sessions: {err}")),
+        }
+
+        if !completed {
+            self.cleanup_request = Some(rx);
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
 
@@ -251,8 +316,45 @@ impl SessionPanel {
         self.cleanup_open = open && !should_close;
         if should_clean {
             self.cleanup_open = false;
-            self.clean_sessions(notifications);
+            self.begin_clean_sessions(notifications);
         }
+    }
+
+    fn render_cleanup_progress_dialog(&self, ctx: &egui::Context) {
+        if self.cleanup_request.is_none() {
+            return;
+        }
+
+        ctx.request_repaint_after(Duration::from_millis(100));
+        egui::Window::new("Cleaning Sessions")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new());
+                    ui.label("Cleaning expired cron/webhook sessions...");
+                });
+                ui.add_space(8.0);
+                let progress = self.cleanup_progress.clone().unwrap_or_default();
+                let fraction = if progress.total_sessions > 0 {
+                    progress.deleted_sessions as f32 / progress.total_sessions as f32
+                } else {
+                    0.0
+                };
+                ui.add(
+                    egui::ProgressBar::new(fraction.clamp(0.0, 1.0))
+                        .desired_width(360.0)
+                        .show_percentage()
+                        .text(format!(
+                            "{} / {}",
+                            progress.deleted_sessions, progress.total_sessions
+                        )),
+                );
+                ui.label(format!("Total: {}", progress.total_sessions));
+                ui.label(format!("Deleted: {}", progress.deleted_sessions));
+                ui.small("This dialog will close automatically when cleanup finishes.");
+            });
     }
 }
 
@@ -264,6 +366,7 @@ impl PanelRenderer for SessionPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.ensure_loaded(notifications);
+        self.poll_cleanup_request(ui.ctx(), notifications);
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
@@ -524,6 +627,7 @@ impl PanelRenderer for SessionPanel {
             chat_box.show(ui.ctx());
         }
         self.render_cleanup_dialog(ui.ctx(), notifications);
+        self.render_cleanup_progress_dialog(ui.ctx());
     }
 }
 

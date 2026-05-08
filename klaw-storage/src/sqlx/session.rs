@@ -10,11 +10,11 @@ use crate::{
     LlmAuditQuery, LlmAuditRecord, LlmAuditSortOrder, LlmAuditSummaryRecord, LlmUsageRecord,
     LlmUsageSummary, NewApprovalRecord, NewLlmAuditRecord, NewLlmUsageRecord,
     NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupQuery, SessionCleanupSummary,
-    SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage, StorageError,
-    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
-    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
-    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, jsonl,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupProgress, SessionCleanupQuery,
+    SessionCleanupSummary, SessionCompressionState, SessionIndex, SessionSortOrder, SessionStorage,
+    StorageError, ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery,
+    ToolAuditRecord, UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery,
+    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, jsonl,
     util::{now_ms, relative_or_absolute_jsonl},
 };
 use async_trait::async_trait;
@@ -565,6 +565,14 @@ impl SessionStorage for SqlxSessionStore {
         &self,
         query: &SessionCleanupQuery,
     ) -> Result<SessionCleanupSummary, StorageError> {
+        self.clean_sessions_with_progress(query, &|_| {}).await
+    }
+
+    async fn clean_sessions_with_progress(
+        &self,
+        query: &SessionCleanupQuery,
+        progress: &(dyn Fn(SessionCleanupProgress) + Send + Sync),
+    ) -> Result<SessionCleanupSummary, StorageError> {
         let channels = validate_cleanup_channels(&query.channels)?;
         let channel_filter = cleanup_channel_filter(channels.len());
         let select_sql = format!(
@@ -582,6 +590,11 @@ impl SessionStorage for SqlxSessionStore {
             .await
             .map_err(StorageError::backend)?;
         let sessions: Vec<SessionIndex> = rows.into_iter().map(Into::into).collect();
+        let total_sessions = i64::try_from(sessions.len()).unwrap_or(i64::MAX);
+        progress(SessionCleanupProgress {
+            total_sessions,
+            deleted_sessions: 0,
+        });
         if sessions.is_empty() {
             return Ok(SessionCleanupSummary::default());
         }
@@ -609,10 +622,10 @@ impl SessionStorage for SqlxSessionStore {
         )
         .await?;
         let (jsonl_files_deleted, jsonl_files_missing) =
-            remove_session_jsonl_files(self, &session_keys).await?;
+            remove_session_jsonl_files(self, &session_keys, progress, total_sessions).await?;
 
         Ok(SessionCleanupSummary {
-            matched_sessions: i64::try_from(sessions.len()).unwrap_or(i64::MAX),
+            matched_sessions: total_sessions,
             session_records_deleted: i64::try_from(session_records_deleted).unwrap_or(i64::MAX),
             related_records_deleted,
             jsonl_files_deleted,
@@ -1544,16 +1557,22 @@ async fn execute_session_key_delete(
 async fn remove_session_jsonl_files(
     store: &SqlxSessionStore,
     session_keys: &[String],
+    progress: &(dyn Fn(SessionCleanupProgress) + Send + Sync),
+    total_sessions: i64,
 ) -> Result<(i64, i64), StorageError> {
     let mut deleted = 0;
     let mut missing = 0;
-    for session_key in session_keys {
+    for (index, session_key) in session_keys.iter().enumerate() {
         let path = store.session_jsonl_path(session_key);
         match fs::remove_file(path).await {
             Ok(()) => deleted += 1,
             Err(err) if err.kind() == ErrorKind::NotFound => missing += 1,
             Err(err) => return Err(StorageError::backend(err)),
         }
+        progress(SessionCleanupProgress {
+            total_sessions,
+            deleted_sessions: i64::try_from(index + 1).unwrap_or(i64::MAX),
+        });
     }
     Ok((deleted, missing))
 }

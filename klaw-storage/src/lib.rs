@@ -30,12 +30,12 @@ pub use types::{
     LlmUsageSource, LlmUsageSummary, NewApprovalRecord, NewCronJob, NewCronTaskRun,
     NewHeartbeatJob, NewHeartbeatTaskRun, NewLlmAuditRecord, NewLlmUsageRecord,
     NewPendingQuestionRecord, NewToolAuditRecord, NewWebhookAgentRecord, NewWebhookEventRecord,
-    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupQuery, SessionCleanupSummary,
-    SessionCompressionState, SessionIndex, SessionSortOrder, ToolAuditFilterOptions,
-    ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord, ToolAuditSortOrder,
-    ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch, UpdateWebhookAgentResult,
-    UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery,
-    WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
+    PendingQuestionRecord, PendingQuestionStatus, SessionCleanupProgress, SessionCleanupQuery,
+    SessionCleanupSummary, SessionCompressionState, SessionIndex, SessionSortOrder,
+    ToolAuditFilterOptions, ToolAuditFilterOptionsQuery, ToolAuditQuery, ToolAuditRecord,
+    ToolAuditSortOrder, ToolAuditStatus, UpdateCronJobPatch, UpdateHeartbeatJobPatch,
+    UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookAgentQuery, WebhookAgentRecord,
+    WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder, WebhookEventStatus,
 };
 
 #[cfg(all(feature = "turso", feature = "sqlx"))]
@@ -425,13 +425,45 @@ mod tests {
             .await
             .expect("webhook event should insert");
 
+        let progress_updates = std::sync::Mutex::new(Vec::new());
         let summary = store
-            .clean_sessions(&SessionCleanupQuery {
-                updated_before_ms: cutoff_ms,
-                channels: vec!["cron".to_string(), "webhook".to_string()],
-            })
+            .clean_sessions_with_progress(
+                &SessionCleanupQuery {
+                    updated_before_ms: cutoff_ms,
+                    channels: vec!["cron".to_string(), "webhook".to_string()],
+                },
+                &|progress| {
+                    progress_updates
+                        .lock()
+                        .expect("progress lock should acquire")
+                        .push(progress);
+                },
+            )
             .await
             .expect("cleanup should succeed");
+
+        assert_eq!(
+            progress_updates
+                .lock()
+                .expect("progress lock should acquire")
+                .first()
+                .cloned(),
+            Some(SessionCleanupProgress {
+                total_sessions: 2,
+                deleted_sessions: 0,
+            })
+        );
+        assert_eq!(
+            progress_updates
+                .lock()
+                .expect("progress lock should acquire")
+                .last()
+                .cloned(),
+            Some(SessionCleanupProgress {
+                total_sessions: 2,
+                deleted_sessions: 2,
+            })
+        );
 
         assert_eq!(summary.matched_sessions, 2);
         assert_eq!(summary.session_records_deleted, 2);

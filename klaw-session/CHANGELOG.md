@@ -4,6 +4,7 @@
 
 ### Added
 - Added session-manager cleanup wrappers for restricted cron/webhook session cleanup, including cleanup summary reporting.
+- Added session cleanup progress forwarding so callers can show total and deleted session counts while cleanup runs.
 
 ## 2026-05-04
 
