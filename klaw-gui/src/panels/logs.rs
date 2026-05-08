@@ -401,21 +401,44 @@ fn filtered_entry_indices(
 }
 
 fn parse_level(line: &str) -> ParsedLevel {
-    for token in line.split_whitespace() {
-        if let Some(level) = parse_level_token(token) {
-            return level;
-        }
+    // Only inspect the first two whitespace-delimited tokens.
+    // Standard tracing format: <timestamp> <LEVEL> <message>
+    // Short format: <LEVEL> <message>
+    // Scanning beyond position 1 causes false matches when level keywords
+    // like "error" appear inside the log message body.
+    let mut tokens = line.split_whitespace().take(2);
+
+    let first = tokens.next();
+    let second = tokens.next();
+
+    // Try the second token first (tracing format: timestamp LEVEL ...)
+    if let Some(token) = second
+        && let Some(level) = parse_level_token(token)
+    {
+        return level;
+    }
+
+    // Fallback: try the first token (short format: LEVEL ...)
+    if let Some(token) = first
+        && let Some(level) = parse_level_token(token)
+    {
+        return level;
     }
 
     ParsedLevel::Unknown
 }
 
 fn parse_level_token(token: &str) -> Option<ParsedLevel> {
-    let normalized = token
-        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '=')
+    // Strip common bracket wrappers only ([], <>, ()) — these are typical
+    // in level indicators like [INFO] or <WARN>.  Do NOT strip colons,
+    // periods, or other punctuation, as that would turn message-body
+    // fragments like "error:" or "error." into false level matches.
+    let stripped = token
+        .trim_start_matches(['[', '<', '('])
+        .trim_end_matches([']', '>', ')'])
         .to_ascii_lowercase();
 
-    match normalized.as_str() {
+    match stripped.as_str() {
         "trace" | "level=trace" => Some(ParsedLevel::Trace),
         "debug" | "level=debug" => Some(ParsedLevel::Debug),
         "info" | "level=info" => Some(ParsedLevel::Info),
@@ -570,6 +593,46 @@ mod tests {
             parse_level("request severity=warning-ish"),
             ParsedLevel::Unknown
         );
+    }
+
+    #[test]
+    fn parse_level_ignores_level_keywords_in_message_body() {
+        // "error" appears in message but actual level is INFO — should not misidentify
+        assert_eq!(
+            parse_level("INFO connection error: timeout exceeded"),
+            ParsedLevel::Info
+        );
+        // Tracing format: level in position 1, "error" deep in body
+        assert_eq!(
+            parse_level(
+                "2026-05-08T07:18:54.743068Z DEBUG pooling idle connection for error recovery"
+            ),
+            ParsedLevel::Debug
+        );
+        // Whole line has no structural level token, only "error" in body
+        assert_eq!(
+            parse_level("connection error: timeout exceeded"),
+            ParsedLevel::Unknown
+        );
+        assert_eq!(
+            parse_level("WARN retry after error occurred"),
+            ParsedLevel::Warn
+        );
+    }
+
+    #[test]
+    fn parse_level_token_rejects_punctuation_attached_words() {
+        // Colon, period, exclamation — typical in message body, not level indicators
+        assert_eq!(parse_level_token("error:"), None);
+        assert_eq!(parse_level_token("error."), None);
+        assert_eq!(parse_level_token("error!"), None);
+        // Bracket-wrapped levels should still match
+        assert_eq!(parse_level_token("[ERROR]"), Some(ParsedLevel::Error));
+        assert_eq!(parse_level_token("<WARN>"), Some(ParsedLevel::Warn));
+        assert_eq!(parse_level_token("(DEBUG)"), Some(ParsedLevel::Debug));
+        // Bare words and key=value still work
+        assert_eq!(parse_level_token("INFO"), Some(ParsedLevel::Info));
+        assert_eq!(parse_level_token("level=error"), Some(ParsedLevel::Error));
     }
 
     #[test]
