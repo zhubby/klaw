@@ -166,6 +166,26 @@ mod tests {
             if request.input == "__hold__" {
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
+            if request.input == "__stream__" {
+                frame_tx
+                    .try_send(GatewayWebsocketServerFrame::Protocol(
+                        GatewayRpcMessage::notification(
+                            GatewayProtocolMethod::ItemAgentMessageDelta,
+                            json!({
+                                "session_id": request.session_key,
+                                "thread_id": request.chat_id,
+                                "turn_id": request
+                                    .metadata
+                                    .get("channel.websocket.v1.turn_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("turn_test"),
+                                "item_id": "item_agent_test",
+                                "delta": "streamed",
+                            }),
+                        ),
+                    ))
+                    .map_err(|_| GatewayWebsocketHandlerError::internal("connection closed"))?;
+            }
             frame_tx
                 .try_send(GatewayWebsocketServerFrame::Protocol(
                     GatewayRpcMessage::notification(
@@ -1073,6 +1093,261 @@ mod tests {
             Some(&json!("turn_client_1"))
         );
         drop(recorded);
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_v1_turn_frames_reach_all_subscribed_connections() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket_a, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("first websocket should connect");
+        let (mut socket_b, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("second websocket should connect");
+
+        for socket in [&mut socket_a, &mut socket_b] {
+            socket
+                .send(Message::Text(
+                    json!({
+                        "id": "subscribe-shared",
+                        "method": "session/subscribe",
+                        "params": { "session_key": "websocket:shared" }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("session/subscribe should send");
+            for _ in 0..2 {
+                let _ = socket
+                    .next()
+                    .await
+                    .expect("subscribe response frame")
+                    .expect("subscribe response message");
+            }
+        }
+
+        socket_a
+            .send(Message::Text(
+                json!({
+                    "id": "turn-shared-1",
+                    "method": "turn/start",
+                    "params": {
+                        "session_id": "websocket:shared",
+                        "thread_id": "thread_shared",
+                        "turn_id": "turn_shared",
+                        "input": [{ "type": "text", "text": "__stream__" }]
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("turn/start should send");
+
+        let first = socket_a
+            .next()
+            .await
+            .expect("turn/start result")
+            .expect("turn/start result message");
+        let Message::Text(text) = first else {
+            panic!("unexpected turn/start result frame: {first:?}");
+        };
+        let result =
+            serde_json::from_str::<serde_json::Value>(&text).expect("turn/start result parses");
+        assert_eq!(
+            result.get("id").and_then(|value| value.as_str()),
+            Some("turn-shared-1")
+        );
+
+        let mut saw_delta_a = false;
+        let mut saw_started_b = false;
+        let mut saw_delta_b = false;
+        for _ in 0..3 {
+            let frame_a = timeout(Duration::from_secs(1), socket_a.next())
+                .await
+                .expect("first connection should receive lifecycle frame")
+                .expect("first connection lifecycle frame")
+                .expect("first connection lifecycle message");
+            if let Message::Text(text) = frame_a {
+                let frame = serde_json::from_str::<serde_json::Value>(&text)
+                    .expect("first connection frame parses");
+                saw_delta_a |= frame.get("method").and_then(|value| value.as_str())
+                    == Some("item/agentMessage/delta")
+                    && frame
+                        .pointer("/params/delta")
+                        .and_then(|value| value.as_str())
+                        == Some("streamed");
+            }
+
+            let frame_b = timeout(Duration::from_secs(1), socket_b.next())
+                .await
+                .expect("second connection should receive lifecycle frame")
+                .expect("second connection lifecycle frame")
+                .expect("second connection lifecycle message");
+            if let Message::Text(text) = frame_b {
+                let frame = serde_json::from_str::<serde_json::Value>(&text)
+                    .expect("second connection frame parses");
+                saw_started_b |= frame.get("method").and_then(|value| value.as_str())
+                    == Some("turn/started")
+                    && frame
+                        .pointer("/params/turn_id")
+                        .and_then(|value| value.as_str())
+                        == Some("turn_shared");
+                saw_delta_b |= frame.get("method").and_then(|value| value.as_str())
+                    == Some("item/agentMessage/delta")
+                    && frame
+                        .pointer("/params/delta")
+                        .and_then(|value| value.as_str())
+                        == Some("streamed");
+            }
+        }
+
+        assert!(
+            saw_delta_a,
+            "initiating connection should receive stream delta"
+        );
+        assert!(saw_started_b, "subscribed peer should receive turn/started");
+        assert!(saw_delta_b, "subscribed peer should receive stream delta");
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_v1_turn_failure_reaches_all_subscribed_connections() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket_a, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("first websocket should connect");
+        let (mut socket_b, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("second websocket should connect");
+
+        for socket in [&mut socket_a, &mut socket_b] {
+            socket
+                .send(Message::Text(
+                    json!({
+                        "id": "subscribe-failing",
+                        "method": "session/subscribe",
+                        "params": { "session_key": "websocket:failing" }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("session/subscribe should send");
+            for _ in 0..2 {
+                let _ = socket
+                    .next()
+                    .await
+                    .expect("subscribe response frame")
+                    .expect("subscribe response message");
+            }
+        }
+
+        socket_a
+            .send(Message::Text(
+                json!({
+                    "id": "turn-failing-1",
+                    "method": "turn/start",
+                    "params": {
+                        "session_id": "websocket:failing",
+                        "thread_id": "thread_failing",
+                        "turn_id": "turn_failing",
+                        "input": [{ "type": "text", "text": "__fail__" }]
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("turn/start should send");
+
+        let _result = socket_a
+            .next()
+            .await
+            .expect("turn/start result")
+            .expect("turn/start result message");
+
+        let mut saw_failed_a = false;
+        let mut saw_failed_b = false;
+        for _ in 0..2 {
+            let frame_a = timeout(Duration::from_secs(1), socket_a.next())
+                .await
+                .expect("first connection should receive lifecycle frame")
+                .expect("first connection lifecycle frame")
+                .expect("first connection lifecycle message");
+            if let Message::Text(text) = frame_a {
+                let frame = serde_json::from_str::<serde_json::Value>(&text)
+                    .expect("first connection frame parses");
+                saw_failed_a |= frame.get("method").and_then(|value| value.as_str())
+                    == Some("turn/failed")
+                    && frame
+                        .pointer("/params/error/code")
+                        .and_then(|value| value.as_str())
+                        == Some("internal_error");
+            }
+
+            let frame_b = timeout(Duration::from_secs(1), socket_b.next())
+                .await
+                .expect("second connection should receive lifecycle frame")
+                .expect("second connection lifecycle frame")
+                .expect("second connection lifecycle message");
+            if let Message::Text(text) = frame_b {
+                let frame = serde_json::from_str::<serde_json::Value>(&text)
+                    .expect("second connection frame parses");
+                saw_failed_b |= frame.get("method").and_then(|value| value.as_str())
+                    == Some("turn/failed")
+                    && frame
+                        .pointer("/params/error/code")
+                        .and_then(|value| value.as_str())
+                        == Some("internal_error");
+            }
+        }
+
+        assert!(
+            saw_failed_a,
+            "initiating connection should receive turn/failed"
+        );
+        assert!(saw_failed_b, "subscribed peer should receive turn/failed");
 
         handle.shutdown().await.expect("gateway should stop");
     }

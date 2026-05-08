@@ -6,6 +6,10 @@
 
 - Gateway WebSocket v1 protocol now includes `item/agentMessage/clear` so streaming clients can reset an in-progress assistant item when runtime clears a non-final snapshot.
 
+### Fixed
+
+- Gateway WebSocket v1 turn lifecycle and streaming frames now fan out to every `/ws/chat` connection subscribed to the same session, keeping multiple browser clients in sync during a turn.
+
 ## 2026-05-07
 
 ### Fixed

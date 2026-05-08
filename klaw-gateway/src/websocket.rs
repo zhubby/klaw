@@ -304,7 +304,6 @@ async fn handle_socket(state: Arc<GatewayState>, mut socket: WebSocket) {
                             &mut current_session_key,
                             Arc::clone(&active_turns),
                             &text,
-                            outgoing_tx.clone(),
                         )
                         .await;
                         if send_frames(&mut socket, &frames).await.is_err() {
@@ -348,7 +347,6 @@ async fn handle_text_message(
     current_session_key: &mut Option<String>,
     active_turns: ActiveTurns,
     text: &str,
-    outgoing_tx: GatewayWebsocketFrameTx,
 ) -> Vec<GatewayWebsocketServerFrame> {
     if text.len() > GATEWAY_WEBSOCKET_MAX_TEXT_FRAME_BYTES {
         return vec![protocol_error_frame_with_data(
@@ -400,7 +398,6 @@ async fn handle_text_message(
         current_session_key,
         active_turns,
         raw_value,
-        outgoing_tx,
     )
     .await
 }
@@ -411,7 +408,6 @@ async fn handle_protocol_message(
     current_session_key: &mut Option<String>,
     active_turns: ActiveTurns,
     raw_value: Value,
-    outgoing_tx: GatewayWebsocketFrameTx,
 ) -> Vec<GatewayWebsocketServerFrame> {
     let id = raw_value
         .get("id")
@@ -817,7 +813,6 @@ async fn handle_protocol_message(
                 active_turns,
                 id,
                 params,
-                outgoing_tx,
             )
             .await
         }
@@ -865,7 +860,6 @@ async fn handle_protocol_turn_start(
     active_turns: ActiveTurns,
     request_id: String,
     params: V1TurnStartParams,
-    outgoing_tx: GatewayWebsocketFrameTx,
 ) -> Vec<GatewayWebsocketServerFrame> {
     let Some(websocket) = state.websocket.as_ref() else {
         return vec![protocol_error_frame(
@@ -964,6 +958,19 @@ async fn handle_protocol_turn_start(
         metadata.insert(META_WEBSOCKET_MODEL.to_string(), Value::String(model));
     }
 
+    let (turn_frame_tx, mut turn_frame_rx) =
+        mpsc::channel::<GatewayWebsocketServerFrame>(GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY);
+    let fanout_state = Arc::clone(state);
+    let fanout_session_id = session_id.clone();
+    let _fanout_handle = spawn(async move {
+        while let Some(frame) = turn_frame_rx.recv().await {
+            fanout_state
+                .websocket_broadcaster
+                .broadcast_to_session(&fanout_session_id, frame)
+                .await;
+        }
+    });
+
     let handler = Arc::clone(&websocket.handler);
     let submit_connection_id = connection_id.to_string();
     let submit_request_id = request_id.clone();
@@ -985,11 +992,11 @@ async fn handle_protocol_turn_start(
                     metadata,
                     stream: params.stream,
                 },
-                outgoing_tx.clone(),
+                turn_frame_tx.clone(),
             )
             .await;
         if let Err(err) = result {
-            let _ = outgoing_tx.try_send(v1_turn_failed_frame(
+            let _ = turn_frame_tx.try_send(v1_turn_failed_frame(
                 &submit_session_id,
                 &submit_thread_id,
                 &submit_turn_id,
@@ -1021,16 +1028,20 @@ async fn handle_protocol_turn_start(
         status: GatewayTurnStatus::InProgress,
     };
 
-    vec![
-        GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::success(
-            request_id,
-            json!({ "turn": turn }),
-        )),
-        GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
-            GatewayProtocolMethod::TurnStarted,
-            json!(turn),
-        )),
-    ]
+    let _ = state
+        .websocket_broadcaster
+        .broadcast_to_session(
+            &turn.session_id,
+            GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+                GatewayProtocolMethod::TurnStarted,
+                json!(turn.clone()),
+            )),
+        )
+        .await;
+
+    vec![GatewayWebsocketServerFrame::Protocol(
+        GatewayRpcMessage::success(request_id, json!({ "turn": turn })),
+    )]
 }
 
 async fn handle_protocol_turn_cancel(

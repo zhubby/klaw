@@ -207,6 +207,39 @@ mod tests {
             .await;
         assert_eq!(delivered, 0);
     }
+
+    #[tokio::test]
+    async fn broadcaster_delivers_session_frame_to_all_subscribed_connections() {
+        let broadcaster = GatewayWebsocketBroadcaster::new();
+        let (frame_tx_a, mut frame_rx_a) = mpsc::channel(GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY);
+        let (frame_tx_b, mut frame_rx_b) = mpsc::channel(GATEWAY_WEBSOCKET_OUTBOUND_QUEUE_CAPACITY);
+        broadcaster
+            .register(
+                "conn-1".to_string(),
+                Some("websocket:shared".to_string()),
+                frame_tx_a,
+            )
+            .await;
+        broadcaster
+            .register(
+                "conn-2".to_string(),
+                Some("websocket:shared".to_string()),
+                frame_tx_b,
+            )
+            .await;
+
+        let frame = GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+            GatewayProtocolMethod::ItemAgentMessageDelta,
+            json!({ "session_id": "websocket:shared", "delta": "hello" }),
+        ));
+        let delivered = broadcaster
+            .broadcast_to_session("websocket:shared", frame.clone())
+            .await;
+
+        assert_eq!(delivered, 2);
+        assert_eq!(frame_rx_a.recv().await, Some(frame.clone()));
+        assert_eq!(frame_rx_b.recv().await, Some(frame));
+    }
 }
 
 pub(crate) struct GatewayState {
