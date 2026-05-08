@@ -1192,6 +1192,56 @@ async fn dingtalk_stream_writer_marks_special_cards_without_network_calls() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dingtalk_stream_writer_finalizes_existing_stream_before_special_card() {
+    let mut writer = DingtalkStreamWriter::new(
+        DingtalkApiClient::with_base_urls(
+            &super::DingtalkProxyConfig::default(),
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+        )
+        .expect("client"),
+        "client-id".to_string(),
+        "client-secret".to_string(),
+        "robot-1".to_string(),
+        "staff-1".to_string(),
+        "template-1.schema".to_string(),
+        "content".to_string(),
+        false,
+    );
+    writer.card_sent = true;
+    writer.last_rendered = Some("thinking...".to_string());
+    let output = ChannelResponse {
+        content: String::new(),
+        reasoning: None,
+        metadata: {
+            let mut metadata = BTreeMap::new();
+            metadata.insert(
+                "im.card".to_string(),
+                serde_json::json!({
+                    "kind": "approval",
+                    "title": "Approve",
+                    "body": "Need approval",
+                    "actions": [
+                        { "kind": "approve", "value": "approval-1" },
+                        { "kind": "reject", "value": "approval-1" }
+                    ]
+                }),
+            );
+            metadata
+        },
+        attachments: Vec::new(),
+    };
+
+    writer.finish(&output).await;
+
+    assert!(writer.saw_special_card);
+    assert_eq!(
+        writer.last_rendered.as_deref(),
+        Some("已切换为交互卡片，请在下方卡片处理。")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn dingtalk_stream_writer_falls_back_after_stream_failure() {
     let mut writer = DingtalkStreamWriter::new(
         DingtalkApiClient::with_base_urls(

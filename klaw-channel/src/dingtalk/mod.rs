@@ -53,6 +53,7 @@ const WS_WATCHDOG_INTERVAL: Duration = Duration::from_secs(15);
 const EVENT_DEDUP_TTL: Duration = Duration::from_secs(60 * 60);
 const EVENT_DEDUP_MAX_ENTRIES: usize = 20_000;
 const DINGTALK_STREAM_UPDATE_INTERVAL: Duration = Duration::from_millis(400);
+const DINGTALK_SPECIAL_CARD_TERMINAL_MESSAGE: &str = "已切换为交互卡片，请在下方卡片处理。";
 
 /// Returns `true` when shutdown was requested during the delay.
 async fn wait_reconnect_delay_or_shutdown(
@@ -235,6 +236,15 @@ impl DingtalkStreamWriter {
     async fn finish(&mut self, output: &ChannelResponse) {
         if resolve_channel_card(output).is_some() {
             self.saw_special_card = true;
+            if self.card_sent {
+                let _ = self
+                    .flush_rendered(
+                        DINGTALK_SPECIAL_CARD_TERMINAL_MESSAGE.to_string(),
+                        true,
+                        true,
+                    )
+                    .await;
+            }
             return;
         }
         let rendered =
