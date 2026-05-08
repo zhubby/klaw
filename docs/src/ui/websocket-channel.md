@@ -76,6 +76,7 @@ flowchart LR
 | `session/subscribed` | 会话订阅完成 |
 | `session/unsubscribed` | 会话取消订阅 |
 | `turn/started` | turn 已被服务端接受并开始处理 |
+| `item/completed` (`userMessage`) | 用户消息已被服务端接受并广播 |
 | `item/started` | agent message item 开始 |
 | `item/agentMessage/delta` | agent message 增量 |
 | `item/completed` | item 完成 |
@@ -138,6 +139,7 @@ stream_output = true
 ```text
 Client turn/start
   -> Gateway validates v1 frame and tracks active turn
+  -> Gateway emits item/completed userMessage to subscribed clients
   -> Runtime converts content blocks to ChannelRequest
   -> Agent emits stream snapshots
   -> Gateway emits item/agentMessage/delta

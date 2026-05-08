@@ -232,6 +232,18 @@ mod tests {
         url
     }
 
+    fn is_user_message_item(frame: &serde_json::Value, content: &str) -> bool {
+        frame.get("method").and_then(|value| value.as_str()) == Some("item/completed")
+            && frame
+                .pointer("/params/item/type")
+                .and_then(|value| value.as_str())
+                == Some("userMessage")
+            && frame
+                .pointer("/params/item/payload/message/content")
+                .and_then(|value| value.as_str())
+                == Some(content)
+    }
+
     #[tokio::test]
     async fn spawn_gateway_uses_actual_random_port() {
         let config = GatewayConfig {
@@ -1229,6 +1241,112 @@ mod tests {
         );
         assert!(saw_started_b, "subscribed peer should receive turn/started");
         assert!(saw_delta_b, "subscribed peer should receive stream delta");
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn websocket_v1_user_message_reaches_all_subscribed_connections() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                websocket_handler: Some(Arc::new(RecordingWebsocketHandler::default())),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let (mut socket_a, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("first websocket should connect");
+        let (mut socket_b, _) = connect_async(ws_url(handle.info().actual_port, None))
+            .await
+            .expect("second websocket should connect");
+
+        for socket in [&mut socket_a, &mut socket_b] {
+            socket
+                .send(Message::Text(
+                    json!({
+                        "id": "subscribe-user-message",
+                        "method": "session/subscribe",
+                        "params": { "session_key": "websocket:user-message" }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("session/subscribe should send");
+            for _ in 0..2 {
+                let _ = socket
+                    .next()
+                    .await
+                    .expect("subscribe response frame")
+                    .expect("subscribe response message");
+            }
+        }
+
+        socket_a
+            .send(Message::Text(
+                json!({
+                    "id": "turn-user-message-1",
+                    "method": "turn/start",
+                    "params": {
+                        "session_id": "websocket:user-message",
+                        "thread_id": "thread_user_message",
+                        "turn_id": "turn_user_message",
+                        "input": [{ "type": "text", "text": "hello from browser a" }]
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("turn/start should send");
+
+        let _result = socket_a
+            .next()
+            .await
+            .expect("turn/start result")
+            .expect("turn/start result message");
+
+        let mut saw_user_message_a = false;
+        let mut saw_user_message_b = false;
+        for _ in 0..3 {
+            if let Ok(Some(Ok(Message::Text(text)))) =
+                timeout(Duration::from_millis(250), socket_a.next()).await
+            {
+                let frame = serde_json::from_str::<serde_json::Value>(&text)
+                    .expect("first connection frame parses");
+                saw_user_message_a |= is_user_message_item(&frame, "hello from browser a");
+            }
+
+            if let Ok(Some(Ok(Message::Text(text)))) =
+                timeout(Duration::from_millis(250), socket_b.next()).await
+            {
+                let frame = serde_json::from_str::<serde_json::Value>(&text)
+                    .expect("second connection frame parses");
+                saw_user_message_b |= is_user_message_item(&frame, "hello from browser a");
+            }
+        }
+
+        assert!(
+            saw_user_message_a,
+            "initiating connection should receive userMessage item"
+        );
+        assert!(
+            saw_user_message_b,
+            "subscribed peer should receive userMessage item"
+        );
 
         handle.shutdown().await.expect("gateway should stop");
     }

@@ -601,6 +601,15 @@ impl ChatApp {
                 let Some(item) = params.get("item") else {
                     return;
                 };
+                if let Some(message) = user_message_from_completed_item(item) {
+                    self.complete_user_message(
+                        session_key,
+                        &message.content,
+                        message.metadata,
+                        message.message_id,
+                    );
+                    return;
+                }
                 let response = item
                     .get("payload")
                     .and_then(|payload| payload.get("response"))
@@ -819,6 +828,48 @@ impl ChatApp {
         sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
     }
 
+    fn complete_user_message(
+        &mut self,
+        session_key: &str,
+        content: &str,
+        metadata: BTreeMap<String, Value>,
+        message_id: Option<String>,
+    ) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
+        if content.is_empty() {
+            return;
+        }
+        let mut history = self.sessions[index].buffers.messages.borrow_mut();
+        if message_id_exists(&history, message_id.as_deref()) {
+            return;
+        }
+        if let Some(message) = history
+            .last_mut()
+            .filter(|message| matches!(message.role, MessageRole::User))
+            .filter(|message| message.message_id.is_none())
+            .filter(|message| message.text == content)
+        {
+            message.message_id = message_id;
+            if !metadata.is_empty() {
+                message.metadata = metadata;
+                message.card = crate::resolve_im_card(&message.text, &message.metadata);
+            }
+            let messages = history.clone();
+            drop(history);
+            sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
+            return;
+        }
+        history.push(ChatMessage::new_with_metadata(
+            content.to_string(),
+            MessageRole::User,
+            current_timestamp_ms(),
+            message_id,
+            metadata,
+        ));
+    }
+
     pub(in crate::web_chat) fn send_session_draft(&mut self, session_key: &str) {
         let Some(index) = self.session_index(session_key) else {
             return;
@@ -963,6 +1014,39 @@ struct HistoryPageMessage {
     message_id: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct CompletedUserMessage {
+    content: String,
+    metadata: BTreeMap<String, Value>,
+    message_id: Option<String>,
+}
+
+fn user_message_from_completed_item(item: &Value) -> Option<CompletedUserMessage> {
+    if item.get("type").and_then(Value::as_str) != Some("userMessage") {
+        return None;
+    }
+    let message = item.get("payload")?.get("message")?;
+    let content = message.get("content")?.as_str()?.to_string();
+    let mut metadata = message
+        .get("metadata")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<BTreeMap<String, Value>>(value).ok())
+        .unwrap_or_default();
+    if let Some(attachments) = message.get("attachments").filter(|value| !value.is_null()) {
+        metadata.insert("attachments".to_string(), attachments.clone());
+    }
+    let message_id = message
+        .get("message_id")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("item_id").and_then(Value::as_str))
+        .map(ToString::to_string);
+    Some(CompletedUserMessage {
+        content,
+        metadata,
+        message_id,
+    })
+}
+
 fn prepend_history_page(history: &mut Vec<ChatMessage>, page_messages: Vec<HistoryPageMessage>) {
     let existing_message_ids = history
         .iter()
@@ -1042,7 +1126,7 @@ fn history_cursor_can_advance(
 mod tests {
     use super::{
         HistoryPageMessage, build_submit_params, history_cursor_can_advance,
-        history_request_cursor, prepend_history_page,
+        history_request_cursor, prepend_history_page, user_message_from_completed_item,
     };
     use crate::{MessageRole, WebArchiveAttachment};
     use crate::{should_hide_heartbeat_operational_message, should_hide_heartbeat_silent_ack};
@@ -1119,6 +1203,37 @@ mod tests {
             params.get("model").and_then(serde_json::Value::as_str),
             Some("gpt-4.1-mini")
         );
+    }
+
+    #[test]
+    fn user_message_from_completed_item_extracts_content_metadata_and_id() {
+        let item = json!({
+            "item_id": "item_user_turn_1",
+            "turn_id": "turn_1",
+            "type": "userMessage",
+            "status": "completed",
+            "payload": {
+                "message": {
+                    "content": "hello from another browser",
+                    "metadata": { "client": "web" },
+                    "attachments": [{ "archive_id": "archive-1" }]
+                }
+            }
+        });
+
+        let message =
+            user_message_from_completed_item(&item).expect("userMessage item should be parsed");
+
+        assert_eq!(message.content, "hello from another browser");
+        assert_eq!(message.message_id.as_deref(), Some("item_user_turn_1"));
+        assert_eq!(
+            message
+                .metadata
+                .get("client")
+                .and_then(serde_json::Value::as_str),
+            Some("web")
+        );
+        assert!(message.metadata.get("attachments").is_some());
     }
 
     #[test]

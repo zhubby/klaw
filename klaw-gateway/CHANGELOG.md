@@ -9,6 +9,7 @@
 ### Fixed
 
 - Gateway WebSocket v1 turn lifecycle and streaming frames now fan out to every `/ws/chat` connection subscribed to the same session, keeping multiple browser clients in sync during a turn.
+- Gateway WebSocket v1 now emits a completed `userMessage` item when a `turn/start` is accepted, so other clients subscribed to the same chat receive the user's sent message before assistant output.
 
 ## 2026-05-07
 

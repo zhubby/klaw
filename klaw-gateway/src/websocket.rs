@@ -1,7 +1,8 @@
 use crate::{
     protocol::{
         GatewayContentBlock, GatewayProtocolError, GatewayProtocolErrorCode, GatewayProtocolMethod,
-        GatewayRpcMessage, GatewayTurnStatus, GatewayWebsocketProtocolInitializeParams,
+        GatewayRpcMessage, GatewayThreadItem, GatewayThreadItemStatus, GatewayThreadItemType,
+        GatewayTurnStatus, GatewayWebsocketProtocolInitializeParams,
         GatewayWebsocketProtocolInitializeResult, GatewayWebsocketTurnStarted,
     },
     state::GatewayState,
@@ -971,6 +972,25 @@ async fn handle_protocol_turn_start(
         }
     });
 
+    let turn = GatewayWebsocketTurnStarted {
+        session_id: session_id.clone(),
+        thread_id: thread_id.clone(),
+        turn_id: turn_id.clone(),
+        request_id: request_id.clone(),
+        status: GatewayTurnStatus::InProgress,
+    };
+    let _ = turn_frame_tx.try_send(v1_user_message_completed_frame(
+        &session_id,
+        &thread_id,
+        &turn_id,
+        &input,
+        &attachments,
+        &metadata,
+    ));
+    let _ = turn_frame_tx.try_send(GatewayWebsocketServerFrame::Protocol(
+        GatewayRpcMessage::notification(GatewayProtocolMethod::TurnStarted, json!(turn.clone())),
+    ));
+
     let handler = Arc::clone(&websocket.handler);
     let submit_connection_id = connection_id.to_string();
     let submit_request_id = request_id.clone();
@@ -1020,28 +1040,43 @@ async fn handle_protocol_turn_start(
         active_turns.write().await.remove(&turn_id);
     }
 
-    let turn = GatewayWebsocketTurnStarted {
-        session_id,
-        thread_id,
-        turn_id,
-        request_id: request_id.clone(),
-        status: GatewayTurnStatus::InProgress,
-    };
-
-    let _ = state
-        .websocket_broadcaster
-        .broadcast_to_session(
-            &turn.session_id,
-            GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
-                GatewayProtocolMethod::TurnStarted,
-                json!(turn.clone()),
-            )),
-        )
-        .await;
-
     vec![GatewayWebsocketServerFrame::Protocol(
         GatewayRpcMessage::success(request_id, json!({ "turn": turn })),
     )]
+}
+
+fn v1_user_message_completed_frame(
+    session_id: &str,
+    thread_id: &str,
+    turn_id: &str,
+    input: &str,
+    attachments: &[GatewayWebsocketAttachmentRef],
+    metadata: &BTreeMap<String, Value>,
+) -> GatewayWebsocketServerFrame {
+    let item = GatewayThreadItem {
+        item_id: format!("item_user_{turn_id}"),
+        turn_id: turn_id.to_string(),
+        item_type: GatewayThreadItemType::UserMessage,
+        status: GatewayThreadItemStatus::Completed,
+        payload: json!({
+            "session_id": session_id,
+            "thread_id": thread_id,
+            "message": {
+                "content": input,
+                "metadata": metadata,
+                "attachments": attachments,
+            },
+        }),
+    };
+    GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+        GatewayProtocolMethod::ItemCompleted,
+        json!({
+            "session_id": session_id,
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "item": item,
+        }),
+    ))
 }
 
 async fn handle_protocol_turn_cancel(

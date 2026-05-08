@@ -449,7 +449,7 @@ WebUI 启动后通常按以下顺序加载工作区：
 - `model`：可选，指定具体模型。
 - `metadata`：可选扩展元数据，不可存放密钥或长期凭据。
 
-服务端先返回初始 turn success 响应，再发送 `turn/started` 通知：
+服务端先返回初始 turn success 响应，并向订阅该 session 的连接广播已完成的 `userMessage` item 与 `turn/started` 通知：
 
 ```json
 {
@@ -461,6 +461,27 @@ WebUI 启动后通常按以下顺序加载工作区：
       "turn_id": "turn_1",
       "request_id": "turn_req_1",
       "status": "in_progress"
+    }
+  }
+}
+{
+  "method": "item/completed",
+  "params": {
+    "session_id": "websocket:abc",
+    "thread_id": "websocket:abc",
+    "turn_id": "turn_1",
+    "item": {
+      "item_id": "item_user_turn_1",
+      "turn_id": "turn_1",
+      "type": "userMessage",
+      "status": "completed",
+      "payload": {
+        "message": {
+          "content": "Hello",
+          "metadata": {},
+          "attachments": []
+        }
+      }
     }
   }
 }

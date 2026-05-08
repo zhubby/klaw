@@ -6,6 +6,7 @@
 
 - WebUI now shows a transient `Thinking...` assistant bubble after a streamed user send until the first assistant, reasoning, tool, or completion event arrives, making pending turns visibly responsive without writing placeholders into history.
 - WebUI now handles v1 `item/agentMessage/clear` notifications by removing the current streaming assistant draft, preventing tool-triggered interim text from being merged into the final reply bubble.
+- WebUI now renders v1 completed `userMessage` items from the gateway and de-duplicates them against the sending browser's local echo, keeping multiple browser tabs connected to the same chat in sync.
 
 ## 2026-05-05
 
