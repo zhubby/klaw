@@ -7,8 +7,9 @@ use web_sys::{CloseEvent, MessageEvent, WebSocket};
 use crate::{
     ConnectionState, MessageRole, ProviderCatalog, WebArchiveAttachment, WorkspaceSessionEntry,
     build_websocket_turn_start_params, classify_stream_message_action,
-    next_pending_attachments_after_submit, should_hide_heartbeat_operational_message,
-    should_hide_heartbeat_silent_ack, should_register_non_stream_fade,
+    next_pending_attachments_after_submit, should_clear_active_stream_assistant_message,
+    should_hide_heartbeat_operational_message, should_hide_heartbeat_silent_ack,
+    should_register_non_stream_fade,
 };
 
 use super::{
@@ -586,6 +587,13 @@ impl ChatApp {
                     None,
                 );
             }
+            "item/agentMessage/clear" => {
+                let Some(session_key) = params.get("session_id").and_then(Value::as_str) else {
+                    return;
+                };
+                let turn_id = params.get("turn_id").and_then(Value::as_str);
+                self.clear_assistant_stream_draft(session_key, turn_id);
+            }
             "item/completed" => {
                 let Some(session_key) = params.get("session_id").and_then(Value::as_str) else {
                     return;
@@ -656,6 +664,28 @@ impl ChatApp {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn clear_assistant_stream_draft(&mut self, session_key: &str, request_id: Option<&str>) {
+        let Some(index) = self.session_index(session_key) else {
+            return;
+        };
+        let mut history = self.sessions[index].buffers.messages.borrow_mut();
+        let should_clear = should_clear_active_stream_assistant_message(
+            history.last().map(|message| message.role),
+            history
+                .last()
+                .and_then(|message| message.message_id.as_deref()),
+            self.sessions[index]
+                .buffers
+                .active_stream_request_id
+                .borrow()
+                .as_deref(),
+            request_id,
+        );
+        if should_clear {
+            history.pop();
         }
     }
 

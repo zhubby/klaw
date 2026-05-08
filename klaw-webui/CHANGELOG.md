@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-08
+
+### Fixed
+
+- WebUI now handles v1 `item/agentMessage/clear` notifications by removing the current streaming assistant draft, preventing tool-triggered interim text from being merged into the final reply bubble.
+
 ## 2026-05-05
 
 ### Changed

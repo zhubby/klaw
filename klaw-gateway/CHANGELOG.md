@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-08
+
+### Added
+
+- Gateway WebSocket v1 protocol now includes `item/agentMessage/clear` so streaming clients can reset an in-progress assistant item when runtime clears a non-final snapshot.
+
 ## 2026-05-07
 
 ### Fixed

@@ -475,6 +475,9 @@ impl GatewayStreamState {
             }
             klaw_channel::ChannelStreamEvent::Clear => {
                 self.last_snapshot = None;
+                let context = self.v1_context.clone();
+                send_v1_agent_clear(frame_tx, &context)
+                    .map_err(|err| std::io::Error::other(err.message.clone()))?;
             }
         }
         Ok(())
@@ -527,6 +530,24 @@ fn send_v1_agent_delta(
                 "turn_id": context.turn_id,
                 "item_id": context.agent_message_item_id,
                 "delta": delta,
+            }),
+        )),
+    )
+}
+
+fn send_v1_agent_clear(
+    frame_tx: &GatewayWebsocketFrameTx,
+    context: &GatewayV1StreamContext,
+) -> Result<(), GatewayWebsocketHandlerError> {
+    send_frame(
+        frame_tx,
+        GatewayWebsocketServerFrame::Protocol(GatewayRpcMessage::notification(
+            GatewayProtocolMethod::ItemAgentMessageClear,
+            json!({
+                "session_id": context.session_id,
+                "thread_id": context.thread_id,
+                "turn_id": context.turn_id,
+                "item_id": context.agent_message_item_id,
             }),
         )),
     )
@@ -815,6 +836,37 @@ mod tests {
             _ => None,
         });
         assert_eq!(last_delta, Some("Reset"));
+    }
+
+    #[test]
+    fn stream_clear_emits_v1_agent_message_clear() {
+        let frames = stream_events_to_frames_with_identity(
+            "req-2",
+            "websocket:test",
+            Some("thr_v1"),
+            Some("turn_v1"),
+            true,
+            &[
+                ChannelStreamEvent::Snapshot(ChannelResponse {
+                    content: "temporary".to_string(),
+                    reasoning: Some("visible".to_string()),
+                    metadata: BTreeMap::new(),
+                    attachments: Vec::new(),
+                }),
+                ChannelStreamEvent::Clear,
+            ],
+        );
+
+        assert!(frames.iter().any(|frame| match frame {
+            klaw_gateway::GatewayWebsocketServerFrame::Protocol(
+                klaw_gateway::GatewayRpcMessage::Notification { method, params },
+            ) if *method == klaw_gateway::GatewayProtocolMethod::ItemAgentMessageClear => {
+                params.get("turn_id").and_then(serde_json::Value::as_str) == Some("turn_v1")
+                    && params.get("item_id").and_then(serde_json::Value::as_str)
+                        == Some("item_agent_turn_v1")
+            }
+            _ => false,
+        }));
     }
 
     #[test]

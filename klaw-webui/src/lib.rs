@@ -822,6 +822,19 @@ pub(crate) fn classify_stream_message_action(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn should_clear_active_stream_assistant_message(
+    last_role: Option<MessageRole>,
+    last_message_id: Option<&str>,
+    active_stream_request_id: Option<&str>,
+    request_id: Option<&str>,
+) -> bool {
+    request_id.is_some()
+        && request_id == active_stream_request_id
+        && last_role == Some(MessageRole::Assistant)
+        && last_message_id.is_none()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn should_register_non_stream_fade(
     role: MessageRole,
     streamed: bool,
@@ -946,9 +959,9 @@ mod tests {
         normalize_gateway_token_input, resolve_assistant_bubble_palette, resolve_gateway_token,
         resolve_im_card, resolve_im_card_palette, resolve_session_route_inputs,
         session_card_activity_label, should_activate_session_window,
-        should_cancel_file_picker_selection, should_prompt_for_gateway_token_before_connect,
-        should_register_non_stream_fade, slash_command_matches,
-        sort_session_entries_by_created_at_desc,
+        should_cancel_file_picker_selection, should_clear_active_stream_assistant_message,
+        should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
+        slash_command_matches, sort_session_entries_by_created_at_desc,
     };
 
     #[test]
@@ -1031,6 +1044,34 @@ mod tests {
             "",
         );
         assert_eq!(action, StreamMessageAction::IgnoreEmpty);
+    }
+
+    #[test]
+    fn active_stream_clear_targets_only_matching_assistant_drafts() {
+        assert!(should_clear_active_stream_assistant_message(
+            Some(MessageRole::Assistant),
+            None,
+            Some("turn-1"),
+            Some("turn-1")
+        ));
+        assert!(!should_clear_active_stream_assistant_message(
+            Some(MessageRole::Assistant),
+            Some("msg-1"),
+            Some("turn-1"),
+            Some("turn-1")
+        ));
+        assert!(!should_clear_active_stream_assistant_message(
+            Some(MessageRole::Assistant),
+            None,
+            Some("turn-1"),
+            Some("turn-2")
+        ));
+        assert!(!should_clear_active_stream_assistant_message(
+            Some(MessageRole::User),
+            None,
+            Some("turn-1"),
+            Some("turn-1")
+        ));
     }
 
     #[test]

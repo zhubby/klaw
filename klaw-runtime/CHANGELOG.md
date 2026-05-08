@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Gateway WebSocket streaming now forwards agent stream clear events as v1 `item/agentMessage/clear` notifications so web clients can discard non-final assistant drafts before rendering the final answer.
 - Assistant chat history now filters runtime-only LLM audit, usage, and conversation-history metadata before writing JSONL records, avoiding duplicated request payloads in `sessions/`.
 
 ## 2026-05-07

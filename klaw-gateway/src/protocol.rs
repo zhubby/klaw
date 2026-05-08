@@ -176,6 +176,8 @@ pub enum GatewayProtocolMethod {
     ItemCompleted,
     #[serde(rename = "item/agentMessage/delta")]
     ItemAgentMessageDelta,
+    #[serde(rename = "item/agentMessage/clear")]
+    ItemAgentMessageClear,
     #[serde(rename = "item/reasoning/delta")]
     ItemReasoningDelta,
     #[serde(rename = "item/plan/delta")]
