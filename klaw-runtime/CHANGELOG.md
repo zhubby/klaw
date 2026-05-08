@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-08
+
+### Fixed
+
+- Assistant chat history now filters runtime-only LLM audit, usage, and conversation-history metadata before writing JSONL records, avoiding duplicated request payloads in `sessions/`.
+
 ## 2026-05-07
 
 ### Changed

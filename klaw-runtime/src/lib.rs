@@ -1703,9 +1703,21 @@ fn parse_delivery_metadata_json(raw: &str) -> Option<BTreeMap<String, Value>> {
 }
 
 fn chat_record_metadata_json(metadata: &BTreeMap<String, Value>) -> Option<String> {
+    let metadata = metadata
+        .iter()
+        .filter(|(key, _)| should_persist_chat_record_metadata_key(key))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<BTreeMap<_, _>>();
     (!metadata.is_empty())
-        .then(|| serde_json::to_string(metadata).ok())
+        .then(|| serde_json::to_string(&metadata).ok())
         .flatten()
+}
+
+fn should_persist_chat_record_metadata_key(key: &str) -> bool {
+    !matches!(
+        key,
+        "agent.conversation_history" | "llm.usage.records" | "llm.audit.records"
+    )
 }
 
 fn validate_webhook_delivery_target(route: &WebhookDeliveryRoute) -> Result<(), String> {
@@ -3851,8 +3863,8 @@ mod tests {
         META_ISOLATED_TURN_KEY, RuntimeBundle, StartupReport, approval_manager,
         ask_question_manager, build_ask_question_followup_request_metadata,
         build_history_for_model, build_new_session_bootstrap_user_message,
-        build_unavailable_provider, builtin_tool_names, compression_trigger_interval,
-        configured_default_model, extract_skill_short_description,
+        build_unavailable_provider, builtin_tool_names, chat_record_metadata_json,
+        compression_trigger_interval, configured_default_model, extract_skill_short_description,
         format_approve_already_handled_message, format_new_session_started_message, im_commands,
         normalize_runtime_provider_override, parse_outbound_attachments, resolve_session_route,
         resolve_webhook_agent_model, should_emit_outbound, should_trigger_compression,
@@ -4225,6 +4237,44 @@ mod tests {
             OutboundAttachmentSource::ArchiveId { ref archive_id } if archive_id == "arch-1"
         ));
         assert_eq!(attachments[0].filename.as_deref(), Some("chart.png"));
+    }
+
+    #[test]
+    fn chat_record_metadata_json_drops_runtime_audit_payloads() {
+        let metadata = BTreeMap::from([
+            ("agent.disposition".to_string(), json!("final_message")),
+            (
+                "agent.conversation_history".to_string(),
+                json!([{"role": "user"}]),
+            ),
+            (
+                "llm.usage.records".to_string(),
+                json!([{"total_tokens": 10}]),
+            ),
+            (
+                "llm.audit.records".to_string(),
+                json!([{
+                    "request_seq": 1,
+                    "request_body": {
+                        "messages": [{"role": "system", "content": "large prompt"}]
+                    }
+                }]),
+            ),
+            (
+                "im.card".to_string(),
+                json!({"kind": "approval", "approval_id": "appr_1"}),
+            ),
+        ]);
+
+        let persisted = chat_record_metadata_json(&metadata).expect("metadata should persist");
+        let value: Value = serde_json::from_str(&persisted).expect("metadata should parse");
+
+        assert_eq!(value["agent.disposition"], "final_message");
+        assert_eq!(value["im.card"]["approval_id"], "appr_1");
+        assert!(value.get("agent.conversation_history").is_none());
+        assert!(value.get("llm.usage.records").is_none());
+        assert!(value.get("llm.audit.records").is_none());
+        assert!(!persisted.contains("request_body"));
     }
 
     #[test]
