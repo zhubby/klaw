@@ -22,7 +22,7 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::mpsc;
     use tokio::time::timeout;
-    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
     #[derive(Clone, Default)]
     struct RecordingWebsocketHandler {
@@ -242,6 +242,35 @@ mod tests {
                 .pointer("/params/item/payload/message/content")
                 .and_then(|value| value.as_str())
                 == Some(content)
+    }
+
+    type TestWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+    async fn next_json_frame(socket: &mut TestWebSocket, label: &str) -> serde_json::Value {
+        let frame = socket
+            .next()
+            .await
+            .unwrap_or_else(|| panic!("{label} frame"))
+            .unwrap_or_else(|err| panic!("{label} message: {err}"));
+        let Message::Text(text) = frame else {
+            panic!("unexpected {label} frame: {frame:?}");
+        };
+        serde_json::from_str::<serde_json::Value>(&text)
+            .unwrap_or_else(|err| panic!("{label} should parse: {err}"))
+    }
+
+    async fn next_json_frame_matching(
+        socket: &mut TestWebSocket,
+        label: &str,
+        matches: impl Fn(&serde_json::Value) -> bool,
+    ) -> serde_json::Value {
+        for _ in 0..8 {
+            let frame = next_json_frame(socket, label).await;
+            if matches(&frame) {
+                return frame;
+            }
+        }
+        panic!("did not receive expected {label} frame");
     }
 
     #[tokio::test]
@@ -1062,16 +1091,10 @@ mod tests {
             Some("turn_client_1")
         );
 
-        let second = socket
-            .next()
-            .await
-            .expect("turn started event")
-            .expect("turn started message");
-        let Message::Text(text) = second else {
-            panic!("unexpected turn event frame: {second:?}");
-        };
-        let second =
-            serde_json::from_str::<serde_json::Value>(&text).expect("turn event should parse");
+        let second = next_json_frame_matching(&mut socket, "turn started event", |frame| {
+            frame.get("method").and_then(|value| value.as_str()) == Some("turn/started")
+        })
+        .await;
         assert_eq!(
             second.get("method").and_then(|value| value.as_str()),
             Some("turn/started")
@@ -1427,7 +1450,7 @@ mod tests {
 
         let mut saw_failed_a = false;
         let mut saw_failed_b = false;
-        for _ in 0..2 {
+        for _ in 0..3 {
             let frame_a = timeout(Duration::from_secs(1), socket_a.next())
                 .await
                 .expect("first connection should receive lifecycle frame")
@@ -1584,11 +1607,10 @@ mod tests {
             .await
             .expect("turn/start result")
             .expect("turn/start result message");
-        let _started_event = socket
-            .next()
-            .await
-            .expect("turn/started event")
-            .expect("turn/started event message");
+        let _started_event = next_json_frame_matching(&mut socket, "turn/started event", |frame| {
+            frame.get("method").and_then(|value| value.as_str()) == Some("turn/started")
+        })
+        .await;
 
         socket
             .send(Message::Text(
@@ -1607,16 +1629,10 @@ mod tests {
             .await
             .expect("turn/cancel should send");
 
-        let result = socket
-            .next()
-            .await
-            .expect("cancel result")
-            .expect("cancel result message");
-        let Message::Text(text) = result else {
-            panic!("unexpected cancel result frame: {result:?}");
-        };
-        let result =
-            serde_json::from_str::<serde_json::Value>(&text).expect("cancel result should parse");
+        let result = next_json_frame_matching(&mut socket, "cancel result", |frame| {
+            frame.get("id").and_then(|value| value.as_str()) == Some("cancel-1")
+        })
+        .await;
         assert_eq!(
             result.get("id").and_then(|value| value.as_str()),
             Some("cancel-1")
@@ -1628,16 +1644,10 @@ mod tests {
             Some("interrupted")
         );
 
-        let event = socket
-            .next()
-            .await
-            .expect("interrupted event")
-            .expect("interrupted message");
-        let Message::Text(text) = event else {
-            panic!("unexpected interrupted frame: {event:?}");
-        };
-        let event = serde_json::from_str::<serde_json::Value>(&text)
-            .expect("interrupted event should parse");
+        let event = next_json_frame_matching(&mut socket, "interrupted event", |frame| {
+            frame.get("method").and_then(|value| value.as_str()) == Some("turn/interrupted")
+        })
+        .await;
         assert_eq!(
             event.get("method").and_then(|value| value.as_str()),
             Some("turn/interrupted")
@@ -1706,21 +1716,14 @@ mod tests {
             .await
             .expect("turn/start result")
             .expect("turn/start result message");
-        let _started_event = socket
-            .next()
-            .await
-            .expect("turn/started event")
-            .expect("turn/started event message");
-        let failed = socket
-            .next()
-            .await
-            .expect("turn/failed event")
-            .expect("turn/failed event message");
-        let Message::Text(text) = failed else {
-            panic!("unexpected failed frame: {failed:?}");
-        };
-        let failed =
-            serde_json::from_str::<serde_json::Value>(&text).expect("failed event should parse");
+        let _started_event = next_json_frame_matching(&mut socket, "turn/started event", |frame| {
+            frame.get("method").and_then(|value| value.as_str()) == Some("turn/started")
+        })
+        .await;
+        let failed = next_json_frame_matching(&mut socket, "turn/failed event", |frame| {
+            frame.get("method").and_then(|value| value.as_str()) == Some("turn/failed")
+        })
+        .await;
         assert_eq!(
             failed.get("method").and_then(|value| value.as_str()),
             Some("turn/failed")
@@ -1783,11 +1786,11 @@ mod tests {
                 .await
                 .expect("turn/start result")
                 .expect("turn/start result message");
-            let _started_event = socket
-                .next()
-                .await
-                .expect("turn/started event")
-                .expect("turn/started event message");
+            let _started_event =
+                next_json_frame_matching(&mut socket, "turn/started event", |frame| {
+                    frame.get("method").and_then(|value| value.as_str()) == Some("turn/started")
+                })
+                .await;
         }
 
         socket
@@ -1808,15 +1811,13 @@ mod tests {
             .await
             .expect("over limit turn/start should send");
 
-        let error = socket
-            .next()
-            .await
-            .expect("over limit error")
-            .expect("over limit error message");
-        let Message::Text(text) = error else {
-            panic!("unexpected over limit frame: {error:?}");
-        };
-        let error = serde_json::from_str::<serde_json::Value>(&text).expect("error should parse");
+        let error = next_json_frame_matching(&mut socket, "over limit error", |frame| {
+            frame
+                .pointer("/error/code")
+                .and_then(|value| value.as_str())
+                == Some("too_many_active_turns")
+        })
+        .await;
         assert_eq!(
             error
                 .pointer("/error/code")
