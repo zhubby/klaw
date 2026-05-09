@@ -37,9 +37,13 @@ pub fn show_workbench(
     ui.separator();
 
     if let Some(active) = state.workbench.active_tab() {
+        let is_dark_mode = ui.visuals().dark_mode;
         let ctx = RenderCtx {
             menu: active.menu,
             tab_title: active.title.as_str(),
+            is_dark_mode,
+            light_theme: state.light_theme,
+            dark_theme: state.dark_theme,
         };
         puffin::profile_scope!("workbench_panel_shell");
         panels.render_for(ui, &ctx, notifications);

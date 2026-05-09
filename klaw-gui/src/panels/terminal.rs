@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
+use crate::panels::terminal_palette::palette_for_theme;
 use crate::panels::{PanelRenderer, RenderCtx};
-use egui_term::{BackendSettings, PtyEvent, TerminalBackend, TerminalView};
+use egui_term::{BackendSettings, PtyEvent, TerminalBackend, TerminalTheme, TerminalView};
 use klaw_util::default_workspace_dir;
 use std::fs;
 use std::path::PathBuf;
@@ -178,9 +179,11 @@ impl PanelRenderer for TerminalPanel {
             ui.available_width(),
             ui.available_height().max(MIN_TERMINAL_HEIGHT),
         );
+        let palette = palette_for_theme(ctx.is_dark_mode, ctx.light_theme, ctx.dark_theme);
         let terminal = TerminalView::new(ui, &mut session.backend)
             .set_focus(true)
-            .set_size(terminal_size);
+            .set_size(terminal_size)
+            .set_theme(TerminalTheme::new(Box::new(palette)));
         ui.add(terminal);
     }
 

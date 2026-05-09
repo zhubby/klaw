@@ -23,16 +23,21 @@ mod skills_manager;
 mod skills_registry;
 mod system;
 mod terminal;
+mod terminal_palette;
 mod tool;
 mod voice;
 mod webhook;
 
 use crate::domain::menu::WorkbenchMenu;
 use crate::notifications::NotificationCenter;
+use crate::state::{DarkThemePreset, LightThemePreset};
 
 pub struct RenderCtx<'a> {
     pub menu: WorkbenchMenu,
     pub tab_title: &'a str,
+    pub is_dark_mode: bool,
+    pub light_theme: LightThemePreset,
+    pub dark_theme: DarkThemePreset,
 }
 
 pub trait PanelRenderer {
