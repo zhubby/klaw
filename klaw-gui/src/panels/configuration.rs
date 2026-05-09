@@ -610,18 +610,20 @@ impl PanelRenderer for ConfigurationPanel {
             );
             ui.add_space(4.0);
             ui.separator();
-            ui.horizontal_wrapped(|ui| {
+            ui.vertical_centered(|ui| {
                 let dirty = this.is_dirty();
                 let dot_color = if dirty {
                     Color32::YELLOW
                 } else {
                     Color32::LIGHT_GREEN
                 };
-                let dot_pos = ui.next_widget_position();
-                let row_height = ui.text_style_height(&egui::TextStyle::Body);
-                let dot_center = egui::pos2(dot_pos.x + 4.0, dot_pos.y + row_height / 2.0);
+                ui.add_space(4.0);
+                let rect = ui.available_rect_before_wrap();
+                let dot_center = egui::pos2(rect.center().x, rect.top() + 4.0);
                 ui.painter().circle_filled(dot_center, 4.0, dot_color);
-                ui.add_space(8.0);
+                ui.add_space(12.0);
+            });
+            ui.horizontal_wrapped(|ui| {
                 if ui
                     .button(format!("{} Save", regular::FLOPPY_DISK))
                     .clicked()
