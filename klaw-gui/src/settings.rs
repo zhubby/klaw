@@ -296,6 +296,7 @@ pub fn save_ui_language(language: UiLanguage) -> io::Result<AppSettings> {
     let Some(path) = settings_path() else {
         let mut settings = AppSettings::default();
         settings.general.ui_language = language;
+        set_current_ui_language(language);
         return Ok(settings);
     };
     save_ui_language_to_path(&path, language)

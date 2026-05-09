@@ -190,7 +190,6 @@ impl ChatApp {
     fn render_status_bar(&mut self, ctx: &Context) {
         let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         let mut requested_theme = None;
-        let mut requested_language = None;
         let mut stream_changed = false;
         let open_sessions = self.sessions.iter().filter(|session| session.open).count();
         TopBottomPanel::bottom("klaw-webui-status").show(ctx, |ui| {
@@ -203,20 +202,11 @@ impl ChatApp {
                 }
                 ui.separator();
                 ui.label(format!("{}:", translator.text("language")));
-                ComboBox::from_id_salt("webui-status-language")
-                    .width(120.0)
-                    .selected_text(self.ui_language.label())
-                    .show_ui(ui, |ui| {
-                        for language in UiLanguage::available() {
-                            if ui
-                                .selectable_label(self.ui_language == *language, language.label())
-                                .clicked()
-                            {
-                                requested_language = Some(*language);
-                                ui.close();
-                            }
-                        }
-                    });
+                if let Some(language) =
+                    render_language_combo(ui, "webui-status-language", self.ui_language, 120.0)
+                {
+                    self.set_ui_language(language);
+                }
                 ui.separator();
                 ui.label(format!("Agents: {}/{}", self.sessions.len(), open_sessions))
                     .on_hover_text("Total agent windows / currently open windows.");
@@ -277,9 +267,6 @@ impl ChatApp {
         if let Some(theme_mode) = requested_theme {
             self.set_theme_mode(theme_mode);
         }
-        if let Some(language) = requested_language {
-            self.set_ui_language(language);
-        }
         if stream_changed {
             self.persist_workspace_state();
         }
@@ -292,7 +279,6 @@ impl ChatApp {
 
         let mut open = self.show_settings_dialog;
         let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
-        let mut requested_language = None;
         let mut requested_theme_mode = None;
         let mut requested_light_theme = None;
         let mut requested_dark_theme = None;
@@ -314,23 +300,14 @@ impl ChatApp {
                     .spacing([8.0, 8.0])
                     .show(ui, |ui| {
                         ui.label(format!("{}:", translator.text("language")));
-                        ComboBox::from_id_salt("webui-settings-language")
-                            .width(160.0)
-                            .selected_text(self.ui_language.label())
-                            .show_ui(ui, |ui| {
-                                for language in UiLanguage::available() {
-                                    if ui
-                                        .selectable_label(
-                                            self.ui_language == *language,
-                                            language.label(),
-                                        )
-                                        .clicked()
-                                    {
-                                        requested_language = Some(*language);
-                                        ui.close();
-                                    }
-                                }
-                            });
+                        if let Some(language) = render_language_combo(
+                            ui,
+                            "webui-settings-language",
+                            self.ui_language,
+                            160.0,
+                        ) {
+                            self.set_ui_language(language);
+                        }
                         ui.end_row();
 
                         ui.label("Theme Mode:");
@@ -409,9 +386,6 @@ impl ChatApp {
 
         self.show_settings_dialog = open;
 
-        if let Some(language) = requested_language {
-            self.set_ui_language(language);
-        }
         if let Some(theme_mode) = requested_theme_mode {
             self.set_theme_mode(theme_mode);
         }
@@ -1403,6 +1377,30 @@ fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState) {
         ui.add_space(4.0);
         ui.label(RichText::new(copy.body).weak());
     });
+}
+
+fn render_language_combo(
+    ui: &mut egui::Ui,
+    id: &'static str,
+    selected_language: UiLanguage,
+    width: f32,
+) -> Option<UiLanguage> {
+    let mut requested_language = None;
+    ComboBox::from_id_salt(id)
+        .width(width)
+        .selected_text(selected_language.label())
+        .show_ui(ui, |ui| {
+            for language in UiLanguage::available() {
+                if ui
+                    .selectable_label(selected_language == *language, language.label())
+                    .clicked()
+                {
+                    requested_language = Some(*language);
+                    ui.close();
+                }
+            }
+        });
+    requested_language
 }
 
 fn render_history_loading_state(ui: &mut egui::Ui) {

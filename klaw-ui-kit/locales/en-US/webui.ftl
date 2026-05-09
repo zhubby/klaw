@@ -15,4 +15,3 @@ status-connected = Connected
 status-connecting = Connecting...
 status-disconnected = Disconnected
 status-error = Error
-test-hello = Hello, {$name}

@@ -2,7 +2,6 @@ use i18n_embed::LanguageLoader;
 use i18n_embed::fluent::FluentLanguageLoader;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::OnceLock;
 use unic_langid::{LanguageIdentifier, langid};
 
@@ -25,14 +24,6 @@ impl UiLanguage {
     }
 
     #[must_use]
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::English => "en-US",
-            Self::SimplifiedChinese => "zh-CN",
-        }
-    }
-
-    #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::English => "English",
@@ -41,16 +32,7 @@ impl UiLanguage {
     }
 
     #[must_use]
-    pub fn from_code(code: &str) -> Option<Self> {
-        match code {
-            "en" | "en-US" => Some(Self::English),
-            "zh" | "zh-CN" | "zh-Hans" => Some(Self::SimplifiedChinese),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn language_identifier(self) -> LanguageIdentifier {
+    fn language_identifier(self) -> LanguageIdentifier {
         match self {
             Self::English => langid!("en-US"),
             Self::SimplifiedChinese => langid!("zh-CN"),
@@ -94,15 +76,6 @@ impl Translator {
             key.to_string()
         }
     }
-
-    #[must_use]
-    pub fn text_with_args(&self, key: &str, args: &[(&str, &str)]) -> String {
-        if !self.loader.has(key) {
-            return key.to_string();
-        }
-        self.loader
-            .get_args(key, args.iter().copied().collect::<HashMap<_, _>>())
-    }
 }
 
 fn cached_loader(domain: LocaleDomain, language: UiLanguage) -> &'static FluentLanguageLoader {
@@ -144,16 +117,10 @@ mod tests {
     use super::{LocaleDomain, Translator, UiLanguage};
 
     #[test]
-    fn ui_language_defaults_to_english_and_roundtrips_codes() {
+    fn ui_language_defaults_to_english_and_exposes_labels() {
         assert_eq!(UiLanguage::default(), UiLanguage::English);
-        assert_eq!(UiLanguage::English.code(), "en-US");
-        assert_eq!(UiLanguage::SimplifiedChinese.code(), "zh-CN");
-        assert_eq!(
-            UiLanguage::from_code("zh-CN"),
-            Some(UiLanguage::SimplifiedChinese)
-        );
-        assert_eq!(UiLanguage::from_code("en-US"), Some(UiLanguage::English));
-        assert_eq!(UiLanguage::from_code("fr-FR"), None);
+        assert_eq!(UiLanguage::English.label(), "English");
+        assert_eq!(UiLanguage::SimplifiedChinese.label(), "简体中文");
     }
 
     #[test]
@@ -178,15 +145,5 @@ mod tests {
 
         assert_eq!(translator.text("test-english-only"), "English only");
         assert_eq!(translator.text("missing-key"), "missing-key");
-    }
-
-    #[test]
-    fn variables_are_interpolated() {
-        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
-
-        assert_eq!(
-            translator.text_with_args("test-hello", &[("name", "Klaw")]),
-            "你好，Klaw"
-        );
     }
 }

@@ -15,4 +15,3 @@ status-connected = 已连接
 status-connecting = 连接中...
 status-disconnected = 未连接
 status-error = 错误
-test-hello = 你好，{$name}
