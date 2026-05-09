@@ -609,20 +609,13 @@ impl PanelRenderer for ConfigurationPanel {
                 &Self::path_hint(this.config_path.as_deref()),
             );
             ui.separator();
-            ui.vertical_centered(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let dirty = this.is_dirty();
                 let dot_color = if dirty {
                     Color32::YELLOW
                 } else {
                     Color32::LIGHT_GREEN
                 };
-                ui.add_space(4.0);
-                let rect = ui.available_rect_before_wrap();
-                let dot_center = egui::pos2(rect.center().x, rect.top() + 4.0);
-                ui.painter().circle_filled(dot_center, 4.0, dot_color);
-                ui.add_space(12.0);
-            });
-            ui.horizontal_wrapped(|ui| {
                 if ui
                     .button(format!("{} Save", regular::FLOPPY_DISK))
                     .clicked()
@@ -650,6 +643,18 @@ impl PanelRenderer for ConfigurationPanel {
                 {
                     this.try_reload(notifications);
                 }
+                ui.add_space(6.0);
+                let interact_size = ui.spacing().interact_size;
+                let dot_rect = ui
+                    .add(
+                        egui::Label::new(RichText::new(" ").size(interact_size.y))
+                            .selectable(false),
+                    )
+                    .rect;
+                let dot_center = dot_rect.center();
+                let dot_radius = interact_size.y / 2.0;
+                ui.painter()
+                    .circle_filled(dot_center, dot_radius, dot_color);
             });
             ui.separator();
             ui.horizontal(|ui| {
