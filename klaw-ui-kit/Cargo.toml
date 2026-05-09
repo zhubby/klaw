@@ -30,3 +30,10 @@ i18n-embed = { workspace = true, features = ["fluent-system", "desktop-requester
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { workspace = true }
 i18n-embed = { workspace = true, features = ["fluent-system", "web-sys-requester"] }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "locale_bench"
+harness = false
