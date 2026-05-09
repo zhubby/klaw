@@ -133,12 +133,12 @@ impl SkillsManagerPanel {
                 self.skill_root = Some(skill_root);
                 self.items = items;
                 self.loaded = true;
-                if let Some(current_name) = self.detail_name.as_deref() {
-                    if !self.items.iter().any(|item| item.name == current_name) {
-                        self.detail_name = None;
-                        self.detail_record = None;
-                        self.detail_window_open = false;
-                    }
+                if let Some(current_name) = self.detail_name.as_deref()
+                    && !self.items.iter().any(|item| item.name == current_name)
+                {
+                    self.detail_name = None;
+                    self.detail_record = None;
+                    self.detail_window_open = false;
                 }
             }
             Err(err) => notifications.error(format!("Failed to load installed skills: {err}")),
@@ -655,15 +655,13 @@ impl SkillsManagerPanel {
             .as_ref()
             .map(|current| current.selected_registry != selected_registry)
             .unwrap_or(false);
-        if registry_changed {
-            if let Some(mut current) = self.install_window.take() {
-                current.selected_registry = selected_registry.clone();
-                self.reload_install_window_catalog(&mut current);
-                if let Some(error) = current.error.as_ref() {
-                    notifications.warning(error.clone());
-                }
-                self.install_window = Some(current);
+        if registry_changed && let Some(mut current) = self.install_window.take() {
+            current.selected_registry = selected_registry.clone();
+            self.reload_install_window_catalog(&mut current);
+            if let Some(error) = current.error.as_ref() {
+                notifications.warning(error.clone());
             }
+            self.install_window = Some(current);
         }
 
         if let Some((registry_name, skill_name, installed)) = toggle_action {
@@ -1012,9 +1010,8 @@ fn install_local_skill_from_markdown_path(
         ));
     }
 
-    copy_directory_recursive(&source_dir_canonical, &target_dir).map_err(|err| {
+    copy_directory_recursive(&source_dir_canonical, &target_dir).inspect_err(|_| {
         let _ = fs::remove_dir_all(&target_dir);
-        err
     })?;
 
     Ok(LocalInstallResult {

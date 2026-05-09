@@ -198,7 +198,7 @@ fn absolutize_path(path: &Path) -> Result<PathBuf, DaemonError> {
 fn current_manager() -> Result<Box<dyn DaemonManager>, DaemonError> {
     #[cfg(target_os = "macos")]
     {
-        return Ok(Box::new(LaunchdUserManager::default()));
+        return Ok(Box::new(LaunchdUserManager));
     }
 
     #[cfg(target_os = "linux")]

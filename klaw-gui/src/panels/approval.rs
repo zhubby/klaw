@@ -65,12 +65,11 @@ impl ApprovalPanel {
         let offset = (page - 1) * size;
         let session_key = self.session_key_filter.clone();
         let tool_name = self.tool_name_filter.clone();
-        let preview_filter = self
-            .preview_filter
-            .trim()
-            .is_empty()
-            .then(|| None)
-            .unwrap_or_else(|| Some(self.preview_filter.trim().to_string()));
+        let preview_filter = if self.preview_filter.trim().is_empty() {
+            None
+        } else {
+            Some(self.preview_filter.trim().to_string())
+        };
         let query = ApprovalListQuery {
             session_key,
             tool_name,

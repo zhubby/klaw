@@ -4,18 +4,10 @@ use std::time::Duration;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
+#[derive(Default)]
 pub struct MonitorPanel {
     profiler_ui: puffin_egui::GlobalProfilerUi,
     profiler_enabled: bool,
-}
-
-impl Default for MonitorPanel {
-    fn default() -> Self {
-        Self {
-            profiler_ui: puffin_egui::GlobalProfilerUi::default(),
-            profiler_enabled: false,
-        }
-    }
 }
 
 impl PanelRenderer for MonitorPanel {

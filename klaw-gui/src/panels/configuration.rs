@@ -190,13 +190,10 @@ impl ConfigurationPanel {
     }
 
     fn sync_search_with_query(&mut self) {
-        let matches = self.search_matches();
+        let _matches = self.search_matches();
         self.search_match_index = 0;
         self.search_match_committed = false;
         self.pending_search_range = None;
-        if matches.is_empty() {
-            return;
-        }
     }
 
     fn jump_to_next_search_match(&mut self, notifications: &mut NotificationCenter) {

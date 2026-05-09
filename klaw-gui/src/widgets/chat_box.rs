@@ -30,6 +30,7 @@ impl ChatRole {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "user" => Self::User,
@@ -298,10 +299,10 @@ impl ChatBox {
                             });
                         }
 
-                        if matches!(message.role, ChatRole::User) {
-                            if ui.small_button("🔄").on_hover_text("Retry").clicked() {
-                                *pending_action = Some(ChatAction::Retry(message.id.clone()));
-                            }
+                        if matches!(message.role, ChatRole::User)
+                            && ui.small_button("🔄").on_hover_text("Retry").clicked()
+                        {
+                            *pending_action = Some(ChatAction::Retry(message.id.clone()));
                         }
                     });
                 });
@@ -340,12 +341,11 @@ impl ChatBox {
 
                 ui.add_enabled_ui(send_enabled, |ui| {
                     let button = ui.add_sized([50.0, input_height], egui::Button::new("Send"));
-                    if button.clicked()
-                        || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    if (button.clicked()
+                        || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
+                        && !self.input_text.trim().is_empty()
                     {
-                        if !self.input_text.trim().is_empty() {
-                            *pending_action = Some(ChatAction::Send);
-                        }
+                        *pending_action = Some(ChatAction::Send);
                     }
                 });
             },

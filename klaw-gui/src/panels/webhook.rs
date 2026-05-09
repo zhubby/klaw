@@ -943,11 +943,7 @@ impl PanelRenderer for WebhookPanel {
                             });
                         });
                         header.col(|ui| {
-                            ui.strong(if self.query_kind == WebhookQueryKind::Events {
-                                "Sender"
-                            } else {
-                                "Sender"
-                            });
+                            ui.strong("Sender");
                         });
                     })
                     .body(|body| {

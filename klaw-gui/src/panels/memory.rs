@@ -229,6 +229,7 @@ struct SessionSearchOutput {
     hits: Vec<SessionSearchHit>,
 }
 
+#[derive(Default)]
 pub struct MemoryPanel {
     loaded: bool,
     loading: bool,
@@ -255,38 +256,6 @@ pub struct MemoryPanel {
     session_search_result: Option<SessionSearchOutput>,
     archive_run_request: Option<PendingArchiveRun>,
     archive_run_loading: bool,
-}
-
-impl Default for MemoryPanel {
-    fn default() -> Self {
-        Self {
-            loaded: false,
-            loading: false,
-            refresh_queued: false,
-            overview: None,
-            load_request: None,
-            store: None,
-            config_path: None,
-            config: AppConfig::default(),
-            form: None,
-            stats_window_open: false,
-            tab: MemoryTab::LongTerm,
-            status_filter: StatusFilter::Active,
-            kind_filter: KindFilter::All,
-            topic_filter: String::new(),
-            selected_long_term_id: None,
-            detail_record_id: None,
-            delete_confirm_id: None,
-            delete_request: None,
-            delete_loading: false,
-            session_form: SessionSearchForm::default(),
-            session_search_request: None,
-            session_search_loading: false,
-            session_search_result: None,
-            archive_run_request: None,
-            archive_run_loading: false,
-        }
-    }
 }
 
 impl MemoryPanel {
@@ -1730,10 +1699,10 @@ async fn search_session_history(
         .and_then(|session| session.active_session_key)
         .filter(|value| !value.trim().is_empty());
     let mut session_keys = vec![base_session_key.clone()];
-    if let Some(active_session_key) = active_session_key {
-        if active_session_key != base_session_key {
-            session_keys.push(active_session_key);
-        }
+    if let Some(active_session_key) = active_session_key
+        && active_session_key != base_session_key
+    {
+        session_keys.push(active_session_key);
     }
     if input_session_key != base_session_key && !session_keys.contains(&input_session_key) {
         session_keys.push(input_session_key.clone());

@@ -766,16 +766,20 @@ mod tests {
 
     #[test]
     fn next_task_skips_startup_maintenance_when_auto_backup_is_disabled() {
-        let mut supervisor = SyncSupervisor::default();
-        supervisor.startup_check_completed = true;
+        let supervisor = SyncSupervisor {
+            startup_check_completed: true,
+            ..Default::default()
+        };
 
         assert_eq!(supervisor.next_task(&ready_settings(false, None), 0), None);
     }
 
     #[test]
     fn next_task_runs_auto_backup_after_interval_elapses() {
-        let mut supervisor = SyncSupervisor::default();
-        supervisor.startup_check_completed = true;
+        let supervisor = SyncSupervisor {
+            startup_check_completed: true,
+            ..Default::default()
+        };
         let mut settings = ready_settings(true, Some(1_000));
         settings.sync.schedule.interval_minutes = 1;
 

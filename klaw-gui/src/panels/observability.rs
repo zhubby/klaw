@@ -256,16 +256,12 @@ impl ObservabilityPanel {
         };
         match form.validate() {
             Ok((provider, model, entry)) => {
-                if form.original_provider.is_some() {
-                    if let Some(old_provider) = &form.original_provider {
-                        if let Some(old_model) = &form.original_model {
-                            if old_provider != &provider || old_model != &model {
-                                if let Some(models) = self.config.price.get_mut(old_provider) {
-                                    models.remove(old_model.as_str());
-                                }
-                            }
-                        }
-                    }
+                if let Some(old_provider) = &form.original_provider
+                    && let Some(old_model) = &form.original_model
+                    && (old_provider != &provider || old_model != &model)
+                    && let Some(models) = self.config.price.get_mut(old_provider)
+                {
+                    models.remove(old_model.as_str());
                 }
                 let is_dup = self
                     .config
@@ -443,15 +439,14 @@ impl ObservabilityPanel {
                 });
         });
 
-        if let (Some(provider), Some(model)) = (edit_provider, edit_model) {
-            if let Some(entry) = self
+        if let (Some(provider), Some(model)) = (edit_provider, edit_model)
+            && let Some(entry) = self
                 .config
                 .price
                 .get(&provider)
                 .and_then(|models| models.get(&model))
-            {
-                self.price_form = Some(PriceForm::edit(&provider, &model, entry));
-            }
+        {
+            self.price_form = Some(PriceForm::edit(&provider, &model, entry));
         }
         if let (Some(provider), Some(model)) = (delete_provider, delete_model) {
             self.price_delete_confirm = Some((provider, model));

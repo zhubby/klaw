@@ -1072,6 +1072,7 @@ impl PanelRenderer for VoicePanel {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_secret_provider_section(
     ui: &mut egui::Ui,
     id_prefix: &str,
@@ -1291,14 +1292,16 @@ mod tests {
     use klaw_config::{AppConfig, SttProviderKind, TtsProviderKind, VoiceConfig};
 
     fn sample_app_config() -> AppConfig {
-        let mut config = AppConfig::default();
-        config.voice = VoiceConfig {
-            enabled: true,
-            stt_provider: SttProviderKind::Deepgram,
-            tts_provider: TtsProviderKind::Elevenlabs,
-            default_language: "zh-CN".to_string(),
-            default_voice_id: Some("voice-1".to_string()),
-            ..VoiceConfig::default()
+        let mut config = AppConfig {
+            voice: VoiceConfig {
+                enabled: true,
+                stt_provider: SttProviderKind::Deepgram,
+                tts_provider: TtsProviderKind::Elevenlabs,
+                default_language: "zh-CN".to_string(),
+                default_voice_id: Some("voice-1".to_string()),
+                ..VoiceConfig::default()
+            },
+            ..AppConfig::default()
         };
         config.voice.providers.deepgram.api_key = Some("dg".to_string());
         config.voice.providers.assemblyai.api_key = Some("aa".to_string());

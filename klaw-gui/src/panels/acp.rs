@@ -187,7 +187,7 @@ impl AcpPanel {
             return;
         }
         if let Some(selected) = self.selected_agent.as_deref()
-            && available.iter().any(|agent_id| *agent_id == selected)
+            && available.contains(&selected)
         {
             self.prompt_test.agent_id = selected.to_string();
             return;
@@ -1658,7 +1658,7 @@ impl PanelRenderer for AcpPanel {
 }
 
 fn pending_permission_mut(
-    pending_permissions: &mut Vec<PendingPermissionState>,
+    pending_permissions: &mut [PendingPermissionState],
     request_id: u64,
 ) -> Option<&mut PendingPermissionState> {
     pending_permissions

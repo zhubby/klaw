@@ -261,60 +261,59 @@ impl AnalyzeDashboardPanel {
                 }
             }
 
-            if matches!(self.view, DashboardView::Models) {
-                if let Some(snapshot) = &self.model_snapshot {
-                    ui.separator();
-                    egui::ComboBox::from_id_salt("analyze-dashboard-provider")
-                        .selected_text(self.selected_provider.as_deref().unwrap_or("All Providers"))
-                        .show_ui(ui, |ui| {
+            if matches!(self.view, DashboardView::Models)
+                && let Some(snapshot) = &self.model_snapshot
+            {
+                ui.separator();
+                egui::ComboBox::from_id_salt("analyze-dashboard-provider")
+                    .selected_text(self.selected_provider.as_deref().unwrap_or("All Providers"))
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(self.selected_provider.is_none(), "All Providers")
+                            .clicked()
+                        {
+                            self.selected_provider = None;
+                            self.selected_model = None;
+                            changed = true;
+                        }
+                        for provider in &snapshot.providers {
                             if ui
-                                .selectable_label(self.selected_provider.is_none(), "All Providers")
+                                .selectable_label(
+                                    self.selected_provider.as_deref() == Some(provider.as_str()),
+                                    provider,
+                                )
                                 .clicked()
                             {
-                                self.selected_provider = None;
+                                self.selected_provider = Some(provider.clone());
                                 self.selected_model = None;
                                 changed = true;
                             }
-                            for provider in &snapshot.providers {
-                                if ui
-                                    .selectable_label(
-                                        self.selected_provider.as_deref()
-                                            == Some(provider.as_str()),
-                                        provider,
-                                    )
-                                    .clicked()
-                                {
-                                    self.selected_provider = Some(provider.clone());
-                                    self.selected_model = None;
-                                    changed = true;
-                                }
-                            }
-                        });
+                        }
+                    });
 
-                    egui::ComboBox::from_id_salt("analyze-dashboard-model")
-                        .selected_text(self.selected_model.as_deref().unwrap_or("All Models"))
-                        .show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("analyze-dashboard-model")
+                    .selected_text(self.selected_model.as_deref().unwrap_or("All Models"))
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(self.selected_model.is_none(), "All Models")
+                            .clicked()
+                        {
+                            self.selected_model = None;
+                            changed = true;
+                        }
+                        for model in &snapshot.models {
                             if ui
-                                .selectable_label(self.selected_model.is_none(), "All Models")
+                                .selectable_label(
+                                    self.selected_model.as_deref() == Some(model.as_str()),
+                                    model,
+                                )
                                 .clicked()
                             {
-                                self.selected_model = None;
+                                self.selected_model = Some(model.clone());
                                 changed = true;
                             }
-                            for model in &snapshot.models {
-                                if ui
-                                    .selectable_label(
-                                        self.selected_model.as_deref() == Some(model.as_str()),
-                                        model,
-                                    )
-                                    .clicked()
-                                {
-                                    self.selected_model = Some(model.clone());
-                                    changed = true;
-                                }
-                            }
-                        });
-                }
+                        }
+                    });
             }
 
             ui.separator();
@@ -1035,6 +1034,7 @@ fn render_model_tool_breakdown_table(ui: &mut egui::Ui, rows: &[ModelToolBreakdo
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_top_tool_table<FPrimary, FSecondary>(
     ui: &mut egui::Ui,
     title: &str,

@@ -249,10 +249,10 @@ impl ArchivePullCommand {
     async fn run(self, service: &SqliteArchiveService) -> Result<(), Box<dyn std::error::Error>> {
         let blob = service.open_download(&self.archive_id).await?;
         let output_path = resolve_output_path(self.output, &blob.record);
-        if let Some(parent) = output_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).await?;
-            }
+        if let Some(parent) = output_path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).await?;
         }
         fs::write(&output_path, &blob.bytes).await?;
         println!("archive_id={}", blob.record.id);

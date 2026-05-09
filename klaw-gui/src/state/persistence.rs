@@ -25,10 +25,7 @@ pub fn load_ui_state() -> UiState {
     let Some(path) = default_state_path() else {
         return UiState::default();
     };
-    match load_ui_state_from_path(&path) {
-        Ok(state) => state,
-        Err(_) => UiState::default(),
-    }
+    load_ui_state_from_path(&path).unwrap_or_default()
 }
 
 pub fn save_ui_state(state: &UiState) -> io::Result<()> {
@@ -107,10 +104,12 @@ mod tests {
     #[test]
     fn roundtrip_ui_state() {
         let path = unique_test_path();
-        let mut state = UiState::default();
-        state.theme_mode = ThemeMode::Dark;
-        state.light_theme = LightThemePreset::Crab;
-        state.dark_theme = DarkThemePreset::Mocha;
+        let mut state = UiState {
+            theme_mode: ThemeMode::Dark,
+            light_theme: LightThemePreset::Crab,
+            dark_theme: DarkThemePreset::Mocha,
+            ..Default::default()
+        };
         state.apply(UiAction::OpenMenu(WorkbenchMenu::Provider));
         state.apply(UiAction::ActivateTab(TabId::from_menu(
             WorkbenchMenu::Provider,

@@ -1090,6 +1090,55 @@ fn format_skill_source(
     source
 }
 
+fn format_bytes(value: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let raw = value as f64;
+    if raw >= GB {
+        format!("{:.2} GB", raw / GB)
+    } else if raw >= MB {
+        format!("{:.2} MB", raw / MB)
+    } else if raw >= KB {
+        format!("{:.2} KB", raw / KB)
+    } else {
+        format!("{value} B")
+    }
+}
+
+struct WorkspaceDocRowInteraction {
+    selected_doc: Option<String>,
+    open_preview: bool,
+}
+
+fn handle_workspace_doc_row_interaction(
+    is_selected: bool,
+    file_name: String,
+    clicked: bool,
+    double_clicked: bool,
+) -> WorkspaceDocRowInteraction {
+    if double_clicked {
+        return WorkspaceDocRowInteraction {
+            selected_doc: Some(file_name),
+            open_preview: true,
+        };
+    }
+
+    let selected_doc = if clicked {
+        if is_selected { None } else { Some(file_name) }
+    } else if is_selected {
+        Some(file_name)
+    } else {
+        None
+    };
+
+    WorkspaceDocRowInteraction {
+        selected_doc,
+        open_preview: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1292,54 +1341,5 @@ mod tests {
 
         assert_eq!(interaction.selected_doc, None);
         assert!(!interaction.open_preview);
-    }
-}
-
-fn format_bytes(value: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-
-    let raw = value as f64;
-    if raw >= GB {
-        format!("{:.2} GB", raw / GB)
-    } else if raw >= MB {
-        format!("{:.2} MB", raw / MB)
-    } else if raw >= KB {
-        format!("{:.2} KB", raw / KB)
-    } else {
-        format!("{value} B")
-    }
-}
-
-struct WorkspaceDocRowInteraction {
-    selected_doc: Option<String>,
-    open_preview: bool,
-}
-
-fn handle_workspace_doc_row_interaction(
-    is_selected: bool,
-    file_name: String,
-    clicked: bool,
-    double_clicked: bool,
-) -> WorkspaceDocRowInteraction {
-    if double_clicked {
-        return WorkspaceDocRowInteraction {
-            selected_doc: Some(file_name),
-            open_preview: true,
-        };
-    }
-
-    let selected_doc = if clicked {
-        if is_selected { None } else { Some(file_name) }
-    } else if is_selected {
-        Some(file_name)
-    } else {
-        None
-    };
-
-    WorkspaceDocRowInteraction {
-        selected_doc,
-        open_preview: false,
     }
 }

@@ -295,22 +295,12 @@ impl DirKind {
     }
 }
 
+#[derive(Default)]
 struct DirState {
     usage_bytes: Option<u64>,
     usage_error: Option<String>,
     usage_rx: Option<Receiver<Result<u64, String>>>,
     clear_rx: Option<Receiver<Result<(), String>>>,
-}
-
-impl Default for DirState {
-    fn default() -> Self {
-        Self {
-            usage_bytes: None,
-            usage_error: None,
-            usage_rx: None,
-            clear_rx: None,
-        }
-    }
 }
 
 impl DirState {
@@ -668,8 +658,6 @@ impl SystemPanel {
                     success_color
                 } else if check.required {
                     error_color
-                } else if matches!(check.category, DependencyCategory::Preferred) {
-                    warn_color
                 } else {
                     warn_color
                 };
@@ -736,39 +724,37 @@ impl SystemPanel {
         ] {
             let dir = self.get_dir_mut(kind);
 
-            if let Some(rx) = dir.usage_rx.as_ref() {
-                if let Ok(result) = rx.try_recv() {
-                    dir.usage_rx = None;
-                    match result {
-                        Ok(bytes) => {
-                            dir.usage_bytes = Some(bytes);
-                            dir.usage_error = None;
-                        }
-                        Err(err) => {
-                            dir.usage_bytes = None;
-                            dir.usage_error = Some(err.clone());
-                            notifications
-                                .error(format!("Failed to collect {} usage: {err}", kind.title()));
-                        }
+            if let Some(rx) = dir.usage_rx.as_ref()
+                && let Ok(result) = rx.try_recv()
+            {
+                dir.usage_rx = None;
+                match result {
+                    Ok(bytes) => {
+                        dir.usage_bytes = Some(bytes);
+                        dir.usage_error = None;
+                    }
+                    Err(err) => {
+                        dir.usage_bytes = None;
+                        dir.usage_error = Some(err.clone());
+                        notifications
+                            .error(format!("Failed to collect {} usage: {err}", kind.title()));
                     }
                 }
             }
 
-            if let Some(rx) = dir.clear_rx.as_ref() {
-                if let Ok(result) = rx.try_recv() {
-                    dir.clear_rx = None;
-                    match result {
-                        Ok(()) => {
-                            dir.usage_bytes = Some(0);
-                            notifications.success(format!("{} directory cleared", kind.title()));
-                            self.refresh_usage(kind);
-                        }
-                        Err(err) => {
-                            notifications.error(format!(
-                                "Failed to clear {} directory: {err}",
-                                kind.title()
-                            ));
-                        }
+            if let Some(rx) = dir.clear_rx.as_ref()
+                && let Ok(result) = rx.try_recv()
+            {
+                dir.clear_rx = None;
+                match result {
+                    Ok(()) => {
+                        dir.usage_bytes = Some(0);
+                        notifications.success(format!("{} directory cleared", kind.title()));
+                        self.refresh_usage(kind);
+                    }
+                    Err(err) => {
+                        notifications
+                            .error(format!("Failed to clear {} directory: {err}", kind.title()));
                     }
                 }
             }
@@ -858,11 +844,9 @@ impl SystemPanel {
                 .button(regular::FOLDER_OPEN)
                 .on_hover_text(format!("Open {} directory in Finder", kind.title()))
                 .clicked()
+                && let Err(err) = open_directory_in_file_manager(&path)
             {
-                if let Err(err) = open_directory_in_file_manager(&path) {
-                    notifications
-                        .error(format!("Failed to open {} directory: {err}", kind.title()));
-                }
+                notifications.error(format!("Failed to open {} directory: {err}", kind.title()));
             }
 
             if ui

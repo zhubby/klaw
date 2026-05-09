@@ -857,21 +857,21 @@ impl SettingPanel {
                     .show(ui, |ui| {
                         ui.label("Interval (minutes):");
                         let mut interval = self.settings.sync.schedule.interval_minutes.to_string();
-                        if ui.text_edit_singleline(&mut interval).changed() {
-                            if let Ok(parsed) = interval.parse::<u32>() {
-                                self.settings.sync.schedule.interval_minutes = parsed.max(1);
-                                changed = true;
-                            }
+                        if ui.text_edit_singleline(&mut interval).changed()
+                            && let Ok(parsed) = interval.parse::<u32>()
+                        {
+                            self.settings.sync.schedule.interval_minutes = parsed.max(1);
+                            changed = true;
                         }
                         ui.end_row();
 
                         ui.label("Keep latest manifests:");
                         let mut keep_last = self.settings.sync.retention.keep_last.to_string();
-                        if ui.text_edit_singleline(&mut keep_last).changed() {
-                            if let Ok(parsed) = keep_last.parse::<u32>() {
-                                self.settings.sync.retention.keep_last = parsed.max(1);
-                                changed = true;
-                            }
+                        if ui.text_edit_singleline(&mut keep_last).changed()
+                            && let Ok(parsed) = keep_last.parse::<u32>()
+                        {
+                            self.settings.sync.retention.keep_last = parsed.max(1);
+                            changed = true;
                         }
                         ui.end_row();
                     });
@@ -970,11 +970,11 @@ impl SettingPanel {
                         if checked && index.is_none() {
                             self.settings.sync.backup_items.push(*item);
                             changed = true;
-                        } else if !checked {
-                            if let Some(idx) = index {
-                                self.settings.sync.backup_items.remove(idx);
-                                changed = true;
-                            }
+                        } else if !checked
+                            && let Some(idx) = index
+                        {
+                            self.settings.sync.backup_items.remove(idx);
+                            changed = true;
                         }
                     }
                 }
@@ -1310,8 +1310,7 @@ fn runtime_progress_from_backup(progress: BackupProgress) -> SyncRuntimeProgress
 
 fn render_sync_text_field(ui: &mut egui::Ui, label: &str, value: &mut String) -> bool {
     ui.label(label);
-    let changed = ui.text_edit_singleline(value).changed();
-    changed
+    ui.text_edit_singleline(value).changed()
 }
 
 fn render_proxy_fields(ui: &mut egui::Ui, config: &mut crate::settings::ProxyConfig) -> bool {

@@ -311,11 +311,7 @@ impl McpPanel {
             }
             Ok(Err(err)) => {
                 self.sync_fetch_rx = None;
-                if self.sync_announce {
-                    notifications.error(format!("Failed to sync MCP runtime: {err}"));
-                } else {
-                    notifications.error(format!("Failed to sync MCP runtime: {err}"));
-                }
+                notifications.error(format!("Failed to sync MCP runtime: {err}"));
                 self.sync_announce = false;
             }
             Err(mpsc::TryRecvError::Empty) => {}
@@ -688,11 +684,9 @@ impl PanelRenderer for McpPanel {
                 ui.spinner();
                 ui.label("Applying MCP changes...");
             }
-            if self.status_fetch_rx.is_some() {
-                if self.status_refresh_manual {
-                    ui.spinner();
-                    ui.label("Refreshing runtime status...");
-                }
+            if self.status_fetch_rx.is_some() && self.status_refresh_manual {
+                ui.spinner();
+                ui.label("Refreshing runtime status...");
             }
             if self.restart_request.is_some() {
                 ui.spinner();

@@ -50,6 +50,7 @@ pub struct SecuritySettings {}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+#[allow(clippy::enum_variant_names)]
 pub enum ProxyMode {
     #[default]
     NoProxy,
@@ -69,21 +70,12 @@ pub struct NetworkSettings {
     pub socks5_proxy: ProxyConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ProxyConfig {
     #[serde(default)]
     pub host: String,
     #[serde(default)]
     pub port: u16,
-}
-
-impl Default for ProxyConfig {
-    fn default() -> Self {
-        Self {
-            host: String::new(),
-            port: 0,
-        }
-    }
 }
 
 #[allow(dead_code)]
@@ -281,10 +273,7 @@ pub fn load_settings() -> AppSettings {
     let Some(path) = settings_path() else {
         return AppSettings::default();
     };
-    match load_settings_from_path(&path) {
-        Ok(settings) => settings,
-        Err(_) => AppSettings::default(),
-    }
+    load_settings_from_path(&path).unwrap_or_default()
 }
 
 pub fn save_settings(settings: &AppSettings) -> io::Result<()> {

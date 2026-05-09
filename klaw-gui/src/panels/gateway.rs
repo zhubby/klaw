@@ -100,7 +100,7 @@ enum PendingGatewayAction {
 }
 
 enum PendingGatewayResult {
-    Snapshot(Result<GatewayStatusSnapshot, String>),
+    Snapshot(Box<Result<GatewayStatusSnapshot, String>>),
     TailscaleHost(Result<TailscaleHostInfo, String>),
 }
 
@@ -219,7 +219,7 @@ impl GatewayPanel {
 
         match pending.receiver.try_recv() {
             Ok(result) => match result {
-                PendingGatewayResult::Snapshot(result) => match result {
+                PendingGatewayResult::Snapshot(result) => match *result {
                     Ok(status) => {
                         self.apply_status(status);
                         match pending.action {
@@ -300,7 +300,7 @@ impl GatewayPanel {
                                 announce: false,
                                 tailscale_only: false,
                             },
-                            || PendingGatewayResult::Snapshot(request_gateway_status()),
+                            || PendingGatewayResult::Snapshot(Box::new(request_gateway_status())),
                         );
                     }
                 },
@@ -346,7 +346,7 @@ impl GatewayPanel {
                 if tailscale_only {
                     PendingGatewayResult::TailscaleHost(request_tailscale_host_status())
                 } else {
-                    PendingGatewayResult::Snapshot(request_gateway_status())
+                    PendingGatewayResult::Snapshot(Box::new(request_gateway_status()))
                 }
             },
         );
@@ -404,19 +404,19 @@ impl GatewayPanel {
 
     fn start(&mut self, _notifications: &mut NotificationCenter) {
         self.queue_request(PendingGatewayAction::Start, || {
-            PendingGatewayResult::Snapshot(request_start_gateway())
+            PendingGatewayResult::Snapshot(Box::new(request_start_gateway()))
         });
     }
 
     fn restart(&mut self, _notifications: &mut NotificationCenter) {
         self.queue_request(PendingGatewayAction::Restart, || {
-            PendingGatewayResult::Snapshot(request_restart_gateway())
+            PendingGatewayResult::Snapshot(Box::new(request_restart_gateway()))
         });
     }
 
     fn set_tailscale_mode(&mut self, mode: TailscaleMode, _notifications: &mut NotificationCenter) {
         self.queue_request(PendingGatewayAction::SetTailscaleMode(mode), move || {
-            PendingGatewayResult::Snapshot(request_set_tailscale_mode(mode))
+            PendingGatewayResult::Snapshot(Box::new(request_set_tailscale_mode(mode)))
         });
     }
 
@@ -861,8 +861,10 @@ mod tests {
 
     #[test]
     fn apply_status_syncs_selected_tailscale_mode() {
-        let mut panel = GatewayPanel::default();
-        panel.selected_tailscale_mode = TailscaleMode::Serve;
+        let mut panel = GatewayPanel {
+            selected_tailscale_mode: TailscaleMode::Serve,
+            ..Default::default()
+        };
 
         panel.apply_status(GatewayStatusSnapshot {
             tailscale_mode: TailscaleMode::Funnel,

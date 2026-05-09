@@ -2350,12 +2350,14 @@ mod tests {
 
     #[test]
     fn runtime_definition_uses_runtime_name_override() {
-        let mut panel = ToolPanel::default();
-        panel.runtime_definitions = vec![ToolDefinition {
-            name: "terminal_multiplexer".to_string(),
-            description: "tmux metadata".to_string(),
-            parameters: serde_json::json!({}),
-        }];
+        let panel = ToolPanel {
+            runtime_definitions: vec![ToolDefinition {
+                name: "terminal_multiplexer".to_string(),
+                description: "tmux metadata".to_string(),
+                parameters: serde_json::json!({}),
+            }],
+            ..Default::default()
+        };
 
         let tool = panel
             .tool_by_config_key("terminal_multiplexers")

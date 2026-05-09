@@ -119,10 +119,10 @@ impl PanelRenderer for LocalModelsPanel {
             if ui.button("Install Model").clicked() {
                 self.install_window_open = true;
             }
-            if ui.button("Open Models Directory").clicked() {
-                if let Err(err) = open_path_in_os(&self.models_dir_path()) {
-                    notifications.error(format!("Failed to open models directory: {err}"));
-                }
+            if ui.button("Open Models Directory").clicked()
+                && let Err(err) = open_path_in_os(&self.models_dir_path())
+            {
+                notifications.error(format!("Failed to open models directory: {err}"));
             }
             if ui
                 .add_enabled(
@@ -130,10 +130,9 @@ impl PanelRenderer for LocalModelsPanel {
                     egui::Button::new("Set Default GGUF File"),
                 )
                 .clicked()
+                && let Some(model_id) = selected_model.clone()
             {
-                if let Some(model_id) = selected_model.clone() {
-                    self.open_default_gguf_dialog(model_id);
-                }
+                self.open_default_gguf_dialog(model_id);
             }
             if ui
                 .add_enabled(
@@ -141,10 +140,9 @@ impl PanelRenderer for LocalModelsPanel {
                     egui::Button::new("Clear Default GGUF"),
                 )
                 .clicked()
+                && let Some(model_id) = selected_model.clone()
             {
-                if let Some(model_id) = selected_model.clone() {
-                    self.begin_set_default_gguf_model_file(model_id, None);
-                }
+                self.begin_set_default_gguf_model_file(model_id, None);
             }
         });
 
@@ -493,11 +491,11 @@ impl LocalModelsPanel {
                             );
                         }
                     });
-                if ui.button("Cancel Download").clicked() {
-                    if let Some(token) = self.install_cancel.as_ref() {
-                        token.cancel();
-                        notifications.info("Cancelling model download");
-                    }
+                if ui.button("Cancel Download").clicked()
+                    && let Some(token) = self.install_cancel.as_ref()
+                {
+                    token.cancel();
+                    notifications.info("Cancelling model download");
                 }
             });
     }

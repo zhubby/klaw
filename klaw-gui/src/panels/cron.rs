@@ -1005,10 +1005,10 @@ fn validate_inbound_payload_value(payload: &serde_json::Value) -> Result<(), Str
         None => return Err("missing required field `metadata`".to_string()),
     }
 
-    if let Some(media_references) = object.get("media_references") {
-        if !media_references.is_array() {
-            return Err("`media_references` must be an array when provided".to_string());
-        }
+    if let Some(media_references) = object.get("media_references")
+        && !media_references.is_array()
+    {
+        return Err("`media_references` must be an array when provided".to_string());
     }
 
     Ok(())

@@ -97,10 +97,10 @@ pub fn sync_runtime_set_task_progress(
     progress: Option<SyncRuntimeProgress>,
 ) {
     with_runtime_state(|state| {
-        if let Some(task) = state.active_task.as_mut() {
-            if task.kind == kind {
-                task.progress = progress;
-            }
+        if let Some(task) = state.active_task.as_mut()
+            && task.kind == kind
+        {
+            task.progress = progress;
         }
     });
 }

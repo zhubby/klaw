@@ -282,8 +282,8 @@ fn run_command(command: &str, args: &[&str]) -> anyhow::Result<CommandOutput> {
         Ok(output)
     } else {
         bail!(
-            "command '{}' failed with exit code {}: {}",
-            format!("{command} {}", args.join(" ")),
+            "command '{command} {}' failed with exit code {}: {}",
+            args.join(" "),
             output.exit_code,
             command_error_details(&output)
         );
@@ -292,12 +292,10 @@ fn run_command(command: &str, args: &[&str]) -> anyhow::Result<CommandOutput> {
 
 #[cfg(target_os = "macos")]
 fn run_command_allow_failure(command: &str, args: &[&str]) -> anyhow::Result<CommandOutput> {
-    let output = Command::new(command).args(args).output().with_context(|| {
-        format!(
-            "failed to run '{}'",
-            format!("{command} {}", args.join(" "))
-        )
-    })?;
+    let output = Command::new(command)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run '{command} {}'", args.join(" ")))?;
     Ok(CommandOutput {
         exit_code: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),

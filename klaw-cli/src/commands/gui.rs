@@ -218,6 +218,7 @@ fn tool_definitions(runtime: &RuntimeBundle) -> Vec<ToolDefinition> {
     definitions
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_execute_acp_prompt_stream_command(
     agent_id: String,
     prompt: String,
