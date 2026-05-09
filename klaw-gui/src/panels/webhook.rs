@@ -18,6 +18,7 @@ use klaw_session::{
     WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
     WebhookEventStatus,
 };
+use klaw_ui_kit::{label_with_hint, toggle::toggle};
 use klaw_util::default_data_dir;
 use serde_json::Value;
 use std::fs;
@@ -778,7 +779,7 @@ impl PanelRenderer for WebhookPanel {
         }
 
         ui.heading(ctx.tab_title);
-        render_webhook_config_summary(ui, &self.config);
+        render_webhook_config_summary(ui);
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
@@ -1180,50 +1181,58 @@ impl PanelRenderer for WebhookPanel {
                 .resizable(true)
                 .default_width(520.0)
                 .show(ui.ctx(), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Enabled");
-                        ui.checkbox(&mut self.config_form.enabled, "");
-                    });
+                    egui::Grid::new("webhook-config-grid")
+                        .num_columns(2)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            label_with_hint(ui, "Enabled", "Enable or disable the entire webhook subsystem.");
+                            ui.add(toggle(&mut self.config_form.enabled));
+                            ui.end_row();
+                        });
 
                     ui.separator();
                     ui.strong("Events Endpoint");
-                    ui.horizontal(|ui| {
-                        ui.label("Enabled");
-                        ui.checkbox(&mut self.config_form.events_enabled, "");
-                    });
+                    egui::Grid::new("webhook-config-events-grid")
+                        .num_columns(2)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            label_with_hint(ui, "Enabled", "Enable the events endpoint to receive inbound webhook events.");
+                            ui.add(toggle(&mut self.config_form.events_enabled));
+                            ui.end_row();
 
-                    ui.horizontal(|ui| {
-                        ui.label("Path");
-                        ui.monospace(Route::WebhookEvents.as_str());
-                    });
+                            label_with_hint(ui, "Path", "URL path for the events endpoint (read-only, auto-assigned).");
+                            ui.monospace(Route::WebhookEvents.as_str());
+                            ui.end_row();
 
-                    ui.horizontal(|ui| {
-                        ui.label("Max Body Bytes");
-                        ui.add_sized(
-                            [160.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.events_max_body_bytes),
-                        );
-                    });
+                            label_with_hint(ui, "Max Body Bytes", "Maximum request body size in bytes accepted by the events endpoint.");
+                            ui.add_sized(
+                                [160.0, ui.spacing().interact_size.y],
+                                egui::TextEdit::singleline(&mut self.config_form.events_max_body_bytes),
+                            );
+                            ui.end_row();
+                        });
 
                     ui.separator();
                     ui.strong("Agents Endpoint");
-                    ui.horizontal(|ui| {
-                        ui.label("Enabled");
-                        ui.checkbox(&mut self.config_form.agents_enabled, "");
-                    });
+                    egui::Grid::new("webhook-config-agents-grid")
+                        .num_columns(2)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            label_with_hint(ui, "Enabled", "Enable the agents endpoint to receive inbound agent prompts.");
+                            ui.add(toggle(&mut self.config_form.agents_enabled));
+                            ui.end_row();
 
-                    ui.horizontal(|ui| {
-                        ui.label("Path");
-                        ui.monospace(Route::WebhookAgents.as_str());
-                    });
+                            label_with_hint(ui, "Path", "URL path for the agents endpoint (read-only, auto-assigned).");
+                            ui.monospace(Route::WebhookAgents.as_str());
+                            ui.end_row();
 
-                    ui.horizontal(|ui| {
-                        ui.label("Max Body Bytes");
-                        ui.add_sized(
-                            [160.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.config_form.agents_max_body_bytes),
-                        );
-                    });
+                            label_with_hint(ui, "Max Body Bytes", "Maximum request body size in bytes accepted by the agents endpoint.");
+                            ui.add_sized(
+                                [160.0, ui.spacing().interact_size.y],
+                                egui::TextEdit::singleline(&mut self.config_form.agents_max_body_bytes),
+                            );
+                            ui.end_row();
+                        });
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
@@ -1661,19 +1670,8 @@ impl PanelRenderer for WebhookPanel {
     }
 }
 
-fn render_webhook_config_summary(ui: &mut egui::Ui, config: &AppConfig) {
-    let webhook = &config.gateway.webhook;
-
-    ui.horizontal_wrapped(|ui| {
-        ui.label("Webhook");
-        render_boolean_status(ui, webhook.enabled);
-        ui.separator();
-        ui.label("Events");
-        render_boolean_status(ui, webhook.events.enabled);
-        ui.separator();
-        ui.label("Agents");
-        render_boolean_status(ui, webhook.agents.enabled);
-    });
+fn render_webhook_config_summary(ui: &mut egui::Ui) {
+    ui.label("Manage webhook endpoints for inbound event and agent prompts.");
 }
 
 fn webhook_summary_state(item: &WebhookListRow) -> Option<WebhookSummaryState> {
@@ -1721,22 +1719,6 @@ fn query_mode_primary_label(kind: WebhookQueryKind) -> &'static str {
         WebhookQueryKind::Events => "Event Type",
         WebhookQueryKind::Agents => "Hook ID",
     }
-}
-
-fn render_boolean_status(ui: &mut egui::Ui, enabled: bool) {
-    let (icon, color, label) = if enabled {
-        (
-            regular::CHECK_CIRCLE,
-            Color32::from_rgb(0x22, 0xC5, 0x5E),
-            "Enabled",
-        )
-    } else {
-        (regular::X_CIRCLE, ui.visuals().error_fg_color, "Disabled")
-    };
-    ui.horizontal(|ui| {
-        ui.colored_label(color, icon);
-        ui.colored_label(color, label);
-    });
 }
 
 fn gateway_base_url(ws_url: &str) -> String {

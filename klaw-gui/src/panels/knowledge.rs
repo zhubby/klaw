@@ -17,6 +17,7 @@ use klaw_knowledge::{
     KnowledgeSyncProgress, KnowledgeSyncProgressStage,
 };
 use klaw_model::{ModelCapability, ModelService, ModelSummary};
+use klaw_ui_kit::label_with_hint;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -801,15 +802,6 @@ fn split_csv(value: &str) -> Vec<String> {
 fn optional_string(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
-}
-
-fn label_with_hint(ui: &mut egui::Ui, label: &str, hint: &str) {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add_space(2.0);
-        let response = ui.label(RichText::new(regular::INFO).size(14.0).color(Color32::GRAY));
-        response.on_hover_text(hint);
-    });
 }
 
 fn status_label(path: Option<&Path>) -> String {

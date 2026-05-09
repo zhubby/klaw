@@ -14,6 +14,7 @@ use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig,
     TelegramConfig, TelegramProxyConfig, WebsocketConfig,
 };
+use klaw_ui_kit::label_with_hint;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -905,49 +906,49 @@ impl ChannelPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("ID");
+                                label_with_hint(ui, "ID", "Unique identifier for this Dingtalk channel instance (e.g. \"ops\", \"devops\").");
                                 ui.text_edit_singleline(&mut form.id);
                                 ui.end_row();
 
-                                ui.label("Enabled");
+                                label_with_hint(ui, "Enabled", "Enable or disable this Dingtalk channel instance.");
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("Client ID");
+                                label_with_hint(ui, "Client ID", "Dingtalk application client ID from the Dingtalk developer console.");
                                 ui.text_edit_singleline(&mut form.client_id);
                                 ui.end_row();
 
-                                ui.label("Client Secret");
+                                label_with_hint(ui, "Client Secret", "Dingtalk application client secret from the Dingtalk developer console.");
                                 ui.text_edit_singleline(&mut form.client_secret);
                                 ui.end_row();
 
-                                ui.label("Bot Title");
+                                label_with_hint(ui, "Bot Title", "Display name shown for the bot in Dingtalk conversations.");
                                 ui.text_edit_singleline(&mut form.bot_title);
                                 ui.end_row();
 
-                                ui.label("Show Reasoning");
+                                label_with_hint(ui, "Show Reasoning", "Include agent reasoning/thinking steps in Dingtalk responses.");
                                 ui.checkbox(&mut form.show_reasoning, "");
                                 ui.end_row();
 
-                                ui.label("Stream Output");
+                                label_with_hint(ui, "Stream Output", "Stream agent responses progressively instead of waiting for full completion.");
                                 ui.checkbox(&mut form.stream_output, "");
                                 ui.end_row();
 
                                 if form.stream_output {
-                                    ui.label("Stream Template ID");
+                                    label_with_hint(ui, "Stream Template ID", "Dingtalk message template ID for formatting streamed output chunks.");
                                     ui.text_edit_singleline(&mut form.stream_template_id);
                                     ui.end_row();
 
-                                    ui.label("Stream Content Key");
+                                    label_with_hint(ui, "Stream Content Key", "JSON key in the stream template that holds the content text.");
                                     ui.text_edit_singleline(&mut form.stream_content_key);
                                     ui.end_row();
                                 }
 
-                                ui.label("Proxy Enabled");
+                                label_with_hint(ui, "Proxy Enabled", "Route Dingtalk API requests through an HTTP proxy.");
                                 ui.checkbox(&mut form.proxy_enabled, "");
                                 ui.end_row();
 
-                                ui.label("Proxy URL");
+                                label_with_hint(ui, "Proxy URL", "HTTP proxy URL for Dingtalk API connections (e.g. \"http://proxy:8080\")");
                                 ui.text_edit_singleline(&mut form.proxy_url);
                                 ui.end_row();
                             });
@@ -960,31 +961,31 @@ impl ChannelPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("ID");
+                                label_with_hint(ui, "ID", "Unique identifier for this Telegram channel instance (e.g. \"ops-bot\")");
                                 ui.text_edit_singleline(&mut form.id);
                                 ui.end_row();
 
-                                ui.label("Enabled");
+                                label_with_hint(ui, "Enabled", "Enable or disable this Telegram channel instance.");
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("Bot Token");
+                                label_with_hint(ui, "Bot Token", "Telegram bot token obtained from BotFather (e.g. \"123456:ABC-DEF\")");
                                 ui.text_edit_singleline(&mut form.bot_token);
                                 ui.end_row();
 
-                                ui.label("Show Reasoning");
+                                label_with_hint(ui, "Show Reasoning", "Include agent reasoning/thinking steps in Telegram responses.");
                                 ui.checkbox(&mut form.show_reasoning, "");
                                 ui.end_row();
 
-                                ui.label("Stream Output");
+                                label_with_hint(ui, "Stream Output", "Stream agent responses progressively instead of waiting for full completion.");
                                 ui.checkbox(&mut form.stream_output, "");
                                 ui.end_row();
 
-                                ui.label("Proxy Enabled");
+                                label_with_hint(ui, "Proxy Enabled", "Route Telegram API requests through an HTTP proxy.");
                                 ui.checkbox(&mut form.proxy_enabled, "");
                                 ui.end_row();
 
-                                ui.label("Proxy URL");
+                                label_with_hint(ui, "Proxy URL", "HTTP proxy URL for Telegram API connections (e.g. \"http://proxy:8080\")");
                                 ui.text_edit_singleline(&mut form.proxy_url);
                                 ui.end_row();
                             });
@@ -997,19 +998,19 @@ impl ChannelPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("ID");
+                                label_with_hint(ui, "ID", "Unique identifier for this WebSocket channel instance (e.g. \"browser\")");
                                 ui.text_edit_singleline(&mut form.id);
                                 ui.end_row();
 
-                                ui.label("Enabled");
+                                label_with_hint(ui, "Enabled", "Enable or disable this WebSocket channel instance.");
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("Show Reasoning");
+                                label_with_hint(ui, "Show Reasoning", "Include agent reasoning/thinking steps in WebSocket responses.");
                                 ui.checkbox(&mut form.show_reasoning, "");
                                 ui.end_row();
 
-                                ui.label("Stream Output");
+                                label_with_hint(ui, "Stream Output", "Stream agent responses progressively instead of waiting for full completion.");
                                 ui.checkbox(&mut form.stream_output, "");
                                 ui.end_row();
                             });
@@ -1143,13 +1144,13 @@ impl PanelRenderer for ChannelPanel {
         let rows = self.all_rows();
 
         ui.heading(ctx.tab_title);
+        ui.label("Manage channel connections to external messaging services (Dingtalk, Telegram, WebSocket).");
         ui.horizontal(|ui| {
-            ui.label(format!("Channel instances: {}", rows.len()));
             if self.restart_request.is_some() {
-                ui.label("Restarting channel...");
+                ui.label(RichText::new("Restarting channel...").small());
             }
             if self.sync_request.is_some() {
-                ui.label("Synchronizing channels...");
+                ui.label(RichText::new("Synchronizing channels...").small());
             }
         });
         ui.separator();
