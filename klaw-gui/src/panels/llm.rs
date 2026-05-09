@@ -363,118 +363,115 @@ impl PanelRenderer for LlmPanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal_wrapped(|ui| {
-            ui.horizontal(|ui| {
-                ui.label("Session");
-                let combo_resp = egui::ComboBox::from_id_salt("llm-audit-session-filter")
-                    .selected_text(self.session_filter.as_deref().unwrap_or("All"))
-                    .width(FILTER_INPUT_WIDTH)
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        if ui
-                            .selectable_value(&mut self.session_filter, None, "All")
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                        for session_key in &self.session_options {
+        egui::ScrollArea::horizontal()
+            .id_salt("llm-filter-row")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Session");
+                    let combo_resp = egui::ComboBox::from_id_salt("llm-audit-session-filter")
+                        .selected_text(self.session_filter.as_deref().unwrap_or("All"))
+                        .width(FILTER_INPUT_WIDTH)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
                             if ui
-                                .selectable_value(
-                                    &mut self.session_filter,
-                                    Some(session_key.clone()),
-                                    session_key,
-                                )
+                                .selectable_value(&mut self.session_filter, None, "All")
                                 .changed()
                             {
                                 changed = true;
                             }
-                        }
-                        changed
-                    });
-                if combo_resp.inner.unwrap_or(false) {
-                    self.page = 1;
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Provider");
-                let combo_resp = egui::ComboBox::from_id_salt("llm-audit-provider-filter")
-                    .selected_text(
-                        self.provider_filter
-                            .as_deref()
-                            .map(|provider| self.provider_display_name(provider))
-                            .unwrap_or("All"),
-                    )
-                    .width(FILTER_INPUT_WIDTH)
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        if ui
-                            .selectable_value(&mut self.provider_filter, None, "All")
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                        for provider in &self.provider_options {
-                            let provider_label = self.provider_display_name(provider).to_string();
+                            for session_key in &self.session_options {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.session_filter,
+                                        Some(session_key.clone()),
+                                        session_key,
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Provider");
+                    let combo_resp = egui::ComboBox::from_id_salt("llm-audit-provider-filter")
+                        .selected_text(
+                            self.provider_filter
+                                .as_deref()
+                                .map(|provider| self.provider_display_name(provider))
+                                .unwrap_or("All"),
+                        )
+                        .width(FILTER_INPUT_WIDTH)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
                             if ui
-                                .selectable_value(
-                                    &mut self.provider_filter,
-                                    Some(provider.clone()),
-                                    provider_label,
-                                )
+                                .selectable_value(&mut self.provider_filter, None, "All")
                                 .changed()
                             {
                                 changed = true;
                             }
-                        }
-                        changed
-                    });
-                if combo_resp.inner.unwrap_or(false) {
-                    self.page = 1;
-                    need_refresh = true;
-                }
+                            for provider in &self.provider_options {
+                                let provider_label =
+                                    self.provider_display_name(provider).to_string();
+                                if ui
+                                    .selectable_value(
+                                        &mut self.provider_filter,
+                                        Some(provider.clone()),
+                                        provider_label,
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Start Date");
+                    if render_date_picker(ui, &mut self.start_date, "llm-audit-start-date") {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("End Date");
+                    if render_date_picker(ui, &mut self.end_date, "llm-audit-end-date") {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Page");
+                    if ui
+                        .add_sized(
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                    ui.label("Size");
+                    if ui
+                        .add_sized(
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.size).range(1..=1000),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                });
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Start Date");
-                if render_date_picker(ui, &mut self.start_date, "llm-audit-start-date") {
-                    self.page = 1;
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("End Date");
-                if render_date_picker(ui, &mut self.end_date, "llm-audit-end-date") {
-                    self.page = 1;
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Page");
-                if ui
-                    .add_sized(
-                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-                ui.label("Size");
-                if ui
-                    .add_sized(
-                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::DragValue::new(&mut self.size).range(1..=1000),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-            });
-        });
+        let _ = (); // suppress unused-variable warning for ScrollArea show() InnerReturn
         if need_refresh {
             self.reload_config(notifications);
             self.refresh(notifications);

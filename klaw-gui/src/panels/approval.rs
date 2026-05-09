@@ -148,150 +148,154 @@ impl PanelRenderer for ApprovalPanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal_wrapped(|ui| {
-            ui.horizontal(|ui| {
-                ui.label("Session Key");
-                let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
-                let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
-                    .selected_text(selected_text)
-                    .width(FILTER_INPUT_WIDTH)
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        if ui
-                            .selectable_value(&mut self.session_key_filter, None, "All")
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                        for key in &self.session_keys {
+        let filter_row = egui::ScrollArea::horizontal()
+            .id_salt("approval-filter-row")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Session Key");
+                    let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
+                    let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
+                        .selected_text(selected_text)
+                        .width(FILTER_INPUT_WIDTH)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
                             if ui
-                                .selectable_value(
-                                    &mut self.session_key_filter,
-                                    Some(key.clone()),
-                                    key,
-                                )
+                                .selectable_value(&mut self.session_key_filter, None, "All")
                                 .changed()
                             {
                                 changed = true;
                             }
-                        }
-                        changed
-                    });
-                if combo_resp.inner.unwrap_or(false) {
-                    self.page = 1;
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Tool Name");
-                let selected_text = self.tool_name_filter.as_deref().unwrap_or("All");
-                let combo_resp = egui::ComboBox::from_id_salt("tool_name_filter")
-                    .selected_text(selected_text)
-                    .width(FILTER_INPUT_WIDTH)
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        if ui
-                            .selectable_value(&mut self.tool_name_filter, None, "All")
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                        for name in &self.tool_names {
+                            for key in &self.session_keys {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.session_key_filter,
+                                        Some(key.clone()),
+                                        key,
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+
+                    ui.separator();
+
+                    ui.label("Tool Name");
+                    let selected_text = self.tool_name_filter.as_deref().unwrap_or("All");
+                    let combo_resp = egui::ComboBox::from_id_salt("tool_name_filter")
+                        .selected_text(selected_text)
+                        .width(FILTER_INPUT_WIDTH)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
                             if ui
-                                .selectable_value(
-                                    &mut self.tool_name_filter,
-                                    Some(name.clone()),
-                                    name,
-                                )
+                                .selectable_value(&mut self.tool_name_filter, None, "All")
                                 .changed()
                             {
                                 changed = true;
                             }
-                        }
-                        changed
-                    });
-                if combo_resp.inner.unwrap_or(false) {
-                    self.page = 1;
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Status");
-                let combo_resp = egui::ComboBox::from_id_salt("status_filter")
-                    .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        if ui
-                            .selectable_value(&mut self.status_filter, None, "All")
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                        for status in [
-                            ApprovalStatus::Pending,
-                            ApprovalStatus::Approved,
-                            ApprovalStatus::Rejected,
-                            ApprovalStatus::Expired,
-                            ApprovalStatus::Consumed,
-                        ] {
+                            for name in &self.tool_names {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.tool_name_filter,
+                                        Some(name.clone()),
+                                        name,
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+
+                    ui.separator();
+
+                    ui.label("Status");
+                    let combo_resp = egui::ComboBox::from_id_salt("status_filter")
+                        .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
                             if ui
-                                .selectable_value(
-                                    &mut self.status_filter,
-                                    Some(status),
-                                    status.as_str(),
-                                )
+                                .selectable_value(&mut self.status_filter, None, "All")
                                 .changed()
                             {
                                 changed = true;
                             }
-                        }
-                        changed
-                    });
-                if combo_resp.inner.unwrap_or(false) {
-                    self.page = 1;
-                    need_refresh = true;
-                }
+                            for status in [
+                                ApprovalStatus::Pending,
+                                ApprovalStatus::Approved,
+                                ApprovalStatus::Rejected,
+                                ApprovalStatus::Expired,
+                                ApprovalStatus::Consumed,
+                            ] {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.status_filter,
+                                        Some(status),
+                                        status.as_str(),
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+
+                    ui.separator();
+
+                    ui.label("Preview");
+                    if ui
+                        .add_sized(
+                            [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut self.preview_filter),
+                        )
+                        .changed()
+                    {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+
+                    ui.separator();
+
+                    ui.label("Page");
+                    if ui
+                        .add_sized(
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                    ui.label("Size");
+                    if ui
+                        .add_sized(
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.size).range(1..=1000),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                });
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Preview");
-                if ui
-                    .add_sized(
-                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.preview_filter),
-                    )
-                    .changed()
-                {
-                    self.page = 1;
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Page");
-                if ui
-                    .add_sized(
-                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-                ui.label("Size");
-                if ui
-                    .add_sized(
-                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::DragValue::new(&mut self.size).range(1..=1000),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-            });
-        });
+        let _ = filter_row;
         if need_refresh {
             self.refresh(notifications);
         }

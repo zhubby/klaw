@@ -573,114 +573,107 @@ impl PanelRenderer for CronPanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal_wrapped(|ui| {
-            ui.horizontal(|ui| {
-                ui.label("Name");
-                if ui
-                    .add_enabled(
-                        true,
-                        egui::TextEdit::singleline(&mut self.name_search).desired_width(140.0),
-                    )
-                    .changed()
-                {
-                    self.page = 1;
-                    need_refresh = true;
-                }
+        egui::ScrollArea::horizontal()
+            .id_salt("cron-filter-row")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    if ui
+                        .add_enabled(
+                            true,
+                            egui::TextEdit::singleline(&mut self.name_search).desired_width(140.0),
+                        )
+                        .changed()
+                    {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Kind");
+                    let combo_resp = egui::ComboBox::from_id_salt("cron-kind-filter")
+                        .selected_text(self.kind_filter.map(|k| k.as_str()).unwrap_or("All"))
+                        .width(80.0)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
+                            if ui
+                                .selectable_value(&mut self.kind_filter, None, "All")
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            if ui
+                                .selectable_value(
+                                    &mut self.kind_filter,
+                                    Some(CronScheduleKind::Cron),
+                                    "cron",
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            if ui
+                                .selectable_value(
+                                    &mut self.kind_filter,
+                                    Some(CronScheduleKind::Every),
+                                    "every",
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Created From");
+                    if render_date_picker(ui, &mut self.start_date, "cron-start-date") {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Created To");
+                    if render_date_picker(ui, &mut self.end_date, "cron-end-date") {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    let sort_label = match self.sort_order {
+                        CronSortOrder::UpdatedAtDesc => "Updated At ↓",
+                        CronSortOrder::CreatedAtDesc => "Created At ↓",
+                        CronSortOrder::UpdatedAtAsc => "Updated At ↑",
+                        CronSortOrder::CreatedAtAsc => "Created At ↑",
+                    };
+                    if ui.button(sort_label).clicked() {
+                        self.toggle_sort_order();
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Page");
+                    if ui
+                        .add_sized(
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                    ui.label("Size");
+                    if ui
+                        .add_sized(
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.size).range(1..=1000),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                });
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Kind");
-                let combo_resp = egui::ComboBox::from_id_salt("cron-kind-filter")
-                    .selected_text(self.kind_filter.map(|k| k.as_str()).unwrap_or("All"))
-                    .width(80.0)
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        if ui
-                            .selectable_value(&mut self.kind_filter, None, "All")
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                        if ui
-                            .selectable_value(
-                                &mut self.kind_filter,
-                                Some(CronScheduleKind::Cron),
-                                "cron",
-                            )
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                        if ui
-                            .selectable_value(
-                                &mut self.kind_filter,
-                                Some(CronScheduleKind::Every),
-                                "every",
-                            )
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                        changed
-                    });
-                if combo_resp.inner.unwrap_or(false) {
-                    self.page = 1;
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Created From");
-                if render_date_picker(ui, &mut self.start_date, "cron-start-date") {
-                    self.page = 1;
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Created To");
-                if render_date_picker(ui, &mut self.end_date, "cron-end-date") {
-                    self.page = 1;
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                let sort_label = match self.sort_order {
-                    CronSortOrder::UpdatedAtDesc => "Updated At ↓",
-                    CronSortOrder::CreatedAtDesc => "Created At ↓",
-                    CronSortOrder::UpdatedAtAsc => "Updated At ↑",
-                    CronSortOrder::CreatedAtAsc => "Created At ↑",
-                };
-                if ui.button(sort_label).clicked() {
-                    self.toggle_sort_order();
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Page");
-                if ui
-                    .add_sized(
-                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-                ui.label("Size");
-                if ui
-                    .add_sized(
-                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::DragValue::new(&mut self.size).range(1..=1000),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-            });
-        });
         if need_refresh {
             self.refresh_jobs(notifications);
         }

@@ -28,7 +28,7 @@ use std::thread;
 use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
 
-const FILTER_INPUT_WIDTH: f32 = 220.0;
+const FILTER_INPUT_WIDTH: f32 = 120.0;
 const PAGING_INPUT_WIDTH: f32 = 50.0;
 const PROMPT_LIST_HEIGHT: f32 = 320.0;
 const PROMPT_TEXT_HEIGHT: f32 = 260.0;
@@ -208,7 +208,9 @@ pub struct WebhookPanel {
     source_filter: String,
     event_type_filter: String,
     session_filter: String,
-    status_filter: String,
+    status_filter: Option<WebhookEventStatus>,
+    event_type_options: Vec<String>,
+    session_options: Vec<String>,
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
     page: i64,
@@ -250,7 +252,9 @@ impl Default for WebhookPanel {
             source_filter: String::new(),
             event_type_filter: String::new(),
             session_filter: String::new(),
-            status_filter: String::new(),
+            status_filter: None,
+            event_type_options: Vec::new(),
+            session_options: Vec::new(),
             start_date: Some(one_year_ago),
             end_date: Some(today),
             page: 1,
@@ -319,7 +323,7 @@ impl WebhookPanel {
         let source_filter = self.source_filter.clone();
         let event_type_filter = self.event_type_filter.clone();
         let session_filter = self.session_filter.clone();
-        let status_filter = self.status_filter.clone();
+        let status_filter = self.status_filter;
         let start_date = self.start_date;
         let end_date = self.end_date;
         let sort_order = self.sort_order;
@@ -332,7 +336,7 @@ impl WebhookPanel {
                             source: normalize_filter(&source_filter),
                             event_type: normalize_filter(&event_type_filter),
                             session_key: normalize_filter(&session_filter),
-                            status: parse_status_filter(&status_filter),
+                            status: status_filter,
                             received_from_ms: start_date.and_then(date_start_ms),
                             received_to_ms: end_date.and_then(date_end_ms),
                             limit: size,
@@ -348,7 +352,7 @@ impl WebhookPanel {
                         let query = WebhookAgentQuery {
                             hook_id: normalize_filter(&event_type_filter),
                             session_key: normalize_filter(&session_filter),
-                            status: parse_status_filter(&status_filter),
+                            status: status_filter,
                             received_from_ms: start_date.and_then(date_start_ms),
                             received_to_ms: end_date.and_then(date_end_ms),
                             limit: size,
@@ -376,6 +380,7 @@ impl WebhookPanel {
             Ok(result) => match result {
                 Ok(rows) => {
                     self.rows = rows;
+                    self.collect_filter_options();
                     self.loaded = true;
                     if self.rows_refresh_queued {
                         self.rows_refresh_queued = false;
@@ -397,6 +402,32 @@ impl WebhookPanel {
                 notifications.error("Webhook rows worker closed unexpectedly");
             }
         }
+    }
+
+    fn collect_filter_options(&mut self) {
+        let mut event_types: Vec<String> = Vec::new();
+        let mut sessions: Vec<String> = Vec::new();
+        for row in &self.rows {
+            match row {
+                WebhookListRow::Event(record) => {
+                    if !event_types.contains(&record.event_type) {
+                        event_types.push(record.event_type.clone());
+                    }
+                    if !sessions.contains(&record.session_key) {
+                        sessions.push(record.session_key.clone());
+                    }
+                }
+                WebhookListRow::Agent(record) => {
+                    if !sessions.contains(&record.session_key) {
+                        sessions.push(record.session_key.clone());
+                    }
+                }
+            }
+        }
+        event_types.sort();
+        sessions.sort();
+        self.event_type_options = event_types;
+        self.session_options = sessions;
     }
 
     fn refresh_gateway_status(&mut self) {
@@ -769,117 +800,183 @@ impl PanelRenderer for WebhookPanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal_wrapped(|ui| {
-            ui.horizontal(|ui| {
-                ui.label("type");
-                let events_selected = self.query_kind == WebhookQueryKind::Events;
-                if ui.selectable_label(events_selected, "Events").clicked() && !events_selected {
-                    self.query_kind = WebhookQueryKind::Events;
-                    self.page = 1;
-                    self.selected_id = None;
-                    self.summary_popup = None;
-                    need_refresh = true;
-                }
-                let agents_selected = self.query_kind == WebhookQueryKind::Agents;
-                if ui.selectable_label(agents_selected, "Agents").clicked() && !agents_selected {
-                    self.query_kind = WebhookQueryKind::Agents;
-                    self.page = 1;
-                    self.selected_id = None;
-                    self.summary_popup = None;
-                    need_refresh = true;
-                }
-            });
-            if self.query_kind == WebhookQueryKind::Events {
-                ui.separator();
+        let filter_row = egui::ScrollArea::horizontal()
+            .id_salt("webhook-filter-row")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("source");
+                    ui.label("Type");
+                    let events_selected = self.query_kind == WebhookQueryKind::Events;
+                    if ui.selectable_label(events_selected, "Events").clicked() && !events_selected
+                    {
+                        self.query_kind = WebhookQueryKind::Events;
+                        self.page = 1;
+                        self.selected_id = None;
+                        self.summary_popup = None;
+                        need_refresh = true;
+                    }
+                    let agents_selected = self.query_kind == WebhookQueryKind::Agents;
+                    if ui.selectable_label(agents_selected, "Agents").clicked() && !agents_selected
+                    {
+                        self.query_kind = WebhookQueryKind::Agents;
+                        self.page = 1;
+                        self.selected_id = None;
+                        self.summary_popup = None;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    if self.query_kind == WebhookQueryKind::Events {
+                        ui.label("Source");
+                        if ui
+                            .add_sized(
+                                [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
+                                egui::TextEdit::singleline(&mut self.source_filter),
+                            )
+                            .changed()
+                        {
+                            need_refresh = true;
+                        }
+                        ui.separator();
+                    }
+                    ui.label(query_mode_primary_label(self.query_kind));
+                    let selected_event_type = self.event_type_filter.as_str();
+                    let event_type_text = if selected_event_type.is_empty() {
+                        "All"
+                    } else {
+                        selected_event_type
+                    };
+                    let combo_resp = egui::ComboBox::from_id_salt("webhook-event-type-filter")
+                        .selected_text(event_type_text)
+                        .width(FILTER_INPUT_WIDTH)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
+                            if ui
+                                .selectable_label(self.event_type_filter.is_empty(), "All")
+                                .clicked()
+                            {
+                                self.event_type_filter.clear();
+                                changed = true;
+                            }
+                            for opt in &self.event_type_options {
+                                if ui
+                                    .selectable_label(self.event_type_filter == *opt, opt.as_str())
+                                    .clicked()
+                                {
+                                    self.event_type_filter = opt.clone();
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Session");
+                    let selected_session = self.session_filter.as_str();
+                    let session_text = if selected_session.is_empty() {
+                        "All"
+                    } else {
+                        selected_session
+                    };
+                    let combo_resp = egui::ComboBox::from_id_salt("webhook-session-filter")
+                        .selected_text(session_text)
+                        .width(FILTER_INPUT_WIDTH)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
+                            if ui
+                                .selectable_label(self.session_filter.is_empty(), "All")
+                                .clicked()
+                            {
+                                self.session_filter.clear();
+                                changed = true;
+                            }
+                            for opt in &self.session_options {
+                                if ui
+                                    .selectable_label(self.session_filter == *opt, opt.as_str())
+                                    .clicked()
+                                {
+                                    self.session_filter = opt.clone();
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Status");
+                    let combo_resp = egui::ComboBox::from_id_salt("webhook-status-filter")
+                        .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
+                        .width(FILTER_INPUT_WIDTH)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
+                            if ui
+                                .selectable_value(&mut self.status_filter, None, "All")
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            for status in [
+                                WebhookEventStatus::Accepted,
+                                WebhookEventStatus::Processed,
+                                WebhookEventStatus::Failed,
+                            ] {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.status_filter,
+                                        Some(status),
+                                        status.as_str(),
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Start Date");
+                    if render_date_picker(ui, &mut self.start_date, "webhook-start-date") {
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("End Date");
+                    if render_date_picker(ui, &mut self.end_date, "webhook-end-date") {
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Page");
                     if ui
                         .add_sized(
-                            [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.source_filter),
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                    ui.label("Size");
+                    if ui
+                        .add_sized(
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.size).range(1..=1000),
                         )
                         .changed()
                     {
                         need_refresh = true;
                     }
                 });
-            }
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label(query_mode_primary_label(self.query_kind));
-                if ui
-                    .add_sized(
-                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.event_type_filter),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("session");
-                if ui
-                    .add_sized(
-                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.session_filter),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("status");
-                if ui
-                    .add_sized(
-                        [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(&mut self.status_filter),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("start date");
-                if render_date_picker(ui, &mut self.start_date, "webhook-start-date") {
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("end date");
-                if render_date_picker(ui, &mut self.end_date, "webhook-end-date") {
-                    need_refresh = true;
-                }
-            });
-        });
-        ui.horizontal(|ui| {
-            ui.label("page");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-            ui.label("size");
-            if ui
-                .add_sized(
-                    [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.size).range(1..=1000),
-                )
-                .changed()
-            {
-                need_refresh = true;
-            }
-        });
+        // Prevent the scroll area from expanding vertically
+        let _ = filter_row;
         if need_refresh {
             self.refresh(notifications);
         }
@@ -889,6 +986,7 @@ impl PanelRenderer for WebhookPanel {
         let mut open_summary: Option<WebhookSummaryState> = None;
         let mut open_raw_json: Option<RawJsonState> = None;
         egui::ScrollArea::both()
+            .id_salt("webhook-table-scroll")
             .auto_shrink([false, false])
             .max_width(table_width)
             .show(ui, |ui| {
@@ -1620,8 +1718,8 @@ fn normalize_filter(raw: &str) -> Option<String> {
 
 fn query_mode_primary_label(kind: WebhookQueryKind) -> &'static str {
     match kind {
-        WebhookQueryKind::Events => "event type",
-        WebhookQueryKind::Agents => "hook id",
+        WebhookQueryKind::Events => "Event Type",
+        WebhookQueryKind::Agents => "Hook ID",
     }
 }
 
@@ -1895,15 +1993,6 @@ fn is_markdown_path(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
 }
 
-fn parse_status_filter(raw: &str) -> Option<WebhookEventStatus> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        WebhookEventStatus::parse(trimmed)
-    }
-}
-
 fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
@@ -2036,7 +2125,7 @@ mod tests {
     fn agent_query_mode_uses_hook_id_label() {
         assert_eq!(
             query_mode_primary_label(WebhookQueryKind::Agents),
-            "hook id"
+            "Hook ID"
         );
     }
 

@@ -384,77 +384,74 @@ impl PanelRenderer for SessionPanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal_wrapped(|ui| {
-            ui.horizontal(|ui| {
-                ui.label("Start Date");
-                if render_date_picker(ui, &mut self.start_date, "session-start-date") {
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("End Date");
-                if render_date_picker(ui, &mut self.end_date, "session-end-date") {
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Channel");
-                let combo_resp = egui::ComboBox::from_id_salt("session-channel-filter")
-                    .selected_text(self.channel_filter.as_deref().unwrap_or("All"))
-                    .width(140.0)
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        if ui
-                            .selectable_value(&mut self.channel_filter, None, "All")
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                        for channel in &self.channels {
+        egui::ScrollArea::horizontal()
+            .id_salt("session-filter-row")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Start Date");
+                    if render_date_picker(ui, &mut self.start_date, "session-start-date") {
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("End Date");
+                    if render_date_picker(ui, &mut self.end_date, "session-end-date") {
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Channel");
+                    let combo_resp = egui::ComboBox::from_id_salt("session-channel-filter")
+                        .selected_text(self.channel_filter.as_deref().unwrap_or("All"))
+                        .width(140.0)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
                             if ui
-                                .selectable_value(
-                                    &mut self.channel_filter,
-                                    Some(channel.clone()),
-                                    channel,
-                                )
+                                .selectable_value(&mut self.channel_filter, None, "All")
                                 .changed()
                             {
                                 changed = true;
                             }
-                        }
-                        changed
-                    });
-                if combo_resp.inner.unwrap_or(false) {
-                    self.page = 1;
-                    need_refresh = true;
-                }
+                            for channel in &self.channels {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.channel_filter,
+                                        Some(channel.clone()),
+                                        channel,
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        });
+                    if combo_resp.inner.unwrap_or(false) {
+                        self.page = 1;
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Page");
+                    if ui
+                        .add_sized(
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                    ui.label("Size");
+                    if ui
+                        .add_sized(
+                            [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
+                            egui::DragValue::new(&mut self.size).range(1..=1000),
+                        )
+                        .changed()
+                    {
+                        need_refresh = true;
+                    }
+                });
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Page");
-                if ui
-                    .add_sized(
-                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-                ui.label("Size");
-                if ui
-                    .add_sized(
-                        [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
-                        egui::DragValue::new(&mut self.size).range(1..=1000),
-                    )
-                    .changed()
-                {
-                    need_refresh = true;
-                }
-            });
-        });
         if need_refresh {
             self.refresh(notifications);
         }

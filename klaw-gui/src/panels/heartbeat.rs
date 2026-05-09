@@ -584,34 +584,34 @@ impl PanelRenderer for HeartbeatPanel {
 
         ui.separator();
         let mut need_refresh = false;
-        ui.horizontal_wrapped(|ui| {
-            ui.horizontal(|ui| {
-                ui.label("Start Date");
-                if render_date_picker(ui, &mut self.start_date, "heartbeat-start-date") {
-                    need_refresh = true;
-                }
+        egui::ScrollArea::horizontal()
+            .id_salt("heartbeat-filter-row")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Start Date");
+                    if render_date_picker(ui, &mut self.start_date, "heartbeat-start-date") {
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("End Date");
+                    if render_date_picker(ui, &mut self.end_date, "heartbeat-end-date") {
+                        need_refresh = true;
+                    }
+                    ui.separator();
+                    ui.label("Page");
+                    ui.add_sized(
+                        [50.0, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
+                    );
+                    ui.label("Size");
+                    ui.add_sized(
+                        [50.0, ui.spacing().interact_size.y],
+                        egui::DragValue::new(&mut self.size).range(1..=1000),
+                    );
+                });
             });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("End Date");
-                if render_date_picker(ui, &mut self.end_date, "heartbeat-end-date") {
-                    need_refresh = true;
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Page");
-                ui.add_sized(
-                    [50.0, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.page).range(1..=i64::MAX),
-                );
-                ui.label("Size");
-                ui.add_sized(
-                    [50.0, ui.spacing().interact_size.y],
-                    egui::DragValue::new(&mut self.size).range(1..=1000),
-                );
-            });
-        });
+        let _ = (); // suppress unused-variable warning from ScrollArea show()
         if need_refresh {
             self.refresh_sessions(notifications);
             self.refresh_jobs(notifications);
