@@ -22,7 +22,7 @@ use klaw_storage::{
 use klaw_ui_kit::{
     LocaleDomain, ThemeSwitch, Translator, theme_mode_from_preference, theme_preference,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -276,7 +276,11 @@ impl ShellUi {
                     egui::vec2(ui.available_width(), row_height),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        if ui.button(regular::X).on_hover_text("Hide Window").clicked() {
+                        if ui
+                            .button(regular::X)
+                            .on_hover_text(translator.text("status-hide-window"))
+                            .clicked()
+                        {
                             actions.push(UiAction::HideWindow);
                         }
 
@@ -285,13 +289,17 @@ impl ShellUi {
                         } else {
                             regular::ARROWS_OUT
                         };
-                        if ui.button(zoom_icon).on_hover_text("Zoom Window").clicked() {
+                        if ui
+                            .button(zoom_icon)
+                            .on_hover_text(translator.text("status-zoom-window"))
+                            .clicked()
+                        {
                             actions.push(UiAction::ZoomWindow);
                         }
 
                         if ui
                             .button(regular::MINUS)
-                            .on_hover_text("Minimize Window")
+                            .on_hover_text(translator.text("status-minimize-window"))
                             .clicked()
                         {
                             actions.push(UiAction::MinimizeWindow);
@@ -316,7 +324,7 @@ impl ShellUi {
 
         egui::TopBottomPanel::bottom("klaw-status-bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Theme Mode:");
+                ui.label(translator.text("status-theme-mode"));
                 let mut preference = theme_preference(state.theme_mode);
                 let response = ui.add(ThemeSwitch::new(&mut preference));
                 if response.changed() {
@@ -327,17 +335,19 @@ impl ShellUi {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(update) = self.release_update.as_ref() {
-                        let version_label = egui::RichText::new(format!(
-                            "{} Update v{}",
-                            regular::DOWNLOAD_SIMPLE,
-                            env!("CARGO_PKG_VERSION")
-                        ))
+                        let mut update_args = HashMap::new();
+                        update_args.insert("icon", regular::DOWNLOAD_SIMPLE.to_string());
+                        update_args.insert("version", env!("CARGO_PKG_VERSION").to_string());
+                        let version_label = egui::RichText::new(
+                            translator.text_args("status-update-available", update_args),
+                        )
                         .color(ui.visuals().warn_fg_color);
+                        let mut hover_args = HashMap::new();
+                        hover_args.insert("current", update.current_version.clone());
+                        hover_args.insert("latest", update.latest_version.clone());
+                        hover_args.insert("name", update.release_name.clone());
                         ui.hyperlink_to(version_label, &update.release_url)
-                            .on_hover_text(format!(
-                                "发现新版本：v{} -> v{}\n{}\n点击打开 Release 页面",
-                                update.current_version, update.latest_version, update.release_name
-                            ));
+                            .on_hover_text(translator.text_args("status-update-hover", hover_args));
                     } else {
                         let version_label =
                             format!("{} v{}", regular::INFO, env!("CARGO_PKG_VERSION"));
@@ -346,7 +356,11 @@ impl ShellUi {
 
                     ui.separator();
                     if self.provider_ids.is_empty() {
-                        ui.label("Model Provider: N/A");
+                        ui.label(format!(
+                            "{} {}",
+                            translator.text("status-model-provider"),
+                            translator.text("status-model-provider-na")
+                        ));
                     } else {
                         let default_provider = if self.config_default_provider.is_empty() {
                             "unknown"
@@ -379,7 +393,7 @@ impl ShellUi {
                                 }
                             });
 
-                        ui.label("Model Provider:");
+                        ui.label(translator.text("status-model-provider"));
 
                         ui.separator();
 
@@ -388,7 +402,14 @@ impl ShellUi {
                             .get(selected_provider_id)
                             .map(String::as_str)
                             .unwrap_or("N/A");
-                        ui.label(format!("Default Model: {default_model}"));
+                        let default_model_display = if default_model == "N/A" {
+                            translator.text("status-model-provider-na")
+                        } else {
+                            default_model.to_string()
+                        };
+                        let mut model_args = HashMap::new();
+                        model_args.insert("model", default_model_display);
+                        ui.label(translator.text_args("status-default-model", model_args));
                     }
                 });
             });
@@ -411,7 +432,7 @@ impl ShellUi {
         });
 
         if state.show_about {
-            egui::Window::new("About Klaw")
+            egui::Window::new(translator.text("about-title"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
@@ -433,13 +454,17 @@ impl ShellUi {
                             ui.add_space(12.0);
                         }
 
-                        ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                        ui.monospace(format!("Git Commit {}", about_git_commit_sha()));
+                        let mut version_args = HashMap::new();
+                        version_args.insert("version", env!("CARGO_PKG_VERSION").to_string());
+                        ui.label(translator.text_args("about-version", version_args));
+                        let mut commit_args = HashMap::new();
+                        commit_args.insert("sha", about_git_commit_sha().to_string());
+                        ui.monospace(translator.text_args("about-git-commit", commit_args));
                         ui.add_space(4.0);
                         ui.hyperlink_to(ABOUT_GITHUB_URL, ABOUT_GITHUB_URL);
                         ui.add_space(12.0);
 
-                        if ui.button("Close").clicked() {
+                        if ui.button(translator.text("about-close")).clicked() {
                             actions.push(UiAction::HideAbout);
                         }
                     });

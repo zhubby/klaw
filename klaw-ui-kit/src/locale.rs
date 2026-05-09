@@ -2,6 +2,7 @@ use i18n_embed::LanguageLoader;
 use i18n_embed::fluent::FluentLanguageLoader;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use unic_langid::{LanguageIdentifier, langid};
 
@@ -76,6 +77,15 @@ impl Translator {
             key.to_string()
         }
     }
+
+    #[must_use]
+    pub fn text_args(&self, key: &str, args: HashMap<&str, String>) -> String {
+        if self.loader.has(key) {
+            self.loader.get_args(key, args)
+        } else {
+            key.to_string()
+        }
+    }
 }
 
 fn cached_loader(domain: LocaleDomain, language: UiLanguage) -> &'static FluentLanguageLoader {
@@ -114,7 +124,7 @@ fn load_translator(domain: LocaleDomain, language: UiLanguage) -> FluentLanguage
 
 #[cfg(test)]
 mod tests {
-    use super::{LocaleDomain, Translator, UiLanguage};
+    use super::{HashMap, LocaleDomain, Translator, UiLanguage};
 
     #[test]
     fn ui_language_defaults_to_english_and_exposes_labels() {
@@ -145,5 +155,69 @@ mod tests {
 
         assert_eq!(translator.text("test-english-only"), "English only");
         assert_eq!(translator.text("missing-key"), "missing-key");
+    }
+
+    #[test]
+    fn gui_text_args_resolves_single_parameter() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        let mut args = HashMap::new();
+        args.insert("model", "gpt-4o".to_string());
+        let result = translator.text_args("status-default-model", args);
+        assert_eq!(result, "Default Model: gpt-4o");
+    }
+
+    #[test]
+    fn gui_text_args_resolves_single_parameter_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        let mut args = HashMap::new();
+        args.insert("model", "gpt-4o".to_string());
+        let result = translator.text_args("status-default-model", args);
+        assert_eq!(result, "默认模型：gpt-4o");
+    }
+
+    #[test]
+    fn gui_text_args_resolves_multi_parameter() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        let mut args = HashMap::new();
+        args.insert("version", "0.16.5".to_string());
+        let result = translator.text_args("about-version", args);
+        assert_eq!(result, "Version 0.16.5");
+    }
+
+    #[test]
+    fn gui_text_args_resolves_multi_parameter_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        let mut args = HashMap::new();
+        args.insert("version", "0.16.5".to_string());
+        let result = translator.text_args("about-version", args);
+        assert_eq!(result, "版本 0.16.5");
+    }
+
+    #[test]
+    fn gui_text_args_resolves_about_git_commit() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        let mut args = HashMap::new();
+        args.insert("sha", "abc123".to_string());
+        let result = translator.text_args("about-git-commit", args);
+        assert_eq!(result, "Git Commit abc123");
+    }
+
+    #[test]
+    fn gui_text_args_resolves_update_available() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        let mut args = HashMap::new();
+        args.insert("icon", "⬇".to_string());
+        args.insert("version", "0.16.5".to_string());
+        let result = translator.text_args("status-update-available", args);
+        assert_eq!(result, "⬇ Update v0.16.5");
+    }
+
+    #[test]
+    fn gui_text_args_missing_key_returns_key() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        let mut args = HashMap::new();
+        args.insert("x", "y".to_string());
+        let result = translator.text_args("nonexistent-key", args);
+        assert_eq!(result, "nonexistent-key");
     }
 }
