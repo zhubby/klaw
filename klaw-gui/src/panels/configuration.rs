@@ -608,7 +608,6 @@ impl PanelRenderer for ConfigurationPanel {
                 Self::subtitle(),
                 &Self::path_hint(this.config_path.as_deref()),
             );
-            ui.add_space(4.0);
             ui.separator();
             ui.vertical_centered(|ui| {
                 let dirty = this.is_dirty();
