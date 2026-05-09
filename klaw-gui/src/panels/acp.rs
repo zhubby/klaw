@@ -13,6 +13,7 @@ use klaw_acp::{
     AcpPermissionRequest, AcpRuntimeSnapshot, AcpSessionEvent, AcpSessionEventKind, AcpSyncResult,
 };
 use klaw_config::{AcpAgentConfig, AppConfig, ConfigError, ConfigSnapshot, ConfigStore};
+use klaw_ui_kit::label_with_hint;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -1606,10 +1607,9 @@ impl PanelRenderer for AcpPanel {
         self.refresh_status_if_due();
         ui.ctx().request_repaint_after(ACP_STATUS_POLL_INTERVAL);
         ui.heading(ctx.tab_title);
-        ui.label(
+        label_with_hint(
+            ui,
             "ACP lets klaw call external ACP-compatible coding agents through adapter commands.",
-        );
-        ui.small(
             "Default templates use `npx -y @zed-industries/claude-agent-acp` and `npx -y @zed-industries/codex-acp`; runtime cwd comes from `working_directory`.",
         );
         ui.add_space(8.0);
