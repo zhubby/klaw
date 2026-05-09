@@ -20,7 +20,7 @@ use klaw_storage::{
     BackupItem, BackupPlan, BackupProgress, BackupService, S3SnapshotStoreConfig, SnapshotListItem,
     SnapshotMode,
 };
-use klaw_ui_kit::{LocaleDomain, Translator, UiLanguage};
+use klaw_ui_kit::{LocaleDomain, Translator, UiLanguage, label_with_hint};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
@@ -30,8 +30,7 @@ use tokio::runtime::Builder;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsSection {
     General,
-    Privacy,
-    Security,
+    SecurityPrivacy,
     Network,
     Sync,
 }
@@ -40,8 +39,7 @@ impl SettingsSection {
     fn title(&self) -> &'static str {
         match self {
             SettingsSection::General => "General",
-            SettingsSection::Privacy => "Privacy",
-            SettingsSection::Security => "Security",
+            SettingsSection::SecurityPrivacy => "Security & Privacy",
             SettingsSection::Network => "Network",
             SettingsSection::Sync => "Sync",
         }
@@ -50,8 +48,7 @@ impl SettingsSection {
     fn icon(&self) -> &'static str {
         match self {
             SettingsSection::General => "\u{2699}",
-            SettingsSection::Privacy => "\u{1F512}",
-            SettingsSection::Security => "\u{1F6E1}",
+            SettingsSection::SecurityPrivacy => "\u{1F6E1}",
             SettingsSection::Network => "\u{1F310}",
             SettingsSection::Sync => "\u{1F504}",
         }
@@ -81,6 +78,7 @@ pub struct SettingPanel {
     sync_task_rx: Option<Receiver<SyncTaskMessage>>,
     sync_task_kind: Option<SyncRuntimeTaskKind>,
     pending_restore_manifest_id: Option<String>,
+    pending_delete_all_data: bool,
 }
 
 impl Default for SettingPanel {
@@ -94,6 +92,7 @@ impl Default for SettingPanel {
             sync_task_rx: None,
             sync_task_kind: None,
             pending_restore_manifest_id: None,
+            pending_delete_all_data: false,
         }
     }
 }
@@ -136,8 +135,7 @@ impl PanelRenderer for SettingPanel {
                                         ui.set_max_width(160.0);
                                         for section in [
                                             SettingsSection::General,
-                                            SettingsSection::Privacy,
-                                            SettingsSection::Security,
+                                            SettingsSection::SecurityPrivacy,
                                             SettingsSection::Network,
                                             SettingsSection::Sync,
                                         ] {
@@ -161,12 +159,8 @@ impl PanelRenderer for SettingPanel {
                                             SettingsSection::General => {
                                                 this.render_general_section(ui, notifications)
                                             }
-                                            SettingsSection::Privacy => {
-                                                this.render_privacy_section(ui, notifications)
-                                            }
-                                            SettingsSection::Security => {
-                                                this.render_security_section(ui)
-                                            }
+                                            SettingsSection::SecurityPrivacy => this
+                                                .render_security_privacy_section(ui, notifications),
                                             SettingsSection::Network => {
                                                 this.render_network_section(ui)
                                             }
@@ -566,29 +560,35 @@ impl SettingPanel {
         self.sync_theme_state();
         let translator = Translator::new(LocaleDomain::Gui, self.settings.general.ui_language);
         ui.strong("General Settings");
-        ui.add_space(8.0);
+        ui.add_space(12.0);
 
+        // ── Block 1: Language ──
+        ui.add_space(4.0);
         let mut requested_language = None;
-        ui.horizontal(|ui| {
-            ui.label(format!("{}:", translator.text("language")));
-            egui::ComboBox::from_id_salt("settings-ui-language")
-                .width(160.0)
-                .selected_text(self.settings.general.ui_language.label())
-                .show_ui(ui, |ui| {
-                    for language in UiLanguage::available() {
-                        if ui
-                            .selectable_label(
-                                self.settings.general.ui_language == *language,
-                                language.label(),
-                            )
-                            .clicked()
-                        {
-                            requested_language = Some(*language);
-                            ui.close();
+        egui::Grid::new("general-language-grid")
+            .num_columns(2)
+            .spacing([8.0, 8.0])
+            .show(ui, |ui| {
+                ui.label(format!("{}:", translator.text("language")));
+                egui::ComboBox::from_id_salt("settings-ui-language")
+                    .width(160.0)
+                    .selected_text(self.settings.general.ui_language.label())
+                    .show_ui(ui, |ui| {
+                        for language in UiLanguage::available() {
+                            if ui
+                                .selectable_label(
+                                    self.settings.general.ui_language == *language,
+                                    language.label(),
+                                )
+                                .clicked()
+                            {
+                                requested_language = Some(*language);
+                                ui.close();
+                            }
                         }
-                    }
-                });
-        });
+                    });
+                ui.end_row();
+            });
         if let Some(language) = requested_language
             && language != self.settings.general.ui_language
         {
@@ -605,40 +605,49 @@ impl SettingPanel {
             }
         }
 
-        ui.add_space(8.0);
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(12.0);
 
+        // ── Block 2: Launch at startup ──
         let previous_launch_setting = self.settings.general.launch_at_startup;
         let enable_unavailable_reason = autostart::enable_availability()
             .unsupported_reason()
             .map(str::to_owned);
         let mut startup_setting_changed = false;
-        ui.horizontal(|ui| {
-            ui.label("Launch at startup:");
-            ui.add_enabled_ui(enable_unavailable_reason.is_none(), |ui| {
-                startup_setting_changed = ui
-                    .radio_value(&mut self.settings.general.launch_at_startup, true, "Yes")
-                    .changed();
+        let hint_text = if let Some(reason) = &enable_unavailable_reason {
+            format!(
+                "Automatically start Klaw when you log in to your computer.\n{reason} You can still turn the setting off from here."
+            )
+        } else {
+            "Automatically start Klaw when you log in to your computer.".to_owned()
+        };
+        egui::Grid::new("general-startup-grid")
+            .num_columns(2)
+            .spacing([8.0, 8.0])
+            .show(ui, |ui| {
+                label_with_hint(ui, "Launch at startup:", &hint_text);
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(enable_unavailable_reason.is_none(), |ui| {
+                        startup_setting_changed = ui
+                            .radio_value(&mut self.settings.general.launch_at_startup, true, "Yes")
+                            .changed();
+                    });
+                    startup_setting_changed |= ui
+                        .radio_value(&mut self.settings.general.launch_at_startup, false, "No")
+                        .changed();
+                });
+                ui.end_row();
             });
-            startup_setting_changed |= ui
-                .radio_value(&mut self.settings.general.launch_at_startup, false, "No")
-                .changed();
-        });
         if startup_setting_changed {
             self.persist_launch_at_startup_change(previous_launch_setting, notifications);
-        }
-
-        ui.add_space(8.0);
-        ui.label("Automatically start Klaw when you log in to your computer.");
-        if let Some(reason) = enable_unavailable_reason {
-            ui.add_space(4.0);
-            ui.label(format!(
-                "{reason} You can still turn the setting off from here."
-            ));
         }
 
         ui.add_space(16.0);
         ui.separator();
         ui.add_space(12.0);
+
+        // ── Block 3: Theme ──
         ui.label(format!(
             "Current theme mode: {} (change from the bottom status bar).",
             self.theme_state.theme_mode.label()
@@ -711,51 +720,125 @@ impl SettingPanel {
         }
     }
 
-    fn render_privacy_section(
+    fn render_security_privacy_section(
         &mut self,
         ui: &mut egui::Ui,
         notifications: &mut NotificationCenter,
     ) {
-        ui.strong("Privacy Settings");
-        ui.add_space(8.0);
+        ui.strong("Security & Privacy Settings");
+        ui.add_space(12.0);
 
+        // ── Block 1: Location Services ──
+        ui.add_space(4.0);
+        ui.strong("Location Services");
+        ui.add_space(8.0);
         let location_status = current_location_status();
-        ui.group(|ui| {
-            ui.strong("Location Services");
-            ui.add_space(6.0);
-            ui.label(format!(
-                "System location services: {}",
-                bool_status_label(location_status.services_enabled)
-            ));
-            ui.label(format!(
-                "App authorization: {}",
-                location_status.authorization_label()
-            ));
-            if let Some(detail) = location_status.detail_message() {
-                ui.add_space(4.0);
-                ui.small(detail);
-            }
-            ui.add_space(8.0);
-            if ui.button("Open Location Settings").clicked() {
-                match open_location_settings() {
-                    Ok(()) => notifications.info("Opened macOS Location Services settings."),
-                    Err(err) => notifications.error(format!(
-                        "Failed to open macOS Location Services settings: {err}"
-                    )),
-                }
-            }
-        });
-    }
+        egui::Grid::new("security-location-grid")
+            .num_columns(2)
+            .spacing([8.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("System location services:");
+                ui.label(bool_status_label(location_status.services_enabled));
+                ui.end_row();
 
-    fn render_security_section(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Security Settings");
+                ui.label("App authorization:");
+                ui.label(location_status.authorization_label());
+                ui.end_row();
+
+                if let Some(detail) = location_status.detail_message() {
+                    ui.label("Detail:");
+                    ui.small(detail);
+                    ui.end_row();
+                }
+            });
         ui.add_space(8.0);
-        ui.label("Security settings are not yet configured.");
+        if ui.button("Open Location Settings").clicked() {
+            match open_location_settings() {
+                Ok(()) => notifications.info("Opened macOS Location Services settings."),
+                Err(err) => notifications.error(format!(
+                    "Failed to open macOS Location Services settings: {err}"
+                )),
+            }
+        }
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(12.0);
+
+        // ── Block 2: Danger Zone ──
+        ui.add_space(4.0);
+        ui.strong("Danger Zone");
         ui.add_space(8.0);
-        ui.label("Future options may include:");
-        ui.label("\u{2022} API key encryption");
-        ui.label("\u{2022} Session timeout");
-        ui.label("\u{2022} Two-factor authentication");
+        egui::Grid::new("security-danger-grid")
+            .num_columns(2)
+            .spacing([8.0, 8.0])
+            .show(ui, |ui| {
+                label_with_hint(
+                    ui,
+                    "Delete All App Data",
+                    "Permanently remove the entire .klaw directory including configs, sessions, skills, memory, databases, and all other application data. This cannot be undone.",
+                );
+                ui.horizontal(|ui| {
+                    ui.style_mut().visuals.widgets.noninteractive.fg_stroke =
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 50, 50));
+                    if ui.button("Delete All Data").clicked() {
+                        self.pending_delete_all_data = true;
+                    }
+                });
+                ui.end_row();
+            });
+
+        // ── Confirmation modal ──
+        if self.pending_delete_all_data {
+            let mut keep_open = true;
+            egui::Window::new("Confirm Delete All Data")
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut keep_open)
+                .show(ui.ctx(), |ui| {
+                    ui.colored_label(
+                        ui.style().visuals.error_fg_color,
+                        "This will permanently delete all Klaw data!",
+                    );
+                    ui.add_space(8.0);
+                    ui.label("The entire ~/.klaw directory will be removed, including:");
+                    ui.label("\u{2022} Config and settings");
+                    ui.label("\u{2022} Sessions and archives");
+                    ui.label("\u{2022} Skills and registry");
+                    ui.label("\u{2022} Memory and knowledge");
+                    ui.label("\u{2022} Databases and logs");
+                    ui.add_space(8.0);
+                    ui.strong("This action cannot be undone.");
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            self.pending_delete_all_data = false;
+                        }
+                        ui.style_mut().visuals.widgets.noninteractive.fg_stroke =
+                            egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 50, 50));
+                        if ui.button("Delete Everything").clicked() {
+                            self.pending_delete_all_data = false;
+                            match klaw_util::default_data_dir() {
+                                Some(dir) => {
+                                    if let Err(err) = std::fs::remove_dir_all(&dir) {
+                                        notifications.error(format!(
+                                            "Failed to delete data directory: {err}\n"
+                                        ));
+                                    } else {
+                                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                    }
+                                }
+                                None => {
+                                    notifications.error("Cannot locate the data directory.");
+                                }
+                            }
+                        }
+                    });
+                });
+            if !keep_open {
+                self.pending_delete_all_data = false;
+            }
+        }
     }
 
     fn render_network_section(&mut self, ui: &mut egui::Ui) {
