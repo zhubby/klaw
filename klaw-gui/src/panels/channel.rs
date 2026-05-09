@@ -1144,8 +1144,9 @@ impl PanelRenderer for ChannelPanel {
         let rows = self.all_rows();
 
         ui.heading(ctx.tab_title);
-        ui.label("Manage channel connections to external messaging services (Dingtalk, Telegram, WebSocket).");
         ui.horizontal(|ui| {
+            ui.label("Manage channel connections to external messaging services (Dingtalk, Telegram, WebSocket).");
+            ui.add_space(4.0);
             if self.restart_request.is_some() {
                 ui.label(RichText::new("Restarting channel...").small());
             }
