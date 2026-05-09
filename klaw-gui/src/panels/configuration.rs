@@ -611,7 +611,8 @@ impl PanelRenderer for ConfigurationPanel {
             ui.separator();
             ui.horizontal_wrapped(|ui| {
                 let dirty = this.is_dirty();
-                let dot_color = if dirty {
+                let dirty_text = if dirty { "● Unsaved" } else { "● Saved" };
+                let dirty_color = if dirty {
                     Color32::YELLOW
                 } else {
                     Color32::LIGHT_GREEN
@@ -644,17 +645,7 @@ impl PanelRenderer for ConfigurationPanel {
                     this.try_reload(notifications);
                 }
                 ui.add_space(6.0);
-                let interact_size = ui.spacing().interact_size;
-                let dot_rect = ui
-                    .add(
-                        egui::Label::new(RichText::new(" ").size(interact_size.y))
-                            .selectable(false),
-                    )
-                    .rect;
-                let dot_center = dot_rect.center();
-                let dot_radius = interact_size.y / 2.0;
-                ui.painter()
-                    .circle_filled(dot_center, dot_radius, dot_color);
+                ui.colored_label(dirty_color, dirty_text);
             });
             ui.separator();
             ui.horizontal(|ui| {
