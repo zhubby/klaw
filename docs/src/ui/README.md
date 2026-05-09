@@ -9,6 +9,7 @@
 
 - [桌面架构设计](architecture.md) - 桌面端完整架构、模块结构、设计模式
 - [实时日志流](log-stream.md) - GUI 工作区中的进程内实时日志
+- [GUI/WebUI i18n](i18n.md) - 桌面端与 Web 端共享语言类型、分域 Fluent 资源和持久化策略
 - [WASM 中文字体方案](wasm-cjk-fonts.md) - eframe/egui WASM 零打包中文字体方案
 - [WebSocket Channel](websocket-channel.md) - WebSocket Channel 架构、协议与使用指南
 - [WebUI 架构](webui-architecture.md) - klaw-webui 浏览器端 WASM 聊天客户端架构设计

@@ -6,7 +6,7 @@ use crate::release_check::{ReleaseCheckOutcome, ReleaseUpdateInfo, check_for_rel
 use crate::runtime_bridge::{
     ProviderRuntimeSnapshot, RuntimeRequestHandle, begin_provider_status_request,
 };
-use crate::settings::{AppSettings, SyncMode, load_settings, save_settings};
+use crate::settings::{AppSettings, SyncMode, current_ui_language, load_settings, save_settings};
 use crate::state::workbench::TabId;
 use crate::state::{UiAction, UiState};
 use crate::sync_runtime::{
@@ -19,7 +19,9 @@ use egui_phosphor::regular;
 use klaw_storage::{
     BackupItem, BackupPlan, BackupService, S3SnapshotStoreConfig, SnapshotListItem, SnapshotMode,
 };
-use klaw_ui_kit::{ThemeSwitch, theme_mode_from_preference, theme_preference};
+use klaw_ui_kit::{
+    LocaleDomain, ThemeSwitch, Translator, theme_mode_from_preference, theme_preference,
+};
 use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -221,25 +223,29 @@ impl ShellUi {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
 
+        let translator = Translator::new(LocaleDomain::Gui, current_ui_language());
         egui::TopBottomPanel::top("klaw-menu-bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Force Persist Layout").clicked() {
+                ui.menu_button(translator.text("menu-file"), |ui| {
+                    if ui
+                        .button(translator.text("menu-force-persist-layout"))
+                        .clicked()
+                    {
                         actions.push(UiAction::ForcePersistLayout);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Hide Window").clicked() {
+                    if ui.button(translator.text("menu-hide-window")).clicked() {
                         actions.push(UiAction::HideWindow);
                         ui.close();
                     }
                 });
 
-                ui.menu_button("View", |ui| {
+                ui.menu_button(translator.text("menu-view"), |ui| {
                     let label = if state.fullscreen {
-                        "Exit Full Windows"
+                        translator.text("menu-exit-full-windows")
                     } else {
-                        "Toggle Full Windows"
+                        translator.text("menu-toggle-full-windows")
                     };
                     if ui.button(label).clicked() {
                         actions.push(UiAction::ToggleFullscreen);
@@ -247,19 +253,19 @@ impl ShellUi {
                     }
                 });
 
-                ui.menu_button("Windows", |ui| {
-                    if ui.button("Minimize").clicked() {
+                ui.menu_button(translator.text("menu-windows"), |ui| {
+                    if ui.button(translator.text("menu-minimize")).clicked() {
                         actions.push(UiAction::MinimizeWindow);
                         ui.close();
                     }
-                    if ui.button("Zoom").clicked() {
+                    if ui.button(translator.text("menu-zoom")).clicked() {
                         actions.push(UiAction::ZoomWindow);
                         ui.close();
                     }
                 });
 
-                ui.menu_button("Help", |ui| {
-                    if ui.button("About").clicked() {
+                ui.menu_button(translator.text("menu-help"), |ui| {
+                    if ui.button(translator.text("menu-about")).clicked() {
                         actions.push(UiAction::ShowAbout);
                         ui.close();
                     }

@@ -1,0 +1,12 @@
+language = 语言
+menu-file = 文件
+menu-view = 视图
+menu-windows = 窗口
+menu-help = 帮助
+menu-force-persist-layout = 强制保存布局
+menu-hide-window = 隐藏窗口
+menu-toggle-full-windows = 切换全窗口
+menu-exit-full-windows = 退出全窗口
+menu-minimize = 最小化
+menu-zoom = 缩放
+menu-about = 关于

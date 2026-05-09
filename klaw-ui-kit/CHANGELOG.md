@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-09
+
+### Added
+
+- 新增共享 `UiLanguage`、`LocaleDomain` 与 Fluent `Translator`，为桌面 GUI 和 WebUI 提供 English / 简体中文的嵌入式 i18n 基础能力
+- 新增分域 Fluent 资源，GUI 与 WebUI 使用独立 `gui.ftl` / `webui.ftl` key 集，并以英文资源作为 fallback
+
 ## 2026-04-15
 
 ### Added

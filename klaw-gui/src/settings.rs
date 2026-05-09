@@ -1,11 +1,14 @@
+use klaw_ui_kit::UiLanguage;
 use klaw_util::{default_data_dir, settings_path as default_settings_path};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, Ordering};
 
-const SETTINGS_SCHEMA_VERSION: u32 = 2;
+const SETTINGS_SCHEMA_VERSION: u32 = 3;
+static CURRENT_UI_LANGUAGE: AtomicU8 = AtomicU8::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppSettings {
@@ -40,6 +43,8 @@ impl Default for AppSettings {
 pub struct GeneralSettings {
     #[serde(default)]
     pub launch_at_startup: bool,
+    #[serde(default)]
+    pub ui_language: UiLanguage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -273,14 +278,42 @@ pub fn load_settings() -> AppSettings {
     let Some(path) = settings_path() else {
         return AppSettings::default();
     };
-    load_settings_from_path(&path).unwrap_or_default()
+    let settings = load_settings_from_path(&path).unwrap_or_default();
+    set_current_ui_language(settings.general.ui_language);
+    settings
 }
 
 pub fn save_settings(settings: &AppSettings) -> io::Result<()> {
     let Some(path) = settings_path() else {
         return Ok(());
     };
-    save_settings_to_path(&path, settings)
+    save_settings_to_path(&path, settings)?;
+    set_current_ui_language(settings.general.ui_language);
+    Ok(())
+}
+
+pub fn save_ui_language(language: UiLanguage) -> io::Result<AppSettings> {
+    let Some(path) = settings_path() else {
+        let mut settings = AppSettings::default();
+        settings.general.ui_language = language;
+        return Ok(settings);
+    };
+    save_ui_language_to_path(&path, language)
+}
+
+pub fn current_ui_language() -> UiLanguage {
+    match CURRENT_UI_LANGUAGE.load(Ordering::Relaxed) {
+        1 => UiLanguage::SimplifiedChinese,
+        _ => UiLanguage::English,
+    }
+}
+
+fn set_current_ui_language(language: UiLanguage) {
+    let value = match language {
+        UiLanguage::English => 0,
+        UiLanguage::SimplifiedChinese => 1,
+    };
+    CURRENT_UI_LANGUAGE.store(value, Ordering::Relaxed);
 }
 
 fn load_settings_from_path(path: &Path) -> io::Result<AppSettings> {
@@ -315,6 +348,15 @@ fn save_settings_to_path(path: &Path, settings: &AppSettings) -> io::Result<()> 
     fs::write(&tmp_path, serialized)?;
     fs::rename(&tmp_path, path)?;
     Ok(())
+}
+
+fn save_ui_language_to_path(path: &Path, language: UiLanguage) -> io::Result<AppSettings> {
+    let mut settings = load_settings_from_path(path).unwrap_or_default();
+    settings.general.ui_language = language;
+    settings.schema_version = SETTINGS_SCHEMA_VERSION;
+    save_settings_to_path(path, &settings)?;
+    set_current_ui_language(language);
+    Ok(settings)
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -370,6 +412,7 @@ fn default_device_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_ui_kit::UiLanguage;
 
     #[test]
     fn default_settings_roundtrip() {
@@ -396,6 +439,7 @@ mod tests {
     fn settings_serialization() {
         let mut settings = AppSettings::default();
         settings.general.launch_at_startup = true;
+        settings.general.ui_language = UiLanguage::SimplifiedChinese;
         settings.network.proxy_mode = ProxyMode::ManualProxy;
         settings.network.http_proxy = ProxyConfig {
             host: "proxy.example.com".to_string(),
@@ -406,9 +450,48 @@ mod tests {
         let restored: AppSettings = serde_json::from_str(&json).unwrap();
 
         assert!(restored.general.launch_at_startup);
+        assert_eq!(restored.general.ui_language, UiLanguage::SimplifiedChinese);
         assert_eq!(restored.network.proxy_mode, ProxyMode::ManualProxy);
         assert_eq!(restored.network.http_proxy.host, "proxy.example.com");
         assert_eq!(restored.network.http_proxy.port, 3128);
+    }
+
+    #[test]
+    fn general_language_defaults_to_english_when_missing() {
+        let json = r#"{
+          "schema_version": 2,
+          "general": {
+            "launch_at_startup": true
+          }
+        }"#;
+
+        let path = std::env::temp_dir().join("klaw-settings-language-missing.json");
+        fs::write(&path, json).unwrap();
+        let settings = load_settings_from_path(&path).unwrap();
+
+        assert_eq!(settings.general.ui_language, UiLanguage::English);
+    }
+
+    #[test]
+    fn save_ui_language_merges_with_latest_settings_on_disk() {
+        let path = std::env::temp_dir().join("klaw-settings-language-merge.json");
+        let stale_settings = AppSettings::default();
+        save_settings_to_path(&path, &stale_settings).unwrap();
+
+        let mut latest_settings = load_settings_from_path(&path).unwrap();
+        latest_settings.sync.enabled = true;
+        latest_settings.sync.last_manifest_id = Some("manifest-new".to_string());
+        save_settings_to_path(&path, &latest_settings).unwrap();
+
+        save_ui_language_to_path(&path, UiLanguage::SimplifiedChinese).unwrap();
+        let restored = load_settings_from_path(&path).unwrap();
+
+        assert_eq!(restored.general.ui_language, UiLanguage::SimplifiedChinese);
+        assert!(restored.sync.enabled);
+        assert_eq!(
+            restored.sync.last_manifest_id.as_deref(),
+            Some("manifest-new")
+        );
     }
 
     #[test]

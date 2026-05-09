@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-09
+
+### Added
+
+- WebUI 底部状态栏新增语言下拉框，支持 English / 简体中文并持久化到浏览器 workspace state
+- WebUI 顶部菜单栏和连接状态标签现在通过 `klaw-ui-kit` 的 WebUI Fluent 资源渲染，可随语言设置切换
+
 ## 2026-05-08
 
 ### Fixed

@@ -1,6 +1,7 @@
 pub mod fonts;
 pub mod foundation;
 pub mod label;
+pub mod locale;
 pub mod notifications;
 pub mod text_animator;
 pub mod theme;
@@ -12,5 +13,6 @@ pub use foundation::{
     ThemeMode, theme_mode_from_preference, theme_preference, theme_preference_label,
 };
 pub use label::label_with_hint;
+pub use locale::{LocaleDomain, Translator, UiLanguage};
 pub use notifications::NotificationCenter;
 pub use theme::{DarkThemePreset, LightThemePreset, apply_theme, dark_visuals, light_visuals};

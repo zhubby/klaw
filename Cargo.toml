@@ -150,6 +150,8 @@ vergen = "9.1.0"
 vergen-gitcl = "9.1.0"
 console_error_panic_hook = "0.1"
 rust-embed = "8.11.0"
+i18n-embed = "0.15"
+unic-langid = { version = "0.9", features = ["macros"] }
 wasm-bindgen = "0.2.114"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3.77"
