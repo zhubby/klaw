@@ -2675,16 +2675,18 @@ pub(crate) async fn submit_and_get_turn_outcome(
     );
     trace!(inbound = ?inbound_payload, "channel inbound normalized");
 
-    runtime
-        .inbound_transport
-        .enqueue(Envelope {
-            header,
-            metadata: BTreeMap::new(),
-            payload: inbound_payload,
-        })
+    refresh_runtime_system_prompt(runtime).await;
+    let outcome = runtime
+        .runtime
+        .process_message(
+            Envelope {
+                header,
+                metadata: BTreeMap::new(),
+                payload: inbound_payload,
+            },
+            false,
+        )
         .await;
-
-    let outcome = run_runtime_once(runtime).await?;
     enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
@@ -2783,16 +2785,18 @@ pub(crate) async fn submit_history_only_turn_outcome(
     );
     trace!(inbound = ?inbound_payload, "channel history-only inbound normalized");
 
-    runtime
-        .inbound_transport
-        .enqueue(Envelope {
-            header,
-            metadata: BTreeMap::new(),
-            payload: inbound_payload,
-        })
+    refresh_runtime_system_prompt(runtime).await;
+    let outcome = runtime
+        .runtime
+        .process_message(
+            Envelope {
+                header,
+                metadata: BTreeMap::new(),
+                payload: inbound_payload,
+            },
+            false,
+        )
         .await;
-
-    let outcome = run_runtime_once(runtime).await?;
     enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
@@ -3925,6 +3929,11 @@ mod tests {
     }
 
     #[derive(Default, Clone)]
+    struct EchoCaptureProvider {
+        last_user_message: Arc<Mutex<Option<String>>>,
+    }
+
+    #[derive(Default, Clone)]
     struct SilentHeartbeatAckProvider;
 
     #[derive(Default, Clone)]
@@ -4349,6 +4358,44 @@ mod tests {
                 .unwrap_or_else(|err| err.into_inner()) = options.tool_choice;
             Ok(klaw_llm::LlmResponse {
                 content: "bootstrap reply".to_string(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                usage: None,
+                usage_source: None,
+                audit: None,
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for EchoCaptureProvider {
+        fn name(&self) -> &str {
+            "test-provider"
+        }
+
+        fn default_model(&self) -> &str {
+            "test-model"
+        }
+
+        async fn chat(
+            &self,
+            messages: Vec<klaw_llm::LlmMessage>,
+            _tools: Vec<klaw_llm::ToolDefinition>,
+            _model: Option<&str>,
+            _options: ChatOptions,
+        ) -> Result<klaw_llm::LlmResponse, LlmError> {
+            let last_user_message = messages
+                .iter()
+                .rev()
+                .find(|message| message.role == "user")
+                .map(|message| message.content.clone())
+                .unwrap_or_default();
+            *self
+                .last_user_message
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = Some(last_user_message.clone());
+            Ok(klaw_llm::LlmResponse {
+                content: format!("reply to {last_user_message}"),
                 reasoning: None,
                 tool_calls: Vec::new(),
                 usage: None,
@@ -6775,6 +6822,81 @@ A .docx file is a ZIP archive containing XML files.
         assert_eq!(callback_history.len(), 2);
         assert_eq!(callback_history[0].content, "callback hello");
         assert_eq!(callback_history[1].content, "bootstrap reply");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn submit_channel_request_returns_response_for_current_inbound_when_queue_has_cron() {
+        let provider = Arc::new(EchoCaptureProvider::default());
+        let runtime = build_test_runtime(provider.clone()).await;
+        let sessions = test_session_manager(&runtime);
+        sessions
+            .get_or_create_session_state(
+                "dingtalk:acc:chat-1",
+                "chat-1",
+                "dingtalk",
+                "test-provider",
+                "test-model",
+            )
+            .await
+            .expect("dingtalk session should exist");
+
+        runtime
+            .inbound_transport
+            .enqueue(Envelope {
+                header: EnvelopeHeader::new("cron:job-1:run-1"),
+                metadata: BTreeMap::new(),
+                payload: InboundMessage {
+                    channel: "dingtalk".to_string(),
+                    sender_id: "cron".to_string(),
+                    chat_id: "chat-1".to_string(),
+                    session_key: "cron:job-1:run-1".to_string(),
+                    content: "cron prompt".to_string(),
+                    media_references: Vec::new(),
+                    metadata: BTreeMap::from([
+                        (
+                            "channel.base_session_key".to_string(),
+                            json!("dingtalk:acc:chat-1"),
+                        ),
+                        (
+                            "channel.delivery_session_key".to_string(),
+                            json!("dingtalk:acc:chat-1"),
+                        ),
+                    ]),
+                },
+            })
+            .await;
+
+        let response = submit_channel_request(
+            &runtime,
+            ChannelRequest {
+                channel: "dingtalk".to_string(),
+                input: "user prompt".to_string(),
+                session_key: "dingtalk:acc:chat-1".to_string(),
+                chat_id: "chat-1".to_string(),
+                media_references: Vec::new(),
+                metadata: BTreeMap::from([
+                    (
+                        "channel.dingtalk.session_webhook".to_string(),
+                        json!("https://example/session"),
+                    ),
+                    ("channel.dingtalk.bot_title".to_string(), json!("Klaw")),
+                    ("channel.delivery_mode".to_string(), json!("direct_reply")),
+                ]),
+            },
+        )
+        .await
+        .expect("submit should succeed")
+        .expect("submit should return a response");
+
+        assert_eq!(response.content, "reply to user prompt");
+        assert_eq!(
+            provider
+                .last_user_message
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .as_deref(),
+            Some("user prompt")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
