@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 
-const SETTINGS_SCHEMA_VERSION: u32 = 3;
+const SETTINGS_SCHEMA_VERSION: u32 = 4;
 static CURRENT_UI_LANGUAGE: AtomicU8 = AtomicU8::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -17,9 +17,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub general: GeneralSettings,
     #[serde(default)]
-    pub privacy: PrivacySettings,
-    #[serde(default)]
-    pub security: SecuritySettings,
+    pub security_privacy: SecurityPrivacySettings,
     #[serde(default)]
     pub network: NetworkSettings,
     #[serde(default)]
@@ -31,8 +29,7 @@ impl Default for AppSettings {
         Self {
             schema_version: SETTINGS_SCHEMA_VERSION,
             general: GeneralSettings::default(),
-            privacy: PrivacySettings::default(),
-            security: SecuritySettings::default(),
+            security_privacy: SecurityPrivacySettings::default(),
             network: NetworkSettings::default(),
             sync: SyncSettings::default(),
         }
@@ -48,10 +45,7 @@ pub struct GeneralSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct PrivacySettings {}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct SecuritySettings {}
+pub struct SecurityPrivacySettings {}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]

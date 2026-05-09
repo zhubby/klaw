@@ -31,6 +31,17 @@ impl WorkbenchMenuGroup {
             WorkbenchMenuGroup::Observability => "OBSERVABILITY",
         }
     }
+
+    pub const fn i18n_key(self) -> &'static str {
+        match self {
+            WorkbenchMenuGroup::Workspace => "menu-group-workspace",
+            WorkbenchMenuGroup::AiAndCapability => "menu-group-ai-and-capability",
+            WorkbenchMenuGroup::RuntimeAndAccess => "menu-group-runtime-and-access",
+            WorkbenchMenuGroup::AutomationAndOperations => "menu-group-automation-and-operations",
+            WorkbenchMenuGroup::DataAndHistory => "menu-group-data-and-history",
+            WorkbenchMenuGroup::Observability => "menu-group-observability",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -161,6 +172,39 @@ impl WorkbenchMenu {
             WorkbenchMenu::Logs => "Logs",
             WorkbenchMenu::AnalyzeDashboard => "Analyze Dashboard",
             WorkbenchMenu::Observability => "Observability",
+        }
+    }
+
+    pub const fn i18n_key(self) -> &'static str {
+        match self {
+            WorkbenchMenu::Profile => "menu-profile",
+            WorkbenchMenu::System => "menu-system",
+            WorkbenchMenu::Setting => "menu-setting",
+            WorkbenchMenu::Terminal => "menu-terminal",
+            WorkbenchMenu::Session => "menu-session",
+            WorkbenchMenu::Approval => "menu-approval",
+            WorkbenchMenu::Configuration => "menu-configuration",
+            WorkbenchMenu::Provider => "menu-provider",
+            WorkbenchMenu::LocalModels => "menu-local-models",
+            WorkbenchMenu::Llm => "menu-llm",
+            WorkbenchMenu::Channel => "menu-channel",
+            WorkbenchMenu::Voice => "menu-voice",
+            WorkbenchMenu::Cron => "menu-cron",
+            WorkbenchMenu::Heartbeat => "menu-heartbeat",
+            WorkbenchMenu::Gateway => "menu-gateway",
+            WorkbenchMenu::Webhook => "menu-webhook",
+            WorkbenchMenu::Mcp => "menu-mcp",
+            WorkbenchMenu::Acp => "menu-acp",
+            WorkbenchMenu::Skill => "menu-skill-registry",
+            WorkbenchMenu::SkillsManager => "menu-skills-manager",
+            WorkbenchMenu::Memory => "menu-memory",
+            WorkbenchMenu::Knowledge => "menu-knowledge",
+            WorkbenchMenu::Archive => "menu-archive",
+            WorkbenchMenu::Tool => "menu-tool",
+            WorkbenchMenu::Monitor => "menu-monitor",
+            WorkbenchMenu::Logs => "menu-logs",
+            WorkbenchMenu::AnalyzeDashboard => "menu-analyze-dashboard",
+            WorkbenchMenu::Observability => "menu-observability",
         }
     }
 

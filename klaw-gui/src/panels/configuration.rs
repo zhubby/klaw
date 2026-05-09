@@ -7,6 +7,7 @@ use egui::{
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular;
 use klaw_config::{ConfigSnapshot, ConfigStore};
+use klaw_ui_kit::label_with_hint;
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -150,10 +151,14 @@ impl ConfigurationPanel {
         }
     }
 
-    fn status_label(path: Option<&Path>) -> String {
+    fn subtitle() -> &'static str {
+        "Edit the TOML configuration for the klaw runtime"
+    }
+
+    fn path_hint(path: Option<&Path>) -> String {
         match path {
-            Some(path) => format!("Path: {}", path.display()),
-            None => "Path: (not loaded)".to_string(),
+            Some(path) => format!("Config file: {}", path.display()),
+            None => "Config file: (not loaded)".to_string(),
         }
     }
 
@@ -598,18 +603,20 @@ impl PanelRenderer for ConfigurationPanel {
 
         let mut render_strip = |ui: &mut egui::Ui, this: &mut ConfigurationPanel| {
             ui.heading(ctx.tab_title);
-            ui.label(Self::status_label(this.config_path.as_deref()));
-            ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                Self::subtitle(),
+                &Self::path_hint(this.config_path.as_deref()),
+            );
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
                 let dirty = this.is_dirty();
-                let dirty_label = if dirty { "Dirty: yes" } else { "Dirty: no" };
-                let color = if dirty {
+                let dirty_text = if dirty { "● Unsaved" } else { "● Saved" };
+                let dirty_color = if dirty {
                     Color32::YELLOW
                 } else {
                     Color32::LIGHT_GREEN
                 };
-                ui.colored_label(color, dirty_label);
-            });
-            ui.horizontal_wrapped(|ui| {
                 if ui
                     .button(format!("{} Save", regular::FLOPPY_DISK))
                     .clicked()
@@ -637,7 +644,10 @@ impl PanelRenderer for ConfigurationPanel {
                 {
                     this.try_reload(notifications);
                 }
+                ui.add_space(6.0);
+                ui.colored_label(dirty_color, dirty_text);
             });
+            ui.separator();
             ui.horizontal(|ui| {
                 ui.label(format!("{} Find", regular::MAGNIFYING_GLASS));
                 let search_response = ui.add(

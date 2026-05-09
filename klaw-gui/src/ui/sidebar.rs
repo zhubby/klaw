@@ -1,6 +1,8 @@
 use crate::domain::menu::{WorkbenchMenu, WorkbenchMenuGroup};
+use crate::settings::current_ui_language;
 use crate::state::{UiAction, UiState};
 use egui_phosphor::regular;
+use klaw_ui_kit::{LocaleDomain, Translator};
 
 fn grouped_menus() -> Vec<(WorkbenchMenuGroup, Vec<WorkbenchMenu>)> {
     WorkbenchMenuGroup::ALL
@@ -12,6 +14,8 @@ fn grouped_menus() -> Vec<(WorkbenchMenuGroup, Vec<WorkbenchMenu>)> {
 pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
     puffin::profile_function!();
     let mut actions = Vec::new();
+
+    let translator = Translator::new(LocaleDomain::Gui, current_ui_language());
 
     ui.label(
         egui::RichText::new(format!("{} Klaw", regular::ROBOT))
@@ -33,7 +37,7 @@ pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
                 }
 
                 ui.label(
-                    egui::RichText::new(group.title())
+                    egui::RichText::new(translator.text(group.i18n_key()))
                         .small()
                         .strong()
                         .color(ui.visuals().weak_text_color()),
@@ -45,7 +49,7 @@ pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
                         .workbench
                         .active_tab
                         .is_some_and(|id| id.menu == *menu);
-                    let label = format!("{} {}", menu.icon(), menu.title());
+                    let label = format!("{} {}", menu.icon(), translator.text(menu.i18n_key()));
                     if ui.selectable_label(is_active, label).clicked() {
                         actions.push(UiAction::OpenMenu(*menu));
                     }
@@ -60,6 +64,7 @@ pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
 mod tests {
     use super::grouped_menus;
     use crate::domain::menu::{WorkbenchMenu, WorkbenchMenuGroup};
+    use klaw_ui_kit::{LocaleDomain, Translator, UiLanguage};
 
     #[test]
     fn grouped_menus_follow_expected_group_order() {
@@ -74,13 +79,15 @@ mod tests {
     #[test]
     fn grouped_menus_are_sorted_and_keep_skills_adjacent() {
         let groups = grouped_menus();
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+
         let (_, workspace_group) = groups
             .iter()
             .find(|(group, _)| *group == WorkbenchMenuGroup::Workspace)
             .expect("workspace group should exist");
         let workspace_titles = workspace_group
             .iter()
-            .map(|menu| menu.title())
+            .map(|menu| translator.text(menu.i18n_key()))
             .collect::<Vec<_>>();
         assert_eq!(
             workspace_titles,
@@ -98,7 +105,10 @@ mod tests {
             .find(|(group, _)| *group == WorkbenchMenuGroup::AiAndCapability)
             .expect("AI & Capability group should exist");
 
-        let titles = ai_group.iter().map(|menu| menu.title()).collect::<Vec<_>>();
+        let titles = ai_group
+            .iter()
+            .map(|menu| translator.text(menu.i18n_key()))
+            .collect::<Vec<_>>();
         assert_eq!(
             titles,
             vec![
@@ -123,5 +133,38 @@ mod tests {
             .position(|menu| *menu == WorkbenchMenu::Skill)
             .expect("skills registry should exist");
         assert_eq!(registry_index, manager_index + 1);
+    }
+
+    #[test]
+    fn sidebar_menu_i18n_keys_match_ftl_keys() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        for menu in WorkbenchMenu::ALL {
+            let key = menu.i18n_key();
+            let translated = translator.text(key);
+            // English fallback must resolve to a display string (not the raw key)
+            assert_ne!(translated, key, "i18n_key {key} has no English FTL entry");
+            assert!(!translated.is_empty());
+        }
+    }
+
+    #[test]
+    fn sidebar_group_i18n_keys_match_ftl_keys() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        for group in WorkbenchMenuGroup::ALL {
+            let key = group.i18n_key();
+            let translated = translator.text(key);
+            assert_ne!(translated, key, "i18n_key {key} has no English FTL entry");
+            assert!(!translated.is_empty());
+        }
+    }
+
+    #[test]
+    fn sidebar_menu_i18n_keys_cover_chinese_translations() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        for menu in WorkbenchMenu::ALL {
+            let key = menu.i18n_key();
+            let translated = translator.text(key);
+            assert!(!translated.is_empty());
+        }
     }
 }
