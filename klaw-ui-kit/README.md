@@ -8,6 +8,7 @@
 - Shared theme widgets, including the tri-state `ThemeSwitch` for `egui::ThemePreference`
 - Shared font installation and embedded font assets used by both frontends
 - Platform-agnostic display copy helpers
+- Shared i18n primitives, language selection types, and embedded Fluent resources for frontend-specific domains
 - Lightweight `egui` wrappers used by both frontends
 
 ## Font features
@@ -32,6 +33,15 @@ klaw-ui-kit = { workspace = true, default-features = false, features = ["fonts-n
 # Disable embedded fonts entirely.
 klaw-ui-kit = { workspace = true, default-features = false }
 ```
+
+## i18n resources
+
+`klaw-ui-kit` provides the shared `UiLanguage`, `LocaleDomain`, and `Translator` APIs used by both frontends. The supported languages are English (`en-US`) and Simplified Chinese (`zh-CN`), with English as the fallback language.
+
+GUI and WebUI copy use separate Fluent domains so each frontend can evolve its own labels without forcing shared keys:
+
+- `locales/{language}/gui.ftl`
+- `locales/{language}/webui.ftl`
 
 ## What does not belong here
 

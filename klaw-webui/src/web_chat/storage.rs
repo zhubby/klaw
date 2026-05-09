@@ -1,5 +1,5 @@
 use crate::normalize_gateway_token_input;
-use klaw_ui_kit::{DarkThemePreset, LightThemePreset, ThemeMode};
+use klaw_ui_kit::{DarkThemePreset, LightThemePreset, ThemeMode, UiLanguage};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use web_sys::Storage;
@@ -31,6 +31,8 @@ pub(super) struct PersistedWorkspaceState {
     pub(in crate::web_chat) gateway_token: Option<String>,
     #[serde(default = "default_stream_enabled")]
     pub(in crate::web_chat) stream_enabled: bool,
+    #[serde(default)]
+    pub(in crate::web_chat) ui_language: UiLanguage,
 }
 
 const fn default_session_open() -> bool {
@@ -47,6 +49,7 @@ fn default_workspace_state() -> PersistedWorkspaceState {
         active_session_key: None,
         gateway_token: None,
         stream_enabled: default_stream_enabled(),
+        ui_language: UiLanguage::English,
     }
 }
 
@@ -127,7 +130,7 @@ fn is_valid_session_key(session_key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{default_stream_enabled, default_workspace_state, is_valid_session_key};
-    use klaw_ui_kit::{DarkThemePreset, LightThemePreset, ThemeMode};
+    use klaw_ui_kit::{DarkThemePreset, LightThemePreset, ThemeMode, UiLanguage};
 
     #[test]
     fn persisted_workspace_state_defaults_without_local_sessions() {
@@ -139,6 +142,18 @@ mod tests {
         assert!(state.gateway_token.is_none());
         assert!(state.sessions.is_empty());
         assert!(state.stream_enabled);
+        assert_eq!(state.ui_language, UiLanguage::English);
+    }
+
+    #[test]
+    fn persisted_workspace_state_roundtrips_ui_language() {
+        let mut state = default_workspace_state();
+        state.ui_language = UiLanguage::SimplifiedChinese;
+
+        let encoded = serde_json::to_string(&state).unwrap();
+        let restored = serde_json::from_str::<super::PersistedWorkspaceState>(&encoded).unwrap();
+
+        assert_eq!(restored.ui_language, UiLanguage::SimplifiedChinese);
     }
 
     #[test]

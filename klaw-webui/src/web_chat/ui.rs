@@ -7,19 +7,18 @@ use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_ui_kit::toggle::toggle;
 use klaw_ui_kit::{
-    DarkThemePreset, LightThemePreset, ThemeMode, ThemeSwitch, text_animator::TextAnimator,
-    theme_mode_from_preference,
+    DarkThemePreset, LightThemePreset, LocaleDomain, ThemeMode, ThemeSwitch, Translator,
+    UiLanguage, text_animator::TextAnimator, theme_mode_from_preference,
 };
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     ActiveSlashCommand, ConnectionState, ImCard, ImCardAction, ImCardActionKind, ImCardKind,
     MessageRole, PageMode, SlashCommandCompletion, WebArchiveAttachment, apply_slash_completion,
-    attachment_action_in_progress, can_trigger_file_picker, connection_action_label,
-    delete_confirmation_body, derive_page_mode, detect_active_slash_command,
-    has_exact_slash_command_match, normalize_gateway_token_input, resolve_assistant_bubble_palette,
-    resolve_im_card_palette, should_activate_session_window, should_show_thinking_placeholder,
-    slash_command_matches,
+    attachment_action_in_progress, can_trigger_file_picker, delete_confirmation_body,
+    derive_page_mode, detect_active_slash_command, has_exact_slash_command_match,
+    normalize_gateway_token_input, resolve_assistant_bubble_palette, resolve_im_card_palette,
+    should_activate_session_window, should_show_thinking_placeholder, slash_command_matches,
 };
 
 use super::{
@@ -42,70 +41,119 @@ fn rgb(color: [u8; 3]) -> Color32 {
 
 impl ChatApp {
     fn render_top_bar(&mut self, ctx: &Context) {
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         TopBottomPanel::top("klaw-webui-toolbar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button(format!("{} File", regular::FILE), |ui| {
-                    if ui.button(format!("{} Settings", regular::GEAR)).clicked() {
-                        self.show_settings_dialog = true;
-                        ui.close();
-                    }
-                });
+                ui.menu_button(
+                    format!("{} {}", regular::FILE, translator.text("menu-file")),
+                    |ui| {
+                        if ui
+                            .button(format!(
+                                "{} {}",
+                                regular::GEAR,
+                                translator.text("menu-settings")
+                            ))
+                            .clicked()
+                        {
+                            self.show_settings_dialog = true;
+                            ui.close();
+                        }
+                    },
+                );
 
-                ui.menu_button(format!("{} Window", regular::APP_WINDOW), |ui| {
-                    if ui
-                        .button(format!("{} Tile Windows", regular::APP_WINDOW))
-                        .clicked()
-                    {
-                        self.tile_open_sessions();
-                        ui.close();
-                    }
-                    if ui
-                        .button(format!("{} Reset Layout", regular::ARROWS_OUT))
-                        .clicked()
-                    {
-                        self.reset_window_layout();
-                        ui.close();
-                    }
-                });
+                ui.menu_button(
+                    format!("{} {}", regular::APP_WINDOW, translator.text("menu-window")),
+                    |ui| {
+                        if ui
+                            .button(format!(
+                                "{} {}",
+                                regular::APP_WINDOW,
+                                translator.text("menu-tile-windows")
+                            ))
+                            .clicked()
+                        {
+                            self.tile_open_sessions();
+                            ui.close();
+                        }
+                        if ui
+                            .button(format!(
+                                "{} {}",
+                                regular::ARROWS_OUT,
+                                translator.text("menu-reset-layout")
+                            ))
+                            .clicked()
+                        {
+                            self.reset_window_layout();
+                            ui.close();
+                        }
+                    },
+                );
 
-                ui.menu_button(format!("{} Connection", regular::PLUG), |ui| {
-                    let connection_action =
-                        connection_action_label(&self.connection_state.borrow().clone());
-                    if ui
-                        .button(format!("{} Gateway Token", regular::KEY))
-                        .clicked()
-                    {
-                        self.show_gateway_dialog = true;
-                        ui.close();
-                    }
-                    if ui
-                        .button(format!("{} {connection_action}", regular::ARROWS_CLOCKWISE))
-                        .clicked()
-                    {
-                        self.request_workspace_connection();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            matches!(
-                                *self.connection_state.borrow(),
-                                ConnectionState::Connected | ConnectionState::Connecting
-                            ),
-                            Button::new(format!("{} Disconnect", regular::SIGN_OUT)),
-                        )
-                        .clicked()
-                    {
-                        self.disconnect_and_clear_token();
-                        ui.close();
-                    }
-                });
+                ui.menu_button(
+                    format!("{} {}", regular::PLUG, translator.text("menu-connection")),
+                    |ui| {
+                        let connection_action = match &*self.connection_state.borrow() {
+                            ConnectionState::Connected | ConnectionState::Error(_) => {
+                                translator.text("menu-reconnect")
+                            }
+                            ConnectionState::Connecting | ConnectionState::Disconnected => {
+                                translator.text("menu-connect")
+                            }
+                        };
+                        if ui
+                            .button(format!(
+                                "{} {}",
+                                regular::KEY,
+                                translator.text("menu-gateway-token")
+                            ))
+                            .clicked()
+                        {
+                            self.show_gateway_dialog = true;
+                            ui.close();
+                        }
+                        if ui
+                            .button(format!("{} {connection_action}", regular::ARROWS_CLOCKWISE))
+                            .clicked()
+                        {
+                            self.request_workspace_connection();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                matches!(
+                                    *self.connection_state.borrow(),
+                                    ConnectionState::Connected | ConnectionState::Connecting
+                                ),
+                                Button::new(format!(
+                                    "{} {}",
+                                    regular::SIGN_OUT,
+                                    translator.text("menu-disconnect")
+                                )),
+                            )
+                            .clicked()
+                        {
+                            self.disconnect_and_clear_token();
+                            ui.close();
+                        }
+                    },
+                );
 
-                ui.menu_button(format!("{} Help", regular::QUESTION), |ui| {
-                    if ui.button(format!("{} About", regular::INFO)).clicked() {
-                        self.show_about_dialog = true;
-                        ui.close();
-                    }
-                });
+                ui.menu_button(
+                    format!("{} {}", regular::QUESTION, translator.text("menu-help")),
+                    |ui| {
+                        if ui
+                            .button(format!(
+                                "{} {}",
+                                regular::INFO,
+                                translator.text("menu-about")
+                            ))
+                            .clicked()
+                        {
+                            self.show_about_dialog = true;
+                            ui.close();
+                        }
+                    },
+                );
 
                 let row_height = ui.spacing().interact_size.y;
                 ui.allocate_ui_with_layout(
@@ -114,16 +162,22 @@ impl ChatApp {
                     |ui| {
                         let state = self.connection_state.borrow().clone();
                         let (dot, label) = match state {
-                            ConnectionState::Connected => {
-                                (Color32::from_rgb(41, 163, 90), "Connected")
-                            }
-                            ConnectionState::Connecting => {
-                                (Color32::from_rgb(214, 149, 33), "Connecting…")
-                            }
-                            ConnectionState::Disconnected => {
-                                (Color32::from_rgb(208, 67, 67), "Disconnected")
-                            }
-                            ConnectionState::Error(_) => (Color32::from_rgb(208, 67, 67), "Error"),
+                            ConnectionState::Connected => (
+                                Color32::from_rgb(41, 163, 90),
+                                translator.text("status-connected"),
+                            ),
+                            ConnectionState::Connecting => (
+                                Color32::from_rgb(214, 149, 33),
+                                translator.text("status-connecting"),
+                            ),
+                            ConnectionState::Disconnected => (
+                                Color32::from_rgb(208, 67, 67),
+                                translator.text("status-disconnected"),
+                            ),
+                            ConnectionState::Error(_) => (
+                                Color32::from_rgb(208, 67, 67),
+                                translator.text("status-error"),
+                            ),
                         };
                         ui.label(RichText::new(label).small().strong());
                         ui.label(RichText::new("●").color(dot));
@@ -134,6 +188,7 @@ impl ChatApp {
     }
 
     fn render_status_bar(&mut self, ctx: &Context) {
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         let mut requested_theme = None;
         let mut stream_changed = false;
         let open_sessions = self.sessions.iter().filter(|session| session.open).count();
@@ -144,6 +199,13 @@ impl ChatApp {
                 let mut next_theme = current_theme;
                 if ui.add(ThemeSwitch::new(&mut next_theme)).changed() {
                     requested_theme = Some(theme_mode_from_preference(next_theme));
+                }
+                ui.separator();
+                ui.label(format!("{}:", translator.text("language")));
+                if let Some(language) =
+                    render_language_combo(ui, "webui-status-language", self.ui_language, 120.0)
+                {
+                    self.set_ui_language(language);
                 }
                 ui.separator();
                 ui.label(format!("Agents: {}/{}", self.sessions.len(), open_sessions))
@@ -216,6 +278,7 @@ impl ChatApp {
         }
 
         let mut open = self.show_settings_dialog;
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         let mut requested_theme_mode = None;
         let mut requested_light_theme = None;
         let mut requested_dark_theme = None;
@@ -236,6 +299,17 @@ impl ChatApp {
                     .num_columns(2)
                     .spacing([8.0, 8.0])
                     .show(ui, |ui| {
+                        ui.label(format!("{}:", translator.text("language")));
+                        if let Some(language) = render_language_combo(
+                            ui,
+                            "webui-settings-language",
+                            self.ui_language,
+                            160.0,
+                        ) {
+                            self.set_ui_language(language);
+                        }
+                        ui.end_row();
+
                         ui.label("Theme Mode:");
                         ComboBox::from_id_salt("webui-settings-theme-mode")
                             .width(160.0)
@@ -1303,6 +1377,30 @@ fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState) {
         ui.add_space(4.0);
         ui.label(RichText::new(copy.body).weak());
     });
+}
+
+fn render_language_combo(
+    ui: &mut egui::Ui,
+    id: &'static str,
+    selected_language: UiLanguage,
+    width: f32,
+) -> Option<UiLanguage> {
+    let mut requested_language = None;
+    ComboBox::from_id_salt(id)
+        .width(width)
+        .selected_text(selected_language.label())
+        .show_ui(ui, |ui| {
+            for language in UiLanguage::available() {
+                if ui
+                    .selectable_label(selected_language == *language, language.label())
+                    .clicked()
+                {
+                    requested_language = Some(*language);
+                    ui.close();
+                }
+            }
+        });
+    requested_language
 }
 
 fn render_history_loading_state(ui: &mut egui::Ui) {

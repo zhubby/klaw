@@ -3,7 +3,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::settings::{
     AppSettings, ProxyMode, S3SyncConfig, SyncItem, SyncMode, SyncProvider, load_settings,
-    save_settings,
+    save_settings, save_ui_language,
 };
 use crate::state::persistence;
 use crate::state::{DarkThemePreset, LightThemePreset, UiState};
@@ -20,6 +20,7 @@ use klaw_storage::{
     BackupItem, BackupPlan, BackupProgress, BackupService, S3SnapshotStoreConfig, SnapshotListItem,
     SnapshotMode,
 };
+use klaw_ui_kit::{LocaleDomain, Translator, UiLanguage};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
@@ -563,7 +564,47 @@ impl SettingPanel {
         notifications: &mut NotificationCenter,
     ) {
         self.sync_theme_state();
+        let translator = Translator::new(LocaleDomain::Gui, self.settings.general.ui_language);
         ui.strong("General Settings");
+        ui.add_space(8.0);
+
+        let mut requested_language = None;
+        ui.horizontal(|ui| {
+            ui.label(format!("{}:", translator.text("language")));
+            egui::ComboBox::from_id_salt("settings-ui-language")
+                .width(160.0)
+                .selected_text(self.settings.general.ui_language.label())
+                .show_ui(ui, |ui| {
+                    for language in UiLanguage::available() {
+                        if ui
+                            .selectable_label(
+                                self.settings.general.ui_language == *language,
+                                language.label(),
+                            )
+                            .clicked()
+                        {
+                            requested_language = Some(*language);
+                            ui.close();
+                        }
+                    }
+                });
+        });
+        if let Some(language) = requested_language
+            && language != self.settings.general.ui_language
+        {
+            match save_ui_language(language) {
+                Ok(settings) => {
+                    self.settings = settings;
+                    self.save_error = None;
+                    notifications.success("Language updated.");
+                }
+                Err(err) => {
+                    self.save_error = Some(err.to_string());
+                    notifications.error(format!("Failed to update language: {err}"));
+                }
+            }
+        }
+
         ui.add_space(8.0);
 
         let previous_launch_setting = self.settings.general.launch_at_startup;

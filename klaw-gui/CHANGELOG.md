@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-09
+
+### Added
+
+- `Settings > General` 新增语言下拉框，支持 English / 简体中文并持久化到 GUI settings
+- 顶部菜单栏现在通过 `klaw-ui-kit` 的 GUI Fluent 资源渲染，可随语言设置切换
+
 ## 2026-05-08
 
 ### Fixed

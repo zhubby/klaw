@@ -68,6 +68,7 @@
 - [UI](./ui/README.md)
   - [桌面架构设计](./ui/architecture.md)
   - [实时日志流](./ui/log-stream.md)
+  - [GUI/WebUI i18n](./ui/i18n.md)
   - [WASM 中文字体方案](./ui/wasm-cjk-fonts.md)
   - [WebSocket Channel](./ui/websocket-channel.md)
   - [WebUI Architecture](./ui/webui-architecture.md)

@@ -1,7 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use eframe::egui::{self, Context};
-use klaw_ui_kit::{DarkThemePreset, LightThemePreset, NotificationCenter, ThemeMode, apply_theme};
+use klaw_ui_kit::{
+    DarkThemePreset, LightThemePreset, NotificationCenter, ThemeMode, UiLanguage, apply_theme,
+};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::Notification;
 use web_sys::WebSocket;
@@ -43,6 +45,7 @@ pub(super) struct ChatApp {
     pub(in crate::web_chat) theme_mode: ThemeMode,
     pub(in crate::web_chat) light_theme: LightThemePreset,
     pub(in crate::web_chat) dark_theme: DarkThemePreset,
+    pub(in crate::web_chat) ui_language: UiLanguage,
 }
 
 impl ChatApp {
@@ -58,6 +61,7 @@ impl ChatApp {
         let theme_mode = persisted.theme_mode;
         let light_theme = persisted.light_theme;
         let dark_theme = persisted.dark_theme;
+        let ui_language = persisted.ui_language;
 
         let mut app = Self {
             ctx: cc.egui_ctx.clone(),
@@ -83,6 +87,7 @@ impl ChatApp {
             theme_mode,
             light_theme,
             dark_theme,
+            ui_language,
         };
         app.restore_window_state(persisted_sessions);
         app.apply_theme();
@@ -108,6 +113,7 @@ impl ChatApp {
             active_session_key: self.active_session_key.clone(),
             gateway_token: self.gateway_token.clone(),
             stream_enabled: self.stream_enabled,
+            ui_language: self.ui_language,
         });
     }
 
@@ -239,6 +245,15 @@ impl ChatApp {
         self.dark_theme = dark_theme;
         self.apply_theme();
         self.persist_workspace_state();
+    }
+
+    pub(in crate::web_chat) fn set_ui_language(&mut self, ui_language: UiLanguage) {
+        if self.ui_language == ui_language {
+            return;
+        }
+        self.ui_language = ui_language;
+        self.persist_workspace_state();
+        self.ctx.request_repaint();
     }
 
     pub(in crate::web_chat) fn remove_session(&mut self, session_key: &str) {

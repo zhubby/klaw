@@ -1,0 +1,17 @@
+language = 语言
+menu-file = 文件
+menu-window = 窗口
+menu-connection = 连接
+menu-help = 帮助
+menu-settings = 设置
+menu-tile-windows = 平铺窗口
+menu-reset-layout = 重置布局
+menu-gateway-token = 网关令牌
+menu-reconnect = 重新连接
+menu-connect = 连接
+menu-disconnect = 断开连接
+menu-about = 关于
+status-connected = 已连接
+status-connecting = 连接中...
+status-disconnected = 未连接
+status-error = 错误

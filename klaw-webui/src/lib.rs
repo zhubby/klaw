@@ -735,7 +735,7 @@ pub(crate) fn should_prompt_for_gateway_token_before_connect(token: Option<&str>
     token.and_then(normalize_gateway_token_input).is_none()
 }
 
-#[cfg(any(test, target_arch = "wasm32"))]
+#[cfg(test)]
 pub(crate) fn connection_action_label(connection_state: &ConnectionState) -> &'static str {
     match connection_state {
         ConnectionState::Connected => "Reconnect",

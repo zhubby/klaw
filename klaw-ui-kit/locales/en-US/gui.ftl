@@ -1,0 +1,13 @@
+language = Language
+menu-file = File
+menu-view = View
+menu-windows = Windows
+menu-help = Help
+menu-force-persist-layout = Force Persist Layout
+menu-hide-window = Hide Window
+menu-toggle-full-windows = Toggle Full Windows
+menu-exit-full-windows = Exit Full Windows
+menu-minimize = Minimize
+menu-zoom = Zoom
+menu-about = About
+test-english-only = English only
