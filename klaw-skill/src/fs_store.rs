@@ -79,6 +79,13 @@ struct RegistrySkillEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct LocalSkillEntry {
+    name: String,
+    fallback_name: String,
+    markdown_path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillUninstallResult {
     pub removed_managed: bool,
     pub removed_local: bool,
@@ -143,12 +150,6 @@ where
             return Err(SkillError::InvalidSkillName(value.to_string()));
         }
         Ok(value.to_string())
-    }
-
-    fn skill_markdown_path(&self, skill_name: &str) -> PathBuf {
-        self.skills_dir
-            .join(skill_name)
-            .join(Path::new(SKILL_MARKDOWN_FILE))
     }
 
     async fn ensure_skills_dir(&self) -> Result<(), SkillError> {
@@ -450,19 +451,11 @@ where
         Ok(report)
     }
 
-    async fn read_local_skill_record(&self, skill_name: &str) -> Result<SkillRecord, SkillError> {
-        let path = self.skill_markdown_path(skill_name);
-        let exists = fs::try_exists(&path)
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "try_exists",
-                path: path.clone(),
-                source,
-            })?;
-        if !exists {
-            return Err(SkillError::SkillNotFound(skill_name.to_string()));
-        }
-
+    async fn read_local_skill_record_from_path(
+        &self,
+        name: String,
+        path: PathBuf,
+    ) -> Result<SkillRecord, SkillError> {
         let content = fs::read_to_string(&path)
             .await
             .map_err(|source| SkillError::Io {
@@ -477,8 +470,8 @@ where
         })?;
 
         Ok(SkillRecord {
-            name: skill_name.to_string(),
-            source: SkillSource::configured("local", skill_name, ""),
+            source: SkillSource::configured("local", &name, ""),
+            name,
             local_path: path,
             content,
             updated_at_ms: modified_time_ms(&metadata).unwrap_or_default(),
@@ -486,6 +479,37 @@ where
             registry: None,
             stale: None,
         })
+    }
+
+    async fn discover_local_skill_records(
+        &self,
+        managed_by_name: &BTreeMap<String, (String, bool)>,
+    ) -> Result<Vec<SkillRecord>, SkillError> {
+        self.ensure_skills_dir().await?;
+        let entries = discover_local_skill_entries(&self.skills_dir).await?;
+        let mut seen = BTreeSet::new();
+        let mut records = Vec::new();
+        for entry in entries {
+            if managed_by_name.contains_key(&entry.name)
+                || managed_by_name.contains_key(&entry.fallback_name)
+            {
+                warn!(skill_name = %entry.name, "skip local skill because managed registry skill has higher priority");
+                continue;
+            }
+            if !seen.insert(entry.name.clone()) {
+                warn!(
+                    skill_name = %entry.name,
+                    path = %entry.markdown_path.display(),
+                    "skip duplicate local skill discovered during recursive scan"
+                );
+                continue;
+            }
+            records.push(
+                self.read_local_skill_record_from_path(entry.name, entry.markdown_path)
+                    .await?,
+            );
+        }
+        Ok(records)
     }
 
     async fn read_registry_skill_record(
@@ -558,41 +582,12 @@ where
         &self,
         managed_by_name: &BTreeMap<String, (String, bool)>,
     ) -> Result<Vec<SkillSummary>, SkillError> {
-        self.ensure_skills_dir().await?;
-        let mut items = Vec::new();
-        let mut entries =
-            fs::read_dir(&self.skills_dir)
-                .await
-                .map_err(|source| SkillError::Io {
-                    op: "read_dir",
-                    path: self.skills_dir.clone(),
-                    source,
-                })?;
-
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "next_entry",
-                path: self.skills_dir.clone(),
-                source,
-            })?
-        {
-            let path = entry.path();
-            if !is_directory(&path, &entry).await? {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(OsStr::to_str) else {
-                continue;
-            };
-            if managed_by_name.contains_key(name) {
-                warn!(skill_name = %name, "skip local skill because managed registry skill has higher priority");
-                continue;
-            }
-            let record = self.read_local_skill_record(name).await?;
-            items.push(Self::to_summary(&record));
-        }
-        Ok(items)
+        Ok(self
+            .discover_local_skill_records(managed_by_name)
+            .await?
+            .iter()
+            .map(Self::to_summary)
+            .collect())
     }
 
     pub async fn install_from_registry(
@@ -974,7 +969,20 @@ where
                 .read_registry_skill_record(registry, &name, *stale)
                 .await;
         }
-        self.read_local_skill_record(&name).await
+        let entries = discover_local_skill_entries(&self.skills_dir).await?;
+        for entry in entries {
+            if managed_by_name.contains_key(&entry.name)
+                || managed_by_name.contains_key(&entry.fallback_name)
+            {
+                continue;
+            }
+            if entry.name == name || entry.fallback_name == name {
+                return self
+                    .read_local_skill_record_from_path(entry.name, entry.markdown_path)
+                    .await;
+            }
+        }
+        Err(SkillError::SkillNotFound(name))
     }
 
     async fn load_all_installed_skill_markdowns(&self) -> Result<Vec<SkillRecord>, SkillError> {
@@ -998,37 +1006,7 @@ where
                 ),
             }
         }
-        self.ensure_skills_dir().await?;
-        let mut entries =
-            fs::read_dir(&self.skills_dir)
-                .await
-                .map_err(|source| SkillError::Io {
-                    op: "read_dir",
-                    path: self.skills_dir.clone(),
-                    source,
-                })?;
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|source| SkillError::Io {
-                op: "next_entry",
-                path: self.skills_dir.clone(),
-                source,
-            })?
-        {
-            let path = entry.path();
-            if !is_directory(&path, &entry).await? {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(OsStr::to_str) else {
-                continue;
-            };
-            if managed_by_name.contains_key(name) {
-                warn!(skill_name = %name, "skip local skill in load_all because managed registry skill has higher priority");
-                continue;
-            }
-            records.push(self.read_local_skill_record(name).await?);
-        }
+        records.extend(self.discover_local_skill_records(&managed_by_name).await?);
         records.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(records)
     }
@@ -1095,15 +1073,6 @@ pub fn open_default_skills_manager() -> Result<FileSystemSkillStore<ReqwestSkill
 pub fn open_default_skill_registry() -> Result<FileSystemSkillStore<ReqwestSkillFetcher>, SkillError>
 {
     FileSystemSkillStore::from_home_dir()
-}
-
-async fn is_directory(path: &Path, entry: &tokio::fs::DirEntry) -> Result<bool, SkillError> {
-    let ty = entry.file_type().await.map_err(|source| SkillError::Io {
-        op: "file_type",
-        path: path.to_path_buf(),
-        source,
-    })?;
-    Ok(ty.is_dir())
 }
 
 async fn sync_source_repository(
@@ -1233,6 +1202,102 @@ async fn resolve_registry_skill_dir(
             .join(requested_name)
             .join(SKILL_MARKDOWN_FILE),
     })
+}
+
+async fn discover_local_skill_entries(
+    skills_dir: &Path,
+) -> Result<Vec<LocalSkillEntry>, SkillError> {
+    let exists = fs::try_exists(skills_dir)
+        .await
+        .map_err(|source| SkillError::Io {
+            op: "try_exists",
+            path: skills_dir.to_path_buf(),
+            source,
+        })?;
+    if !exists {
+        return Ok(Vec::new());
+    }
+
+    let mut pending = vec![skills_dir.to_path_buf()];
+    let mut items = Vec::new();
+    while let Some(dir) = pending.pop() {
+        let mut entries = fs::read_dir(&dir).await.map_err(|source| SkillError::Io {
+            op: "read_dir",
+            path: dir.clone(),
+            source,
+        })?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|source| SkillError::Io {
+                op: "next_entry",
+                path: dir.clone(),
+                source,
+            })?
+        {
+            let path = entry.path();
+            let file_type = entry.file_type().await.map_err(|source| SkillError::Io {
+                op: "file_type",
+                path: path.clone(),
+                source,
+            })?;
+
+            if file_type.is_dir() {
+                if is_ignored_skill_scan_dir(&path) {
+                    continue;
+                }
+                pending.push(path);
+                continue;
+            }
+
+            if !file_type.is_file() || !is_skill_markdown_path(&path) {
+                continue;
+            }
+
+            let skill_dir = path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| skills_dir.to_path_buf());
+            let content = fs::read_to_string(&path)
+                .await
+                .map_err(|source| SkillError::Io {
+                    op: "read_to_string",
+                    path: path.clone(),
+                    source,
+                })?;
+            let fallback_name = skill_dir
+                .file_name()
+                .and_then(OsStr::to_str)
+                .unwrap_or_default()
+                .to_string();
+            let name = parse_skill_name_from_markdown(&content)
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| (!fallback_name.is_empty()).then_some(fallback_name.clone()))
+                .unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            items.push(LocalSkillEntry {
+                name,
+                fallback_name,
+                markdown_path: path,
+            });
+        }
+    }
+
+    items.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.markdown_path.cmp(&b.markdown_path))
+    });
+    Ok(items)
+}
+
+fn is_ignored_skill_scan_dir(path: &Path) -> bool {
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| matches!(name, ".git" | "node_modules"))
 }
 
 async fn discover_registry_skills(
@@ -1782,6 +1847,93 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].name, "a");
         assert_eq!(records[1].name, "b");
+    }
+
+    #[tokio::test]
+    async fn local_scan_recursively_discovers_nested_skill_markdown() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+
+        let valid_skill_dir = root.join(SKILLS_DIR_NAME).join("local-good");
+        fs::create_dir_all(&valid_skill_dir)
+            .await
+            .expect("create valid skill dir");
+        fs::write(valid_skill_dir.join(SKILL_MARKDOWN_FILE), "# local-good")
+            .await
+            .expect("write valid skill");
+
+        let cloned_repo_skill_dir = root
+            .join(SKILLS_DIR_NAME)
+            .join("zhubby-skills")
+            .join("skills")
+            .join("sonarqube");
+        fs::create_dir_all(&cloned_repo_skill_dir)
+            .await
+            .expect("create cloned repo skill dir");
+        fs::write(
+            cloned_repo_skill_dir.join(SKILL_MARKDOWN_FILE),
+            "# sonarqube",
+        )
+        .await
+        .expect("write nested repo skill");
+
+        let list = store
+            .list_installed()
+            .await
+            .expect("list should discover nested skill");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].name, "local-good");
+        assert_eq!(list[1].name, "sonarqube");
+
+        let records = store
+            .load_all_installed_skill_markdowns()
+            .await
+            .expect("load all should discover nested skill");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].name, "local-good");
+        assert_eq!(records[1].name, "sonarqube");
+
+        let record = store
+            .get_installed("sonarqube")
+            .await
+            .expect("get nested local skill");
+        assert_eq!(record.name, "sonarqube");
+        assert_eq!(
+            record.local_path,
+            root.join(SKILLS_DIR_NAME)
+                .join("zhubby-skills")
+                .join("skills")
+                .join("sonarqube")
+                .join(SKILL_MARKDOWN_FILE)
+        );
+    }
+
+    #[tokio::test]
+    async fn local_scan_skips_duplicate_recursive_skill_names() {
+        let root = test_root();
+        let store = FileSystemSkillStore::with_fetcher(root.clone(), MockSkillFetcher::default());
+
+        let first = root.join(SKILLS_DIR_NAME).join("first");
+        let second = root
+            .join(SKILLS_DIR_NAME)
+            .join("repo")
+            .join("skills")
+            .join("second");
+        fs::create_dir_all(&first).await.expect("create first");
+        fs::create_dir_all(&second).await.expect("create second");
+        fs::write(first.join(SKILL_MARKDOWN_FILE), "# duplicate")
+            .await
+            .expect("write first");
+        fs::write(second.join(SKILL_MARKDOWN_FILE), "# duplicate")
+            .await
+            .expect("write second");
+
+        let records = store
+            .load_all_installed_skill_markdowns()
+            .await
+            .expect("load all should skip duplicate");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].name, "duplicate");
     }
 
     #[tokio::test]

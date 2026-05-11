@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-05-11
+
+### Fixed
+- local installed skill scans now recursively discover `SKILL.md` / `skill.md`, so cloned registry repositories under `~/.klaw/skills` can expose nested skills such as `skills/sonarqube/SKILL.md`
+- duplicate local skill names discovered during recursive scans are skipped with a warning instead of breaking GUI prompt preview refresh
+- added regression coverage for manually cloned repository wrapper directories and duplicate local skill names inside the local skills directory
+
 ## 2026-04-30
 
 ### Fixed
