@@ -16,9 +16,11 @@
 - `About Klaw` dialog now centers the title and shows the embedded app icon, version, build-time git commit sha, and repository link
 - System tray / macOS menu bar icon loaded from embedded PNG assets at runtime
   - macOS menu bar icon now uses left click to show and activate the main window
-  - right click opens a compact menu with `About` and `Quit Klaw`
+  - right click opens a compact menu with `Show Klaw`, `About`, and `Quit Klaw`
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
   - includes tabs/theme mode/light-dark theme presets/fullscreen and window size
+- Linux windows keep the same borderless shell as macOS and provide native resize
+  hit zones on the window edges and corners.
 - macOS app icon is loaded from embedded image bytes at startup, so both `.app` bundles and standalone binaries keep the custom icon
 - macOS window close requests now hide the app to the menu bar instead of quitting; tray `Quit Klaw` remains the explicit full-exit path
 - macOS `Launch at startup` now provisions a user `LaunchAgent` from the packaged `.app` bundle and re-syncs stale login-item state on startup

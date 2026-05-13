@@ -47,14 +47,7 @@ pub fn request_quit() {
 }
 
 pub fn run() -> anyhow::Result<()> {
-    let viewport = configure_platform_viewport(
-        egui::ViewportBuilder::default()
-            .with_title("Klaw")
-            .with_decorations(false)
-            .with_titlebar_shown(false)
-            .with_titlebar_buttons_shown(false)
-            .with_fullsize_content_view(true),
-    );
+    let viewport = configure_platform_viewport(egui::ViewportBuilder::default().with_title("Klaw"));
     let native_options = eframe::NativeOptions {
         viewport,
         ..eframe::NativeOptions::default()
@@ -71,6 +64,12 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(target_os = "macos")]
 fn configure_platform_viewport(viewport: egui::ViewportBuilder) -> egui::ViewportBuilder {
     install_macos_app_icon();
+    let viewport = viewport
+        .with_decorations(false)
+        .with_resizable(true)
+        .with_titlebar_shown(false)
+        .with_titlebar_buttons_shown(false)
+        .with_fullsize_content_view(true);
     if let Some(icon) = icon::viewport_icon() {
         viewport.with_icon(icon)
     } else {
@@ -80,6 +79,7 @@ fn configure_platform_viewport(viewport: egui::ViewportBuilder) -> egui::Viewpor
 
 #[cfg(not(target_os = "macos"))]
 fn configure_platform_viewport(viewport: egui::ViewportBuilder) -> egui::ViewportBuilder {
+    let viewport = viewport.with_decorations(false).with_resizable(true);
     if let Some(icon) = icon::viewport_icon() {
         viewport.with_icon(icon)
     } else {
@@ -139,3 +139,15 @@ pub(crate) fn hide_macos_app() {
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn hide_macos_app() {}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn non_macos_viewport_uses_resizable_borderless_window() {
+        let viewport = super::configure_platform_viewport(egui::ViewportBuilder::default());
+
+        assert_eq!(viewport.decorations, Some(false));
+        assert_eq!(viewport.resizable, Some(true));
+    }
+}

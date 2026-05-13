@@ -20,6 +20,7 @@ pub enum UiAction {
     MinimizeWindow,
     ZoomWindow,
     StartWindowDrag,
+    StartWindowResize(egui::viewport::ResizeDirection),
     ShowAbout,
     HideAbout,
 }
@@ -120,7 +121,8 @@ impl UiState {
             | UiAction::ForcePersistLayout
             | UiAction::MinimizeWindow
             | UiAction::ZoomWindow
-            | UiAction::StartWindowDrag => {}
+            | UiAction::StartWindowDrag
+            | UiAction::StartWindowResize(_) => {}
         }
     }
 }

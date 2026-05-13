@@ -204,6 +204,18 @@ Run skip quarantine
 
 `xattr -rd com.apple.quarantine /Applications/Klaw.app`
 
+## Linux Debian Packaging
+
+Build a `.deb` package from the GUI-capable `klaw` binary:
+
+```bash
+make package-linux-deb
+```
+
+Artifacts are written to `dist/linux/`:
+
+- `dist/linux/klaw_<version>_<deb-arch>.deb`
+
 See `docs/` for architecture details.
 
 ## License

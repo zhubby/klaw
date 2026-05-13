@@ -130,6 +130,9 @@ impl KlawGuiApp {
             UiAction::StartWindowDrag => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
+            UiAction::StartWindowResize(direction) => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+            }
             UiAction::SetRuntimeProviderOverride(provider_id) => {
                 if self.pending_provider_override.is_some() {
                     self.shell

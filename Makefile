@@ -8,6 +8,12 @@ APP_DIR := $(DIST_DIR)/$(APP_NAME).app
 DMG_NAME := $(APP_NAME)-$(VERSION)-$(MACOS_TARGET).dmg
 DMG_PATH := $(DIST_DIR)/$(DMG_NAME)
 
+LINUX_TARGET ?= $(shell rustc -vV | awk '/host:/ {print $$2}')
+DEB_ARCH ?= $(shell dpkg --print-architecture 2>/dev/null || uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+LINUX_DIST_DIR := dist/linux
+DEB_NAME := klaw_$(VERSION)_$(DEB_ARCH).deb
+DEB_PATH := $(LINUX_DIST_DIR)/$(DEB_NAME)
+
 # klaw-webui → klaw-gateway 内嵌 `/chat`（输出目录见 .gitignore）
 WASM_TARGET := wasm32-unknown-unknown
 WEBUI_DIST_DIR := klaw-gateway/static/chat/dist
@@ -15,7 +21,7 @@ WEBUI_WASM_RELEASE := target/$(WASM_TARGET)/release/klaw_webui.wasm
 WASM_BINDGEN ?= wasm-bindgen
 WASM_BINDGEN_VERSION := $(shell awk -F' *= *' '/^wasm-bindgen = / {gsub(/"/,"",$$2); print $$2; exit}' Cargo.toml)
 
-.PHONY: build-macos-app package-macos-dmg clean-macos-artifacts webui-wasm clean-webui-wasm docs
+.PHONY: build-macos-app package-macos-dmg clean-macos-artifacts package-linux-deb clean-linux-artifacts webui-wasm clean-webui-wasm docs
 
 build-macos-app:
 	cargo build --release -p klaw-cli --target $(MACOS_TARGET)
@@ -31,6 +37,17 @@ package-macos-dmg: build-macos-app
 
 clean-macos-artifacts:
 	rm -rf $(DIST_DIR)
+
+package-linux-deb:
+	cargo build --release -p klaw-cli --target $(LINUX_TARGET)
+	./scripts/linux/package_deb.sh \
+		--binary target/$(LINUX_TARGET)/release/klaw \
+		--version $(VERSION) \
+		--arch $(DEB_ARCH) \
+		--output-dir $(LINUX_DIST_DIR)
+
+clean-linux-artifacts:
+	rm -rf $(LINUX_DIST_DIR)
 
 # 生成 `klaw-gateway/static/chat/dist/`（需已安装与 workspace 对齐版本的 wasm-bindgen CLI）
 webui-wasm:

@@ -28,6 +28,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 
+const WINDOW_RESIZE_HIT_ZONE: f32 = 8.0;
+
 pub struct ShellUi {
     panels: PanelRegistry,
     notifications: NotificationCenter,
@@ -223,6 +225,10 @@ impl ShellUi {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
 
+        if let Some(action) = window_resize_action(ctx) {
+            actions.push(action);
+        }
+
         let translator = Translator::new(LocaleDomain::Gui, current_ui_language());
         egui::TopBottomPanel::top("klaw-menu-bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -313,7 +319,7 @@ impl ShellUi {
                                 && ui.input(|i| {
                                     i.pointer.button_pressed(egui::PointerButton::Primary)
                                 });
-                            if pointer_pressed_on_region {
+                            if pointer_pressed_on_region && !pointer_in_window_resize_zone(ctx) {
                                 actions.push(UiAction::StartWindowDrag);
                             }
                         }
@@ -474,6 +480,76 @@ impl ShellUi {
         self.notifications.show(ctx);
 
         actions
+    }
+}
+
+fn window_resize_action(ctx: &egui::Context) -> Option<UiAction> {
+    let (viewport, content_rect, pointer_pos, primary_pressed) = ctx.input(|input| {
+        (
+            input.viewport().clone(),
+            input.content_rect(),
+            input.pointer.latest_pos(),
+            input.pointer.button_pressed(egui::PointerButton::Primary),
+        )
+    });
+    if viewport.fullscreen == Some(true) || viewport.maximized == Some(true) {
+        return None;
+    }
+    let direction = window_resize_direction(pointer_pos?, content_rect, WINDOW_RESIZE_HIT_ZONE)?;
+    ctx.set_cursor_icon(resize_cursor_icon(direction));
+    primary_pressed.then_some(UiAction::StartWindowResize(direction))
+}
+
+fn pointer_in_window_resize_zone(ctx: &egui::Context) -> bool {
+    ctx.input(|input| {
+        input.pointer.latest_pos().is_some_and(|pos| {
+            window_resize_direction(pos, input.content_rect(), WINDOW_RESIZE_HIT_ZONE).is_some()
+        })
+    })
+}
+
+fn window_resize_direction(
+    pos: egui::Pos2,
+    rect: egui::Rect,
+    hit_zone: f32,
+) -> Option<egui::viewport::ResizeDirection> {
+    use egui::viewport::ResizeDirection;
+
+    if !rect.contains(pos) {
+        return None;
+    }
+
+    let near_left = pos.x <= rect.left() + hit_zone;
+    let near_right = pos.x >= rect.right() - hit_zone;
+    let near_top = pos.y <= rect.top() + hit_zone;
+    let near_bottom = pos.y >= rect.bottom() - hit_zone;
+
+    match (near_left, near_right, near_top, near_bottom) {
+        (true, _, true, _) => Some(ResizeDirection::NorthWest),
+        (_, true, true, _) => Some(ResizeDirection::NorthEast),
+        (true, _, _, true) => Some(ResizeDirection::SouthWest),
+        (_, true, _, true) => Some(ResizeDirection::SouthEast),
+        (true, _, _, _) => Some(ResizeDirection::West),
+        (_, true, _, _) => Some(ResizeDirection::East),
+        (_, _, true, _) => Some(ResizeDirection::North),
+        (_, _, _, true) => Some(ResizeDirection::South),
+        _ => None,
+    }
+}
+
+fn resize_cursor_icon(direction: egui::viewport::ResizeDirection) -> egui::CursorIcon {
+    use egui::CursorIcon;
+    use egui::viewport::ResizeDirection;
+
+    match direction {
+        ResizeDirection::North => CursorIcon::ResizeNorth,
+        ResizeDirection::South => CursorIcon::ResizeSouth,
+        ResizeDirection::East => CursorIcon::ResizeEast,
+        ResizeDirection::West => CursorIcon::ResizeWest,
+        ResizeDirection::NorthEast => CursorIcon::ResizeNorthEast,
+        ResizeDirection::SouthEast => CursorIcon::ResizeSouthEast,
+        ResizeDirection::NorthWest => CursorIcon::ResizeNorthWest,
+        ResizeDirection::SouthWest => CursorIcon::ResizeSouthWest,
     }
 }
 
@@ -773,6 +849,7 @@ fn run_auto_backup_task(settings: &AppSettings) -> Result<SyncSupervisorMessage,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::viewport::ResizeDirection;
 
     fn ready_settings(auto_backup: bool, last_sync_at: Option<i64>) -> AppSettings {
         let mut settings = AppSettings::default();
@@ -783,6 +860,48 @@ mod tests {
         settings.sync.s3.access_key = "ak".to_string();
         settings.sync.s3.secret_key = "sk".to_string();
         settings
+    }
+
+    #[test]
+    fn window_resize_direction_detects_corners_edges_and_interior() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 300.0));
+
+        assert_eq!(
+            window_resize_direction(egui::pos2(2.0, 2.0), rect, 8.0),
+            Some(ResizeDirection::NorthWest)
+        );
+        assert_eq!(
+            window_resize_direction(egui::pos2(398.0, 2.0), rect, 8.0),
+            Some(ResizeDirection::NorthEast)
+        );
+        assert_eq!(
+            window_resize_direction(egui::pos2(2.0, 298.0), rect, 8.0),
+            Some(ResizeDirection::SouthWest)
+        );
+        assert_eq!(
+            window_resize_direction(egui::pos2(398.0, 298.0), rect, 8.0),
+            Some(ResizeDirection::SouthEast)
+        );
+        assert_eq!(
+            window_resize_direction(egui::pos2(200.0, 2.0), rect, 8.0),
+            Some(ResizeDirection::North)
+        );
+        assert_eq!(
+            window_resize_direction(egui::pos2(200.0, 298.0), rect, 8.0),
+            Some(ResizeDirection::South)
+        );
+        assert_eq!(
+            window_resize_direction(egui::pos2(2.0, 150.0), rect, 8.0),
+            Some(ResizeDirection::West)
+        );
+        assert_eq!(
+            window_resize_direction(egui::pos2(398.0, 150.0), rect, 8.0),
+            Some(ResizeDirection::East)
+        );
+        assert_eq!(
+            window_resize_direction(egui::pos2(200.0, 150.0), rect, 8.0),
+            None
+        );
     }
 
     #[test]

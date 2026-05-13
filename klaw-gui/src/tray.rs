@@ -9,6 +9,7 @@ use tray_icon::{
 };
 
 const MENU_SHOW_ABOUT_ID: &str = "tray.show_about";
+const MENU_SHOW_KLAW_ID: &str = "tray.show_klaw";
 const MENU_QUIT_KLAW_ID: &str = "tray.quit_klaw";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,11 +113,12 @@ fn load_tray_icon() -> anyhow::Result<tray_icon::Icon> {
 
 fn build_tray_menu() -> anyhow::Result<Menu> {
     let menu = Menu::new();
+    let show_item = MenuItem::with_id(MENU_SHOW_KLAW_ID, "Show Klaw", true, None);
     let about_item = MenuItem::with_id(MENU_SHOW_ABOUT_ID, "About", true, None);
     let quit_item = MenuItem::with_id(MENU_QUIT_KLAW_ID, "Quit Klaw", true, None);
     let separator = PredefinedMenuItem::separator();
 
-    menu.append_items(&[&about_item, &separator, &quit_item])
+    menu.append_items(&[&show_item, &about_item, &separator, &quit_item])
         .context("failed to build tray menu")?;
 
     Ok(menu)
@@ -124,6 +126,7 @@ fn build_tray_menu() -> anyhow::Result<Menu> {
 
 fn tray_command_for_menu_id(menu_id: &str) -> Option<TrayCommand> {
     match menu_id {
+        MENU_SHOW_KLAW_ID => Some(TrayCommand::OpenKlaw),
         MENU_SHOW_ABOUT_ID => Some(TrayCommand::ShowAbout),
         MENU_QUIT_KLAW_ID => Some(TrayCommand::QuitKlaw),
         _ => None,
@@ -144,14 +147,18 @@ fn tray_command_for_icon_event(event: TrayIconEvent) -> Option<TrayCommand> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MENU_QUIT_KLAW_ID, MENU_SHOW_ABOUT_ID, TrayCommand, tray_command_for_icon_event,
-        tray_command_for_menu_id,
+        MENU_QUIT_KLAW_ID, MENU_SHOW_ABOUT_ID, MENU_SHOW_KLAW_ID, TrayCommand,
+        tray_command_for_icon_event, tray_command_for_menu_id,
     };
     use tray_icon::dpi::{PhysicalPosition, PhysicalSize};
     use tray_icon::{MouseButton, MouseButtonState, Rect, TrayIconEvent, TrayIconId};
 
     #[test]
     fn tray_menu_ids_map_to_expected_commands() {
+        assert_eq!(
+            tray_command_for_menu_id(MENU_SHOW_KLAW_ID),
+            Some(TrayCommand::OpenKlaw)
+        );
         assert_eq!(
             tray_command_for_menu_id(MENU_SHOW_ABOUT_ID),
             Some(TrayCommand::ShowAbout)

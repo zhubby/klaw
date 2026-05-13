@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-05-13
+
+### Fixed
+
+- Linux GUI windows now keep the borderless macOS-style shell while adding native resize hit zones on the window edges and corners.
+- GUI tracing now caps `winit`/`egui_winit` window backend logs at `info` when the GUI default is `debug`, preventing large icon payload debug output from flooding the Logs panel on Linux startup.
+
+### Changed
+
+- Tray/status-icon menus now include `Show Klaw` so the main window can be restored from the menu as well as by left-clicking the icon.
+
 ## 2026-05-09
 
 ### Added

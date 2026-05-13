@@ -67,6 +67,7 @@ impl WorkbenchState {
             | UiAction::MinimizeWindow
             | UiAction::ZoomWindow
             | UiAction::StartWindowDrag
+            | UiAction::StartWindowResize(_)
             | UiAction::ShowAbout
             | UiAction::HideAbout => {}
         }
