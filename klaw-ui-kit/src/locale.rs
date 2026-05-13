@@ -444,4 +444,88 @@ mod tests {
             "已保存 system.md"
         );
     }
+
+    #[test]
+    fn gui_settings_panel_translates_section_titles_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("setting-section-general"), "General");
+        assert_eq!(
+            translator.text("setting-section-security"),
+            "Security & Privacy"
+        );
+        assert_eq!(translator.text("setting-section-network"), "Network");
+        assert_eq!(translator.text("setting-section-sync"), "Sync");
+    }
+
+    #[test]
+    fn gui_settings_panel_translates_section_titles_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("setting-section-general"), "通用");
+        assert_eq!(translator.text("setting-section-security"), "安全与隐私");
+        assert_eq!(translator.text("setting-section-network"), "网络");
+        assert_eq!(translator.text("setting-section-sync"), "同步");
+    }
+
+    #[test]
+    fn gui_settings_panel_translates_common_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("setting-yes"), "Yes");
+        assert_eq!(translator.text("setting-no"), "No");
+        assert_eq!(translator.text("setting-cancel"), "Cancel");
+        assert_eq!(translator.text("setting-enabled"), "enabled");
+        assert_eq!(translator.text("setting-disabled"), "disabled");
+        assert_eq!(
+            translator.text("setting-subtitle"),
+            "Configure application preferences"
+        );
+    }
+
+    #[test]
+    fn gui_settings_panel_translates_common_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("setting-yes"), "是");
+        assert_eq!(translator.text("setting-no"), "否");
+        assert_eq!(translator.text("setting-cancel"), "取消");
+        assert_eq!(translator.text("setting-enabled"), "已启用");
+        assert_eq!(translator.text("setting-disabled"), "已禁用");
+        assert_eq!(translator.text("setting-subtitle"), "配置应用偏好");
+    }
+
+    #[test]
+    fn gui_settings_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "setting-save-error",
+                HashMap::from([("error", "disk error".to_string())])
+            ),
+            "Save error: disk error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "setting-theme-mode-current",
+                HashMap::from([("mode", "Dark".to_string())])
+            ),
+            "Current theme mode: Dark (change from the bottom status bar)."
+        );
+    }
+
+    #[test]
+    fn gui_settings_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "setting-save-error",
+                HashMap::from([("error", "磁盘错误".to_string())])
+            ),
+            "保存错误：磁盘错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "setting-theme-mode-current",
+                HashMap::from([("mode", "深色".to_string())])
+            ),
+            "当前主题模式：深色（可在底部状态栏更改）。"
+        );
+    }
 }

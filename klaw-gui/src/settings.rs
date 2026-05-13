@@ -1,4 +1,4 @@
-use klaw_ui_kit::UiLanguage;
+use klaw_ui_kit::{Translator, UiLanguage};
 use klaw_util::{default_data_dir, settings_path as default_settings_path};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -110,6 +110,7 @@ pub enum SyncItem {
 }
 
 impl SyncItem {
+    #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self {
             SyncItem::Session => "Session",
@@ -121,6 +122,20 @@ impl SyncItem {
             SyncItem::UserWorkspace => "User Workspace",
             SyncItem::Memory => "Memory",
             SyncItem::Config => "Config",
+        }
+    }
+
+    pub fn label_with_translator(&self, t: &Translator) -> String {
+        match self {
+            SyncItem::Session => t.text("setting-sync-item-session"),
+            SyncItem::Skills => t.text("setting-sync-item-skills"),
+            SyncItem::Mcp => t.text("setting-sync-item-mcp-excluded"),
+            SyncItem::SkillsRegistry => t.text("setting-sync-item-skills-registry"),
+            SyncItem::GuiSettings => t.text("setting-sync-item-gui-settings"),
+            SyncItem::Archive => t.text("setting-sync-item-archive"),
+            SyncItem::UserWorkspace => t.text("setting-sync-item-user-workspace"),
+            SyncItem::Memory => t.text("setting-sync-item-memory"),
+            SyncItem::Config => t.text("setting-sync-item-config"),
         }
     }
 
