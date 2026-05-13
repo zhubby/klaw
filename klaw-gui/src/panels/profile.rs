@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_seconds;
 use crate::widgets::markdown;
 use egui::{Color32, RichText};
@@ -7,7 +8,9 @@ use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
 use klaw_core::{SkillPromptEntry, build_runtime_system_prompt};
 use klaw_skill::{SkillSourceKind, SkillsManager, open_default_skills_manager};
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint};
 use klaw_util::default_workspace_dir;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -86,6 +89,24 @@ pub struct ProfilePanel {
 }
 
 impl ProfilePanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
+    fn subtitle(t: &Translator) -> String {
+        t.text("profile-subtitle")
+    }
+
+    fn path_hint(t: &Translator, path: Option<&Path>) -> String {
+        match path {
+            Some(path) => t.text_args(
+                "profile-path-hint",
+                HashMap::from([("path", path.display().to_string())]),
+            ),
+            None => t.text("profile-path-not-loaded"),
+        }
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.loaded {
             return;
@@ -107,7 +128,10 @@ impl ProfilePanel {
                 self.refresh_system_prompt_preview();
             }
             Err(err) => {
-                notifications.error(format!("Failed to load workspace markdown files: {err}"))
+                notifications.error(Self::translator().text_args(
+                    "profile-notify-load-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
         }
     }
@@ -137,11 +161,14 @@ impl ProfilePanel {
                 self.system_prompt_preview_rx = Some(rx);
             }
             Err(mpsc::TryRecvError::Disconnected) => {
+                let t = Self::translator();
                 self.system_prompt_preview_loading = false;
-                self.system_prompt_preview =
-                    "# System Prompt Preview Unavailable\n\nBackground preview task disconnected."
-                        .to_string();
-                notifications.warning("System prompt preview loader disconnected");
+                self.system_prompt_preview = format!(
+                    "# {}\n\n{}",
+                    t.text("profile-system-prompt-unavailable-title"),
+                    t.text("profile-system-prompt-unavailable-body"),
+                );
+                notifications.warning(t.text("profile-notify-preview-disconnected"));
             }
         }
     }
@@ -214,16 +241,18 @@ impl ProfilePanel {
     fn render_docs_section(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         let mut edit_target = None;
         let mut preview_target = None;
+        let t = Self::translator();
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_min_height(ui.available_height());
+            ui.set_max_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.strong("Workspace Markdown Files");
+                ui.strong(t.text("profile-workspace-markdown-files"));
                 ui.label(format!("({})", self.docs.len()));
             });
             ui.add_space(6.0);
 
             if self.docs.is_empty() {
-                ui.label("No markdown files found in the workspace directory.");
+                ui.label(t.text("profile-no-markdown-files"));
                 return;
             }
 
@@ -241,19 +270,19 @@ impl ProfilePanel {
                 .sense(egui::Sense::click())
                 .header(22.0, |mut header| {
                     header.col(|ui| {
-                        ui.strong("Name");
+                        ui.strong(t.text("profile-name"));
                     });
                     header.col(|ui| {
-                        ui.strong("Summary");
+                        ui.strong(t.text("profile-summary"));
                     });
                     header.col(|ui| {
-                        ui.strong("Size");
+                        ui.strong(t.text("profile-size"));
                     });
                     header.col(|ui| {
-                        ui.strong("Modified");
+                        ui.strong(t.text("profile-modified"));
                     });
                     header.col(|ui| {
-                        ui.strong("Path");
+                        ui.strong(t.text("profile-path"));
                     });
                 })
                 .body(|body| {
@@ -295,12 +324,19 @@ impl ProfilePanel {
                         let has_default_template =
                             klaw_core::get_default_template_content(&doc.file_name).is_some();
                         response.context_menu(|ui| {
-                            if ui.button(format!("{} Preview", regular::EYE)).clicked() {
+                            if ui
+                                .button(format!("{} {}", regular::EYE, t.text("profile-preview")))
+                                .clicked()
+                            {
                                 preview_target = Some(doc_clone.clone());
                                 ui.close();
                             }
                             if ui
-                                .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                .button(format!(
+                                    "{} {}",
+                                    regular::PENCIL_SIMPLE,
+                                    t.text("profile-edit")
+                                ))
                                 .clicked()
                             {
                                 edit_target = Some(doc_clone.clone());
@@ -310,8 +346,9 @@ impl ProfilePanel {
                                 && ui
                                     .add(egui::Button::new(
                                         RichText::new(format!(
-                                            "{} Reset",
-                                            regular::ARROW_COUNTER_CLOCKWISE
+                                            "{} {}",
+                                            regular::ARROW_COUNTER_CLOCKWISE,
+                                            t.text("profile-reset")
                                         ))
                                         .color(RESET_BUTTON_COLOR),
                                     ))
@@ -326,8 +363,12 @@ impl ProfilePanel {
                             ui.separator();
                             if ui
                                 .add(egui::Button::new(
-                                    RichText::new(format!("{} Delete", regular::TRASH))
-                                        .color(egui::Color32::RED),
+                                    RichText::new(format!(
+                                        "{} {}",
+                                        regular::TRASH,
+                                        t.text("profile-delete")
+                                    ))
+                                    .color(egui::Color32::RED),
                                 ))
                                 .clicked()
                             {
@@ -348,16 +389,18 @@ impl ProfilePanel {
     }
 
     fn render_system_prompt_preview(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_min_height(ui.available_height());
+            ui.set_max_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.strong("System Prompt Preview");
+                ui.strong(t.text("profile-system-prompt-preview"));
                 if self.system_prompt_preview_loading {
                     ui.add(egui::Spinner::new());
-                    ui.small("Loading...");
+                    ui.small(t.text("profile-loading"));
                 }
             });
-            ui.small("Rendered from current workspace prompt docs and installed skills.");
+            ui.small(t.text("profile-system-prompt-desc"));
             ui.add_space(6.0);
 
             egui::ScrollArea::vertical()
@@ -383,6 +426,7 @@ impl ProfilePanel {
             return;
         };
 
+        let t = Self::translator();
         let mut layouter = markdown::text_layouter;
 
         let viewport_height = ctx.input(|input| {
@@ -402,69 +446,104 @@ impl ProfilePanel {
         let has_default_template =
             klaw_core::get_default_template_content(&editor.file_name).is_some();
 
-        egui::Window::new(format!("Edit {}", editor.file_name))
-            .open(&mut editor.open)
-            .resizable(true)
-            .default_width(860.0)
-            .default_height(window_max_height.min(560.0))
-            .max_height(window_max_height)
-            .show(ctx, |ui| {
-                ui.label(format!("Path: {}", editor.path.display()));
-                ui.horizontal(|ui| {
-                    let label = if dirty { "Dirty: yes" } else { "Dirty: no" };
-                    let color = if dirty {
-                        Color32::YELLOW
-                    } else {
-                        Color32::LIGHT_GREEN
-                    };
-                    ui.colored_label(color, label);
-                    ui.label("Workspace markdown editor");
-                });
-                ui.separator();
+        egui::Window::new(t.text_args(
+            "profile-edit-title",
+            HashMap::from([("name", editor.file_name.clone())]),
+        ))
+        .open(&mut editor.open)
+        .resizable(true)
+        .default_width(860.0)
+        .default_height(window_max_height.min(560.0))
+        .max_height(window_max_height)
+        .show(ctx, |ui| {
+            ui.label(t.text_args(
+                "profile-path-label",
+                HashMap::from([("path", editor.path.display().to_string())]),
+            ));
+            ui.horizontal(|ui| {
+                let label = if dirty {
+                    t.text("profile-dirty-yes")
+                } else {
+                    t.text("profile-dirty-no")
+                };
+                let color = if dirty {
+                    Color32::YELLOW
+                } else {
+                    Color32::LIGHT_GREEN
+                };
+                ui.colored_label(color, label);
+                ui.label(t.text("profile-workspace-editor"));
+            });
+            ui.separator();
 
-                StripBuilder::new(ui)
-                    .size(Size::remainder().at_least(MIN_EDITOR_HEIGHT))
-                    .size(Size::exact(FOOTER_HEIGHT))
-                    .vertical(|mut strip| {
-                        strip.cell(|ui| {
-                            let editor_height = ui.available_height();
-                            egui::ScrollArea::both()
-                                .id_salt(("workspace-markdown-editor", &editor.file_name))
-                                .auto_shrink([false, false])
-                                .max_height(editor_height)
-                                .show(ui, |ui| {
-                                    let editor_width = ui.available_width();
-                                    ui.add_sized(
-                                        [editor_width, editor_height],
-                                        egui::TextEdit::multiline(&mut editor.editor_raw)
-                                            .font(egui::TextStyle::Monospace)
-                                            .desired_rows(24)
-                                            .desired_width(f32::INFINITY)
-                                            .code_editor()
-                                            .layouter(&mut layouter),
-                                    );
-                                });
-                        });
-
-                        strip.cell(|ui| {
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                if ui.button("Save").clicked() {
-                                    save_clicked = true;
-                                }
-                                if ui.button("Cancel").clicked() {
-                                    cancel_clicked = true;
-                                }
-                                if ui.button("Reset").clicked() {
-                                    reset_clicked = true;
-                                }
-                                if has_default_template && ui.button("Default").clicked() {
-                                    default_clicked = true;
-                                }
+            StripBuilder::new(ui)
+                .size(Size::remainder().at_least(MIN_EDITOR_HEIGHT))
+                .size(Size::exact(FOOTER_HEIGHT))
+                .vertical(|mut strip| {
+                    strip.cell(|ui| {
+                        let editor_height = ui.available_height();
+                        egui::ScrollArea::both()
+                            .id_salt(("workspace-markdown-editor", &editor.file_name))
+                            .auto_shrink([false, false])
+                            .max_height(editor_height)
+                            .show(ui, |ui| {
+                                let editor_width = ui.available_width();
+                                ui.add_sized(
+                                    [editor_width, editor_height],
+                                    egui::TextEdit::multiline(&mut editor.editor_raw)
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_rows(24)
+                                        .desired_width(f32::INFINITY)
+                                        .code_editor()
+                                        .layouter(&mut layouter),
+                                );
                             });
+                    });
+
+                    strip.cell(|ui| {
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(format!(
+                                    "{} {}",
+                                    regular::FLOPPY_DISK,
+                                    t.text("profile-save")
+                                ))
+                                .clicked()
+                            {
+                                save_clicked = true;
+                            }
+                            if ui
+                                .button(format!("{} {}", regular::X, t.text("profile-cancel")))
+                                .clicked()
+                            {
+                                cancel_clicked = true;
+                            }
+                            if ui
+                                .button(format!(
+                                    "{} {}",
+                                    regular::ARROW_COUNTER_CLOCKWISE,
+                                    t.text("profile-reset-btn")
+                                ))
+                                .clicked()
+                            {
+                                reset_clicked = true;
+                            }
+                            if has_default_template
+                                && ui
+                                    .button(format!(
+                                        "{} {}",
+                                        regular::STAR,
+                                        t.text("profile-default")
+                                    ))
+                                    .clicked()
+                            {
+                                default_clicked = true;
+                            }
                         });
                     });
-            });
+                });
+        });
 
         if reset_clicked {
             editor.editor_raw = editor.original_raw.clone();
@@ -484,14 +563,23 @@ impl ProfilePanel {
                     saved_file_name = Some(editor.file_name.clone());
                 }
                 Err(err) => {
-                    notifications.error(format!("Failed to save {}: {err}", editor.path.display()));
+                    notifications.error(Self::translator().text_args(
+                        "profile-notify-save-failed",
+                        HashMap::from([
+                            ("path", editor.path.display().to_string()),
+                            ("error", err.to_string()),
+                        ]),
+                    ));
                 }
             }
         }
 
         let should_close = cancel_clicked || !editor.open;
         if let Some(file_name) = saved_file_name {
-            notifications.success(format!("Saved {file_name}"));
+            notifications.success(
+                Self::translator()
+                    .text_args("profile-notify-saved", HashMap::from([("name", file_name)])),
+            );
             self.reload(notifications);
         }
         if should_close {
@@ -508,20 +596,23 @@ impl ProfilePanel {
         let Some(pending_reset) = self.pending_default_confirm.clone() else {
             return;
         };
+        let t = Self::translator();
         let mut confirmed = false;
         let mut cancelled = false;
         let description = match &pending_reset.target {
-            DefaultResetTarget::Editor => format!(
-                "Reset {} to the built-in default template? This will replace the current editor content.",
-                pending_reset.file_name
+            DefaultResetTarget::Editor => t.text_args(
+                "profile-reset-default-editor-desc",
+                HashMap::from([("name", pending_reset.file_name.clone())]),
             ),
-            DefaultResetTarget::File(path) => format!(
-                "Reset {} to the built-in default template? This will overwrite {} after confirmation.",
-                pending_reset.file_name,
-                path.display()
+            DefaultResetTarget::File(path) => t.text_args(
+                "profile-reset-default-file-desc",
+                HashMap::from([
+                    ("name", pending_reset.file_name.clone()),
+                    ("path", path.display().to_string()),
+                ]),
             ),
         };
-        egui::Window::new("Reset to default template")
+        egui::Window::new(t.text("profile-reset-default-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -530,13 +621,21 @@ impl ProfilePanel {
                 ui.horizontal(|ui| {
                     if ui
                         .add(egui::Button::new(
-                            RichText::new("Reset to default").color(RESET_BUTTON_COLOR),
+                            RichText::new(format!(
+                                "{} {}",
+                                regular::ARROW_COUNTER_CLOCKWISE,
+                                t.text("profile-reset-default-btn")
+                            ))
+                            .color(RESET_BUTTON_COLOR),
                         ))
                         .clicked()
                     {
                         confirmed = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .button(format!("{} {}", regular::X, t.text("profile-cancel")))
+                        .clicked()
+                    {
                         cancelled = true;
                     }
                 });
@@ -550,23 +649,28 @@ impl ProfilePanel {
                     DefaultResetTarget::Editor => {
                         if let Some(editor) = self.editor.as_mut() {
                             editor.editor_raw = default_content.to_string();
-                            notifications.success(format!(
-                                "Reset {} to default template",
-                                pending_reset.file_name
+                            notifications.success(Self::translator().text_args(
+                                "profile-notify-reset-to-default",
+                                HashMap::from([("name", pending_reset.file_name.clone())]),
                             ));
                         }
                     }
                     DefaultResetTarget::File(path) => match fs::write(path, default_content) {
                         Ok(()) => {
                             self.sync_open_views_with_content(path, default_content);
-                            notifications.success(format!(
-                                "Reset {} to default template",
-                                pending_reset.file_name
+                            notifications.success(Self::translator().text_args(
+                                "profile-notify-reset-to-default",
+                                HashMap::from([("name", pending_reset.file_name.clone())]),
                             ));
                             self.reload(notifications);
                         }
-                        Err(err) => notifications
-                            .error(format!("Failed to reset {}: {err}", path.display())),
+                        Err(err) => notifications.error(Self::translator().text_args(
+                            "profile-notify-reset-failed",
+                            HashMap::from([
+                                ("path", path.display().to_string()),
+                                ("error", err.to_string()),
+                            ]),
+                        )),
                     },
                 }
             }
@@ -589,7 +693,7 @@ impl ProfilePanel {
         }
 
         let Some(workspace_dir) = self.workspace_dir.clone() else {
-            notifications.error("Workspace path is unavailable.");
+            notifications.error(Self::translator().text("profile-notify-workspace-unavailable"));
             self.create_form.open = false;
             return;
         };
@@ -605,7 +709,8 @@ impl ProfilePanel {
         let mut create_clicked = false;
         let mut cancel_clicked = false;
 
-        egui::Window::new("Create workspace file")
+        let t = Self::translator();
+        egui::Window::new(t.text("profile-create-file-title"))
             .open(&mut self.create_form.open)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
@@ -614,11 +719,14 @@ impl ProfilePanel {
             .default_height(window_max_height.min(480.0))
             .max_height(window_max_height)
             .show(ctx, |ui| {
-                ui.label(format!("Workspace Path: {}", workspace_dir.display()));
-                ui.small("The file will be created directly under the workspace directory.");
+                ui.label(t.text_args(
+                    "profile-create-workspace-path",
+                    HashMap::from([("path", workspace_dir.display().to_string())]),
+                ));
+                ui.small(t.text("profile-create-file-hint"));
                 ui.add_space(8.0);
 
-                ui.label("File Name");
+                ui.label(t.text("profile-file-name-label"));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.create_form.file_name)
                         .desired_width(f32::INFINITY)
@@ -626,7 +734,7 @@ impl ProfilePanel {
                 );
                 ui.add_space(8.0);
 
-                ui.label("Body");
+                ui.label(t.text("profile-body-label"));
                 egui::ScrollArea::vertical()
                     .id_salt("workspace-create-body-scroll")
                     .max_height((window_max_height - 180.0).max(180.0))
@@ -644,10 +752,20 @@ impl ProfilePanel {
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Create").clicked() {
+                    if ui
+                        .button(format!(
+                            "{} {}",
+                            regular::FILE_PLUS,
+                            t.text("profile-create-btn")
+                        ))
+                        .clicked()
+                    {
                         create_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .button(format!("{} {}", regular::X, t.text("profile-cancel")))
+                        .clicked()
+                    {
                         cancel_clicked = true;
                     }
                 });
@@ -660,11 +778,17 @@ impl ProfilePanel {
                 &self.create_form.body,
             ) {
                 Ok(path) => {
-                    notifications.success(format!("Created {}", path.display()));
+                    notifications.success(Self::translator().text_args(
+                        "profile-notify-created",
+                        HashMap::from([("path", path.display().to_string())]),
+                    ));
                     self.reload(notifications);
                     self.create_form = WorkspaceFileCreateForm::default();
                 }
-                Err(err) => notifications.error(err),
+                Err(err) => notifications.error(Self::translator().text_args(
+                    "profile-notify-create-failed",
+                    HashMap::from([("error", err.to_string())]),
+                )),
             }
         }
 
@@ -678,21 +802,28 @@ impl ProfilePanel {
             return;
         };
 
-        egui::Window::new(format!("Preview {}", preview.file_name))
-            .open(&mut preview.open)
-            .resizable(true)
-            .default_width(860.0)
-            .default_height(620.0)
-            .show(ctx, |ui| {
-                ui.label(format!("Path: {}", preview.path.display()));
-                ui.separator();
-                egui::ScrollArea::vertical()
-                    .id_salt(("workspace-markdown-preview", &preview.file_name))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        markdown::render(ui, &mut self.preview_cache, &preview.content)
-                    });
-            });
+        let t = Self::translator();
+        egui::Window::new(t.text_args(
+            "profile-preview-title",
+            HashMap::from([("name", preview.file_name.clone())]),
+        ))
+        .open(&mut preview.open)
+        .resizable(true)
+        .default_width(860.0)
+        .default_height(620.0)
+        .show(ctx, |ui| {
+            ui.label(t.text_args(
+                "profile-path-label",
+                HashMap::from([("path", preview.path.display().to_string())]),
+            ));
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .id_salt(("workspace-markdown-preview", &preview.file_name))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    markdown::render(ui, &mut self.preview_cache, &preview.content)
+                });
+        });
 
         if self.preview.as_ref().is_some_and(|preview| !preview.open) {
             self.preview = None;
@@ -708,27 +839,41 @@ impl ProfilePanel {
             return;
         };
 
+        let t = Self::translator();
         let mut confirmed = false;
         let mut cancelled = false;
-        egui::Window::new("Delete workspace file")
+        egui::Window::new(t.text("profile-delete-file-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label(format!("Delete {} ?", doc.file_name));
-                ui.small(format!("Path: {}", doc.path.display()));
+                ui.label(t.text_args(
+                    "profile-delete-file-desc",
+                    HashMap::from([("name", doc.file_name.clone())]),
+                ));
+                ui.small(t.text_args(
+                    "profile-delete-file-path",
+                    HashMap::from([("path", doc.path.display().to_string())]),
+                ));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(egui::Button::new(
-                            RichText::new(format!("{} Delete", regular::TRASH))
-                                .color(egui::Color32::RED),
+                            RichText::new(format!(
+                                "{} {}",
+                                regular::TRASH,
+                                t.text("profile-delete")
+                            ))
+                            .color(egui::Color32::RED),
                         ))
                         .clicked()
                     {
                         confirmed = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .button(format!("{} {}", regular::X, t.text("profile-cancel")))
+                        .clicked()
+                    {
                         cancelled = true;
                     }
                 });
@@ -747,11 +892,20 @@ impl ProfilePanel {
                     {
                         self.preview = None;
                     }
-                    notifications.success(format!("Deleted {}", doc.file_name));
+                    notifications.success(Self::translator().text_args(
+                        "profile-notify-deleted",
+                        HashMap::from([("name", doc.file_name.clone())]),
+                    ));
                     self.reload(notifications);
                 }
                 Err(err) => {
-                    notifications.error(format!("Failed to delete {}: {err}", doc.path.display()));
+                    notifications.error(Self::translator().text_args(
+                        "profile-notify-delete-failed",
+                        HashMap::from([
+                            ("path", doc.path.display().to_string()),
+                            ("error", err.to_string()),
+                        ]),
+                    ));
                 }
             }
             self.pending_delete_doc = None;
@@ -776,15 +930,39 @@ impl PanelRenderer for ProfilePanel {
             ui.ctx().request_repaint_after(PREVIEW_POLL_INTERVAL);
         }
 
+        let t = Self::translator();
         ui.heading(ctx.tab_title);
+        label_with_hint(
+            ui,
+            &Self::subtitle(&t),
+            &Self::path_hint(&t, self.workspace_dir.as_deref()),
+        );
         ui.horizontal(|ui| {
-            ui.label(format!("Markdown Files: {}", self.docs.len()));
-            if ui.button("Reload").clicked() {
+            if ui
+                .button(format!(
+                    "{} {}",
+                    regular::ARROW_CLOCKWISE,
+                    t.text("profile-reload")
+                ))
+                .clicked()
+            {
                 self.reload(notifications);
             }
-            if ui.button("Create File").clicked() {
+            if ui
+                .button(format!(
+                    "{} {}",
+                    regular::FILE_PLUS,
+                    t.text("profile-create-file")
+                ))
+                .clicked()
+            {
                 self.create_form.open = true;
             }
+            ui.add_space(6.0);
+            ui.label(t.text_args(
+                "profile-markdown-files-count",
+                HashMap::from([("count", self.docs.len().to_string())]),
+            ));
         });
         ui.separator();
         let docs_height = Self::docs_section_height(ui.available_height());

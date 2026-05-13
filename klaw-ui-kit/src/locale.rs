@@ -326,4 +326,122 @@ mod tests {
         assert_eq!(translator.text("config-confirm-continue"), "继续");
         assert_eq!(translator.text("config-confirm-cancel"), "取消");
     }
+
+    #[test]
+    fn gui_profile_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("profile-reload"), "Reload");
+        assert_eq!(translator.text("profile-create-file"), "Create File");
+        assert_eq!(
+            translator.text("profile-workspace-markdown-files"),
+            "Workspace Markdown Files"
+        );
+        assert_eq!(
+            translator.text("profile-no-markdown-files"),
+            "No markdown files found in the workspace directory."
+        );
+        assert_eq!(
+            translator.text("profile-system-prompt-preview"),
+            "System Prompt Preview"
+        );
+        assert_eq!(translator.text("profile-save"), "Save");
+        assert_eq!(translator.text("profile-cancel"), "Cancel");
+        assert_eq!(translator.text("profile-reset-btn"), "Reset");
+        assert_eq!(translator.text("profile-default"), "Default");
+        assert_eq!(translator.text("profile-create-btn"), "Create");
+        assert_eq!(translator.text("profile-delete"), "Delete");
+        assert_eq!(translator.text("profile-preview"), "Preview");
+    }
+
+    #[test]
+    fn gui_profile_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("profile-reload"), "重载");
+        assert_eq!(translator.text("profile-create-file"), "创建文件");
+        assert_eq!(
+            translator.text("profile-workspace-markdown-files"),
+            "工作区 Markdown 文件"
+        );
+        assert_eq!(
+            translator.text("profile-no-markdown-files"),
+            "在工作区目录中未找到 Markdown 文件。"
+        );
+        assert_eq!(
+            translator.text("profile-system-prompt-preview"),
+            "系统提示词预览"
+        );
+        assert_eq!(translator.text("profile-save"), "保存");
+        assert_eq!(translator.text("profile-cancel"), "取消");
+        assert_eq!(translator.text("profile-reset-btn"), "重置");
+        assert_eq!(translator.text("profile-default"), "默认");
+        assert_eq!(translator.text("profile-create-btn"), "创建");
+        assert_eq!(translator.text("profile-delete"), "删除");
+        assert_eq!(translator.text("profile-preview"), "预览");
+    }
+
+    #[test]
+    fn gui_profile_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "profile-markdown-files-count",
+                HashMap::from([("count", "3".to_string())])
+            ),
+            "Markdown Files: 3"
+        );
+        assert_eq!(
+            translator.text_args(
+                "profile-edit-title",
+                HashMap::from([("name", "system.md".to_string())])
+            ),
+            "Edit system.md"
+        );
+        assert_eq!(
+            translator.text_args(
+                "profile-path-hint",
+                HashMap::from([("path", "/tmp/ws".to_string())])
+            ),
+            "Workspace: /tmp/ws"
+        );
+        assert_eq!(
+            translator.text_args(
+                "profile-notify-saved",
+                HashMap::from([("name", "system.md".to_string())])
+            ),
+            "Saved system.md"
+        );
+    }
+
+    #[test]
+    fn gui_profile_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "profile-markdown-files-count",
+                HashMap::from([("count", "3".to_string())])
+            ),
+            "Markdown 文件：3"
+        );
+        assert_eq!(
+            translator.text_args(
+                "profile-edit-title",
+                HashMap::from([("name", "system.md".to_string())])
+            ),
+            "编辑 system.md"
+        );
+        assert_eq!(
+            translator.text_args(
+                "profile-path-hint",
+                HashMap::from([("path", "/tmp/ws".to_string())])
+            ),
+            "工作区：/tmp/ws"
+        );
+        assert_eq!(
+            translator.text_args(
+                "profile-notify-saved",
+                HashMap::from([("name", "system.md".to_string())])
+            ),
+            "已保存 system.md"
+        );
+    }
 }
