@@ -546,6 +546,7 @@ impl PanelRenderer for ProviderPanel {
 
         let t = Self::translator();
         ui.heading(ctx.tab_title);
+        ui.label(t.text("provider-subtitle"));
         ui.horizontal(|ui| {
             ui.colored_label(
                 egui::Color32::LIGHT_GREEN,

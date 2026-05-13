@@ -740,6 +740,7 @@ local-model-notify-cancelling-download = Cancelling model download
 local-model-notify-open-dir-failed = Failed to open models directory: { $error }
 
 ## Provider panel
+provider-subtitle = Configure model providers and set the default provider for the runtime.
 provider-label-config-default = Config default: { $provider }
 provider-label-runtime-active = Runtime active: { $provider }
 provider-btn-add = { $icon } Add Provider
@@ -915,6 +916,7 @@ tool-notify-syncing = Syncing tool config with runtime...
 tool-notify-saved = Tool config saved
 
 ## Skills Registry panel
+skills-reg-subtitle = Manage skill registries and sync skills from remote repositories.
 skills-reg-label-registries-count = Registries: { $count }
 skills-reg-btn-config = { $icon } Config
 skills-reg-btn-reload = { $icon } Reload
@@ -982,6 +984,7 @@ skills-reg-error-address-empty = Skills registry address cannot be empty
 skills-reg-error-name-duplicate = Skills registry '{ $name }' already exists, choose another name
 
 ## Skills Manager panel
+skills-mgr-subtitle = Install, view, and manage skills from registries or local sources.
 skills-mgr-label-installed-count = Installed: { $count }
 skills-mgr-label-registries-count = Registries: { $count }
 skills-mgr-btn-refresh = { $icon } Refresh

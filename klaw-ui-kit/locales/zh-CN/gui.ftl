@@ -740,6 +740,7 @@ local-model-notify-cancelling-download = 正在取消模型下载
 local-model-notify-open-dir-failed = 打开模型目录失败: { $error }
 
 ## 模型提供商面板
+provider-subtitle = 配置模型提供商并设置运行时的默认提供商。
 provider-label-config-default = 配置默认: { $provider }
 provider-label-runtime-active = 运行时活跃: { $provider }
 provider-btn-add = { $icon } 添加提供商
@@ -914,7 +915,8 @@ tool-notify-sync-failed = 工具配置已保存，但同步运行时失败: { $e
 tool-notify-syncing = 正在同步工具配置与运行时...
 tool-notify-saved = 工具配置已保存
 
-## Skills Registry panel
+## 技能仓库面板
+skills-reg-subtitle = 管理技能仓库并从远程仓库同步技能。
 skills-reg-label-registries-count = 注册源: { $count }
 skills-reg-btn-config = { $icon } 配置
 skills-reg-btn-reload = { $icon } 刷新
@@ -981,7 +983,8 @@ skills-reg-error-name-empty = 技能注册源名称不能为空
 skills-reg-error-address-empty = 技能注册源地址不能为空
 skills-reg-error-name-duplicate = 技能注册源 '{ $name }' 已存在，请使用其他名称
 
-## Skills Manager panel
+## 技能管理面板
+skills-mgr-subtitle = 从注册源或本地来源安装、查看和管理技能。
 skills-mgr-label-installed-count = 已安装: { $count }
 skills-mgr-label-registries-count = 注册源: { $count }
 skills-mgr-btn-refresh = { $icon } 刷新

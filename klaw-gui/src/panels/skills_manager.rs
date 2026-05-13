@@ -850,6 +850,7 @@ impl PanelRenderer for SkillsManagerPanel {
         let t = Self::translator();
 
         ui.heading(ctx.tab_title);
+        ui.label(t.text("skills-mgr-subtitle"));
         ui.horizontal(|ui| {
             ui.label(t.text_args(
                 "skills-mgr-label-installed-count",

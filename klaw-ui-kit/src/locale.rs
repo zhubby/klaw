@@ -1608,4 +1608,46 @@ mod tests {
             "已从 /src 安装本地技能 `my-skill` 至 /dest"
         );
     }
+
+    #[test]
+    fn gui_panel_subtitles_translated_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("local-model-subtitle"),
+            "Browse, install, and manage local LLM models stored on your device."
+        );
+        assert_eq!(
+            translator.text("provider-subtitle"),
+            "Configure model providers and set the default provider for the runtime."
+        );
+        assert_eq!(
+            translator.text("skills-reg-subtitle"),
+            "Manage skill registries and sync skills from remote repositories."
+        );
+        assert_eq!(
+            translator.text("skills-mgr-subtitle"),
+            "Install, view, and manage skills from registries or local sources."
+        );
+    }
+
+    #[test]
+    fn gui_panel_subtitles_translated_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("local-model-subtitle"),
+            "浏览、安装和管理存储在设备上的本地 LLM 模型。"
+        );
+        assert_eq!(
+            translator.text("provider-subtitle"),
+            "配置模型提供商并设置运行时的默认提供商。"
+        );
+        assert_eq!(
+            translator.text("skills-reg-subtitle"),
+            "管理技能仓库并从远程仓库同步技能。"
+        );
+        assert_eq!(
+            translator.text("skills-mgr-subtitle"),
+            "从注册源或本地来源安装、查看和管理技能。"
+        );
+    }
 }
